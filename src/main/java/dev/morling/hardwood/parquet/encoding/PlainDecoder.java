@@ -23,6 +23,10 @@ public class PlainDecoder {
     private final InputStream input;
     private final PhysicalType type;
 
+    // For bit-packed boolean reading
+    private int currentByte = 0;
+    private int bitPosition = 8; // 8 means we need to read a new byte
+
     public PlainDecoder(InputStream input, PhysicalType type) {
         this.input = input;
         this.type = type;
@@ -67,11 +71,20 @@ public class PlainDecoder {
     }
 
     private boolean readBoolean() throws IOException {
-        int b = input.read();
-        if (b == -1) {
-            throw new IOException("Unexpected EOF while reading boolean");
+        // Booleans are bit-packed in PLAIN encoding (8 values per byte, LSB first)
+        if (bitPosition == 8) {
+            // Need to read a new byte
+            currentByte = input.read();
+            if (currentByte == -1) {
+                throw new IOException("Unexpected EOF while reading boolean");
+            }
+            bitPosition = 0;
         }
-        return b != 0;
+
+        // Extract the bit at the current position
+        boolean value = ((currentByte >> bitPosition) & 1) != 0;
+        bitPosition++;
+        return value;
     }
 
     private int readInt32() throws IOException {

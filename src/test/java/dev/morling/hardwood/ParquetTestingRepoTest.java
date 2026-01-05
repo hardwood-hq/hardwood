@@ -146,36 +146,46 @@ class ParquetTestingRepoTest {
             System.out.println("Row groups: " + metadata.rowGroups().size());
             System.out.println("Columns: " + reader.getSchema().getColumnCount());
 
-            // Try to read first row group, first column to verify we can parse pages
-            if (!metadata.rowGroups().isEmpty() && reader.getSchema().getColumnCount() > 0) {
-                var rowGroup = metadata.rowGroups().get(0);
-                var column = reader.getSchema().getColumn(0);
-                var columnChunk = rowGroup.columns().get(0);
+            // Try to read ALL columns from ALL row groups to verify we can parse everything
+            int totalValuesRead = 0;
+            for (int rgIdx = 0; rgIdx < metadata.rowGroups().size(); rgIdx++) {
+                var rowGroup = metadata.rowGroups().get(rgIdx);
 
-                System.out.println("Column 0: " + column.name() + " (" + column.type() + ")");
-                System.out.println("  Encoding: " + columnChunk.metaData().encodings());
-                System.out.println("  Codec: " + columnChunk.metaData().codec());
+                for (int colIdx = 0; colIdx < reader.getSchema().getColumnCount(); colIdx++) {
+                    var column = reader.getSchema().getColumn(colIdx);
+                    var columnChunk = rowGroup.columns().get(colIdx);
 
-                // Try to create a column reader and read values
-                ColumnReader columnReader = new ColumnReader(reader.getFile(), column, columnChunk);
-                List<Object> values = columnReader.readAll();
-                System.out.println("  Successfully read " + values.size() + " values");
-
-                // Show first few values
-                int displayCount = Math.min(5, values.size());
-                for (int i = 0; i < displayCount; i++) {
-                    Object value = values.get(i);
-                    if (value instanceof byte[]) {
-                        System.out.println("    [" + i + "]: <byte array, length=" + ((byte[]) value).length + ">");
+                    if (rgIdx == 0 && colIdx == 0) {
+                        System.out.println("Column " + colIdx + ": " + column.name() + " (" + column.type() + ")");
+                        System.out.println("  Encoding: " + columnChunk.metaData().encodings());
+                        System.out.println("  Codec: " + columnChunk.metaData().codec());
                     }
-                    else {
-                        System.out.println("    [" + i + "]: " + value);
+
+                    // Try to create a column reader and read all values
+                    ColumnReader columnReader = new ColumnReader(reader.getFile(), column, columnChunk);
+                    List<Object> values = columnReader.readAll();
+                    totalValuesRead += values.size();
+
+                    // Show first few values from first column only
+                    if (rgIdx == 0 && colIdx == 0) {
+                        int displayCount = Math.min(5, values.size());
+                        for (int i = 0; i < displayCount; i++) {
+                            Object value = values.get(i);
+                            if (value instanceof byte[]) {
+                                System.out.println("    [" + i + "]: <byte array, length=" + ((byte[]) value).length + ">");
+                            }
+                            else {
+                                System.out.println("    [" + i + "]: " + value);
+                            }
+                        }
+                        if (values.size() > displayCount) {
+                            System.out.println("    ... and " + (values.size() - displayCount) + " more");
+                        }
                     }
-                }
-                if (values.size() > displayCount) {
-                    System.out.println("    ... and " + (values.size() - displayCount) + " more");
                 }
             }
+
+            System.out.println("  Total values read from all columns: " + totalValuesRead);
 
             System.out.println("✓ SUCCESS: Can read " + relativePath);
         }

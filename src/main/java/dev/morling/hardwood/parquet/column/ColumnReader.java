@@ -22,16 +22,14 @@ import dev.morling.hardwood.parquet.schema.Column;
  */
 public class ColumnReader {
 
-    private final RandomAccessFile file;
     private final Column column;
     private final ColumnMetaData columnMetaData;
     private final PageReader pageReader;
 
     public ColumnReader(RandomAccessFile file, Column column, ColumnChunk columnChunk) {
-        this.file = file;
         this.column = column;
         this.columnMetaData = columnChunk.metaData();
-        this.pageReader = new PageReader(file, columnMetaData, column, columnChunk.fileOffset());
+        this.pageReader = new PageReader(file, columnMetaData, column);
     }
 
     /**

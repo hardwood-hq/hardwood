@@ -128,7 +128,10 @@ public record ColumnMetaData(
                         reader.skipField(header.type());
                     }
                     break;
-                case 10: // dictionary_page_offset (optional)
+                case 10: // index_page_offset (optional) - skipped for now
+                    reader.skipField(header.type());
+                    break;
+                case 11: // dictionary_page_offset (optional)
                     if (header.type() == 0x06) {
                         dictionaryPageOffset = reader.readI64();
                     }

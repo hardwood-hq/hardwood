@@ -14,9 +14,7 @@ import dev.morling.hardwood.parquet.thrift.ThriftCompactReader;
 /**
  * Column chunk metadata.
  */
-public record ColumnChunk(
-        ColumnMetaData metaData,
-        long fileOffset) {
+public record ColumnChunk(ColumnMetaData metaData) {
 
     public static ColumnChunk read(ThriftCompactReader reader) throws IOException {
         short saved = reader.pushFieldIdContext();
@@ -30,7 +28,6 @@ public record ColumnChunk(
 
     private static ColumnChunk readInternal(ThriftCompactReader reader) throws IOException {
         ColumnMetaData metaData = null;
-        long fileOffset = 0;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -43,12 +40,7 @@ public record ColumnChunk(
                     reader.skipField(header.type());
                     break;
                 case 2: // file_offset (required i64)
-                    if (header.type() == 0x06) {
-                        fileOffset = reader.readI64();
-                    }
-                    else {
-                        reader.skipField(header.type());
-                    }
+                    reader.skipField(header.type());
                     break;
                 case 3: // meta_data (required)
                     if (header.type() == 0x0C) { // STRUCT
@@ -64,6 +56,6 @@ public record ColumnChunk(
             }
         }
 
-        return new ColumnChunk(metaData, fileOffset);
+        return new ColumnChunk(metaData);
     }
 }

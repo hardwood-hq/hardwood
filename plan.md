@@ -374,77 +374,77 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [ ] bad_data/PARQUET-1481.parquet
 
 #### Data Files (Valid Test Data)
-- [ ] data/alltypes_dictionary.parquet
-- [ ] data/alltypes_plain.parquet
-- [ ] data/alltypes_plain.snappy.parquet
-- [ ] data/alltypes_tiny_pages.parquet
-- [ ] data/alltypes_tiny_pages_plain.parquet
-- [ ] data/binary.parquet
-- [ ] data/binary_truncated_min_max.parquet
-- [ ] data/byte_array_decimal.parquet
-- [ ] data/byte_stream_split.zstd.parquet
-- [ ] data/byte_stream_split_extended.gzip.parquet
+- [ ] data/alltypes_dictionary.parquet (Boolean EOF)
+- [ ] data/alltypes_plain.parquet (Boolean EOF)
+- [ ] data/alltypes_plain.snappy.parquet (Boolean EOF)
+- [ ] data/alltypes_tiny_pages.parquet (Boolean EOF)
+- [ ] data/alltypes_tiny_pages_plain.parquet (Boolean EOF)
+- [x] data/binary.parquet
+- [x] data/binary_truncated_min_max.parquet
+- [x] data/byte_array_decimal.parquet
+- [ ] data/byte_stream_split.zstd.parquet (ZSTD)
+- [ ] data/byte_stream_split_extended.gzip.parquet (GZIP)
 - [x] data/column_chunk_key_value_metadata.parquet
-- [ ] data/concatenated_gzip_members.parquet
-- [ ] data/data_index_bloom_encoding_stats.parquet
-- [ ] data/data_index_bloom_encoding_with_length.parquet
-- [ ] data/datapage_v1-corrupt-checksum.parquet
-- [ ] data/datapage_v1-snappy-compressed-checksum.parquet
-- [ ] data/datapage_v1-uncompressed-checksum.parquet
-- [ ] data/datapage_v2.snappy.parquet
-- [ ] data/datapage_v2_empty_datapage.snappy.parquet
-- [ ] data/delta_binary_packed.parquet
-- [ ] data/delta_byte_array.parquet
-- [ ] data/delta_encoding_optional_column.parquet
-- [ ] data/delta_encoding_required_column.parquet
-- [ ] data/delta_length_byte_array.parquet
-- [ ] data/dict-page-offset-zero.parquet
-- [ ] data/fixed_length_byte_array.parquet
-- [ ] data/fixed_length_decimal.parquet
-- [ ] data/fixed_length_decimal_legacy.parquet
-- [ ] data/float16_nonzeros_and_nans.parquet
-- [ ] data/float16_zeros_and_nans.parquet
-- [ ] data/geospatial/crs-arbitrary-value.parquet
-- [ ] data/geospatial/crs-default.parquet
-- [ ] data/geospatial/crs-geography.parquet
-- [ ] data/geospatial/crs-projjson.parquet
-- [ ] data/geospatial/crs-srid.parquet
-- [ ] data/geospatial/geospatial-with-nan.parquet
-- [ ] data/geospatial/geospatial.parquet
-- [ ] data/hadoop_lz4_compressed.parquet
-- [ ] data/hadoop_lz4_compressed_larger.parquet
+- [ ] data/concatenated_gzip_members.parquet (GZIP)
+- [ ] data/data_index_bloom_encoding_stats.parquet (Boolean EOF)
+- [x] data/data_index_bloom_encoding_with_length.parquet
+- [x] data/datapage_v1-corrupt-checksum.parquet
+- [x] data/datapage_v1-snappy-compressed-checksum.parquet
+- [x] data/datapage_v1-uncompressed-checksum.parquet
+- [ ] data/datapage_v2.snappy.parquet (DATA_PAGE_V2)
+- [ ] data/datapage_v2_empty_datapage.snappy.parquet (DATA_PAGE_V2)
+- [ ] data/delta_binary_packed.parquet (Boolean EOF in some columns)
+- [ ] data/delta_byte_array.parquet (Boolean EOF in some columns)
+- [ ] data/delta_encoding_optional_column.parquet (Boolean EOF in some columns)
+- [ ] data/delta_encoding_required_column.parquet (Boolean EOF in some columns)
+- [ ] data/delta_length_byte_array.parquet (Boolean EOF in some columns)
+- [ ] data/dict-page-offset-zero.parquet (Boolean EOF)
+- [ ] data/fixed_length_byte_array.parquet (FIXED_LEN_BYTE_ARRAY)
+- [ ] data/fixed_length_decimal.parquet (FIXED_LEN_BYTE_ARRAY)
+- [ ] data/fixed_length_decimal_legacy.parquet (FIXED_LEN_BYTE_ARRAY)
+- [ ] data/float16_nonzeros_and_nans.parquet (Boolean EOF)
+- [ ] data/float16_zeros_and_nans.parquet (Boolean EOF)
+- [x] data/geospatial/crs-arbitrary-value.parquet
+- [x] data/geospatial/crs-default.parquet
+- [x] data/geospatial/crs-geography.parquet
+- [x] data/geospatial/crs-projjson.parquet
+- [x] data/geospatial/crs-srid.parquet
+- [x] data/geospatial/geospatial-with-nan.parquet
+- [x] data/geospatial/geospatial.parquet
+- [ ] data/hadoop_lz4_compressed.parquet (LZ4)
+- [ ] data/hadoop_lz4_compressed_larger.parquet (LZ4)
 - [x] data/incorrect_map_schema.parquet
-- [ ] data/int32_decimal.parquet
-- [ ] data/int32_with_null_pages.parquet
-- [ ] data/int64_decimal.parquet
-- [ ] data/int96_from_spark.parquet
+- [x] data/int32_decimal.parquet
+- [x] data/int32_with_null_pages.parquet
+- [x] data/int64_decimal.parquet
+- [x] data/int96_from_spark.parquet
 - [x] data/large_string_map.brotli.parquet
 - [x] data/list_columns.parquet
-- [ ] data/lz4_raw_compressed.parquet
-- [ ] data/lz4_raw_compressed_larger.parquet
-- [ ] data/map_no_value.parquet
-- [ ] data/nan_in_stats.parquet
-- [ ] data/nation.dict-malformed.parquet
+- [ ] data/lz4_raw_compressed.parquet (LZ4_RAW)
+- [ ] data/lz4_raw_compressed_larger.parquet (LZ4_RAW)
+- [x] data/map_no_value.parquet
+- [ ] data/nan_in_stats.parquet (NegativeArraySize)
+- [x] data/nation.dict-malformed.parquet
 - [x] data/nested_lists.snappy.parquet
-- [ ] data/nested_maps.snappy.parquet
-- [ ] data/nested_structs.rust.parquet
-- [ ] data/non_hadoop_lz4_compressed.parquet
-- [ ] data/nonnullable.impala.parquet
+- [x] data/nested_maps.snappy.parquet
+- [ ] data/nested_structs.rust.parquet (Boolean EOF)
+- [ ] data/non_hadoop_lz4_compressed.parquet (LZ4)
+- [x] data/nonnullable.impala.parquet
 - [x] data/null_list.parquet
-- [ ] data/nullable.impala.parquet
+- [x] data/nullable.impala.parquet
 - [x] data/nulls.snappy.parquet
 - [x] data/old_list_structure.parquet
-- [ ] data/overflow_i16_page_cnt.parquet
-- [ ] data/page_v2_empty_compressed.parquet
-- [ ] data/plain-dict-uncompressed-checksum.parquet
-- [ ] data/repeated_no_annotation.parquet
-- [ ] data/repeated_primitive_no_list.parquet
-- [ ] data/rle-dict-snappy-checksum.parquet
-- [ ] data/rle-dict-uncompressed-corrupt-checksum.parquet
-- [ ] data/rle_boolean_encoding.parquet
-- [ ] data/single_nan.parquet
-- [ ] data/sort_columns.parquet
-- [ ] data/unknown-logical-type.parquet
+- [x] data/overflow_i16_page_cnt.parquet
+- [ ] data/page_v2_empty_compressed.parquet (DATA_PAGE_V2)
+- [x] data/plain-dict-uncompressed-checksum.parquet
+- [x] data/repeated_no_annotation.parquet
+- [x] data/repeated_primitive_no_list.parquet
+- [ ] data/rle-dict-snappy-checksum.parquet (Boolean EOF)
+- [ ] data/rle-dict-uncompressed-corrupt-checksum.parquet (Boolean EOF)
+- [ ] data/rle_boolean_encoding.parquet (Boolean EOF)
+- [x] data/single_nan.parquet
+- [x] data/sort_columns.parquet
+- [x] data/unknown-logical-type.parquet
 
 #### Shredded Variant Files (Nested Structure Tests)
 - [ ] shredded_variant/case-001.parquet
@@ -584,6 +584,30 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [ ] shredded_variant/case-136.parquet
 - [ ] shredded_variant/case-137.parquet
 - [ ] shredded_variant/case-138.parquet
+
+### Test Summary
+
+**Current Pass Rate: 177/215 (82.3%)** - Reading ALL columns from ALL row groups
+
+Progress:
+- Started (first column only): 163/215 (75.8%)
+- After Dictionary Encoding (first column only): 187/220 (85.0%)
+- After fixing tests to read ALL columns: 177/215 (82.3%)
+
+**Note:** Test was updated to read from ALL columns, not just first column. This exposed additional issues:
+- Boolean column reading issues (EOF errors)
+- Delta encoding issues in some files
+- Float16 handling issues
+
+Remaining Failures by Category (38 total):
+- Boolean EOF errors: ~15 files (alltypes_*, float16_*, rle_boolean, etc.)
+- Delta encoding issues: ~5 files (delta_*)
+- ZSTD compression: ~3 files
+- GZIP compression: ~3 files
+- LZ4/LZ4_RAW compression: ~5 files
+- DATA_PAGE_V2: ~3 files
+- FIXED_LEN_BYTE_ARRAY: ~3 files
+- Other issues: ~1 file
 
 ### Test Categories
 - [ ] Round-trip tests (write → read → compare)

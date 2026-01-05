@@ -35,12 +35,11 @@ public class PageReader {
     private long valuesRead = 0;
     private Object[] dictionary = null;
 
-    public PageReader(RandomAccessFile file, ColumnMetaData columnMetaData, Column column, long columnChunkOffset) {
+    public PageReader(RandomAccessFile file, ColumnMetaData columnMetaData, Column column) {
         this.file = file;
         this.columnMetaData = columnMetaData;
         this.column = column;
 
-        // Start at dictionary page offset if present, otherwise at data page offset
         if (columnMetaData.dictionaryPageOffset() != null) {
             this.currentOffset = columnMetaData.dictionaryPageOffset();
         }
@@ -161,9 +160,17 @@ public class PageReader {
                 throw new IOException("Dictionary page not found for RLE_DICTIONARY encoding");
             }
 
-            // Read indices using RLE/Bit-Packing Hybrid encoding
             int bitWidth = getBitWidth(dictionary.length - 1);
-            RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(dataStream, bitWidth);
+
+            // Read 1-byte length prefix (dictionary indices format for Data Page V1)
+            dataStream.read();
+
+            // Read the RLE/Bit-Packing Hybrid encoded indices
+            byte[] indicesData = new byte[dataStream.available()];
+            dataStream.read(indicesData);
+
+            RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(
+                    new ByteArrayInputStream(indicesData), bitWidth);
 
             int[] indices = new int[numNonNullValues];
             indexDecoder.readInts(indices, 0, numNonNullValues);
@@ -197,13 +204,13 @@ public class PageReader {
             throws IOException {
         ByteArrayInputStream dataStream = new ByteArrayInputStream(data);
 
-        // Dictionary values are always encoded with PLAIN encoding
-        if (header.encoding() != Encoding.PLAIN) {
+        // Dictionary values are encoded with PLAIN or PLAIN_DICTIONARY encoding
+        if (header.encoding() != Encoding.PLAIN && header.encoding() != Encoding.PLAIN_DICTIONARY) {
             throw new UnsupportedOperationException(
                     "Dictionary encoding not yet supported: " + header.encoding());
         }
 
-        // Read all dictionary values
+        // Read all dictionary values (both PLAIN and PLAIN_DICTIONARY use plain encoding for dictionary)
         dictionary = new Object[header.numValues()];
         PlainDecoder decoder = new PlainDecoder(dataStream, column.type());
         decoder.readValues(dictionary, 0, header.numValues());

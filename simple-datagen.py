@@ -52,3 +52,24 @@ print("\nGenerated plain_snappy.parquet:")
 print("  - Encoding: PLAIN (use_dictionary=False)")
 print("  - Compression: SNAPPY (compression='snappy')")
 print("  - Data: id=[1,2,3], value=[100,200,300] - NO NULLS")
+
+# Generate dictionary encoded file with strings
+schema_dict = pa.schema([
+    ('id', pa.int64(), False),
+    ('category', pa.string(), False)
+])
+table_dict = pa.table({
+    'id': [1, 2, 3, 4, 5],
+    'category': ['A', 'B', 'A', 'C', 'B']  # Repeated values - good for dictionary
+}, schema=schema_dict)
+
+# Only use dictionary for the category column (column 1), not id (column 0)
+pq.write_table(table_dict, 'src/test/resources/dictionary_uncompressed.parquet',
+               use_dictionary=['category'],  # Only dictionary encode the category column
+               compression=None,
+               data_page_version='1.0')
+
+print("\nGenerated dictionary_uncompressed.parquet:")
+print("  - Encoding: DICTIONARY (use_dictionary=True)")
+print("  - Compression: UNCOMPRESSED")
+print("  - Data: id=[1,2,3,4,5], category=['A','B','A','C','B']")

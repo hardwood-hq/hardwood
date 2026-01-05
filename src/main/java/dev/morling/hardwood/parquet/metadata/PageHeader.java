@@ -88,6 +88,9 @@ public enum PageType {
                         reader.skipField(header.type());
                     }
                     break;
+                case 4: // crc (optional) - skipped for now
+                    reader.skipField(header.type());
+                    break;
                 case 5: // data_page_header
                     if (header.type() == 0x0C) {
                         dataPageHeader = DataPageHeader.read(reader);
@@ -95,6 +98,9 @@ public enum PageType {
                     else {
                         reader.skipField(header.type());
                     }
+                    break;
+                case 6: // index_page_header (optional) - skipped for now
+                    reader.skipField(header.type());
                     break;
                 case 7: // dictionary_page_header
                     if (header.type() == 0x0C) {
@@ -116,6 +122,11 @@ public enum PageType {
                     reader.skipField(header.type());
                     break;
             }
+        }
+
+        // Validate required fields
+        if (type == null) {
+            throw new IOException("PageHeader missing required field: type");
         }
 
         return new PageHeader(type, uncompressedPageSize, compressedPageSize,
