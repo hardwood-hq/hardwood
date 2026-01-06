@@ -8,10 +8,14 @@
 package dev.morling.hardwood;
 
 import java.nio.file.Paths;
+import java.time.Instant;
+import java.time.LocalDateTime;
+import java.time.ZoneOffset;
 
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
 import dev.morling.hardwood.row.Row;
+import dev.morling.hardwood.schema.FileSchema;
 
 public class DebugParquetTest {
 
@@ -23,39 +27,71 @@ public class DebugParquetTest {
             System.out.println("Version: " + reader.getFileMetaData().version());
             System.out.println("Num rows: " + reader.getFileMetaData().numRows());
             System.out.println("Row groups: " + reader.getFileMetaData().rowGroups().size());
-            System.out.println("Created by: " + reader.getFileMetaData().createdBy());
             System.out.println();
 
-            // Show file schema with logical types
-            System.out.println("File Schema:");
-            System.out.println(reader.getFileSchema());
-            System.out.println();
+            FileSchema schema = reader.getFileSchema();
+            int colCount = schema.getColumnCount();
 
-            // Show first 3 columns in detail
-            System.out.println("Column Details:");
-            for (int i = 0; i < Math.min(3, reader.getFileSchema().getColumnCount()); i++) {
-                var col = reader.getFileSchema().getColumn(i);
-                System.out.println("  Column " + i + ": " + col.name());
-                System.out.println("    Physical: " + col.type());
-                System.out.println("    Logical: " + col.logicalType());
-                System.out.println();
+            // Calculate column widths
+            int[] widths = new int[colCount];
+            for (int i = 0; i < colCount; i++) {
+                widths[i] = Math.max(schema.getColumn(i).name().length(), 8);
             }
 
+            // Print header
+            StringBuilder header = new StringBuilder("| ");
+            StringBuilder separator = new StringBuilder("+-");
+            for (int i = 0; i < colCount; i++) {
+                header.append(padRight(schema.getColumn(i).name(), widths[i])).append(" | ");
+                separator.append("-".repeat(widths[i])).append("-+-");
+            }
+            System.out.println(separator);
+            System.out.println(header);
+            System.out.println(separator);
+
+            // Print rows
             try (RowReader rowReader = reader.createRowReader()) {
-                System.out.println("Reading first 5 rows with timestamp conversion:");
-                int i = 0;
+                int rowNum = 0;
                 for (Row row : rowReader) {
-                    System.out.println(String.format("Row %d: VendorID=%s, Pickup=%s, Dropoff=%s",
-                            i,
-                            row.isNull(0) ? "null" : row.getInt(0),
-                            row.isNull(1) ? "null" : row.getTimestamp(1),
-                            row.isNull(2) ? "null" : row.getTimestamp(2)));
-                    if (i >= 4) {
+                    StringBuilder line = new StringBuilder("| ");
+                    for (int i = 0; i < colCount; i++) {
+                        String value = formatValue(row, i);
+                        // Adjust width if value is longer
+                        if (value.length() > widths[i]) {
+                            value = value.substring(0, widths[i] - 2) + "..";
+                        }
+                        line.append(padRight(value, widths[i])).append(" | ");
+                    }
+                    System.out.println(line);
+                    if (++rowNum >= 5) {
                         break;
                     }
-                    i++;
                 }
             }
+            System.out.println(separator);
         }
+    }
+
+    private static String formatValue(Row row, int col) {
+        if (row.isNull(col)) {
+            return "null";
+        }
+        Object value = row.getObject(col);
+        if (value instanceof Instant instant) {
+            // Format timestamp as local datetime for readability
+            return LocalDateTime.ofInstant(instant, ZoneOffset.UTC)
+                    .toString().replace("T", " ");
+        }
+        if (value instanceof Double d) {
+            return String.format("%.2f", d);
+        }
+        return String.valueOf(value);
+    }
+
+    private static String padRight(String s, int width) {
+        if (s.length() >= width) {
+            return s;
+        }
+        return s + " ".repeat(width - s.length());
     }
 }

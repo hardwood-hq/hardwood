@@ -10,6 +10,7 @@ package dev.morling.hardwood.internal.thrift;
 import java.io.IOException;
 
 import dev.morling.hardwood.metadata.LogicalType;
+import dev.morling.hardwood.metadata.LogicalType.TimeUnit;
 
 /**
  * Reader for LogicalType union from Thrift Compact Protocol.
@@ -210,7 +211,7 @@ public class LogicalTypeReader {
                     }
                     break;
                 case 2: // unit (required)
-                    unit = readTimestampUnit(reader);
+                    unit = readTimeUnit(reader);
                     break;
                 default:
                     reader.skipField(header.type());
@@ -270,84 +271,20 @@ public class LogicalTypeReader {
         return new LogicalType.IntType(bitWidth, isSigned);
     }
 
-    private static LogicalType.TimeType.TimeUnit readTimeUnit(ThriftCompactReader reader) throws IOException {
+    private static TimeUnit readTimeUnit(ThriftCompactReader reader) throws IOException {
         short saved = reader.pushFieldIdContext();
         try {
-            LogicalType.TimeType.TimeUnit result = LogicalType.TimeType.TimeUnit.MILLIS;
+            ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
+            int fieldId = header.fieldId();
+            reader.skipField(header.type());
+            reader.readFieldHeader(); // Consume STOP
 
-            while (true) {
-                ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
-                if (header == null) {
-                    return result;
-                }
-
-                // Union: only one field should be set, but read to STOP
-                if (result == LogicalType.TimeType.TimeUnit.MILLIS) {
-                    result = switch (header.fieldId()) {
-                        case 1 -> { // MILLIS
-                            reader.skipField(header.type());
-                            yield LogicalType.TimeType.TimeUnit.MILLIS;
-                        }
-                        case 2 -> { // MICROS
-                            reader.skipField(header.type());
-                            yield LogicalType.TimeType.TimeUnit.MICROS;
-                        }
-                        case 3 -> { // NANOS
-                            reader.skipField(header.type());
-                            yield LogicalType.TimeType.TimeUnit.NANOS;
-                        }
-                        default -> {
-                            reader.skipField(header.type());
-                            yield LogicalType.TimeType.TimeUnit.MILLIS;
-                        }
-                    };
-                } else {
-                    // Already found the union variant, skip remaining fields
-                    reader.skipField(header.type());
-                }
-            }
-        }
-        finally {
-            reader.popFieldIdContext(saved);
-        }
-    }
-
-    private static LogicalType.TimestampType.TimeUnit readTimestampUnit(ThriftCompactReader reader) throws IOException {
-        short saved = reader.pushFieldIdContext();
-        try {
-            LogicalType.TimestampType.TimeUnit result = LogicalType.TimestampType.TimeUnit.MILLIS;
-
-            while (true) {
-                ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
-                if (header == null) {
-                    return result;
-                }
-
-                // Union: only one field should be set, but read to STOP
-                if (result == LogicalType.TimestampType.TimeUnit.MILLIS) {
-                    result = switch (header.fieldId()) {
-                        case 1 -> { // MILLIS
-                            reader.skipField(header.type());
-                            yield LogicalType.TimestampType.TimeUnit.MILLIS;
-                        }
-                        case 2 -> { // MICROS
-                            reader.skipField(header.type());
-                            yield LogicalType.TimestampType.TimeUnit.MICROS;
-                        }
-                        case 3 -> { // NANOS
-                            reader.skipField(header.type());
-                            yield LogicalType.TimestampType.TimeUnit.NANOS;
-                        }
-                        default -> {
-                            reader.skipField(header.type());
-                            yield LogicalType.TimestampType.TimeUnit.MILLIS;
-                        }
-                    };
-                } else {
-                    // Already found the union variant, skip remaining fields
-                    reader.skipField(header.type());
-                }
-            }
+            return switch (fieldId) {
+                case 1 -> TimeUnit.MILLIS;
+                case 2 -> TimeUnit.MICROS;
+                case 3 -> TimeUnit.NANOS;
+                default -> throw new IllegalArgumentException("Unexpected time unit:" + fieldId);
+            };
         }
         finally {
             reader.popFieldIdContext(saved);

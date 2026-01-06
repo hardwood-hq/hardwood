@@ -54,16 +54,16 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
 
     // Parameterized: Time with unit and UTC adjustment
     record TimeType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {
-        public enum TimeUnit { MILLIS, MICROS, NANOS }
     }
 
     // Parameterized: Timestamp with unit and UTC adjustment
     record TimestampType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {
-        public enum TimeUnit { MILLIS, MICROS, NANOS }
     }
 
     // Complex types (not fully supported in Milestone 1)
     record ListType() implements LogicalType {}
 
     record MapType() implements LogicalType {}
+
+    public enum TimeUnit { MILLIS, MICROS, NANOS }
 }

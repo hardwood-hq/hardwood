@@ -90,8 +90,12 @@ logical_types_schema = pa.schema([
     ('id', pa.int32(), False),  # Simple INT32 (no logical type)
     ('name', pa.string(), False),  # STRING logical type
     ('birth_date', pa.date32(), False),  # DATE logical type (INT32 days since epoch)
-    ('created_at', pa.timestamp('ms', tz='UTC'), False),  # TIMESTAMP(MILLIS, UTC)
-    ('wake_time', pa.time64('us'), False),  # TIME(MICROS)
+    ('created_at_millis', pa.timestamp('ms', tz='UTC'), False),  # TIMESTAMP(MILLIS, UTC)
+    ('created_at_micros', pa.timestamp('us', tz='UTC'), False),  # TIMESTAMP(MICROS, UTC)
+    ('created_at_nanos', pa.timestamp('ns', tz='UTC'), False),  # TIMESTAMP(NANOS, UTC)
+    ('wake_time_millis', pa.time32('ms'), False),  # TIME(MILLIS)
+    ('wake_time_micros', pa.time64('us'), False),  # TIME(MICROS)
+    ('wake_time_nanos', pa.time64('ns'), False),  # TIME(NANOS)
     ('balance', pa.decimal128(10, 2), False),  # DECIMAL(scale=2, precision=10)
     ('tiny_int', pa.int8(), False),  # INT_8 logical type
     ('small_int', pa.int16(), False),  # INT_16 logical type
@@ -112,16 +116,39 @@ logical_types_data = {
         date(1985, 6, 30),
         date(2000, 12, 25)
     ],
-    'created_at': [
+    'created_at_millis': [
         datetime(2025, 1, 1, 10, 30, 0),
         datetime(2025, 1, 2, 14, 45, 30),
         datetime(2025, 1, 3, 9, 15, 45)
     ],
-    'wake_time': [
+    'created_at_micros': [
+        datetime(2025, 1, 1, 10, 30, 0, 123456),
+        datetime(2025, 1, 2, 14, 45, 30, 654321),
+        datetime(2025, 1, 3, 9, 15, 45, 111222)
+    ],
+    # NANOS columns use raw int64 values since Python datetime only supports microseconds
+    # Values are nanoseconds since epoch with 9-digit precision (e.g., .123456789)
+    'created_at_nanos': pa.array([
+        1735727400123456789,  # 2025-01-01T10:30:00.123456789Z
+        1735829130654321987,  # 2025-01-02T14:45:30.654321987Z
+        1735895745111222333,  # 2025-01-03T09:15:45.111222333Z
+    ], type=pa.timestamp('ns', tz='UTC')),
+    'wake_time_millis': [
         time(7, 30, 0),
         time(8, 0, 0),
         time(6, 45, 0)
     ],
+    'wake_time_micros': [
+        time(7, 30, 0, 123456),
+        time(8, 0, 0, 654321),
+        time(6, 45, 0, 111222)
+    ],
+    # TIME NANOS uses raw int64 values (nanoseconds since midnight)
+    'wake_time_nanos': pa.array([
+        27000123456789,  # 7:30:00.123456789
+        28800654321987,  # 8:00:00.654321987
+        24300111222333,  # 6:45:00.111222333
+    ], type=pa.time64('ns')),
     'balance': [
         Decimal('1234.56'),
         Decimal('9876.54'),
