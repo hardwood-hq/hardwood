@@ -12,7 +12,8 @@ import dev.morling.hardwood.metadata.PhysicalType;
 import dev.morling.hardwood.metadata.RepetitionType;
 
 /**
- * Represents a column in a flat Parquet schema.
+ * Represents a primitive column in a Parquet schema.
+ * Stores computed definition and repetition levels based on schema hierarchy.
  */
 public record ColumnSchema(
         String name,
@@ -20,18 +21,32 @@ public record ColumnSchema(
         RepetitionType repetitionType,
         Integer typeLength,
         int columnIndex,
+        int maxDefinitionLevel,
+        int maxRepetitionLevel,
         LogicalType logicalType) {
 
+    /**
+     * Constructor for flat schemas (backward compatibility).
+     */
+    public ColumnSchema(
+            String name,
+            PhysicalType type,
+            RepetitionType repetitionType,
+            Integer typeLength,
+            int columnIndex,
+            LogicalType logicalType) {
+        this(name, type, repetitionType, typeLength, columnIndex,
+                repetitionType == RepetitionType.REQUIRED ? 0 : 1,
+                0,
+                logicalType);
+    }
+
     public int getMaxDefinitionLevel() {
-        // For flat schemas:
-        // REQUIRED: 0 (no definition level needed)
-        // OPTIONAL: 1 (0 = null, 1 = present)
-        return repetitionType == RepetitionType.REQUIRED ? 0 : 1;
+        return maxDefinitionLevel;
     }
 
     public int getMaxRepetitionLevel() {
-        // For flat schemas (no repeated fields in Milestone 1)
-        return 0;
+        return maxRepetitionLevel;
     }
 
     public boolean isRequired() {

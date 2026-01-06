@@ -106,6 +106,27 @@ public class PageReader {
     private Page parseDataPage(DataPageHeader header, byte[] data) throws IOException {
         ByteArrayInputStream dataStream = new ByteArrayInputStream(data);
 
+        // In DATA_PAGE V1, order is: repetition levels, definition levels, values
+        // Both rep and def levels have 4-byte length prefix
+
+        // Read repetition levels
+        int[] repetitionLevels = null;
+        if (column.getMaxRepetitionLevel() > 0) {
+            byte[] lengthBytes = new byte[4];
+            dataStream.read(lengthBytes);
+            int repLevelLength = java.nio.ByteBuffer.wrap(lengthBytes)
+                    .order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+
+            byte[] repLevelData = new byte[repLevelLength];
+            dataStream.read(repLevelData);
+
+            repetitionLevels = new int[header.numValues()];
+            RleBitPackingHybridDecoder repLevelDecoder = new RleBitPackingHybridDecoder(
+                    new ByteArrayInputStream(repLevelData),
+                    getBitWidth(column.getMaxRepetitionLevel()));
+            repLevelDecoder.readInts(repetitionLevels, 0, header.numValues());
+        }
+
         // Read definition levels
         int[] definitionLevels = null;
         if (column.getMaxDefinitionLevel() > 0) {
@@ -125,9 +146,6 @@ public class PageReader {
                     getBitWidth(column.getMaxDefinitionLevel()));
             defLevelDecoder.readInts(definitionLevels, 0, header.numValues());
         }
-
-        // Read repetition levels (for Milestone 1, always 0 for flat schemas)
-        // We skip this for now as max repetition level is 0
 
         // Count non-null values to read from encoded data
         int numNonNullValues = header.numValues();
@@ -209,15 +227,28 @@ public class PageReader {
                     "Encoding not yet supported: " + header.encoding());
         }
 
-        return new Page(header.numValues(), definitionLevels, values);
+        return new Page(header.numValues(), definitionLevels, repetitionLevels, values);
     }
 
     private Page parseDataPageV2(DataPageHeaderV2 header, byte[] data) throws IOException {
         ByteArrayInputStream dataStream = new ByteArrayInputStream(data);
 
-        // Read repetition levels (for flat schemas, length should be 0)
-        if (header.repetitionLevelsByteLength() > 0) {
-            // Skip repetition levels for now (max repetition level is 0 for flat schemas)
+        // In V2, the byte lengths are in the header - no length prefixes in the data
+
+        // Read repetition levels
+        int[] repetitionLevels = null;
+        if (column.getMaxRepetitionLevel() > 0 && header.repetitionLevelsByteLength() > 0) {
+            byte[] repLevelData = new byte[header.repetitionLevelsByteLength()];
+            dataStream.read(repLevelData);
+
+            repetitionLevels = new int[header.numValues()];
+            RleBitPackingHybridDecoder repLevelDecoder = new RleBitPackingHybridDecoder(
+                    new ByteArrayInputStream(repLevelData),
+                    getBitWidth(column.getMaxRepetitionLevel()));
+            repLevelDecoder.readInts(repetitionLevels, 0, header.numValues());
+        }
+        else if (header.repetitionLevelsByteLength() > 0) {
+            // Skip if we have rep level data but maxRepLevel is 0
             dataStream.skipNBytes(header.repetitionLevelsByteLength());
         }
 
@@ -304,7 +335,7 @@ public class PageReader {
                     "Encoding not yet supported: " + header.encoding());
         }
 
-        return new Page(header.numValues(), definitionLevels, values);
+        return new Page(header.numValues(), definitionLevels, repetitionLevels, values);
     }
 
     private void parseDictionaryPage(dev.morling.hardwood.metadata.DictionaryPageHeader header, byte[] data)
@@ -351,6 +382,6 @@ public class PageReader {
         }
     }
 
-    public static record Page(int numValues, int[] definitionLevels, Object[] values) {
+    public static record Page(int numValues, int[] definitionLevels, int[] repetitionLevels, Object[] values) {
     }
 }

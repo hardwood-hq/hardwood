@@ -23,10 +23,11 @@ The `RowReader` provides a convenient row-oriented interface for reading Parquet
 ```java
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.row.Row;
-import dev.morling.hardwood.row.RowReader;
+import dev.morling.hardwood.reader.RowReader;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.math.BigDecimal;
+import java.util.List;
 import java.util.UUID;
 
 try (ParquetFileReader fileReader = ParquetFileReader.open(path)) {
@@ -52,6 +53,20 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(path)) {
             // Can also access by position or use generic getObject()
             long idByIndex = row.getLong(0);
             Object genericValue = row.getObject("created_at");  // Returns Instant for TIMESTAMP
+
+            // Access nested structs
+            Row address = row.getStruct("address");
+            if (address != null) {
+                String city = address.getString("city");
+                int zip = address.getInt("zip");
+            }
+
+            // Access lists
+            List<String> tags = row.getStringList("tags");
+            List<Row> contacts = row.getStructList("contacts");  // List of structs
+
+            // Access nested lists (list<list<T>>)
+            List<?> matrix = row.getList("matrix");  // Returns List<List<Integer>> for list<list<int>>
         }
     }
 }
@@ -75,6 +90,12 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(path)) {
 - `getUuid()` - UUID logical type → UUID
 - `getInt()` / `getLong()` - INT_8/16/32/64, UINT_8/16/32/64 logical types → int/long
 - `getObject()` - Generic accessor with automatic logical type conversion
+
+**Nested types:**
+- `getStruct()` - Nested struct → Row (recursive access)
+- `getIntList()`, `getLongList()`, `getStringList()` - List of primitives
+- `getStructList()` - List of structs → List<Row>
+- `getList()` - Generic list access for nested lists (list<list<T>>, etc.)
 
 ### Column-Oriented Reading (ColumnReader)
 
@@ -164,8 +185,9 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
   - [x] STRING, ENUM, UUID, DATE, TIME, TIMESTAMP, DECIMAL, JSON, BSON
   - [x] INT_8, INT_16, INT_32, INT_64 (signed integers)
   - [x] UINT_8, UINT_16, UINT_32, UINT_64 (unsigned integers)
+  - [x] LIST (nested list support with arbitrary depth)
+  - [ ] MAP (not implemented)
   - [ ] INTERVAL (not implemented)
-  - [ ] LIST, MAP (not implemented - requires nested structure support)
 - [x] Define repetition types: `REQUIRED`, `OPTIONAL`, `REPEATED`
 
 #### 1.2 Schema Representation
@@ -374,11 +396,12 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 #### 7.3 Record Assembly (Inverse Dremel)
 - [x] Column reader synchronization (via RowReader)
 - [x] Definition level interpretation
-- [ ] Repetition level interpretation
+- [x] Repetition level interpretation
 - [x] Null value handling
-- [ ] Nested structure reconstruction
-- [ ] List assembly from repeated fields
-- [ ] Record completion detection
+- [x] Nested structure reconstruction (structs within structs, arbitrary depth)
+- [x] List assembly from repeated fields (simple lists, list of structs)
+- [x] Nested list assembly (list<list<T>>, list<list<list<T>>>, arbitrary depth)
+- [x] Record completion detection
 
 #### 7.4 Logical Type Support
 - [x] Logical type metadata parsing from Thrift
@@ -402,10 +425,15 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
   - [x] UUID (tested with PyArrow 21+ which writes UUID logical type)
   - [x] JSON (no test coverage - PyArrow doesn't write JSON logical type)
   - [x] BSON (no test coverage - PyArrow doesn't write BSON logical type)
+- [x] Nested types (tested)
+  - [x] Nested structs (arbitrary depth, e.g., Customer → Account → Organization → Address)
+  - [x] Lists of primitives (list<int>, list<string>, etc.)
+  - [x] Lists of structs (list<struct>)
+  - [x] Nested lists (list<list<T>>, list<list<list<T>>>, arbitrary depth)
+  - [x] Logical type conversion within nested lists (e.g., list<list<timestamp>>)
 - [ ] Not implemented (future)
   - [ ] INTERVAL
-  - [ ] LIST (requires nested structure support)
-  - [ ] MAP (requires nested structure support)
+  - [ ] MAP
 
 ---
 
@@ -518,8 +546,11 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [x] Dictionary encoding
 - [x] Definition/repetition levels
 - [x] Logical type parsing and conversion (STRING, DATE, TIMESTAMP, TIME, DECIMAL, INT types)
-- [ ] Nested schema support (Dremel algorithm)
-- [ ] **Validate**: Read/write nested structures
+- [x] Nested schema support (Dremel algorithm for reading)
+  - [x] Nested structs (arbitrary depth)
+  - [x] Lists of primitives and structs
+  - [x] Nested lists (arbitrary depth)
+- [x] **Validate**: Read nested structures (AddressBook example from Dremel paper)
 
 ### Milestone 4: Compression ✓
 - [x] GZIP integration
@@ -562,7 +593,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 
 ### Test Summary
 
-**Current Pass Rate: 190/215 (88.4%)**
+**Current Pass Rate: 190/215 (88.4%) parquet-testing, 25/25 unit tests**
 
 Progress:
 - Started (first column only): 163/215 (75.8%)
@@ -574,6 +605,7 @@ Progress:
 - After FIXED_LEN_BYTE_ARRAY support: 188/215 (87.4%)
 - After GZIP compression support: 189/215 (87.9%)
 - After ZSTD compression support: 190/215 (88.4%)
+- After nested types support: 25 unit tests (nested structs, lists, nested lists)
 
 Remaining Failures by Category (25 total):
 - ZSTD compression: 3 files (edge cases with unusual frame descriptors)
@@ -593,6 +625,13 @@ Remaining Failures by Category (25 total):
   - [x] Signed integers (INT_8, INT_16) with narrowing
   - [x] Unsigned integers (UINT_8, UINT_16, UINT_32, UINT_64)
   - [x] Parameterized type metadata (scale/precision, time units, bit widths)
+- [x] Nested type tests
+  - [x] Nested structs (4-level deep: Customer → Account → Organization → Address)
+  - [x] Lists of primitives (int, string)
+  - [x] Lists of structs
+  - [x] Nested lists (list<list<int>>, list<list<list<int>>>)
+  - [x] Logical types in nested lists (list<list<timestamp>>)
+  - [x] AddressBook example from Dremel paper
 - [ ] Cross-compatibility tests (write files, read with other implementations)
 - [ ] Fuzz testing (random schemas and data)
 - [ ] Edge cases (empty files, single values, max nesting)

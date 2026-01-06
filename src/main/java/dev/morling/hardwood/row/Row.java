@@ -11,10 +11,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
 
 /**
  * Represents a single row in a Parquet file with typed accessor methods.
+ * Supports nested structures (structs and lists).
  */
 public interface Row {
 
@@ -92,4 +94,32 @@ public interface Row {
     int getColumnCount();
 
     String getColumnName(int position);
+
+    // Nested struct access
+    Row getStruct(int position);
+
+    Row getStruct(String name);
+
+    // List access - returns List of the appropriate type based on element schema
+    List<Integer> getIntList(int position);
+
+    List<Integer> getIntList(String name);
+
+    List<Long> getLongList(int position);
+
+    List<Long> getLongList(String name);
+
+    List<String> getStringList(int position);
+
+    List<String> getStringList(String name);
+
+    // List of structs
+    List<Row> getStructList(int position);
+
+    List<Row> getStructList(String name);
+
+    // Generic list access (for nested lists like list<list<int>>)
+    List<?> getList(int position);
+
+    List<?> getList(String name);
 }

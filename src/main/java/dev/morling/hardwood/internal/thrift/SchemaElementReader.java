@@ -9,6 +9,7 @@ package dev.morling.hardwood.internal.thrift;
 
 import java.io.IOException;
 
+import dev.morling.hardwood.metadata.ConvertedType;
 import dev.morling.hardwood.metadata.LogicalType;
 import dev.morling.hardwood.metadata.PhysicalType;
 import dev.morling.hardwood.metadata.RepetitionType;
@@ -35,6 +36,7 @@ public class SchemaElementReader {
         Integer typeLength = null;
         RepetitionType repetitionType = null;
         Integer numChildren = null;
+        ConvertedType convertedType = null;
         Integer fieldId = null;
         LogicalType logicalType = null;
 
@@ -85,6 +87,14 @@ public class SchemaElementReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 6: // converted_type (optional)
+                    if (header.type() == 0x05) { // I32
+                        convertedType = ConvertedType.fromThriftValue(reader.readI32());
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 case 10: // logicalType (optional)
                     if (header.type() == 0x0C) { // STRUCT
                         logicalType = LogicalTypeReader.read(reader);
@@ -107,6 +117,6 @@ public class SchemaElementReader {
             }
         }
 
-        return new SchemaElement(name, type, typeLength, repetitionType, numChildren, fieldId, logicalType);
+        return new SchemaElement(name, type, typeLength, repetitionType, numChildren, convertedType, fieldId, logicalType);
     }
 }

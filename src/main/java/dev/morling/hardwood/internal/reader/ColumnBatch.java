@@ -12,40 +12,30 @@ import dev.morling.hardwood.schema.ColumnSchema;
 /**
  * Holds a batch of values read from a single column.
  * Used internally by RowReader for batched parallel column fetching.
+ *
+ * @see SimpleColumnBatch for pre-assembled values (flat columns, simple lists)
+ * @see RawColumnBatch for raw values with levels (list-of-struct assembly)
  */
-public class ColumnBatch {
+public sealed
 
-    private final Object[] values;
-    private final int size;
-    private final ColumnSchema column;
-
-    public ColumnBatch(Object[] values, int size, ColumnSchema column) {
-        this.values = values;
-        this.size = size;
-        this.column = column;
-    }
+interface ColumnBatch
+permits SimpleColumnBatch, RawColumnBatch
+{
 
     /**
-     * Get value at the given index within this batch.
+     * Number of records in this batch.
      */
-    public Object get(int index) {
-        if (index < 0 || index >= size) {
-            throw new IndexOutOfBoundsException("Index " + index + " out of bounds for batch size " + size);
-        }
-        return values[index];
-    }
-
-    /**
-     * Number of values in this batch.
-     */
-    public int size() {
-        return size;
-    }
+    int size();
 
     /**
      * The column this batch belongs to.
      */
-    public ColumnSchema getColumn() {
-        return column;
+    ColumnSchema getColumn();
+
+    /**
+     * A value along with its definition and repetition levels.
+     * Used for multi-column list-of-struct assembly.
+     */
+    record ValueWithLevels(Object value, int defLevel, int repLevel) {
     }
 }
