@@ -6,8 +6,9 @@
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
 module dev.morling.hardwood {
-    requires snappy.java;
-    requires com.github.luben.zstd_jni;
+    requires static snappy.java;
+    requires static com.github.luben.zstd_jni;
+    requires static org.lz4.java;
     exports dev.morling.hardwood.row;
     exports dev.morling.hardwood.metadata;
     exports dev.morling.hardwood.reader;

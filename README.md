@@ -464,7 +464,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [x] UNCOMPRESSED (passthrough)
 - [x] GZIP (java.util.zip, no external dependency)
 - [x] SNAPPY (snappy-java)
-- [ ] LZ4 (lz4-java)
+- [x] LZ4 (lz4-java) - supports both Hadoop and raw LZ4 formats
 - [x] ZSTD (zstd-jni)
 - [ ] LZO (lzo-java, optional)
 - [ ] BROTLI (brotli4j, optional)
@@ -573,7 +573,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [x] GZIP integration
 - [x] Snappy integration
 - [x] ZSTD integration
-- [ ] LZ4 integration
+- [x] LZ4 integration (both Hadoop and raw formats)
 - [x] **Validate**: Read files with various codecs from parquet-testing
 
 ### Milestone 5: Advanced Encodings
@@ -610,7 +610,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 
 ### Test Summary
 
-**Current Pass Rate: 193/215 (89.8%) parquet-testing, 29 unit tests**
+**Current Pass Rate: 198/215 (92.1%) parquet-testing, 29 unit tests**
 
 Progress:
 - Started (first column only): 163/215 (75.8%)
@@ -625,10 +625,10 @@ Progress:
 - After nested types support: 25 unit tests (nested structs, lists, nested lists)
 - After DELTA_BINARY_PACKED/DELTA_LENGTH_BYTE_ARRAY: 189/215 (87.9%), 28 unit tests
 - After DELTA_BYTE_ARRAY: 193/215 (89.8%), 29 unit tests
+- After LZ4 compression: 198/215 (92.1%), 29 unit tests
 
-Remaining Failures by Category (22 total):
+Remaining Failures by Category (17 total):
 - Bad data files (intentionally malformed): 6 files
-- LZ4 compression: 5 files (hadoop_lz4, lz4_raw, non_hadoop_lz4)
 - Snappy decompression (DATA_PAGE_V2): 2 files
 - BYTE_STREAM_SPLIT encoding: 2 files
 - Brotli compression: 1 file

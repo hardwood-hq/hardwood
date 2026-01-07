@@ -18,6 +18,8 @@ public class DecompressorFactory {
     private static final SnappyDecompressor SNAPPY = new SnappyDecompressor();
     private static final GzipDecompressor GZIP = new GzipDecompressor();
     private static final ZstdDecompressor ZSTD = new ZstdDecompressor();
+    private static final Lz4Decompressor LZ4 = new Lz4Decompressor();
+    private static final Lz4RawDecompressor LZ4_RAW = new Lz4RawDecompressor();
 
     /**
      * Get a decompressor for the given compression codec.
@@ -32,10 +34,10 @@ public class DecompressorFactory {
             case SNAPPY -> SNAPPY;
             case GZIP -> GZIP;
             case ZSTD -> ZSTD;
+            case LZ4 -> LZ4;
+            case LZ4_RAW -> LZ4_RAW;
             case LZO -> throw new UnsupportedOperationException("LZO compression not yet supported");
             case BROTLI -> throw new UnsupportedOperationException("BROTLI compression not yet supported");
-            case LZ4 -> throw new UnsupportedOperationException("LZ4 compression not yet supported");
-            case LZ4_RAW -> throw new UnsupportedOperationException("LZ4_RAW compression not yet supported");
         };
     }
 }
