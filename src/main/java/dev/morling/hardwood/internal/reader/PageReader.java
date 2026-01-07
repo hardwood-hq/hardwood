@@ -177,17 +177,21 @@ public class PageReader {
 
         // Decompress values section if needed
         byte[] valuesData;
-        if (header.isCompressed()) {
+        int uncompressedValuesSize = uncompressedPageSize - repLevelLen - defLevelLen;
+
+        // For DATA_PAGE_V2, decompress if is_compressed flag is true
+        // Note: Snappy can expand data when compression isn't effective,
+        // so compressed size may be >= uncompressed size
+        // Special case: if compressedValuesLen is 0 (all nulls), skip decompression
+        if (header.isCompressed() && compressedValuesLen > 0) {
             byte[] compressedValues = new byte[compressedValuesLen];
             System.arraycopy(pageData, valuesOffset, compressedValues, 0, compressedValuesLen);
-
-            // Calculate expected uncompressed values size
-            int uncompressedValuesSize = uncompressedPageSize - repLevelLen - defLevelLen;
 
             Decompressor decompressor = DecompressorFactory.getDecompressor(columnMetaData.codec());
             valuesData = decompressor.decompress(compressedValues, uncompressedValuesSize);
         }
         else {
+            // Use data as-is (not compressed, or empty values section)
             valuesData = new byte[compressedValuesLen];
             System.arraycopy(pageData, valuesOffset, valuesData, 0, compressedValuesLen);
         }
@@ -294,17 +298,11 @@ public class PageReader {
                     throw new IOException("Dictionary page not found for " + encoding + " encoding");
                 }
 
-                int bitWidth;
-                if (isV1) {
-                    // V1: dictionary indices start with 1-byte bit-width
-                    bitWidth = dataStream.read();
-                    if (bitWidth < 0) {
-                        throw new IOException("Failed to read bit width for dictionary indices");
-                    }
-                }
-                else {
-                    // V2: calculate bit width from dictionary size
-                    bitWidth = getBitWidth(dictionary.length - 1);
+                // RLE_DICTIONARY encoding always starts with 1-byte bit-width prefix
+                // This is true for both V1 and V2 data pages
+                int bitWidth = dataStream.read();
+                if (bitWidth < 0) {
+                    throw new IOException("Failed to read bit width for dictionary indices");
                 }
 
                 byte[] indicesData = dataStream.readAllBytes();
