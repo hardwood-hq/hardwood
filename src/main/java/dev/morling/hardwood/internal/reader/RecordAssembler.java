@@ -8,9 +8,7 @@
 package dev.morling.hardwood.internal.reader;
 
 import java.util.ArrayList;
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
 import dev.morling.hardwood.schema.FileSchema;
 import dev.morling.hardwood.schema.SchemaNode;
@@ -124,15 +122,16 @@ public class RecordAssembler {
                 : assembleStruct(group, batches, batchPosition, startColumn);
     }
 
-    private Map<String, Object> assembleStruct(SchemaNode.GroupNode structNode, List<ColumnBatch> batches,
-                                               int batchPosition, int startColumn) {
-        Map<String, Object> result = new HashMap<>();
+    private Object[] assembleStruct(SchemaNode.GroupNode structNode, List<ColumnBatch> batches,
+                                    int batchPosition, int startColumn) {
+        Object[] result = new Object[structNode.children().size()];
         int columnIndex = startColumn;
         boolean allNull = true;
 
-        for (SchemaNode child : structNode.children()) {
+        for (int i = 0; i < result.length; i++) {
+            SchemaNode child = structNode.children().get(i);
             Object value = assembleValue(child, batches, batchPosition, columnIndex);
-            result.put(child.name(), value);
+            result[i] = value;
             columnIndex += countPrimitiveColumns(child);
             if (value != null)
                 allNull = false;
@@ -197,45 +196,45 @@ public class RecordAssembler {
             if (firstColValues.get(elemIdx).defLevel() < elementMaxDefLevel - 1)
                 continue;
 
-            Map<String, Object> struct = buildStruct(elementSchema, columnRawValues, batches,
+            Object[] struct = buildStruct(elementSchema, columnRawValues, batches,
                     startColumn, elemIdx, listRepLevel);
             result.add(struct);
         }
         return result;
     }
 
-    private Map<String, Object> buildStruct(SchemaNode.GroupNode elementSchema,
-                                            List<List<ColumnBatch.ValueWithLevels>> columnRawValues,
-                                            List<ColumnBatch> batches, int startColumn,
-                                            int elemIdx, int listRepLevel) {
-        Map<String, Object> structValues = new HashMap<>();
+    private Object[] buildStruct(SchemaNode.GroupNode elementSchema,
+                                 List<List<ColumnBatch.ValueWithLevels>> columnRawValues,
+                                 List<ColumnBatch> batches, int startColumn,
+                                 int elemIdx, int listRepLevel) {
+        Object[] structValues = new Object[elementSchema.children().size()];
         int childColOffset = 0;
 
-        for (SchemaNode child : elementSchema.children()) {
+        for (int i = 0; i < structValues.length; i++) {
+            SchemaNode child = elementSchema.children().get(i);
             int colCount = countPrimitiveColumns(child);
 
-            if (child instanceof SchemaNode.PrimitiveNode primChild) {
-                addPrimitiveValue(structValues, primChild.name(), columnRawValues.get(childColOffset),
+            if (child instanceof SchemaNode.PrimitiveNode) {
+                structValues[i] = getPrimitiveValue(columnRawValues.get(childColOffset),
                         batches.get(startColumn + childColOffset).getColumn().getMaxDefinitionLevel(), elemIdx);
             }
             else if (child instanceof SchemaNode.GroupNode groupChild && groupChild.isList()) {
-                List<Object> nestedList = assembleNestedList(groupChild, batches, startColumn + childColOffset,
+                structValues[i] = assembleNestedList(groupChild, batches, startColumn + childColOffset,
                         columnRawValues, childColOffset, elemIdx, listRepLevel);
-                structValues.put(groupChild.name(), nestedList);
             }
             childColOffset += colCount;
         }
         return structValues;
     }
 
-    private void addPrimitiveValue(Map<String, Object> struct, String name,
-                                   List<ColumnBatch.ValueWithLevels> colValues, int maxDefLevel, int elemIdx) {
+    private Object getPrimitiveValue(List<ColumnBatch.ValueWithLevels> colValues, int maxDefLevel, int elemIdx) {
         if (elemIdx < colValues.size()) {
             ColumnBatch.ValueWithLevels val = colValues.get(elemIdx);
             if (val.defLevel() == maxDefLevel) {
-                struct.put(name, val.value());
+                return val.value();
             }
         }
+        return null;
     }
 
     private List<Object> assembleNestedList(SchemaNode.GroupNode listNode, List<ColumnBatch> batches,
@@ -280,11 +279,12 @@ public class RecordAssembler {
             if (nestedColValues.get(0).get(elemIdx).defLevel() < nestedMaxDefLevel - 1)
                 continue;
 
-            Map<String, Object> structValues = new HashMap<>();
+            Object[] structValues = new Object[elementGroup.children().size()];
             int childIdx = 0;
-            for (SchemaNode child : elementGroup.children()) {
-                if (child instanceof SchemaNode.PrimitiveNode primChild) {
-                    addPrimitiveValue(structValues, primChild.name(), nestedColValues.get(childIdx),
+            for (int i = 0; i < structValues.length; i++) {
+                SchemaNode child = elementGroup.children().get(i);
+                if (child instanceof SchemaNode.PrimitiveNode) {
+                    structValues[i] = getPrimitiveValue(nestedColValues.get(childIdx),
                             batches.get(startColumn + childIdx).getColumn().getMaxDefinitionLevel(), elemIdx);
                     childIdx++;
                 }

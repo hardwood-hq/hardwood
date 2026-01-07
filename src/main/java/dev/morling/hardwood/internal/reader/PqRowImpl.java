@@ -13,7 +13,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import dev.morling.hardwood.internal.conversion.LogicalTypeConverter;
@@ -30,35 +29,29 @@ import dev.morling.hardwood.schema.SchemaNode;
 public class PqRowImpl implements PqRow {
 
     private final Object[] values;
-    private final Map<String, Object> nestedValues;
-    private final FileSchema schema;
-    private final SchemaNode.GroupNode structSchema;
+    private final SchemaNode.GroupNode schema;
 
     /**
-     * Constructor for flat rows (array-backed).
+     * Constructor for top-level rows.
      */
-    public PqRowImpl(Object[] values, FileSchema schema) {
+    public PqRowImpl(Object[] values, FileSchema fileSchema) {
         this.values = values;
-        this.nestedValues = null;
-        this.schema = schema;
-        this.structSchema = null;
+        this.schema = fileSchema.getRootNode();
     }
 
     /**
-     * Constructor for nested struct rows (map-backed).
+     * Constructor for nested struct rows.
      */
-    public PqRowImpl(Map<String, Object> nestedValues, SchemaNode.GroupNode structSchema) {
-        this.values = null;
-        this.nestedValues = nestedValues;
-        this.schema = null;
-        this.structSchema = structSchema;
+    public PqRowImpl(Object[] values, SchemaNode.GroupNode structSchema) {
+        this.values = values;
+        this.schema = structSchema;
     }
 
     @Override
     @SuppressWarnings("unchecked")
     public <T> T getValue(PqType<T> type, int index) {
-        Object rawValue = getRawValue(index);
-        SchemaNode fieldSchema = getFieldSchema(index);
+        Object rawValue = values[index];
+        SchemaNode fieldSchema = schema.children().get(index);
         return (T) convertValue(rawValue, type, fieldSchema);
     }
 
@@ -66,62 +59,33 @@ public class PqRowImpl implements PqRow {
     @SuppressWarnings("unchecked")
     public <T> T getValue(PqType<T> type, String name) {
         int index = getFieldIndex(name);
-        Object rawValue = getRawValue(index);
-        SchemaNode fieldSchema = getFieldSchema(index);
+        Object rawValue = values[index];
+        SchemaNode fieldSchema = schema.children().get(index);
         return (T) convertValue(rawValue, type, fieldSchema);
     }
 
     @Override
     public boolean isNull(int index) {
-        return getRawValue(index) == null;
+        return values[index] == null;
     }
 
     @Override
     public boolean isNull(String name) {
-        return getRawValue(getFieldIndex(name)) == null;
+        return values[getFieldIndex(name)] == null;
     }
 
     @Override
     public int getFieldCount() {
-        if (values != null) {
-            return schema.getRootNode().children().size();
-        }
-        else {
-            return structSchema.children().size();
-        }
+        return schema.children().size();
     }
 
     @Override
     public String getFieldName(int index) {
-        if (values != null) {
-            return schema.getRootNode().children().get(index).name();
-        }
-        else {
-            return structSchema.children().get(index).name();
-        }
-    }
-
-    private Object getRawValue(int index) {
-        if (values != null) {
-            return values[index];
-        }
-        else {
-            String name = structSchema.children().get(index).name();
-            return nestedValues.get(name);
-        }
-    }
-
-    private SchemaNode getFieldSchema(int index) {
-        if (values != null) {
-            return schema.getRootNode().children().get(index);
-        }
-        else {
-            return structSchema.children().get(index);
-        }
+        return schema.children().get(index).name();
     }
 
     private int getFieldIndex(String name) {
-        List<SchemaNode> children = values != null ? schema.getRootNode().children() : structSchema.children();
+        List<SchemaNode> children = schema.children();
         for (int i = 0; i < children.size(); i++) {
             if (children.get(i).name().equals(name)) {
                 return i;
@@ -190,9 +154,9 @@ public class PqRowImpl implements PqRow {
         }
         else if (type instanceof PqType.RowType) {
             validateGroupNode(fieldSchema, false);
-            Map<String, Object> mapValue = (Map<String, Object>) rawValue;
+            Object[] arrayValue = (Object[]) rawValue;
             SchemaNode.GroupNode groupSchema = (SchemaNode.GroupNode) fieldSchema;
-            return new PqRowImpl(mapValue, groupSchema);
+            return new PqRowImpl(arrayValue, groupSchema);
         }
         else if (type instanceof PqType.ListType) {
             validateGroupNode(fieldSchema, true);

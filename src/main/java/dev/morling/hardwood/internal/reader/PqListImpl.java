@@ -14,7 +14,6 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.Iterator;
 import java.util.List;
-import java.util.Map;
 import java.util.UUID;
 
 import dev.morling.hardwood.internal.conversion.LogicalTypeConverter;
@@ -222,9 +221,9 @@ public class PqListImpl implements PqList {
             return convertLogicalElement(rawValue, UUID.class);
         }
         else if (type instanceof PqType.RowType) {
-            Map<String, Object> mapValue = (Map<String, Object>) rawValue;
+            Object[] arrayValue = (Object[]) rawValue;
             SchemaNode.GroupNode groupSchema = (SchemaNode.GroupNode) elementSchema;
-            return new PqRowImpl(mapValue, groupSchema);
+            return new PqRowImpl(arrayValue, groupSchema);
         }
         else if (type instanceof PqType.ListType) {
             List<?> listValue = (List<?>) rawValue;

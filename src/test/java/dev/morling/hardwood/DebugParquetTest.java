@@ -13,11 +13,9 @@ import java.time.LocalDateTime;
 import java.time.ZoneOffset;
 
 import dev.morling.hardwood.metadata.LogicalType;
-import dev.morling.hardwood.metadata.PhysicalType;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
 import dev.morling.hardwood.row.PqRow;
-import dev.morling.hardwood.row.PqType;
 import dev.morling.hardwood.schema.ColumnSchema;
 import dev.morling.hardwood.schema.FileSchema;
 
@@ -36,21 +34,32 @@ public class DebugParquetTest {
             FileSchema schema = reader.getFileSchema();
             int colCount = schema.getColumnCount();
 
-            // Calculate column widths
+            // Calculate column widths (accounting for type names)
             int[] widths = new int[colCount];
             for (int i = 0; i < colCount; i++) {
-                widths[i] = Math.max(schema.getColumn(i).name().length(), 8);
+                ColumnSchema col = schema.getColumn(i);
+                int nameLen = col.name().length();
+                int physicalLen = col.type().name().length();
+                int logicalLen = formatLogicalType(col.logicalType()).length();
+                widths[i] = Math.max(Math.max(Math.max(nameLen, physicalLen), logicalLen), 8);
             }
 
-            // Print header
+            // Print header with field names, physical types, and logical types
             StringBuilder header = new StringBuilder("| ");
+            StringBuilder physicalRow = new StringBuilder("| ");
+            StringBuilder logicalRow = new StringBuilder("| ");
             StringBuilder separator = new StringBuilder("+-");
             for (int i = 0; i < colCount; i++) {
-                header.append(padRight(schema.getColumn(i).name(), widths[i])).append(" | ");
+                ColumnSchema col = schema.getColumn(i);
+                header.append(padRight(col.name(), widths[i])).append(" | ");
+                physicalRow.append(padRight(col.type().name(), widths[i])).append(" | ");
+                logicalRow.append(padRight(formatLogicalType(col.logicalType()), widths[i])).append(" | ");
                 separator.append("-".repeat(widths[i])).append("-+-");
             }
             System.out.println(separator);
             System.out.println(header);
+            System.out.println(physicalRow);
+            System.out.println(logicalRow);
             System.out.println(separator);
 
             // Print rows
@@ -94,28 +103,34 @@ public class DebugParquetTest {
         return String.valueOf(value);
     }
 
-    @SuppressWarnings("unchecked")
     private static Object getValue(PqRow row, int col, ColumnSchema schema) {
-        // Use logical type if available
-        LogicalType logicalType = schema.logicalType();
-        if (logicalType != null) {
-            PqType<?> pqType = logicalType.toPqType();
-            if (pqType != null) {
-                return row.getValue(pqType, col);
-            }
-        }
+        return row.getValue(schema.toPqType(), col);
+    }
 
-        // Fall back to physical type
-        PhysicalType physicalType = schema.type();
-        return switch (physicalType) {
-            case BOOLEAN -> row.getValue(PqType.BOOLEAN, col);
-            case INT32 -> row.getValue(PqType.INT32, col);
-            case INT64 -> row.getValue(PqType.INT64, col);
-            case FLOAT -> row.getValue(PqType.FLOAT, col);
-            case DOUBLE -> row.getValue(PqType.DOUBLE, col);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> row.getValue(PqType.STRING, col);
-            default -> row.getValue(PqType.BINARY, col);
-        };
+    private static String formatLogicalType(LogicalType logicalType) {
+        if (logicalType == null) {
+            return "-";
+        }
+        // Extract the simple type name from the record class
+        String name = logicalType.getClass().getSimpleName();
+        // Remove "Type" suffix if present (e.g., "TimestampType" -> "TIMESTAMP")
+        if (name.endsWith("Type")) {
+            name = name.substring(0, name.length() - 4);
+        }
+        // Add parameters for parameterized types
+        if (logicalType instanceof LogicalType.TimestampType ts) {
+            return name.toUpperCase() + "(" + ts.unit() + ")";
+        }
+        if (logicalType instanceof LogicalType.TimeType t) {
+            return name.toUpperCase() + "(" + t.unit() + ")";
+        }
+        if (logicalType instanceof LogicalType.DecimalType d) {
+            return name.toUpperCase() + "(" + d.precision() + "," + d.scale() + ")";
+        }
+        if (logicalType instanceof LogicalType.IntType i) {
+            return (i.isSigned() ? "INT" : "UINT") + "_" + i.bitWidth();
+        }
+        return name.toUpperCase();
     }
 
     private static String padRight(String s, int width) {

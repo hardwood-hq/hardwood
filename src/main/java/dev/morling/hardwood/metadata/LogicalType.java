@@ -7,48 +7,23 @@
  */
 package dev.morling.hardwood.metadata;
 
-import dev.morling.hardwood.row.PqType;
-
 /**
  * Logical types that provide semantic meaning to physical types.
  * Sealed interface allows for parameterized types (e.g., DECIMAL with scale/precision).
  */
 public sealed
-
 interface LogicalType
 permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType
 {
 
-    /**
-     * Returns the corresponding PqType for this logical type, or null if not supported.
-     */
-    default PqType<?> toPqType() {
-        return null;
-    }
-
     // Simple types (no parameters)
-    record StringType() implements LogicalType {
-
-    @Override
-        public PqType<?> toPqType() {
-            return PqType.STRING;
-        }}
+    record StringType() implements LogicalType {}
 
     record EnumType() implements LogicalType {}
 
-    record UuidType() implements LogicalType {
+    record UuidType() implements LogicalType {}
 
-    @Override
-        public PqType<?> toPqType() {
-            return PqType.UUID;
-        }}
-
-    record DateType() implements LogicalType {
-
-    @Override
-        public PqType<?> toPqType() {
-            return PqType.DATE;
-        }}
+    record DateType() implements LogicalType {}
 
     record JsonType() implements LogicalType {}
 
@@ -63,11 +38,7 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
                 throw new IllegalArgumentException("Invalid bit width: " + bitWidth);
             }
         }
-
-    @Override
-        public PqType<?> toPqType() {
-            return bitWidth == 64 ? PqType.INT64 : PqType.INT32;
-        }}
+    }
 
     // Parameterized: Decimal with scale and precision
     record DecimalType(int scale, int precision) implements LogicalType {
@@ -79,37 +50,18 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
                 throw new IllegalArgumentException("Scale cannot be negative: " + scale);
             }
         }
-
-    @Override
-        public PqType<?> toPqType() {
-            return PqType.DECIMAL;
-        }}
+    }
 
     // Parameterized: Time with unit and UTC adjustment
-    record TimeType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {
-
-    @Override
-        public PqType<?> toPqType() {
-            return PqType.TIME;
-        }}
+    record TimeType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {}
 
     // Parameterized: Timestamp with unit and UTC adjustment
-    record TimestampType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {
-
-    @Override
-        public PqType<?> toPqType() {
-            return PqType.TIMESTAMP;
-        }}
+    record TimestampType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {}
 
     // Complex types (not fully supported in Milestone 1)
-    record ListType() implements LogicalType {
-
-    @Override
-        public PqType<?> toPqType() {
-            return PqType.LIST;
-        }}
+    record ListType() implements LogicalType {}
 
     record MapType() implements LogicalType {}
 
-    public enum TimeUnit { MILLIS, MICROS, NANOS }
+    enum TimeUnit { MILLIS, MICROS, NANOS }
 }
