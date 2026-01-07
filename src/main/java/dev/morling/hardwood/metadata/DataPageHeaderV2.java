@@ -16,5 +16,6 @@ public record DataPageHeaderV2(
         int numRows,
         Encoding encoding,
         int definitionLevelsByteLength,
-        int repetitionLevelsByteLength) {
+        int repetitionLevelsByteLength,
+        boolean isCompressed) {
 }

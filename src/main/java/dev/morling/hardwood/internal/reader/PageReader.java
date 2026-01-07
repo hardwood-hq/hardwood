@@ -81,26 +81,30 @@ public class PageReader {
             currentOffset = file.getFilePointer();
         }
 
-        // Decompress page data
-        Decompressor decompressor = DecompressorFactory.getDecompressor(columnMetaData.codec());
-        byte[] uncompressedData = decompressor.decompress(pageData, pageHeader.uncompressedPageSize());
-
         // Handle different page types
+        // Note: DATA_PAGE_V2 has different compression semantics - levels are uncompressed
         return switch (pageHeader.type()) {
             case DICTIONARY_PAGE -> {
+                // Decompress entire page data for dictionary pages
+                Decompressor decompressor = DecompressorFactory.getDecompressor(columnMetaData.codec());
+                byte[] uncompressedData = decompressor.decompress(pageData, pageHeader.uncompressedPageSize());
                 // Read and store dictionary values
                 parseDictionaryPage(pageHeader.dictionaryPageHeader(), uncompressedData);
                 yield readPage(); // Read next page (the data page)
             }
             case DATA_PAGE -> {
+                // Decompress entire page data for V1 data pages
+                Decompressor decompressor = DecompressorFactory.getDecompressor(columnMetaData.codec());
+                byte[] uncompressedData = decompressor.decompress(pageData, pageHeader.uncompressedPageSize());
                 DataPageHeader dataHeader = pageHeader.dataPageHeader();
                 valuesRead += dataHeader.numValues();
                 yield parseDataPage(dataHeader, uncompressedData);
             }
             case DATA_PAGE_V2 -> {
+                // For V2, levels are stored uncompressed; only values may be compressed
                 DataPageHeaderV2 dataHeaderV2 = pageHeader.dataPageHeaderV2();
                 valuesRead += dataHeaderV2.numValues();
-                yield parseDataPageV2(dataHeaderV2, uncompressedData);
+                yield parseDataPageV2(dataHeaderV2, pageData, pageHeader.uncompressedPageSize());
             }
             default -> throw new IOException("Unexpected page type: " + pageHeader.type());
         };
@@ -142,39 +146,59 @@ public class PageReader {
         return new Page(header.numValues(), definitionLevels, repetitionLevels, values);
     }
 
-    private Page parseDataPageV2(DataPageHeaderV2 header, byte[] data) throws IOException {
-        ByteArrayInputStream dataStream = new ByteArrayInputStream(data);
+    private Page parseDataPageV2(DataPageHeaderV2 header, byte[] pageData, int uncompressedPageSize)
+            throws IOException {
+        // In DATA_PAGE_V2:
+        // - Repetition levels are stored uncompressed
+        // - Definition levels are stored uncompressed
+        // - Only the values section may be compressed (controlled by is_compressed flag)
 
-        // In V2, the byte lengths are in the header - no length prefixes in the data
+        int repLevelLen = header.repetitionLevelsByteLength();
+        int defLevelLen = header.definitionLevelsByteLength();
+        int valuesOffset = repLevelLen + defLevelLen;
+        int compressedValuesLen = pageData.length - valuesOffset;
 
-        // Read repetition levels
+        // Read repetition levels (uncompressed)
         int[] repetitionLevels = null;
-        if (column.getMaxRepetitionLevel() > 0 && header.repetitionLevelsByteLength() > 0) {
-            byte[] repLevelData = new byte[header.repetitionLevelsByteLength()];
-            dataStream.read(repLevelData);
-
+        if (column.getMaxRepetitionLevel() > 0 && repLevelLen > 0) {
+            byte[] repLevelData = new byte[repLevelLen];
+            System.arraycopy(pageData, 0, repLevelData, 0, repLevelLen);
             repetitionLevels = decodeLevels(repLevelData, header.numValues(), column.getMaxRepetitionLevel());
         }
-        else if (header.repetitionLevelsByteLength() > 0) {
-            // Skip if we have rep level data but maxRepLevel is 0
-            dataStream.skipNBytes(header.repetitionLevelsByteLength());
-        }
 
-        // Read definition levels
+        // Read definition levels (uncompressed)
         int[] definitionLevels = null;
-        if (column.getMaxDefinitionLevel() > 0 && header.definitionLevelsByteLength() > 0) {
-            byte[] defLevelData = new byte[header.definitionLevelsByteLength()];
-            dataStream.read(defLevelData);
-
+        if (column.getMaxDefinitionLevel() > 0 && defLevelLen > 0) {
+            byte[] defLevelData = new byte[defLevelLen];
+            System.arraycopy(pageData, repLevelLen, defLevelData, 0, defLevelLen);
             definitionLevels = decodeLevels(defLevelData, header.numValues(), column.getMaxDefinitionLevel());
         }
+
+        // Decompress values section if needed
+        byte[] valuesData;
+        if (header.isCompressed()) {
+            byte[] compressedValues = new byte[compressedValuesLen];
+            System.arraycopy(pageData, valuesOffset, compressedValues, 0, compressedValuesLen);
+
+            // Calculate expected uncompressed values size
+            int uncompressedValuesSize = uncompressedPageSize - repLevelLen - defLevelLen;
+
+            Decompressor decompressor = DecompressorFactory.getDecompressor(columnMetaData.codec());
+            valuesData = decompressor.decompress(compressedValues, uncompressedValuesSize);
+        }
+        else {
+            valuesData = new byte[compressedValuesLen];
+            System.arraycopy(pageData, valuesOffset, valuesData, 0, compressedValuesLen);
+        }
+
+        ByteArrayInputStream valuesStream = new ByteArrayInputStream(valuesData);
 
         // In V2, we have numNulls directly available
         int numNonNullValues = header.numValues() - header.numNulls();
 
         // Decode values and map to output array
         Object[] values = decodeAndMapValues(
-                header.encoding(), dataStream, header.numValues(), numNonNullValues, definitionLevels, false);
+                header.encoding(), valuesStream, header.numValues(), numNonNullValues, definitionLevels, false);
 
         return new Page(header.numValues(), definitionLevels, repetitionLevels, values);
     }
@@ -230,6 +254,38 @@ public class PageReader {
                 encodedValues = new Object[numNonNullValues];
                 PlainDecoder decoder = new PlainDecoder(dataStream, column.type(), column.typeLength());
                 decoder.readValues(encodedValues, 0, numNonNullValues);
+                mapEncodedValues(encodedValues, values, definitionLevels);
+            }
+            case RLE -> {
+                // RLE encoding for boolean values uses bit-width of 1
+                // The format includes a 4-byte little-endian length prefix followed by
+                // RLE/bit-packing hybrid encoded data
+                if (column.type() != dev.morling.hardwood.metadata.PhysicalType.BOOLEAN) {
+                    throw new UnsupportedOperationException(
+                            "RLE encoding for non-boolean types not yet supported: " + column.type());
+                }
+
+                // Read 4-byte length prefix (little-endian)
+                byte[] lengthBytes = new byte[4];
+                dataStream.read(lengthBytes);
+                int rleLength = java.nio.ByteBuffer.wrap(lengthBytes)
+                        .order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+
+                // Read the RLE-encoded data
+                byte[] rleData = new byte[rleLength];
+                dataStream.read(rleData);
+
+                RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(
+                        new ByteArrayInputStream(rleData), 1);
+
+                int[] boolInts = new int[numNonNullValues];
+                decoder.readInts(boolInts, 0, numNonNullValues);
+
+                // Convert int[] to Boolean[]
+                encodedValues = new Object[numNonNullValues];
+                for (int i = 0; i < numNonNullValues; i++) {
+                    encodedValues[i] = boolInts[i] != 0;
+                }
                 mapEncodedValues(encodedValues, values, definitionLevels);
             }
             case RLE_DICTIONARY, PLAIN_DICTIONARY -> {

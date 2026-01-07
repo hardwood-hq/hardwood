@@ -34,6 +34,7 @@ public class DataPageHeaderV2Reader {
         Encoding encoding = null;
         int definitionLevelsByteLength = 0;
         int repetitionLevelsByteLength = 0;
+        boolean isCompressed = true; // Default value per Parquet spec
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -60,6 +61,17 @@ public class DataPageHeaderV2Reader {
                 case 6: // repetition_levels_byte_length
                     repetitionLevelsByteLength = reader.readI32();
                     break;
+                case 7: // is_compressed (boolean encoded in type: 0x01=true, 0x02=false)
+                    if (header.type() == 0x01) {
+                        isCompressed = true;
+                    }
+                    else if (header.type() == 0x02) {
+                        isCompressed = false;
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 default:
                     reader.skipField(header.type());
                     break;
@@ -67,6 +79,6 @@ public class DataPageHeaderV2Reader {
         }
 
         return new DataPageHeaderV2(numValues, numNulls, numRows, encoding,
-                definitionLevelsByteLength, repetitionLevelsByteLength);
+                definitionLevelsByteLength, repetitionLevelsByteLength, isCompressed);
     }
 }

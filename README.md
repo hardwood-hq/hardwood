@@ -610,7 +610,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 
 ### Test Summary
 
-**Current Pass Rate: 198/215 (92.1%) parquet-testing, 29 unit tests**
+**Current Pass Rate: 202/215 (94.0%) parquet-testing, 29 unit tests**
 
 Progress:
 - Started (first column only): 163/215 (75.8%)
@@ -626,15 +626,14 @@ Progress:
 - After DELTA_BINARY_PACKED/DELTA_LENGTH_BYTE_ARRAY: 189/215 (87.9%), 28 unit tests
 - After DELTA_BYTE_ARRAY: 193/215 (89.8%), 29 unit tests
 - After LZ4 compression: 198/215 (92.1%), 29 unit tests
+- After DATA_PAGE_V2 decompression fix + RLE boolean: 202/215 (94.0%), 29 unit tests
 
-Remaining Failures by Category (17 total):
-- Bad data files (intentionally malformed): 6 files
+Remaining Failures by Category (13 total):
+- Bad data files (intentionally malformed): 5 files
 - Snappy decompression (DATA_PAGE_V2): 2 files
 - BYTE_STREAM_SPLIT encoding: 2 files
 - Brotli compression: 1 file
-- GZIP edge cases: 1 file (concatenated members)
-- RLE boolean encoding: 1 file
-- Other edge cases: 4 files (dict-page-offset-zero, fixed_length_byte_array, page_v2_empty_compressed, case-046)
+- Other edge cases: 3 files (dict-page-offset-zero, fixed_length_byte_array, case-046)
 
 ### Test Categories
 - [ ] Round-trip tests (write → read → compare)
