@@ -142,19 +142,36 @@ public class RecordAssembler {
 
     private Object[] assembleStruct(SchemaNode.GroupNode structNode, List<ColumnBatch> batches,
                                     int batchPosition, int startColumn) {
+        // First check if the struct itself is null by examining the definition level
+        // of the first child column. If defLevel < struct's maxDefLevel, struct is null.
+        ColumnBatch firstBatch = batches.get(startColumn);
+        if (firstBatch instanceof RawColumnBatch raw) {
+            List<ColumnBatch.ValueWithLevels> values = extractValuesFromBatch(raw, batchPosition);
+            if (!values.isEmpty()) {
+                int defLevel = values.get(0).defLevel();
+                int structMaxDef = structNode.maxDefinitionLevel();
+                // If def level is less than the struct's max definition level,
+                // the struct itself is null (not just empty with null children)
+                if (defLevel < structMaxDef) {
+                    return null;
+                }
+            }
+        }
+        // For SimpleColumnBatch, we don't have definition levels, so we can't distinguish
+        // a null struct from a struct with all null children. Since we now use raw mode
+        // for optional structs, this path should rarely be hit.
+
         Object[] result = new Object[structNode.children().size()];
         int columnIndex = startColumn;
-        boolean allNull = true;
 
         for (int i = 0; i < result.length; i++) {
             SchemaNode child = structNode.children().get(i);
             Object value = assembleValue(child, batches, batchPosition, columnIndex);
             result[i] = value;
             columnIndex += countPrimitiveColumns(child);
-            if (value != null)
-                allNull = false;
         }
-        return allNull ? null : result;
+        // Return the struct even if all children are null - the struct itself is present
+        return result;
     }
 
     @SuppressWarnings("unchecked")

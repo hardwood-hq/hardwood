@@ -66,9 +66,6 @@ class ParquetComparisonTest {
             "repeated_primitive_no_list.parquet", // ClassCast: int32 Int32_list is not a group
             "unknown-logical-type.parquet", // Unknown logical type
 
-            // Hardwood reader issues
-            "nulls.snappy.parquet", // Nested struct comparison not yet implemented
-
             // shredded_variant files with parquet-java issues
             "case-040.parquet", // ParquetDecodingException
             "case-041.parquet", // NullPointer on Schema field

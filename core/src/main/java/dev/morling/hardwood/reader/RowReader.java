@@ -137,7 +137,7 @@ public class RowReader implements Iterable<PqRow>, AutoCloseable {
         List<CompletableFuture<ColumnBatch>> futures = new ArrayList<>();
         for (int i = 0; i < currentColumnReaders.size(); i++) {
             ColumnReader reader = currentColumnReaders.get(i);
-            // Use raw mode for columns in list-of-struct to enable multi-column assembly
+            // Use raw mode for columns in nested structures to enable proper assembly
             boolean rawMode = schema.isColumnInListOfStruct(i);
             CompletableFuture<ColumnBatch> future = CompletableFuture.supplyAsync(() -> {
                 try {

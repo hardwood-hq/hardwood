@@ -258,7 +258,7 @@ public class ColumnReader {
      *                (used for multi-column list assembly)
      */
     ColumnBatch readBatch(int batchSize, boolean rawMode) throws IOException {
-        if (rawMode && maxRepetitionLevel > 0) {
+        if (rawMode) {
             return readBatchRaw(batchSize);
         }
 

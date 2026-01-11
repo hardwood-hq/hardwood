@@ -74,36 +74,45 @@ public class FileSchema {
     }
 
     /**
-     * Check if a column (by index) is part of a list that contains struct elements,
-     * or is part of a MAP. Such columns need raw mode reading for multi-column assembly.
+     * Check if a column (by index) needs raw mode reading for proper assembly.
+     * This includes columns in:
+     * - Lists that contain struct elements
+     * - MAPs (which have repeated key-value pairs)
+     * - Optional structs (to distinguish null struct from struct with null children)
      */
     public boolean isColumnInListOfStruct(int columnIndex) {
-        return isColumnInListOfStruct(rootNode, columnIndex, false);
+        return needsRawMode(rootNode, columnIndex, false);
     }
 
-    private boolean isColumnInListOfStruct(SchemaNode node, int columnIndex, boolean inListWithStructElement) {
+    private boolean needsRawMode(SchemaNode node, int columnIndex, boolean ancestorNeedsRaw) {
         if (node instanceof SchemaNode.PrimitiveNode prim) {
-            return prim.columnIndex() == columnIndex && inListWithStructElement;
+            boolean result = prim.columnIndex() == columnIndex && ancestorNeedsRaw;
+            return result;
         }
 
         SchemaNode.GroupNode group = (SchemaNode.GroupNode) node;
 
-        // Check if this is a list with struct elements or a MAP
-        boolean needsRawMode = false;
+        // Check if this group requires raw mode for its descendants
+        boolean thisNeedsRaw = false;
         if (group.isList()) {
             SchemaNode element = group.getListElement();
             if (element instanceof SchemaNode.GroupNode elementGroup && !elementGroup.isList()) {
                 // List element is a struct (group that's not a list)
-                needsRawMode = true;
+                thisNeedsRaw = true;
             }
         }
         else if (group.isMap()) {
             // MAPs have repeated key-value pairs that need multi-column correlation
-            needsRawMode = true;
+            thisNeedsRaw = true;
+        }
+        else if (group.repetitionType() == RepetitionType.OPTIONAL && !group.children().isEmpty()) {
+            // Optional structs need raw mode to distinguish null struct from struct with null children
+            thisNeedsRaw = true;
         }
 
+        boolean combined = ancestorNeedsRaw || thisNeedsRaw;
         for (SchemaNode child : group.children()) {
-            if (isColumnInListOfStruct(child, columnIndex, inListWithStructElement || needsRawMode)) {
+            if (needsRawMode(child, columnIndex, combined)) {
                 return true;
             }
         }
