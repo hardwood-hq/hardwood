@@ -10,23 +10,16 @@
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-  
-  <groupId>dev.morling.hardwood</groupId>
-  <artifactId>hardwood</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
-  
-  <properties>
-    <java.version>17</java.version>
-    <maven.compiler.parameters>true</maven.compiler.parameters>
-    <maven.compiler.release>${java.version}</maven.compiler.release>
-    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
-    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-  </properties>
 
-  <name>My OSS Project</name>
-  <description>My Latest OSS Project</description>
-  <inceptionYear>2024</inceptionYear>
-  <url>tbd.</url>
+  <groupId>dev.morling.hardwood</groupId>
+  <artifactId>hardwood-parent</artifactId>
+  <version>1.0.0-SNAPSHOT</version>
+  <packaging>pom</packaging>
+
+  <name>Hardwood Parent</name>
+  <description>A minimal dependency parser for the Apache Parquet file format</description>
+  <inceptionYear>2026</inceptionYear>
+  <url>https://github.com/gunnarmorling/hardwood</url>
 
   <licenses>
     <license>
@@ -35,6 +28,20 @@
       <distribution>repo</distribution>
     </license>
   </licenses>
+
+  <modules>
+    <module>core</module>
+    <module>integration-test</module>
+    <module>parquet-testing-runner</module>
+  </modules>
+
+  <properties>
+    <java.version>17</java.version>
+    <maven.compiler.parameters>true</maven.compiler.parameters>
+    <maven.compiler.release>${java.version}</maven.compiler.release>
+    <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+    <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+  </properties>
 
   <dependencyManagement>
     <dependencies>
@@ -45,47 +52,66 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <dependency>
+        <groupId>org.assertj</groupId>
+        <artifactId>assertj-core</artifactId>
+        <version>3.25.3</version>
+      </dependency>
+      <dependency>
+        <groupId>org.xerial.snappy</groupId>
+        <artifactId>snappy-java</artifactId>
+        <version>1.1.10.7</version>
+      </dependency>
+      <dependency>
+        <groupId>com.github.luben</groupId>
+        <artifactId>zstd-jni</artifactId>
+        <version>1.5.6-7</version>
+      </dependency>
+      <dependency>
+        <groupId>org.lz4</groupId>
+        <artifactId>lz4-java</artifactId>
+        <version>1.8.0</version>
+      </dependency>
+      <dependency>
+        <groupId>com.aayushatharva.brotli4j</groupId>
+        <artifactId>brotli4j</artifactId>
+        <version>1.16.0</version>
+      </dependency>
+      <!-- Hardwood modules -->
+      <dependency>
+        <groupId>dev.morling.hardwood</groupId>
+        <artifactId>hardwood-core</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <!-- Parquet reference implementation -->
+      <dependency>
+        <groupId>org.apache.parquet</groupId>
+        <artifactId>parquet-hadoop</artifactId>
+        <version>1.14.4</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.parquet</groupId>
+        <artifactId>parquet-avro</artifactId>
+        <version>1.14.4</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-common</artifactId>
+        <version>3.4.1</version>
+      </dependency>
+      <dependency>
+        <groupId>org.apache.hadoop</groupId>
+        <artifactId>hadoop-mapreduce-client-core</artifactId>
+        <version>3.4.1</version>
+      </dependency>
+      <!-- Git cloning -->
+      <dependency>
+        <groupId>org.eclipse.jgit</groupId>
+        <artifactId>org.eclipse.jgit</artifactId>
+        <version>6.8.0.202311291450-r</version>
+      </dependency>
     </dependencies>
   </dependencyManagement>
-
-  <dependencies>
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.assertj</groupId>
-      <artifactId>assertj-core</artifactId>
-      <version>3.25.3</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.xerial.snappy</groupId>
-      <artifactId>snappy-java</artifactId>
-      <version>1.1.10.7</version>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>com.github.luben</groupId>
-      <artifactId>zstd-jni</artifactId>
-      <version>1.5.6-7</version>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>org.lz4</groupId>
-      <artifactId>lz4-java</artifactId>
-      <version>1.8.0</version>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>com.aayushatharva.brotli4j</groupId>
-      <artifactId>brotli4j</artifactId>
-      <version>1.16.0</version>
-      <optional>true</optional>
-    </dependency>
-
-  </dependencies>
 
   <build>
     <!-- Keep alphabetic order -->
@@ -101,7 +127,7 @@
           <artifactId>formatter-maven-plugin</artifactId>
           <version>2.23.0</version>
           <configuration>
-              <configFile>etc/eclipse-formatter-config.xml</configFile>
+              <configFile>${maven.multiModuleProjectDirectory}/etc/eclipse-formatter-config.xml</configFile>
           </configuration>
         </plugin>
         <plugin>
@@ -164,8 +190,8 @@
         </plugin>
       </plugins>
     </pluginManagement>
-
   </build>
+
   <profiles>
     <profile>
       <id>qa</id>
@@ -180,10 +206,11 @@
             <groupId>com.mycila</groupId>
             <artifactId>license-maven-plugin</artifactId>
             <configuration>
-              <header>etc/license.txt</header>
+              <header>${maven.multiModuleProjectDirectory}/etc/license.txt</header>
               <strictCheck>true</strictCheck>
               <aggregate>true</aggregate>
               <excludes>
+                <exclude>.docker-venv/**</exclude>
                 <exclude>LICENSE.txt</exclude>
                 <exclude>**/.dontdelete</exclude>
               </excludes>

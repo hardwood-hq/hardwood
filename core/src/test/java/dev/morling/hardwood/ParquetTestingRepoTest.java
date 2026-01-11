@@ -177,6 +177,9 @@ class ParquetTestingRepoTest {
                             if (value instanceof byte[]) {
                                 System.out.println("    [" + i + "]: <byte array, length=" + ((byte[]) value).length + ">");
                             }
+                            else if (value instanceof String s && s.length() > 100) {
+                                System.out.println("    [" + i + "]: <string, length=" + s.length() + ">");
+                            }
                             else {
                                 System.out.println("    [" + i + "]: " + value);
                             }
