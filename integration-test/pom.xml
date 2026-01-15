@@ -22,6 +22,11 @@
   <name>Integration Tests</name>
   <description>Integration tests for Hardwood</description>
 
+  <properties>
+    <jreleaser.skip>true</jreleaser.skip>
+    <maven.deploy.skip>true</maven.deploy.skip>
+  </properties>
+
   <dependencies>
     <!-- Hardwood (module under test) -->
     <dependency>

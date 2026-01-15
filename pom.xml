@@ -36,12 +36,31 @@
     <module>parquet-testing-runner</module>
   </modules>
 
+  <scm>
+    <connection>scm:git:https://github.com/hardwood-hq/hardwood.git</connection>
+    <developerConnection>scm:git:https://github.com/hardwood-hq/hardwood.git</developerConnection>
+    <url>https://github.com/hardwood-hq/hardwood.git</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <developers>
+    <developer>
+      <id>gunnarmorling</id>
+      <name>Gunnar Morling</name>
+      <url>https://www.morling.dev</url>
+      <roles>
+        <role>author</role>
+      </roles>
+    </developer>
+  </developers>
+
   <properties>
     <java.version>21</java.version>
     <maven.compiler.parameters>true</maven.compiler.parameters>
     <maven.compiler.release>${java.version}</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
+    <jreleaser.skip>false</jreleaser.skip>
   </properties>
 
   <dependencyManagement>
@@ -183,6 +202,16 @@
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-javadoc-plugin</artifactId>
+          <version>3.6.3</version>
+        </plugin>
+        <plugin>
+          <groupId>org.jreleaser</groupId>
+          <artifactId>jreleaser-maven-plugin</artifactId>
+          <version>1.22.0</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-resources-plugin</artifactId>
           <version>3.4.0</version>
         </plugin>
@@ -190,6 +219,11 @@
           <groupId>org.apache.maven.plugins</groupId>
           <artifactId>maven-site-plugin</artifactId>
           <version>4.0.0-M16</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-source-plugin</artifactId>
+          <version>3.3.1</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>
@@ -298,6 +332,117 @@
       <properties>
         <skipTests>true</skipTests>
       </properties>
+    </profile>
+    <profile>
+      <id>deployment</id>
+      <properties>
+        <altDeploymentRepository>local::file:./target/staging-deploy</altDeploymentRepository>
+      </properties>
+      <build>
+        <defaultGoal>deploy</defaultGoal>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-javadoc-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-javadocs</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+                <configuration>
+                  <attach>true</attach>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-source-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>attach-sources</id>
+                <goals>
+                  <goal>jar</goal>
+                </goals>
+                <configuration>
+                  <attach>true</attach>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>publication</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.jreleaser</groupId>
+            <artifactId>jreleaser-maven-plugin</artifactId>
+            <configuration>
+              <jreleaser>
+                <project>
+                  <stereotype>NONE</stereotype>
+                </project>
+                <release>
+                  <github>
+                    <overwrite>true</overwrite>
+                    <changelog>
+                      <formatted>ALWAYS</formatted>
+                      <contributors>
+                        <format>- {{contributorName}}{{#contributorUsernameAsLink}} ({{.}}){{/contributorUsernameAsLink}}</format>
+                      </contributors>
+                    </changelog>
+                  </github>
+                </release>
+                <signing>
+                  <pgp>
+                    <active>ALWAYS</active>
+                    <armored>true</armored>
+                  </pgp>
+                </signing>
+                <deploy>
+                  <maven>
+                    <mavenCentral>
+                      <sonatype>
+                        <active>ALWAYS</active>
+                        <url>https://central.sonatype.com/api/v1/publisher</url>
+                        <stagingRepositories>target/staging-deploy</stagingRepositories>
+                      </sonatype>
+                    </mavenCentral>
+                  </maven>
+                </deploy>
+              </jreleaser>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+    <profile>
+      <id>release</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-release-plugin</artifactId>
+            <version>3.3.1</version>
+            <configuration>
+              <preparationGoals>clean verify</preparationGoals>
+              <preparationProfiles>deployment,publication</preparationProfiles>
+              <tagNameFormat>v@{project.version}</tagNameFormat>
+              <goals>deploy jreleaser:full-release</goals>
+              <arguments>-ntp -B</arguments>
+              <scmCommentPrefix/>
+              <scmReleaseCommitComment>Releasing version @{releaseLabel}</scmReleaseCommitComment>
+              <scmDevelopmentCommitComment>Bump for next development cycle</scmDevelopmentCommitComment>
+              <scmShallowClone>false</scmShallowClone>
+              <releaseProfiles>deployment,publication</releaseProfiles>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
     </profile>
   </profiles>
 </project>
