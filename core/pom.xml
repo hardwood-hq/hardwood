@@ -21,6 +21,7 @@
 
   <name>Hardwood Core</name>
   <description>Core Parquet reader implementation</description>
+  <url>https://github.com/hardwood-hq/hardwood</url>
 
   <dependencies>
     <!-- Test dependencies -->

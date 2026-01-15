@@ -28,7 +28,7 @@ jobs:
 
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: 'true'
 
@@ -37,13 +37,7 @@ jobs:
         with:
           java-version: '25'
           distribution: 'temurin'
-
-      - name: 'Cache Maven packages'
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-          restore-keys: ${{ runner.os }}-m2
+          cache: 'maven'
 
       - name: 'Build and install modules'
         run: ./mvnw -B clean install -DskipTests
@@ -88,17 +82,11 @@ jobs:
         with:
           java-version: ${{ matrix.java }}
           distribution: 'temurin'
+          cache: 'maven'
 
       - name: 'Install libdeflate'
         if: ${{ matrix.install_libdeflate }}
         run: sudo apt-get update && sudo apt-get install -y libdeflate-dev
-
-      - name: 'Cache Maven packages'
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-          restore-keys: ${{ runner.os }}-m2
 
       - name: 'Download built artifacts'
         uses: actions/download-artifact@v4
@@ -133,13 +121,7 @@ jobs:
         with:
           java-version: '25'
           distribution: 'temurin'
-
-      - name: 'Cache Maven packages'
-        uses: actions/cache@v4
-        with:
-          path: ~/.m2/repository
-          key: ${{ runner.os }}-m2-${{ hashFiles('**/pom.xml') }}
-          restore-keys: ${{ runner.os }}-m2
+          cache: 'maven'
 
       - name: 'Download built artifacts'
         uses: actions/download-artifact@v4
