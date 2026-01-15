@@ -21,6 +21,7 @@
 
   <name>Hardwood Hadoop Compatibility</name>
   <description>Parquet-java API compatibility layer (no parquet-java/hadoop dependencies)</description>
+  <url>https://github.com/gunnarmorling/hardwood</url>
 
   <dependencies>
     <!-- Only runtime dependency: hardwood-core -->
