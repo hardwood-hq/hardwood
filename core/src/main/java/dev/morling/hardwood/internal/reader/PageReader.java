@@ -10,7 +10,9 @@ package dev.morling.hardwood.internal.reader;
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.nio.MappedByteBuffer;
 
 import dev.morling.hardwood.internal.compression.Decompressor;
 import dev.morling.hardwood.internal.compression.DecompressorFactory;
@@ -25,78 +27,55 @@ import dev.morling.hardwood.internal.thrift.ThriftCompactReader;
 import dev.morling.hardwood.metadata.ColumnMetaData;
 import dev.morling.hardwood.metadata.DataPageHeader;
 import dev.morling.hardwood.metadata.DataPageHeaderV2;
+import dev.morling.hardwood.metadata.DictionaryPageHeader;
 import dev.morling.hardwood.metadata.Encoding;
 import dev.morling.hardwood.metadata.PageHeader;
 import dev.morling.hardwood.schema.ColumnSchema;
 
 /**
  * Reader for individual pages within a column chunk.
+ * Uses a memory-mapped buffer (one per column chunk) for efficient, thread-safe access.
  */
 public class PageReader {
 
-    private final RandomAccessFile file;
     private final ColumnMetaData columnMetaData;
     private final ColumnSchema column;
-    private long currentOffset;
+    private final MappedByteBuffer mappedBuffer;  // Mapped to this column chunk only
+    private int currentPosition = 0;              // Position within the column chunk buffer
     private long valuesRead = 0;
     private Object[] dictionary = null;
 
-    public PageReader(RandomAccessFile file, ColumnMetaData columnMetaData, ColumnSchema column)
-            throws IOException {
-        this.file = file;
+    public PageReader(MappedByteBuffer mappedBuffer, ColumnMetaData columnMetaData, ColumnSchema column) {
+        this.mappedBuffer = mappedBuffer;
         this.columnMetaData = columnMetaData;
         this.column = column;
-
-        // Validate total uncompressed size doesn't exceed Java's array size limit.
-        // This catches oversized column chunks early, before attempting to read pages.
-        long totalUncompressedSize = columnMetaData.totalUncompressedSize();
-        if (totalUncompressedSize > Integer.MAX_VALUE) {
-            throw new IOException(
-                    "Column chunk uncompressed size (" + totalUncompressedSize + " bytes) exceeds maximum allowed " +
-                            "(Integer.MAX_VALUE = " + Integer.MAX_VALUE + " bytes). Column: " + column.name() + ". " +
-                            "This is usually caused by a Parquet writer creating oversized column chunks. " +
-                            "Consider using smaller page sizes when writing.");
-        }
-
-        // Use dictionary page offset if present and > 0.
-        // Offset 0 is invalid (PAR1 magic) and should be treated as "no dictionary page".
-        // See ARROW-5322: Some writers incorrectly set dictionary_page_offset to 0.
-        Long dictOffset = columnMetaData.dictionaryPageOffset();
-        if (dictOffset != null && dictOffset > 0) {
-            this.currentOffset = dictOffset;
-        }
-        else {
-            this.currentOffset = columnMetaData.dataPageOffset();
-        }
     }
 
     /**
      * Read the next page. Returns null if no more pages.
+     * Reads directly from memory-mapped buffer - thread-safe with no system calls.
      */
     public Page readPage() throws IOException {
         if (valuesRead >= columnMetaData.numValues()) {
             return null;
         }
 
-        // Synchronize on file to prevent concurrent access from multiple column readers
-        PageHeader pageHeader;
-        byte[] pageData;
-        synchronized (file) {
-            // Seek to page position
-            file.seek(currentOffset);
+        // Create a slice of the mapped buffer starting at current position for header parsing
+        MappedByteBufferInputStream headerStream = new MappedByteBufferInputStream(mappedBuffer, currentPosition);
+        ThriftCompactReader headerReader = new ThriftCompactReader(headerStream);
+        PageHeader pageHeader = PageHeaderReader.read(headerReader);
+        int headerSize = headerStream.getBytesRead();
 
-            // Read page header using a tracking input stream
-            RandomAccessFileInputStream headerStream = new RandomAccessFileInputStream(file);
-            ThriftCompactReader headerReader = new ThriftCompactReader(headerStream);
-            pageHeader = PageHeaderReader.read(headerReader);
-
-            // Read page data
-            pageData = new byte[pageHeader.compressedPageSize()];
-            file.readFully(pageData);
-
-            // Update offset for next page
-            currentOffset = file.getFilePointer();
+        // Read page data directly from the mapped buffer
+        int compressedSize = pageHeader.compressedPageSize();
+        int dataStart = currentPosition + headerSize;
+        byte[] pageData = new byte[compressedSize];
+        for (int i = 0; i < compressedSize; i++) {
+            pageData[i] = mappedBuffer.get(dataStart + i);
         }
+
+        // Update position for next page
+        currentPosition += headerSize + compressedSize;
 
         // Handle different page types
         // Note: DATA_PAGE_V2 has different compression semantics - levels are uncompressed
@@ -393,10 +372,10 @@ public class PageReader {
     private int readLittleEndianInt(InputStream stream) throws IOException {
         byte[] bytes = new byte[4];
         stream.read(bytes);
-        return java.nio.ByteBuffer.wrap(bytes).order(java.nio.ByteOrder.LITTLE_ENDIAN).getInt();
+        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getInt();
     }
 
-    private void parseDictionaryPage(dev.morling.hardwood.metadata.DictionaryPageHeader header, byte[] data)
+    private void parseDictionaryPage(DictionaryPageHeader header, byte[] data)
             throws IOException {
         ByteArrayInputStream dataStream = new ByteArrayInputStream(data);
 
@@ -420,23 +399,42 @@ public class PageReader {
     }
 
     /**
-     * InputStream wrapper for RandomAccessFile that tracks bytes read.
+     * InputStream that reads from a MappedByteBuffer at a given offset.
+     * Tracks bytes read for determining header size.
      */
-    private static class RandomAccessFileInputStream extends InputStream {
-        private final RandomAccessFile file;
+    private static class MappedByteBufferInputStream extends InputStream {
+        private final MappedByteBuffer buffer;
+        private final int startOffset;
+        private int pos;
 
-        public RandomAccessFileInputStream(RandomAccessFile file) {
-            this.file = file;
+        public MappedByteBufferInputStream(MappedByteBuffer buffer, int startOffset) {
+            this.buffer = buffer;
+            this.startOffset = startOffset;
+            this.pos = startOffset;
         }
 
         @Override
-        public int read() throws IOException {
-            return file.read();
+        public int read() {
+            if (pos >= buffer.limit()) {
+                return -1;
+            }
+            return buffer.get(pos++) & 0xff;
         }
 
         @Override
-        public int read(byte[] b, int off, int len) throws IOException {
-            return file.read(b, off, len);
+        public int read(byte[] b, int off, int len) {
+            if (pos >= buffer.limit()) {
+                return -1;
+            }
+            int available = Math.min(len, buffer.limit() - pos);
+            for (int i = 0; i < available; i++) {
+                b[off + i] = buffer.get(pos++);
+            }
+            return available;
+        }
+
+        public int getBytesRead() {
+            return pos - startOffset;
         }
     }
 

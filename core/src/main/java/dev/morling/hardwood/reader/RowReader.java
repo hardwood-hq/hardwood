@@ -8,8 +8,8 @@
 package dev.morling.hardwood.reader;
 
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.io.UncheckedIOException;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
@@ -35,7 +35,7 @@ public class RowReader implements Iterable<PqRow>, AutoCloseable {
     private static final int DEFAULT_BATCH_SIZE = 5000;
 
     private final FileSchema schema;
-    private final RandomAccessFile file;
+    private final FileChannel channel;
     private final List<RowGroup> rowGroups;
     private final ExecutorService executor;
     private final int batchSize;
@@ -55,24 +55,24 @@ public class RowReader implements Iterable<PqRow>, AutoCloseable {
      * Create a RowReader with default batch size.
      */
     public RowReader(FileSchema schema,
-                     RandomAccessFile file,
+                     FileChannel channel,
                      List<RowGroup> rowGroups,
                      ExecutorService executor,
                      long totalRows) {
-        this(schema, file, rowGroups, executor, totalRows, DEFAULT_BATCH_SIZE);
+        this(schema, channel, rowGroups, executor, totalRows, DEFAULT_BATCH_SIZE);
     }
 
     /**
      * Create a RowReader with custom batch size.
      */
     public RowReader(FileSchema schema,
-                     RandomAccessFile file,
+                     FileChannel channel,
                      List<RowGroup> rowGroups,
                      ExecutorService executor,
                      long totalRows,
                      int batchSize) {
         this.schema = schema;
-        this.file = file;
+        this.channel = channel;
         this.rowGroups = rowGroups;
         this.executor = executor;
         this.totalRows = totalRows;
@@ -99,7 +99,7 @@ public class RowReader implements Iterable<PqRow>, AutoCloseable {
 
         try {
             for (int i = 0; i < schema.getColumnCount(); i++) {
-                currentColumnReaders.add(new ColumnReader(file, schema.getColumn(i), rowGroup.columns().get(i)));
+                currentColumnReaders.add(new ColumnReader(channel, schema.getColumn(i), rowGroup.columns().get(i)));
             }
         }
         catch (IOException e) {

@@ -9,11 +9,13 @@ package dev.morling.hardwood.reader;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.RandomAccessFile;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
+import java.util.Arrays;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.TimeUnit;
@@ -35,43 +37,42 @@ public class ParquetFileReader implements AutoCloseable {
     private static final int FOOTER_LENGTH_SIZE = 4;
     private static final int MAGIC_SIZE = 4;
 
-    private final RandomAccessFile file;
+    private final FileChannel channel;
     private final FileMetaData fileMetaData;
     private final ExecutorService executorService;
 
-    private ParquetFileReader(RandomAccessFile file, FileMetaData fileMetaData) {
-        this.file = file;
+    private ParquetFileReader(FileChannel channel, FileMetaData fileMetaData) {
+        this.channel = channel;
         this.fileMetaData = fileMetaData;
         // Create executor with thread count = available processors
         this.executorService = Executors.newFixedThreadPool(Runtime.getRuntime().availableProcessors());
     }
 
     public static ParquetFileReader open(Path path) throws IOException {
-        RandomAccessFile file = new RandomAccessFile(path.toFile(), "r");
+        FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
         try {
             // Validate file size
-            long fileSize = file.length();
+            long fileSize = channel.size();
             if (fileSize < MAGIC_SIZE + MAGIC_SIZE + FOOTER_LENGTH_SIZE) {
                 throw new IOException("File too small to be a valid Parquet file");
             }
 
             // Read and validate magic number at start
-            byte[] startMagic = new byte[MAGIC_SIZE];
-            file.seek(0);
-            file.readFully(startMagic);
-            if (!java.util.Arrays.equals(startMagic, MAGIC)) {
+            ByteBuffer startMagicBuf = ByteBuffer.allocate(MAGIC_SIZE);
+            readFully(channel, startMagicBuf, 0);
+            if (!Arrays.equals(startMagicBuf.array(), MAGIC)) {
                 throw new IOException("Not a Parquet file (invalid magic number at start)");
             }
 
             // Read footer size and magic number at end
-            file.seek(fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE);
-            byte[] footerLengthBytes = new byte[FOOTER_LENGTH_SIZE];
-            file.readFully(footerLengthBytes);
-            int footerLength = ByteBuffer.wrap(footerLengthBytes).order(ByteOrder.LITTLE_ENDIAN).getInt();
-
+            long footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
+            ByteBuffer footerInfoBuf = ByteBuffer.allocate(FOOTER_LENGTH_SIZE + MAGIC_SIZE);
+            readFully(channel, footerInfoBuf, footerInfoPos);
+            footerInfoBuf.order(ByteOrder.LITTLE_ENDIAN);
+            int footerLength = footerInfoBuf.getInt();
             byte[] endMagic = new byte[MAGIC_SIZE];
-            file.readFully(endMagic);
-            if (!java.util.Arrays.equals(endMagic, MAGIC)) {
+            footerInfoBuf.get(endMagic);
+            if (!Arrays.equals(endMagic, MAGIC)) {
                 throw new IOException("Not a Parquet file (invalid magic number at end)");
             }
 
@@ -82,26 +83,38 @@ public class ParquetFileReader implements AutoCloseable {
             }
 
             // Read footer
-            file.seek(footerStart);
-            byte[] footerBytes = new byte[footerLength];
-            file.readFully(footerBytes);
+            ByteBuffer footerBuf = ByteBuffer.allocate(footerLength);
+            readFully(channel, footerBuf, footerStart);
 
             // Parse file metadata
-            ThriftCompactReader reader = new ThriftCompactReader(new ByteArrayInputStream(footerBytes));
+            ThriftCompactReader reader = new ThriftCompactReader(new ByteArrayInputStream(footerBuf.array()));
             FileMetaData fileMetaData = FileMetaDataReader.read(reader);
 
-            return new ParquetFileReader(file, fileMetaData);
+            return new ParquetFileReader(channel, fileMetaData);
         }
         catch (Exception e) {
-            // Close file if there was an error during initialization
+            // Close channel if there was an error during initialization
             try {
-                file.close();
+                channel.close();
             }
             catch (IOException closeException) {
                 e.addSuppressed(closeException);
             }
             throw e;
         }
+    }
+
+    /**
+     * Read from channel at position until buffer is full.
+     */
+    private static void readFully(FileChannel channel, ByteBuffer buffer, long position) throws IOException {
+        while (buffer.hasRemaining()) {
+            int read = channel.read(buffer, position + buffer.position());
+            if (read < 0) {
+                throw new IOException("Unexpected end of file");
+            }
+        }
+        buffer.flip();
     }
 
     public FileMetaData getFileMetaData() {
@@ -113,7 +126,7 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     public ColumnReader getColumnReader(ColumnSchema idColumn, ColumnChunk idColumnChunk) throws IOException {
-        return new ColumnReader(file, idColumn, idColumnChunk);
+        return new ColumnReader(channel, idColumn, idColumnChunk);
     }
 
     /**
@@ -123,7 +136,7 @@ public class ParquetFileReader implements AutoCloseable {
     public RowReader createRowReader() {
         FileSchema schema = getFileSchema();
         long totalRows = fileMetaData.numRows();
-        return new RowReader(schema, file, fileMetaData.rowGroups(), executorService, totalRows);
+        return new RowReader(schema, channel, fileMetaData.rowGroups(), executorService, totalRows);
     }
 
     @Override
@@ -140,7 +153,7 @@ public class ParquetFileReader implements AutoCloseable {
             Thread.currentThread().interrupt();
         }
 
-        // Close file
-        file.close();
+        // Close channel
+        channel.close();
     }
 }

@@ -8,7 +8,8 @@
 package dev.morling.hardwood.reader;
 
 import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.nio.MappedByteBuffer;
+import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -39,13 +40,24 @@ public class ColumnReader {
     // Lookahead buffer (single value)
     private ValueWithLevels lookahead;
 
-    public ColumnReader(RandomAccessFile file, ColumnSchema column, ColumnChunk columnChunk) throws IOException {
+    public ColumnReader(FileChannel channel, ColumnSchema column, ColumnChunk columnChunk) throws IOException {
         this.column = column;
         this.columnMetaData = columnChunk.metaData();
-        this.pageReader = new PageReader(file, columnMetaData, column);
         this.maxDefinitionLevel = column.maxDefinitionLevel();
         this.maxRepetitionLevel = column.maxRepetitionLevel();
         this.totalValues = columnMetaData.numValues();
+
+        // Determine the start of the column chunk (dictionary page or data page)
+        Long dictOffset = columnMetaData.dictionaryPageOffset();
+        long chunkStartOffset = (dictOffset != null && dictOffset > 0)
+                ? dictOffset
+                : columnMetaData.dataPageOffset();
+
+        // Memory-map the column chunk region
+        long chunkSize = columnMetaData.totalCompressedSize();
+        MappedByteBuffer mappedChunk = channel.map(FileChannel.MapMode.READ_ONLY, chunkStartOffset, chunkSize);
+
+        this.pageReader = new PageReader(mappedChunk, columnMetaData, column);
     }
 
     /**

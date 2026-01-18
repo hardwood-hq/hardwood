@@ -874,6 +874,16 @@ Run the following command to format the source code and organize the imports as 
 ./mvnw process-sources
 ```
 
+### Running Performance Tests
+
+The performance test module is not included in the default build. To run performance tests against NYC Yellow Taxi Trip data:
+
+```shell
+./mvnw test -Pperformance-test -pl performance-test
+```
+
+This will download ~500MB of test data on the first run and compare Hardwood's performance against parquet-java.
+
 ## License
 
 This code base is available under the Apache License, version 2.

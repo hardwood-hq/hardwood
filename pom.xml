@@ -34,7 +34,6 @@
     <module>hadoop-compat</module>
     <module>integration-test</module>
     <module>parquet-testing-runner</module>
-    <module>performance-test</module>
   </modules>
 
   <properties>
@@ -219,9 +218,11 @@
               <strictCheck>true</strictCheck>
               <aggregate>true</aggregate>
               <excludes>
+                <exclude>.venv/**</exclude>
                 <exclude>.docker-venv/**</exclude>
                 <exclude>LICENSE.txt</exclude>
                 <exclude>**/.dontdelete</exclude>
+                <exclude>*.html</exclude>
               </excludes>
             </configuration>
             <executions>
@@ -299,6 +300,12 @@
       <properties>
         <skipTests>true</skipTests>
       </properties>
+    </profile>
+    <profile>
+      <id>performance-test</id>
+      <modules>
+        <module>performance-test</module>
+      </modules>
     </profile>
   </profiles>
 </project>
