@@ -76,6 +76,14 @@ public class RecordAssembler {
      */
     private void processColumn(ColumnBatch batch, FieldPath path, MutableStruct record) {
         int maxRepLevel = batch.getColumn().maxRepetitionLevel();
+
+        // Fast path for flat columns (no repetition, single primitive step)
+        if (maxRepLevel == 0 && path.steps().length == 1 && !path.steps()[0].isContainer()) {
+            processSimpleColumn(batch, path, record);
+            return;
+        }
+
+        // General path for nested/repeated columns
         int[] indices = new int[maxRepLevel + 1];
 
         while (batch.hasValue()) {
@@ -86,6 +94,25 @@ public class RecordAssembler {
 
             updateIndices(indices, r);
             insertAtPath(record, path, indices, d, value);
+        }
+    }
+
+    /**
+     * Optimized path for flat columns: direct struct field assignment.
+     * Used when maxRepLevel == 0 and there are no intermediate path steps.
+     * For flat columns, there's exactly one value per record (either present or null).
+     */
+    private void processSimpleColumn(ColumnBatch batch, FieldPath path, MutableStruct record) {
+        if (!batch.hasValue()) {
+            return;
+        }
+
+        int d = batch.definitionLevel();
+        Object value = batch.value();
+        batch.advance();
+
+        if (d == path.maxDefLevel()) {
+            record.setChild(path.leafFieldIndex(), value);
         }
     }
 
