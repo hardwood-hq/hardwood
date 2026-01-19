@@ -30,7 +30,6 @@ import org.junit.jupiter.api.TestInstance;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
 import dev.morling.hardwood.row.PqRow;
-import dev.morling.hardwood.row.PqType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.withinPercentage;
@@ -130,17 +129,17 @@ class SimplePerformanceTest {
                     RowReader rowReader = reader.createRowReader()) {
                 for (PqRow row : rowReader) {
                     rowCount++;
-                    Long pc = row.getValue(PqType.INT64, "passenger_count");
+                    Long pc = row.getLong("passenger_count");
                     if (pc != null) {
                         passengerCount += pc;
                     }
 
-                    Double td = row.getValue(PqType.DOUBLE, "trip_distance");
+                    Double td = row.getDouble("trip_distance");
                     if (td != null) {
                         tripDistance += td;
                     }
 
-                    Double fa = row.getValue(PqType.DOUBLE, "fare_amount");
+                    Double fa = row.getDouble("fare_amount");
                     if (fa != null) {
                         fareAmount += fa;
                     }

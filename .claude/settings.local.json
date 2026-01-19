@@ -63,7 +63,8 @@
       "Bash(mvn compile:*)",
       "WebFetch(domain:mvnrepository.com)",
       "Bash(mvn test:*)",
-      "WebFetch(domain:www.nyc.gov)"
+      "WebFetch(domain:www.nyc.gov)",
+      "Bash(../mvnw test:*)"
     ]
   }
 }

@@ -94,15 +94,15 @@ If you attempt to read a file using a compression codec whose library is not on 
 
 ### Row-Oriented Reading (PqRow API)
 
-The `RowReader` provides a convenient row-oriented interface for reading Parquet files. The type-safe `PqRow` API uses `PqType<T>` tokens for compile-time type safety.
+The `RowReader` provides a convenient row-oriented interface for reading Parquet files. The `PqRow` API provides typed accessor methods for type-safe field access.
 
 ```java
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
-import dev.morling.hardwood.api.PqRow;
-import dev.morling.hardwood.api.PqList;
-import dev.morling.hardwood.api.PqMap;
-import dev.morling.hardwood.api.PqType;
+import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.row.PqList;
+import dev.morling.hardwood.row.PqIntList;
+import dev.morling.hardwood.row.PqMap;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -112,78 +112,76 @@ import java.util.UUID;
 try (ParquetFileReader fileReader = ParquetFileReader.open(path)) {
     try (RowReader rowReader = fileReader.createRowReader()) {
         for (PqRow row : rowReader) {
-            // Access columns by name with type-safe PqType tokens
-            long id = row.getValue(PqType.INT64, "id");
-            String name = row.getValue(PqType.STRING, "name");
+            // Access columns by name with typed accessors
+            long id = row.getLong("id");
+            String name = row.getString("name");
 
             // Logical types are automatically converted
-            LocalDate birthDate = row.getValue(PqType.DATE, "birth_date");
-            Instant createdAt = row.getValue(PqType.TIMESTAMP, "created_at");
-            LocalTime wakeTime = row.getValue(PqType.TIME, "wake_time");
-            BigDecimal balance = row.getValue(PqType.DECIMAL, "balance");
-            UUID accountId = row.getValue(PqType.UUID, "account_id");
+            LocalDate birthDate = row.getDate("birth_date");
+            Instant createdAt = row.getTimestamp("created_at");
+            LocalTime wakeTime = row.getTime("wake_time");
+            BigDecimal balance = row.getDecimal("balance");
+            UUID accountId = row.getUuid("account_id");
 
             // Check for null values
             if (!row.isNull("age")) {
-                int age = row.getValue(PqType.INT32, "age");
+                int age = row.getInt("age");
                 System.out.println("ID: " + id + ", Name: " + name + ", Age: " + age);
             }
 
-            // Can also access by position
-            long idByIndex = row.getValue(PqType.INT64, 0);
-
             // Access nested structs
-            PqRow address = row.getValue(PqType.ROW, "address");
+            PqRow address = row.getRow("address");
             if (address != null) {
-                String city = address.getValue(PqType.STRING, "city");
-                int zip = address.getValue(PqType.INT32, "zip");
+                String city = address.getString("city");
+                int zip = address.getInt("zip");
             }
 
-            // Access lists with type-safe element access
-            PqList tags = row.getValue(PqType.LIST, "tags");
+            // Access lists and iterate with typed accessors
+            PqList tags = row.getList("tags");
             if (tags != null) {
-                for (String tag : tags.getValues(PqType.STRING)) {
+                for (String tag : tags.strings()) {
                     System.out.println("Tag: " + tag);
                 }
             }
 
             // Access list of structs
-            PqList contacts = row.getValue(PqType.LIST, "contacts");
+            PqList contacts = row.getList("contacts");
             if (contacts != null) {
-                for (PqRow contact : contacts.getValues(PqType.ROW)) {
-                    String contactName = contact.getValue(PqType.STRING, "name");
-                    String phone = contact.getValue(PqType.STRING, "phone");
+                for (PqRow contact : contacts.rows()) {
+                    String contactName = contact.getString("name");
+                    String phone = contact.getString("phone");
                 }
             }
 
-            // Access nested lists (list<list<int>>)
-            PqList matrix = row.getValue(PqType.LIST, "matrix");
+            // Access nested lists (list<list<int>>) using primitive int lists
+            PqList matrix = row.getList("matrix");
             if (matrix != null) {
-                for (PqList innerList : matrix.getValues(PqType.LIST)) {
-                    for (Integer val : innerList.getValues(PqType.INT32)) {
+                for (PqIntList innerList : matrix.intLists()) {
+                    for (var it = innerList.iterator(); it.hasNext(); ) {
+                        int val = it.nextInt();
                         System.out.println("Value: " + val);
                     }
                 }
             }
 
             // Access maps (map<string, int>)
-            PqMap attributes = row.getValue(PqType.MAP, "attributes");
+            PqMap attributes = row.getMap("attributes");
             if (attributes != null) {
                 for (PqMap.Entry entry : attributes.getEntries()) {
-                    String key = entry.getKey(PqType.STRING);
-                    Integer value = entry.getValue(PqType.INT32);
+                    String key = entry.getStringKey();
+                    int value = entry.getIntValue();
                     System.out.println(key + " = " + value);
                 }
             }
 
             // Access maps with struct values (map<string, struct>)
-            PqMap people = row.getValue(PqType.MAP, "people");
+            PqMap people = row.getMap("people");
             if (people != null) {
                 for (PqMap.Entry entry : people.getEntries()) {
-                    String id = entry.getKey(PqType.STRING);
-                    PqRow person = entry.getValue(PqType.ROW);
-                    String personName = person.getValue(PqType.STRING, "name");
-                    int personAge = person.getValue(PqType.INT32, "age");
+                    String personId = entry.getStringKey();
+                    PqRow person = entry.getRowValue();
+                    String personName = person.getString("name");
+                    int personAge = person.getInt("age");
                 }
             }
         }
@@ -191,27 +189,27 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(path)) {
 }
 ```
 
-**Supported PqType tokens:**
+**Typed accessor methods:**
 
-| PqType | Physical/Logical Type | Java Type |
+| Method | Physical/Logical Type | Java Type |
 |--------|----------------------|-----------|
-| `PqType.BOOLEAN` | BOOLEAN | `Boolean` |
-| `PqType.INT32` | INT32 | `Integer` |
-| `PqType.INT64` | INT64 | `Long` |
-| `PqType.FLOAT` | FLOAT | `Float` |
-| `PqType.DOUBLE` | DOUBLE | `Double` |
-| `PqType.BINARY` | BYTE_ARRAY | `byte[]` |
-| `PqType.STRING` | STRING logical type | `String` |
-| `PqType.DATE` | DATE logical type | `LocalDate` |
-| `PqType.TIME` | TIME logical type | `LocalTime` |
-| `PqType.TIMESTAMP` | TIMESTAMP logical type | `Instant` |
-| `PqType.DECIMAL` | DECIMAL logical type | `BigDecimal` |
-| `PqType.UUID` | UUID logical type | `UUID` |
-| `PqType.ROW` | Nested struct | `PqRow` |
-| `PqType.LIST` | LIST logical type | `PqList` |
-| `PqType.MAP` | MAP logical type | `PqMap` |
+| `getBoolean(name)` | BOOLEAN | `boolean` |
+| `getInt(name)` | INT32 | `int` |
+| `getLong(name)` | INT64 | `long` |
+| `getFloat(name)` | FLOAT | `float` |
+| `getDouble(name)` | DOUBLE | `double` |
+| `getBinary(name)` | BYTE_ARRAY | `byte[]` |
+| `getString(name)` | STRING logical type | `String` |
+| `getDate(name)` | DATE logical type | `LocalDate` |
+| `getTime(name)` | TIME logical type | `LocalTime` |
+| `getTimestamp(name)` | TIMESTAMP logical type | `Instant` |
+| `getDecimal(name)` | DECIMAL logical type | `BigDecimal` |
+| `getUuid(name)` | UUID logical type | `UUID` |
+| `getRow(name)` | Nested struct | `PqRow` |
+| `getList(name)` | LIST logical type | `PqList` |
+| `getMap(name)` | MAP logical type | `PqMap` |
 
-**Type validation:** The API validates at runtime that the requested `PqType` matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
+**Type validation:** The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
 
 ### Column-Oriented Reading (ColumnReader)
 

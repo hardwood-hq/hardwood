@@ -12,13 +12,17 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.Arrays;
 import java.util.UUID;
 
 import dev.morling.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.morling.hardwood.metadata.LogicalType;
 import dev.morling.hardwood.metadata.PhysicalType;
-import dev.morling.hardwood.row.PqType;
+import dev.morling.hardwood.row.PqDoubleList;
+import dev.morling.hardwood.row.PqIntList;
+import dev.morling.hardwood.row.PqList;
+import dev.morling.hardwood.row.PqLongList;
+import dev.morling.hardwood.row.PqMap;
+import dev.morling.hardwood.row.PqRow;
 import dev.morling.hardwood.schema.SchemaNode;
 
 /**
@@ -29,87 +33,227 @@ final class ValueConverter {
     private ValueConverter() {
     }
 
+    // ==================== Primitive Type Conversions ====================
+
+    static Integer convertToInt(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validatePhysicalType(schema, PhysicalType.INT32);
+        return (Integer) rawValue;
+    }
+
+    static Long convertToLong(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validatePhysicalType(schema, PhysicalType.INT64);
+        return (Long) rawValue;
+    }
+
+    static Float convertToFloat(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validatePhysicalType(schema, PhysicalType.FLOAT);
+        return (Float) rawValue;
+    }
+
+    static Double convertToDouble(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validatePhysicalType(schema, PhysicalType.DOUBLE);
+        return (Double) rawValue;
+    }
+
+    static Boolean convertToBoolean(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validatePhysicalType(schema, PhysicalType.BOOLEAN);
+        return (Boolean) rawValue;
+    }
+
+    // ==================== Object Type Conversions ====================
+
+    static String convertToString(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateStringType(schema);
+        if (rawValue instanceof String) {
+            return (String) rawValue;
+        }
+        return new String((byte[]) rawValue, StandardCharsets.UTF_8);
+    }
+
+    static byte[] convertToBinary(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validatePhysicalType(schema, PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
+        return (byte[]) rawValue;
+    }
+
+    static LocalDate convertToDate(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateLogicalType(schema, LogicalType.DateType.class);
+        return convertLogicalType(rawValue, schema, LocalDate.class);
+    }
+
+    static LocalTime convertToTime(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateLogicalType(schema, LogicalType.TimeType.class);
+        return convertLogicalType(rawValue, schema, LocalTime.class);
+    }
+
+    static Instant convertToTimestamp(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateLogicalType(schema, LogicalType.TimestampType.class);
+        return convertLogicalType(rawValue, schema, Instant.class);
+    }
+
+    static BigDecimal convertToDecimal(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateLogicalType(schema, LogicalType.DecimalType.class);
+        return convertLogicalType(rawValue, schema, BigDecimal.class);
+    }
+
+    static UUID convertToUuid(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateLogicalType(schema, LogicalType.UuidType.class);
+        return convertLogicalType(rawValue, schema, UUID.class);
+    }
+
+    // ==================== Nested Type Conversions ====================
+
+    static PqRow convertToRow(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateGroupType(schema, false, false);
+        return new PqRowImpl((MutableStruct) rawValue, (SchemaNode.GroupNode) schema);
+    }
+
+    static PqList convertToList(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateGroupType(schema, true, false);
+        SchemaNode elementSchema = ((SchemaNode.GroupNode) schema).getListElement();
+        return new PqListImpl((MutableList) rawValue, elementSchema);
+    }
+
+    static PqMap convertToMap(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateGroupType(schema, false, true);
+        return new PqMapImpl((MutableMap) rawValue, (SchemaNode.GroupNode) schema);
+    }
+
+    // ==================== Typed List Conversions ====================
+
+    static PqIntList convertToIntList(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateGroupType(schema, true, false);
+        SchemaNode elementSchema = ((SchemaNode.GroupNode) schema).getListElement();
+        return new PqIntListImpl((MutableList) rawValue, elementSchema);
+    }
+
+    static PqLongList convertToLongList(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateGroupType(schema, true, false);
+        SchemaNode elementSchema = ((SchemaNode.GroupNode) schema).getListElement();
+        return new PqLongListImpl((MutableList) rawValue, elementSchema);
+    }
+
+    static PqDoubleList convertToDoubleList(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateGroupType(schema, true, false);
+        SchemaNode elementSchema = ((SchemaNode.GroupNode) schema).getListElement();
+        return new PqDoubleListImpl((MutableList) rawValue, elementSchema);
+    }
+
+    // ==================== Generic Type Conversion ====================
+
     /**
-     * Validate schema and convert a raw value to the requested PqType.
-     *
-     * @param rawValue the raw value from the Parquet file
-     * @param type the requested PqType
-     * @param schema the schema node for the field
-     * @return the converted value
-     * @throws IllegalArgumentException if the schema doesn't match the requested type
+     * Convert a value based on schema type. Automatically determines the appropriate
+     * conversion based on the schema's physical and logical types.
      */
-    @SuppressWarnings("unchecked")
-    static <T> T convert(Object rawValue, PqType<T> type, SchemaNode schema) {
+    static Object convertValue(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
 
-        // Validate and convert in one pass
-        return (T) switch (type) {
-            case PqType.BooleanType t -> {
-                validatePhysicalType(schema, PhysicalType.BOOLEAN);
-                yield rawValue;
+        if (schema instanceof SchemaNode.GroupNode group) {
+            if (group.isList()) {
+                return convertToList(rawValue, schema);
             }
-            case PqType.Int32Type t -> {
-                validatePhysicalType(schema, PhysicalType.INT32);
-                yield rawValue;
+            else if (group.isMap()) {
+                return convertToMap(rawValue, schema);
             }
-            case PqType.Int64Type t -> {
-                validatePhysicalType(schema, PhysicalType.INT64);
-                yield rawValue;
+            else {
+                return convertToRow(rawValue, schema);
             }
-            case PqType.FloatType t -> {
-                validatePhysicalType(schema, PhysicalType.FLOAT);
-                yield rawValue;
-            }
-            case PqType.DoubleType t -> {
-                validatePhysicalType(schema, PhysicalType.DOUBLE);
-                yield rawValue;
-            }
-            case PqType.BinaryType t -> {
-                validatePhysicalType(schema, PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
-                yield rawValue;
-            }
-            case PqType.StringType t -> {
-                validateStringType(schema);
-                yield convertToString(rawValue);
-            }
-            case PqType.DateType t -> {
-                validateLogicalType(schema, LogicalType.DateType.class);
-                yield convertLogicalType(rawValue, schema, LocalDate.class);
-            }
-            case PqType.TimeType t -> {
-                validateLogicalType(schema, LogicalType.TimeType.class);
-                yield convertLogicalType(rawValue, schema, LocalTime.class);
-            }
-            case PqType.TimestampType t -> {
-                validateLogicalType(schema, LogicalType.TimestampType.class);
-                yield convertLogicalType(rawValue, schema, Instant.class);
-            }
-            case PqType.DecimalType t -> {
-                validateLogicalType(schema, LogicalType.DecimalType.class);
-                yield convertLogicalType(rawValue, schema, BigDecimal.class);
-            }
-            case PqType.UuidType t -> {
-                validateLogicalType(schema, LogicalType.UuidType.class);
-                yield convertLogicalType(rawValue, schema, UUID.class);
-            }
-            case PqType.RowType t -> {
-                validateGroupType(schema, false, false);
-                yield new PqRowImpl((MutableStruct) rawValue, (SchemaNode.GroupNode) schema);
-            }
-            case PqType.ListType t -> {
-                validateGroupType(schema, true, false);
-                yield new PqListImpl((MutableList) rawValue, (SchemaNode.GroupNode) schema);
-            }
-            case PqType.MapType t -> {
-                validateGroupType(schema, false, true);
-                yield new PqMapImpl((MutableMap) rawValue, (SchemaNode.GroupNode) schema);
-            }
+        }
+
+        SchemaNode.PrimitiveNode primitive = (SchemaNode.PrimitiveNode) schema;
+        LogicalType logicalType = primitive.logicalType();
+
+        // Handle logical types first
+        if (logicalType instanceof LogicalType.DateType) {
+            return convertToDate(rawValue, schema);
+        }
+        else if (logicalType instanceof LogicalType.TimeType) {
+            return convertToTime(rawValue, schema);
+        }
+        else if (logicalType instanceof LogicalType.TimestampType) {
+            return convertToTimestamp(rawValue, schema);
+        }
+        else if (logicalType instanceof LogicalType.DecimalType) {
+            return convertToDecimal(rawValue, schema);
+        }
+        else if (logicalType instanceof LogicalType.UuidType) {
+            return convertToUuid(rawValue, schema);
+        }
+        else if (logicalType instanceof LogicalType.StringType) {
+            return convertToString(rawValue, schema);
+        }
+
+        // Fall back to physical type
+        return switch (primitive.type()) {
+            case INT32 -> convertToInt(rawValue, schema);
+            case INT64 -> convertToLong(rawValue, schema);
+            case FLOAT -> convertToFloat(rawValue, schema);
+            case DOUBLE -> convertToDouble(rawValue, schema);
+            case BOOLEAN -> convertToBoolean(rawValue, schema);
+            case BYTE_ARRAY -> convertToString(rawValue, schema);
+            case FIXED_LEN_BYTE_ARRAY -> convertToBinary(rawValue, schema);
+            case INT96 -> rawValue; // Legacy timestamp, return as-is
         };
     }
 
-    private static void validatePhysicalType(SchemaNode schema, PhysicalType... expectedTypes) {
+    // ==================== Validation Helpers ====================
+
+    static void validatePhysicalType(SchemaNode schema, PhysicalType... expectedTypes) {
         if (!(schema instanceof SchemaNode.PrimitiveNode primitive)) {
             throw new IllegalArgumentException(
                     "Field '" + schema.name() + "' is not a primitive type");
@@ -121,7 +265,7 @@ final class ValueConverter {
         }
         throw new IllegalArgumentException(
                 "Field '" + schema.name() + "' has physical type " + primitive.type()
-                        + ", expected one of " + Arrays.toString(expectedTypes));
+                        + ", expected " + (expectedTypes.length == 1 ? expectedTypes[0] : java.util.Arrays.toString(expectedTypes)));
     }
 
     private static void validateStringType(SchemaNode schema) {
@@ -137,7 +281,7 @@ final class ValueConverter {
         }
     }
 
-    private static void validateLogicalType(SchemaNode schema, Class<? extends LogicalType> expectedType) {
+    static void validateLogicalType(SchemaNode schema, Class<? extends LogicalType> expectedType) {
         if (!(schema instanceof SchemaNode.PrimitiveNode primitive)) {
             throw new IllegalArgumentException(
                     "Field '" + schema.name() + "' is not a primitive type");
@@ -151,7 +295,7 @@ final class ValueConverter {
         }
     }
 
-    private static void validateGroupType(SchemaNode schema, boolean expectList, boolean expectMap) {
+    static void validateGroupType(SchemaNode schema, boolean expectList, boolean expectMap) {
         if (!(schema instanceof SchemaNode.GroupNode group)) {
             throw new IllegalArgumentException(
                     "Field '" + schema.name() + "' is not a group type");
@@ -168,13 +312,6 @@ final class ValueConverter {
             throw new IllegalArgumentException(
                     "Field '" + schema.name() + "' is a list or map, not a struct");
         }
-    }
-
-    private static Object convertToString(Object rawValue) {
-        if (rawValue instanceof String) {
-            return rawValue;
-        }
-        return new String((byte[]) rawValue, StandardCharsets.UTF_8);
     }
 
     private static <T> T convertLogicalType(Object rawValue, SchemaNode schema, Class<T> expectedClass) {

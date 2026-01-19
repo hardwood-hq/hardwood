@@ -31,7 +31,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
 import dev.morling.hardwood.row.PqRow;
-import dev.morling.hardwood.row.PqType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -226,18 +225,18 @@ class ParquetComparisonTest {
 
         // Determine the appropriate type based on Avro schema
         return switch (fieldSchema.getType()) {
-            case BOOLEAN -> row.getValue(PqType.BOOLEAN, fieldName);
-            case INT -> row.getValue(PqType.INT32, fieldName);
-            case LONG -> row.getValue(PqType.INT64, fieldName);
-            case FLOAT -> row.getValue(PqType.FLOAT, fieldName);
-            case DOUBLE -> row.getValue(PqType.DOUBLE, fieldName);
-            case STRING -> row.getValue(PqType.STRING, fieldName);
-            case BYTES -> row.getValue(PqType.BINARY, fieldName);
+            case BOOLEAN -> row.getBoolean(fieldName);
+            case INT -> row.getInt(fieldName);
+            case LONG -> row.getLong(fieldName);
+            case FLOAT -> row.getFloat(fieldName);
+            case DOUBLE -> row.getDouble(fieldName);
+            case STRING -> row.getString(fieldName);
+            case BYTES -> row.getBinary(fieldName);
             case FIXED -> {
                 // FIXED type could be INT96 (legacy timestamp) which needs special handling
                 // For INT96, we skip comparison as it's deprecated and represented differently
                 try {
-                    yield row.getValue(PqType.BINARY, fieldName);
+                    yield row.getBinary(fieldName);
                 }
                 catch (IllegalArgumentException e) {
                     // Likely INT96 - return a marker to skip comparison
@@ -273,7 +272,7 @@ class ParquetComparisonTest {
             }
             case ENUM -> {
                 // Enum type - read as string
-                yield row.getValue(PqType.STRING, fieldName);
+                yield row.getString(fieldName);
             }
             default -> throw new UnsupportedOperationException(
                     "Unsupported Avro type: " + fieldSchema.getType() + " for field: " + fieldName);

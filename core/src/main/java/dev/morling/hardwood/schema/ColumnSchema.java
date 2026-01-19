@@ -10,7 +10,6 @@ package dev.morling.hardwood.schema;
 import dev.morling.hardwood.metadata.LogicalType;
 import dev.morling.hardwood.metadata.PhysicalType;
 import dev.morling.hardwood.metadata.RepetitionType;
-import dev.morling.hardwood.row.PqType;
 
 /**
  * Represents a primitive column in a Parquet schema. Stores computed definition
@@ -25,39 +24,6 @@ public record ColumnSchema(
         int maxDefinitionLevel,
         int maxRepetitionLevel,
         LogicalType logicalType) {
-
-    /**
-     * Returns the corresponding PqType for this column based on its logical and
-     * physical types.
-     */
-    public PqType<?> toPqType() {
-        if (logicalType != null) {
-            return switch (logicalType) {
-            case LogicalType.StringType t -> PqType.STRING;
-            case LogicalType.UuidType t -> PqType.UUID;
-            case LogicalType.DateType t -> PqType.DATE;
-            case LogicalType.TimeType t -> PqType.TIME;
-            case LogicalType.TimestampType t -> PqType.TIMESTAMP;
-            case LogicalType.DecimalType t -> PqType.DECIMAL;
-            case LogicalType.IntType intType -> intType.bitWidth() == 64 ? PqType.INT64 : PqType.INT32;
-            case LogicalType.ListType t -> PqType.LIST;
-            default -> toPqTypeFromPhysical();
-            };
-        }
-        return toPqTypeFromPhysical();
-    }
-
-    private PqType<?> toPqTypeFromPhysical() {
-        return switch (type) {
-        case BOOLEAN -> PqType.BOOLEAN;
-        case INT32 -> PqType.INT32;
-        case INT64 -> PqType.INT64;
-        case FLOAT -> PqType.FLOAT;
-        case DOUBLE -> PqType.DOUBLE;
-        case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> PqType.BINARY;
-        default -> PqType.BINARY;
-        };
-    }
 
     @Override
     public String toString() {

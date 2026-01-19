@@ -20,7 +20,6 @@ import dev.morling.hardwood.reader.RowReader;
 import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqMap;
 import dev.morling.hardwood.row.PqRow;
-import dev.morling.hardwood.row.PqType;
 import dev.morling.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -77,30 +76,30 @@ public class MapSchemaTest {
 
                 // Row 0: Alice with 3 attributes
                 PqRow row0 = rows.get(0);
-                assertThat(row0.getValue(PqType.INT32, "id")).isEqualTo(1);
-                assertThat(row0.getValue(PqType.STRING, "name")).isEqualTo("Alice");
+                assertThat(row0.getInt("id")).isEqualTo(1);
+                assertThat(row0.getString("name")).isEqualTo("Alice");
 
-                PqMap map0 = row0.getValue(PqType.MAP, "attributes");
+                PqMap map0 = row0.getMap("attributes");
                 assertThat(map0.size()).isEqualTo(3);
 
                 // Check key-value pairs (order preserved from PyArrow)
                 List<PqMap.Entry> entries0 = map0.getEntries();
-                assertThat(entries0.get(0).getKey(PqType.STRING)).isEqualTo("age");
-                assertThat(entries0.get(0).getValue(PqType.INT32)).isEqualTo(30);
-                assertThat(entries0.get(1).getKey(PqType.STRING)).isEqualTo("score");
-                assertThat(entries0.get(1).getValue(PqType.INT32)).isEqualTo(95);
-                assertThat(entries0.get(2).getKey(PqType.STRING)).isEqualTo("level");
-                assertThat(entries0.get(2).getValue(PqType.INT32)).isEqualTo(5);
+                assertThat(entries0.get(0).getStringKey()).isEqualTo("age");
+                assertThat(entries0.get(0).getIntValue()).isEqualTo(30);
+                assertThat(entries0.get(1).getStringKey()).isEqualTo("score");
+                assertThat(entries0.get(1).getIntValue()).isEqualTo(95);
+                assertThat(entries0.get(2).getStringKey()).isEqualTo("level");
+                assertThat(entries0.get(2).getIntValue()).isEqualTo(5);
 
                 // Row 2: Charlie with empty map
                 PqRow row2 = rows.get(2);
-                assertThat(row2.getValue(PqType.STRING, "name")).isEqualTo("Charlie");
-                PqMap map2 = row2.getValue(PqType.MAP, "attributes");
+                assertThat(row2.getString("name")).isEqualTo("Charlie");
+                PqMap map2 = row2.getMap("attributes");
                 assertThat(map2.isEmpty()).isTrue();
 
                 // Row 3: Diana with null map
                 PqRow row3 = rows.get(3);
-                assertThat(row3.getValue(PqType.STRING, "name")).isEqualTo("Diana");
+                assertThat(row3.getString("name")).isEqualTo("Diana");
                 assertThat(row3.isNull("attributes")).isTrue();
             }
         }
@@ -148,31 +147,31 @@ public class MapSchemaTest {
 
                 // Row 0: Department A with two teams
                 PqRow row0 = rows.get(0);
-                assertThat(row0.getValue(PqType.INT32, "id")).isEqualTo(1);
-                assertThat(row0.getValue(PqType.STRING, "name")).isEqualTo("Department A");
+                assertThat(row0.getInt("id")).isEqualTo(1);
+                assertThat(row0.getString("name")).isEqualTo("Department A");
 
-                PqMap outerMap0 = row0.getValue(PqType.MAP, "nested_map");
+                PqMap outerMap0 = row0.getMap("nested_map");
                 assertThat(outerMap0.size()).isEqualTo(2);
 
                 // First team: team1 with alice=100, bob=95
                 List<PqMap.Entry> outerEntries = outerMap0.getEntries();
-                assertThat(outerEntries.get(0).getKey(PqType.STRING)).isEqualTo("team1");
+                assertThat(outerEntries.get(0).getStringKey()).isEqualTo("team1");
 
-                PqMap team1 = outerEntries.get(0).getValue(PqType.MAP);
+                PqMap team1 = outerEntries.get(0).getMapValue();
                 assertThat(team1.size()).isEqualTo(2);
                 List<PqMap.Entry> team1Entries = team1.getEntries();
-                assertThat(team1Entries.get(0).getKey(PqType.STRING)).isEqualTo("alice");
-                assertThat(team1Entries.get(0).getValue(PqType.INT32)).isEqualTo(100);
+                assertThat(team1Entries.get(0).getStringKey()).isEqualTo("alice");
+                assertThat(team1Entries.get(0).getIntValue()).isEqualTo(100);
 
                 // Row 3: Department D with empty outer map
                 PqRow row3 = rows.get(3);
-                assertThat(row3.getValue(PqType.STRING, "name")).isEqualTo("Department D");
-                PqMap outerMap3 = row3.getValue(PqType.MAP, "nested_map");
+                assertThat(row3.getString("name")).isEqualTo("Department D");
+                PqMap outerMap3 = row3.getMap("nested_map");
                 assertThat(outerMap3.isEmpty()).isTrue();
 
                 // Row 4: Department E with null map
                 PqRow row4 = rows.get(4);
-                assertThat(row4.getValue(PqType.STRING, "name")).isEqualTo("Department E");
+                assertThat(row4.getString("name")).isEqualTo("Department E");
                 assertThat(row4.isNull("nested_map")).isTrue();
             }
         }
@@ -193,23 +192,23 @@ public class MapSchemaTest {
 
                 // Row 0: List with 3 maps
                 PqRow row0 = rows.get(0);
-                assertThat(row0.getValue(PqType.INT32, "id")).isEqualTo(1);
+                assertThat(row0.getInt("id")).isEqualTo(1);
 
-                PqList mapList0 = row0.getValue(PqType.LIST, "map_list");
+                PqList mapList0 = row0.getList("map_list");
                 assertThat(mapList0.size()).isEqualTo(3);
 
                 // First map: {a:1, b:2}
                 List<PqMap> maps = new ArrayList<>();
-                for (PqMap map : mapList0.getValues(PqType.MAP)) {
+                for (PqMap map : mapList0.maps()) {
                     maps.add(map);
                 }
                 assertThat(maps.get(0).size()).isEqualTo(2);
-                assertThat(maps.get(0).getEntries().get(0).getKey(PqType.STRING)).isEqualTo("a");
-                assertThat(maps.get(0).getEntries().get(0).getValue(PqType.INT32)).isEqualTo(1);
+                assertThat(maps.get(0).getEntries().get(0).getStringKey()).isEqualTo("a");
+                assertThat(maps.get(0).getEntries().get(0).getIntValue()).isEqualTo(1);
 
                 // Row 3: Empty list
                 PqRow row3 = rows.get(3);
-                PqList mapList3 = row3.getValue(PqType.LIST, "map_list");
+                PqList mapList3 = row3.getList("map_list");
                 assertThat(mapList3.isEmpty()).isTrue();
 
                 // Row 4: Null list
@@ -234,22 +233,22 @@ public class MapSchemaTest {
 
                 // Row 0: Two employees
                 PqRow row0 = rows.get(0);
-                assertThat(row0.getValue(PqType.INT32, "id")).isEqualTo(1);
+                assertThat(row0.getInt("id")).isEqualTo(1);
 
-                PqMap people0 = row0.getValue(PqType.MAP, "people");
+                PqMap people0 = row0.getMap("people");
                 assertThat(people0.size()).isEqualTo(2);
 
                 // First entry: employee1 -> {name: Alice, age: 30}
                 List<PqMap.Entry> entries = people0.getEntries();
-                assertThat(entries.get(0).getKey(PqType.STRING)).isEqualTo("employee1");
+                assertThat(entries.get(0).getStringKey()).isEqualTo("employee1");
 
-                PqRow person1 = entries.get(0).getValue(PqType.ROW);
-                assertThat(person1.getValue(PqType.STRING, "name")).isEqualTo("Alice");
-                assertThat(person1.getValue(PqType.INT32, "age")).isEqualTo(30);
+                PqRow person1 = entries.get(0).getRowValue();
+                assertThat(person1.getString("name")).isEqualTo("Alice");
+                assertThat(person1.getInt("age")).isEqualTo(30);
 
                 // Row 2: Empty map
                 PqRow row2 = rows.get(2);
-                PqMap people2 = row2.getValue(PqType.MAP, "people");
+                PqMap people2 = row2.getMap("people");
                 assertThat(people2.isEmpty()).isTrue();
             }
         }

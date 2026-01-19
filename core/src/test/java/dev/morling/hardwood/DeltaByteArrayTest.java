@@ -16,7 +16,6 @@ import dev.morling.hardwood.metadata.Encoding;
 import dev.morling.hardwood.metadata.RowGroup;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.row.PqRow;
-import dev.morling.hardwood.row.PqType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -68,15 +67,15 @@ class DeltaByteArrayTest {
             int rowIndex = 0;
             for (PqRow row : reader.createRowReader()) {
                 // id column (INT32)
-                Integer id = row.getValue(PqType.INT32, "id");
+                Integer id = row.getInt("id");
                 assertThat(id).isEqualTo(rowIndex + 1);
 
                 // prefix_strings column (DELTA_BYTE_ARRAY)
-                String prefixString = row.getValue(PqType.STRING, "prefix_strings");
+                String prefixString = row.getString("prefix_strings");
                 assertThat(prefixString).isEqualTo(expectedPrefixStrings[rowIndex]);
 
                 // varying_strings column (DELTA_BYTE_ARRAY)
-                String varyingString = row.getValue(PqType.STRING, "varying_strings");
+                String varyingString = row.getString("varying_strings");
                 assertThat(varyingString).isEqualTo(expectedVaryingStrings[rowIndex]);
 
                 rowIndex++;

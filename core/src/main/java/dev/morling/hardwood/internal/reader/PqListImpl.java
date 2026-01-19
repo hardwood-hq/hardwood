@@ -7,10 +7,22 @@
  */
 package dev.morling.hardwood.internal.reader;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Iterator;
+import java.util.List;
+import java.util.NoSuchElementException;
+import java.util.UUID;
+import java.util.function.Function;
 
+import dev.morling.hardwood.row.PqDoubleList;
+import dev.morling.hardwood.row.PqIntList;
 import dev.morling.hardwood.row.PqList;
-import dev.morling.hardwood.row.PqType;
+import dev.morling.hardwood.row.PqLongList;
+import dev.morling.hardwood.row.PqMap;
+import dev.morling.hardwood.row.PqRow;
 import dev.morling.hardwood.schema.SchemaNode;
 
 /**
@@ -21,17 +33,9 @@ public class PqListImpl implements PqList {
     private final MutableList elements;
     private final SchemaNode elementSchema;
 
-    public PqListImpl(MutableList elements, SchemaNode.GroupNode listSchema) {
+    public PqListImpl(MutableList elements, SchemaNode elementSchema) {
         this.elements = elements;
-        this.elementSchema = listSchema.getListElement();
-    }
-
-    @Override
-    public <T> Iterable<T> getValues(PqType<T> elementType) {
-        if (elementSchema == null) {
-            throw new IllegalStateException("List has no element schema");
-        }
-        return () -> new ConvertingIterator<>(elements.elements().iterator(), elementType);
+        this.elementSchema = elementSchema;
     }
 
     @Override
@@ -44,24 +48,164 @@ public class PqListImpl implements PqList {
         return elements.size() == 0;
     }
 
-    private class ConvertingIterator<T> implements Iterator<T> {
-        private final Iterator<?> delegate;
-        private final PqType<T> type;
+    @Override
+    public Object get(int index) {
+        return ValueConverter.convertValue(elements.elements().get(index), elementSchema);
+    }
 
-        ConvertingIterator(Iterator<?> delegate, PqType<T> type) {
-            this.delegate = delegate;
-            this.type = type;
+    @Override
+    public boolean isNull(int index) {
+        return elements.elements().get(index) == null;
+    }
+
+    @Override
+    public Iterable<Object> values() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertValue(raw, elementSchema));
+    }
+
+    // ==================== Primitive Type Accessors ====================
+
+    @Override
+    public Iterable<Integer> ints() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToInt(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<Long> longs() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToLong(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<Float> floats() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToFloat(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<Double> doubles() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToDouble(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<Boolean> booleans() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToBoolean(raw, elementSchema));
+    }
+
+    // ==================== Object Type Accessors ====================
+
+    @Override
+    public Iterable<String> strings() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToString(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<byte[]> binaries() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToBinary(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<LocalDate> dates() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToDate(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<LocalTime> times() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToTime(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<Instant> timestamps() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToTimestamp(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<BigDecimal> decimals() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToDecimal(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<UUID> uuids() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToUuid(raw, elementSchema));
+    }
+
+    // ==================== Nested Type Accessors ====================
+
+    @Override
+    public Iterable<PqRow> rows() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToRow(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<PqList> lists() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToList(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<PqIntList> intLists() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToIntList(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<PqLongList> longLists() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToLongList(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<PqDoubleList> doubleLists() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToDoubleList(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<PqMap> maps() {
+        return () -> new ConvertingIterator<>(elements.elements(),
+            raw -> ValueConverter.convertToMap(raw, elementSchema));
+    }
+
+    /**
+     * Iterator that converts raw values using a provided function.
+     */
+    private static class ConvertingIterator<T> implements Iterator<T> {
+        private final List<Object> list;
+        private final Function<Object, T> converter;
+        private int pos = 0;
+
+        ConvertingIterator(List<Object> list, Function<Object, T> converter) {
+            this.list = list;
+            this.converter = converter;
         }
 
         @Override
         public boolean hasNext() {
-            return delegate.hasNext();
+            return pos < list.size();
         }
 
         @Override
         public T next() {
-            Object rawValue = delegate.next();
-            return ValueConverter.convert(rawValue, type, elementSchema);
+            if (!hasNext()) {
+                throw new NoSuchElementException();
+            }
+            Object raw = list.get(pos++);
+            if (raw == null) {
+                return null;
+            }
+            return converter.apply(raw);
         }
     }
 }

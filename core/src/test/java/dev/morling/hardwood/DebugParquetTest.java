@@ -68,7 +68,7 @@ public class DebugParquetTest {
                 for (PqRow row : rowReader) {
                     StringBuilder line = new StringBuilder("| ");
                     for (int i = 0; i < colCount; i++) {
-                        String value = formatValue(row, i, schema.getColumn(i));
+                        String value = formatValue(row, i, schema);
                         // Adjust width if value is longer
                         if (value.length() > widths[i]) {
                             value = value.substring(0, widths[i] - 2) + "..";
@@ -85,26 +85,31 @@ public class DebugParquetTest {
         }
     }
 
-    private static String formatValue(PqRow row, int col, ColumnSchema schema) {
-        if (row.isNull(col)) {
+    private static String formatValue(PqRow row, int col, FileSchema schema) {
+        ColumnSchema colSchema = schema.getColumn(col);
+        String fieldName = colSchema.name();
+        if (row.isNull(fieldName)) {
             return "null";
         }
 
-        Object value = getValue(row, col, schema);
-
-        if (value instanceof Instant instant) {
-            // Format timestamp as local datetime for readability
+        // Check logical type first for timestamps
+        LogicalType logicalType = colSchema.logicalType();
+        if (logicalType instanceof LogicalType.TimestampType) {
+            Instant instant = row.getTimestamp(fieldName);
             return LocalDateTime.ofInstant(instant, ZoneOffset.UTC)
                     .toString().replace("T", " ");
         }
-        if (value instanceof Double d) {
-            return String.format("%.2f", d);
-        }
-        return String.valueOf(value);
-    }
 
-    private static Object getValue(PqRow row, int col, ColumnSchema schema) {
-        return row.getValue(schema.toPqType(), col);
+        // Fall back to physical type
+        return switch (colSchema.type()) {
+            case INT32 -> String.valueOf(row.getInt(fieldName));
+            case INT64 -> String.valueOf(row.getLong(fieldName));
+            case FLOAT -> String.format("%.2f", row.getFloat(fieldName));
+            case DOUBLE -> String.format("%.2f", row.getDouble(fieldName));
+            case BOOLEAN -> String.valueOf(row.getBoolean(fieldName));
+            case BYTE_ARRAY -> row.getString(fieldName);
+            default -> String.valueOf(row.getValue(fieldName));
+        };
     }
 
     private static String formatLogicalType(LogicalType logicalType) {

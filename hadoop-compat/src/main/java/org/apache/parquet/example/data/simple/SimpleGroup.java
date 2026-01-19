@@ -14,7 +14,6 @@ import org.apache.parquet.schema.Type;
 
 import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqRow;
-import dev.morling.hardwood.row.PqType;
 
 /**
  * SimpleGroup implementation that wraps Hardwood's PqRow.
@@ -47,16 +46,17 @@ public class SimpleGroup implements Group {
     @Override
     public int getFieldRepetitionCount(int fieldIndex) {
         Type fieldType = schema.getType(fieldIndex);
+        String fieldName = fieldType.getName();
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
             // For repeated fields, get the list and return size
-            if (row.isNull(fieldIndex)) {
+            if (row.isNull(fieldName)) {
                 return 0;
             }
-            PqList list = row.getValue(PqType.LIST, fieldIndex);
+            PqList list = row.getList(fieldName);
             return list != null ? list.size() : 0;
         }
         // For non-repeated fields, return 1 if present, 0 if null
-        return row.isNull(fieldIndex) ? 0 : 1;
+        return row.isNull(fieldName) ? 0 : 1;
     }
 
     @Override
@@ -68,7 +68,21 @@ public class SimpleGroup implements Group {
 
     @Override
     public String getString(int fieldIndex, int index) {
-        return getValueAtIndex(fieldIndex, index, PqType.STRING);
+        Type fieldType = schema.getType(fieldIndex);
+        String fieldName = fieldType.getName();
+        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
+            PqList list = row.getList(fieldName);
+            if (list == null || index >= list.size()) {
+                return null;
+            }
+            return (String) list.get(index);
+        }
+        else {
+            if (index != 0) {
+                throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
+            }
+            return row.getString(fieldName);
+        }
     }
 
     @Override
@@ -80,8 +94,25 @@ public class SimpleGroup implements Group {
 
     @Override
     public int getInteger(int fieldIndex, int index) {
-        Integer value = getValueAtIndex(fieldIndex, index, PqType.INT32);
-        return value != null ? value : 0;
+        Type fieldType = schema.getType(fieldIndex);
+        String fieldName = fieldType.getName();
+        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
+            PqList list = row.getList(fieldName);
+            if (list == null || index >= list.size()) {
+                return 0;
+            }
+            Integer value = (Integer) list.get(index);
+            return value != null ? value : 0;
+        }
+        else {
+            if (index != 0) {
+                throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
+            }
+            if (row.isNull(fieldName)) {
+                return 0;
+            }
+            return row.getInt(fieldName);
+        }
     }
 
     @Override
@@ -93,8 +124,25 @@ public class SimpleGroup implements Group {
 
     @Override
     public long getLong(int fieldIndex, int index) {
-        Long value = getValueAtIndex(fieldIndex, index, PqType.INT64);
-        return value != null ? value : 0L;
+        Type fieldType = schema.getType(fieldIndex);
+        String fieldName = fieldType.getName();
+        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
+            PqList list = row.getList(fieldName);
+            if (list == null || index >= list.size()) {
+                return 0L;
+            }
+            Long value = (Long) list.get(index);
+            return value != null ? value : 0L;
+        }
+        else {
+            if (index != 0) {
+                throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
+            }
+            if (row.isNull(fieldName)) {
+                return 0L;
+            }
+            return row.getLong(fieldName);
+        }
     }
 
     @Override
@@ -106,8 +154,25 @@ public class SimpleGroup implements Group {
 
     @Override
     public double getDouble(int fieldIndex, int index) {
-        Double value = getValueAtIndex(fieldIndex, index, PqType.DOUBLE);
-        return value != null ? value : 0.0;
+        Type fieldType = schema.getType(fieldIndex);
+        String fieldName = fieldType.getName();
+        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
+            PqList list = row.getList(fieldName);
+            if (list == null || index >= list.size()) {
+                return 0.0;
+            }
+            Double value = (Double) list.get(index);
+            return value != null ? value : 0.0;
+        }
+        else {
+            if (index != 0) {
+                throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
+            }
+            if (row.isNull(fieldName)) {
+                return 0.0;
+            }
+            return row.getDouble(fieldName);
+        }
     }
 
     @Override
@@ -119,8 +184,25 @@ public class SimpleGroup implements Group {
 
     @Override
     public float getFloat(int fieldIndex, int index) {
-        Float value = getValueAtIndex(fieldIndex, index, PqType.FLOAT);
-        return value != null ? value : 0.0f;
+        Type fieldType = schema.getType(fieldIndex);
+        String fieldName = fieldType.getName();
+        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
+            PqList list = row.getList(fieldName);
+            if (list == null || index >= list.size()) {
+                return 0.0f;
+            }
+            Float value = (Float) list.get(index);
+            return value != null ? value : 0.0f;
+        }
+        else {
+            if (index != 0) {
+                throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
+            }
+            if (row.isNull(fieldName)) {
+                return 0.0f;
+            }
+            return row.getFloat(fieldName);
+        }
     }
 
     @Override
@@ -132,8 +214,25 @@ public class SimpleGroup implements Group {
 
     @Override
     public boolean getBoolean(int fieldIndex, int index) {
-        Boolean value = getValueAtIndex(fieldIndex, index, PqType.BOOLEAN);
-        return value != null ? value : false;
+        Type fieldType = schema.getType(fieldIndex);
+        String fieldName = fieldType.getName();
+        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
+            PqList list = row.getList(fieldName);
+            if (list == null || index >= list.size()) {
+                return false;
+            }
+            Boolean value = (Boolean) list.get(index);
+            return value != null ? value : false;
+        }
+        else {
+            if (index != 0) {
+                throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
+            }
+            if (row.isNull(fieldName)) {
+                return false;
+            }
+            return row.getBoolean(fieldName);
+        }
     }
 
     @Override
@@ -145,7 +244,22 @@ public class SimpleGroup implements Group {
 
     @Override
     public Binary getBinary(int fieldIndex, int index) {
-        byte[] bytes = getValueAtIndex(fieldIndex, index, PqType.BINARY);
+        Type fieldType = schema.getType(fieldIndex);
+        String fieldName = fieldType.getName();
+        byte[] bytes;
+        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
+            PqList list = row.getList(fieldName);
+            if (list == null || index >= list.size()) {
+                return null;
+            }
+            bytes = (byte[]) list.get(index);
+        }
+        else {
+            if (index != 0) {
+                throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
+            }
+            bytes = row.getBinary(fieldName);
+        }
         return bytes != null ? Binary.fromConstantByteArray(bytes) : null;
     }
 
@@ -159,29 +273,24 @@ public class SimpleGroup implements Group {
     @Override
     public Group getGroup(int fieldIndex, int index) {
         Type fieldType = schema.getType(fieldIndex);
+        String fieldName = fieldType.getName();
         GroupType nestedType = fieldType.asGroupType();
 
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
             // Repeated group - get from list
-            PqList list = row.getValue(PqType.LIST, fieldIndex);
+            PqList list = row.getList(fieldName);
             if (list == null || index >= list.size()) {
                 return null;
             }
-            int i = 0;
-            for (PqRow nestedRow : list.getValues(PqType.ROW)) {
-                if (i == index) {
-                    return new SimpleGroup(nestedRow, nestedType);
-                }
-                i++;
-            }
-            return null;
+            PqRow nestedRow = (PqRow) list.get(index);
+            return nestedRow != null ? new SimpleGroup(nestedRow, nestedType) : null;
         }
         else {
             // Single group
             if (index != 0) {
                 throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
             }
-            PqRow nestedRow = row.getValue(PqType.ROW, fieldIndex);
+            PqRow nestedRow = row.getRow(fieldName);
             return nestedRow != null ? new SimpleGroup(nestedRow, nestedType) : null;
         }
     }
@@ -189,41 +298,6 @@ public class SimpleGroup implements Group {
     @Override
     public Group getGroup(String field, int index) {
         return getGroup(schema.getFieldIndex(field), index);
-    }
-
-    // ---- Helper methods ----
-
-    /**
-     * Get a value at a specific index, handling repeated fields.
-     */
-    private <T> T getValueAtIndex(int fieldIndex, int index, PqType<T> pqType) {
-        Type fieldType = schema.getType(fieldIndex);
-
-        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            // Repeated field - get from list
-            PqList list = row.getValue(PqType.LIST, fieldIndex);
-            if (list == null || index >= list.size()) {
-                return null;
-            }
-            int i = 0;
-            for (T value : list.getValues(pqType)) {
-                if (i == index) {
-                    return value;
-                }
-                i++;
-            }
-            return null;
-        }
-        else {
-            // Non-repeated field
-            if (index != 0) {
-                throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
-            }
-            if (row.isNull(fieldIndex)) {
-                return null;
-            }
-            return row.getValue(pqType, fieldIndex);
-        }
     }
 
     @Override

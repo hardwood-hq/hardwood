@@ -7,45 +7,52 @@
  */
 package dev.morling.hardwood.row;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.UUID;
+
 /**
  * Type-safe list interface for reading Parquet list values.
  * <p>
- * Provides access to list elements using {@link PqType} for compile-time type safety.
+ * Provides type-specific accessor methods for iterating over list elements.
+ * For primitive int/long/double lists, use the dedicated types
+ * ({@link PqIntList}, {@link PqLongList}, {@link PqDoubleList}) via
+ * {@code row.getListOfInts()}, etc.
  * </p>
  *
  * <pre>{@code
- * // Simple list
- * PqList tags = row.getValue(PqType.LIST, "tags");
- * for (String tag : tags.getValues(PqType.STRING)) {
+ * // String list
+ * PqList tags = row.getList("tags");
+ * for (String tag : tags.strings()) {
  *     System.out.println(tag);
  * }
  *
- * // Nested list (list<list<int>>)
- * PqList matrix = row.getValue(PqType.LIST, "matrix");
- * for (PqList innerList : matrix.getValues(PqType.LIST)) {
- *     for (Integer val : innerList.getValues(PqType.INT32)) {
- *         System.out.println(val);
+ * // Nested row list
+ * PqList items = row.getList("items");
+ * for (PqRow item : items.rows()) {
+ *     String name = item.getString("name");
+ * }
+ *
+ * // Nested list (2D matrix)
+ * PqList matrix = row.getList("matrix");
+ * for (PqIntList row : matrix.intLists()) {
+ *     for (var it = row.iterator(); it.hasNext(); ) {
+ *         int value = it.nextInt();
  *     }
  * }
  *
- * // List of structs
- * PqList contacts = row.getValue(PqType.LIST, "contacts");
- * for (PqRow contact : contacts.getValues(PqType.ROW)) {
- *     String name = contact.getValue(PqType.STRING, "name");
+ * // Triple nested list (3D cube)
+ * PqList cube = row.getList("cube");
+ * for (PqList plane : cube.lists()) {
+ *     for (PqIntList row : plane.intLists()) {
+ *         // ...
+ *     }
  * }
  * }</pre>
  */
 public interface PqList {
-
-    /**
-     * Get an iterable over the list elements with type safety.
-     *
-     * @param elementType the expected type of list elements
-     * @param <T> the Java type corresponding to the PqType
-     * @return an iterable over the elements (never null, may be empty)
-     * @throws IllegalArgumentException if the requested element type doesn't match the schema
-     */
-    <T> Iterable<T> getValues(PqType<T> elementType);
 
     /**
      * Get the number of elements in this list.
@@ -60,4 +67,126 @@ public interface PqList {
      * @return true if the list has no elements
      */
     boolean isEmpty();
+
+    /**
+     * Get a raw element by index without type conversion.
+     *
+     * @param index the element index (0-based)
+     * @return the raw element value, or null if the element is null
+     * @throws IndexOutOfBoundsException if index is out of range
+     */
+    Object get(int index);
+
+    /**
+     * Check if an element is null by index.
+     *
+     * @param index the element index (0-based)
+     * @return true if the element is null
+     */
+    boolean isNull(int index);
+
+    /**
+     * Iterate over elements as raw objects without type conversion.
+     */
+    Iterable<Object> values();
+
+    // ==================== Primitive Type Accessors ====================
+
+    /**
+     * Iterate over elements as int values.
+     */
+    Iterable<Integer> ints();
+
+    /**
+     * Iterate over elements as long values.
+     */
+    Iterable<Long> longs();
+
+    /**
+     * Iterate over elements as float values.
+     */
+    Iterable<Float> floats();
+
+    /**
+     * Iterate over elements as double values.
+     */
+    Iterable<Double> doubles();
+
+    /**
+     * Iterate over elements as boolean values.
+     */
+    Iterable<Boolean> booleans();
+
+    // ==================== Object Type Accessors ====================
+
+    /**
+     * Iterate over elements as String values.
+     */
+    Iterable<String> strings();
+
+    /**
+     * Iterate over elements as binary (byte[]) values.
+     */
+    Iterable<byte[]> binaries();
+
+    /**
+     * Iterate over elements as LocalDate values.
+     */
+    Iterable<LocalDate> dates();
+
+    /**
+     * Iterate over elements as LocalTime values.
+     */
+    Iterable<LocalTime> times();
+
+    /**
+     * Iterate over elements as Instant (timestamp) values.
+     */
+    Iterable<Instant> timestamps();
+
+    /**
+     * Iterate over elements as BigDecimal values.
+     */
+    Iterable<BigDecimal> decimals();
+
+    /**
+     * Iterate over elements as UUID values.
+     */
+    Iterable<UUID> uuids();
+
+    // ==================== Nested Type Accessors ====================
+
+    /**
+     * Iterate over elements as nested rows (structs).
+     */
+    Iterable<PqRow> rows();
+
+    /**
+     * Iterate over elements as nested lists.
+     * Use this for list-of-list structures.
+     */
+    Iterable<PqList> lists();
+
+    /**
+     * Iterate over elements as nested int lists.
+     * Use this for list-of-int-list structures (e.g., 2D int matrix).
+     */
+    Iterable<PqIntList> intLists();
+
+    /**
+     * Iterate over elements as nested long lists.
+     * Use this for list-of-long-list structures.
+     */
+    Iterable<PqLongList> longLists();
+
+    /**
+     * Iterate over elements as nested double lists.
+     * Use this for list-of-double-list structures.
+     */
+    Iterable<PqDoubleList> doubleLists();
+
+    /**
+     * Iterate over elements as nested maps.
+     */
+    Iterable<PqMap> maps();
 }

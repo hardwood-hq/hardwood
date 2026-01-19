@@ -7,10 +7,19 @@
  */
 package dev.morling.hardwood.internal.reader;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
+import java.util.UUID;
 
+import dev.morling.hardwood.row.PqDoubleList;
+import dev.morling.hardwood.row.PqIntList;
+import dev.morling.hardwood.row.PqList;
+import dev.morling.hardwood.row.PqLongList;
+import dev.morling.hardwood.row.PqMap;
 import dev.morling.hardwood.row.PqRow;
-import dev.morling.hardwood.row.PqType;
 import dev.morling.hardwood.schema.FileSchema;
 import dev.morling.hardwood.schema.SchemaNode;
 
@@ -38,25 +47,170 @@ public class PqRowImpl implements PqRow {
         this.schema = structSchema;
     }
 
-    @Override
-    public <T> T getValue(PqType<T> type, int index) {
-        Object rawValue = values.getChild(index);
-        SchemaNode fieldSchema = schema.children().get(index);
-        return ValueConverter.convert(rawValue, type, fieldSchema);
-    }
+    // ==================== Primitive Types ====================
 
     @Override
-    public <T> T getValue(PqType<T> type, String name) {
+    public int getInt(String name) {
         int index = getFieldIndex(name);
-        Object rawValue = values.getChild(index);
         SchemaNode fieldSchema = schema.children().get(index);
-        return ValueConverter.convert(rawValue, type, fieldSchema);
+        Integer val = ValueConverter.convertToInt(values.getChild(index), fieldSchema);
+        if (val == null) {
+            throw new NullPointerException("Field '" + name + "' is null");
+        }
+        return val;
     }
 
     @Override
-    public boolean isNull(int index) {
-        return values.getChild(index) == null;
+    public long getLong(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        Long val = ValueConverter.convertToLong(values.getChild(index), fieldSchema);
+        if (val == null) {
+            throw new NullPointerException("Field '" + name + "' is null");
+        }
+        return val;
     }
+
+    @Override
+    public float getFloat(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        Float val = ValueConverter.convertToFloat(values.getChild(index), fieldSchema);
+        if (val == null) {
+            throw new NullPointerException("Field '" + name + "' is null");
+        }
+        return val;
+    }
+
+    @Override
+    public double getDouble(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        Double val = ValueConverter.convertToDouble(values.getChild(index), fieldSchema);
+        if (val == null) {
+            throw new NullPointerException("Field '" + name + "' is null");
+        }
+        return val;
+    }
+
+    @Override
+    public boolean getBoolean(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        Boolean val = ValueConverter.convertToBoolean(values.getChild(index), fieldSchema);
+        if (val == null) {
+            throw new NullPointerException("Field '" + name + "' is null");
+        }
+        return val;
+    }
+
+    // ==================== Object Types ====================
+
+    @Override
+    public String getString(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToString(values.getChild(index), fieldSchema);
+    }
+
+    @Override
+    public byte[] getBinary(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToBinary(values.getChild(index), fieldSchema);
+    }
+
+    @Override
+    public LocalDate getDate(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToDate(values.getChild(index), fieldSchema);
+    }
+
+    @Override
+    public LocalTime getTime(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToTime(values.getChild(index), fieldSchema);
+    }
+
+    @Override
+    public Instant getTimestamp(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToTimestamp(values.getChild(index), fieldSchema);
+    }
+
+    @Override
+    public BigDecimal getDecimal(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToDecimal(values.getChild(index), fieldSchema);
+    }
+
+    @Override
+    public UUID getUuid(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToUuid(values.getChild(index), fieldSchema);
+    }
+
+    // ==================== Nested Types ====================
+
+    @Override
+    public PqRow getRow(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToRow(values.getChild(index), fieldSchema);
+    }
+
+    // ==================== Primitive List Types ====================
+
+    @Override
+    public PqIntList getListOfInts(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToIntList(values.getChild(index), fieldSchema);
+    }
+
+    @Override
+    public PqLongList getListOfLongs(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToLongList(values.getChild(index), fieldSchema);
+    }
+
+    @Override
+    public PqDoubleList getListOfDoubles(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToDoubleList(values.getChild(index), fieldSchema);
+    }
+
+    // ==================== Generic List ====================
+
+    @Override
+    public PqList getList(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToList(values.getChild(index), fieldSchema);
+    }
+
+    @Override
+    public PqMap getMap(String name) {
+        int index = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.children().get(index);
+        return ValueConverter.convertToMap(values.getChild(index), fieldSchema);
+    }
+
+    // ==================== Generic Fallback ====================
+
+    @Override
+    public Object getValue(String name) {
+        return values.getChild(getFieldIndex(name));
+    }
+
+    // ==================== Metadata ====================
 
     @Override
     public boolean isNull(String name) {

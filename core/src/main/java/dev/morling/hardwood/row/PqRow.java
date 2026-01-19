@@ -7,60 +7,231 @@
  */
 package dev.morling.hardwood.row;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.UUID;
+
 /**
  * Type-safe row interface for reading Parquet data.
  * <p>
- * Provides access to field values using {@link PqType} for compile-time type safety.
+ * Provides dedicated accessor methods for each type, similar to JDBC ResultSet.
  * </p>
  *
  * <pre>{@code
  * PqRow row = ...;
- * int id = row.getValue(PqType.INT32, "id");
- * String name = row.getValue(PqType.STRING, "name");
- * LocalDate date = row.getValue(PqType.DATE, "birth_date");
+ * int id = row.getInt("id");
+ * String name = row.getString("name");
+ * LocalDate date = row.getDate("birth_date");
  *
  * // Nested struct
- * PqRow address = row.getValue(PqType.ROW, "address");
- * String city = address.getValue(PqType.STRING, "city");
+ * PqRow address = row.getRow("address");
+ * String city = address.getString("city");
  *
  * // List
- * PqList tags = row.getValue(PqType.LIST, "tags");
- * for (String tag : tags.getValues(PqType.STRING)) { ... }
+ * PqList tags = row.getList("tags");
+ * for (String tag : tags.strings()) { ... }
  * }</pre>
  */
 public interface PqRow {
 
-    /**
-     * Get a field value by index with type safety.
-     *
-     * @param type the expected type of the field
-     * @param index the field index (0-based)
-     * @param <T> the Java type corresponding to the PqType
-     * @return the field value, or null if the field is null
-     * @throws IllegalArgumentException if the requested type doesn't match the schema
-     * @throws IndexOutOfBoundsException if the index is out of range
-     */
-    <T> T getValue(PqType<T> type, int index);
+    // ==================== Primitive Types ====================
 
     /**
-     * Get a field value by name with type safety.
+     * Get an INT32 field value by name.
      *
-     * @param type the expected type of the field
      * @param name the field name
-     * @param <T> the Java type corresponding to the PqType
-     * @return the field value, or null if the field is null
-     * @throws IllegalArgumentException if the requested type doesn't match the schema,
-     *         or if the field name doesn't exist
+     * @return the int value
+     * @throws NullPointerException if the field is null
+     * @throws IllegalArgumentException if the field type is not INT32
      */
-    <T> T getValue(PqType<T> type, String name);
+    int getInt(String name);
 
     /**
-     * Check if a field is null by index.
+     * Get an INT64 field value by name.
      *
-     * @param index the field index (0-based)
-     * @return true if the field is null
+     * @param name the field name
+     * @return the long value
+     * @throws NullPointerException if the field is null
+     * @throws IllegalArgumentException if the field type is not INT64
      */
-    boolean isNull(int index);
+    long getLong(String name);
+
+    /**
+     * Get a FLOAT field value by name.
+     *
+     * @param name the field name
+     * @return the float value
+     * @throws NullPointerException if the field is null
+     * @throws IllegalArgumentException if the field type is not FLOAT
+     */
+    float getFloat(String name);
+
+    /**
+     * Get a DOUBLE field value by name.
+     *
+     * @param name the field name
+     * @return the double value
+     * @throws NullPointerException if the field is null
+     * @throws IllegalArgumentException if the field type is not DOUBLE
+     */
+    double getDouble(String name);
+
+    /**
+     * Get a BOOLEAN field value by name.
+     *
+     * @param name the field name
+     * @return the boolean value
+     * @throws NullPointerException if the field is null
+     * @throws IllegalArgumentException if the field type is not BOOLEAN
+     */
+    boolean getBoolean(String name);
+
+    // ==================== Object Types ====================
+
+    /**
+     * Get a STRING field value by name.
+     *
+     * @param name the field name
+     * @return the string value, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not STRING
+     */
+    String getString(String name);
+
+    /**
+     * Get a BINARY field value by name.
+     *
+     * @param name the field name
+     * @return the byte array, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not BINARY
+     */
+    byte[] getBinary(String name);
+
+    /**
+     * Get a DATE field value by name.
+     *
+     * @param name the field name
+     * @return the date value, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not DATE
+     */
+    LocalDate getDate(String name);
+
+    /**
+     * Get a TIME field value by name.
+     *
+     * @param name the field name
+     * @return the time value, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not TIME
+     */
+    LocalTime getTime(String name);
+
+    /**
+     * Get a TIMESTAMP field value by name.
+     *
+     * @param name the field name
+     * @return the instant value, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not TIMESTAMP
+     */
+    Instant getTimestamp(String name);
+
+    /**
+     * Get a DECIMAL field value by name.
+     *
+     * @param name the field name
+     * @return the decimal value, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not DECIMAL
+     */
+    BigDecimal getDecimal(String name);
+
+    /**
+     * Get a UUID field value by name.
+     *
+     * @param name the field name
+     * @return the UUID value, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not UUID
+     */
+    UUID getUuid(String name);
+
+    // ==================== Nested Types ====================
+
+    /**
+     * Get a nested ROW (struct) field value by name.
+     *
+     * @param name the field name
+     * @return the nested row, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not a struct
+     */
+    PqRow getRow(String name);
+
+    // ==================== Primitive List Types ====================
+
+    /**
+     * Get an INT32 list field by name.
+     *
+     * @param name the field name
+     * @return the int list, or null if the field is null
+     * @throws IllegalArgumentException if the field is not a list of INT32
+     */
+    PqIntList getListOfInts(String name);
+
+    /**
+     * Get an INT64 list field by name.
+     *
+     * @param name the field name
+     * @return the long list, or null if the field is null
+     * @throws IllegalArgumentException if the field is not a list of INT64
+     */
+    PqLongList getListOfLongs(String name);
+
+    /**
+     * Get a DOUBLE list field by name.
+     *
+     * @param name the field name
+     * @return the double list, or null if the field is null
+     * @throws IllegalArgumentException if the field is not a list of DOUBLE
+     */
+    PqDoubleList getListOfDoubles(String name);
+
+    // ==================== Generic List ====================
+
+    /**
+     * Get a LIST field value by name.
+     *
+     * <pre>{@code
+     * PqList tags = row.getList("tags");
+     * for (String tag : tags.strings()) {
+     *     System.out.println(tag);
+     * }
+     * }</pre>
+     *
+     * @param name the field name
+     * @return the list, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not a list
+     */
+    PqList getList(String name);
+
+    /**
+     * Get a MAP field value by name.
+     *
+     * @param name the field name
+     * @return the map, or null if the field is null
+     * @throws IllegalArgumentException if the field type is not a map
+     */
+    PqMap getMap(String name);
+
+    // ==================== Generic Fallback ====================
+
+    /**
+     * Get a field value by name without type conversion.
+     * Returns the raw value as stored internally.
+     *
+     * @param name the field name
+     * @return the raw value, or null if the field is null
+     */
+    Object getValue(String name);
+
+    // ==================== Metadata ====================
 
     /**
      * Check if a field is null by name.

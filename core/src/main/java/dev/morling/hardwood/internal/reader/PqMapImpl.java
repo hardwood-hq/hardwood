@@ -7,12 +7,18 @@
  */
 package dev.morling.hardwood.internal.reader;
 
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.UUID;
 
+import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqMap;
-import dev.morling.hardwood.row.PqType;
+import dev.morling.hardwood.row.PqRow;
 import dev.morling.hardwood.schema.SchemaNode;
 
 /**
@@ -80,17 +86,162 @@ public class PqMapImpl implements PqMap {
             this.valueSchema = valueSchema;
         }
 
+        // ==================== Key Accessors - Primitives ====================
+
         @Override
-        public <K> K getKey(PqType<K> type) {
-            return ValueConverter.convert(key, type, keySchema);
+        public int getIntKey() {
+            Integer val = ValueConverter.convertToInt(key, keySchema);
+            if (val == null) {
+                throw new NullPointerException("Key is null");
+            }
+            return val;
         }
 
         @Override
-        public <V> V getValue(PqType<V> type) {
-            if (value == null) {
-                return null;
+        public long getLongKey() {
+            Long val = ValueConverter.convertToLong(key, keySchema);
+            if (val == null) {
+                throw new NullPointerException("Key is null");
             }
-            return ValueConverter.convert(value, type, valueSchema);
+            return val;
+        }
+
+        // ==================== Key Accessors - Objects ====================
+
+        @Override
+        public String getStringKey() {
+            return ValueConverter.convertToString(key, keySchema);
+        }
+
+        @Override
+        public byte[] getBinaryKey() {
+            return ValueConverter.convertToBinary(key, keySchema);
+        }
+
+        @Override
+        public LocalDate getDateKey() {
+            return ValueConverter.convertToDate(key, keySchema);
+        }
+
+        @Override
+        public Instant getTimestampKey() {
+            return ValueConverter.convertToTimestamp(key, keySchema);
+        }
+
+        @Override
+        public UUID getUuidKey() {
+            return ValueConverter.convertToUuid(key, keySchema);
+        }
+
+        @Override
+        public Object getKey() {
+            return key;
+        }
+
+        // ==================== Value Accessors - Primitives ====================
+
+        @Override
+        public int getIntValue() {
+            Integer val = ValueConverter.convertToInt(value, valueSchema);
+            if (val == null) {
+                throw new NullPointerException("Value is null");
+            }
+            return val;
+        }
+
+        @Override
+        public long getLongValue() {
+            Long val = ValueConverter.convertToLong(value, valueSchema);
+            if (val == null) {
+                throw new NullPointerException("Value is null");
+            }
+            return val;
+        }
+
+        @Override
+        public float getFloatValue() {
+            Float val = ValueConverter.convertToFloat(value, valueSchema);
+            if (val == null) {
+                throw new NullPointerException("Value is null");
+            }
+            return val;
+        }
+
+        @Override
+        public double getDoubleValue() {
+            Double val = ValueConverter.convertToDouble(value, valueSchema);
+            if (val == null) {
+                throw new NullPointerException("Value is null");
+            }
+            return val;
+        }
+
+        @Override
+        public boolean getBooleanValue() {
+            Boolean val = ValueConverter.convertToBoolean(value, valueSchema);
+            if (val == null) {
+                throw new NullPointerException("Value is null");
+            }
+            return val;
+        }
+
+        // ==================== Value Accessors - Objects ====================
+
+        @Override
+        public String getStringValue() {
+            return ValueConverter.convertToString(value, valueSchema);
+        }
+
+        @Override
+        public byte[] getBinaryValue() {
+            return ValueConverter.convertToBinary(value, valueSchema);
+        }
+
+        @Override
+        public LocalDate getDateValue() {
+            return ValueConverter.convertToDate(value, valueSchema);
+        }
+
+        @Override
+        public LocalTime getTimeValue() {
+            return ValueConverter.convertToTime(value, valueSchema);
+        }
+
+        @Override
+        public Instant getTimestampValue() {
+            return ValueConverter.convertToTimestamp(value, valueSchema);
+        }
+
+        @Override
+        public BigDecimal getDecimalValue() {
+            return ValueConverter.convertToDecimal(value, valueSchema);
+        }
+
+        @Override
+        public UUID getUuidValue() {
+            return ValueConverter.convertToUuid(value, valueSchema);
+        }
+
+        // ==================== Value Accessors - Nested Types ====================
+
+        @Override
+        public PqRow getRowValue() {
+            return ValueConverter.convertToRow(value, valueSchema);
+        }
+
+        @Override
+        public PqList getListValue() {
+            return ValueConverter.convertToList(value, valueSchema);
+        }
+
+        @Override
+        public PqMap getMapValue() {
+            return ValueConverter.convertToMap(value, valueSchema);
+        }
+
+        @Override
+        public Object getValue() {
+            return value;
         }
 
         @Override

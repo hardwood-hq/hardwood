@@ -63,9 +63,9 @@ public final class MutableList implements MutableContainer {
     }
 
     /**
-     * Returns an iterable over the elements for reading.
+     * Returns the list of elements for reading.
      */
-    public Iterable<Object> elements() {
+    public List<Object> elements() {
         return elements;
     }
 
