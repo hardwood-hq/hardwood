@@ -37,8 +37,8 @@ public class PqRowApiTest {
     void testPrimitiveTypes() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
-            try (RowReader rowReader = fileReader.createRowReader()) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+            RowReader rowReader = fileReader.createRowReader()) {
                 List<PqRow> rows = new ArrayList<>();
                 for (PqRow row : rowReader) {
                     rows.add(row);
@@ -68,7 +68,6 @@ public class PqRowApiTest {
                 assertThat(row2.getLong("id")).isEqualTo(3L);
                 assertThat(row2.getLong("value")).isEqualTo(300L);
             }
-        }
     }
 
     @Test

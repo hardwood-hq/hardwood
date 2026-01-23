@@ -109,80 +109,80 @@ import java.time.LocalTime;
 import java.math.BigDecimal;
 import java.util.UUID;
 
-try (ParquetFileReader fileReader = ParquetFileReader.open(path)) {
-    try (RowReader rowReader = fileReader.createRowReader()) {
-        for (PqRow row : rowReader) {
-            // Access columns by name with typed accessors
-            long id = row.getLong("id");
-            String name = row.getString("name");
+try (ParquetFileReader fileReader = ParquetFileReader.open(path);
+    RowReader rowReader = fileReader.createRowReader()) {
 
-            // Logical types are automatically converted
-            LocalDate birthDate = row.getDate("birth_date");
-            Instant createdAt = row.getTimestamp("created_at");
-            LocalTime wakeTime = row.getTime("wake_time");
-            BigDecimal balance = row.getDecimal("balance");
-            UUID accountId = row.getUuid("account_id");
+    for (PqRow row : rowReader) {
+        // Access columns by name with typed accessors
+        long id = row.getLong("id");
+        String name = row.getString("name");
 
-            // Check for null values
-            if (!row.isNull("age")) {
-                int age = row.getInt("age");
-                System.out.println("ID: " + id + ", Name: " + name + ", Age: " + age);
+        // Logical types are automatically converted
+        LocalDate birthDate = row.getDate("birth_date");
+        Instant createdAt = row.getTimestamp("created_at");
+        LocalTime wakeTime = row.getTime("wake_time");
+        BigDecimal balance = row.getDecimal("balance");
+        UUID accountId = row.getUuid("account_id");
+
+        // Check for null values
+        if (!row.isNull("age")) {
+            int age = row.getInt("age");
+            System.out.println("ID: " + id + ", Name: " + name + ", Age: " + age);
+        }
+
+        // Access nested structs
+        PqRow address = row.getRow("address");
+        if (address != null) {
+            String city = address.getString("city");
+            int zip = address.getInt("zip");
+        }
+
+        // Access lists and iterate with typed accessors
+        PqList tags = row.getList("tags");
+        if (tags != null) {
+            for (String tag : tags.strings()) {
+                System.out.println("Tag: " + tag);
             }
+        }
 
-            // Access nested structs
-            PqRow address = row.getRow("address");
-            if (address != null) {
-                String city = address.getString("city");
-                int zip = address.getInt("zip");
+        // Access list of structs
+        PqList contacts = row.getList("contacts");
+        if (contacts != null) {
+            for (PqRow contact : contacts.rows()) {
+                String contactName = contact.getString("name");
+                String phone = contact.getString("phone");
             }
+        }
 
-            // Access lists and iterate with typed accessors
-            PqList tags = row.getList("tags");
-            if (tags != null) {
-                for (String tag : tags.strings()) {
-                    System.out.println("Tag: " + tag);
+        // Access nested lists (list<list<int>>) using primitive int lists
+        PqList matrix = row.getList("matrix");
+        if (matrix != null) {
+            for (PqIntList innerList : matrix.intLists()) {
+                for (var it = innerList.iterator(); it.hasNext(); ) {
+                    int val = it.nextInt();
+                    System.out.println("Value: " + val);
                 }
             }
+        }
 
-            // Access list of structs
-            PqList contacts = row.getList("contacts");
-            if (contacts != null) {
-                for (PqRow contact : contacts.rows()) {
-                    String contactName = contact.getString("name");
-                    String phone = contact.getString("phone");
-                }
+        // Access maps (map<string, int>)
+        PqMap attributes = row.getMap("attributes");
+        if (attributes != null) {
+            for (PqMap.Entry entry : attributes.getEntries()) {
+                String key = entry.getStringKey();
+                int value = entry.getIntValue();
+                System.out.println(key + " = " + value);
             }
+        }
 
-            // Access nested lists (list<list<int>>) using primitive int lists
-            PqList matrix = row.getList("matrix");
-            if (matrix != null) {
-                for (PqIntList innerList : matrix.intLists()) {
-                    for (var it = innerList.iterator(); it.hasNext(); ) {
-                        int val = it.nextInt();
-                        System.out.println("Value: " + val);
-                    }
-                }
-            }
-
-            // Access maps (map<string, int>)
-            PqMap attributes = row.getMap("attributes");
-            if (attributes != null) {
-                for (PqMap.Entry entry : attributes.getEntries()) {
-                    String key = entry.getStringKey();
-                    int value = entry.getIntValue();
-                    System.out.println(key + " = " + value);
-                }
-            }
-
-            // Access maps with struct values (map<string, struct>)
-            PqMap people = row.getMap("people");
-            if (people != null) {
-                for (PqMap.Entry entry : people.getEntries()) {
-                    String personId = entry.getStringKey();
-                    PqRow person = entry.getRowValue();
-                    String personName = person.getString("name");
-                    int personAge = person.getInt("age");
-                }
+        // Access maps with struct values (map<string, struct>)
+        PqMap people = row.getMap("people");
+        if (people != null) {
+            for (PqMap.Entry entry : people.getEntries()) {
+                String personId = entry.getStringKey();
+                PqRow person = entry.getRowValue();
+                String personName = person.getString("name");
+                int personAge = person.getInt("age");
             }
         }
     }
@@ -927,10 +927,37 @@ Run the following command to format the source code and organize the imports as 
 The performance test module is not included in the default build. To run performance tests against NYC Yellow Taxi Trip data:
 
 ```shell
-./mvnw test -Pperformance-test -pl performance-test
+./mvnw test -Pperformance-test
 ```
 
-This will download ~500MB of test data on the first run and compare Hardwood's performance against parquet-java.
+This will download test data on the first run (up to ~4GB for the full 2020-2025 dataset).
+
+**Configuration options:**
+
+| Property | Default | Description |
+|----------|---------|-------------|
+| `perf.contenders` | `hardwood` | Which implementations to benchmark: `hardwood`, `parquet-java`, or `all` |
+| `perf.start` | `2020-01` | Start year-month for data range |
+| `perf.end` | `2025-11` | End year-month for data range |
+
+**Examples:**
+
+```shell
+# Run only Hardwood (default)
+./mvnw test -Pperformance-test
+
+# Compare Hardwood against parquet-java
+./mvnw test -Pperformance-test -Dperf.contenders=all
+
+# Run only for 2025 data
+./mvnw test -Pperformance-test -Dperf.start=2025-01
+
+# Run for a specific year
+./mvnw test -Pperformance-test -Dperf.start=2024-01 -Dperf.end=2024-12
+
+# Run for a single month
+./mvnw test -Pperformance-test -Dperf.start=2025-06 -Dperf.end=2025-06
+```
 
 ## License
 

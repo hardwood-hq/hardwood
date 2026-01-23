@@ -14,9 +14,15 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.time.YearMonth;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.EnumSet;
 import java.util.List;
+import java.util.Set;
+import java.util.function.Function;
 import java.util.function.Supplier;
+import java.util.stream.Collectors;
 
 import org.apache.avro.generic.GenericRecord;
 import org.apache.hadoop.conf.Configuration;
@@ -37,7 +43,7 @@ import static org.assertj.core.api.Assertions.withinPercentage;
 /**
  * Performance comparison test between Hardwood, and parquet-java.
  *
- * <p>Downloads NYC Yellow Taxi Trip Records for 2025 and compares reading
+ * <p>Downloads NYC Yellow Taxi Trip Records for 2020-2025 and compares reading
  * performance while verifying correctness by comparing calculated sums.</p>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -45,16 +51,79 @@ class SimplePerformanceTest {
 
     private static final String BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data/";
     private static final Path DATA_DIR = Path.of("target/tlc-trip-record-data");
-    private static final int YEAR = 2025;
+    private static final YearMonth DEFAULT_START = YearMonth.of(2020, 1);
+    private static final YearMonth DEFAULT_END = YearMonth.of(2025, 11);
+    private static final String CONTENDERS_PROPERTY = "perf.contenders";
+    private static final String START_PROPERTY = "perf.start";
+    private static final String END_PROPERTY = "perf.end";
+
+    enum Contender {
+        HARDWOOD("Hardwood"),
+        PARQUET_JAVA("parquet-java");
+
+        private final String displayName;
+
+        Contender(String displayName) {
+            this.displayName = displayName;
+        }
+
+        String displayName() {
+            return displayName;
+        }
+
+        static Contender fromString(String name) {
+            for (Contender c : values()) {
+                if (c.name().equalsIgnoreCase(name) || c.displayName.equalsIgnoreCase(name)) {
+                    return c;
+                }
+            }
+            throw new IllegalArgumentException("Unknown contender: " + name +
+                    ". Valid values: " + Arrays.toString(values()));
+        }
+    }
 
     record Result(long passengerCount, double tripDistance, double fareAmount, long durationMs, long rowCount) {
+    }
+
+    private Set<Contender> getEnabledContenders() {
+        String property = System.getProperty(CONTENDERS_PROPERTY);
+        if (property == null || property.isBlank()) {
+            return EnumSet.of(Contender.HARDWOOD);
+        }
+        if (property.equalsIgnoreCase("all")) {
+            return EnumSet.allOf(Contender.class);
+        }
+        return Arrays.stream(property.split(","))
+                .map(String::trim)
+                .filter(s -> !s.isEmpty())
+                .map(Contender::fromString)
+                .collect(Collectors.toCollection(() -> EnumSet.noneOf(Contender.class)));
+    }
+
+    private YearMonth getStartMonth() {
+        String property = System.getProperty(START_PROPERTY);
+        if (property == null || property.isBlank()) {
+            return DEFAULT_START;
+        }
+        return YearMonth.parse(property);
+    }
+
+    private YearMonth getEndMonth() {
+        String property = System.getProperty(END_PROPERTY);
+        if (property == null || property.isBlank()) {
+            return DEFAULT_END;
+        }
+        YearMonth requested = YearMonth.parse(property);
+        return requested.isAfter(DEFAULT_END) ? DEFAULT_END : requested;
     }
 
     @BeforeAll
     void downloadData() throws IOException {
         Files.createDirectories(DATA_DIR);
-        for (int month = 1; month <= 12; month++) {
-            String filename = String.format("yellow_tripdata_%d-%02d.parquet", YEAR, month);
+        YearMonth start = getStartMonth();
+        YearMonth end = getEndMonth();
+        for (YearMonth ym = start; !ym.isAfter(end); ym = ym.plusMonths(1)) {
+            String filename = String.format("yellow_tripdata_%d-%02d.parquet", ym.getYear(), ym.getMonthValue());
             Path target = DATA_DIR.resolve(filename);
             if (!Files.exists(target)) {
                 downloadFile(BASE_URL + filename, target);
@@ -67,40 +136,68 @@ class SimplePerformanceTest {
         List<Path> files = getAvailableFiles();
         assertThat(files).as("At least one data file should be available").isNotEmpty();
 
+        Set<Contender> enabledContenders = getEnabledContenders();
+        assertThat(enabledContenders).as("At least one contender must be enabled").isNotEmpty();
+
         System.out.println("\n=== Performance Test ===");
         System.out.println("Files available: " + files.size());
+        System.out.println("Enabled contenders: " + enabledContenders.stream()
+                .map(Contender::displayName)
+                .collect(Collectors.joining(", ")));
 
-        // Warmup run (not timed)
+        // Warmup run (not timed) - use first enabled contender
         System.out.println("\nWarmup run...");
-        runHardwood(files);
+        Contender warmupContender = enabledContenders.iterator().next();
+        getRunner(warmupContender).apply(files);
 
         // Timed runs
         System.out.println("\nTimed runs:");
-        Result hardwoodResult = timeRun("Hardwood", () -> runHardwood(files));
-        Result parquetJavaResult = timeRun("parquet-java", () -> runParquetJava(files));
+        Result hardwoodResult = null;
+        Result parquetJavaResult = null;
+
+        for (Contender contender : enabledContenders) {
+            Result result = timeRun(contender.displayName(), () -> getRunner(contender).apply(files));
+            if (contender == Contender.HARDWOOD) {
+                hardwoodResult = result;
+            }
+            else if (contender == Contender.PARQUET_JAVA) {
+                parquetJavaResult = result;
+            }
+        }
 
         // Print results
-        printResults(files.size(), hardwoodResult, parquetJavaResult);
+        printResults(files.size(), enabledContenders, hardwoodResult, parquetJavaResult);
 
-        // Verify correctness - compare against parquet-java as reference
-        // Use relative tolerance for floating-point sums (accumulation error over millions of rows)
-        assertThat(hardwoodResult.passengerCount())
-                .as("Hardwood passenger_count should match parquet-java")
-                .isEqualTo(parquetJavaResult.passengerCount());
-        assertThat(hardwoodResult.tripDistance())
-                .as("Hardwood trip_distance should match parquet-java")
-                .isCloseTo(parquetJavaResult.tripDistance(), withinPercentage(0.0001));
-        assertThat(hardwoodResult.fareAmount())
-                .as("Hardwood fare_amount should match parquet-java")
-                .isCloseTo(parquetJavaResult.fareAmount(), withinPercentage(0.0001));
+        // Verify correctness - compare against parquet-java as reference (only if both are enabled)
+        if (hardwoodResult != null && parquetJavaResult != null) {
+            // Use relative tolerance for floating-point sums (accumulation error over millions of rows)
+            assertThat(hardwoodResult.passengerCount())
+                    .as("Hardwood passenger_count should match parquet-java")
+                    .isEqualTo(parquetJavaResult.passengerCount());
+            assertThat(hardwoodResult.tripDistance())
+                    .as("Hardwood trip_distance should match parquet-java")
+                    .isCloseTo(parquetJavaResult.tripDistance(), withinPercentage(0.0001));
+            assertThat(hardwoodResult.fareAmount())
+                    .as("Hardwood fare_amount should match parquet-java")
+                    .isCloseTo(parquetJavaResult.fareAmount(), withinPercentage(0.0001));
 
-        System.out.println("\nAll results match!");
+            System.out.println("\nAll results match!");
+        }
+    }
+
+    private Function<List<Path>, Result> getRunner(Contender contender) {
+        return switch (contender) {
+            case HARDWOOD -> this::runHardwood;
+            case PARQUET_JAVA -> this::runParquetJava;
+        };
     }
 
     private List<Path> getAvailableFiles() throws IOException {
         List<Path> files = new ArrayList<>();
-        for (int month = 1; month <= 11; month++) {
-            String filename = String.format("yellow_tripdata_%d-%02d.parquet", YEAR, month);
+        YearMonth start = getStartMonth();
+        YearMonth end = getEndMonth();
+        for (YearMonth ym = start; !ym.isAfter(end); ym = ym.plusMonths(1)) {
+            String filename = String.format("yellow_tripdata_%d-%02d.parquet", ym.getYear(), ym.getMonthValue());
             Path file = DATA_DIR.resolve(filename);
             if (Files.exists(file) && Files.size(file) > 0) {
                 files.add(file);
@@ -129,8 +226,9 @@ class SimplePerformanceTest {
                     RowReader rowReader = reader.createRowReader()) {
                 for (PqRow row : rowReader) {
                     rowCount++;
-                    if (!row.isNull("passenger_count")) {
-                        passengerCount += row.getLong("passenger_count");
+                    Object pc = row.getValue("passenger_count");
+                    if (pc != null) {
+                        passengerCount += ((Number) pc).longValue();
                     }
 
                     if (!row.isNull("trip_distance")) {
@@ -187,7 +285,8 @@ class SimplePerformanceTest {
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    private void printResults(int fileCount, Result hardwood, Result parquetJava) {
+    private void printResults(int fileCount, Set<Contender> enabledContenders,
+            Result hardwood, Result parquetJava) {
         int cpuCores = Runtime.getRuntime().availableProcessors();
         long totalBytes = 0;
         try {
@@ -197,6 +296,9 @@ class SimplePerformanceTest {
         }
         catch (IOException ignored) {
         }
+
+        // Use the first available result to get row count
+        Result firstResult = hardwood != null ? hardwood : parquetJava;
 
         System.out.println("\n" + "=".repeat(100));
         System.out.println("PERFORMANCE TEST RESULTS");
@@ -209,16 +311,18 @@ class SimplePerformanceTest {
         System.out.println();
         System.out.println("Data:");
         System.out.println("  Files processed: " + fileCount);
-        System.out.println("  Total rows:      " + String.format("%,d", hardwood.rowCount()));
+        System.out.println("  Total rows:      " + String.format("%,d", firstResult.rowCount()));
         System.out.println("  Total size:      " + String.format("%,.1f MB", totalBytes / (1024.0 * 1024.0)));
         System.out.println();
 
-        // Correctness verification
-        System.out.println("Correctness Verification:");
-        System.out.println(String.format("  %-20s %17s %17s %17s", "", "passenger_count", "trip_distance", "fare_amount"));
-        System.out.println(String.format("  %-20s %,17d %,17.2f %,17.2f", "Hardwood", hardwood.passengerCount(), hardwood.tripDistance(), hardwood.fareAmount()));
-        System.out.println(String.format("  %-20s %,17d %,17.2f %,17.2f", "parquet-java", parquetJava.passengerCount(), parquetJava.tripDistance(), parquetJava.fareAmount()));
-        System.out.println();
+        // Correctness verification (only if both contenders ran)
+        if (hardwood != null && parquetJava != null) {
+            System.out.println("Correctness Verification:");
+            System.out.println(String.format("  %-20s %17s %17s %17s", "", "passenger_count", "trip_distance", "fare_amount"));
+            System.out.println(String.format("  %-20s %,17d %,17.2f %,17.2f", "Hardwood", hardwood.passengerCount(), hardwood.tripDistance(), hardwood.fareAmount()));
+            System.out.println(String.format("  %-20s %,17d %,17.2f %,17.2f", "parquet-java", parquetJava.passengerCount(), parquetJava.tripDistance(), parquetJava.fareAmount()));
+            System.out.println();
+        }
 
         // Performance comparison
         System.out.println("Performance:");
@@ -226,15 +330,21 @@ class SimplePerformanceTest {
                 "Contender", "Time (s)", "Records/sec", "Records/sec/core", "MB/sec"));
         System.out.println("  " + "-".repeat(85));
 
-        printResultRow("Hardwood", hardwood, cpuCores);
-        printResultRow("parquet-java", parquetJava, 1);
+        if (hardwood != null) {
+            printResultRow("Hardwood", hardwood, cpuCores);
+        }
+        if (parquetJava != null) {
+            printResultRow("parquet-java", parquetJava, 1);
+        }
 
-        // Speedup
-        System.out.println();
-        double speedup = (double) parquetJava.durationMs() / hardwood.durationMs();
-        System.out.println(String.format("  Speedup: %.2fx %s",
-                speedup,
-                speedup > 1 ? "(Hardwood is faster)" : "(parquet-java is faster)"));
+        // Speedup (only if both contenders ran)
+        if (hardwood != null && parquetJava != null) {
+            System.out.println();
+            double speedup = (double) parquetJava.durationMs() / hardwood.durationMs();
+            System.out.println(String.format("  Speedup: %.2fx %s",
+                    speedup,
+                    speedup > 1 ? "(Hardwood is faster)" : "(parquet-java is faster)"));
+        }
         System.out.println();
         System.out.println("=".repeat(100));
     }
