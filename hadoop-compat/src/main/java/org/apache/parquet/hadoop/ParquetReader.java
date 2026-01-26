@@ -8,7 +8,6 @@
 package org.apache.parquet.hadoop;
 
 import java.io.IOException;
-import java.util.Iterator;
 
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
@@ -18,7 +17,6 @@ import org.apache.parquet.schema.MessageType;
 
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
-import dev.morling.hardwood.row.PqRow;
 
 /**
  * Parquet reader with parquet-java compatible API.
@@ -44,13 +42,11 @@ public class ParquetReader<T> implements AutoCloseable {
 
     private final ParquetFileReader hardwoodReader;
     private final RowReader rowReader;
-    private final Iterator<PqRow> rowIterator;
     private final MessageType messageType;
 
     private ParquetReader(Path path) throws IOException {
         this.hardwoodReader = ParquetFileReader.open(path.toNioPath());
         this.rowReader = hardwoodReader.createRowReader();
-        this.rowIterator = rowReader.iterator();
         this.messageType = SchemaConverter.toMessageType(hardwoodReader.getFileSchema());
     }
 
@@ -62,9 +58,9 @@ public class ParquetReader<T> implements AutoCloseable {
      */
     @SuppressWarnings("unchecked")
     public T read() throws IOException {
-        if (rowIterator.hasNext()) {
-            PqRow row = rowIterator.next();
-            return (T) new SimpleGroup(row, messageType);
+        if (rowReader.hasNext()) {
+            rowReader.next();
+            return (T) new SimpleGroup(rowReader, messageType);
         }
         return null;
     }

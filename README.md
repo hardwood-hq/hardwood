@@ -92,14 +92,14 @@ If you attempt to read a file using a compression codec whose library is not on 
 
 ## Usage
 
-### Row-Oriented Reading (PqRow API)
+### Row-Oriented Reading
 
-The `RowReader` provides a convenient row-oriented interface for reading Parquet files. The `PqRow` API provides typed accessor methods for type-safe field access.
+The `RowReader` provides a convenient row-oriented interface for reading Parquet files with typed accessor methods for type-safe field access.
 
 ```java
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
-import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.row.PqStruct;
 import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqIntList;
 import dev.morling.hardwood.row.PqMap;
@@ -112,33 +112,35 @@ import java.util.UUID;
 try (ParquetFileReader fileReader = ParquetFileReader.open(path);
     RowReader rowReader = fileReader.createRowReader()) {
 
-    for (PqRow row : rowReader) {
+    while (rowReader.hasNext()) {
+        rowReader.next();
+
         // Access columns by name with typed accessors
-        long id = row.getLong("id");
-        String name = row.getString("name");
+        long id = rowReader.getLong("id");
+        String name = rowReader.getString("name");
 
         // Logical types are automatically converted
-        LocalDate birthDate = row.getDate("birth_date");
-        Instant createdAt = row.getTimestamp("created_at");
-        LocalTime wakeTime = row.getTime("wake_time");
-        BigDecimal balance = row.getDecimal("balance");
-        UUID accountId = row.getUuid("account_id");
+        LocalDate birthDate = rowReader.getDate("birth_date");
+        Instant createdAt = rowReader.getTimestamp("created_at");
+        LocalTime wakeTime = rowReader.getTime("wake_time");
+        BigDecimal balance = rowReader.getDecimal("balance");
+        UUID accountId = rowReader.getUuid("account_id");
 
         // Check for null values
-        if (!row.isNull("age")) {
-            int age = row.getInt("age");
+        if (!rowReader.isNull("age")) {
+            int age = rowReader.getInt("age");
             System.out.println("ID: " + id + ", Name: " + name + ", Age: " + age);
         }
 
         // Access nested structs
-        PqRow address = row.getRow("address");
+        PqStruct address = rowReader.getStruct("address");
         if (address != null) {
             String city = address.getString("city");
             int zip = address.getInt("zip");
         }
 
         // Access lists and iterate with typed accessors
-        PqList tags = row.getList("tags");
+        PqList tags = rowReader.getList("tags");
         if (tags != null) {
             for (String tag : tags.strings()) {
                 System.out.println("Tag: " + tag);
@@ -146,16 +148,16 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(path);
         }
 
         // Access list of structs
-        PqList contacts = row.getList("contacts");
+        PqList contacts = rowReader.getList("contacts");
         if (contacts != null) {
-            for (PqRow contact : contacts.rows()) {
+            for (PqStruct contact : contacts.structs()) {
                 String contactName = contact.getString("name");
                 String phone = contact.getString("phone");
             }
         }
 
         // Access nested lists (list<list<int>>) using primitive int lists
-        PqList matrix = row.getList("matrix");
+        PqList matrix = rowReader.getList("matrix");
         if (matrix != null) {
             for (PqIntList innerList : matrix.intLists()) {
                 for (var it = innerList.iterator(); it.hasNext(); ) {
@@ -166,7 +168,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(path);
         }
 
         // Access maps (map<string, int>)
-        PqMap attributes = row.getMap("attributes");
+        PqMap attributes = rowReader.getMap("attributes");
         if (attributes != null) {
             for (PqMap.Entry entry : attributes.getEntries()) {
                 String key = entry.getStringKey();
@@ -176,11 +178,11 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(path);
         }
 
         // Access maps with struct values (map<string, struct>)
-        PqMap people = row.getMap("people");
+        PqMap people = rowReader.getMap("people");
         if (people != null) {
             for (PqMap.Entry entry : people.getEntries()) {
                 String personId = entry.getStringKey();
-                PqRow person = entry.getRowValue();
+                PqStruct person = entry.getStructValue();
                 String personName = person.getString("name");
                 int personAge = person.getInt("age");
             }
@@ -205,7 +207,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(path);
 | `getTimestamp(name)` | TIMESTAMP logical type | `Instant` |
 | `getDecimal(name)` | DECIMAL logical type | `BigDecimal` |
 | `getUuid(name)` | UUID logical type | `UUID` |
-| `getRow(name)` | Nested struct | `PqRow` |
+| `getStruct(name)` | Nested struct | `PqStruct` |
 | `getList(name)` | LIST logical type | `PqList` |
 | `getMap(name)` | MAP logical type | `PqMap` |
 

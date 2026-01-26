@@ -5,55 +5,51 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.morling.hardwood.internal.reader;
+package dev.morling.hardwood.reader;
 
 import java.math.BigDecimal;
+import java.nio.channels.FileChannel;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
+import java.util.concurrent.ExecutorService;
 
 import dev.morling.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.morling.hardwood.internal.reader.TypedColumnData;
 import dev.morling.hardwood.metadata.LogicalType;
 import dev.morling.hardwood.metadata.PhysicalType;
+import dev.morling.hardwood.metadata.RowGroup;
 import dev.morling.hardwood.row.PqDoubleList;
 import dev.morling.hardwood.row.PqIntList;
 import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqLongList;
 import dev.morling.hardwood.row.PqMap;
-import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.row.PqStruct;
 import dev.morling.hardwood.schema.ColumnSchema;
 import dev.morling.hardwood.schema.FileSchema;
 
 /**
- * Immutable view into batch column data at a specific row index.
- * <p>
- * This class provides PqRow access to data stored in {@link TypedColumnData} arrays.
- * Each instance captures a snapshot of the column data references and row index,
- * remaining valid even after the iterator loads subsequent batches.
- * </p>
+ * RowReader implementation for flat schemas (no nested structures).
+ * Directly accesses column data without record assembly.
  */
-public class BatchRowView implements PqRow {
+final class FlatRowReader extends AbstractRowReader {
 
-    private final TypedColumnData[] columnData;
-    private final FileSchema schema;
-    private final int rowIndex;
+    private TypedColumnData[] columnData;
 
-    /**
-     * Create a BatchRowView for a specific row in the batch.
-     *
-     * @param columnData the column data for this batch (should be a defensive copy if batch may change)
-     * @param schema     the file schema
-     * @param rowIndex   the row index within the batch (immutable)
-     */
-    public BatchRowView(TypedColumnData[] columnData, FileSchema schema, int rowIndex) {
-        this.columnData = columnData;
-        this.schema = schema;
-        this.rowIndex = rowIndex;
+    FlatRowReader(FileSchema schema, FileChannel channel, List<RowGroup> rowGroups,
+                  ExecutorService executor, String fileName) {
+        super(schema, channel, rowGroups, executor, fileName);
     }
 
-    // ==================== Primitive Types ====================
+    @Override
+    protected void onBatchLoaded(TypedColumnData[] newColumnData) {
+        this.columnData = newColumnData;
+    }
+
+    // ==================== Primitive Type Accessors ====================
 
     @Override
     public int getInt(String name) {
@@ -115,7 +111,7 @@ public class BatchRowView implements PqRow {
         return ((TypedColumnData.BooleanColumn) data).get(rowIndex);
     }
 
-    // ==================== Object Types ====================
+    // ==================== Object Type Accessors ====================
 
     @Override
     public String getString(String name) {
@@ -209,42 +205,36 @@ public class BatchRowView implements PqRow {
         return LogicalTypeConverter.convertToUuid(((TypedColumnData.ByteArrayColumn) data).get(rowIndex), col.type());
     }
 
-    // ==================== Nested Types (not supported for flat schemas) ====================
+    // ==================== Nested Type Accessors ====================
 
     @Override
-    public PqRow getRow(String name) {
-        throw new UnsupportedOperationException(
-                "Nested struct access not supported in batch mode. Schema is expected to be flat.");
+    public PqStruct getStruct(String name) {
+        throw new UnsupportedOperationException("Nested struct access not supported for flat schemas.");
     }
 
     @Override
     public PqIntList getListOfInts(String name) {
-        throw new UnsupportedOperationException(
-                "List access not supported in batch mode. Schema is expected to be flat.");
+        throw new UnsupportedOperationException("List access not supported for flat schemas.");
     }
 
     @Override
     public PqLongList getListOfLongs(String name) {
-        throw new UnsupportedOperationException(
-                "List access not supported in batch mode. Schema is expected to be flat.");
+        throw new UnsupportedOperationException("List access not supported for flat schemas.");
     }
 
     @Override
     public PqDoubleList getListOfDoubles(String name) {
-        throw new UnsupportedOperationException(
-                "List access not supported in batch mode. Schema is expected to be flat.");
+        throw new UnsupportedOperationException("List access not supported for flat schemas.");
     }
 
     @Override
     public PqList getList(String name) {
-        throw new UnsupportedOperationException(
-                "List access not supported in batch mode. Schema is expected to be flat.");
+        throw new UnsupportedOperationException("List access not supported for flat schemas.");
     }
 
     @Override
     public PqMap getMap(String name) {
-        throw new UnsupportedOperationException(
-                "Map access not supported in batch mode. Schema is expected to be flat.");
+        throw new UnsupportedOperationException("Map access not supported for flat schemas.");
     }
 
     // ==================== Generic Fallback ====================

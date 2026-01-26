@@ -19,30 +19,21 @@ import dev.morling.hardwood.row.PqIntList;
 import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqLongList;
 import dev.morling.hardwood.row.PqMap;
-import dev.morling.hardwood.row.PqRow;
-import dev.morling.hardwood.schema.FileSchema;
+import dev.morling.hardwood.row.PqStruct;
 import dev.morling.hardwood.schema.SchemaNode;
 
 /**
- * Implementation of PqRow interface.
+ * Implementation of PqStruct interface for nested struct access.
  */
-public class PqRowImpl implements PqRow {
+public class PqStructImpl implements PqStruct {
 
     private final MutableStruct values;
     private final SchemaNode.GroupNode schema;
 
     /**
-     * Constructor for top-level rows.
+     * Constructor for nested struct.
      */
-    public PqRowImpl(MutableStruct values, FileSchema fileSchema) {
-        this.values = values;
-        this.schema = fileSchema.getRootNode();
-    }
-
-    /**
-     * Constructor for nested struct rows.
-     */
-    public PqRowImpl(MutableStruct values, SchemaNode.GroupNode structSchema) {
+    public PqStructImpl(MutableStruct values, SchemaNode.GroupNode structSchema) {
         this.values = values;
         this.schema = structSchema;
     }
@@ -158,10 +149,10 @@ public class PqRowImpl implements PqRow {
     // ==================== Nested Types ====================
 
     @Override
-    public PqRow getRow(String name) {
+    public PqStruct getStruct(String name) {
         int index = getFieldIndex(name);
         SchemaNode fieldSchema = schema.children().get(index);
-        return ValueConverter.convertToRow(values.getChild(index), fieldSchema);
+        return ValueConverter.convertToStruct(values.getChild(index), fieldSchema);
     }
 
     // ==================== Primitive List Types ====================

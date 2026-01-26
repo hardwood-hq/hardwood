@@ -36,7 +36,6 @@ import org.junit.jupiter.api.TestInstance;
 import dev.morling.hardwood.metadata.PhysicalType;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
-import dev.morling.hardwood.row.PqRow;
 import dev.morling.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -236,23 +235,24 @@ class SimplePerformanceTest {
                 boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
                         && pn.type() == PhysicalType.INT64;
 
-                for (PqRow row : rowReader) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
                     rowCount++;
-                    if (!row.isNull("passenger_count")) {
+                    if (!rowReader.isNull("passenger_count")) {
                         if (pcIsLong) {
-                            passengerCount += row.getLong("passenger_count");
+                            passengerCount += rowReader.getLong("passenger_count");
                         }
                         else {
-                            passengerCount += (long) row.getDouble("passenger_count");
+                            passengerCount += (long) rowReader.getDouble("passenger_count");
                         }
                     }
 
-                    if (!row.isNull("trip_distance")) {
-                        tripDistance += row.getDouble("trip_distance");
+                    if (!rowReader.isNull("trip_distance")) {
+                        tripDistance += rowReader.getDouble("trip_distance");
                     }
 
-                    if (!row.isNull("fare_amount")) {
-                        fareAmount += row.getDouble("fare_amount");
+                    if (!rowReader.isNull("fare_amount")) {
+                        fareAmount += rowReader.getDouble("fare_amount");
                     }
                 }
             }

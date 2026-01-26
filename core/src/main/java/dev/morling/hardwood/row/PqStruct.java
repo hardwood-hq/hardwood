@@ -14,27 +14,29 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 /**
- * Type-safe row interface for reading Parquet data.
+ * Type-safe struct interface for reading nested Parquet data.
  * <p>
  * Provides dedicated accessor methods for each type, similar to JDBC ResultSet.
+ * This interface is used for nested struct access, not for top-level row iteration.
+ * For top-level row access, use {@link dev.morling.hardwood.reader.RowReader} directly.
  * </p>
  *
  * <pre>{@code
- * PqRow row = ...;
- * int id = row.getInt("id");
- * String name = row.getString("name");
- * LocalDate date = row.getDate("birth_date");
+ * while (rowReader.hasNext()) {
+ *     rowReader.next();
+ *     int id = rowReader.getInt("id");
  *
- * // Nested struct
- * PqRow address = row.getRow("address");
- * String city = address.getString("city");
+ *     // Nested struct
+ *     PqStruct address = rowReader.getStruct("address");
+ *     String city = address.getString("city");
  *
- * // List
- * PqList tags = row.getList("tags");
- * for (String tag : tags.strings()) { ... }
+ *     // List of structs
+ *     PqList items = rowReader.getList("items");
+ *     for (PqStruct item : items.structs()) { ... }
+ * }
  * }</pre>
  */
-public interface PqRow {
+public interface PqStruct {
 
     // ==================== Primitive Types ====================
 
@@ -156,13 +158,13 @@ public interface PqRow {
     // ==================== Nested Types ====================
 
     /**
-     * Get a nested ROW (struct) field value by name.
+     * Get a nested struct field value by name.
      *
      * @param name the field name
-     * @return the nested row, or null if the field is null
+     * @return the nested struct, or null if the field is null
      * @throws IllegalArgumentException if the field type is not a struct
      */
-    PqRow getRow(String name);
+    PqStruct getStruct(String name);
 
     // ==================== Primitive List Types ====================
 
@@ -199,7 +201,7 @@ public interface PqRow {
      * Get a LIST field value by name.
      *
      * <pre>{@code
-     * PqList tags = row.getList("tags");
+     * PqList tags = struct.getList("tags");
      * for (String tag : tags.strings()) {
      *     System.out.println(tag);
      * }
@@ -242,7 +244,7 @@ public interface PqRow {
     boolean isNull(String name);
 
     /**
-     * Get the number of fields in this row.
+     * Get the number of fields in this struct.
      *
      * @return the field count
      */

@@ -22,20 +22,20 @@ import dev.morling.hardwood.row.PqIntList;
 import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqLongList;
 import dev.morling.hardwood.row.PqMap;
-import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.row.PqStruct;
 import dev.morling.hardwood.schema.SchemaNode;
 
 /**
- * Shared validation and conversion logic for PqRow, PqList, and PqMap implementations.
+ * Shared validation and conversion logic for PqStruct, PqList, and PqMap implementations.
  */
-final class ValueConverter {
+public final class ValueConverter {
 
     private ValueConverter() {
     }
 
     // ==================== Primitive Type Conversions ====================
 
-    static Integer convertToInt(Object rawValue, SchemaNode schema) {
+    public static Integer convertToInt(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -43,7 +43,7 @@ final class ValueConverter {
         return (Integer) rawValue;
     }
 
-    static Long convertToLong(Object rawValue, SchemaNode schema) {
+    public static Long convertToLong(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -51,7 +51,7 @@ final class ValueConverter {
         return (Long) rawValue;
     }
 
-    static Float convertToFloat(Object rawValue, SchemaNode schema) {
+    public static Float convertToFloat(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -59,7 +59,7 @@ final class ValueConverter {
         return (Float) rawValue;
     }
 
-    static Double convertToDouble(Object rawValue, SchemaNode schema) {
+    public static Double convertToDouble(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -67,7 +67,7 @@ final class ValueConverter {
         return (Double) rawValue;
     }
 
-    static Boolean convertToBoolean(Object rawValue, SchemaNode schema) {
+    public static Boolean convertToBoolean(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -77,7 +77,7 @@ final class ValueConverter {
 
     // ==================== Object Type Conversions ====================
 
-    static String convertToString(Object rawValue, SchemaNode schema) {
+    public static String convertToString(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -88,7 +88,7 @@ final class ValueConverter {
         return new String((byte[]) rawValue, StandardCharsets.UTF_8);
     }
 
-    static byte[] convertToBinary(Object rawValue, SchemaNode schema) {
+    public static byte[] convertToBinary(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -96,7 +96,7 @@ final class ValueConverter {
         return (byte[]) rawValue;
     }
 
-    static LocalDate convertToDate(Object rawValue, SchemaNode schema) {
+    public static LocalDate convertToDate(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -104,7 +104,7 @@ final class ValueConverter {
         return convertLogicalType(rawValue, schema, LocalDate.class);
     }
 
-    static LocalTime convertToTime(Object rawValue, SchemaNode schema) {
+    public static LocalTime convertToTime(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -112,7 +112,7 @@ final class ValueConverter {
         return convertLogicalType(rawValue, schema, LocalTime.class);
     }
 
-    static Instant convertToTimestamp(Object rawValue, SchemaNode schema) {
+    public static Instant convertToTimestamp(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -120,7 +120,7 @@ final class ValueConverter {
         return convertLogicalType(rawValue, schema, Instant.class);
     }
 
-    static BigDecimal convertToDecimal(Object rawValue, SchemaNode schema) {
+    public static BigDecimal convertToDecimal(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -128,7 +128,7 @@ final class ValueConverter {
         return convertLogicalType(rawValue, schema, BigDecimal.class);
     }
 
-    static UUID convertToUuid(Object rawValue, SchemaNode schema) {
+    public static UUID convertToUuid(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -138,15 +138,15 @@ final class ValueConverter {
 
     // ==================== Nested Type Conversions ====================
 
-    static PqRow convertToRow(Object rawValue, SchemaNode schema) {
+    public static PqStruct convertToStruct(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
         validateGroupType(schema, false, false);
-        return new PqRowImpl((MutableStruct) rawValue, (SchemaNode.GroupNode) schema);
+        return new PqStructImpl((MutableStruct) rawValue, (SchemaNode.GroupNode) schema);
     }
 
-    static PqList convertToList(Object rawValue, SchemaNode schema) {
+    public static PqList convertToList(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -155,7 +155,7 @@ final class ValueConverter {
         return new PqListImpl((MutableList) rawValue, elementSchema);
     }
 
-    static PqMap convertToMap(Object rawValue, SchemaNode schema) {
+    public static PqMap convertToMap(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -165,7 +165,7 @@ final class ValueConverter {
 
     // ==================== Typed List Conversions ====================
 
-    static PqIntList convertToIntList(Object rawValue, SchemaNode schema) {
+    public static PqIntList convertToIntList(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -174,7 +174,7 @@ final class ValueConverter {
         return new PqIntListImpl((MutableList) rawValue, elementSchema);
     }
 
-    static PqLongList convertToLongList(Object rawValue, SchemaNode schema) {
+    public static PqLongList convertToLongList(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -183,7 +183,7 @@ final class ValueConverter {
         return new PqLongListImpl((MutableList) rawValue, elementSchema);
     }
 
-    static PqDoubleList convertToDoubleList(Object rawValue, SchemaNode schema) {
+    public static PqDoubleList convertToDoubleList(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
@@ -211,7 +211,7 @@ final class ValueConverter {
                 return convertToMap(rawValue, schema);
             }
             else {
-                return convertToRow(rawValue, schema);
+                return convertToStruct(rawValue, schema);
             }
         }
 

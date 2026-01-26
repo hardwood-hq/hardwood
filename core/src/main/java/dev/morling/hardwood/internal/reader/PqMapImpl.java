@@ -18,7 +18,7 @@ import java.util.UUID;
 
 import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqMap;
-import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.row.PqStruct;
 import dev.morling.hardwood.schema.SchemaNode;
 
 /**
@@ -225,8 +225,8 @@ public class PqMapImpl implements PqMap {
         // ==================== Value Accessors - Nested Types ====================
 
         @Override
-        public PqRow getRowValue() {
-            return ValueConverter.convertToRow(value, valueSchema);
+        public PqStruct getStructValue() {
+            return ValueConverter.convertToStruct(value, valueSchema);
         }
 
         @Override

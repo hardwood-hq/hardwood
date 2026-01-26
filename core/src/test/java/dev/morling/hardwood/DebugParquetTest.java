@@ -15,7 +15,6 @@ import java.time.ZoneOffset;
 import dev.morling.hardwood.metadata.LogicalType;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
-import dev.morling.hardwood.row.PqRow;
 import dev.morling.hardwood.schema.ColumnSchema;
 import dev.morling.hardwood.schema.FileSchema;
 
@@ -65,10 +64,12 @@ public class DebugParquetTest {
             // Print rows
             try (RowReader rowReader = reader.createRowReader()) {
                 int rowNum = 0;
-                for (PqRow row : rowReader) {
+                while (rowReader.hasNext() && rowNum < 5) {
+                    rowReader.next();
+                    rowNum++;
                     StringBuilder line = new StringBuilder("| ");
                     for (int i = 0; i < colCount; i++) {
-                        String value = formatValue(row, i, schema);
+                        String value = formatValue(rowReader, i, schema);
                         // Adjust width if value is longer
                         if (value.length() > widths[i]) {
                             value = value.substring(0, widths[i] - 2) + "..";
@@ -76,39 +77,36 @@ public class DebugParquetTest {
                         line.append(padRight(value, widths[i])).append(" | ");
                     }
                     System.out.println(line);
-                    if (++rowNum >= 5) {
-                        break;
-                    }
                 }
             }
             System.out.println(separator);
         }
     }
 
-    private static String formatValue(PqRow row, int col, FileSchema schema) {
+    private static String formatValue(RowReader rowReader, int col, FileSchema schema) {
         ColumnSchema colSchema = schema.getColumn(col);
         String fieldName = colSchema.name();
-        if (row.isNull(fieldName)) {
+        if (rowReader.isNull(fieldName)) {
             return "null";
         }
 
         // Check logical type first for timestamps
         LogicalType logicalType = colSchema.logicalType();
         if (logicalType instanceof LogicalType.TimestampType) {
-            Instant instant = row.getTimestamp(fieldName);
+            Instant instant = rowReader.getTimestamp(fieldName);
             return LocalDateTime.ofInstant(instant, ZoneOffset.UTC)
                     .toString().replace("T", " ");
         }
 
         // Fall back to physical type
         return switch (colSchema.type()) {
-            case INT32 -> String.valueOf(row.getInt(fieldName));
-            case INT64 -> String.valueOf(row.getLong(fieldName));
-            case FLOAT -> String.format("%.2f", row.getFloat(fieldName));
-            case DOUBLE -> String.format("%.2f", row.getDouble(fieldName));
-            case BOOLEAN -> String.valueOf(row.getBoolean(fieldName));
-            case BYTE_ARRAY -> row.getString(fieldName);
-            default -> String.valueOf(row.getValue(fieldName));
+            case INT32 -> String.valueOf(rowReader.getInt(fieldName));
+            case INT64 -> String.valueOf(rowReader.getLong(fieldName));
+            case FLOAT -> String.format("%.2f", rowReader.getFloat(fieldName));
+            case DOUBLE -> String.format("%.2f", rowReader.getDouble(fieldName));
+            case BOOLEAN -> String.valueOf(rowReader.getBoolean(fieldName));
+            case BYTE_ARRAY -> rowReader.getString(fieldName);
+            default -> String.valueOf(rowReader.getValue(fieldName));
         };
     }
 

@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 import dev.morling.hardwood.metadata.Encoding;
 import dev.morling.hardwood.metadata.RowGroup;
 import dev.morling.hardwood.reader.ParquetFileReader;
-import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,20 +42,23 @@ class DeltaBinaryPackedTest {
             }
 
             int rowIndex = 0;
-            for (PqRow row : reader.createRowReader()) {
-                rowIndex++;
+            try (RowReader rowReader = reader.createRowReader()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                    rowIndex++;
 
-                // id column (INT64): 1, 2, 3, ...
-                Long id = row.getLong("id");
-                assertThat(id).isEqualTo(rowIndex);
+                    // id column (INT64): 1, 2, 3, ...
+                    long id = rowReader.getLong("id");
+                    assertThat(id).isEqualTo(rowIndex);
 
-                // value_i32 column (INT32): 10, 20, 30, ... (constant delta = 10)
-                Integer valueI32 = row.getInt("value_i32");
-                assertThat(valueI32).isEqualTo(rowIndex * 10);
+                    // value_i32 column (INT32): 10, 20, 30, ... (constant delta = 10)
+                    int valueI32 = rowReader.getInt("value_i32");
+                    assertThat(valueI32).isEqualTo(rowIndex * 10);
 
-                // value_i64 column (INT64): 1, 4, 9, 16, ... (squares)
-                Long valueI64 = row.getLong("value_i64");
-                assertThat(valueI64).isEqualTo((long) rowIndex * rowIndex);
+                    // value_i64 column (INT64): 1, 4, 9, 16, ... (squares)
+                    long valueI64 = rowReader.getLong("value_i64");
+                    assertThat(valueI64).isEqualTo((long) rowIndex * rowIndex);
+                }
             }
             assertThat(rowIndex).isEqualTo(200);
         }
@@ -80,20 +83,23 @@ class DeltaBinaryPackedTest {
 
             int rowIndex = 0;
             int nullCount = 0;
-            for (PqRow row : reader.createRowReader()) {
-                rowIndex++;
+            try (RowReader rowReader = reader.createRowReader()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                    rowIndex++;
 
-                // id column (INT32): 1, 2, 3, ...
-                Integer id = row.getInt("id");
-                assertThat(id).isEqualTo(rowIndex);
+                    // id column (INT32): 1, 2, 3, ...
+                    int id = rowReader.getInt("id");
+                    assertThat(id).isEqualTo(rowIndex);
 
-                // optional_value column: i*5 if i%3 != 0, else null
-                if (rowIndex % 3 == 0) {
-                    assertThat(row.isNull("optional_value")).isTrue();
-                    nullCount++;
-                }
-                else {
-                    assertThat(row.getInt("optional_value")).isEqualTo(rowIndex * 5);
+                    // optional_value column: i*5 if i%3 != 0, else null
+                    if (rowIndex % 3 == 0) {
+                        assertThat(rowReader.isNull("optional_value")).isTrue();
+                        nullCount++;
+                    }
+                    else {
+                        assertThat(rowReader.getInt("optional_value")).isEqualTo(rowIndex * 5);
+                    }
                 }
             }
             assertThat(rowIndex).isEqualTo(100);
@@ -123,20 +129,24 @@ class DeltaBinaryPackedTest {
             String[] expectedDescriptions = { "Short", "A bit longer text", "Medium length", "Tiny", "Another string value" };
 
             int rowIndex = 0;
-            for (PqRow row : reader.createRowReader()) {
-                // id column (INT64)
-                Long id = row.getLong("id");
-                assertThat(id).isEqualTo(rowIndex + 1);
+            try (RowReader rowReader = reader.createRowReader()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
 
-                // name column (DELTA_LENGTH_BYTE_ARRAY)
-                String name = row.getString("name");
-                assertThat(name).isEqualTo(expectedNames[rowIndex]);
+                    // id column (INT64)
+                    long id = rowReader.getLong("id");
+                    assertThat(id).isEqualTo(rowIndex + 1);
 
-                // description column (DELTA_LENGTH_BYTE_ARRAY)
-                String description = row.getString("description");
-                assertThat(description).isEqualTo(expectedDescriptions[rowIndex]);
+                    // name column (DELTA_LENGTH_BYTE_ARRAY)
+                    String name = rowReader.getString("name");
+                    assertThat(name).isEqualTo(expectedNames[rowIndex]);
 
-                rowIndex++;
+                    // description column (DELTA_LENGTH_BYTE_ARRAY)
+                    String description = rowReader.getString("description");
+                    assertThat(description).isEqualTo(expectedDescriptions[rowIndex]);
+
+                    rowIndex++;
+                }
             }
             assertThat(rowIndex).isEqualTo(5);
         }

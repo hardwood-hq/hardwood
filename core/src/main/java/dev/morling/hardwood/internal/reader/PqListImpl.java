@@ -22,7 +22,7 @@ import dev.morling.hardwood.row.PqIntList;
 import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqLongList;
 import dev.morling.hardwood.row.PqMap;
-import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.row.PqStruct;
 import dev.morling.hardwood.schema.SchemaNode;
 
 /**
@@ -143,9 +143,9 @@ public class PqListImpl implements PqList {
     // ==================== Nested Type Accessors ====================
 
     @Override
-    public Iterable<PqRow> rows() {
+    public Iterable<PqStruct> structs() {
         return () -> new ConvertingIterator<>(elements.elements(),
-            raw -> ValueConverter.convertToRow(raw, elementSchema));
+            raw -> ValueConverter.convertToStruct(raw, elementSchema));
     }
 
     @Override

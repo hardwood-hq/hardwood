@@ -232,12 +232,12 @@ public interface PqMap {
         // ==================== Value Accessors - Nested Types ====================
 
         /**
-         * Get the value as a nested ROW (struct).
+         * Get the value as a nested struct.
          *
-         * @return the nested row, or null if the value is null
+         * @return the nested struct, or null if the value is null
          * @throws IllegalArgumentException if the value type is not a struct
          */
-        PqRow getRowValue();
+        PqStruct getStructValue();
 
         /**
          * Get the value as a LIST.

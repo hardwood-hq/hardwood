@@ -12,7 +12,6 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.ZoneId;
 import java.time.format.DateTimeFormatter;
-import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -20,7 +19,6 @@ import org.junit.jupiter.api.Test;
 import dev.morling.hardwood.metadata.LogicalType;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
-import dev.morling.hardwood.row.PqRow;
 import dev.morling.hardwood.schema.ColumnSchema;
 import dev.morling.hardwood.schema.FileSchema;
 
@@ -42,90 +40,99 @@ public class YellowTripDataTest {
             assertThat(fileReader.getFileMetaData().numRows()).isEqualTo(5);
 
             try (RowReader rowReader = fileReader.createRowReader()) {
-                List<PqRow> rows = new ArrayList<>();
-                for (PqRow row : rowReader) {
-                    rows.add(row);
-                }
-
-                assertThat(rows).hasSize(5);
+                int rowCount = 0;
 
                 // Row 0: VendorID=1, pickup=2025-01-01T00:18:38, dropoff=2025-01-01T00:26:59
-                PqRow row0 = rows.get(0);
-                assertThat(row0.getInt("VendorID")).isEqualTo(1);
-                assertThat(row0.getTimestamp("tpep_pickup_datetime"))
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getInt("VendorID")).isEqualTo(1);
+                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
                         .isEqualTo(Instant.parse("2025-01-01T00:18:38Z"));
-                assertThat(row0.getTimestamp("tpep_dropoff_datetime"))
+                assertThat(rowReader.getTimestamp("tpep_dropoff_datetime"))
                         .isEqualTo(Instant.parse("2025-01-01T00:26:59Z"));
-                assertThat(row0.getLong("passenger_count")).isEqualTo(1L);
-                assertThat(row0.getDouble("trip_distance")).isEqualTo(1.6);
-                assertThat(row0.getLong("RatecodeID")).isEqualTo(1L);
-                assertThat(row0.getString("store_and_fwd_flag")).isEqualTo("N");
-                assertThat(row0.getInt("PULocationID")).isEqualTo(229);
-                assertThat(row0.getInt("DOLocationID")).isEqualTo(237);
-                assertThat(row0.getLong("payment_type")).isEqualTo(1L);
-                assertThat(row0.getDouble("fare_amount")).isEqualTo(10.0);
-                assertThat(row0.getDouble("extra")).isEqualTo(3.5);
-                assertThat(row0.getDouble("mta_tax")).isEqualTo(0.5);
-                assertThat(row0.getDouble("tip_amount")).isEqualTo(3.0);
-                assertThat(row0.getDouble("tolls_amount")).isEqualTo(0.0);
-                assertThat(row0.getDouble("improvement_surcharge")).isEqualTo(1.0);
-                assertThat(row0.getDouble("total_amount")).isEqualTo(18.0);
-                assertThat(row0.getDouble("congestion_surcharge")).isEqualTo(2.5);
-                assertThat(row0.getDouble("Airport_fee")).isEqualTo(0.0);
-                assertThat(row0.getDouble("cbd_congestion_fee")).isEqualTo(0.0);
+                assertThat(rowReader.getLong("passenger_count")).isEqualTo(1L);
+                assertThat(rowReader.getDouble("trip_distance")).isEqualTo(1.6);
+                assertThat(rowReader.getLong("RatecodeID")).isEqualTo(1L);
+                assertThat(rowReader.getString("store_and_fwd_flag")).isEqualTo("N");
+                assertThat(rowReader.getInt("PULocationID")).isEqualTo(229);
+                assertThat(rowReader.getInt("DOLocationID")).isEqualTo(237);
+                assertThat(rowReader.getLong("payment_type")).isEqualTo(1L);
+                assertThat(rowReader.getDouble("fare_amount")).isEqualTo(10.0);
+                assertThat(rowReader.getDouble("extra")).isEqualTo(3.5);
+                assertThat(rowReader.getDouble("mta_tax")).isEqualTo(0.5);
+                assertThat(rowReader.getDouble("tip_amount")).isEqualTo(3.0);
+                assertThat(rowReader.getDouble("tolls_amount")).isEqualTo(0.0);
+                assertThat(rowReader.getDouble("improvement_surcharge")).isEqualTo(1.0);
+                assertThat(rowReader.getDouble("total_amount")).isEqualTo(18.0);
+                assertThat(rowReader.getDouble("congestion_surcharge")).isEqualTo(2.5);
+                assertThat(rowReader.getDouble("Airport_fee")).isEqualTo(0.0);
+                assertThat(rowReader.getDouble("cbd_congestion_fee")).isEqualTo(0.0);
 
                 // Row 1: VendorID=1, pickup=2025-01-01T00:32:40, trip_distance=0.5
-                PqRow row1 = rows.get(1);
-                assertThat(row1.getInt("VendorID")).isEqualTo(1);
-                assertThat(row1.getTimestamp("tpep_pickup_datetime"))
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getInt("VendorID")).isEqualTo(1);
+                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
                         .isEqualTo(Instant.parse("2025-01-01T00:32:40Z"));
-                assertThat(row1.getTimestamp("tpep_dropoff_datetime"))
+                assertThat(rowReader.getTimestamp("tpep_dropoff_datetime"))
                         .isEqualTo(Instant.parse("2025-01-01T00:35:13Z"));
-                assertThat(row1.getLong("passenger_count")).isEqualTo(1L);
-                assertThat(row1.getDouble("trip_distance")).isEqualTo(0.5);
-                assertThat(row1.getInt("PULocationID")).isEqualTo(236);
-                assertThat(row1.getInt("DOLocationID")).isEqualTo(237);
-                assertThat(row1.getDouble("fare_amount")).isEqualTo(5.1);
-                assertThat(row1.getDouble("tip_amount")).isCloseTo(2.02, within(0.001));
-                assertThat(row1.getDouble("total_amount")).isEqualTo(12.12);
+                assertThat(rowReader.getLong("passenger_count")).isEqualTo(1L);
+                assertThat(rowReader.getDouble("trip_distance")).isEqualTo(0.5);
+                assertThat(rowReader.getInt("PULocationID")).isEqualTo(236);
+                assertThat(rowReader.getInt("DOLocationID")).isEqualTo(237);
+                assertThat(rowReader.getDouble("fare_amount")).isEqualTo(5.1);
+                assertThat(rowReader.getDouble("tip_amount")).isCloseTo(2.02, within(0.001));
+                assertThat(rowReader.getDouble("total_amount")).isEqualTo(12.12);
 
                 // Row 2: VendorID=1, pickup=2025-01-01T00:44:04, same PU/DO location
-                PqRow row2 = rows.get(2);
-                assertThat(row2.getInt("VendorID")).isEqualTo(1);
-                assertThat(row2.getTimestamp("tpep_pickup_datetime"))
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getInt("VendorID")).isEqualTo(1);
+                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
                         .isEqualTo(Instant.parse("2025-01-01T00:44:04Z"));
-                assertThat(row2.getInt("PULocationID")).isEqualTo(141);
-                assertThat(row2.getInt("DOLocationID")).isEqualTo(141);
-                assertThat(row2.getDouble("trip_distance")).isEqualTo(0.6);
-                assertThat(row2.getDouble("total_amount")).isEqualTo(12.1);
+                assertThat(rowReader.getInt("PULocationID")).isEqualTo(141);
+                assertThat(rowReader.getInt("DOLocationID")).isEqualTo(141);
+                assertThat(rowReader.getDouble("trip_distance")).isEqualTo(0.6);
+                assertThat(rowReader.getDouble("total_amount")).isEqualTo(12.1);
 
                 // Row 3: VendorID=2, 3 passengers, no tip (payment_type=2 = cash)
-                PqRow row3 = rows.get(3);
-                assertThat(row3.getInt("VendorID")).isEqualTo(2);
-                assertThat(row3.getTimestamp("tpep_pickup_datetime"))
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getInt("VendorID")).isEqualTo(2);
+                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
                         .isEqualTo(Instant.parse("2025-01-01T00:14:27Z"));
-                assertThat(row3.getLong("passenger_count")).isEqualTo(3L);
-                assertThat(row3.getDouble("trip_distance")).isEqualTo(0.52);
-                assertThat(row3.getInt("PULocationID")).isEqualTo(244);
-                assertThat(row3.getInt("DOLocationID")).isEqualTo(244);
-                assertThat(row3.getLong("payment_type")).isEqualTo(2L);
-                assertThat(row3.getDouble("tip_amount")).isEqualTo(0.0);
-                assertThat(row3.getDouble("congestion_surcharge")).isEqualTo(0.0);
-                assertThat(row3.getDouble("total_amount")).isEqualTo(9.7);
+                assertThat(rowReader.getLong("passenger_count")).isEqualTo(3L);
+                assertThat(rowReader.getDouble("trip_distance")).isEqualTo(0.52);
+                assertThat(rowReader.getInt("PULocationID")).isEqualTo(244);
+                assertThat(rowReader.getInt("DOLocationID")).isEqualTo(244);
+                assertThat(rowReader.getLong("payment_type")).isEqualTo(2L);
+                assertThat(rowReader.getDouble("tip_amount")).isEqualTo(0.0);
+                assertThat(rowReader.getDouble("congestion_surcharge")).isEqualTo(0.0);
+                assertThat(rowReader.getDouble("total_amount")).isEqualTo(9.7);
 
                 // Row 4: VendorID=2, 3 passengers, different DO location
-                PqRow row4 = rows.get(4);
-                assertThat(row4.getInt("VendorID")).isEqualTo(2);
-                assertThat(row4.getTimestamp("tpep_pickup_datetime"))
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getInt("VendorID")).isEqualTo(2);
+                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
                         .isEqualTo(Instant.parse("2025-01-01T00:21:34Z"));
-                assertThat(row4.getTimestamp("tpep_dropoff_datetime"))
+                assertThat(rowReader.getTimestamp("tpep_dropoff_datetime"))
                         .isEqualTo(Instant.parse("2025-01-01T00:25:06Z"));
-                assertThat(row4.getLong("passenger_count")).isEqualTo(3L);
-                assertThat(row4.getDouble("trip_distance")).isEqualTo(0.66);
-                assertThat(row4.getInt("PULocationID")).isEqualTo(244);
-                assertThat(row4.getInt("DOLocationID")).isEqualTo(116);
-                assertThat(row4.getDouble("fare_amount")).isEqualTo(5.8);
-                assertThat(row4.getDouble("total_amount")).isEqualTo(8.3);
+                assertThat(rowReader.getLong("passenger_count")).isEqualTo(3L);
+                assertThat(rowReader.getDouble("trip_distance")).isEqualTo(0.66);
+                assertThat(rowReader.getInt("PULocationID")).isEqualTo(244);
+                assertThat(rowReader.getInt("DOLocationID")).isEqualTo(116);
+                assertThat(rowReader.getDouble("fare_amount")).isEqualTo(5.8);
+                assertThat(rowReader.getDouble("total_amount")).isEqualTo(8.3);
+
+                // Verify no more rows
+                assertThat(rowReader.hasNext()).isFalse();
+                assertThat(rowCount).isEqualTo(5);
             }
         }
     }
@@ -155,14 +162,13 @@ public class YellowTripDataTest {
             // Print first 10 rows
             try (RowReader rowReader = fileReader.createRowReader()) {
                 int count = 0;
-                for (PqRow row : rowReader) {
-                    if (count++ >= 10) {
-                        break;
-                    }
+                while (rowReader.hasNext() && count < 10) {
+                    rowReader.next();
+                    count++;
 
                     StringBuilder line = new StringBuilder();
                     for (ColumnSchema col : columns) {
-                        String formatted = formatValue(row, col, fmt);
+                        String formatted = formatValue(rowReader, col, fmt);
                         int width = Math.max(col.name().length(), 12);
                         line.append(String.format("%-" + width + "s | ", formatted));
                     }
@@ -172,28 +178,28 @@ public class YellowTripDataTest {
         }
     }
 
-    private String formatValue(PqRow row, ColumnSchema col, DateTimeFormatter fmt) {
+    private String formatValue(RowReader rowReader, ColumnSchema col, DateTimeFormatter fmt) {
         String name = col.name();
-        if (row.isNull(name)) {
+        if (rowReader.isNull(name)) {
             return "null";
         }
 
         // Check logical type first for timestamps
         LogicalType logicalType = col.logicalType();
         if (logicalType instanceof LogicalType.TimestampType) {
-            Instant inst = row.getTimestamp(name);
+            Instant inst = rowReader.getTimestamp(name);
             return fmt.format(inst);
         }
 
         // Fall back to physical type
         return switch (col.type()) {
-            case INT32 -> String.valueOf(row.getInt(name));
-            case INT64 -> String.valueOf(row.getLong(name));
-            case FLOAT -> String.format("%.2f", row.getFloat(name));
-            case DOUBLE -> String.format("%.2f", row.getDouble(name));
-            case BOOLEAN -> String.valueOf(row.getBoolean(name));
-            case BYTE_ARRAY -> row.getString(name);
-            default -> String.valueOf(row.getValue(name));
+            case INT32 -> String.valueOf(rowReader.getInt(name));
+            case INT64 -> String.valueOf(rowReader.getLong(name));
+            case FLOAT -> String.format("%.2f", rowReader.getFloat(name));
+            case DOUBLE -> String.format("%.2f", rowReader.getDouble(name));
+            case BOOLEAN -> String.valueOf(rowReader.getBoolean(name));
+            case BYTE_ARRAY -> rowReader.getString(name);
+            default -> String.valueOf(rowReader.getValue(name));
         };
     }
 }

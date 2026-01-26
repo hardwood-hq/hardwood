@@ -7,35 +7,152 @@
  */
 package org.apache.parquet.example.data.simple;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.Type;
 
+import dev.morling.hardwood.reader.RowReader;
 import dev.morling.hardwood.row.PqList;
-import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.row.PqStruct;
 
 /**
- * SimpleGroup implementation that wraps Hardwood's PqRow.
+ * SimpleGroup implementation that wraps Hardwood's RowReader.
  * <p>
- * This class provides parquet-java compatible Group access by delegating
- * to Hardwood's PqRow API.
+ * This class provides parquet-java compatible Group access by capturing
+ * a snapshot of the row data from Hardwood's RowReader API.
  * </p>
  */
 public class SimpleGroup implements Group {
 
-    private final PqRow row;
+    private final Map<String, Object> values;
+    private final Map<String, Boolean> nullFlags;
     private final GroupType schema;
 
     /**
-     * Create a SimpleGroup wrapping a PqRow.
+     * Create a SimpleGroup by capturing data from a RowReader at its current position.
      *
-     * @param row the Hardwood PqRow
+     * @param rowReader the Hardwood RowReader positioned at the row to capture
      * @param schema the GroupType schema
      */
-    public SimpleGroup(PqRow row, GroupType schema) {
-        this.row = row;
+    public SimpleGroup(RowReader rowReader, GroupType schema) {
         this.schema = schema;
+        this.values = new HashMap<>();
+        this.nullFlags = new HashMap<>();
+        captureRowData(rowReader);
+    }
+
+    /**
+     * Create a SimpleGroup wrapping a nested PqStruct.
+     *
+     * @param struct the Hardwood PqStruct
+     * @param schema the GroupType schema
+     */
+    public SimpleGroup(PqStruct struct, GroupType schema) {
+        this.schema = schema;
+        this.values = new HashMap<>();
+        this.nullFlags = new HashMap<>();
+        captureStructData(struct);
+    }
+
+    private void captureRowData(RowReader rowReader) {
+        for (int i = 0; i < schema.getFieldCount(); i++) {
+            Type fieldType = schema.getType(i);
+            String fieldName = fieldType.getName();
+            boolean isNull = rowReader.isNull(fieldName);
+            nullFlags.put(fieldName, isNull);
+            if (!isNull) {
+                values.put(fieldName, captureValue(rowReader, fieldName, fieldType));
+            }
+        }
+    }
+
+    private void captureStructData(PqStruct struct) {
+        for (int i = 0; i < schema.getFieldCount(); i++) {
+            Type fieldType = schema.getType(i);
+            String fieldName = fieldType.getName();
+            boolean isNull = struct.isNull(fieldName);
+            nullFlags.put(fieldName, isNull);
+            if (!isNull) {
+                values.put(fieldName, captureStructValue(struct, fieldName, fieldType));
+            }
+        }
+    }
+
+    private Object captureValue(RowReader rowReader, String fieldName, Type fieldType) {
+        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
+            return rowReader.getList(fieldName);
+        }
+        if (fieldType.isPrimitive()) {
+            return capturePrimitiveFromRowReader(rowReader, fieldName, fieldType);
+        }
+        // Group type - check if it's a LIST or MAP
+        GroupType groupType = fieldType.asGroupType();
+        if (isListType(groupType)) {
+            return rowReader.getList(fieldName);
+        }
+        if (isMapType(groupType)) {
+            return rowReader.getMap(fieldName);
+        }
+        // Nested struct
+        return rowReader.getStruct(fieldName);
+    }
+
+    private Object captureStructValue(PqStruct struct, String fieldName, Type fieldType) {
+        if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
+            return struct.getList(fieldName);
+        }
+        if (fieldType.isPrimitive()) {
+            return capturePrimitiveFromStruct(struct, fieldName, fieldType);
+        }
+        // Group type - check if it's a LIST or MAP
+        GroupType groupType = fieldType.asGroupType();
+        if (isListType(groupType)) {
+            return struct.getList(fieldName);
+        }
+        if (isMapType(groupType)) {
+            return struct.getMap(fieldName);
+        }
+        // Nested struct
+        return struct.getStruct(fieldName);
+    }
+
+    private boolean isListType(GroupType groupType) {
+        var originalType = groupType.getOriginalType();
+        return originalType == org.apache.parquet.schema.OriginalType.LIST;
+    }
+
+    private boolean isMapType(GroupType groupType) {
+        var originalType = groupType.getOriginalType();
+        return originalType == org.apache.parquet.schema.OriginalType.MAP
+                || originalType == org.apache.parquet.schema.OriginalType.MAP_KEY_VALUE;
+    }
+
+    private Object capturePrimitiveFromRowReader(RowReader rowReader, String fieldName, Type fieldType) {
+        return switch (fieldType.asPrimitiveType().getPrimitiveTypeName()) {
+            case INT32 -> rowReader.getInt(fieldName);
+            case INT64 -> rowReader.getLong(fieldName);
+            case FLOAT -> rowReader.getFloat(fieldName);
+            case DOUBLE -> rowReader.getDouble(fieldName);
+            case BOOLEAN -> rowReader.getBoolean(fieldName);
+            case BINARY, FIXED_LEN_BYTE_ARRAY -> rowReader.getBinary(fieldName);
+            case INT96 -> rowReader.getBinary(fieldName);
+        };
+    }
+
+    private Object capturePrimitiveFromStruct(PqStruct struct, String fieldName, Type fieldType) {
+        return switch (fieldType.asPrimitiveType().getPrimitiveTypeName()) {
+            case INT32 -> struct.getInt(fieldName);
+            case INT64 -> struct.getLong(fieldName);
+            case FLOAT -> struct.getFloat(fieldName);
+            case DOUBLE -> struct.getDouble(fieldName);
+            case BOOLEAN -> struct.getBoolean(fieldName);
+            case BINARY, FIXED_LEN_BYTE_ARRAY -> struct.getBinary(fieldName);
+            case INT96 -> struct.getBinary(fieldName);
+        };
     }
 
     @Override
@@ -47,16 +164,14 @@ public class SimpleGroup implements Group {
     public int getFieldRepetitionCount(int fieldIndex) {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
+        if (Boolean.TRUE.equals(nullFlags.get(fieldName))) {
+            return 0;
+        }
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            // For repeated fields, get the list and return size
-            if (row.isNull(fieldName)) {
-                return 0;
-            }
-            PqList list = row.getList(fieldName);
+            PqList list = (PqList) values.get(fieldName);
             return list != null ? list.size() : 0;
         }
-        // For non-repeated fields, return 1 if present, 0 if null
-        return row.isNull(fieldName) ? 0 : 1;
+        return 1;
     }
 
     @Override
@@ -71,7 +186,7 @@ public class SimpleGroup implements Group {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            PqList list = row.getList(fieldName);
+            PqList list = (PqList) values.get(fieldName);
             if (list == null || index >= list.size()) {
                 return null;
             }
@@ -81,7 +196,11 @@ public class SimpleGroup implements Group {
             if (index != 0) {
                 throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
             }
-            return row.getString(fieldName);
+            Object value = values.get(fieldName);
+            if (value instanceof byte[] bytes) {
+                return new String(bytes, java.nio.charset.StandardCharsets.UTF_8);
+            }
+            return (String) value;
         }
     }
 
@@ -97,7 +216,7 @@ public class SimpleGroup implements Group {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            PqList list = row.getList(fieldName);
+            PqList list = (PqList) values.get(fieldName);
             if (list == null || index >= list.size()) {
                 return 0;
             }
@@ -108,10 +227,8 @@ public class SimpleGroup implements Group {
             if (index != 0) {
                 throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
             }
-            if (row.isNull(fieldName)) {
-                return 0;
-            }
-            return row.getInt(fieldName);
+            Integer value = (Integer) values.get(fieldName);
+            return value != null ? value : 0;
         }
     }
 
@@ -127,7 +244,7 @@ public class SimpleGroup implements Group {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            PqList list = row.getList(fieldName);
+            PqList list = (PqList) values.get(fieldName);
             if (list == null || index >= list.size()) {
                 return 0L;
             }
@@ -138,10 +255,8 @@ public class SimpleGroup implements Group {
             if (index != 0) {
                 throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
             }
-            if (row.isNull(fieldName)) {
-                return 0L;
-            }
-            return row.getLong(fieldName);
+            Long value = (Long) values.get(fieldName);
+            return value != null ? value : 0L;
         }
     }
 
@@ -157,7 +272,7 @@ public class SimpleGroup implements Group {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            PqList list = row.getList(fieldName);
+            PqList list = (PqList) values.get(fieldName);
             if (list == null || index >= list.size()) {
                 return 0.0;
             }
@@ -168,10 +283,8 @@ public class SimpleGroup implements Group {
             if (index != 0) {
                 throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
             }
-            if (row.isNull(fieldName)) {
-                return 0.0;
-            }
-            return row.getDouble(fieldName);
+            Double value = (Double) values.get(fieldName);
+            return value != null ? value : 0.0;
         }
     }
 
@@ -187,7 +300,7 @@ public class SimpleGroup implements Group {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            PqList list = row.getList(fieldName);
+            PqList list = (PqList) values.get(fieldName);
             if (list == null || index >= list.size()) {
                 return 0.0f;
             }
@@ -198,10 +311,8 @@ public class SimpleGroup implements Group {
             if (index != 0) {
                 throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
             }
-            if (row.isNull(fieldName)) {
-                return 0.0f;
-            }
-            return row.getFloat(fieldName);
+            Float value = (Float) values.get(fieldName);
+            return value != null ? value : 0.0f;
         }
     }
 
@@ -217,7 +328,7 @@ public class SimpleGroup implements Group {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            PqList list = row.getList(fieldName);
+            PqList list = (PqList) values.get(fieldName);
             if (list == null || index >= list.size()) {
                 return false;
             }
@@ -228,10 +339,8 @@ public class SimpleGroup implements Group {
             if (index != 0) {
                 throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
             }
-            if (row.isNull(fieldName)) {
-                return false;
-            }
-            return row.getBoolean(fieldName);
+            Boolean value = (Boolean) values.get(fieldName);
+            return value != null ? value : false;
         }
     }
 
@@ -248,7 +357,7 @@ public class SimpleGroup implements Group {
         String fieldName = fieldType.getName();
         byte[] bytes;
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            PqList list = row.getList(fieldName);
+            PqList list = (PqList) values.get(fieldName);
             if (list == null || index >= list.size()) {
                 return null;
             }
@@ -258,7 +367,7 @@ public class SimpleGroup implements Group {
             if (index != 0) {
                 throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
             }
-            bytes = row.getBinary(fieldName);
+            bytes = (byte[]) values.get(fieldName);
         }
         return bytes != null ? Binary.fromConstantByteArray(bytes) : null;
     }
@@ -277,21 +386,19 @@ public class SimpleGroup implements Group {
         GroupType nestedType = fieldType.asGroupType();
 
         if (fieldType.getRepetition() == Type.Repetition.REPEATED) {
-            // Repeated group - get from list
-            PqList list = row.getList(fieldName);
+            PqList list = (PqList) values.get(fieldName);
             if (list == null || index >= list.size()) {
                 return null;
             }
-            PqRow nestedRow = (PqRow) list.get(index);
-            return nestedRow != null ? new SimpleGroup(nestedRow, nestedType) : null;
+            PqStruct nestedStruct = (PqStruct) list.get(index);
+            return nestedStruct != null ? new SimpleGroup(nestedStruct, nestedType) : null;
         }
         else {
-            // Single group
             if (index != 0) {
                 throw new IndexOutOfBoundsException("Index must be 0 for non-repeated fields, got: " + index);
             }
-            PqRow nestedRow = row.getRow(fieldName);
-            return nestedRow != null ? new SimpleGroup(nestedRow, nestedType) : null;
+            PqStruct nestedStruct = (PqStruct) values.get(fieldName);
+            return nestedStruct != null ? new SimpleGroup(nestedStruct, nestedType) : null;
         }
     }
 

@@ -30,7 +30,6 @@ import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
-import dev.morling.hardwood.row.PqRow;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -141,19 +140,14 @@ class ParquetComparisonTest {
         List<GenericRecord> referenceRows = readWithParquetJava(testFile);
         System.out.println("  parquet-java rows: " + referenceRows.size());
 
-        // Read with Hardwood
-        List<PqRow> hardwoodRows = readWithHardwood(testFile);
-        System.out.println("  Hardwood rows: " + hardwoodRows.size());
+        // Compare with Hardwood row by row
+        int hardwoodRowCount = compareWithHardwood(testFile, referenceRows);
+        System.out.println("  Hardwood rows: " + hardwoodRowCount);
 
-        // Compare row counts
-        assertThat(hardwoodRows)
+        // Verify row counts match
+        assertThat(hardwoodRowCount)
                 .as("Row count mismatch")
-                .hasSameSizeAs(referenceRows);
-
-        // Compare each row, field by field
-        for (int i = 0; i < referenceRows.size(); i++) {
-            compareRow(i, referenceRows.get(i), hardwoodRows.get(i));
-        }
+                .isEqualTo(referenceRows.size());
 
         System.out.println("  All " + referenceRows.size() + " rows match!");
     }
@@ -184,59 +178,64 @@ class ParquetComparisonTest {
     }
 
     /**
-     * Read all rows using Hardwood's RowReader.
+     * Read with Hardwood and compare row by row against reference.
+     * Returns the number of rows read.
      */
-    private List<PqRow> readWithHardwood(Path file) throws IOException {
-        List<PqRow> rows = new ArrayList<>();
+    private int compareWithHardwood(Path file, List<GenericRecord> referenceRows) throws IOException {
+        int rowIndex = 0;
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(file)) {
-            try (RowReader rowReader = fileReader.createRowReader()) {
-                for (PqRow row : rowReader) {
-                    rows.add(row);
-                }
+        try (ParquetFileReader fileReader = ParquetFileReader.open(file);
+             RowReader rowReader = fileReader.createRowReader()) {
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                assertThat(rowIndex)
+                        .as("Hardwood has more rows than reference")
+                        .isLessThan(referenceRows.size());
+                compareRow(rowIndex, referenceRows.get(rowIndex), rowReader);
+                rowIndex++;
             }
         }
 
-        return rows;
+        return rowIndex;
     }
 
     /**
      * Compare a single row field by field.
      */
-    private void compareRow(int rowIndex, GenericRecord reference, PqRow actual) {
+    private void compareRow(int rowIndex, GenericRecord reference, RowReader rowReader) {
         var schema = reference.getSchema();
 
         for (var field : schema.getFields()) {
             String fieldName = field.name();
             Object refValue = reference.get(fieldName);
-            Object actualValue = getHardwoodValue(actual, fieldName, field.schema());
+            Object actualValue = getHardwoodValue(rowReader, fieldName, field.schema());
 
             compareValues(rowIndex, fieldName, refValue, actualValue);
         }
     }
 
     /**
-     * Get a value from Hardwood PqRow, handling type conversions.
+     * Get a value from Hardwood RowReader, handling type conversions.
      */
-    private Object getHardwoodValue(PqRow row, String fieldName, org.apache.avro.Schema fieldSchema) {
-        if (row.isNull(fieldName)) {
+    private Object getHardwoodValue(RowReader rowReader, String fieldName, org.apache.avro.Schema fieldSchema) {
+        if (rowReader.isNull(fieldName)) {
             return null;
         }
 
         // Determine the appropriate type based on Avro schema
         return switch (fieldSchema.getType()) {
-            case BOOLEAN -> row.getBoolean(fieldName);
-            case INT -> row.getInt(fieldName);
-            case LONG -> row.getLong(fieldName);
-            case FLOAT -> row.getFloat(fieldName);
-            case DOUBLE -> row.getDouble(fieldName);
-            case STRING -> row.getString(fieldName);
-            case BYTES -> row.getBinary(fieldName);
+            case BOOLEAN -> rowReader.getBoolean(fieldName);
+            case INT -> rowReader.getInt(fieldName);
+            case LONG -> rowReader.getLong(fieldName);
+            case FLOAT -> rowReader.getFloat(fieldName);
+            case DOUBLE -> rowReader.getDouble(fieldName);
+            case STRING -> rowReader.getString(fieldName);
+            case BYTES -> rowReader.getBinary(fieldName);
             case FIXED -> {
                 // FIXED type could be INT96 (legacy timestamp) which needs special handling
                 // For INT96, we skip comparison as it's deprecated and represented differently
                 try {
-                    yield row.getBinary(fieldName);
+                    yield rowReader.getBinary(fieldName);
                 }
                 catch (IllegalArgumentException e) {
                     // Likely INT96 - return a marker to skip comparison
@@ -250,7 +249,7 @@ class ParquetComparisonTest {
                 // Handle nullable types (union with null)
                 for (var subSchema : fieldSchema.getTypes()) {
                     if (subSchema.getType() != org.apache.avro.Schema.Type.NULL) {
-                        yield getHardwoodValue(row, fieldName, subSchema);
+                        yield getHardwoodValue(rowReader, fieldName, subSchema);
                     }
                 }
                 yield null;
@@ -272,7 +271,7 @@ class ParquetComparisonTest {
             }
             case ENUM -> {
                 // Enum type - read as string
-                yield row.getString(fieldName);
+                yield rowReader.getString(fieldName);
             }
             default -> throw new UnsupportedOperationException(
                     "Unsupported Avro type: " + fieldSchema.getType() + " for field: " + fieldName);

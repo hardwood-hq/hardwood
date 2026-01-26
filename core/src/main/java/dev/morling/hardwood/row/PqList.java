@@ -19,34 +19,34 @@ import java.util.UUID;
  * Provides type-specific accessor methods for iterating over list elements.
  * For primitive int/long/double lists, use the dedicated types
  * ({@link PqIntList}, {@link PqLongList}, {@link PqDoubleList}) via
- * {@code row.getListOfInts()}, etc.
+ * {@code rowReader.getListOfInts()}, etc.
  * </p>
  *
  * <pre>{@code
  * // String list
- * PqList tags = row.getList("tags");
+ * PqList tags = rowReader.getList("tags");
  * for (String tag : tags.strings()) {
  *     System.out.println(tag);
  * }
  *
- * // Nested row list
- * PqList items = row.getList("items");
- * for (PqRow item : items.rows()) {
+ * // Nested struct list
+ * PqList items = rowReader.getList("items");
+ * for (PqStruct item : items.structs()) {
  *     String name = item.getString("name");
  * }
  *
  * // Nested list (2D matrix)
- * PqList matrix = row.getList("matrix");
- * for (PqIntList row : matrix.intLists()) {
- *     for (var it = row.iterator(); it.hasNext(); ) {
+ * PqList matrix = rowReader.getList("matrix");
+ * for (PqIntList innerList : matrix.intLists()) {
+ *     for (var it = innerList.iterator(); it.hasNext(); ) {
  *         int value = it.nextInt();
  *     }
  * }
  *
  * // Triple nested list (3D cube)
- * PqList cube = row.getList("cube");
+ * PqList cube = rowReader.getList("cube");
  * for (PqList plane : cube.lists()) {
- *     for (PqIntList row : plane.intLists()) {
+ *     for (PqIntList innerList : plane.intLists()) {
  *         // ...
  *     }
  * }
@@ -157,9 +157,9 @@ public interface PqList {
     // ==================== Nested Type Accessors ====================
 
     /**
-     * Iterate over elements as nested rows (structs).
+     * Iterate over elements as nested structs.
      */
-    Iterable<PqRow> rows();
+    Iterable<PqStruct> structs();
 
     /**
      * Iterate over elements as nested lists.

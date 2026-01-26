@@ -15,7 +15,7 @@ import org.junit.jupiter.api.Test;
 import dev.morling.hardwood.metadata.Encoding;
 import dev.morling.hardwood.metadata.RowGroup;
 import dev.morling.hardwood.reader.ParquetFileReader;
-import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -65,20 +65,24 @@ class DeltaByteArrayTest {
             };
 
             int rowIndex = 0;
-            for (PqRow row : reader.createRowReader()) {
-                // id column (INT32)
-                Integer id = row.getInt("id");
-                assertThat(id).isEqualTo(rowIndex + 1);
+            try (RowReader rowReader = reader.createRowReader()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
 
-                // prefix_strings column (DELTA_BYTE_ARRAY)
-                String prefixString = row.getString("prefix_strings");
-                assertThat(prefixString).isEqualTo(expectedPrefixStrings[rowIndex]);
+                    // id column (INT32)
+                    int id = rowReader.getInt("id");
+                    assertThat(id).isEqualTo(rowIndex + 1);
 
-                // varying_strings column (DELTA_BYTE_ARRAY)
-                String varyingString = row.getString("varying_strings");
-                assertThat(varyingString).isEqualTo(expectedVaryingStrings[rowIndex]);
+                    // prefix_strings column (DELTA_BYTE_ARRAY)
+                    String prefixString = rowReader.getString("prefix_strings");
+                    assertThat(prefixString).isEqualTo(expectedPrefixStrings[rowIndex]);
 
-                rowIndex++;
+                    // varying_strings column (DELTA_BYTE_ARRAY)
+                    String varyingString = rowReader.getString("varying_strings");
+                    assertThat(varyingString).isEqualTo(expectedVaryingStrings[rowIndex]);
+
+                    rowIndex++;
+                }
             }
             assertThat(rowIndex).isEqualTo(8);
         }

@@ -19,7 +19,7 @@ import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
 import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqMap;
-import dev.morling.hardwood.row.PqRow;
+import dev.morling.hardwood.row.PqStruct;
 import dev.morling.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -67,19 +67,16 @@ public class MapSchemaTest {
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
             try (RowReader rowReader = fileReader.createRowReader()) {
-                List<PqRow> rows = new ArrayList<>();
-                for (PqRow row : rowReader) {
-                    rows.add(row);
-                }
-
-                assertThat(rows).hasSize(5);
+                int rowCount = 0;
 
                 // Row 0: Alice with 3 attributes
-                PqRow row0 = rows.get(0);
-                assertThat(row0.getInt("id")).isEqualTo(1);
-                assertThat(row0.getString("name")).isEqualTo("Alice");
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getInt("id")).isEqualTo(1);
+                assertThat(rowReader.getString("name")).isEqualTo("Alice");
 
-                PqMap map0 = row0.getMap("attributes");
+                PqMap map0 = rowReader.getMap("attributes");
                 assertThat(map0.size()).isEqualTo(3);
 
                 // Check key-value pairs (order preserved from PyArrow)
@@ -91,16 +88,33 @@ public class MapSchemaTest {
                 assertThat(entries0.get(2).getStringKey()).isEqualTo("level");
                 assertThat(entries0.get(2).getIntValue()).isEqualTo(5);
 
+                // Row 1: Bob (skip)
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+
                 // Row 2: Charlie with empty map
-                PqRow row2 = rows.get(2);
-                assertThat(row2.getString("name")).isEqualTo("Charlie");
-                PqMap map2 = row2.getMap("attributes");
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getString("name")).isEqualTo("Charlie");
+                PqMap map2 = rowReader.getMap("attributes");
                 assertThat(map2.isEmpty()).isTrue();
 
                 // Row 3: Diana with null map
-                PqRow row3 = rows.get(3);
-                assertThat(row3.getString("name")).isEqualTo("Diana");
-                assertThat(row3.isNull("attributes")).isTrue();
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getString("name")).isEqualTo("Diana");
+                assertThat(rowReader.isNull("attributes")).isTrue();
+
+                // Row 4: skip and count
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                    rowCount++;
+                }
+
+                assertThat(rowCount).isEqualTo(5);
             }
         }
     }
@@ -138,19 +152,16 @@ public class MapSchemaTest {
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
             try (RowReader rowReader = fileReader.createRowReader()) {
-                List<PqRow> rows = new ArrayList<>();
-                for (PqRow row : rowReader) {
-                    rows.add(row);
-                }
-
-                assertThat(rows).hasSize(5);
+                int rowCount = 0;
 
                 // Row 0: Department A with two teams
-                PqRow row0 = rows.get(0);
-                assertThat(row0.getInt("id")).isEqualTo(1);
-                assertThat(row0.getString("name")).isEqualTo("Department A");
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getInt("id")).isEqualTo(1);
+                assertThat(rowReader.getString("name")).isEqualTo("Department A");
 
-                PqMap outerMap0 = row0.getMap("nested_map");
+                PqMap outerMap0 = rowReader.getMap("nested_map");
                 assertThat(outerMap0.size()).isEqualTo(2);
 
                 // First team: team1 with alice=100, bob=95
@@ -163,16 +174,29 @@ public class MapSchemaTest {
                 assertThat(team1Entries.get(0).getStringKey()).isEqualTo("alice");
                 assertThat(team1Entries.get(0).getIntValue()).isEqualTo(100);
 
+                // Skip rows 1-2
+                rowReader.next();
+                rowCount++;
+                rowReader.next();
+                rowCount++;
+
                 // Row 3: Department D with empty outer map
-                PqRow row3 = rows.get(3);
-                assertThat(row3.getString("name")).isEqualTo("Department D");
-                PqMap outerMap3 = row3.getMap("nested_map");
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getString("name")).isEqualTo("Department D");
+                PqMap outerMap3 = rowReader.getMap("nested_map");
                 assertThat(outerMap3.isEmpty()).isTrue();
 
                 // Row 4: Department E with null map
-                PqRow row4 = rows.get(4);
-                assertThat(row4.getString("name")).isEqualTo("Department E");
-                assertThat(row4.isNull("nested_map")).isTrue();
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getString("name")).isEqualTo("Department E");
+                assertThat(rowReader.isNull("nested_map")).isTrue();
+
+                assertThat(rowReader.hasNext()).isFalse();
+                assertThat(rowCount).isEqualTo(5);
             }
         }
     }
@@ -183,18 +207,15 @@ public class MapSchemaTest {
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
             try (RowReader rowReader = fileReader.createRowReader()) {
-                List<PqRow> rows = new ArrayList<>();
-                for (PqRow row : rowReader) {
-                    rows.add(row);
-                }
-
-                assertThat(rows).hasSize(5);
+                int rowCount = 0;
 
                 // Row 0: List with 3 maps
-                PqRow row0 = rows.get(0);
-                assertThat(row0.getInt("id")).isEqualTo(1);
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getInt("id")).isEqualTo(1);
 
-                PqList mapList0 = row0.getList("map_list");
+                PqList mapList0 = rowReader.getList("map_list");
                 assertThat(mapList0.size()).isEqualTo(3);
 
                 // First map: {a:1, b:2}
@@ -206,14 +227,27 @@ public class MapSchemaTest {
                 assertThat(maps.get(0).getEntries().get(0).getStringKey()).isEqualTo("a");
                 assertThat(maps.get(0).getEntries().get(0).getIntValue()).isEqualTo(1);
 
+                // Skip rows 1-2
+                rowReader.next();
+                rowCount++;
+                rowReader.next();
+                rowCount++;
+
                 // Row 3: Empty list
-                PqRow row3 = rows.get(3);
-                PqList mapList3 = row3.getList("map_list");
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                PqList mapList3 = rowReader.getList("map_list");
                 assertThat(mapList3.isEmpty()).isTrue();
 
                 // Row 4: Null list
-                PqRow row4 = rows.get(4);
-                assertThat(row4.isNull("map_list")).isTrue();
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.isNull("map_list")).isTrue();
+
+                assertThat(rowReader.hasNext()).isFalse();
+                assertThat(rowCount).isEqualTo(5);
             }
         }
     }
@@ -224,32 +258,38 @@ public class MapSchemaTest {
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
             try (RowReader rowReader = fileReader.createRowReader()) {
-                List<PqRow> rows = new ArrayList<>();
-                for (PqRow row : rowReader) {
-                    rows.add(row);
-                }
-
-                assertThat(rows).hasSize(3);
+                int rowCount = 0;
 
                 // Row 0: Two employees
-                PqRow row0 = rows.get(0);
-                assertThat(row0.getInt("id")).isEqualTo(1);
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                assertThat(rowReader.getInt("id")).isEqualTo(1);
 
-                PqMap people0 = row0.getMap("people");
+                PqMap people0 = rowReader.getMap("people");
                 assertThat(people0.size()).isEqualTo(2);
 
                 // First entry: employee1 -> {name: Alice, age: 30}
                 List<PqMap.Entry> entries = people0.getEntries();
                 assertThat(entries.get(0).getStringKey()).isEqualTo("employee1");
 
-                PqRow person1 = entries.get(0).getRowValue();
+                PqStruct person1 = entries.get(0).getStructValue();
                 assertThat(person1.getString("name")).isEqualTo("Alice");
                 assertThat(person1.getInt("age")).isEqualTo(30);
 
+                // Skip row 1
+                rowReader.next();
+                rowCount++;
+
                 // Row 2: Empty map
-                PqRow row2 = rows.get(2);
-                PqMap people2 = row2.getMap("people");
+                assertThat(rowReader.hasNext()).isTrue();
+                rowReader.next();
+                rowCount++;
+                PqMap people2 = rowReader.getMap("people");
                 assertThat(people2.isEmpty()).isTrue();
+
+                assertThat(rowReader.hasNext()).isFalse();
+                assertThat(rowCount).isEqualTo(3);
             }
         }
     }
