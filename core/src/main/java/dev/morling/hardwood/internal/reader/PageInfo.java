@@ -7,7 +7,7 @@
  */
 package dev.morling.hardwood.internal.reader;
 
-import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
 
 import dev.morling.hardwood.metadata.ColumnMetaData;
 import dev.morling.hardwood.schema.ColumnSchema;
@@ -20,7 +20,7 @@ import dev.morling.hardwood.schema.ColumnSchema;
  * </p>
  */
 public record PageInfo(
-    ByteBuffer pageData,
+    MappedByteBuffer pageData,
     ColumnSchema columnSchema,
     ColumnMetaData columnMetaData,
     Dictionary dictionary

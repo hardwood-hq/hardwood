@@ -55,7 +55,9 @@ public class PageCursor {
         else {
             PageInfo first = pageInfos.get(0);
             this.columnName = first.columnSchema().name();
-            this.pageReader = new PageReader(first.columnMetaData(), first.columnSchema(), first.dictionary());
+            this.pageReader = new PageReader(
+                    first.columnMetaData(),
+                    first.columnSchema());
         }
         // Start prefetching immediately
         fillPrefetchQueue();
@@ -131,7 +133,7 @@ public class PageCursor {
      */
     private Page decodePage(PageInfo pageInfo) {
         try {
-            return pageReader.decodePage(pageInfo.pageData());
+            return pageReader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
         }
         catch (Exception e) {
             throw new RuntimeException("Error decoding page for column " + pageInfo.columnSchema().name(), e);

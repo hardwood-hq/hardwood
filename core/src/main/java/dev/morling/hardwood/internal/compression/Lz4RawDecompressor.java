@@ -8,6 +8,8 @@
 package dev.morling.hardwood.internal.compression;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
+import java.nio.MappedByteBuffer;
 
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4FastDecompressor;
@@ -27,16 +29,19 @@ public class Lz4RawDecompressor implements Decompressor {
     }
 
     @Override
-    public byte[] decompress(byte[] compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
         try {
+            // Decompress directly from MappedByteBuffer - no copying
             byte[] uncompressed = new byte[uncompressedSize];
-            int compressedLength = decompressor.decompress(compressed, 0, uncompressed, 0, uncompressedSize);
+            ByteBuffer dest = ByteBuffer.wrap(uncompressed);
 
-            // Verify all compressed bytes were consumed
-            if (compressedLength != compressed.length) {
+            int compressedLength = compressed.remaining();
+            int consumedLength = decompressor.decompress(compressed, 0, dest, 0, uncompressedSize);
+
+            if (consumedLength != compressedLength) {
                 throw new IOException(
-                        "LZ4_RAW decompression did not consume all input: expected " + compressed.length +
-                                " bytes, consumed " + compressedLength);
+                        "LZ4_RAW decompression did not consume all input: expected " + compressedLength +
+                                " bytes, consumed " + consumedLength);
             }
 
             return uncompressed;

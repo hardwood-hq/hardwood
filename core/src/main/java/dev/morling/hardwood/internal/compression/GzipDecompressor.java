@@ -8,6 +8,7 @@
 package dev.morling.hardwood.internal.compression;
 
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
@@ -26,18 +27,20 @@ public class GzipDecompressor implements Decompressor {
     private static final int FCOMMENT = 16;
 
     @Override
-    public byte[] decompress(byte[] compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
         byte[] result = new byte[uncompressedSize];
         int totalDecompressed = 0;
-        int inputOffset = 0;
 
         // Handle concatenated GZIP members
-        while (totalDecompressed < uncompressedSize && inputOffset < compressed.length) {
-            int headerEnd = skipGzipHeader(compressed, inputOffset);
+        while (totalDecompressed < uncompressedSize && compressed.hasRemaining()) {
+            int headerEnd = skipGzipHeader(compressed);
 
             Inflater inflater = new Inflater(true); // true = nowrap (raw deflate)
             try {
-                inflater.setInput(compressed, headerEnd, compressed.length - headerEnd);
+                // slice() with indices is absolute - must add current position
+                MappedByteBuffer dataSlice = compressed.slice(compressed.position() + headerEnd, compressed.remaining() - headerEnd);
+                inflater.setInput(dataSlice);
+
                 while (totalDecompressed < uncompressedSize) {
                     int decompressed = inflater.inflate(result, totalDecompressed, uncompressedSize - totalDecompressed);
                     if (decompressed == 0) {
@@ -54,7 +57,8 @@ public class GzipDecompressor implements Decompressor {
                     totalDecompressed += decompressed;
                 }
                 // Move past consumed input + 8-byte trailer for next member
-                inputOffset = compressed.length - inflater.getRemaining() + 8;
+                int consumed = dataSlice.capacity() - inflater.getRemaining() + 8;
+                compressed.position(compressed.position() + headerEnd + consumed);
             }
             catch (DataFormatException e) {
                 throw new IOException("GZIP decompression failed", e);
@@ -72,37 +76,38 @@ public class GzipDecompressor implements Decompressor {
         return result;
     }
 
-    private int skipGzipHeader(byte[] data, int start) throws IOException {
-        if (data.length - start < 10) {
+    private int skipGzipHeader(MappedByteBuffer buffer) throws IOException {
+        int start = buffer.position();
+        if (buffer.remaining() < 10) {
             throw new IOException("GZIP data too short for header");
         }
 
         // Check magic number
-        int magic = (data[start] & 0xff) | ((data[start + 1] & 0xff) << 8);
+        int magic = (buffer.get(start) & 0xff) | ((buffer.get(start + 1) & 0xff) << 8);
         if (magic != GZIP_MAGIC) {
             throw new IOException("Not in GZIP format");
         }
 
         // Check compression method (must be 8 = deflate)
-        if (data[start + 2] != 8) {
-            throw new IOException("Unsupported compression method: " + data[start + 2]);
+        if (buffer.get(start + 2) != 8) {
+            throw new IOException("Unsupported compression method: " + buffer.get(start + 2));
         }
 
-        int flags = data[start + 3] & 0xff;
-        int offset = start + 10; // Skip fixed header
+        int flags = buffer.get(start + 3) & 0xff;
+        int offset = 10; // Skip fixed header
 
         // Skip extra field if present
         if ((flags & FEXTRA) != 0) {
-            if (offset + 2 > data.length) {
+            if (offset + 2 > buffer.remaining()) {
                 throw new IOException("Truncated GZIP extra field");
             }
-            int extraLen = (data[offset] & 0xff) | ((data[offset + 1] & 0xff) << 8);
+            int extraLen = (buffer.get(start + offset) & 0xff) | ((buffer.get(start + offset + 1) & 0xff) << 8);
             offset += 2 + extraLen;
         }
 
         // Skip file name if present
         if ((flags & FNAME) != 0) {
-            while (offset < data.length && data[offset] != 0) {
+            while (offset < buffer.remaining() && buffer.get(start + offset) != 0) {
                 offset++;
             }
             offset++; // Skip null terminator
@@ -110,7 +115,7 @@ public class GzipDecompressor implements Decompressor {
 
         // Skip comment if present
         if ((flags & FCOMMENT) != 0) {
-            while (offset < data.length && data[offset] != 0) {
+            while (offset < buffer.remaining() && buffer.get(start + offset) != 0) {
                 offset++;
             }
             offset++; // Skip null terminator
@@ -121,7 +126,7 @@ public class GzipDecompressor implements Decompressor {
             offset += 2;
         }
 
-        if (offset >= data.length) {
+        if (offset >= buffer.remaining()) {
             throw new IOException("GZIP header extends beyond data");
         }
 

@@ -12,6 +12,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.MappedByteBuffer;
 
 import dev.morling.hardwood.internal.compression.Decompressor;
 import dev.morling.hardwood.internal.compression.DecompressorFactory;
@@ -42,19 +43,16 @@ public class PageReader {
 
     private final ColumnMetaData columnMetaData;
     private final ColumnSchema column;
-    private final Dictionary dictionary;
 
     /**
-     * Constructor for page decoding with a pre-parsed dictionary.
+     * Constructor for page decoding.
      *
      * @param columnMetaData metadata for the column
      * @param column column schema
-     * @param dictionary pre-parsed dictionary, or null if not dictionary-encoded
      */
-    public PageReader(ColumnMetaData columnMetaData, ColumnSchema column, Dictionary dictionary) {
+    public PageReader(ColumnMetaData columnMetaData, ColumnSchema column) {
         this.columnMetaData = columnMetaData;
         this.column = column;
-        this.dictionary = dictionary;
     }
 
     /**
@@ -64,28 +62,28 @@ public class PageReader {
      * </p>
      *
      * @param pageBuffer buffer containing just this page (header + data)
+     * @param dictionary dictionary for this page, or null if not dictionary-encoded
      * @return decoded page
      */
-    public Page decodePage(ByteBuffer pageBuffer) throws IOException {
+    public Page decodePage(MappedByteBuffer pageBuffer, Dictionary dictionary) throws IOException {
         // Parse page header
         ByteBufferInputStream headerStream = new ByteBufferInputStream(pageBuffer, 0);
         ThriftCompactReader headerReader = new ThriftCompactReader(headerStream);
         PageHeader pageHeader = PageHeaderReader.read(headerReader);
         int headerSize = headerStream.getBytesRead();
 
-        // Read page data
+        // Slice the page data (avoids copying)
         int compressedSize = pageHeader.compressedPageSize();
-        byte[] pageData = new byte[compressedSize];
-        pageBuffer.slice(headerSize, compressedSize).get(pageData);
+        MappedByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
 
         return switch (pageHeader.type()) {
             case DATA_PAGE -> {
                 Decompressor decompressor = DecompressorFactory.getDecompressor(columnMetaData.codec());
                 byte[] uncompressedData = decompressor.decompress(pageData, pageHeader.uncompressedPageSize());
-                yield parseDataPage(pageHeader.dataPageHeader(), uncompressedData);
+                yield parseDataPage(pageHeader.dataPageHeader(), uncompressedData, dictionary);
             }
             case DATA_PAGE_V2 -> {
-                yield parseDataPageV2(pageHeader.dataPageHeaderV2(), pageData, pageHeader.uncompressedPageSize());
+                yield parseDataPageV2(pageHeader.dataPageHeaderV2(), pageData, pageHeader.uncompressedPageSize(), dictionary);
             }
             default -> throw new IOException("Unexpected page type for single-page decode: " + pageHeader.type());
         };
@@ -174,7 +172,7 @@ public class PageReader {
         }
     }
 
-    private Page parseDataPage(DataPageHeader header, byte[] data) throws IOException {
+    private Page parseDataPage(DataPageHeader header, byte[] data, Dictionary dictionary) throws IOException {
         ByteArrayInputStream dataStream = new ByteArrayInputStream(data);
 
         int[] repetitionLevels = null;
@@ -197,27 +195,27 @@ public class PageReader {
 
         return decodeTypedValues(
                 header.encoding(), dataStream, header.numValues(), numNonNullValues,
-                definitionLevels, repetitionLevels);
+                definitionLevels, repetitionLevels, dictionary);
     }
 
-    private Page parseDataPageV2(DataPageHeaderV2 header, byte[] pageData, int uncompressedPageSize)
-            throws IOException {
+    private Page parseDataPageV2(DataPageHeaderV2 header, MappedByteBuffer pageData, int uncompressedPageSize,
+            Dictionary dictionary) throws IOException {
         int repLevelLen = header.repetitionLevelsByteLength();
         int defLevelLen = header.definitionLevelsByteLength();
         int valuesOffset = repLevelLen + defLevelLen;
-        int compressedValuesLen = pageData.length - valuesOffset;
+        int compressedValuesLen = pageData.remaining() - valuesOffset;
 
         int[] repetitionLevels = null;
         if (column.maxRepetitionLevel() > 0 && repLevelLen > 0) {
             byte[] repLevelData = new byte[repLevelLen];
-            System.arraycopy(pageData, 0, repLevelData, 0, repLevelLen);
+            pageData.slice(0, repLevelLen).get(repLevelData);
             repetitionLevels = decodeLevels(repLevelData, header.numValues(), column.maxRepetitionLevel());
         }
 
         int[] definitionLevels = null;
         if (column.maxDefinitionLevel() > 0 && defLevelLen > 0) {
             byte[] defLevelData = new byte[defLevelLen];
-            System.arraycopy(pageData, repLevelLen, defLevelData, 0, defLevelLen);
+            pageData.slice(repLevelLen, defLevelLen).get(defLevelData);
             definitionLevels = decodeLevels(defLevelData, header.numValues(), column.maxDefinitionLevel());
         }
 
@@ -225,14 +223,13 @@ public class PageReader {
         int uncompressedValuesSize = uncompressedPageSize - repLevelLen - defLevelLen;
 
         if (header.isCompressed() && compressedValuesLen > 0) {
-            byte[] compressedValues = new byte[compressedValuesLen];
-            System.arraycopy(pageData, valuesOffset, compressedValues, 0, compressedValuesLen);
+            MappedByteBuffer compressedValues = pageData.slice(valuesOffset, compressedValuesLen);
             Decompressor decompressor = DecompressorFactory.getDecompressor(columnMetaData.codec());
             valuesData = decompressor.decompress(compressedValues, uncompressedValuesSize);
         }
         else {
             valuesData = new byte[compressedValuesLen];
-            System.arraycopy(pageData, valuesOffset, valuesData, 0, compressedValuesLen);
+            pageData.slice(valuesOffset, compressedValuesLen).get(valuesData);
         }
 
         ByteArrayInputStream valuesStream = new ByteArrayInputStream(valuesData);
@@ -240,7 +237,7 @@ public class PageReader {
 
         return decodeTypedValues(
                 header.encoding(), valuesStream, header.numValues(), numNonNullValues,
-                definitionLevels, repetitionLevels);
+                definitionLevels, repetitionLevels, dictionary);
     }
 
     /**
@@ -248,7 +245,8 @@ public class PageReader {
      */
     private Page decodeTypedValues(Encoding encoding, InputStream dataStream,
                                    int numValues, int numNonNullValues,
-                                   int[] definitionLevels, int[] repetitionLevels) throws IOException {
+                                   int[] definitionLevels, int[] repetitionLevels,
+                                   Dictionary dictionary) throws IOException {
         int maxDefLevel = column.maxDefinitionLevel();
         PhysicalType type = column.type();
 

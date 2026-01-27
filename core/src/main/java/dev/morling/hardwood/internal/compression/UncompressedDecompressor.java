@@ -7,15 +7,18 @@
  */
 package dev.morling.hardwood.internal.compression;
 
+import java.nio.MappedByteBuffer;
+
 /**
  * Decompressor for uncompressed data (passthrough).
  */
 public class UncompressedDecompressor implements Decompressor {
 
     @Override
-    public byte[] decompress(byte[] compressed, int uncompressedSize) {
-        // No decompression needed - just return the data as-is
-        return compressed;
+    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) {
+        byte[] data = new byte[compressed.remaining()];
+        compressed.get(data);
+        return data;
     }
 
     @Override

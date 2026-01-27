@@ -8,21 +8,22 @@
 package dev.morling.hardwood.internal.compression;
 
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
 
 /**
- * Interface for decompressing compressed page data.
+ * Interface for decompressing compressed page data from memory-mapped files.
  */
 public interface Decompressor {
 
     /**
-     * Decompress the given compressed data.
+     * Decompress the given compressed data from a memory-mapped buffer.
      *
-     * @param compressed the compressed data
+     * @param compressed the memory-mapped buffer slice containing compressed data
      * @param uncompressedSize the expected size of uncompressed data
      * @return the uncompressed data
      * @throws IOException if decompression fails
      */
-    byte[] decompress(byte[] compressed, int uncompressedSize) throws IOException;
+    byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException;
 
     /**
      * Get the name of this decompressor.

@@ -8,6 +8,7 @@
 package dev.morling.hardwood.internal.compression;
 
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
 
 import com.github.luben.zstd.Zstd;
 
@@ -17,18 +18,11 @@ import com.github.luben.zstd.Zstd;
 public class ZstdDecompressor implements Decompressor {
 
     @Override
-    public byte[] decompress(byte[] compressed, int uncompressedSize) throws IOException {
-        // ZSTD decompression
+    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
+        // Decompress directly from MappedByteBuffer to byte[] - no copying
         byte[] uncompressed = new byte[uncompressedSize];
-        long actualSize = Zstd.decompressByteArray(uncompressed, 0, uncompressedSize,
-                compressed, 0, compressed.length);
+        int actualSize = Zstd.decompress(uncompressed, compressed);
 
-        // Check for decompression errors
-        if (Zstd.isError(actualSize)) {
-            throw new IOException("ZSTD decompression failed: " + Zstd.getErrorName(actualSize));
-        }
-
-        // Verify the uncompressed size matches expectations
         if (actualSize != uncompressedSize) {
             throw new IOException(
                     "ZSTD decompression size mismatch: expected " + uncompressedSize + ", got " + actualSize);

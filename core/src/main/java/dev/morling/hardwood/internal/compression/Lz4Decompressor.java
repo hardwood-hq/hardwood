@@ -10,6 +10,7 @@ package dev.morling.hardwood.internal.compression;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.MappedByteBuffer;
 
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4FastDecompressor;
@@ -37,15 +38,17 @@ public class Lz4Decompressor implements Decompressor {
     }
 
     @Override
-    public byte[] decompress(byte[] compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
         // Try raw LZ4 first (most common case), then fall back to Hadoop format
         try {
             return decompressRaw(compressed, uncompressedSize);
         }
         catch (Exception e) {
-            // Fall back to Hadoop's block format
+            // Fall back to Hadoop's block format - needs byte[] for block parsing
             try {
-                return decompressHadoopFormat(compressed, uncompressedSize);
+                byte[] compressedBytes = new byte[compressed.remaining()];
+                compressed.duplicate().get(compressedBytes);
+                return decompressHadoopFormat(compressedBytes, uncompressedSize);
             }
             catch (Exception e2) {
                 throw new IOException("LZ4 decompression failed (tried both raw and Hadoop formats): " +
@@ -128,9 +131,10 @@ public class Lz4Decompressor implements Decompressor {
     /**
      * Decompress using raw LZ4 block format (no framing).
      */
-    private byte[] decompressRaw(byte[] compressed, int uncompressedSize) {
+    private byte[] decompressRaw(MappedByteBuffer compressed, int uncompressedSize) {
         byte[] uncompressed = new byte[uncompressedSize];
-        fastDecompressor.decompress(compressed, 0, uncompressed, 0, uncompressedSize);
+        ByteBuffer dest = ByteBuffer.wrap(uncompressed);
+        fastDecompressor.decompress(compressed, 0, dest, 0, uncompressedSize);
         return uncompressed;
     }
 

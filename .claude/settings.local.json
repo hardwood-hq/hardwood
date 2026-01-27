@@ -82,7 +82,8 @@
       "Bash(curl:*)",
       "Bash(pip install:*)",
       "Bash(for f in /app/performance-test/target/tlc-trip-record-data/*.parquet)",
-      "Bash(do echo \"=== $f ===\")"
+      "Bash(do echo \"=== $f ===\")",
+      "Bash(parquet-tools meta:*)"
     ]
   }
 }

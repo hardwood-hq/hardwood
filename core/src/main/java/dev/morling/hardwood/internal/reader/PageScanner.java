@@ -8,7 +8,6 @@
 package dev.morling.hardwood.internal.reader;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.util.ArrayList;
@@ -82,8 +81,7 @@ public class PageScanner {
             int totalPageSize = headerSize + compressedSize;
 
             if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
-                byte[] compressedData = new byte[compressedSize];
-                buffer.slice(pageDataOffset, compressedSize).get(compressedData);
+                MappedByteBuffer compressedData = (MappedByteBuffer) buffer.slice(pageDataOffset, compressedSize);
                 int numValues = header.dictionaryPageHeader().numValues();
                 int uncompressedSize = header.uncompressedPageSize();
 
@@ -92,7 +90,7 @@ public class PageScanner {
             }
             else if (header.type() == PageHeader.PageType.DATA_PAGE ||
                      header.type() == PageHeader.PageType.DATA_PAGE_V2) {
-                ByteBuffer pageSlice = buffer.slice(position, totalPageSize);
+                MappedByteBuffer pageSlice = (MappedByteBuffer) buffer.slice(position, totalPageSize);
 
                 PageInfo pageInfo = new PageInfo(
                     pageSlice,
@@ -111,7 +109,7 @@ public class PageScanner {
         return pageInfos;
     }
 
-    private Dictionary parseDictionary(byte[] compressedData, int numValues,
+    private Dictionary parseDictionary(MappedByteBuffer compressedData, int numValues,
             int uncompressedSize, ColumnSchema column, CompressionCodec codec) throws IOException {
         Decompressor decompressor = DecompressorFactory.getDecompressor(codec);
         byte[] data = decompressor.decompress(compressedData, uncompressedSize);
