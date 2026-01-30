@@ -7,9 +7,6 @@
  */
 package dev.morling.hardwood.perf;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.withinPercentage;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -35,6 +32,9 @@ import dev.morling.hardwood.metadata.PhysicalType;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
 import dev.morling.hardwood.schema.SchemaNode;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.withinPercentage;
 
 /**
  * Performance comparison test between Hardwood, and parquet-java.
