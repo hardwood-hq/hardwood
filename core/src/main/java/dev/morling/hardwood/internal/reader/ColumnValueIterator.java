@@ -8,6 +8,8 @@
 package dev.morling.hardwood.internal.reader;
 
 import java.util.ArrayDeque;
+import java.util.Arrays;
+import java.util.BitSet;
 import java.util.Deque;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
@@ -41,6 +43,7 @@ public class ColumnValueIterator {
     private final ColumnSchema column;
     private final Executor executor;
     private final int maxDefinitionLevel;
+    private final boolean flatSchema;
 
     private Page currentPage;
     private int position;
@@ -55,11 +58,12 @@ public class ColumnValueIterator {
     private int missCount = 0;
     private boolean exhausted = false;
 
-    public ColumnValueIterator(PageCursor pageCursor, ColumnSchema column, Executor executor) {
+    public ColumnValueIterator(PageCursor pageCursor, ColumnSchema column, Executor executor, boolean flatSchema) {
         this.pageCursor = pageCursor;
         this.column = column;
         this.executor = executor;
         this.maxDefinitionLevel = column.maxDefinitionLevel();
+        this.flatSchema = flatSchema;
     }
 
     // ==================== Batch Prefetch ====================
@@ -155,7 +159,7 @@ public class ColumnValueIterator {
      * Compute a batch synchronously from current state.
      */
     private TypedColumnData computeBatch(int maxRecords) {
-        if (column.maxRepetitionLevel() == 0) {
+        if (flatSchema) {
             return computeFlatBatch(maxRecords);
         }
         return computeNestedBatch(maxRecords);
@@ -165,18 +169,39 @@ public class ColumnValueIterator {
      * Return an empty TypedColumnData based on the column's physical type.
      */
     private TypedColumnData emptyTypedColumnData() {
+        if (flatSchema) {
+            return switch (column.type()) {
+                case INT32 -> new FlatColumnData.IntColumn(column, new int[0], null, 0);
+                case INT64 -> new FlatColumnData.LongColumn(column, new long[0], null, 0);
+                case FLOAT -> new FlatColumnData.FloatColumn(column, new float[0], null, 0);
+                case DOUBLE -> new FlatColumnData.DoubleColumn(column, new double[0], null, 0);
+                case BOOLEAN -> new FlatColumnData.BooleanColumn(column, new boolean[0], null, 0);
+                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> new FlatColumnData.ByteArrayColumn(column, new byte[0][], null, 0);
+            };
+        }
         int maxDefLevel = column.maxDefinitionLevel();
         return switch (column.type()) {
-            case INT32 -> new TypedColumnData.IntColumn(column, new int[0], new int[0], maxDefLevel, 0);
-            case INT64 -> new TypedColumnData.LongColumn(column, new long[0], new int[0], maxDefLevel, 0);
-            case FLOAT -> new TypedColumnData.FloatColumn(column, new float[0], new int[0], maxDefLevel, 0);
-            case DOUBLE -> new TypedColumnData.DoubleColumn(column, new double[0], new int[0], maxDefLevel, 0);
-            case BOOLEAN -> new TypedColumnData.BooleanColumn(column, new boolean[0], new int[0], maxDefLevel, 0);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> new TypedColumnData.ByteArrayColumn(column, new byte[0][], new int[0], maxDefLevel, 0);
+            case INT32 -> new NestedColumnData.IntColumn(column, new int[0], new int[0], null, null, maxDefLevel, 0);
+            case INT64 -> new NestedColumnData.LongColumn(column, new long[0], new int[0], null, null, maxDefLevel, 0);
+            case FLOAT -> new NestedColumnData.FloatColumn(column, new float[0], new int[0], null, null, maxDefLevel, 0);
+            case DOUBLE -> new NestedColumnData.DoubleColumn(column, new double[0], new int[0], null, null, maxDefLevel, 0);
+            case BOOLEAN -> new NestedColumnData.BooleanColumn(column, new boolean[0], new int[0], null, null, maxDefLevel, 0);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> new NestedColumnData.ByteArrayColumn(column, new byte[0][], new int[0], null, null, maxDefLevel, 0);
         };
     }
 
     // ==================== Flat Batch Computation ====================
+
+    private void markNulls(BitSet nulls, int[] defLevels, int srcPos, int destPos, int count, int maxDefLevel) {
+        if (nulls == null) {
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            if (defLevels[srcPos + i] < maxDefLevel) {
+                nulls.set(destPos + i);
+            }
+        }
+    }
 
     private TypedColumnData computeFlatBatch(int maxRecords) {
         int maxDefLevel = column.maxDefinitionLevel();
@@ -197,7 +222,7 @@ public class ColumnValueIterator {
 
     private TypedColumnData computeFlatInt(int maxRecords, int maxDefLevel) {
         int[] values = new int[maxRecords];
-        int[] defLevels = maxDefLevel > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -206,27 +231,22 @@ public class ColumnValueIterator {
             int toCopy = Math.min(available, maxRecords - recordCount);
 
             System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            if (defLevels != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, recordCount, toCopy);
-            }
+            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
 
             position += toCopy;
             recordCount += toCopy;
         }
 
         if (recordCount < maxRecords) {
-            values = java.util.Arrays.copyOf(values, recordCount);
-            if (defLevels != null) {
-                defLevels = java.util.Arrays.copyOf(defLevels, recordCount);
-            }
+            values = Arrays.copyOf(values, recordCount);
         }
 
-        return new TypedColumnData.IntColumn(column, values, defLevels, maxDefLevel, recordCount);
+        return new FlatColumnData.IntColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatLong(int maxRecords, int maxDefLevel) {
         long[] values = new long[maxRecords];
-        int[] defLevels = maxDefLevel > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -235,27 +255,22 @@ public class ColumnValueIterator {
             int toCopy = Math.min(available, maxRecords - recordCount);
 
             System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            if (defLevels != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, recordCount, toCopy);
-            }
+            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
 
             position += toCopy;
             recordCount += toCopy;
         }
 
         if (recordCount < maxRecords) {
-            values = java.util.Arrays.copyOf(values, recordCount);
-            if (defLevels != null) {
-                defLevels = java.util.Arrays.copyOf(defLevels, recordCount);
-            }
+            values = Arrays.copyOf(values, recordCount);
         }
 
-        return new TypedColumnData.LongColumn(column, values, defLevels, maxDefLevel, recordCount);
+        return new FlatColumnData.LongColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatFloat(int maxRecords, int maxDefLevel) {
         float[] values = new float[maxRecords];
-        int[] defLevels = maxDefLevel > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -264,27 +279,22 @@ public class ColumnValueIterator {
             int toCopy = Math.min(available, maxRecords - recordCount);
 
             System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            if (defLevels != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, recordCount, toCopy);
-            }
+            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
 
             position += toCopy;
             recordCount += toCopy;
         }
 
         if (recordCount < maxRecords) {
-            values = java.util.Arrays.copyOf(values, recordCount);
-            if (defLevels != null) {
-                defLevels = java.util.Arrays.copyOf(defLevels, recordCount);
-            }
+            values = Arrays.copyOf(values, recordCount);
         }
 
-        return new TypedColumnData.FloatColumn(column, values, defLevels, maxDefLevel, recordCount);
+        return new FlatColumnData.FloatColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatDouble(int maxRecords, int maxDefLevel) {
         double[] values = new double[maxRecords];
-        int[] defLevels = maxDefLevel > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -293,27 +303,22 @@ public class ColumnValueIterator {
             int toCopy = Math.min(available, maxRecords - recordCount);
 
             System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            if (defLevels != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, recordCount, toCopy);
-            }
+            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
 
             position += toCopy;
             recordCount += toCopy;
         }
 
         if (recordCount < maxRecords) {
-            values = java.util.Arrays.copyOf(values, recordCount);
-            if (defLevels != null) {
-                defLevels = java.util.Arrays.copyOf(defLevels, recordCount);
-            }
+            values = Arrays.copyOf(values, recordCount);
         }
 
-        return new TypedColumnData.DoubleColumn(column, values, defLevels, maxDefLevel, recordCount);
+        return new FlatColumnData.DoubleColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatBoolean(int maxRecords, int maxDefLevel) {
         boolean[] values = new boolean[maxRecords];
-        int[] defLevels = maxDefLevel > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -322,27 +327,22 @@ public class ColumnValueIterator {
             int toCopy = Math.min(available, maxRecords - recordCount);
 
             System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            if (defLevels != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, recordCount, toCopy);
-            }
+            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
 
             position += toCopy;
             recordCount += toCopy;
         }
 
         if (recordCount < maxRecords) {
-            values = java.util.Arrays.copyOf(values, recordCount);
-            if (defLevels != null) {
-                defLevels = java.util.Arrays.copyOf(defLevels, recordCount);
-            }
+            values = Arrays.copyOf(values, recordCount);
         }
 
-        return new TypedColumnData.BooleanColumn(column, values, defLevels, maxDefLevel, recordCount);
+        return new FlatColumnData.BooleanColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatByteArray(int maxRecords, int maxDefLevel) {
         byte[][] values = new byte[maxRecords][];
-        int[] defLevels = maxDefLevel > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -351,22 +351,17 @@ public class ColumnValueIterator {
             int toCopy = Math.min(available, maxRecords - recordCount);
 
             System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            if (defLevels != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, recordCount, toCopy);
-            }
+            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
 
             position += toCopy;
             recordCount += toCopy;
         }
 
         if (recordCount < maxRecords) {
-            values = java.util.Arrays.copyOf(values, recordCount);
-            if (defLevels != null) {
-                defLevels = java.util.Arrays.copyOf(defLevels, recordCount);
-            }
+            values = Arrays.copyOf(values, recordCount);
         }
 
-        return new TypedColumnData.ByteArrayColumn(column, values, defLevels, maxDefLevel, recordCount);
+        return new FlatColumnData.ByteArrayColumn(column, values, nulls, recordCount);
     }
 
     // ==================== Nested Batch Computation ====================
@@ -376,12 +371,12 @@ public class ColumnValueIterator {
 
         if (!ensurePageLoaded()) {
             return switch (column.type()) {
-                case INT32 -> new TypedColumnData.IntColumn(column, new int[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
-                case INT64 -> new TypedColumnData.LongColumn(column, new long[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
-                case FLOAT -> new TypedColumnData.FloatColumn(column, new float[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
-                case DOUBLE -> new TypedColumnData.DoubleColumn(column, new double[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
-                case BOOLEAN -> new TypedColumnData.BooleanColumn(column, new boolean[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
-                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> new TypedColumnData.ByteArrayColumn(column, new byte[0][], new int[0], new int[0], new int[0], maxDefLevel, 0);
+                case INT32 -> new NestedColumnData.IntColumn(column, new int[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
+                case INT64 -> new NestedColumnData.LongColumn(column, new long[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
+                case FLOAT -> new NestedColumnData.FloatColumn(column, new float[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
+                case DOUBLE -> new NestedColumnData.DoubleColumn(column, new double[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
+                case BOOLEAN -> new NestedColumnData.BooleanColumn(column, new boolean[0], new int[0], new int[0], new int[0], maxDefLevel, 0);
+                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> new NestedColumnData.ByteArrayColumn(column, new byte[0][], new int[0], new int[0], new int[0], maxDefLevel, 0);
             };
         }
 
@@ -411,9 +406,9 @@ public class ColumnValueIterator {
             while (hasValue()) {
                 if (valueCount >= values.length) {
                     int newSize = values.length * 2;
-                    values = java.util.Arrays.copyOf(values, newSize);
-                    defLevels = java.util.Arrays.copyOf(defLevels, newSize);
-                    repLevels = java.util.Arrays.copyOf(repLevels, newSize);
+                    values = Arrays.copyOf(values, newSize);
+                    defLevels = Arrays.copyOf(defLevels, newSize);
+                    repLevels = Arrays.copyOf(repLevels, newSize);
                 }
 
                 repLevels[valueCount] = repetitionLevel();
@@ -427,15 +422,15 @@ public class ColumnValueIterator {
         }
 
         if (valueCount < values.length) {
-            values = java.util.Arrays.copyOf(values, valueCount);
-            defLevels = java.util.Arrays.copyOf(defLevels, valueCount);
-            repLevels = java.util.Arrays.copyOf(repLevels, valueCount);
+            values = Arrays.copyOf(values, valueCount);
+            defLevels = Arrays.copyOf(defLevels, valueCount);
+            repLevels = Arrays.copyOf(repLevels, valueCount);
         }
         if (recordCount < recordOffsets.length) {
-            recordOffsets = java.util.Arrays.copyOf(recordOffsets, recordCount);
+            recordOffsets = Arrays.copyOf(recordOffsets, recordCount);
         }
 
-        return new TypedColumnData.IntColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
+        return new NestedColumnData.IntColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
     }
 
     private TypedColumnData computeNestedLong(int maxRecords, int maxDefLevel) {
@@ -454,9 +449,9 @@ public class ColumnValueIterator {
             while (hasValue()) {
                 if (valueCount >= values.length) {
                     int newSize = values.length * 2;
-                    values = java.util.Arrays.copyOf(values, newSize);
-                    defLevels = java.util.Arrays.copyOf(defLevels, newSize);
-                    repLevels = java.util.Arrays.copyOf(repLevels, newSize);
+                    values = Arrays.copyOf(values, newSize);
+                    defLevels = Arrays.copyOf(defLevels, newSize);
+                    repLevels = Arrays.copyOf(repLevels, newSize);
                 }
 
                 repLevels[valueCount] = repetitionLevel();
@@ -470,15 +465,15 @@ public class ColumnValueIterator {
         }
 
         if (valueCount < values.length) {
-            values = java.util.Arrays.copyOf(values, valueCount);
-            defLevels = java.util.Arrays.copyOf(defLevels, valueCount);
-            repLevels = java.util.Arrays.copyOf(repLevels, valueCount);
+            values = Arrays.copyOf(values, valueCount);
+            defLevels = Arrays.copyOf(defLevels, valueCount);
+            repLevels = Arrays.copyOf(repLevels, valueCount);
         }
         if (recordCount < recordOffsets.length) {
-            recordOffsets = java.util.Arrays.copyOf(recordOffsets, recordCount);
+            recordOffsets = Arrays.copyOf(recordOffsets, recordCount);
         }
 
-        return new TypedColumnData.LongColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
+        return new NestedColumnData.LongColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
     }
 
     private TypedColumnData computeNestedFloat(int maxRecords, int maxDefLevel) {
@@ -497,9 +492,9 @@ public class ColumnValueIterator {
             while (hasValue()) {
                 if (valueCount >= values.length) {
                     int newSize = values.length * 2;
-                    values = java.util.Arrays.copyOf(values, newSize);
-                    defLevels = java.util.Arrays.copyOf(defLevels, newSize);
-                    repLevels = java.util.Arrays.copyOf(repLevels, newSize);
+                    values = Arrays.copyOf(values, newSize);
+                    defLevels = Arrays.copyOf(defLevels, newSize);
+                    repLevels = Arrays.copyOf(repLevels, newSize);
                 }
 
                 repLevels[valueCount] = repetitionLevel();
@@ -513,15 +508,15 @@ public class ColumnValueIterator {
         }
 
         if (valueCount < values.length) {
-            values = java.util.Arrays.copyOf(values, valueCount);
-            defLevels = java.util.Arrays.copyOf(defLevels, valueCount);
-            repLevels = java.util.Arrays.copyOf(repLevels, valueCount);
+            values = Arrays.copyOf(values, valueCount);
+            defLevels = Arrays.copyOf(defLevels, valueCount);
+            repLevels = Arrays.copyOf(repLevels, valueCount);
         }
         if (recordCount < recordOffsets.length) {
-            recordOffsets = java.util.Arrays.copyOf(recordOffsets, recordCount);
+            recordOffsets = Arrays.copyOf(recordOffsets, recordCount);
         }
 
-        return new TypedColumnData.FloatColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
+        return new NestedColumnData.FloatColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
     }
 
     private TypedColumnData computeNestedDouble(int maxRecords, int maxDefLevel) {
@@ -540,9 +535,9 @@ public class ColumnValueIterator {
             while (hasValue()) {
                 if (valueCount >= values.length) {
                     int newSize = values.length * 2;
-                    values = java.util.Arrays.copyOf(values, newSize);
-                    defLevels = java.util.Arrays.copyOf(defLevels, newSize);
-                    repLevels = java.util.Arrays.copyOf(repLevels, newSize);
+                    values = Arrays.copyOf(values, newSize);
+                    defLevels = Arrays.copyOf(defLevels, newSize);
+                    repLevels = Arrays.copyOf(repLevels, newSize);
                 }
 
                 repLevels[valueCount] = repetitionLevel();
@@ -556,15 +551,15 @@ public class ColumnValueIterator {
         }
 
         if (valueCount < values.length) {
-            values = java.util.Arrays.copyOf(values, valueCount);
-            defLevels = java.util.Arrays.copyOf(defLevels, valueCount);
-            repLevels = java.util.Arrays.copyOf(repLevels, valueCount);
+            values = Arrays.copyOf(values, valueCount);
+            defLevels = Arrays.copyOf(defLevels, valueCount);
+            repLevels = Arrays.copyOf(repLevels, valueCount);
         }
         if (recordCount < recordOffsets.length) {
-            recordOffsets = java.util.Arrays.copyOf(recordOffsets, recordCount);
+            recordOffsets = Arrays.copyOf(recordOffsets, recordCount);
         }
 
-        return new TypedColumnData.DoubleColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
+        return new NestedColumnData.DoubleColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
     }
 
     private TypedColumnData computeNestedBoolean(int maxRecords, int maxDefLevel) {
@@ -583,9 +578,9 @@ public class ColumnValueIterator {
             while (hasValue()) {
                 if (valueCount >= values.length) {
                     int newSize = values.length * 2;
-                    values = java.util.Arrays.copyOf(values, newSize);
-                    defLevels = java.util.Arrays.copyOf(defLevels, newSize);
-                    repLevels = java.util.Arrays.copyOf(repLevels, newSize);
+                    values = Arrays.copyOf(values, newSize);
+                    defLevels = Arrays.copyOf(defLevels, newSize);
+                    repLevels = Arrays.copyOf(repLevels, newSize);
                 }
 
                 repLevels[valueCount] = repetitionLevel();
@@ -599,15 +594,15 @@ public class ColumnValueIterator {
         }
 
         if (valueCount < values.length) {
-            values = java.util.Arrays.copyOf(values, valueCount);
-            defLevels = java.util.Arrays.copyOf(defLevels, valueCount);
-            repLevels = java.util.Arrays.copyOf(repLevels, valueCount);
+            values = Arrays.copyOf(values, valueCount);
+            defLevels = Arrays.copyOf(defLevels, valueCount);
+            repLevels = Arrays.copyOf(repLevels, valueCount);
         }
         if (recordCount < recordOffsets.length) {
-            recordOffsets = java.util.Arrays.copyOf(recordOffsets, recordCount);
+            recordOffsets = Arrays.copyOf(recordOffsets, recordCount);
         }
 
-        return new TypedColumnData.BooleanColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
+        return new NestedColumnData.BooleanColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
     }
 
     private TypedColumnData computeNestedByteArray(int maxRecords, int maxDefLevel) {
@@ -626,9 +621,9 @@ public class ColumnValueIterator {
             while (hasValue()) {
                 if (valueCount >= values.length) {
                     int newSize = values.length * 2;
-                    values = java.util.Arrays.copyOf(values, newSize);
-                    defLevels = java.util.Arrays.copyOf(defLevels, newSize);
-                    repLevels = java.util.Arrays.copyOf(repLevels, newSize);
+                    values = Arrays.copyOf(values, newSize);
+                    defLevels = Arrays.copyOf(defLevels, newSize);
+                    repLevels = Arrays.copyOf(repLevels, newSize);
                 }
 
                 repLevels[valueCount] = repetitionLevel();
@@ -642,15 +637,15 @@ public class ColumnValueIterator {
         }
 
         if (valueCount < values.length) {
-            values = java.util.Arrays.copyOf(values, valueCount);
-            defLevels = java.util.Arrays.copyOf(defLevels, valueCount);
-            repLevels = java.util.Arrays.copyOf(repLevels, valueCount);
+            values = Arrays.copyOf(values, valueCount);
+            defLevels = Arrays.copyOf(defLevels, valueCount);
+            repLevels = Arrays.copyOf(repLevels, valueCount);
         }
         if (recordCount < recordOffsets.length) {
-            recordOffsets = java.util.Arrays.copyOf(recordOffsets, recordCount);
+            recordOffsets = Arrays.copyOf(recordOffsets, recordCount);
         }
 
-        return new TypedColumnData.ByteArrayColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
+        return new NestedColumnData.ByteArrayColumn(column, values, defLevels, repLevels, recordOffsets, maxDefLevel, recordCount);
     }
 
     // ==================== Internal Helpers ====================

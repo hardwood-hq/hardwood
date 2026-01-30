@@ -116,7 +116,7 @@ abstract class AbstractRowReader implements RowReader {
         iterators = new ColumnValueIterator[columnCount];
         for (int i = 0; i < columnCount; i++) {
             PageCursor pageCursor = new PageCursor(pageInfosByColumn.get(i), executor);
-            iterators[i] = new ColumnValueIterator(pageCursor, schema.getColumn(i), executor);
+            iterators[i] = new ColumnValueIterator(pageCursor, schema.getColumn(i), executor, schema.isFlatSchema());
         }
 
         onInitialize();

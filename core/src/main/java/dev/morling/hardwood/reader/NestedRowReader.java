@@ -17,6 +17,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 
 import dev.morling.hardwood.internal.reader.MutableStruct;
+import dev.morling.hardwood.internal.reader.NestedColumnData;
 import dev.morling.hardwood.internal.reader.RecordAssembler;
 import dev.morling.hardwood.internal.reader.TypedColumnData;
 import dev.morling.hardwood.internal.reader.ValueConverter;
@@ -37,7 +38,7 @@ import dev.morling.hardwood.schema.SchemaNode;
 final class NestedRowReader extends AbstractRowReader {
 
     private RecordAssembler assembler;
-    private List<TypedColumnData> columnData;
+    private List<NestedColumnData> columnData;
     private MutableStruct currentRow;
 
     NestedRowReader(FileSchema schema, FileChannel channel, List<RowGroup> rowGroups,
@@ -52,7 +53,11 @@ final class NestedRowReader extends AbstractRowReader {
 
     @Override
     protected void onBatchLoaded(TypedColumnData[] newColumnData) {
-        this.columnData = List.of(newColumnData);
+        NestedColumnData[] nested = new NestedColumnData[newColumnData.length];
+        for (int i = 0; i < newColumnData.length; i++) {
+            nested[i] = (NestedColumnData) newColumnData[i];
+        }
+        this.columnData = List.of(nested);
     }
 
     @Override

@@ -8,9 +8,10 @@
 package dev.morling.hardwood.benchmarks;
 
 import java.io.IOException;
-import java.util.Arrays;
+import java.util.BitSet;
 import java.util.List;
 
+import dev.morling.hardwood.internal.reader.FlatColumnData;
 import dev.morling.hardwood.internal.reader.Page;
 import dev.morling.hardwood.internal.reader.PageInfo;
 import dev.morling.hardwood.internal.reader.PageReader;
@@ -19,8 +20,8 @@ import dev.morling.hardwood.schema.ColumnSchema;
 
 /**
  * Minimal synchronous column assembler for benchmarking.
- * Decodes pages and assembles them into TypedColumnData batches
- * without any async prefetching or queue overhead.
+ * Decodes pages and returns TypedColumnData batches with array copying
+ * to ensure consistent batch sizes across columns.
  */
 public class SyncColumnAssembler {
 
@@ -81,172 +82,176 @@ public class SyncColumnAssembler {
         }
     }
 
+    private void markNulls(BitSet nulls, int[] defLevels, int srcPos, int destPos, int count, int maxDefLevel) {
+        if (nulls == null) {
+            return;
+        }
+        for (int i = 0; i < count; i++) {
+            if (defLevels[srcPos + i] < maxDefLevel) {
+                nulls.set(destPos + i);
+            }
+        }
+    }
+
     private TypedColumnData emptyBatch() {
-        int maxDef = column.maxDefinitionLevel();
         return switch (column.type()) {
-            case INT32 -> new TypedColumnData.IntColumn(column, new int[0], null, maxDef, 0);
-            case INT64 -> new TypedColumnData.LongColumn(column, new long[0], null, maxDef, 0);
-            case FLOAT -> new TypedColumnData.FloatColumn(column, new float[0], null, maxDef, 0);
-            case DOUBLE -> new TypedColumnData.DoubleColumn(column, new double[0], null, maxDef, 0);
-            case BOOLEAN -> new TypedColumnData.BooleanColumn(column, new boolean[0], null, maxDef, 0);
+            case INT32 -> new FlatColumnData.IntColumn(column, new int[0], null, 0);
+            case INT64 -> new FlatColumnData.LongColumn(column, new long[0], null, 0);
+            case FLOAT -> new FlatColumnData.FloatColumn(column, new float[0], null, 0);
+            case DOUBLE -> new FlatColumnData.DoubleColumn(column, new double[0], null, 0);
+            case BOOLEAN -> new FlatColumnData.BooleanColumn(column, new boolean[0], null, 0);
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 ->
-                    new TypedColumnData.ByteArrayColumn(column, new byte[0][], null, maxDef, 0);
+                    new FlatColumnData.ByteArrayColumn(column, new byte[0][], null, 0);
         };
     }
 
     private TypedColumnData assembleInt(int maxRecords) {
         int maxDef = column.maxDefinitionLevel();
         int[] values = new int[maxRecords];
-        int[] defLevels = maxDef > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDef > 0 ? new BitSet(maxRecords) : null;
         int count = 0;
 
         while (count < maxRecords && ensurePageLoaded()) {
             Page.IntPage page = (Page.IntPage) currentPage;
             int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - count);
+            int toRead = Math.min(available, maxRecords - count);
 
-            System.arraycopy(page.values(), position, values, count, toCopy);
-            if (defLevels != null && page.definitionLevels() != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, count, toCopy);
-            }
+            System.arraycopy(page.values(), position, values, count, toRead);
+            markNulls(nulls, page.definitionLevels(), position, count, toRead, maxDef);
 
-            position += toCopy;
-            count += toCopy;
+            position += toRead;
+            count += toRead;
         }
 
-        return new TypedColumnData.IntColumn(column,
-                count < maxRecords ? Arrays.copyOf(values, count) : values,
-                defLevels != null && count < maxRecords ? Arrays.copyOf(defLevels, count) : defLevels,
-                maxDef, count);
+        if (count < maxRecords) {
+            values = java.util.Arrays.copyOf(values, count);
+        }
+
+        return new FlatColumnData.IntColumn(column, values, nulls, count);
     }
 
     private TypedColumnData assembleLong(int maxRecords) {
         int maxDef = column.maxDefinitionLevel();
         long[] values = new long[maxRecords];
-        int[] defLevels = maxDef > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDef > 0 ? new BitSet(maxRecords) : null;
         int count = 0;
 
         while (count < maxRecords && ensurePageLoaded()) {
             Page.LongPage page = (Page.LongPage) currentPage;
             int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - count);
+            int toRead = Math.min(available, maxRecords - count);
 
-            System.arraycopy(page.values(), position, values, count, toCopy);
-            if (defLevels != null && page.definitionLevels() != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, count, toCopy);
-            }
+            System.arraycopy(page.values(), position, values, count, toRead);
+            markNulls(nulls, page.definitionLevels(), position, count, toRead, maxDef);
 
-            position += toCopy;
-            count += toCopy;
+            position += toRead;
+            count += toRead;
         }
 
-        return new TypedColumnData.LongColumn(column,
-                count < maxRecords ? Arrays.copyOf(values, count) : values,
-                defLevels != null && count < maxRecords ? Arrays.copyOf(defLevels, count) : defLevels,
-                maxDef, count);
+        if (count < maxRecords) {
+            values = java.util.Arrays.copyOf(values, count);
+        }
+
+        return new FlatColumnData.LongColumn(column, values, nulls, count);
     }
 
     private TypedColumnData assembleFloat(int maxRecords) {
         int maxDef = column.maxDefinitionLevel();
         float[] values = new float[maxRecords];
-        int[] defLevels = maxDef > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDef > 0 ? new BitSet(maxRecords) : null;
         int count = 0;
 
         while (count < maxRecords && ensurePageLoaded()) {
             Page.FloatPage page = (Page.FloatPage) currentPage;
             int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - count);
+            int toRead = Math.min(available, maxRecords - count);
 
-            System.arraycopy(page.values(), position, values, count, toCopy);
-            if (defLevels != null && page.definitionLevels() != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, count, toCopy);
-            }
+            System.arraycopy(page.values(), position, values, count, toRead);
+            markNulls(nulls, page.definitionLevels(), position, count, toRead, maxDef);
 
-            position += toCopy;
-            count += toCopy;
+            position += toRead;
+            count += toRead;
         }
 
-        return new TypedColumnData.FloatColumn(column,
-                count < maxRecords ? Arrays.copyOf(values, count) : values,
-                defLevels != null && count < maxRecords ? Arrays.copyOf(defLevels, count) : defLevels,
-                maxDef, count);
+        if (count < maxRecords) {
+            values = java.util.Arrays.copyOf(values, count);
+        }
+
+        return new FlatColumnData.FloatColumn(column, values, nulls, count);
     }
 
     private TypedColumnData assembleDouble(int maxRecords) {
         int maxDef = column.maxDefinitionLevel();
         double[] values = new double[maxRecords];
-        int[] defLevels = maxDef > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDef > 0 ? new BitSet(maxRecords) : null;
         int count = 0;
 
         while (count < maxRecords && ensurePageLoaded()) {
             Page.DoublePage page = (Page.DoublePage) currentPage;
             int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - count);
+            int toRead = Math.min(available, maxRecords - count);
 
-            System.arraycopy(page.values(), position, values, count, toCopy);
-            if (defLevels != null && page.definitionLevels() != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, count, toCopy);
-            }
+            System.arraycopy(page.values(), position, values, count, toRead);
+            markNulls(nulls, page.definitionLevels(), position, count, toRead, maxDef);
 
-            position += toCopy;
-            count += toCopy;
+            position += toRead;
+            count += toRead;
         }
 
-        return new TypedColumnData.DoubleColumn(column,
-                count < maxRecords ? Arrays.copyOf(values, count) : values,
-                defLevels != null && count < maxRecords ? Arrays.copyOf(defLevels, count) : defLevels,
-                maxDef, count);
+        if (count < maxRecords) {
+            values = java.util.Arrays.copyOf(values, count);
+        }
+
+        return new FlatColumnData.DoubleColumn(column, values, nulls, count);
     }
 
     private TypedColumnData assembleBoolean(int maxRecords) {
         int maxDef = column.maxDefinitionLevel();
         boolean[] values = new boolean[maxRecords];
-        int[] defLevels = maxDef > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDef > 0 ? new BitSet(maxRecords) : null;
         int count = 0;
 
         while (count < maxRecords && ensurePageLoaded()) {
             Page.BooleanPage page = (Page.BooleanPage) currentPage;
             int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - count);
+            int toRead = Math.min(available, maxRecords - count);
 
-            System.arraycopy(page.values(), position, values, count, toCopy);
-            if (defLevels != null && page.definitionLevels() != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, count, toCopy);
-            }
+            System.arraycopy(page.values(), position, values, count, toRead);
+            markNulls(nulls, page.definitionLevels(), position, count, toRead, maxDef);
 
-            position += toCopy;
-            count += toCopy;
+            position += toRead;
+            count += toRead;
         }
 
-        return new TypedColumnData.BooleanColumn(column,
-                count < maxRecords ? Arrays.copyOf(values, count) : values,
-                defLevels != null && count < maxRecords ? Arrays.copyOf(defLevels, count) : defLevels,
-                maxDef, count);
+        if (count < maxRecords) {
+            values = java.util.Arrays.copyOf(values, count);
+        }
+
+        return new FlatColumnData.BooleanColumn(column, values, nulls, count);
     }
 
     private TypedColumnData assembleByteArray(int maxRecords) {
         int maxDef = column.maxDefinitionLevel();
         byte[][] values = new byte[maxRecords][];
-        int[] defLevels = maxDef > 0 ? new int[maxRecords] : null;
+        BitSet nulls = maxDef > 0 ? new BitSet(maxRecords) : null;
         int count = 0;
 
         while (count < maxRecords && ensurePageLoaded()) {
             Page.ByteArrayPage page = (Page.ByteArrayPage) currentPage;
             int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - count);
+            int toRead = Math.min(available, maxRecords - count);
 
-            System.arraycopy(page.values(), position, values, count, toCopy);
-            if (defLevels != null && page.definitionLevels() != null) {
-                System.arraycopy(page.definitionLevels(), position, defLevels, count, toCopy);
-            }
+            System.arraycopy(page.values(), position, values, count, toRead);
+            markNulls(nulls, page.definitionLevels(), position, count, toRead, maxDef);
 
-            position += toCopy;
-            count += toCopy;
+            position += toRead;
+            count += toRead;
         }
 
-        return new TypedColumnData.ByteArrayColumn(column,
-                count < maxRecords ? Arrays.copyOf(values, count) : values,
-                defLevels != null && count < maxRecords ? Arrays.copyOf(defLevels, count) : defLevels,
-                maxDef, count);
+        if (count < maxRecords) {
+            values = java.util.Arrays.copyOf(values, count);
+        }
+
+        return new FlatColumnData.ByteArrayColumn(column, values, nulls, count);
     }
 }

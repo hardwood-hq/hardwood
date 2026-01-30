@@ -16,6 +16,7 @@ import java.util.BitSet;
 import java.util.UUID;
 
 import dev.morling.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.morling.hardwood.internal.reader.FlatColumnData;
 import dev.morling.hardwood.internal.reader.TypedColumnData;
 import dev.morling.hardwood.metadata.LogicalType;
 import dev.morling.hardwood.schema.ColumnSchema;
@@ -34,7 +35,7 @@ final class BenchmarkRowReader {
 
     private final FileSchema schema;
 
-    private TypedColumnData[] columnData;
+    private FlatColumnData[] columnData;
     private BitSet[] nulls;
     private int recordCount = 0;
 
@@ -48,14 +49,16 @@ final class BenchmarkRowReader {
      * Load a batch of column data for row-oriented access.
      */
     void loadBatch(TypedColumnData[] newColumnData) {
-        this.columnData = newColumnData;
+        this.columnData = new FlatColumnData[newColumnData.length];
+        this.nulls = new BitSet[newColumnData.length];
         this.rowIndex = -1;
         this.recordCount = newColumnData.length > 0 ? newColumnData[0].recordCount() : 0;
 
-        this.nulls = new BitSet[newColumnData.length];
         for (int i = 0; i < newColumnData.length; i++) {
-			nulls[i] = newColumnData[i].nulls();
-		}
+            FlatColumnData flat = (FlatColumnData) newColumnData[i];
+            this.columnData[i] = flat;
+            this.nulls[i] = flat.nulls();
+        }
     }
 
     boolean hasNext() {
@@ -73,7 +76,7 @@ final class BenchmarkRowReader {
         if (isNull(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.IntColumn) data).get(rowIndex);
+        return ((FlatColumnData.IntColumn) data).get(rowIndex);
     }
 
     long getLong(int columnIndex) {
@@ -81,7 +84,7 @@ final class BenchmarkRowReader {
         if (isNull(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.LongColumn) data).get(rowIndex);
+        return ((FlatColumnData.LongColumn) data).get(rowIndex);
     }
 
     float getFloat(int columnIndex) {
@@ -89,7 +92,7 @@ final class BenchmarkRowReader {
         if (isNull(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.FloatColumn) data).get(rowIndex);
+        return ((FlatColumnData.FloatColumn) data).get(rowIndex);
     }
 
     double getDouble(int columnIndex) {
@@ -97,7 +100,7 @@ final class BenchmarkRowReader {
         if (isNull(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.DoubleColumn) data).get(rowIndex);
+        return ((FlatColumnData.DoubleColumn) data).get(rowIndex);
     }
 
     boolean getBoolean(int columnIndex) {
@@ -105,7 +108,7 @@ final class BenchmarkRowReader {
         if (isNull(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.BooleanColumn) data).get(rowIndex);
+        return ((FlatColumnData.BooleanColumn) data).get(rowIndex);
     }
 
     // ==================== Object Type Accessors ====================
@@ -115,7 +118,7 @@ final class BenchmarkRowReader {
         if (isNull(columnIndex)) {
             return null;
         }
-        return new String(((TypedColumnData.ByteArrayColumn) data).get(rowIndex), StandardCharsets.UTF_8);
+        return new String(((FlatColumnData.ByteArrayColumn) data).get(rowIndex), StandardCharsets.UTF_8);
     }
 
     byte[] getBinary(int columnIndex) {
@@ -123,7 +126,7 @@ final class BenchmarkRowReader {
         if (isNull(columnIndex)) {
             return null;
         }
-        return ((TypedColumnData.ByteArrayColumn) data).get(rowIndex);
+        return ((FlatColumnData.ByteArrayColumn) data).get(rowIndex);
     }
 
     LocalDate getDate(int columnIndex) {
@@ -132,7 +135,7 @@ final class BenchmarkRowReader {
             return null;
         }
         ColumnSchema col = schema.getColumn(columnIndex);
-        int rawValue = ((TypedColumnData.IntColumn) data).get(rowIndex);
+        int rawValue = ((FlatColumnData.IntColumn) data).get(rowIndex);
         return LogicalTypeConverter.convertToDate(rawValue, col.type());
     }
 
@@ -144,10 +147,10 @@ final class BenchmarkRowReader {
         ColumnSchema col = schema.getColumn(columnIndex);
         Object rawValue;
         if (col.type() == dev.morling.hardwood.metadata.PhysicalType.INT32) {
-            rawValue = ((TypedColumnData.IntColumn) data).get(rowIndex);
+            rawValue = ((FlatColumnData.IntColumn) data).get(rowIndex);
         }
         else {
-            rawValue = ((TypedColumnData.LongColumn) data).get(rowIndex);
+            rawValue = ((FlatColumnData.LongColumn) data).get(rowIndex);
         }
         return LogicalTypeConverter.convertToTime(rawValue, col.type(), (LogicalType.TimeType) col.logicalType());
     }
@@ -158,7 +161,7 @@ final class BenchmarkRowReader {
             return null;
         }
         ColumnSchema col = schema.getColumn(columnIndex);
-        long rawValue = ((TypedColumnData.LongColumn) data).get(rowIndex);
+        long rawValue = ((FlatColumnData.LongColumn) data).get(rowIndex);
         return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(), (LogicalType.TimestampType) col.logicalType());
     }
 
@@ -169,9 +172,9 @@ final class BenchmarkRowReader {
         }
         ColumnSchema col = schema.getColumn(columnIndex);
         Object rawValue = switch (col.type()) {
-            case INT32 -> ((TypedColumnData.IntColumn) data).get(rowIndex);
-            case INT64 -> ((TypedColumnData.LongColumn) data).get(rowIndex);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> ((TypedColumnData.ByteArrayColumn) data).get(rowIndex);
+            case INT32 -> ((FlatColumnData.IntColumn) data).get(rowIndex);
+            case INT64 -> ((FlatColumnData.LongColumn) data).get(rowIndex);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> ((FlatColumnData.ByteArrayColumn) data).get(rowIndex);
             default -> throw new IllegalArgumentException("Unexpected physical type for DECIMAL: " + col.type());
         };
         return LogicalTypeConverter.convertToDecimal(rawValue, col.type(), (LogicalType.DecimalType) col.logicalType());
@@ -183,7 +186,7 @@ final class BenchmarkRowReader {
             return null;
         }
         ColumnSchema col = schema.getColumn(columnIndex);
-        return LogicalTypeConverter.convertToUuid(((TypedColumnData.ByteArrayColumn) data).get(rowIndex), col.type());
+        return LogicalTypeConverter.convertToUuid(((FlatColumnData.ByteArrayColumn) data).get(rowIndex), col.type());
     }
 
     // ==================== Metadata ====================

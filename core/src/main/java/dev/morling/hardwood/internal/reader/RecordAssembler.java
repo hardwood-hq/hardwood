@@ -63,11 +63,11 @@ public class RecordAssembler {
      * @param recordIndex       the record index within the prefetched batch
      * @return the assembled row
      */
-    public MutableStruct assembleRow(List<TypedColumnData> prefetchedColumns, int recordIndex) {
+    public MutableStruct assembleRow(List<NestedColumnData> prefetchedColumns, int recordIndex) {
         int rootSize = schema.getRootNode().children().size();
         MutableStruct record = new MutableStruct(rootSize);
 
-        for (TypedColumnData columnData : prefetchedColumns) {
+        for (NestedColumnData columnData : prefetchedColumns) {
             int colIndex = columnData.column().columnIndex();
             processPrefetchedColumn(columnData, recordIndex, schema.getFieldPaths().get(colIndex), record);
         }
@@ -78,7 +78,7 @@ public class RecordAssembler {
     /**
      * Process a single column's prefetched data for a specific record.
      */
-    private void processPrefetchedColumn(TypedColumnData columnData, int recordIndex,
+    private void processPrefetchedColumn(NestedColumnData columnData, int recordIndex,
                                           FieldPath path, MutableStruct record) {
         ColumnSchema column = columnData.column();
         int maxRepLevel = column.maxRepetitionLevel();

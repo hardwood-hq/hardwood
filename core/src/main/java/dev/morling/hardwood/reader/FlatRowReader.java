@@ -19,6 +19,7 @@ import java.util.UUID;
 import java.util.concurrent.ExecutorService;
 
 import dev.morling.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.morling.hardwood.internal.reader.FlatColumnData;
 import dev.morling.hardwood.internal.reader.TypedColumnData;
 import dev.morling.hardwood.metadata.LogicalType;
 import dev.morling.hardwood.metadata.PhysicalType;
@@ -38,8 +39,8 @@ import dev.morling.hardwood.schema.FileSchema;
  */
 final class FlatRowReader extends AbstractRowReader {
 
-    private TypedColumnData[] columnData;
-    // Pre-extracted null BitSets to avoid megamorphic TypedColumnData::isNull() calls
+    private FlatColumnData[] columnData;
+    // Pre-extracted null BitSets to avoid megamorphic FlatColumnData::nulls() calls
     private BitSet[] nulls;
 
     FlatRowReader(FileSchema schema, FileChannel channel, List<RowGroup> rowGroups,
@@ -49,11 +50,12 @@ final class FlatRowReader extends AbstractRowReader {
 
     @Override
     protected void onBatchLoaded(TypedColumnData[] newColumnData) {
-        this.columnData = newColumnData;
-        // Extract null BitSets once per batch to avoid megamorphic dispatch on every null check
+        this.columnData = new FlatColumnData[newColumnData.length];
         this.nulls = new BitSet[newColumnData.length];
         for (int i = 0; i < newColumnData.length; i++) {
-            nulls[i] = newColumnData[i].nulls();
+            FlatColumnData flat = (FlatColumnData) newColumnData[i];
+            this.columnData[i] = flat;
+            this.nulls[i] = flat.nulls();
         }
     }
 
@@ -76,7 +78,7 @@ final class FlatRowReader extends AbstractRowReader {
         if (isNullInternal(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.IntColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.IntColumn) columnData[columnIndex]).get(rowIndex);
     }
 
     @Override
@@ -91,7 +93,7 @@ final class FlatRowReader extends AbstractRowReader {
         if (isNullInternal(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.LongColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.LongColumn) columnData[columnIndex]).get(rowIndex);
     }
 
     @Override
@@ -106,7 +108,7 @@ final class FlatRowReader extends AbstractRowReader {
         if (isNullInternal(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.FloatColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.FloatColumn) columnData[columnIndex]).get(rowIndex);
     }
 
     @Override
@@ -121,7 +123,7 @@ final class FlatRowReader extends AbstractRowReader {
         if (isNullInternal(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.DoubleColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.DoubleColumn) columnData[columnIndex]).get(rowIndex);
     }
 
     @Override
@@ -136,7 +138,7 @@ final class FlatRowReader extends AbstractRowReader {
         if (isNullInternal(columnIndex)) {
             throw new NullPointerException("Column " + columnIndex + " is null");
         }
-        return ((TypedColumnData.BooleanColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.BooleanColumn) columnData[columnIndex]).get(rowIndex);
     }
 
     // ==================== Object Type Accessors ====================
@@ -151,7 +153,7 @@ final class FlatRowReader extends AbstractRowReader {
         if (isNullInternal(columnIndex)) {
             return null;
         }
-        return new String(((TypedColumnData.ByteArrayColumn) columnData[columnIndex]).get(rowIndex), StandardCharsets.UTF_8);
+        return new String(((FlatColumnData.ByteArrayColumn) columnData[columnIndex]).get(rowIndex), StandardCharsets.UTF_8);
     }
 
     @Override
@@ -164,7 +166,7 @@ final class FlatRowReader extends AbstractRowReader {
         if (isNullInternal(columnIndex)) {
             return null;
         }
-        return ((TypedColumnData.ByteArrayColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.ByteArrayColumn) columnData[columnIndex]).get(rowIndex);
     }
 
     @Override
@@ -178,7 +180,7 @@ final class FlatRowReader extends AbstractRowReader {
             return null;
         }
         ColumnSchema col = schema.getColumn(columnIndex);
-        int rawValue = ((TypedColumnData.IntColumn) columnData[columnIndex]).get(rowIndex);
+        int rawValue = ((FlatColumnData.IntColumn) columnData[columnIndex]).get(rowIndex);
         return LogicalTypeConverter.convertToDate(rawValue, col.type());
     }
 
@@ -195,10 +197,10 @@ final class FlatRowReader extends AbstractRowReader {
         ColumnSchema col = schema.getColumn(columnIndex);
         Object rawValue;
         if (col.type() == PhysicalType.INT32) {
-            rawValue = ((TypedColumnData.IntColumn) columnData[columnIndex]).get(rowIndex);
+            rawValue = ((FlatColumnData.IntColumn) columnData[columnIndex]).get(rowIndex);
         }
         else {
-            rawValue = ((TypedColumnData.LongColumn) columnData[columnIndex]).get(rowIndex);
+            rawValue = ((FlatColumnData.LongColumn) columnData[columnIndex]).get(rowIndex);
         }
         return LogicalTypeConverter.convertToTime(rawValue, col.type(), (LogicalType.TimeType) col.logicalType());
     }
@@ -214,7 +216,7 @@ final class FlatRowReader extends AbstractRowReader {
             return null;
         }
         ColumnSchema col = schema.getColumn(columnIndex);
-        long rawValue = ((TypedColumnData.LongColumn) columnData[columnIndex]).get(rowIndex);
+        long rawValue = ((FlatColumnData.LongColumn) columnData[columnIndex]).get(rowIndex);
         return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(), (LogicalType.TimestampType) col.logicalType());
     }
 
@@ -229,11 +231,11 @@ final class FlatRowReader extends AbstractRowReader {
             return null;
         }
         ColumnSchema col = schema.getColumn(columnIndex);
-        TypedColumnData data = columnData[columnIndex];
+        FlatColumnData data = columnData[columnIndex];
         Object rawValue = switch (col.type()) {
-            case INT32 -> ((TypedColumnData.IntColumn) data).get(rowIndex);
-            case INT64 -> ((TypedColumnData.LongColumn) data).get(rowIndex);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> ((TypedColumnData.ByteArrayColumn) data).get(rowIndex);
+            case INT32 -> ((FlatColumnData.IntColumn) data).get(rowIndex);
+            case INT64 -> ((FlatColumnData.LongColumn) data).get(rowIndex);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> ((FlatColumnData.ByteArrayColumn) data).get(rowIndex);
             default -> throw new IllegalArgumentException("Unexpected physical type for DECIMAL: " + col.type());
         };
         return LogicalTypeConverter.convertToDecimal(rawValue, col.type(), (LogicalType.DecimalType) col.logicalType());
@@ -250,7 +252,7 @@ final class FlatRowReader extends AbstractRowReader {
             return null;
         }
         ColumnSchema col = schema.getColumn(columnIndex);
-        return LogicalTypeConverter.convertToUuid(((TypedColumnData.ByteArrayColumn) columnData[columnIndex]).get(rowIndex), col.type());
+        return LogicalTypeConverter.convertToUuid(((FlatColumnData.ByteArrayColumn) columnData[columnIndex]).get(rowIndex), col.type());
     }
 
     // ==================== Nested Type Accessors ====================
