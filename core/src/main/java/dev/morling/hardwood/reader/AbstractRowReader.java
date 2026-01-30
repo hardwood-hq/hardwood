@@ -32,7 +32,7 @@ import dev.morling.hardwood.schema.FileSchema;
 abstract class AbstractRowReader implements RowReader {
 
     private static final System.Logger LOG = System.getLogger(AbstractRowReader.class.getName());
-    private static final int BATCH_SIZE = 8192;
+    private static final int BATCH_SIZE = 16384;
 
     protected final FileSchema schema;
     private final FileChannel channel;
