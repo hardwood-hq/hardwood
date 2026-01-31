@@ -25,6 +25,7 @@ import dev.morling.hardwood.metadata.ColumnChunk;
 import dev.morling.hardwood.metadata.RowGroup;
 import dev.morling.hardwood.schema.ColumnSchema;
 import dev.morling.hardwood.schema.FileSchema;
+import dev.morling.hardwood.schema.ProjectedSchema;
 
 /**
  * Base class for RowReader implementations providing common batch loading logic.
@@ -35,6 +36,7 @@ abstract class AbstractRowReader implements RowReader {
     private static final int BATCH_SIZE = 16384;
 
     protected final FileSchema schema;
+    protected final ProjectedSchema projectedSchema;
     private final FileChannel channel;
     private final List<RowGroup> rowGroups;
     private final HardwoodContext context;
@@ -48,9 +50,10 @@ abstract class AbstractRowReader implements RowReader {
     private volatile boolean closed;
     private boolean initialized = false;
 
-    protected AbstractRowReader(FileSchema schema, FileChannel channel, List<RowGroup> rowGroups,
-                                HardwoodContext context, String fileName) {
+    protected AbstractRowReader(FileSchema schema, ProjectedSchema projectedSchema, FileChannel channel,
+                                List<RowGroup> rowGroups, HardwoodContext context, String fileName) {
         this.schema = schema;
+        this.projectedSchema = projectedSchema;
         this.channel = channel;
         this.rowGroups = rowGroups;
         this.context = context;
@@ -63,32 +66,33 @@ abstract class AbstractRowReader implements RowReader {
         }
         initialized = true;
 
-        LOG.log(System.Logger.Level.DEBUG, "Starting to parse file ''{0}'' with {1} row groups, {2} columns",
-                fileName, rowGroups.size(), schema.getColumnCount());
+        int projectedColumnCount = projectedSchema.getProjectedColumnCount();
 
-        int columnCount = schema.getColumnCount();
+        LOG.log(System.Logger.Level.DEBUG, "Starting to parse file ''{0}'' with {1} row groups, {2} projected columns (of {3} total)",
+                fileName, rowGroups.size(), projectedColumnCount, schema.getColumnCount());
 
-        // Collect page infos for each column across all row groups
-        List<List<PageInfo>> pageInfosByColumn = new ArrayList<>(columnCount);
-        for (int i = 0; i < columnCount; i++) {
+        // Collect page infos for each projected column across all row groups
+        List<List<PageInfo>> pageInfosByColumn = new ArrayList<>(projectedColumnCount);
+        for (int i = 0; i < projectedColumnCount; i++) {
             pageInfosByColumn.add(new ArrayList<>());
         }
 
-        LOG.log(System.Logger.Level.DEBUG, "Scanning pages for {0} columns across {1} row groups",
-                columnCount, rowGroups.size());
+        LOG.log(System.Logger.Level.DEBUG, "Scanning pages for {0} projected columns across {1} row groups",
+                projectedColumnCount, rowGroups.size());
 
-        // Scan each column in parallel
+        // Scan each projected column in parallel
         @SuppressWarnings("unchecked")
-        CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[columnCount];
+        CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[projectedColumnCount];
 
-        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-            final int col = colIndex;
-            final ColumnSchema columnSchema = schema.getColumn(col);
+        for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
+            final int projIdx = projectedIndex;
+            final int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
+            final ColumnSchema columnSchema = schema.getColumn(originalIndex);
 
-            scanFutures[col] = CompletableFuture.supplyAsync(() -> {
+            scanFutures[projIdx] = CompletableFuture.supplyAsync(() -> {
                 List<PageInfo> columnPages = new ArrayList<>();
                 for (RowGroup rowGroup : rowGroups) {
-                    ColumnChunk columnChunk = rowGroup.columns().get(col);
+                    ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
                     PageScanner scanner = new PageScanner(channel, columnSchema, columnChunk, context);
                     try {
                         columnPages.addAll(scanner.scanPages());
@@ -104,19 +108,20 @@ abstract class AbstractRowReader implements RowReader {
         // Wait for all scans to complete and collect results
         CompletableFuture.allOf(scanFutures).join();
 
-        for (int colIndex = 0; colIndex < columnCount; colIndex++) {
-            pageInfosByColumn.get(colIndex).addAll(scanFutures[colIndex].join());
+        for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
+            pageInfosByColumn.get(projectedIndex).addAll(scanFutures[projectedIndex].join());
         }
 
         int totalPages = pageInfosByColumn.stream().mapToInt(List::size).sum();
-        LOG.log(System.Logger.Level.DEBUG, "Page scanning complete: {0} total pages across {1} columns",
-                totalPages, columnCount);
+        LOG.log(System.Logger.Level.DEBUG, "Page scanning complete: {0} total pages across {1} projected columns",
+                totalPages, projectedColumnCount);
 
-        // Create iterators for each column
-        iterators = new ColumnValueIterator[columnCount];
-        for (int i = 0; i < columnCount; i++) {
+        // Create iterators for each projected column
+        iterators = new ColumnValueIterator[projectedColumnCount];
+        for (int i = 0; i < projectedColumnCount; i++) {
+            int originalIndex = projectedSchema.toOriginalIndex(i);
             PageCursor pageCursor = new PageCursor(pageInfosByColumn.get(i), context);
-            iterators[i] = new ColumnValueIterator(pageCursor, schema.getColumn(i), schema.isFlatSchema());
+            iterators[i] = new ColumnValueIterator(pageCursor, schema.getColumn(originalIndex), schema.isFlatSchema());
         }
 
         onInitialize();

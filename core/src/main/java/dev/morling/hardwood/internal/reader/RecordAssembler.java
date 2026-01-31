@@ -12,6 +12,7 @@ import java.util.List;
 import dev.morling.hardwood.schema.ColumnSchema;
 import dev.morling.hardwood.schema.FieldPath;
 import dev.morling.hardwood.schema.FileSchema;
+import dev.morling.hardwood.schema.ProjectedSchema;
 
 /**
  * Independent column processing record assembler for Parquet data.
@@ -51,15 +52,17 @@ import dev.morling.hardwood.schema.FileSchema;
 public class RecordAssembler {
 
     private final FileSchema schema;
+    private final ProjectedSchema projectedSchema;
 
-    public RecordAssembler(FileSchema schema) {
+    public RecordAssembler(FileSchema schema, ProjectedSchema projectedSchema) {
         this.schema = schema;
+        this.projectedSchema = projectedSchema;
     }
 
     /**
      * Assemble a row from prefetched column data at the given record index.
      *
-     * @param prefetchedColumns list of prefetched data, one per column
+     * @param prefetchedColumns list of prefetched data, one per projected column
      * @param recordIndex       the record index within the prefetched batch
      * @return the assembled row
      */
@@ -67,9 +70,11 @@ public class RecordAssembler {
         int rootSize = schema.getRootNode().children().size();
         MutableStruct record = new MutableStruct(rootSize);
 
-        for (NestedColumnData columnData : prefetchedColumns) {
-            int colIndex = columnData.column().columnIndex();
-            processPrefetchedColumn(columnData, recordIndex, schema.getFieldPaths().get(colIndex), record);
+        for (int projectedIdx = 0; projectedIdx < prefetchedColumns.size(); projectedIdx++) {
+            NestedColumnData columnData = prefetchedColumns.get(projectedIdx);
+            // Get the original column index to look up the field path
+            int originalColIndex = projectedSchema.toOriginalIndex(projectedIdx);
+            processPrefetchedColumn(columnData, recordIndex, schema.getFieldPaths().get(originalColIndex), record);
         }
 
         return record;

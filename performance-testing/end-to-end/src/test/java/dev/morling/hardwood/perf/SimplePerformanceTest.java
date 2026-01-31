@@ -29,6 +29,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import dev.morling.hardwood.metadata.PhysicalType;
+import dev.morling.hardwood.reader.ColumnProjection;
 import dev.morling.hardwood.reader.Hardwood;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
@@ -58,6 +59,7 @@ class SimplePerformanceTest {
     enum Contender {
         HARDWOOD_INDEXED("Hardwood (indexed)"),
         HARDWOOD_NAMED("Hardwood (named)"),
+        HARDWOOD_PROJECTION("Hardwood (projection)"),
         PARQUET_JAVA_INDEXED("parquet-java (indexed)"),
         PARQUET_JAVA_NAMED("parquet-java (named)");
 
@@ -210,6 +212,7 @@ class SimplePerformanceTest {
         return switch (contender) {
             case HARDWOOD_INDEXED -> this::runHardwoodIndexed;
             case HARDWOOD_NAMED -> this::runHardwoodNamed;
+            case HARDWOOD_PROJECTION -> this::runHardwoodProjection;
             case PARQUET_JAVA_INDEXED -> this::runParquetJavaIndexed;
             case PARQUET_JAVA_NAMED -> this::runParquetJavaNamed;
         };
@@ -309,6 +312,57 @@ class SimplePerformanceTest {
 
                         if (!rowReader.isNull("fare_amount")) {
                             fareAmount += rowReader.getDouble("fare_amount");
+                        }
+                    }
+                }
+                catch (IOException e) {
+                    throw new RuntimeException("Failed to read file: " + file, e);
+                }
+            }
+        }
+        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+    }
+
+    private Result runHardwoodProjection(List<Path> files) {
+        long passengerCount = 0;
+        double tripDistance = 0.0;
+        double fareAmount = 0.0;
+        long rowCount = 0;
+
+        // Only read the 3 columns we need
+        ColumnProjection projection = ColumnProjection.columns(
+                "passenger_count", "trip_distance", "fare_amount");
+
+        try (Hardwood hardwood = Hardwood.create()) {
+            for (Path file : files) {
+                try (ParquetFileReader reader = hardwood.open(file);
+                        RowReader rowReader = reader.createRowReader(projection)) {
+
+                    // Check column type once per file
+                    SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
+
+                    boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
+                            && pn.type() == PhysicalType.INT64;
+
+                    // Use projected indices (0, 1, 2) instead of original indices
+                    while (rowReader.hasNext()) {
+                        rowReader.next();
+                        rowCount++;
+                        if (!rowReader.isNull(0)) { // passenger_count
+                            if (pcIsLong) {
+                                passengerCount += rowReader.getLong(0);
+                            }
+                            else {
+                                passengerCount += (long) rowReader.getDouble(0);
+                            }
+                        }
+
+                        if (!rowReader.isNull(1)) { // trip_distance
+                            tripDistance += rowReader.getDouble(1);
+                        }
+
+                        if (!rowReader.isNull(2)) { // fare_amount
+                            fareAmount += rowReader.getDouble(2);
                         }
                     }
                 }
@@ -481,7 +535,8 @@ class SimplePerformanceTest {
     }
 
     private boolean isHardwood(Contender c) {
-        return c == Contender.HARDWOOD_INDEXED || c == Contender.HARDWOOD_NAMED;
+        return c == Contender.HARDWOOD_INDEXED || c == Contender.HARDWOOD_NAMED
+                || c == Contender.HARDWOOD_PROJECTION;
     }
 
     private void printResultRow(String name, Result result, int cpuCores, long totalBytes) {

@@ -31,6 +31,7 @@ import dev.morling.hardwood.row.PqMap;
 import dev.morling.hardwood.row.PqStruct;
 import dev.morling.hardwood.schema.ColumnSchema;
 import dev.morling.hardwood.schema.FileSchema;
+import dev.morling.hardwood.schema.ProjectedSchema;
 
 /**
  * RowReader implementation for flat schemas (no nested structures).
@@ -42,9 +43,9 @@ final class FlatRowReader extends AbstractRowReader {
     // Pre-extracted null BitSets to avoid megamorphic FlatColumnData::nulls() calls
     private BitSet[] nulls;
 
-    FlatRowReader(FileSchema schema, FileChannel channel, List<RowGroup> rowGroups,
-                  HardwoodContext context, String fileName) {
-        super(schema, channel, rowGroups, context, fileName);
+    FlatRowReader(FileSchema schema, ProjectedSchema projectedSchema, FileChannel channel,
+                  List<RowGroup> rowGroups, HardwoodContext context, String fileName) {
+        super(schema, projectedSchema, channel, rowGroups, context, fileName);
     }
 
     @Override
@@ -58,8 +59,20 @@ final class FlatRowReader extends AbstractRowReader {
         }
     }
 
-    private boolean isNullInternal(int columnIndex) {
-        BitSet columnNulls = nulls[columnIndex];
+    /**
+     * Translates an original column index to a projected index.
+     * Throws IllegalArgumentException if the column is not in the projection.
+     */
+    private int requireProjectedIndex(int originalIndex, String columnName) {
+        int projectedIndex = projectedSchema.toProjectedIndex(originalIndex);
+        if (projectedIndex < 0) {
+            throw new IllegalArgumentException("Column not in projection: " + columnName);
+        }
+        return projectedIndex;
+    }
+
+    private boolean isNullInternal(int projectedIndex) {
+        BitSet columnNulls = nulls[projectedIndex];
         return columnNulls != null && columnNulls.get(rowIndex);
     }
 
@@ -69,168 +82,233 @@ final class FlatRowReader extends AbstractRowReader {
     public int getInt(String name) {
         ColumnSchema col = schema.getColumn(name);
         validatePhysicalType(col, PhysicalType.INT32);
-        return getInt(col.columnIndex());
+        int projectedIndex = requireProjectedIndex(col.columnIndex(), name);
+        return getIntInternal(projectedIndex);
     }
 
     @Override
-    public int getInt(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+    public int getInt(int projectedIndex) {
+        return getIntInternal(projectedIndex);
+    }
+
+    private int getIntInternal(int projectedIndex) {
+        if (isNullInternal(projectedIndex)) {
+            throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((FlatColumnData.IntColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.IntColumn) columnData[projectedIndex]).get(rowIndex);
     }
 
     @Override
     public long getLong(String name) {
         ColumnSchema col = schema.getColumn(name);
         validatePhysicalType(col, PhysicalType.INT64);
-        return getLong(col.columnIndex());
+        int projectedIndex = requireProjectedIndex(col.columnIndex(), name);
+        return getLongInternal(projectedIndex);
     }
 
     @Override
-    public long getLong(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+    public long getLong(int projectedIndex) {
+        return getLongInternal(projectedIndex);
+    }
+
+    private long getLongInternal(int projectedIndex) {
+        if (isNullInternal(projectedIndex)) {
+            throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((FlatColumnData.LongColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.LongColumn) columnData[projectedIndex]).get(rowIndex);
     }
 
     @Override
     public float getFloat(String name) {
         ColumnSchema col = schema.getColumn(name);
         validatePhysicalType(col, PhysicalType.FLOAT);
-        return getFloat(col.columnIndex());
+        int projectedIndex = requireProjectedIndex(col.columnIndex(), name);
+        return getFloatInternal(projectedIndex);
     }
 
     @Override
-    public float getFloat(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+    public float getFloat(int projectedIndex) {
+        return getFloatInternal(projectedIndex);
+    }
+
+    private float getFloatInternal(int projectedIndex) {
+        if (isNullInternal(projectedIndex)) {
+            throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((FlatColumnData.FloatColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.FloatColumn) columnData[projectedIndex]).get(rowIndex);
     }
 
     @Override
     public double getDouble(String name) {
         ColumnSchema col = schema.getColumn(name);
         validatePhysicalType(col, PhysicalType.DOUBLE);
-        return getDouble(col.columnIndex());
+        int projectedIndex = requireProjectedIndex(col.columnIndex(), name);
+        return getDoubleInternal(projectedIndex);
     }
 
     @Override
-    public double getDouble(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+    public double getDouble(int projectedIndex) {
+        return getDoubleInternal(projectedIndex);
+    }
+
+    private double getDoubleInternal(int projectedIndex) {
+        if (isNullInternal(projectedIndex)) {
+            throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((FlatColumnData.DoubleColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.DoubleColumn) columnData[projectedIndex]).get(rowIndex);
     }
 
     @Override
     public boolean getBoolean(String name) {
         ColumnSchema col = schema.getColumn(name);
         validatePhysicalType(col, PhysicalType.BOOLEAN);
-        return getBoolean(col.columnIndex());
+        int projectedIndex = requireProjectedIndex(col.columnIndex(), name);
+        return getBooleanInternal(projectedIndex);
     }
 
     @Override
-    public boolean getBoolean(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+    public boolean getBoolean(int projectedIndex) {
+        return getBooleanInternal(projectedIndex);
+    }
+
+    private boolean getBooleanInternal(int projectedIndex) {
+        if (isNullInternal(projectedIndex)) {
+            throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((FlatColumnData.BooleanColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.BooleanColumn) columnData[projectedIndex]).get(rowIndex);
     }
 
     // ==================== Object Type Accessors ====================
 
     @Override
     public String getString(String name) {
-        return getString(schema.getColumn(name).columnIndex());
+        int originalIndex = schema.getColumn(name).columnIndex();
+        int projectedIndex = requireProjectedIndex(originalIndex, name);
+        return getStringInternal(projectedIndex);
     }
 
     @Override
-    public String getString(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
+    public String getString(int projectedIndex) {
+        return getStringInternal(projectedIndex);
+    }
+
+    private String getStringInternal(int projectedIndex) {
+        if (isNullInternal(projectedIndex)) {
             return null;
         }
-        return new String(((FlatColumnData.ByteArrayColumn) columnData[columnIndex]).get(rowIndex), StandardCharsets.UTF_8);
+        return new String(((FlatColumnData.ByteArrayColumn) columnData[projectedIndex]).get(rowIndex), StandardCharsets.UTF_8);
     }
 
     @Override
     public byte[] getBinary(String name) {
-        return getBinary(schema.getColumn(name).columnIndex());
+        int originalIndex = schema.getColumn(name).columnIndex();
+        int projectedIndex = requireProjectedIndex(originalIndex, name);
+        return getBinaryInternal(projectedIndex);
     }
 
     @Override
-    public byte[] getBinary(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
+    public byte[] getBinary(int projectedIndex) {
+        return getBinaryInternal(projectedIndex);
+    }
+
+    private byte[] getBinaryInternal(int projectedIndex) {
+        if (isNullInternal(projectedIndex)) {
             return null;
         }
-        return ((FlatColumnData.ByteArrayColumn) columnData[columnIndex]).get(rowIndex);
+        return ((FlatColumnData.ByteArrayColumn) columnData[projectedIndex]).get(rowIndex);
     }
 
     @Override
     public LocalDate getDate(String name) {
-        return getDate(schema.getColumn(name).columnIndex());
+        int originalIndex = schema.getColumn(name).columnIndex();
+        int projectedIndex = requireProjectedIndex(originalIndex, name);
+        return getDateInternal(projectedIndex, originalIndex);
     }
 
     @Override
-    public LocalDate getDate(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
+    public LocalDate getDate(int projectedIndex) {
+        int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
+        return getDateInternal(projectedIndex, originalIndex);
+    }
+
+    private LocalDate getDateInternal(int projectedIndex, int originalIndex) {
+        if (isNullInternal(projectedIndex)) {
             return null;
         }
-        ColumnSchema col = schema.getColumn(columnIndex);
-        int rawValue = ((FlatColumnData.IntColumn) columnData[columnIndex]).get(rowIndex);
+        ColumnSchema col = schema.getColumn(originalIndex);
+        int rawValue = ((FlatColumnData.IntColumn) columnData[projectedIndex]).get(rowIndex);
         return LogicalTypeConverter.convertToDate(rawValue, col.type());
     }
 
     @Override
     public LocalTime getTime(String name) {
-        return getTime(schema.getColumn(name).columnIndex());
+        int originalIndex = schema.getColumn(name).columnIndex();
+        int projectedIndex = requireProjectedIndex(originalIndex, name);
+        return getTimeInternal(projectedIndex, originalIndex);
     }
 
     @Override
-    public LocalTime getTime(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
+    public LocalTime getTime(int projectedIndex) {
+        int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
+        return getTimeInternal(projectedIndex, originalIndex);
+    }
+
+    private LocalTime getTimeInternal(int projectedIndex, int originalIndex) {
+        if (isNullInternal(projectedIndex)) {
             return null;
         }
-        ColumnSchema col = schema.getColumn(columnIndex);
+        ColumnSchema col = schema.getColumn(originalIndex);
         Object rawValue;
         if (col.type() == PhysicalType.INT32) {
-            rawValue = ((FlatColumnData.IntColumn) columnData[columnIndex]).get(rowIndex);
+            rawValue = ((FlatColumnData.IntColumn) columnData[projectedIndex]).get(rowIndex);
         }
         else {
-            rawValue = ((FlatColumnData.LongColumn) columnData[columnIndex]).get(rowIndex);
+            rawValue = ((FlatColumnData.LongColumn) columnData[projectedIndex]).get(rowIndex);
         }
         return LogicalTypeConverter.convertToTime(rawValue, col.type(), (LogicalType.TimeType) col.logicalType());
     }
 
     @Override
     public Instant getTimestamp(String name) {
-        return getTimestamp(schema.getColumn(name).columnIndex());
+        int originalIndex = schema.getColumn(name).columnIndex();
+        int projectedIndex = requireProjectedIndex(originalIndex, name);
+        return getTimestampInternal(projectedIndex, originalIndex);
     }
 
     @Override
-    public Instant getTimestamp(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
+    public Instant getTimestamp(int projectedIndex) {
+        int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
+        return getTimestampInternal(projectedIndex, originalIndex);
+    }
+
+    private Instant getTimestampInternal(int projectedIndex, int originalIndex) {
+        if (isNullInternal(projectedIndex)) {
             return null;
         }
-        ColumnSchema col = schema.getColumn(columnIndex);
-        long rawValue = ((FlatColumnData.LongColumn) columnData[columnIndex]).get(rowIndex);
+        ColumnSchema col = schema.getColumn(originalIndex);
+        long rawValue = ((FlatColumnData.LongColumn) columnData[projectedIndex]).get(rowIndex);
         return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(), (LogicalType.TimestampType) col.logicalType());
     }
 
     @Override
     public BigDecimal getDecimal(String name) {
-        return getDecimal(schema.getColumn(name).columnIndex());
+        int originalIndex = schema.getColumn(name).columnIndex();
+        int projectedIndex = requireProjectedIndex(originalIndex, name);
+        return getDecimalInternal(projectedIndex, originalIndex);
     }
 
     @Override
-    public BigDecimal getDecimal(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
+    public BigDecimal getDecimal(int projectedIndex) {
+        int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
+        return getDecimalInternal(projectedIndex, originalIndex);
+    }
+
+    private BigDecimal getDecimalInternal(int projectedIndex, int originalIndex) {
+        if (isNullInternal(projectedIndex)) {
             return null;
         }
-        ColumnSchema col = schema.getColumn(columnIndex);
-        FlatColumnData data = columnData[columnIndex];
+        ColumnSchema col = schema.getColumn(originalIndex);
+        FlatColumnData data = columnData[projectedIndex];
         Object rawValue = switch (col.type()) {
             case INT32 -> ((FlatColumnData.IntColumn) data).get(rowIndex);
             case INT64 -> ((FlatColumnData.LongColumn) data).get(rowIndex);
@@ -242,16 +320,23 @@ final class FlatRowReader extends AbstractRowReader {
 
     @Override
     public UUID getUuid(String name) {
-        return getUuid(schema.getColumn(name).columnIndex());
+        int originalIndex = schema.getColumn(name).columnIndex();
+        int projectedIndex = requireProjectedIndex(originalIndex, name);
+        return getUuidInternal(projectedIndex, originalIndex);
     }
 
     @Override
-    public UUID getUuid(int columnIndex) {
-        if (isNullInternal(columnIndex)) {
+    public UUID getUuid(int projectedIndex) {
+        int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
+        return getUuidInternal(projectedIndex, originalIndex);
+    }
+
+    private UUID getUuidInternal(int projectedIndex, int originalIndex) {
+        if (isNullInternal(projectedIndex)) {
             return null;
         }
-        ColumnSchema col = schema.getColumn(columnIndex);
-        return LogicalTypeConverter.convertToUuid(((FlatColumnData.ByteArrayColumn) columnData[columnIndex]).get(rowIndex), col.type());
+        ColumnSchema col = schema.getColumn(originalIndex);
+        return LogicalTypeConverter.convertToUuid(((FlatColumnData.ByteArrayColumn) columnData[projectedIndex]).get(rowIndex), col.type());
     }
 
     // ==================== Nested Type Accessors ====================
@@ -291,33 +376,36 @@ final class FlatRowReader extends AbstractRowReader {
     @Override
     public Object getValue(String name) {
         ColumnSchema col = schema.getColumn(name);
-        int idx = col.columnIndex();
-        if (isNullInternal(idx)) {
+        int projectedIndex = requireProjectedIndex(col.columnIndex(), name);
+        if (isNullInternal(projectedIndex)) {
             return null;
         }
-        return columnData[idx].getValue(rowIndex);
+        return columnData[projectedIndex].getValue(rowIndex);
     }
 
     // ==================== Metadata ====================
 
     @Override
     public boolean isNull(String name) {
-        return isNull(schema.getColumn(name).columnIndex());
+        int originalIndex = schema.getColumn(name).columnIndex();
+        int projectedIndex = requireProjectedIndex(originalIndex, name);
+        return isNullInternal(projectedIndex);
     }
 
     @Override
-    public boolean isNull(int columnIndex) {
-        return isNullInternal(columnIndex);
+    public boolean isNull(int projectedIndex) {
+        return isNullInternal(projectedIndex);
     }
 
     @Override
     public int getFieldCount() {
-        return schema.getColumnCount();
+        return projectedSchema.getProjectedColumnCount();
     }
 
     @Override
-    public String getFieldName(int index) {
-        return schema.getColumn(index).name();
+    public String getFieldName(int projectedIndex) {
+        int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
+        return schema.getColumn(originalIndex).name();
     }
 
     // ==================== Internal Helpers ====================

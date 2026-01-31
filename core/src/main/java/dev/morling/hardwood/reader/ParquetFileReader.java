@@ -23,6 +23,7 @@ import dev.morling.hardwood.metadata.ColumnChunk;
 import dev.morling.hardwood.metadata.FileMetaData;
 import dev.morling.hardwood.schema.ColumnSchema;
 import dev.morling.hardwood.schema.FileSchema;
+import dev.morling.hardwood.schema.ProjectedSchema;
 
 /**
  * Reader for individual Parquet files.
@@ -161,13 +162,24 @@ public class ParquetFileReader implements AutoCloseable {
      * Create a RowReader that iterates over all rows in all row groups.
      */
     public RowReader createRowReader() {
+        return createRowReader(ColumnProjection.all());
+    }
+
+    /**
+     * Create a RowReader that iterates over selected columns in all row groups.
+     *
+     * @param projection specifies which columns to read
+     * @return a RowReader for the selected columns
+     */
+    public RowReader createRowReader(ColumnProjection projection) {
         FileSchema schema = getFileSchema();
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
         String fileName = path.getFileName().toString();
         if (schema.isFlatSchema()) {
-            return new FlatRowReader(schema, channel, fileMetaData.rowGroups(), context, fileName);
+            return new FlatRowReader(schema, projectedSchema, channel, fileMetaData.rowGroups(), context, fileName);
         }
         else {
-            return new NestedRowReader(schema, channel, fileMetaData.rowGroups(), context, fileName);
+            return new NestedRowReader(schema, projectedSchema, channel, fileMetaData.rowGroups(), context, fileName);
         }
     }
 

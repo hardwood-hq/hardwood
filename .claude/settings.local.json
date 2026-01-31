@@ -88,7 +88,8 @@
       "Bash(git add:*)",
       "Bash(git restore:*)",
       "WebFetch(domain:avro.apache.org)",
-      "Bash(wc:*)"
+      "Bash(wc:*)",
+      "Bash(../../mvnw compile:*)"
     ]
   }
 }

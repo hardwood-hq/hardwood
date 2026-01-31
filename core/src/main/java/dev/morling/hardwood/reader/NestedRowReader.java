@@ -28,6 +28,7 @@ import dev.morling.hardwood.row.PqLongList;
 import dev.morling.hardwood.row.PqMap;
 import dev.morling.hardwood.row.PqStruct;
 import dev.morling.hardwood.schema.FileSchema;
+import dev.morling.hardwood.schema.ProjectedSchema;
 import dev.morling.hardwood.schema.SchemaNode;
 
 /**
@@ -40,14 +41,32 @@ final class NestedRowReader extends AbstractRowReader {
     private List<NestedColumnData> columnData;
     private MutableStruct currentRow;
 
-    NestedRowReader(FileSchema schema, FileChannel channel, List<RowGroup> rowGroups,
-                    HardwoodContext context, String fileName) {
-        super(schema, channel, rowGroups, context, fileName);
+    // Maps projected field index -> original field index in root children
+    private int[] projectedFieldToOriginal;
+    // Maps original field index -> projected field index (-1 if not projected)
+    private int[] originalFieldToProjected;
+
+    NestedRowReader(FileSchema schema, ProjectedSchema projectedSchema, FileChannel channel,
+                    List<RowGroup> rowGroups, HardwoodContext context, String fileName) {
+        super(schema, projectedSchema, channel, rowGroups, context, fileName);
     }
 
     @Override
     protected void onInitialize() {
-        assembler = new RecordAssembler(schema);
+        assembler = new RecordAssembler(schema, projectedSchema);
+
+        // Build field index mapping
+        int[] projectedFieldIndices = projectedSchema.getProjectedFieldIndices();
+        int totalFields = schema.getRootNode().children().size();
+
+        projectedFieldToOriginal = projectedFieldIndices.clone();
+        originalFieldToProjected = new int[totalFields];
+        for (int i = 0; i < totalFields; i++) {
+            originalFieldToProjected[i] = -1;
+        }
+        for (int projIdx = 0; projIdx < projectedFieldIndices.length; projIdx++) {
+            originalFieldToProjected[projectedFieldIndices[projIdx]] = projIdx;
+        }
     }
 
     @Override
@@ -64,79 +83,137 @@ final class NestedRowReader extends AbstractRowReader {
         currentRow = assembler.assembleRow(columnData, rowIndex);
     }
 
+    /**
+     * Gets the field index in the schema from a field name.
+     * Throws IllegalArgumentException if the field is not in the projection.
+     */
+    private int getFieldIndex(String name) {
+        List<SchemaNode> children = schema.getRootNode().children();
+        for (int i = 0; i < children.size(); i++) {
+            if (children.get(i).name().equals(name)) {
+                int projectedIdx = originalFieldToProjected[i];
+                if (projectedIdx < 0) {
+                    throw new IllegalArgumentException("Column not in projection: " + name);
+                }
+                return i; // Return original index for accessing schema
+            }
+        }
+        throw new IllegalArgumentException("Field not found: " + name);
+    }
+
+    /**
+     * Validates that the given original field index is in the projection.
+     */
+    private void requireProjectedField(int originalFieldIndex) {
+        if (originalFieldToProjected[originalFieldIndex] < 0) {
+            String name = schema.getRootNode().children().get(originalFieldIndex).name();
+            throw new IllegalArgumentException("Column not in projection: " + name);
+        }
+    }
+
     // ==================== Primitive Type Accessors ====================
 
     @Override
     public int getInt(String name) {
-        return getInt(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getIntInternal(fieldIndex);
     }
 
     @Override
-    public int getInt(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        Integer val = ValueConverter.convertToInt(currentRow.getChild(columnIndex), fieldSchema);
+    public int getInt(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getIntInternal(originalFieldIndex);
+    }
+
+    private int getIntInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        Integer val = ValueConverter.convertToInt(currentRow.getChild(originalFieldIndex), fieldSchema);
         if (val == null) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+            throw new NullPointerException("Column " + originalFieldIndex + " is null");
         }
         return val;
     }
 
     @Override
     public long getLong(String name) {
-        return getLong(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getLongInternal(fieldIndex);
     }
 
     @Override
-    public long getLong(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        Long val = ValueConverter.convertToLong(currentRow.getChild(columnIndex), fieldSchema);
+    public long getLong(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getLongInternal(originalFieldIndex);
+    }
+
+    private long getLongInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        Long val = ValueConverter.convertToLong(currentRow.getChild(originalFieldIndex), fieldSchema);
         if (val == null) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+            throw new NullPointerException("Column " + originalFieldIndex + " is null");
         }
         return val;
     }
 
     @Override
     public float getFloat(String name) {
-        return getFloat(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getFloatInternal(fieldIndex);
     }
 
     @Override
-    public float getFloat(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        Float val = ValueConverter.convertToFloat(currentRow.getChild(columnIndex), fieldSchema);
+    public float getFloat(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getFloatInternal(originalFieldIndex);
+    }
+
+    private float getFloatInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        Float val = ValueConverter.convertToFloat(currentRow.getChild(originalFieldIndex), fieldSchema);
         if (val == null) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+            throw new NullPointerException("Column " + originalFieldIndex + " is null");
         }
         return val;
     }
 
     @Override
     public double getDouble(String name) {
-        return getDouble(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getDoubleInternal(fieldIndex);
     }
 
     @Override
-    public double getDouble(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        Double val = ValueConverter.convertToDouble(currentRow.getChild(columnIndex), fieldSchema);
+    public double getDouble(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getDoubleInternal(originalFieldIndex);
+    }
+
+    private double getDoubleInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        Double val = ValueConverter.convertToDouble(currentRow.getChild(originalFieldIndex), fieldSchema);
         if (val == null) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+            throw new NullPointerException("Column " + originalFieldIndex + " is null");
         }
         return val;
     }
 
     @Override
     public boolean getBoolean(String name) {
-        return getBoolean(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getBooleanInternal(fieldIndex);
     }
 
     @Override
-    public boolean getBoolean(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        Boolean val = ValueConverter.convertToBoolean(currentRow.getChild(columnIndex), fieldSchema);
+    public boolean getBoolean(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getBooleanInternal(originalFieldIndex);
+    }
+
+    private boolean getBooleanInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        Boolean val = ValueConverter.convertToBoolean(currentRow.getChild(originalFieldIndex), fieldSchema);
         if (val == null) {
-            throw new NullPointerException("Column " + columnIndex + " is null");
+            throw new NullPointerException("Column " + originalFieldIndex + " is null");
         }
         return val;
     }
@@ -145,163 +222,197 @@ final class NestedRowReader extends AbstractRowReader {
 
     @Override
     public String getString(String name) {
-        return getString(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getStringInternal(fieldIndex);
     }
 
     @Override
-    public String getString(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        return ValueConverter.convertToString(currentRow.getChild(columnIndex), fieldSchema);
+    public String getString(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getStringInternal(originalFieldIndex);
+    }
+
+    private String getStringInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        return ValueConverter.convertToString(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
     public byte[] getBinary(String name) {
-        return getBinary(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getBinaryInternal(fieldIndex);
     }
 
     @Override
-    public byte[] getBinary(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        return ValueConverter.convertToBinary(currentRow.getChild(columnIndex), fieldSchema);
+    public byte[] getBinary(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getBinaryInternal(originalFieldIndex);
+    }
+
+    private byte[] getBinaryInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        return ValueConverter.convertToBinary(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
     public LocalDate getDate(String name) {
-        return getDate(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getDateInternal(fieldIndex);
     }
 
     @Override
-    public LocalDate getDate(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        return ValueConverter.convertToDate(currentRow.getChild(columnIndex), fieldSchema);
+    public LocalDate getDate(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getDateInternal(originalFieldIndex);
+    }
+
+    private LocalDate getDateInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        return ValueConverter.convertToDate(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
     public LocalTime getTime(String name) {
-        return getTime(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getTimeInternal(fieldIndex);
     }
 
     @Override
-    public LocalTime getTime(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        return ValueConverter.convertToTime(currentRow.getChild(columnIndex), fieldSchema);
+    public LocalTime getTime(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getTimeInternal(originalFieldIndex);
+    }
+
+    private LocalTime getTimeInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        return ValueConverter.convertToTime(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
     public Instant getTimestamp(String name) {
-        return getTimestamp(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getTimestampInternal(fieldIndex);
     }
 
     @Override
-    public Instant getTimestamp(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        return ValueConverter.convertToTimestamp(currentRow.getChild(columnIndex), fieldSchema);
+    public Instant getTimestamp(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getTimestampInternal(originalFieldIndex);
+    }
+
+    private Instant getTimestampInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        return ValueConverter.convertToTimestamp(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
     public BigDecimal getDecimal(String name) {
-        return getDecimal(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getDecimalInternal(fieldIndex);
     }
 
     @Override
-    public BigDecimal getDecimal(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        return ValueConverter.convertToDecimal(currentRow.getChild(columnIndex), fieldSchema);
+    public BigDecimal getDecimal(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getDecimalInternal(originalFieldIndex);
+    }
+
+    private BigDecimal getDecimalInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        return ValueConverter.convertToDecimal(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
     public UUID getUuid(String name) {
-        return getUuid(getFieldIndex(name));
+        int fieldIndex = getFieldIndex(name);
+        return getUuidInternal(fieldIndex);
     }
 
     @Override
-    public UUID getUuid(int columnIndex) {
-        SchemaNode fieldSchema = schema.getRootNode().children().get(columnIndex);
-        return ValueConverter.convertToUuid(currentRow.getChild(columnIndex), fieldSchema);
+    public UUID getUuid(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return getUuidInternal(originalFieldIndex);
+    }
+
+    private UUID getUuidInternal(int originalFieldIndex) {
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalFieldIndex);
+        return ValueConverter.convertToUuid(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     // ==================== Nested Type Accessors ====================
 
     @Override
     public PqStruct getStruct(String name) {
-        int index = getFieldIndex(name);
-        SchemaNode fieldSchema = schema.getRootNode().children().get(index);
-        return ValueConverter.convertToStruct(currentRow.getChild(index), fieldSchema);
+        int originalIndex = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalIndex);
+        return ValueConverter.convertToStruct(currentRow.getChild(originalIndex), fieldSchema);
     }
 
     @Override
     public PqIntList getListOfInts(String name) {
-        int index = getFieldIndex(name);
-        SchemaNode fieldSchema = schema.getRootNode().children().get(index);
-        return ValueConverter.convertToIntList(currentRow.getChild(index), fieldSchema);
+        int originalIndex = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalIndex);
+        return ValueConverter.convertToIntList(currentRow.getChild(originalIndex), fieldSchema);
     }
 
     @Override
     public PqLongList getListOfLongs(String name) {
-        int index = getFieldIndex(name);
-        SchemaNode fieldSchema = schema.getRootNode().children().get(index);
-        return ValueConverter.convertToLongList(currentRow.getChild(index), fieldSchema);
+        int originalIndex = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalIndex);
+        return ValueConverter.convertToLongList(currentRow.getChild(originalIndex), fieldSchema);
     }
 
     @Override
     public PqDoubleList getListOfDoubles(String name) {
-        int index = getFieldIndex(name);
-        SchemaNode fieldSchema = schema.getRootNode().children().get(index);
-        return ValueConverter.convertToDoubleList(currentRow.getChild(index), fieldSchema);
+        int originalIndex = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalIndex);
+        return ValueConverter.convertToDoubleList(currentRow.getChild(originalIndex), fieldSchema);
     }
 
     @Override
     public PqList getList(String name) {
-        int index = getFieldIndex(name);
-        SchemaNode fieldSchema = schema.getRootNode().children().get(index);
-        return ValueConverter.convertToList(currentRow.getChild(index), fieldSchema);
+        int originalIndex = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalIndex);
+        return ValueConverter.convertToList(currentRow.getChild(originalIndex), fieldSchema);
     }
 
     @Override
     public PqMap getMap(String name) {
-        int index = getFieldIndex(name);
-        SchemaNode fieldSchema = schema.getRootNode().children().get(index);
-        return ValueConverter.convertToMap(currentRow.getChild(index), fieldSchema);
+        int originalIndex = getFieldIndex(name);
+        SchemaNode fieldSchema = schema.getRootNode().children().get(originalIndex);
+        return ValueConverter.convertToMap(currentRow.getChild(originalIndex), fieldSchema);
     }
 
     // ==================== Generic Fallback ====================
 
     @Override
     public Object getValue(String name) {
-        return currentRow.getChild(getFieldIndex(name));
+        int originalIndex = getFieldIndex(name);
+        return currentRow.getChild(originalIndex);
     }
 
     // ==================== Metadata ====================
 
     @Override
     public boolean isNull(String name) {
-        return isNull(getFieldIndex(name));
+        int originalIndex = getFieldIndex(name);
+        return currentRow.getChild(originalIndex) == null;
     }
 
     @Override
-    public boolean isNull(int columnIndex) {
-        return currentRow.getChild(columnIndex) == null;
+    public boolean isNull(int projectedFieldIndex) {
+        int originalFieldIndex = projectedFieldToOriginal[projectedFieldIndex];
+        return currentRow.getChild(originalFieldIndex) == null;
     }
 
     @Override
     public int getFieldCount() {
-        return schema.getRootNode().children().size();
+        return projectedSchema.getProjectedFieldIndices().length;
     }
 
     @Override
-    public String getFieldName(int index) {
-        return schema.getRootNode().children().get(index).name();
-    }
-
-    // ==================== Internal Helpers ====================
-
-    private int getFieldIndex(String name) {
-        List<SchemaNode> children = schema.getRootNode().children();
-        for (int i = 0; i < children.size(); i++) {
-            if (children.get(i).name().equals(name)) {
-                return i;
-            }
-        }
-        throw new IllegalArgumentException("Field not found: " + name);
+    public String getFieldName(int projectedFieldIndex) {
+        int originalFieldIndex = projectedSchema.getProjectedFieldIndices()[projectedFieldIndex];
+        return schema.getRootNode().children().get(originalFieldIndex).name();
     }
 }

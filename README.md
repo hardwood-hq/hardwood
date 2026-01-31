@@ -274,6 +274,72 @@ while (rowReader.hasNext()) {
 
 **Type validation:** The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
 
+### Column Projection
+
+Column projection allows reading only a subset of columns from a Parquet file, improving performance by skipping I/O, decoding, and memory allocation for unneeded columns.
+
+```java
+import dev.morling.hardwood.reader.ColumnProjection;
+import dev.morling.hardwood.reader.ParquetFileReader;
+import dev.morling.hardwood.reader.RowReader;
+
+try (ParquetFileReader fileReader = ParquetFileReader.open(path);
+     RowReader rowReader = fileReader.createRowReader(
+         ColumnProjection.columns("id", "name", "created_at"))) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+
+        // Access projected columns normally
+        long id = rowReader.getLong("id");
+        String name = rowReader.getString("name");
+        Instant createdAt = rowReader.getTimestamp("created_at");
+
+        // Accessing non-projected columns throws IllegalArgumentException
+        // rowReader.getInt("age");  // throws "Column not in projection: age"
+    }
+}
+```
+
+**Projection options:**
+
+```java
+// Read all columns (default behavior)
+ColumnProjection.all()
+
+// Read specific columns by name
+ColumnProjection.columns("id", "name", "address")
+
+// For nested schemas - select entire struct and all its children
+ColumnProjection.columns("address")  // includes address.street, address.city, etc.
+
+// For nested schemas - select specific nested field (dot notation)
+ColumnProjection.columns("address.city")  // only the city field
+```
+
+**With index-based access:**
+
+When using column projection, the index-based accessors use *projected* indices (0, 1, 2, ...) rather than the original schema indices:
+
+```java
+try (ParquetFileReader fileReader = ParquetFileReader.open(path);
+     RowReader rowReader = fileReader.createRowReader(
+         ColumnProjection.columns("name", "created_at"))) {  // 2 columns projected
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+
+        // Projected index 0 = "name", projected index 1 = "created_at"
+        String name = rowReader.getString(0);
+        Instant createdAt = rowReader.getTimestamp(1);
+
+        // getFieldCount() returns 2 (projected count)
+        // getFieldName(0) returns "name"
+        // getFieldName(1) returns "created_at"
+    }
+}
+```
+
 ### Reading Multiple Files
 
 When processing multiple Parquet files, use the `Hardwood` class to share a thread pool across readers:
@@ -843,7 +909,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 
 #### 10.3 Reader API
 - [ ] Implement `ParquetReader.builder(path)` fluent API
-- [ ] Projection pushdown
+- [x] Column projection (select subset of columns to read)
 - [ ] Filter predicate support
 - [ ] GenericRecord support
 - [ ] Custom record materializer support
