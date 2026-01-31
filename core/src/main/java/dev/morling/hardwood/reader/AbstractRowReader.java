@@ -7,142 +7,59 @@
  */
 package dev.morling.hardwood.reader;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.channels.FileChannel;
-import java.util.ArrayList;
-import java.util.List;
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.NoSuchElementException;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ForkJoinPool;
+import java.util.UUID;
 
-import dev.morling.hardwood.internal.reader.ColumnValueIterator;
-import dev.morling.hardwood.internal.reader.PageCursor;
-import dev.morling.hardwood.internal.reader.PageInfo;
-import dev.morling.hardwood.internal.reader.PageScanner;
-import dev.morling.hardwood.internal.reader.TypedColumnData;
-import dev.morling.hardwood.metadata.ColumnChunk;
-import dev.morling.hardwood.metadata.RowGroup;
-import dev.morling.hardwood.schema.ColumnSchema;
-import dev.morling.hardwood.schema.FileSchema;
-import dev.morling.hardwood.schema.ProjectedSchema;
+import dev.morling.hardwood.internal.reader.BatchDataView;
+import dev.morling.hardwood.row.PqDoubleList;
+import dev.morling.hardwood.row.PqIntList;
+import dev.morling.hardwood.row.PqList;
+import dev.morling.hardwood.row.PqLongList;
+import dev.morling.hardwood.row.PqMap;
+import dev.morling.hardwood.row.PqStruct;
 
 /**
- * Base class for RowReader implementations providing common batch loading logic.
+ * Base class for RowReader implementations providing iteration control and accessor methods.
+ * Subclasses must implement {@link #initialize()}, {@link #loadNextBatch()}, and {@link #close()}.
  */
 abstract class AbstractRowReader implements RowReader {
 
-    private static final System.Logger LOG = System.getLogger(AbstractRowReader.class.getName());
-    private static final int BATCH_SIZE = 16384;
+    protected BatchDataView dataView;
 
-    protected final FileSchema schema;
-    protected final ProjectedSchema projectedSchema;
-    private final FileChannel channel;
-    private final List<RowGroup> rowGroups;
-    private final HardwoodContext context;
-    private final String fileName;
-
-    private ColumnValueIterator[] iterators;
-
-    protected int rowIndex = -1;  // -1 means next() not yet called
-    private int batchSize = 0;
-    private boolean exhausted = false;
-    private volatile boolean closed;
-    private boolean initialized = false;
-
-    protected AbstractRowReader(FileSchema schema, ProjectedSchema projectedSchema, FileChannel channel,
-                                List<RowGroup> rowGroups, HardwoodContext context, String fileName) {
-        this.schema = schema;
-        this.projectedSchema = projectedSchema;
-        this.channel = channel;
-        this.rowGroups = rowGroups;
-        this.context = context;
-        this.fileName = fileName;
-    }
-
-    private void initialize() {
-        if (initialized) {
-            return;
-        }
-        initialized = true;
-
-        int projectedColumnCount = projectedSchema.getProjectedColumnCount();
-
-        LOG.log(System.Logger.Level.DEBUG, "Starting to parse file ''{0}'' with {1} row groups, {2} projected columns (of {3} total)",
-                fileName, rowGroups.size(), projectedColumnCount, schema.getColumnCount());
-
-        // Collect page infos for each projected column across all row groups
-        List<List<PageInfo>> pageInfosByColumn = new ArrayList<>(projectedColumnCount);
-        for (int i = 0; i < projectedColumnCount; i++) {
-            pageInfosByColumn.add(new ArrayList<>());
-        }
-
-        LOG.log(System.Logger.Level.DEBUG, "Scanning pages for {0} projected columns across {1} row groups",
-                projectedColumnCount, rowGroups.size());
-
-        // Scan each projected column in parallel
-        @SuppressWarnings("unchecked")
-        CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[projectedColumnCount];
-
-        for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
-            final int projIdx = projectedIndex;
-            final int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
-            final ColumnSchema columnSchema = schema.getColumn(originalIndex);
-
-            scanFutures[projIdx] = CompletableFuture.supplyAsync(() -> {
-                List<PageInfo> columnPages = new ArrayList<>();
-                for (RowGroup rowGroup : rowGroups) {
-                    ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
-                    PageScanner scanner = new PageScanner(channel, columnSchema, columnChunk, context);
-                    try {
-                        columnPages.addAll(scanner.scanPages());
-                    }
-                    catch (IOException e) {
-                        throw new UncheckedIOException("Failed to scan pages for column " + columnSchema.name(), e);
-                    }
-                }
-                return columnPages;
-            }, context.executor());
-        }
-
-        // Wait for all scans to complete and collect results
-        CompletableFuture.allOf(scanFutures).join();
-
-        for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
-            pageInfosByColumn.get(projectedIndex).addAll(scanFutures[projectedIndex].join());
-        }
-
-        int totalPages = pageInfosByColumn.stream().mapToInt(List::size).sum();
-        LOG.log(System.Logger.Level.DEBUG, "Page scanning complete: {0} total pages across {1} projected columns",
-                totalPages, projectedColumnCount);
-
-        // Create iterators for each projected column
-        iterators = new ColumnValueIterator[projectedColumnCount];
-        for (int i = 0; i < projectedColumnCount; i++) {
-            int originalIndex = projectedSchema.toOriginalIndex(i);
-            PageCursor pageCursor = new PageCursor(pageInfosByColumn.get(i), context);
-            iterators[i] = new ColumnValueIterator(pageCursor, schema.getColumn(originalIndex), schema.isFlatSchema());
-        }
-
-        onInitialize();
-
-        // Eagerly load first batch
-        loadNextBatch();
-    }
+    // Iteration state shared by all row readers
+    protected int rowIndex = -1;
+    protected int batchSize = 0;
+    protected boolean exhausted = false;
+    protected volatile boolean closed = false;
+    protected boolean initialized = false;
 
     /**
-     * Called during initialization. Subclasses can override to perform additional setup.
+     * Ensures the reader is initialized. Called by metadata methods that may be
+     * invoked before iteration starts.
      */
-    protected void onInitialize() {
-        // Default: do nothing
-    }
+    protected abstract void initialize();
+
+    /**
+     * Loads the next batch of data.
+     * @return true if a batch was loaded, false if no more data
+     */
+    protected abstract boolean loadNextBatch();
+
+    // ==================== Iteration Control ====================
 
     @Override
     public boolean hasNext() {
-        initialize();
-
         if (closed || exhausted) {
             return false;
+        }
+        if (!initialized) {
+            initialize();
+            // Re-check after initialization since it loads the first batch
+            return !exhausted && rowIndex + 1 < batchSize;
         }
         if (rowIndex + 1 < batchSize) {
             return true;
@@ -156,51 +73,193 @@ abstract class AbstractRowReader implements RowReader {
             throw new NoSuchElementException("No more rows available");
         }
         rowIndex++;
-        onNext();
+        dataView.setRowIndex(rowIndex);
     }
 
-    /**
-     * Called after advancing to the next row. Subclasses can override to perform row-specific setup.
-     */
-    protected void onNext() {
-        // Default: do nothing
+    // ==================== Primitive Type Accessors ====================
+
+    @Override
+    public int getInt(String name) {
+        return dataView.getInt(name);
     }
 
     @Override
-    public void close() {
-        closed = true;
+    public int getInt(int columnIndex) {
+        return dataView.getInt(columnIndex);
     }
 
-    @SuppressWarnings("unchecked")
-    private boolean loadNextBatch() {
-        // Use commonPool for batch tasks to avoid deadlock with prefetch tasks on context.executor().
-        // Batch tasks block waiting for prefetches; using separate pools prevents thread starvation.
-        CompletableFuture<TypedColumnData>[] futures = new CompletableFuture[iterators.length];
-        for (int i = 0; i < iterators.length; i++) {
-            final int col = i;
-            futures[i] = CompletableFuture.supplyAsync(() -> iterators[col].readBatch(BATCH_SIZE), ForkJoinPool.commonPool());
-        }
-
-        CompletableFuture.allOf(futures).join();
-
-        TypedColumnData[] newColumnData = new TypedColumnData[iterators.length];
-        for (int i = 0; i < iterators.length; i++) {
-            newColumnData[i] = futures[i].join();
-            if (newColumnData[i].recordCount() == 0) {
-                exhausted = true;
-                return false;
-            }
-        }
-
-        onBatchLoaded(newColumnData);
-
-        batchSize = newColumnData[0].recordCount();
-        rowIndex = -1;  // Reset to -1 so next() increments to 0
-        return batchSize > 0;
+    @Override
+    public long getLong(String name) {
+        return dataView.getLong(name);
     }
 
-    /**
-     * Called when a new batch of column data is loaded. Subclasses must implement to store the data.
-     */
-    protected abstract void onBatchLoaded(TypedColumnData[] columnData);
+    @Override
+    public long getLong(int columnIndex) {
+        return dataView.getLong(columnIndex);
+    }
+
+    @Override
+    public float getFloat(String name) {
+        return dataView.getFloat(name);
+    }
+
+    @Override
+    public float getFloat(int columnIndex) {
+        return dataView.getFloat(columnIndex);
+    }
+
+    @Override
+    public double getDouble(String name) {
+        return dataView.getDouble(name);
+    }
+
+    @Override
+    public double getDouble(int columnIndex) {
+        return dataView.getDouble(columnIndex);
+    }
+
+    @Override
+    public boolean getBoolean(String name) {
+        return dataView.getBoolean(name);
+    }
+
+    @Override
+    public boolean getBoolean(int columnIndex) {
+        return dataView.getBoolean(columnIndex);
+    }
+
+    // ==================== Object Type Accessors ====================
+
+    @Override
+    public String getString(String name) {
+        return dataView.getString(name);
+    }
+
+    @Override
+    public String getString(int columnIndex) {
+        return dataView.getString(columnIndex);
+    }
+
+    @Override
+    public byte[] getBinary(String name) {
+        return dataView.getBinary(name);
+    }
+
+    @Override
+    public byte[] getBinary(int columnIndex) {
+        return dataView.getBinary(columnIndex);
+    }
+
+    @Override
+    public LocalDate getDate(String name) {
+        return dataView.getDate(name);
+    }
+
+    @Override
+    public LocalDate getDate(int columnIndex) {
+        return dataView.getDate(columnIndex);
+    }
+
+    @Override
+    public LocalTime getTime(String name) {
+        return dataView.getTime(name);
+    }
+
+    @Override
+    public LocalTime getTime(int columnIndex) {
+        return dataView.getTime(columnIndex);
+    }
+
+    @Override
+    public Instant getTimestamp(String name) {
+        return dataView.getTimestamp(name);
+    }
+
+    @Override
+    public Instant getTimestamp(int columnIndex) {
+        return dataView.getTimestamp(columnIndex);
+    }
+
+    @Override
+    public BigDecimal getDecimal(String name) {
+        return dataView.getDecimal(name);
+    }
+
+    @Override
+    public BigDecimal getDecimal(int columnIndex) {
+        return dataView.getDecimal(columnIndex);
+    }
+
+    @Override
+    public UUID getUuid(String name) {
+        return dataView.getUuid(name);
+    }
+
+    @Override
+    public UUID getUuid(int columnIndex) {
+        return dataView.getUuid(columnIndex);
+    }
+
+    // ==================== Nested Type Accessors ====================
+
+    @Override
+    public PqStruct getStruct(String name) {
+        return dataView.getStruct(name);
+    }
+
+    @Override
+    public PqIntList getListOfInts(String name) {
+        return dataView.getListOfInts(name);
+    }
+
+    @Override
+    public PqLongList getListOfLongs(String name) {
+        return dataView.getListOfLongs(name);
+    }
+
+    @Override
+    public PqDoubleList getListOfDoubles(String name) {
+        return dataView.getListOfDoubles(name);
+    }
+
+    @Override
+    public PqList getList(String name) {
+        return dataView.getList(name);
+    }
+
+    @Override
+    public PqMap getMap(String name) {
+        return dataView.getMap(name);
+    }
+
+    // ==================== Generic Fallback ====================
+
+    @Override
+    public Object getValue(String name) {
+        return dataView.getValue(name);
+    }
+
+    // ==================== Metadata ====================
+
+    @Override
+    public boolean isNull(String name) {
+        return dataView.isNull(name);
+    }
+
+    @Override
+    public boolean isNull(int columnIndex) {
+        return dataView.isNull(columnIndex);
+    }
+
+    @Override
+    public int getFieldCount() {
+        initialize();
+        return dataView.getFieldCount();
+    }
+
+    @Override
+    public String getFieldName(int index) {
+        initialize();
+        return dataView.getFieldName(index);
+    }
 }

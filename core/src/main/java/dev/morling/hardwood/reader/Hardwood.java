@@ -9,6 +9,7 @@ package dev.morling.hardwood.reader;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.List;
 import java.util.concurrent.ExecutorService;
 
 /**
@@ -52,6 +53,41 @@ public class Hardwood implements AutoCloseable {
      */
     public ParquetFileReader open(Path path) throws IOException {
         return ParquetFileReader.open(path, context);
+    }
+
+    /**
+     * Open multiple Parquet files for reading with cross-file prefetching.
+     * <p>
+     * This method returns a MultiFileRowReader that coordinates prefetching across file
+     * boundaries. When pages from file N are running low, pages from file N+1 are already
+     * being prefetched, eliminating queue misses at file transitions.
+     * </p>
+     *
+     * @param paths the Parquet files to read (must not be empty)
+     * @return a MultiFileRowReader for iterating over all rows in all files
+     * @throws IOException if any file cannot be opened or read
+     * @throws IllegalArgumentException if the paths list is empty
+     */
+    public MultiFileRowReader openAll(List<Path> paths) throws IOException {
+        return openAll(paths, ColumnProjection.all());
+    }
+
+    /**
+     * Open multiple Parquet files for reading with cross-file prefetching and column projection.
+     * <p>
+     * This method returns a MultiFileRowReader that coordinates prefetching across file
+     * boundaries. When pages from file N are running low, pages from file N+1 are already
+     * being prefetched, eliminating queue misses at file transitions.
+     * </p>
+     *
+     * @param paths the Parquet files to read (must not be empty)
+     * @param projection specifies which columns to read
+     * @return a MultiFileRowReader for iterating over all rows in all files
+     * @throws IOException if any file cannot be opened or read
+     * @throws IllegalArgumentException if the paths list is empty
+     */
+    public MultiFileRowReader openAll(List<Path> paths, ColumnProjection projection) throws IOException {
+        return new MultiFileRowReader(paths, context, projection);
     }
 
     /**

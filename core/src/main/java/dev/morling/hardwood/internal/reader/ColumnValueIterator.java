@@ -51,6 +51,10 @@ public class ColumnValueIterator {
      * Column-level parallelism is handled by the row reader calling this
      * method on all columns concurrently.</p>
      *
+     * <p>If a shared stop count is configured and this column approaches a file
+     * transition, it will update the shared counter to signal other columns to
+     * stop at the same point.</p>
+     *
      * @param maxRecords maximum number of records to read
      * @return typed column data containing values, levels, and record boundaries
      */
@@ -626,5 +630,24 @@ public class ColumnValueIterator {
      */
     public boolean hasMore() {
         return !exhausted && ensurePageLoaded();
+    }
+
+    /**
+     * Check if this iterator's cursor needs pages from the next file.
+     * Used for coordinated cross-file transitions.
+     *
+     * @return true if the underlying cursor has exhausted current file pages
+     */
+    public boolean needsNextFilePages() {
+        return pageCursor.needsNextFilePages();
+    }
+
+    /**
+     * Add pages from the next file to this iterator's cursor.
+     * Should be called after all columns have finished their current batch
+     * to ensure synchronized transitions.
+     */
+    public void addNextFilePages() {
+        pageCursor.addNextFilePages();
     }
 }

@@ -50,12 +50,32 @@ public class PageReader {
      *
      * @param columnMetaData metadata for the column
      * @param column column schema
-     * @param context the hardwood context
+     * @param decompressorFactory factory for creating decompressors
      */
     public PageReader(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
         this.columnMetaData = columnMetaData;
         this.column = column;
         this.decompressorFactory = decompressorFactory;
+    }
+
+    /**
+     * Checks if this PageReader is compatible with the given column metadata.
+     * Used for cross-file prefetching to determine if PageReader can be reused.
+     *
+     * @param otherMetaData the column metadata to check against
+     * @return true if compatible (same codec), false otherwise
+     */
+    public boolean isCompatibleWith(ColumnMetaData otherMetaData) {
+        return columnMetaData.codec() == otherMetaData.codec();
+    }
+
+    /**
+     * Gets the decompressor factory used by this PageReader.
+     *
+     * @return the decompressor factory
+     */
+    public DecompressorFactory getDecompressorFactory() {
+        return decompressorFactory;
     }
 
     /**

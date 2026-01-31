@@ -287,7 +287,7 @@ public final class ProjectedSchema {
 
     /**
      * Returns the indices of projected top-level fields in the root node's children.
-     * This is used by NestedRowReader to build a sparse record structure.
+     * This is used by NestedBatchDataView to build a sparse record structure.
      */
     public int[] getProjectedFieldIndices() {
         return projectedFieldIndices;

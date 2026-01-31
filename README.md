@@ -342,7 +342,53 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(path);
 
 ### Reading Multiple Files
 
-When processing multiple Parquet files, use the `Hardwood` class to share a thread pool across readers:
+When processing multiple Parquet files, use the `Hardwood` class to share a thread pool across readers.
+
+#### Unified Multi-File Reader
+
+For reading multiple files as a single logical dataset, use `openAll()` which returns a `MultiFileRowReader`:
+
+```java
+import dev.morling.hardwood.reader.Hardwood;
+import dev.morling.hardwood.reader.MultiFileRowReader;
+
+List<Path> files = List.of(
+    Path.of("data_2024_01.parquet"),
+    Path.of("data_2024_02.parquet"),
+    Path.of("data_2024_03.parquet")
+);
+
+try (Hardwood hardwood = Hardwood.create();
+     MultiFileRowReader reader = hardwood.openAll(files)) {
+
+    while (reader.hasNext()) {
+        reader.next();
+        // Access data using the same API as single-file RowReader
+        long id = reader.getLong("id");
+        String name = reader.getString("name");
+    }
+}
+```
+
+The `MultiFileRowReader` provides cross-file prefetching: when pages from file N are running low, pages from file N+1 are already being prefetched. This eliminates I/O stalls at file boundaries.
+
+**With column projection:**
+
+```java
+try (Hardwood hardwood = Hardwood.create();
+     MultiFileRowReader reader = hardwood.openAll(files,
+         ColumnProjection.columns("id", "name", "amount"))) {
+
+    while (reader.hasNext()) {
+        reader.next();
+        // Only projected columns are read
+    }
+}
+```
+
+#### Individual File Processing
+
+When you need to process files independently (e.g., different handling per file), use individual readers:
 
 ```java
 import dev.morling.hardwood.reader.Hardwood;

@@ -175,12 +175,7 @@ public class ParquetFileReader implements AutoCloseable {
         FileSchema schema = getFileSchema();
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
         String fileName = path.getFileName().toString();
-        if (schema.isFlatSchema()) {
-            return new FlatRowReader(schema, projectedSchema, channel, fileMetaData.rowGroups(), context, fileName);
-        }
-        else {
-            return new NestedRowReader(schema, projectedSchema, channel, fileMetaData.rowGroups(), context, fileName);
-        }
+        return new SingleFileRowReader(schema, projectedSchema, channel, fileMetaData.rowGroups(), context, fileName);
     }
 
     @Override

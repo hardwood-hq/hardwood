@@ -31,6 +31,7 @@ import org.junit.jupiter.api.TestInstance;
 import dev.morling.hardwood.metadata.PhysicalType;
 import dev.morling.hardwood.reader.ColumnProjection;
 import dev.morling.hardwood.reader.Hardwood;
+import dev.morling.hardwood.reader.MultiFileRowReader;
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
 import dev.morling.hardwood.schema.SchemaNode;
@@ -60,6 +61,7 @@ class SimplePerformanceTest {
         HARDWOOD_INDEXED("Hardwood (indexed)"),
         HARDWOOD_NAMED("Hardwood (named)"),
         HARDWOOD_PROJECTION("Hardwood (projection)"),
+        HARDWOOD_MULTIFILE("Hardwood (multifile)"),
         PARQUET_JAVA_INDEXED("parquet-java (indexed)"),
         PARQUET_JAVA_NAMED("parquet-java (named)");
 
@@ -213,6 +215,7 @@ class SimplePerformanceTest {
             case HARDWOOD_INDEXED -> this::runHardwoodIndexed;
             case HARDWOOD_NAMED -> this::runHardwoodNamed;
             case HARDWOOD_PROJECTION -> this::runHardwoodProjection;
+            case HARDWOOD_MULTIFILE -> this::runHardwoodMultiFile;
             case PARQUET_JAVA_INDEXED -> this::runParquetJavaIndexed;
             case PARQUET_JAVA_NAMED -> this::runParquetJavaNamed;
         };
@@ -372,6 +375,111 @@ class SimplePerformanceTest {
             }
         }
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+    }
+
+    /**
+     * Run using MultiFileRowReader with cross-file prefetching.
+     * <p>
+     * Since NYC taxi data has schema variations (passenger_count type changes between years),
+     * files are grouped by schema compatibility and each group is processed with cross-file
+     * prefetching enabled.
+     * </p>
+     */
+    private Result runHardwoodMultiFile(List<Path> files) {
+        long passengerCount = 0;
+        double tripDistance = 0.0;
+        double fareAmount = 0.0;
+        long rowCount = 0;
+
+        // Only read the 3 columns we need
+        ColumnProjection projection = ColumnProjection.columns(
+                "passenger_count", "trip_distance", "fare_amount");
+
+        // Group files by passenger_count type for schema compatibility
+        List<List<Path>> fileGroups = groupFilesBySchema(files);
+
+        try (Hardwood hardwood = Hardwood.create()) {
+            for (List<Path> group : fileGroups) {
+                if (group.isEmpty()) {
+                    continue;
+                }
+
+                // Determine passenger_count type from first file in group
+                boolean pcIsLong;
+                try (ParquetFileReader probe = hardwood.open(group.get(0))) {
+                    SchemaNode pcNode = probe.getFileSchema().getField("passenger_count");
+                    pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
+                            && pn.type() == PhysicalType.INT64;
+                }
+                catch (IOException e) {
+                    throw new RuntimeException("Failed to probe file: " + group.get(0), e);
+                }
+
+                // Process all files in this group with cross-file prefetching
+                try (MultiFileRowReader rowReader = hardwood.openAll(group, projection)) {
+                    while (rowReader.hasNext()) {
+                        rowReader.next();
+                        rowCount++;
+
+                        if (!rowReader.isNull(0)) { // passenger_count
+                            if (pcIsLong) {
+                                passengerCount += rowReader.getLong(0);
+                            }
+                            else {
+                                passengerCount += (long) rowReader.getDouble(0);
+                            }
+                        }
+
+                        if (!rowReader.isNull(1)) { // trip_distance
+                            tripDistance += rowReader.getDouble(1);
+                        }
+
+                        if (!rowReader.isNull(2)) { // fare_amount
+                            fareAmount += rowReader.getDouble(2);
+                        }
+                    }
+                }
+                catch (IOException e) {
+                    throw new RuntimeException("Failed to read files with MultiFileRowReader", e);
+                }
+            }
+        }
+        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+    }
+
+    /**
+     * Groups files by schema compatibility (based on passenger_count physical type).
+     * Files with compatible schemas are grouped together for cross-file prefetching.
+     */
+    private List<List<Path>> groupFilesBySchema(List<Path> files) {
+        List<Path> longTypeFiles = new ArrayList<>();
+        List<Path> doubleTypeFiles = new ArrayList<>();
+
+        for (Path file : files) {
+            try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+                SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
+                boolean isLong = pcNode instanceof SchemaNode.PrimitiveNode pn
+                        && pn.type() == PhysicalType.INT64;
+                if (isLong) {
+                    longTypeFiles.add(file);
+                }
+                else {
+                    doubleTypeFiles.add(file);
+                }
+            }
+            catch (IOException e) {
+                throw new RuntimeException("Failed to read schema from: " + file, e);
+            }
+        }
+
+        List<List<Path>> groups = new ArrayList<>();
+        if (!longTypeFiles.isEmpty()) {
+            groups.add(longTypeFiles);
+        }
+        if (!doubleTypeFiles.isEmpty()) {
+            groups.add(doubleTypeFiles);
+        }
+        return groups;
     }
 
     private Result runParquetJavaIndexed(List<Path> files) {
@@ -536,7 +644,7 @@ class SimplePerformanceTest {
 
     private boolean isHardwood(Contender c) {
         return c == Contender.HARDWOOD_INDEXED || c == Contender.HARDWOOD_NAMED
-                || c == Contender.HARDWOOD_PROJECTION;
+                || c == Contender.HARDWOOD_PROJECTION || c == Contender.HARDWOOD_MULTIFILE;
     }
 
     private void printResultRow(String name, Result result, int cpuCores, long totalBytes) {
