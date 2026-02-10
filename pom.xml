@@ -37,6 +37,8 @@
   </modules>
 
   <properties>
+    <!-- Update to 3.4.3 when available in Maven Central -->
+    <hadoop.version>3.4.4-SNAPSHOT</hadoop.version>
     <java.version>21</java.version>
     <java.version.build>25</java.version.build>
     <maven.compiler.parameters>true</maven.compiler.parameters>
@@ -137,12 +139,12 @@
       <dependency>
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-common</artifactId>
-        <version>3.4.4-SNAPSHOT</version>
+        <version>${hadoop.version}</version>
       </dependency>
       <dependency>
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-mapreduce-client-core</artifactId>
-        <version>3.4.4-SNAPSHOT</version>
+        <version>${hadoop.version}</version>
       </dependency>
       <!-- Git cloning -->
       <dependency>
