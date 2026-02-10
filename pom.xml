@@ -133,7 +133,7 @@
         <artifactId>parquet-avro</artifactId>
         <version>1.16.0</version>
       </dependency>
-      <!-- Hadoop 3.4.4-SNAPSHOT required for Java 24+ (HADOOP-19212: Subject.getSubject() removed) -->
+        <!-- Hadoop 3.4.3+ required for Java 24+ (HADOOP-19212: Subject.getSubject() removed) -->
       <dependency>
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-common</artifactId>
