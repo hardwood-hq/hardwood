@@ -45,17 +45,17 @@
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
   </properties>
 
-  <!-- Apache staging repo for Hadoop 3.4.3 RC (HADOOP-19212 fix for Java 24+) -->
-  <!-- Remove once 3.4.3 is in Central -->
+  <!-- Apache snapshots repo for Hadoop 3.4.4-SNAPSHOT (HADOOP-19212 fix for Java 24+) -->
+  <!-- Remove once 3.4.3+ is in Central -->
   <repositories>
     <repository>
-      <id>apache-hadoop-staging</id>
-      <url>https://repository.apache.org/content/repositories/orgapachehadoop-1461/</url>
+      <id>apache-hadoop-snapshots</id>
+      <url>https://repository.apache.org/content/repositories/snapshots/</url>
       <releases>
-        <enabled>true</enabled>
+        <enabled>false</enabled>
       </releases>
       <snapshots>
-        <enabled>false</enabled>
+        <enabled>true</enabled>
       </snapshots>
     </repository>
   </repositories>
@@ -133,16 +133,16 @@
         <artifactId>parquet-avro</artifactId>
         <version>1.16.0</version>
       </dependency>
-      <!-- Hadoop 3.4.3+ required for Java 24+ (HADOOP-19212: Subject.getSubject() removed) -->
+      <!-- Hadoop 3.4.4-SNAPSHOT required for Java 24+ (HADOOP-19212: Subject.getSubject() removed) -->
       <dependency>
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-common</artifactId>
-        <version>3.4.3</version>
+        <version>3.4.4-SNAPSHOT</version>
       </dependency>
       <dependency>
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-mapreduce-client-core</artifactId>
-        <version>3.4.3</version>
+        <version>3.4.4-SNAPSHOT</version>
       </dependency>
       <!-- Git cloning -->
       <dependency>
