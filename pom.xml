@@ -37,7 +37,8 @@
   </modules>
 
   <properties>
-    <!-- Update to 3.4.3 when available in Maven Central -->
+    <!-- Hadoop 3.4.3+ required for Java 24+ (HADOOP-19212: Subject.getSubject() removed) -->
+    <!-- TODO: Update to 3.4.3 when available in Maven Central -->
     <hadoop.version>3.4.4-SNAPSHOT</hadoop.version>
     <java.version>21</java.version>
     <java.version.build>25</java.version.build>
@@ -48,7 +49,7 @@
   </properties>
 
   <!-- Apache snapshots repo for Hadoop 3.4.4-SNAPSHOT (HADOOP-19212 fix for Java 24+) -->
-  <!-- Remove once 3.4.3+ is in Central -->
+  <!-- TODO: Remove once 3.4.3+ is in Central -->
   <repositories>
     <repository>
       <id>apache-hadoop-snapshots</id>
@@ -135,7 +136,6 @@
         <artifactId>parquet-avro</artifactId>
         <version>1.16.0</version>
       </dependency>
-        <!-- Hadoop 3.4.3+ required for Java 24+ (HADOOP-19212: Subject.getSubject() removed) -->
       <dependency>
         <groupId>org.apache.hadoop</groupId>
         <artifactId>hadoop-common</artifactId>
