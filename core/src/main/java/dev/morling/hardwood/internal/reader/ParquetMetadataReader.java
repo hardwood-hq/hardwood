@@ -7,14 +7,12 @@
  */
 package dev.morling.hardwood.internal.reader;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.channels.FileChannel;
+import java.nio.MappedByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Arrays;
 
 import dev.morling.hardwood.internal.thrift.FileMetaDataReader;
@@ -39,43 +37,29 @@ public final class ParquetMetadataReader {
     }
 
     /**
-     * Reads file metadata from a Parquet file, opening and closing the file.
+     * Reads file metadata from a memory-mapped buffer covering the entire file.
      *
-     * @param path the file path to read
-     * @return the parsed FileMetaData
-     * @throws IOException if the file is not a valid Parquet file or cannot be read
-     */
-    public static FileMetaData readMetadata(Path path) throws IOException {
-        try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
-            return readMetadata(channel, path);
-        }
-    }
-
-    /**
-     * Reads file metadata from a Parquet file using an already-opened channel.
-     *
-     * @param channel the file channel to read from
+     * @param fileMapping the memory-mapped buffer of the entire file
      * @param path the file path (used for error messages)
      * @return the parsed FileMetaData
-     * @throws IOException if the file is not a valid Parquet file or cannot be read
+     * @throws IOException if the file is not a valid Parquet file
      */
-    public static FileMetaData readMetadata(FileChannel channel, Path path) throws IOException {
-        long fileSize = channel.size();
+    public static FileMetaData readMetadata(MappedByteBuffer fileMapping, Path path) throws IOException {
+        int fileSize = fileMapping.limit();
         if (fileSize < MAGIC_SIZE + MAGIC_SIZE + FOOTER_LENGTH_SIZE) {
             throw new IOException("File too small to be a valid Parquet file: " + path);
         }
 
-        // Read and validate magic number at start
-        ByteBuffer startMagicBuf = ByteBuffer.allocate(MAGIC_SIZE);
-        readFully(channel, startMagicBuf, 0);
-        if (!Arrays.equals(startMagicBuf.array(), MAGIC)) {
+        // Validate magic number at start
+        byte[] startMagic = new byte[MAGIC_SIZE];
+        fileMapping.get(0, startMagic);
+        if (!Arrays.equals(startMagic, MAGIC)) {
             throw new IOException("Not a Parquet file (invalid magic number at start): " + path);
         }
 
         // Read footer size and magic number at end
-        long footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
-        ByteBuffer footerInfoBuf = ByteBuffer.allocate(FOOTER_LENGTH_SIZE + MAGIC_SIZE);
-        readFully(channel, footerInfoBuf, footerInfoPos);
+        int footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
+        ByteBuffer footerInfoBuf = fileMapping.slice(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
         footerInfoBuf.order(ByteOrder.LITTLE_ENDIAN);
         int footerLength = footerInfoBuf.getInt();
         byte[] endMagic = new byte[MAGIC_SIZE];
@@ -85,30 +69,14 @@ public final class ParquetMetadataReader {
         }
 
         // Validate footer length
-        long footerStart = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE - footerLength;
+        int footerStart = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE - footerLength;
         if (footerStart < MAGIC_SIZE) {
             throw new IOException("Invalid footer length: " + footerLength);
         }
 
-        // Read footer
-        ByteBuffer footerBuf = ByteBuffer.allocate(footerLength);
-        readFully(channel, footerBuf, footerStart);
-
-        // Parse file metadata
-        ThriftCompactReader reader = new ThriftCompactReader(new ByteArrayInputStream(footerBuf.array()));
+        // Parse file metadata directly from the mapping (no copy needed)
+        ByteBuffer footerBuffer = fileMapping.slice(footerStart, footerLength);
+        ThriftCompactReader reader = new ThriftCompactReader(footerBuffer);
         return FileMetaDataReader.read(reader);
-    }
-
-    /**
-     * Reads from channel at position until buffer is full.
-     */
-    private static void readFully(FileChannel channel, ByteBuffer buffer, long position) throws IOException {
-        while (buffer.hasRemaining()) {
-            int read = channel.read(buffer, position + buffer.position());
-            if (read < 0) {
-                throw new IOException("Unexpected end of file");
-            }
-        }
-        buffer.flip();
     }
 }

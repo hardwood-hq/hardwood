@@ -9,6 +9,7 @@ package dev.morling.hardwood.reader;
 
 import java.io.Closeable;
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -16,6 +17,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.morling.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.morling.hardwood.internal.reader.FileMappingEvent;
 import dev.morling.hardwood.internal.reader.Page;
 import dev.morling.hardwood.internal.reader.PageCursor;
 import dev.morling.hardwood.internal.reader.PageInfo;
@@ -60,8 +62,26 @@ public class ColumnReader implements Closeable {
         // Open a dedicated FileChannel for this column chunk
         this.channel = FileChannel.open(path, StandardOpenOption.READ);
 
+        // Calculate chunk bounds and create mapping
+        Long dictOffset = columnMetaData.dictionaryPageOffset();
+        long chunkStart = (dictOffset != null && dictOffset > 0)
+                ? dictOffset
+                : columnMetaData.dataPageOffset();
+        long chunkSize = columnMetaData.totalCompressedSize();
+
+        FileMappingEvent event = new FileMappingEvent();
+        event.begin();
+
+        MappedByteBuffer mapping = channel.map(FileChannel.MapMode.READ_ONLY, chunkStart, chunkSize);
+
+        event.path = path.toString();
+        event.offset = chunkStart;
+        event.size = chunkSize;
+        event.column = column.name();
+        event.commit();
+
         // Scan pages using PageScanner
-        PageScanner scanner = new PageScanner(channel, column, columnChunk, context);
+        PageScanner scanner = new PageScanner(column, columnChunk, context, mapping, chunkStart);
         List<PageInfo> pageInfos = scanner.scanPages();
 
         // Create PageCursor for async prefetching

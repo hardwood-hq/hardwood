@@ -8,7 +8,6 @@
 package dev.morling.hardwood.benchmarks;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
@@ -39,6 +38,7 @@ import dev.morling.hardwood.internal.reader.PageScanner;
 import dev.morling.hardwood.internal.thrift.PageHeaderReader;
 import dev.morling.hardwood.internal.thrift.ThriftCompactReader;
 import dev.morling.hardwood.metadata.ColumnChunk;
+import dev.morling.hardwood.metadata.ColumnMetaData;
 import dev.morling.hardwood.metadata.PageHeader;
 import dev.morling.hardwood.metadata.RowGroup;
 import dev.morling.hardwood.reader.HardwoodContext;
@@ -82,12 +82,29 @@ public class PageHandlingBenchmark {
             FileSchema schema = reader.getFileSchema();
             List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
 
+            // Calculate data region bounds
+            long minOffset = Long.MAX_VALUE;
+            long maxEnd = 0;
+            for (RowGroup rowGroup : rowGroups) {
+                for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
+                    ColumnMetaData metaData = rowGroup.columns().get(colIdx).metaData();
+                    Long dictOffset = metaData.dictionaryPageOffset();
+                    long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : metaData.dataPageOffset();
+                    long chunkEnd = chunkStart + metaData.totalCompressedSize();
+                    minOffset = Math.min(minOffset, chunkStart);
+                    maxEnd = Math.max(maxEnd, chunkEnd);
+                }
+            }
+
+            // Create single file mapping
+            MappedByteBuffer fileMapping = channel.map(FileChannel.MapMode.READ_ONLY, minOffset, maxEnd - minOffset);
+
             for (RowGroup rowGroup : rowGroups) {
                 for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
 
-                    PageScanner scanner = new PageScanner(channel, columnSchema, columnChunk, context);
+                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, fileMapping, minOffset);
                     allPages.addAll(scanner.scanPages());
                 }
             }
@@ -112,10 +129,9 @@ public class PageHandlingBenchmark {
             MappedByteBuffer pageData = pageInfo.pageData();
 
             // Parse page header to get compressed/uncompressed sizes
-            ByteBufferInputStream headerStream = new ByteBufferInputStream(pageData, 0);
-            ThriftCompactReader headerReader = new ThriftCompactReader(headerStream);
+            ThriftCompactReader headerReader = new ThriftCompactReader(pageData, 0);
             PageHeader header = PageHeaderReader.read(headerReader);
-            int headerSize = headerStream.getBytesRead();
+            int headerSize = headerReader.getBytesRead();
 
             int compressedSize = header.compressedPageSize();
             int uncompressedSize = header.uncompressedPageSize();
@@ -136,44 +152,6 @@ public class PageHandlingBenchmark {
             PageReader pageReader = new PageReader(pageInfo.columnMetaData(), pageInfo.columnSchema(), context.decompressorFactory());
             Page page = pageReader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
             blackhole.consume(page);
-        }
-    }
-
-    /**
-     * InputStream that reads from a ByteBuffer at a given offset.
-     */
-    static class ByteBufferInputStream extends InputStream {
-        private final MappedByteBuffer buffer;
-        private final int startOffset;
-        private int pos;
-
-        public ByteBufferInputStream(MappedByteBuffer buffer, int startOffset) {
-            this.buffer = buffer;
-            this.startOffset = startOffset;
-            this.pos = startOffset;
-        }
-
-        @Override
-        public int read() {
-            if (pos >= buffer.limit()) {
-                return -1;
-            }
-            return buffer.get(pos++) & 0xff;
-        }
-
-        @Override
-        public int read(byte[] b, int off, int len) {
-            if (pos >= buffer.limit()) {
-                return -1;
-            }
-            int available = Math.min(len, buffer.limit() - pos);
-            buffer.slice(pos, available).get(b, off, available);
-            pos += available;
-            return available;
-        }
-
-        public int getBytesRead() {
-            return pos - startOffset;
         }
     }
 }

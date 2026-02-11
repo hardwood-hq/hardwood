@@ -9,7 +9,7 @@ package dev.morling.hardwood.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.channels.FileChannel;
+import java.nio.MappedByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -38,18 +38,18 @@ final class SingleFileRowReader extends AbstractRowReader {
 
     private final FileSchema schema;
     private final ProjectedSchema projectedSchema;
-    private final FileChannel channel;
+    private final MappedByteBuffer fileMapping;
     private final List<RowGroup> rowGroups;
     private final HardwoodContext context;
     private final String fileName;
 
     private ColumnValueIterator[] iterators;
 
-    SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, FileChannel channel,
+    SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, MappedByteBuffer fileMapping,
                         List<RowGroup> rowGroups, HardwoodContext context, String fileName) {
         this.schema = schema;
         this.projectedSchema = projectedSchema;
-        this.channel = channel;
+        this.fileMapping = fileMapping;
         this.rowGroups = rowGroups;
         this.context = context;
         this.fileName = fileName;
@@ -76,7 +76,10 @@ final class SingleFileRowReader extends AbstractRowReader {
         LOG.log(System.Logger.Level.DEBUG, "Scanning pages for {0} projected columns across {1} row groups",
                 projectedColumnCount, rowGroups.size());
 
-        // Scan each projected column in parallel
+        // File mapping covers entire file, so base offset is 0
+        final long mappingBaseOffset = 0;
+
+        // Scan each projected column in parallel using the file mapping
         @SuppressWarnings("unchecked")
         CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[projectedColumnCount];
 
@@ -89,7 +92,8 @@ final class SingleFileRowReader extends AbstractRowReader {
                 List<PageInfo> columnPages = new ArrayList<>();
                 for (RowGroup rowGroup : rowGroups) {
                     ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
-                    PageScanner scanner = new PageScanner(channel, columnSchema, columnChunk, context);
+                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
+                            fileMapping, mappingBaseOffset);
                     try {
                         columnPages.addAll(scanner.scanPages());
                     }

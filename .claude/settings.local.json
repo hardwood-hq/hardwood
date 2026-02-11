@@ -90,7 +90,9 @@
       "WebFetch(domain:avro.apache.org)",
       "Bash(wc:*)",
       "Bash(../../mvnw compile:*)",
-      "Bash(../../mvnw test-compile:*)"
+      "Bash(../../mvnw test-compile:*)",
+      "WebFetch(domain:www.morling.dev)",
+      "WebFetch(domain:inside.java)"
     ]
   }
 }

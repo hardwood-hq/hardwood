@@ -8,6 +8,7 @@
 package dev.morling.hardwood.benchmarks;
 
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -33,6 +34,7 @@ import dev.morling.hardwood.internal.reader.PageInfo;
 import dev.morling.hardwood.internal.reader.PageScanner;
 import dev.morling.hardwood.internal.reader.TypedColumnData;
 import dev.morling.hardwood.metadata.ColumnChunk;
+import dev.morling.hardwood.metadata.ColumnMetaData;
 import dev.morling.hardwood.metadata.LogicalType;
 import dev.morling.hardwood.metadata.RowGroup;
 import dev.morling.hardwood.reader.HardwoodContext;
@@ -100,6 +102,23 @@ public class PipelineBenchmark {
                 columnNames.add(schema.getColumn(i).name());
             }
 
+            // Calculate data region bounds
+            long minOffset = Long.MAX_VALUE;
+            long maxEnd = 0;
+            for (RowGroup rowGroup : rowGroups) {
+                for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
+                    ColumnMetaData metaData = rowGroup.columns().get(colIdx).metaData();
+                    Long dictOffset = metaData.dictionaryPageOffset();
+                    long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : metaData.dataPageOffset();
+                    long chunkEnd = chunkStart + metaData.totalCompressedSize();
+                    minOffset = Math.min(minOffset, chunkStart);
+                    maxEnd = Math.max(maxEnd, chunkEnd);
+                }
+            }
+
+            // Create single file mapping
+            MappedByteBuffer fileMapping = channel.map(FileChannel.MapMode.READ_ONLY, minOffset, maxEnd - minOffset);
+
             // Scan all pages
             for (RowGroup rowGroup : rowGroups) {
                 totalRows += rowGroup.numRows();
@@ -107,7 +126,7 @@ public class PipelineBenchmark {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
 
-                    PageScanner scanner = new PageScanner(channel, columnSchema, columnChunk, context);
+                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, fileMapping, minOffset);
                     List<PageInfo> pages = scanner.scanPages();
                     totalPages += pages.size();
                     pagesByColumn.get(colIdx).addAll(pages);

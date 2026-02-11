@@ -9,6 +9,7 @@ package dev.morling.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
@@ -54,6 +55,7 @@ public class CrossFilePrefetchCoordinator {
     private ProjectedSchema projectedSchema;
     private FileSchema referenceSchema;
     private FileChannel firstFileChannel;
+    private MappedByteBuffer firstFileMapping;
     private FileMetaData firstFileMetaData;
     private Path firstFilePath;
 
@@ -99,24 +101,57 @@ public class CrossFilePrefetchCoordinator {
      */
     public FileSchema openFirstFile() throws IOException {
         firstFilePath = remainingFiles.remove(0);
-        firstFileChannel = FileChannel.open(firstFilePath, StandardOpenOption.READ);
+
+        OpenedFile opened = openAndMapFile(firstFilePath);
+        firstFileChannel = opened.channel;
+        firstFileMapping = opened.mapping;
+        firstFileMetaData = opened.metaData;
+        referenceSchema = opened.schema;
+
+        return referenceSchema;
+    }
+
+    /**
+     * Opens a file, maps it entirely, and reads its metadata.
+     *
+     * @param path the file path to open
+     * @return the opened file with channel, mapping, metadata, and schema
+     * @throws IOException if the file cannot be opened or read
+     */
+    private OpenedFile openAndMapFile(Path path) throws IOException {
+        FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
 
         try {
-            firstFileMetaData = ParquetMetadataReader.readMetadata(firstFileChannel, firstFilePath);
-            referenceSchema = FileSchema.fromSchemaElements(firstFileMetaData.schema());
-            return referenceSchema;
+            long fileSize = channel.size();
+
+            FileMappingEvent event = new FileMappingEvent();
+            event.begin();
+
+            MappedByteBuffer mapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize);
+
+            event.path = path.toString();
+            event.offset = 0;
+            event.size = fileSize;
+            event.column = "(entire file)";
+            event.commit();
+
+            FileMetaData metaData = ParquetMetadataReader.readMetadata(mapping, path);
+            FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
+
+            return new OpenedFile(channel, mapping, metaData, schema);
         }
         catch (Exception e) {
             try {
-                firstFileChannel.close();
+                channel.close();
             }
             catch (IOException closeEx) {
                 e.addSuppressed(closeEx);
             }
-            firstFileChannel = null;
             throw e;
         }
     }
+
+    private record OpenedFile(FileChannel channel, MappedByteBuffer mapping, FileMetaData metaData, FileSchema schema) {}
 
     /**
      * Scans pages for the first file after schema is established.
@@ -135,12 +170,12 @@ public class CrossFilePrefetchCoordinator {
         this.projectedSchema = projectedSchema;
         this.columnsConsumed = new boolean[projectedSchema.getProjectedColumnCount()];
 
-        // Scan pages for the first file (channel already open, metadata already read)
+        // Scan pages for the first file using the existing mapping
         List<List<PageInfo>> pageInfosByColumn = scanAllProjectedColumns(
-                firstFileChannel, firstFileMetaData, referenceSchema, true);
+                firstFileMapping, firstFileMetaData, referenceSchema, true);
 
-        firstFileState = new FileState(firstFilePath, firstFileChannel, firstFileMetaData,
-                referenceSchema, pageInfosByColumn);
+        firstFileState = new FileState(firstFilePath, firstFileChannel, firstFileMapping,
+                firstFileMetaData, referenceSchema, pageInfosByColumn);
 
         LOG.log(System.Logger.Level.DEBUG,
                 "First file prepared: {0}, {1} projected columns",
@@ -299,29 +334,16 @@ public class CrossFilePrefetchCoordinator {
      */
     private FileState prepareFile(Path path) {
         try {
-            FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
-            try {
-                FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(channel, path);
-                FileSchema fileSchema = FileSchema.fromSchemaElements(fileMetaData.schema());
+            OpenedFile opened = openAndMapFile(path);
 
-                // Validate schema compatibility
-                validateSchemaCompatibility(path, fileSchema);
+            // Validate schema compatibility
+            validateSchemaCompatibility(path, opened.schema);
 
-                // Scan pages for each projected column
-                List<List<PageInfo>> pageInfosByColumn = scanAllProjectedColumns(
-                        channel, fileMetaData, fileSchema, false);
+            // Scan pages for each projected column using the mapping
+            List<List<PageInfo>> pageInfosByColumn = scanAllProjectedColumns(
+                    opened.mapping, opened.metaData, opened.schema, false);
 
-                return new FileState(path, channel, fileMetaData, fileSchema, pageInfosByColumn);
-            }
-            catch (Exception e) {
-                try {
-                    channel.close();
-                }
-                catch (IOException closeEx) {
-                    e.addSuppressed(closeEx);
-                }
-                throw e;
-            }
+            return new FileState(path, opened.channel, opened.mapping, opened.metaData, opened.schema, pageInfosByColumn);
         }
         catch (IOException e) {
             throw new UncheckedIOException("Failed to prepare file: " + path, e);
@@ -359,44 +381,53 @@ public class CrossFilePrefetchCoordinator {
     }
 
     /**
-     * Scans pages for all projected columns.
+     * Scans pages for all projected columns using a pre-mapped file buffer.
      *
-     * @param channel the file channel
+     * @param fileMapping the memory-mapped buffer covering the entire file
      * @param fileMetaData the file metadata
      * @param fileSchema the file schema
      * @param isFirstFile true if this is the first file (uses direct index mapping)
      * @return list of page info lists, one per projected column
      */
-    private List<List<PageInfo>> scanAllProjectedColumns(FileChannel channel, FileMetaData fileMetaData,
+    private List<List<PageInfo>> scanAllProjectedColumns(MappedByteBuffer fileMapping, FileMetaData fileMetaData,
                                                          FileSchema fileSchema, boolean isFirstFile) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         List<RowGroup> rowGroups = fileMetaData.rowGroups();
 
+        // Build column index mapping
+        int[] columnIndices = new int[projectedColumnCount];
+        ColumnSchema[] columnSchemas = new ColumnSchema[projectedColumnCount];
+        for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
+            int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
+            if (isFirstFile) {
+                columnSchemas[projectedIndex] = fileSchema.getColumn(originalIndex);
+                columnIndices[projectedIndex] = originalIndex;
+            }
+            else {
+                ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
+                columnSchemas[projectedIndex] = fileSchema.getColumn(refColumn.name());
+                columnIndices[projectedIndex] = columnSchemas[projectedIndex].columnIndex();
+            }
+        }
+
+        // File mapping covers entire file, so base offset is 0
+        final long mappingBaseOffset = 0;
+
+        // Scan each projected column in parallel using the file mapping
         @SuppressWarnings("unchecked")
         CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[projectedColumnCount];
 
         for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
             final int projIdx = projectedIndex;
-            final int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
-
-            // For first file, use direct index; for subsequent files, look up by name
-            final ColumnSchema columnSchema;
-            final int columnIndex;
-            if (isFirstFile) {
-                columnSchema = fileSchema.getColumn(originalIndex);
-                columnIndex = originalIndex;
-            }
-            else {
-                ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
-                columnSchema = fileSchema.getColumn(refColumn.name());
-                columnIndex = columnSchema.columnIndex();
-            }
+            final int columnIndex = columnIndices[projectedIndex];
+            final ColumnSchema columnSchema = columnSchemas[projectedIndex];
 
             scanFutures[projIdx] = CompletableFuture.supplyAsync(() -> {
                 List<PageInfo> columnPages = new ArrayList<>();
                 for (RowGroup rowGroup : rowGroups) {
                     ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
-                    PageScanner scanner = new PageScanner(channel, columnSchema, columnChunk, context);
+                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
+                            fileMapping, mappingBaseOffset);
                     try {
                         columnPages.addAll(scanner.scanPages());
                     }

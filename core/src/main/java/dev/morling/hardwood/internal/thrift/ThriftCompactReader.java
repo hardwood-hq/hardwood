@@ -9,17 +9,16 @@ package dev.morling.hardwood.internal.thrift;
 
 import java.io.EOFException;
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
 /**
- * Reader for Thrift Compact Protocol.
+ * Reader for Thrift Compact Protocol using direct ByteBuffer access.
  * Reference: https://github.com/apache/thrift/blob/master/doc/specs/thrift-compact-protocol.md
  */
 public class ThriftCompactReader {
 
-    private static final byte PROTOCOL_ID = (byte) 0x82;
-    private static final byte VERSION = 0x01;
     private static final byte TYPE_BOOLEAN_TRUE = 0x01;
     private static final byte TYPE_BOOLEAN_FALSE = 0x02;
     private static final byte TYPE_BYTE = 0x03;
@@ -33,31 +32,53 @@ public class ThriftCompactReader {
     private static final byte TYPE_MAP = 0x0B;
     private static final byte TYPE_STRUCT = 0x0C;
 
-    private final InputStream input;
+    private final ByteBuffer buffer;
+    private final int startPosition;
     private short lastFieldId = 0;
 
-    public ThriftCompactReader(InputStream input) {
-        this.input = input;
+    /**
+     * Creates a reader that reads directly from a ByteBuffer.
+     *
+     * @param buffer the buffer to read from (position should be at start of data)
+     */
+    public ThriftCompactReader(ByteBuffer buffer) {
+        this.buffer = buffer.slice().order(ByteOrder.LITTLE_ENDIAN);
+        this.startPosition = 0;
     }
 
     /**
-     * Read an unsigned varint from the stream.
+     * Creates a reader that reads from a ByteBuffer starting at a specific offset.
+     *
+     * @param buffer the buffer to read from
+     * @param offset the offset within the buffer to start reading
      */
-    public long readVarint() throws IOException {
+    public ThriftCompactReader(ByteBuffer buffer, int offset) {
+        this.buffer = buffer.slice(offset, buffer.limit() - offset).order(ByteOrder.LITTLE_ENDIAN);
+        this.startPosition = 0;
+    }
+
+    /**
+     * Returns the number of bytes read from the buffer.
+     */
+    public int getBytesRead() {
+        return buffer.position() - startPosition;
+    }
+
+    /**
+     * Read an unsigned varint from the buffer.
+     */
+    public long readVarint() throws EOFException {
         long result = 0;
         int shift = 0;
-        while (true) {
-            int b = input.read();
-            if (b == -1) {
-                throw new EOFException("Unexpected EOF while reading varint");
-            }
+        while (buffer.hasRemaining()) {
+            int b = buffer.get() & 0xFF;
             result |= (long) (b & 0x7F) << shift;
             if ((b & 0x80) == 0) {
-                break;
+                return result;
             }
             shift += 7;
         }
-        return result;
+        throw new EOFException("Unexpected EOF while reading varint");
     }
 
     /**
@@ -71,26 +92,21 @@ public class ThriftCompactReader {
     /**
      * Read a single byte.
      */
-    public byte readByte() throws IOException {
-        int b = input.read();
-        if (b == -1) {
+    public byte readByte() throws EOFException {
+        if (!buffer.hasRemaining()) {
             throw new EOFException("Unexpected EOF while reading byte");
         }
-        return (byte) b;
+        return buffer.get();
     }
 
     /**
-     * Read multiple bytes into a buffer.
+     * Read multiple bytes into a destination array.
      */
-    public void readBytes(byte[] buffer) throws IOException {
-        int offset = 0;
-        while (offset < buffer.length) {
-            int read = input.read(buffer, offset, buffer.length - offset);
-            if (read == -1) {
-                throw new EOFException("Unexpected EOF while reading bytes");
-            }
-            offset += read;
+    public void readBytes(byte[] dest) throws EOFException {
+        if (buffer.remaining() < dest.length) {
+            throw new EOFException("Unexpected EOF while reading bytes");
         }
+        buffer.get(dest);
     }
 
     /**
@@ -124,16 +140,11 @@ public class ThriftCompactReader {
     /**
      * Read a double value (8 bytes, little-endian).
      */
-    public double readDouble() throws IOException {
-        long bits = 0;
-        for (int i = 0; i < 8; i++) {
-            int b = input.read();
-            if (b == -1) {
-                throw new EOFException("Unexpected EOF while reading double");
-            }
-            bits |= ((long) b & 0xFF) << (i * 8);
+    public double readDouble() throws EOFException {
+        if (buffer.remaining() < 8) {
+            throw new EOFException("Unexpected EOF while reading double");
         }
-        return Double.longBitsToDouble(bits);
+        return buffer.getDouble();
     }
 
     /**

@@ -152,6 +152,12 @@
         <artifactId>org.eclipse.jgit</artifactId>
         <version>7.5.0.202512021534-r</version>
       </dependency>
+      <!-- JFR testing -->
+      <dependency>
+        <groupId>org.moditect.jfrunit</groupId>
+        <artifactId>jfrunit-core</artifactId>
+        <version>1.0.0.Alpha2</version>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 

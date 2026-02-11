@@ -8,10 +8,12 @@
 package dev.morling.hardwood.reader;
 
 import java.io.IOException;
+import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
+import dev.morling.hardwood.internal.reader.FileMappingEvent;
 import dev.morling.hardwood.internal.reader.ParquetMetadataReader;
 import dev.morling.hardwood.metadata.ColumnChunk;
 import dev.morling.hardwood.metadata.FileMetaData;
@@ -36,14 +38,16 @@ public class ParquetFileReader implements AutoCloseable {
 
     private final Path path;
     private final FileChannel channel;
+    private final MappedByteBuffer fileMapping;
     private final FileMetaData fileMetaData;
     private final HardwoodContext context;
     private final boolean ownsContext;
 
-    private ParquetFileReader(Path path, FileChannel channel, FileMetaData fileMetaData,
-                              HardwoodContext context, boolean ownsContext) {
+    private ParquetFileReader(Path path, FileChannel channel, MappedByteBuffer fileMapping,
+                              FileMetaData fileMetaData, HardwoodContext context, boolean ownsContext) {
         this.path = path;
         this.channel = channel;
+        this.fileMapping = fileMapping;
         this.fileMetaData = fileMetaData;
         this.context = context;
         this.ownsContext = ownsContext;
@@ -70,8 +74,24 @@ public class ParquetFileReader implements AutoCloseable {
                                           boolean ownsContext) throws IOException {
         FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
         try {
-            FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(channel, path);
-            return new ParquetFileReader(path, channel, fileMetaData, context, ownsContext);
+            // Map the entire file once - used for both metadata and data reading
+            long fileSize = channel.size();
+
+            FileMappingEvent event = new FileMappingEvent();
+            event.begin();
+
+            MappedByteBuffer fileMapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize);
+
+            event.path = path.toString();
+            event.offset = 0;
+            event.size = fileSize;
+            event.column = "(entire file)";
+            event.commit();
+
+            // Read metadata from the mapping
+            FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(fileMapping, path);
+
+            return new ParquetFileReader(path, channel, fileMapping, fileMetaData, context, ownsContext);
         }
         catch (Exception e) {
             // Close channel if there was an error during initialization
@@ -114,7 +134,7 @@ public class ParquetFileReader implements AutoCloseable {
         FileSchema schema = getFileSchema();
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
         String fileName = path.getFileName().toString();
-        return new SingleFileRowReader(schema, projectedSchema, channel, fileMetaData.rowGroups(), context, fileName);
+        return new SingleFileRowReader(schema, projectedSchema, fileMapping, fileMetaData.rowGroups(), context, fileName);
     }
 
     @Override

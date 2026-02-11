@@ -7,6 +7,7 @@
  */
 package dev.morling.hardwood.internal.reader;
 
+import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.util.List;
@@ -23,6 +24,7 @@ import dev.morling.hardwood.schema.FileSchema;
  *
  * @param path the path to the Parquet file
  * @param channel the open file channel for memory-mapped access
+ * @param fileMapping the memory-mapped buffer covering the entire file
  * @param fileMetaData the parsed file metadata
  * @param fileSchema the parsed file schema
  * @param pageInfosByColumn pre-scanned pages for each column (by projected column index)
@@ -30,6 +32,7 @@ import dev.morling.hardwood.schema.FileSchema;
 public record FileState(
     Path path,
     FileChannel channel,
+    MappedByteBuffer fileMapping,
     FileMetaData fileMetaData,
     FileSchema fileSchema,
     List<List<PageInfo>> pageInfosByColumn

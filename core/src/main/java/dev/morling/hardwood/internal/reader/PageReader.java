@@ -89,11 +89,10 @@ public class PageReader {
      * @return decoded page
      */
     public Page decodePage(MappedByteBuffer pageBuffer, Dictionary dictionary) throws IOException {
-        // Parse page header
-        ByteBufferInputStream headerStream = new ByteBufferInputStream(pageBuffer, 0);
-        ThriftCompactReader headerReader = new ThriftCompactReader(headerStream);
+        // Parse page header directly from buffer
+        ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
         PageHeader pageHeader = PageHeaderReader.read(headerReader);
-        int headerSize = headerStream.getBytesRead();
+        int headerSize = headerReader.getBytesRead();
 
         // Slice the page data (avoids copying)
         int compressedSize = pageHeader.compressedPageSize();
@@ -154,45 +153,6 @@ public class PageReader {
             return 0;
         }
         return 32 - Integer.numberOfLeadingZeros(maxValue);
-    }
-
-    /**
-     * InputStream that reads from a ByteBuffer at a given offset.
-     * Tracks bytes read for determining header size.
-     */
-    static class ByteBufferInputStream extends InputStream {
-        private final ByteBuffer buffer;
-        private final int startOffset;
-        private int pos;
-
-        public ByteBufferInputStream(ByteBuffer buffer, int startOffset) {
-            this.buffer = buffer;
-            this.startOffset = startOffset;
-            this.pos = startOffset;
-        }
-
-        @Override
-        public int read() {
-            if (pos >= buffer.limit()) {
-                return -1;
-            }
-            return buffer.get(pos++) & 0xff;
-        }
-
-        @Override
-        public int read(byte[] b, int off, int len) {
-            if (pos >= buffer.limit()) {
-                return -1;
-            }
-            int available = Math.min(len, buffer.limit() - pos);
-            buffer.slice(pos, available).get(b, off, available);
-            pos += available;
-            return available;
-        }
-
-        public int getBytesRead() {
-            return pos - startOffset;
-        }
     }
 
     private Page parseDataPage(DataPageHeader header, byte[] data, Dictionary dictionary) throws IOException {

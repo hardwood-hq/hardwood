@@ -9,7 +9,6 @@ package dev.morling.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -32,17 +31,28 @@ import dev.morling.hardwood.schema.ColumnSchema;
  */
 public class PageScanner {
 
-    private final FileChannel channel;
     private final ColumnSchema columnSchema;
     private final ColumnChunk columnChunk;
     private final HardwoodContext context;
+    private final MappedByteBuffer fileMapping;
+    private final long fileMappingBaseOffset;
 
-    public PageScanner(FileChannel channel, ColumnSchema columnSchema, ColumnChunk columnChunk,
-                       HardwoodContext context) {
-        this.channel = channel;
+    /**
+     * Creates a PageScanner that uses a pre-mapped file buffer.
+     *
+     * @param columnSchema the column schema
+     * @param columnChunk the column chunk metadata
+     * @param context the Hardwood context
+     * @param fileMapping pre-mapped buffer covering the data region
+     * @param fileMappingBaseOffset the file offset where fileMapping starts
+     */
+    public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContext context,
+                       MappedByteBuffer fileMapping, long fileMappingBaseOffset) {
         this.columnSchema = columnSchema;
         this.columnChunk = columnChunk;
         this.context = context;
+        this.fileMapping = fileMapping;
+        this.fileMappingBaseOffset = fileMappingBaseOffset;
     }
 
     /**
@@ -64,7 +74,8 @@ public class PageScanner {
                 : metaData.dataPageOffset();
         long chunkSize = metaData.totalCompressedSize();
 
-        MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, chunkStartOffset, chunkSize);
+        int sliceOffset = (int) (chunkStartOffset - fileMappingBaseOffset);
+        MappedByteBuffer buffer = fileMapping.slice(sliceOffset, (int) chunkSize);
 
         List<PageInfo> pageInfos = new ArrayList<>();
         long valuesRead = 0;
@@ -73,11 +84,9 @@ public class PageScanner {
         Dictionary dictionary = null;
 
         while (valuesRead < metaData.numValues() && position < buffer.limit()) {
-            PageReader.ByteBufferInputStream headerStream =
-                new PageReader.ByteBufferInputStream(buffer, position);
-            ThriftCompactReader headerReader = new ThriftCompactReader(headerStream);
+            ThriftCompactReader headerReader = new ThriftCompactReader(buffer, position);
             PageHeader header = PageHeaderReader.read(headerReader);
-            int headerSize = headerStream.getBytesRead();
+            int headerSize = headerReader.getBytesRead();
 
             int pageDataOffset = position + headerSize;
             int compressedSize = header.compressedPageSize();

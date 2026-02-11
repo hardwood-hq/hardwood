@@ -10,6 +10,8 @@ package dev.morling.hardwood.reader;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ForkJoinPool;
 
 import dev.morling.hardwood.internal.reader.BatchDataView;
 import dev.morling.hardwood.internal.reader.ColumnValueIterator;
@@ -109,15 +111,26 @@ public class MultiFileRowReader extends AbstractRowReader {
     }
 
     @Override
+    @SuppressWarnings("unchecked")
     protected boolean loadNextBatch() {
         // Before reading, check if all columns have exhausted their current file
         // If so, add next file pages to all columns together
         coordinateCrossFileTransition();
 
-        // Read columns sequentially
+        // Read columns in parallel using ForkJoinPool.commonPool()
+        // This matches SingleFileRowReader's approach and avoids deadlock with prefetch tasks
+        CompletableFuture<TypedColumnData>[] futures = new CompletableFuture[iterators.length];
+        for (int i = 0; i < iterators.length; i++) {
+            final int col = i;
+            futures[i] = CompletableFuture.supplyAsync(
+                    () -> iterators[col].readBatch(BATCH_SIZE), ForkJoinPool.commonPool());
+        }
+
+        CompletableFuture.allOf(futures).join();
+
         TypedColumnData[] newColumnData = new TypedColumnData[iterators.length];
         for (int i = 0; i < iterators.length; i++) {
-            newColumnData[i] = iterators[i].readBatch(BATCH_SIZE);
+            newColumnData[i] = futures[i].join();
             if (newColumnData[i].recordCount() == 0) {
                 exhausted = true;
                 return false;
