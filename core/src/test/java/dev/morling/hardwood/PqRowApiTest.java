@@ -21,8 +21,10 @@ import org.junit.jupiter.api.Test;
 
 import dev.morling.hardwood.reader.ParquetFileReader;
 import dev.morling.hardwood.reader.RowReader;
+import dev.morling.hardwood.row.PqDoubleList;
 import dev.morling.hardwood.row.PqIntList;
 import dev.morling.hardwood.row.PqList;
+import dev.morling.hardwood.row.PqLongList;
 import dev.morling.hardwood.row.PqStruct;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -985,6 +987,327 @@ public class PqRowApiTest {
                 }
                 assertThat(count2).isEqualTo(3);
             }
+        }
+    }
+
+    // ==================== Index-based Accessor Tests ====================
+
+    @Test
+    void testPrimitiveTypesByIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0
+            rowReader.next();
+            assertThat(rowReader.getInt(0)).isEqualTo(1);
+            assertThat(rowReader.getLong(1)).isEqualTo(100L);
+            assertThat(rowReader.getFloat(2)).isEqualTo(1.5f);
+            assertThat(rowReader.getDouble(3)).isEqualTo(10.5);
+            assertThat(rowReader.getBoolean(4)).isTrue();
+            assertThat(rowReader.getString(5)).isEqualTo("hello");
+            assertThat(rowReader.getBinary(6)).isEqualTo(new byte[]{0x00, 0x01, 0x02});
+
+            // Row 1
+            rowReader.next();
+            assertThat(rowReader.getInt(0)).isEqualTo(2);
+            assertThat(rowReader.getLong(1)).isEqualTo(200L);
+            assertThat(rowReader.getFloat(2)).isEqualTo(2.5f);
+            assertThat(rowReader.getDouble(3)).isEqualTo(20.5);
+            assertThat(rowReader.getBoolean(4)).isFalse();
+            assertThat(rowReader.getString(5)).isEqualTo("world");
+            assertThat(rowReader.getBinary(6)).isEqualTo(new byte[]{0x03, 0x04, 0x05});
+
+            // Row 2
+            rowReader.next();
+            assertThat(rowReader.getInt(0)).isEqualTo(3);
+            assertThat(rowReader.getLong(1)).isEqualTo(300L);
+            assertThat(rowReader.getFloat(2)).isEqualTo(3.5f);
+            assertThat(rowReader.getDouble(3)).isEqualTo(30.5);
+            assertThat(rowReader.getBoolean(4)).isTrue();
+            assertThat(rowReader.getString(5)).isEqualTo("test");
+            assertThat(rowReader.getBinary(6)).isEqualTo(new byte[]{0x06, 0x07, 0x08});
+
+            assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    void testBinaryAccessor() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            rowReader.next();
+
+            // By name
+            assertThat(rowReader.getBinary("binary_col")).isEqualTo(new byte[]{0x00, 0x01, 0x02});
+
+            // By index
+            assertThat(rowReader.getBinary(6)).isEqualTo(new byte[]{0x00, 0x01, 0x02});
+        }
+    }
+
+    @Test
+    void testLogicalTypesByIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            rowReader.next();
+
+            // Get field indices by checking field names
+            int idIdx = -1, birthDateIdx = -1, createdAtMillisIdx = -1;
+            int wakeTimeMillisIdx = -1, balanceIdx = -1, accountIdIdx = -1;
+
+            for (int i = 0; i < rowReader.getFieldCount(); i++) {
+                String name = rowReader.getFieldName(i);
+                switch (name) {
+                    case "id" -> idIdx = i;
+                    case "birth_date" -> birthDateIdx = i;
+                    case "created_at_millis" -> createdAtMillisIdx = i;
+                    case "wake_time_millis" -> wakeTimeMillisIdx = i;
+                    case "balance" -> balanceIdx = i;
+                    case "account_id" -> accountIdIdx = i;
+                }
+            }
+
+            // Test index-based access
+            assertThat(rowReader.getInt(idIdx)).isEqualTo(1);
+            assertThat(rowReader.getDate(birthDateIdx)).isEqualTo(LocalDate.of(1990, 1, 15));
+            assertThat(rowReader.getTimestamp(createdAtMillisIdx)).isEqualTo(Instant.parse("2025-01-01T10:30:00Z"));
+            assertThat(rowReader.getTime(wakeTimeMillisIdx)).isEqualTo(LocalTime.of(7, 30, 0));
+            assertThat(rowReader.getDecimal(balanceIdx)).isEqualTo(new BigDecimal("1234.56"));
+            assertThat(rowReader.getUuid(accountIdIdx)).isEqualTo(UUID.fromString("12345678-1234-5678-1234-567812345678"));
+        }
+    }
+
+    @Test
+    void testIsNullByIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/plain_uncompressed_with_nulls.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0: name is not null
+            rowReader.next();
+            assertThat(rowReader.isNull(1)).isFalse();
+
+            // Row 1: name is null
+            rowReader.next();
+            assertThat(rowReader.isNull(1)).isTrue();
+
+            // Row 2: name is not null
+            rowReader.next();
+            assertThat(rowReader.isNull(1)).isFalse();
+        }
+    }
+
+    @Test
+    void testGetValueByNameAndIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            rowReader.next();
+
+            // By name
+            assertThat(rowReader.getValue("int_col")).isEqualTo(1);
+            assertThat(rowReader.getValue("string_col")).isNotNull();
+
+            // By index
+            assertThat(rowReader.getValue(0)).isEqualTo(1);
+            assertThat(rowReader.getValue(1)).isEqualTo(100L);
+        }
+    }
+
+    // ==================== Primitive List Tests ====================
+
+    @Test
+    void testListOfLongs() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/primitive_lists_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0: long_list=[100, 200, 300]
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(1);
+
+            PqLongList longList0 = rowReader.getListOfLongs("long_list");
+            assertThat(longList0).isNotNull();
+            assertThat(longList0.size()).isEqualTo(3);
+            assertThat(longList0.get(0)).isEqualTo(100L);
+            assertThat(longList0.get(1)).isEqualTo(200L);
+            assertThat(longList0.get(2)).isEqualTo(300L);
+
+            // Row 1: long_list=[1000]
+            rowReader.next();
+            PqLongList longList1 = rowReader.getListOfLongs("long_list");
+            assertThat(longList1.size()).isEqualTo(1);
+            assertThat(longList1.get(0)).isEqualTo(1000L);
+
+            // Row 2: long_list=[1, 2, 3, 4, 5]
+            rowReader.next();
+            PqLongList longList2 = rowReader.getListOfLongs("long_list");
+            assertThat(longList2.size()).isEqualTo(5);
+
+            // Row 3: long_list=null
+            rowReader.next();
+            assertThat(rowReader.getListOfLongs("long_list")).isNull();
+
+            assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    void testListOfDoubles() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/primitive_lists_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0: double_list=[1.1, 2.2, 3.3]
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(1);
+
+            PqDoubleList doubleList0 = rowReader.getListOfDoubles("double_list");
+            assertThat(doubleList0).isNotNull();
+            assertThat(doubleList0.size()).isEqualTo(3);
+            assertThat(doubleList0.get(0)).isEqualTo(1.1);
+            assertThat(doubleList0.get(1)).isEqualTo(2.2);
+            assertThat(doubleList0.get(2)).isEqualTo(3.3);
+
+            // Row 1: double_list=[10.5, 20.5]
+            rowReader.next();
+            PqDoubleList doubleList1 = rowReader.getListOfDoubles("double_list");
+            assertThat(doubleList1.size()).isEqualTo(2);
+            assertThat(doubleList1.get(0)).isEqualTo(10.5);
+            assertThat(doubleList1.get(1)).isEqualTo(20.5);
+
+            // Row 2: double_list=[]
+            rowReader.next();
+            PqDoubleList doubleList2 = rowReader.getListOfDoubles("double_list");
+            assertThat(doubleList2).isNotNull();
+            assertThat(doubleList2.isEmpty()).isTrue();
+
+            // Row 3: double_list=null
+            rowReader.next();
+            assertThat(rowReader.getListOfDoubles("double_list")).isNull();
+
+            assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
+    // ==================== Index-based Nested Type Tests ====================
+
+    @Test
+    void testNestedTypesByIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0: id=1, address={street="123 Main St", city="New York", zip=10001}
+            rowReader.next();
+
+            // getInt by index
+            assertThat(rowReader.getInt(0)).isEqualTo(1);
+
+            // getStruct by index
+            PqStruct address0 = rowReader.getStruct(1);
+            assertThat(address0).isNotNull();
+            assertThat(address0.getString("street")).isEqualTo("123 Main St");
+            assertThat(address0.getString("city")).isEqualTo("New York");
+            assertThat(address0.getInt("zip")).isEqualTo(10001);
+
+            // Row 2: address is null
+            rowReader.next();
+            rowReader.next();
+            assertThat(rowReader.isNull(1)).isTrue();
+            assertThat(rowReader.getStruct(1)).isNull();
+        }
+    }
+
+    @Test
+    void testListByIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0: id=1, tags=["a","b","c"], scores=[10,20,30]
+            rowReader.next();
+
+            // Get field indices
+            int tagsIdx = -1, scoresIdx = -1;
+            for (int i = 0; i < rowReader.getFieldCount(); i++) {
+                String name = rowReader.getFieldName(i);
+                if ("tags".equals(name)) {
+                    tagsIdx = i;
+                }
+                else if ("scores".equals(name)) {
+                    scoresIdx = i;
+                }
+            }
+
+            // getList by index
+            PqList tags0 = rowReader.getList(tagsIdx);
+            assertThat(tags0).isNotNull();
+            assertThat(tags0.size()).isEqualTo(3);
+
+            // getListOfInts by index
+            PqIntList scores0 = rowReader.getListOfInts(scoresIdx);
+            assertThat(scores0).isNotNull();
+            assertThat(scores0.size()).isEqualTo(3);
+            assertThat(scores0.get(0)).isEqualTo(10);
+            assertThat(scores0.get(1)).isEqualTo(20);
+            assertThat(scores0.get(2)).isEqualTo(30);
+        }
+    }
+
+    @Test
+    void testPrimitiveListsByIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/primitive_lists_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0
+            rowReader.next();
+
+            // Get field indices
+            int intListIdx = -1, longListIdx = -1, doubleListIdx = -1;
+            for (int i = 0; i < rowReader.getFieldCount(); i++) {
+                String name = rowReader.getFieldName(i);
+                switch (name) {
+                    case "int_list" -> intListIdx = i;
+                    case "long_list" -> longListIdx = i;
+                    case "double_list" -> doubleListIdx = i;
+                }
+            }
+
+            // getListOfInts by index
+            PqIntList intList = rowReader.getListOfInts(intListIdx);
+            assertThat(intList).isNotNull();
+            assertThat(intList.size()).isEqualTo(3);
+            assertThat(intList.get(0)).isEqualTo(1);
+
+            // getListOfLongs by index
+            PqLongList longList = rowReader.getListOfLongs(longListIdx);
+            assertThat(longList).isNotNull();
+            assertThat(longList.size()).isEqualTo(3);
+            assertThat(longList.get(0)).isEqualTo(100L);
+
+            // getListOfDoubles by index
+            PqDoubleList doubleList = rowReader.getListOfDoubles(doubleListIdx);
+            assertThat(doubleList).isNotNull();
+            assertThat(doubleList.size()).isEqualTo(3);
+            assertThat(doubleList.get(0)).isEqualTo(1.1);
         }
     }
 }

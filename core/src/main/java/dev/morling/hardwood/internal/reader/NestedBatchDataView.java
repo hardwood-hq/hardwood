@@ -280,51 +280,77 @@ public final class NestedBatchDataView implements BatchDataView {
         return ValueConverter.convertToUuid(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
-    // ==================== Nested Type Accessors ====================
+    // ==================== Nested Type Accessors (by name) ====================
 
     @Override
     public PqStruct getStruct(String name) {
-        int projectedIndex = lookupProjectedIndex(name);
+        return getStruct(lookupProjectedIndex(name));
+    }
+
+    @Override
+    public PqIntList getListOfInts(String name) {
+        return getListOfInts(lookupProjectedIndex(name));
+    }
+
+    @Override
+    public PqLongList getListOfLongs(String name) {
+        return getListOfLongs(lookupProjectedIndex(name));
+    }
+
+    @Override
+    public PqDoubleList getListOfDoubles(String name) {
+        return getListOfDoubles(lookupProjectedIndex(name));
+    }
+
+    @Override
+    public PqList getList(String name) {
+        return getList(lookupProjectedIndex(name));
+    }
+
+    @Override
+    public PqMap getMap(String name) {
+        return getMap(lookupProjectedIndex(name));
+    }
+
+    // ==================== Nested Type Accessors (by index) ====================
+
+    @Override
+    public PqStruct getStruct(int projectedIndex) {
         int originalFieldIndex = toOriginalFieldIndex(projectedIndex);
         SchemaNode fieldSchema = getFieldSchema(originalFieldIndex);
         return ValueConverter.convertToStruct(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
-    public PqIntList getListOfInts(String name) {
-        int projectedIndex = lookupProjectedIndex(name);
+    public PqIntList getListOfInts(int projectedIndex) {
         int originalFieldIndex = toOriginalFieldIndex(projectedIndex);
         SchemaNode fieldSchema = getFieldSchema(originalFieldIndex);
         return ValueConverter.convertToIntList(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
-    public PqLongList getListOfLongs(String name) {
-        int projectedIndex = lookupProjectedIndex(name);
+    public PqLongList getListOfLongs(int projectedIndex) {
         int originalFieldIndex = toOriginalFieldIndex(projectedIndex);
         SchemaNode fieldSchema = getFieldSchema(originalFieldIndex);
         return ValueConverter.convertToLongList(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
-    public PqDoubleList getListOfDoubles(String name) {
-        int projectedIndex = lookupProjectedIndex(name);
+    public PqDoubleList getListOfDoubles(int projectedIndex) {
         int originalFieldIndex = toOriginalFieldIndex(projectedIndex);
         SchemaNode fieldSchema = getFieldSchema(originalFieldIndex);
         return ValueConverter.convertToDoubleList(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
-    public PqList getList(String name) {
-        int projectedIndex = lookupProjectedIndex(name);
+    public PqList getList(int projectedIndex) {
         int originalFieldIndex = toOriginalFieldIndex(projectedIndex);
         SchemaNode fieldSchema = getFieldSchema(originalFieldIndex);
         return ValueConverter.convertToList(currentRow.getChild(originalFieldIndex), fieldSchema);
     }
 
     @Override
-    public PqMap getMap(String name) {
-        int projectedIndex = lookupProjectedIndex(name);
+    public PqMap getMap(int projectedIndex) {
         int originalFieldIndex = toOriginalFieldIndex(projectedIndex);
         SchemaNode fieldSchema = getFieldSchema(originalFieldIndex);
         return ValueConverter.convertToMap(currentRow.getChild(originalFieldIndex), fieldSchema);
@@ -334,7 +360,11 @@ public final class NestedBatchDataView implements BatchDataView {
 
     @Override
     public Object getValue(String name) {
-        int projectedIndex = lookupProjectedIndex(name);
+        return getValue(lookupProjectedIndex(name));
+    }
+
+    @Override
+    public Object getValue(int projectedIndex) {
         int originalFieldIndex = toOriginalFieldIndex(projectedIndex);
         return currentRow.getChild(originalFieldIndex);
     }

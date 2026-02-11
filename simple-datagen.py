@@ -23,7 +23,7 @@ simple_table = pa.table({
     'value': [100, 200, 300]
 }, schema=schema)
 
-pq.write_table(simple_table, 'src/test/resources/plain_uncompressed.parquet',
+pq.write_table(simple_table, 'core/src/test/resources/plain_uncompressed.parquet',
                use_dictionary=False,
                compression=None,
                data_page_version='1.0')
@@ -43,7 +43,7 @@ table_with_nulls = pa.table({
     'id': [1, 2, 3],
     'name': ['alice', None, 'charlie']
 }, schema=schema_with_nulls)
-pq.write_table(table_with_nulls, 'src/test/resources/plain_uncompressed_with_nulls.parquet',
+pq.write_table(table_with_nulls, 'core/src/test/resources/plain_uncompressed_with_nulls.parquet',
                use_dictionary=False,
                compression=None,
                data_page_version='1.0')
@@ -54,7 +54,7 @@ print("  - Compression: UNCOMPRESSED (compression=None)")
 print("  - Data: id=[1,2,3], name=['alice', None, 'charlie']")
 
 # Generate SNAPPY compressed file with same data as plain_uncompressed
-pq.write_table(simple_table, 'src/test/resources/plain_snappy.parquet',
+pq.write_table(simple_table, 'core/src/test/resources/plain_snappy.parquet',
                use_dictionary=False,
                compression='snappy',
                data_page_version='1.0')
@@ -75,7 +75,7 @@ table_dict = pa.table({
 }, schema=schema_dict)
 
 # Only use dictionary for the category column (column 1), not id (column 0)
-pq.write_table(table_dict, 'src/test/resources/dictionary_uncompressed.parquet',
+pq.write_table(table_dict, 'core/src/test/resources/dictionary_uncompressed.parquet',
                use_dictionary=['category'],  # Only dictionary encode the category column
                compression=None,
                data_page_version='1.0')
@@ -175,7 +175,7 @@ logical_types_table = pa.table(logical_types_data, schema=logical_types_schema)
 
 pq.write_table(
     logical_types_table,
-    'src/test/resources/logical_types_test.parquet',
+    'core/src/test/resources/logical_types_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -212,7 +212,7 @@ nested_struct_data = {
 nested_struct_table = pa.table(nested_struct_data, schema=nested_struct_schema)
 pq.write_table(
     nested_struct_table,
-    'src/test/resources/nested_struct_test.parquet',
+    'core/src/test/resources/nested_struct_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -247,7 +247,7 @@ list_basic_data = {
 list_basic_table = pa.table(list_basic_data, schema=list_basic_schema)
 pq.write_table(
     list_basic_table,
-    'src/test/resources/list_basic_test.parquet',
+    'core/src/test/resources/list_basic_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -282,7 +282,7 @@ list_struct_data = {
 list_struct_table = pa.table(list_struct_data, schema=list_struct_schema)
 pq.write_table(
     list_struct_table,
-    'src/test/resources/list_struct_test.parquet',
+    'core/src/test/resources/list_struct_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -350,7 +350,7 @@ nested_list_struct_data = [
 nested_list_struct_table = pa.Table.from_pylist(nested_list_struct_data, schema=nested_list_struct_schema)
 pq.write_table(
     nested_list_struct_table,
-    'src/test/resources/nested_list_struct_test.parquet',
+    'core/src/test/resources/nested_list_struct_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -428,7 +428,7 @@ deep_nested_struct_data = [
 deep_nested_struct_table = pa.Table.from_pylist(deep_nested_struct_data, schema=deep_nested_struct_schema)
 pq.write_table(
     deep_nested_struct_table,
-    'src/test/resources/deep_nested_struct_test.parquet',
+    'core/src/test/resources/deep_nested_struct_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -485,7 +485,7 @@ nested_list_data = [
 nested_list_table = pa.Table.from_pylist(nested_list_data, schema=nested_list_schema)
 pq.write_table(
     nested_list_table,
-    'src/test/resources/nested_list_test.parquet',
+    'core/src/test/resources/nested_list_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -537,7 +537,7 @@ address_book_data = [
 address_book_table = pa.Table.from_pylist(address_book_data, schema=address_book_schema)
 pq.write_table(
     address_book_table,
-    'src/test/resources/address_book_test.parquet',
+    'core/src/test/resources/address_book_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -593,7 +593,7 @@ triple_nested_data = [
 triple_nested_table = pa.Table.from_pylist(triple_nested_data, schema=triple_nested_schema)
 pq.write_table(
     triple_nested_table,
-    'src/test/resources/triple_nested_list_test.parquet',
+    'core/src/test/resources/triple_nested_list_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -626,7 +626,7 @@ delta_int_table = pa.table(delta_int_data, schema=delta_int_schema)
 # Force DELTA_BINARY_PACKED encoding for all integer columns
 pq.write_table(
     delta_int_table,
-    'src/test/resources/delta_binary_packed_test.parquet',
+    'core/src/test/resources/delta_binary_packed_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0',
@@ -652,7 +652,7 @@ delta_optional_table = pa.table(delta_optional_data, schema=delta_optional_schem
 
 pq.write_table(
     delta_optional_table,
-    'src/test/resources/delta_binary_packed_optional_test.parquet',
+    'core/src/test/resources/delta_binary_packed_optional_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0',
@@ -680,7 +680,7 @@ delta_string_table = pa.table(delta_string_data, schema=delta_string_schema)
 
 pq.write_table(
     delta_string_table,
-    'src/test/resources/delta_length_byte_array_test.parquet',
+    'core/src/test/resources/delta_length_byte_array_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0',
@@ -729,7 +729,7 @@ delta_byte_array_table = pa.table(delta_byte_array_data, schema=delta_byte_array
 
 pq.write_table(
     delta_byte_array_table,
-    'src/test/resources/delta_byte_array_test.parquet',
+    'core/src/test/resources/delta_byte_array_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0',
@@ -782,7 +782,7 @@ simple_map_data = [
 simple_map_table = pa.Table.from_pylist(simple_map_data, schema=simple_map_schema)
 pq.write_table(
     simple_map_table,
-    'src/test/resources/simple_map_test.parquet',
+    'core/src/test/resources/simple_map_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -824,7 +824,7 @@ map_types_data = [
 map_types_table = pa.Table.from_pylist(map_types_data, schema=map_types_schema)
 pq.write_table(
     map_types_table,
-    'src/test/resources/map_types_test.parquet',
+    'core/src/test/resources/map_types_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -879,7 +879,7 @@ map_of_maps_data = [
 map_of_maps_table = pa.Table.from_pylist(map_of_maps_data, schema=map_of_maps_schema)
 pq.write_table(
     map_of_maps_table,
-    'src/test/resources/map_of_maps_test.parquet',
+    'core/src/test/resources/map_of_maps_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -929,7 +929,7 @@ list_of_maps_data = [
 list_of_maps_table = pa.Table.from_pylist(list_of_maps_data, schema=list_of_maps_schema)
 pq.write_table(
     list_of_maps_table,
-    'src/test/resources/list_of_maps_test.parquet',
+    'core/src/test/resources/list_of_maps_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -973,7 +973,7 @@ map_struct_value_data = [
 map_struct_value_table = pa.Table.from_pylist(map_struct_value_data, schema=map_struct_value_schema)
 pq.write_table(
     map_struct_value_table,
-    'src/test/resources/map_struct_value_test.parquet',
+    'core/src/test/resources/map_struct_value_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0'
@@ -982,3 +982,89 @@ pq.write_table(
 print("\nGenerated map_struct_value_test.parquet:")
 print("  - Schema: id, people: map<string, Person(name, age)>")
 print("  - Data: 3 rows with maps containing struct values")
+
+# ============================================================================
+# Primitive Types Test Files (for index-based accessor testing)
+# ============================================================================
+
+# 18. All primitive types in one file (for testing index-based accessors)
+primitive_types_schema = pa.schema([
+    ('int_col', pa.int32(), False),
+    ('long_col', pa.int64(), False),
+    ('float_col', pa.float32(), False),
+    ('double_col', pa.float64(), False),
+    ('bool_col', pa.bool_(), False),
+    ('string_col', pa.string(), False),
+    ('binary_col', pa.binary(), False),
+])
+
+primitive_types_data = {
+    'int_col': [1, 2, 3],
+    'long_col': [100, 200, 300],
+    'float_col': [1.5, 2.5, 3.5],
+    'double_col': [10.5, 20.5, 30.5],
+    'bool_col': [True, False, True],
+    'string_col': ['hello', 'world', 'test'],
+    'binary_col': [b'\x00\x01\x02', b'\x03\x04\x05', b'\x06\x07\x08'],
+}
+
+primitive_types_table = pa.table(primitive_types_data, schema=primitive_types_schema)
+pq.write_table(
+    primitive_types_table,
+    'core/src/test/resources/primitive_types_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0'
+)
+
+print("\nGenerated primitive_types_test.parquet:")
+print("  - Schema: int_col, long_col, float_col, double_col, bool_col, string_col, binary_col")
+print("  - Data: 3 rows with all primitive types for index-based accessor testing")
+
+# 19. Lists of primitive types (int, long, double) for testing getListOfLongs/Doubles
+primitive_lists_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('int_list', pa.list_(pa.int32())),
+    ('long_list', pa.list_(pa.int64())),
+    ('double_list', pa.list_(pa.float64())),
+])
+
+primitive_lists_data = [
+    {
+        'id': 1,
+        'int_list': [1, 2, 3],
+        'long_list': [100, 200, 300],
+        'double_list': [1.1, 2.2, 3.3],
+    },
+    {
+        'id': 2,
+        'int_list': [10, 20],
+        'long_list': [1000],
+        'double_list': [10.5, 20.5],
+    },
+    {
+        'id': 3,
+        'int_list': [],
+        'long_list': [1, 2, 3, 4, 5],
+        'double_list': [],
+    },
+    {
+        'id': 4,
+        'int_list': None,
+        'long_list': None,
+        'double_list': None,
+    }
+]
+
+primitive_lists_table = pa.Table.from_pylist(primitive_lists_data, schema=primitive_lists_schema)
+pq.write_table(
+    primitive_lists_table,
+    'core/src/test/resources/primitive_lists_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0'
+)
+
+print("\nGenerated primitive_lists_test.parquet:")
+print("  - Schema: id, int_list: list<int32>, long_list: list<int64>, double_list: list<float64>")
+print("  - Data: 4 rows with primitive lists including empty and null cases")

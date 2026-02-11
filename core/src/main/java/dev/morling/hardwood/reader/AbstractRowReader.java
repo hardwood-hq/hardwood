@@ -200,7 +200,7 @@ abstract class AbstractRowReader implements RowReader {
         return dataView.getUuid(columnIndex);
     }
 
-    // ==================== Nested Type Accessors ====================
+    // ==================== Nested Type Accessors (by name) ====================
 
     @Override
     public PqStruct getStruct(String name) {
@@ -232,11 +232,48 @@ abstract class AbstractRowReader implements RowReader {
         return dataView.getMap(name);
     }
 
+    // ==================== Nested Type Accessors (by index) ====================
+
+    @Override
+    public PqStruct getStruct(int columnIndex) {
+        return dataView.getStruct(columnIndex);
+    }
+
+    @Override
+    public PqIntList getListOfInts(int columnIndex) {
+        return dataView.getListOfInts(columnIndex);
+    }
+
+    @Override
+    public PqLongList getListOfLongs(int columnIndex) {
+        return dataView.getListOfLongs(columnIndex);
+    }
+
+    @Override
+    public PqDoubleList getListOfDoubles(int columnIndex) {
+        return dataView.getListOfDoubles(columnIndex);
+    }
+
+    @Override
+    public PqList getList(int columnIndex) {
+        return dataView.getList(columnIndex);
+    }
+
+    @Override
+    public PqMap getMap(int columnIndex) {
+        return dataView.getMap(columnIndex);
+    }
+
     // ==================== Generic Fallback ====================
 
     @Override
     public Object getValue(String name) {
         return dataView.getValue(name);
+    }
+
+    @Override
+    public Object getValue(int columnIndex) {
+        return dataView.getValue(columnIndex);
     }
 
     // ==================== Metadata ====================

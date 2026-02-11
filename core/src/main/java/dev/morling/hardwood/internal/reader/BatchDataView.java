@@ -79,7 +79,7 @@ public sealed interface BatchDataView permits FlatBatchDataView, NestedBatchData
     BigDecimal getDecimal(int projectedIndex);
     UUID getUuid(int projectedIndex);
 
-    // Nested type accessors (by name only - not supported for flat schemas)
+    // Nested type accessors (by name - not supported for flat schemas)
     PqStruct getStruct(String name);
     PqIntList getListOfInts(String name);
     PqLongList getListOfLongs(String name);
@@ -87,12 +87,21 @@ public sealed interface BatchDataView permits FlatBatchDataView, NestedBatchData
     PqList getList(String name);
     PqMap getMap(String name);
 
+    // Nested type accessors (by projected index - not supported for flat schemas)
+    PqStruct getStruct(int projectedIndex);
+    PqIntList getListOfInts(int projectedIndex);
+    PqLongList getListOfLongs(int projectedIndex);
+    PqDoubleList getListOfDoubles(int projectedIndex);
+    PqList getList(int projectedIndex);
+    PqMap getMap(int projectedIndex);
+
     // Null check
     boolean isNull(String name);
     boolean isNull(int projectedIndex);
 
     // Generic value access
     Object getValue(String name);
+    Object getValue(int projectedIndex);
 
     // Metadata
     int getFieldCount();

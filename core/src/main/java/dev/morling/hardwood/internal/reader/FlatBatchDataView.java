@@ -299,7 +299,7 @@ public final class FlatBatchDataView implements BatchDataView {
                 ((FlatColumnData.ByteArrayColumn) columnData[projectedIndex]).get(rowIndex), col.type());
     }
 
-    // ==================== Nested Type Accessors ====================
+    // ==================== Nested Type Accessors (by name) ====================
 
     @Override
     public PqStruct getStruct(String name) {
@@ -331,11 +331,47 @@ public final class FlatBatchDataView implements BatchDataView {
         throw new UnsupportedOperationException("Map access not supported for flat schemas.");
     }
 
+    // ==================== Nested Type Accessors (by index) ====================
+
+    @Override
+    public PqStruct getStruct(int projectedIndex) {
+        throw new UnsupportedOperationException("Nested struct access not supported for flat schemas.");
+    }
+
+    @Override
+    public PqIntList getListOfInts(int projectedIndex) {
+        throw new UnsupportedOperationException("List access not supported for flat schemas.");
+    }
+
+    @Override
+    public PqLongList getListOfLongs(int projectedIndex) {
+        throw new UnsupportedOperationException("List access not supported for flat schemas.");
+    }
+
+    @Override
+    public PqDoubleList getListOfDoubles(int projectedIndex) {
+        throw new UnsupportedOperationException("List access not supported for flat schemas.");
+    }
+
+    @Override
+    public PqList getList(int projectedIndex) {
+        throw new UnsupportedOperationException("List access not supported for flat schemas.");
+    }
+
+    @Override
+    public PqMap getMap(int projectedIndex) {
+        throw new UnsupportedOperationException("Map access not supported for flat schemas.");
+    }
+
     // ==================== Generic Value Access ====================
 
     @Override
     public Object getValue(String name) {
-        int projectedIndex = lookupProjectedIndex(name);
+        return getValue(lookupProjectedIndex(name));
+    }
+
+    @Override
+    public Object getValue(int projectedIndex) {
         if (isNull(projectedIndex)) {
             return null;
         }

@@ -293,4 +293,40 @@ public class MapSchemaTest {
             }
         }
     }
+
+    @Test
+    void testMapByIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+            try (RowReader rowReader = fileReader.createRowReader()) {
+                rowReader.next();
+
+                // Find the attributes column index
+                int attributesIdx = -1;
+                for (int i = 0; i < rowReader.getFieldCount(); i++) {
+                    if ("attributes".equals(rowReader.getFieldName(i))) {
+                        attributesIdx = i;
+                        break;
+                    }
+                }
+
+                // Access map by index
+                PqMap map = rowReader.getMap(attributesIdx);
+                assertThat(map.size()).isEqualTo(3);
+
+                List<PqMap.Entry> entries = map.getEntries();
+                assertThat(entries.get(0).getStringKey()).isEqualTo("age");
+                assertThat(entries.get(0).getIntValue()).isEqualTo(30);
+
+                // Skip to row 3 (Diana with null map)
+                rowReader.next();
+                rowReader.next();
+                rowReader.next();
+
+                assertThat(rowReader.isNull(attributesIdx)).isTrue();
+                assertThat(rowReader.getMap(attributesIdx)).isNull();
+            }
+        }
+    }
 }
