@@ -8,6 +8,7 @@
 package dev.morling.hardwood.internal.reader;
 
 import java.lang.reflect.Field;
+import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -39,14 +40,16 @@ public class PageCursorTest {
         }
 
         try (HardwoodContext context = HardwoodContext.create();
-             // Open a file
-             FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+            // Open the file
+            FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
 
-            // Start reading
+            // Configure buffer and metadata
+            MappedByteBuffer mapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
             ColumnSchema columnSchema = schema.getColumn(0);
             RowGroup rowGroup = fileMetaData.rowGroups().get(0);
 
-            PageScanner scanner = new PageScanner(channel, columnSchema, rowGroup.columns().get(0), context);
+            // Begin scanning file
+            PageScanner scanner = new PageScanner(columnSchema, rowGroup.columns().get(0), context, mapping, 0);
             List<PageInfo> scannedPages = scanner.scanPages();
             assertThat(scannedPages).isNotEmpty();
             int pageCount = scannedPages.size();
