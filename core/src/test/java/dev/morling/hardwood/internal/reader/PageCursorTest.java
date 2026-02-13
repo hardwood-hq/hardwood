@@ -29,7 +29,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class PageCursorTest {
 
     @Test
-    void pageCursorRemovesPageInfoEntriesAfterDecoding() throws Exception {
+    void testPageCursorRemovesPageInfoEntriesAfterDecoding() throws Exception {
         Path file = Paths.get("src/test/resources/delta_binary_packed_test.parquet");
         FileMetaData fileMetaData;
         FileSchema schema;
