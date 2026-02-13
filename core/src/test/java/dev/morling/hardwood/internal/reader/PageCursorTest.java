@@ -21,7 +21,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class PageCursorTest {
 
     @Test
-    void pageCursorClearPageInfoEntriesAfterDecoding() throws Exception {
+    void pageCursorRemovesPageInfoEntriesAfterDecoding() throws Exception {
         Path file = Paths.get("src/test/resources/delta_binary_packed_test.parquet");
         FileMetaData fileMetaData;
         FileSchema schema;
