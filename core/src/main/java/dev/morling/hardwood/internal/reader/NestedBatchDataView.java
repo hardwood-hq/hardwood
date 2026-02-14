@@ -381,4 +381,9 @@ public final class NestedBatchDataView implements BatchDataView {
         int originalFieldIndex = projectedFieldToOriginal[projectedIndex];
         return schema.getRootNode().children().get(originalFieldIndex).name();
     }
+
+    @Override
+    public FlatColumnData[] getFlatColumnData() {
+        return null;
+    }
 }

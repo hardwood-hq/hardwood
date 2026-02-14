@@ -11,10 +11,11 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.NoSuchElementException;
+import java.util.BitSet;
 import java.util.UUID;
 
 import dev.morling.hardwood.internal.reader.BatchDataView;
+import dev.morling.hardwood.internal.reader.FlatColumnData;
 import dev.morling.hardwood.row.PqDoubleList;
 import dev.morling.hardwood.row.PqIntList;
 import dev.morling.hardwood.row.PqList;
@@ -38,6 +39,11 @@ abstract class AbstractRowReader implements RowReader {
     protected boolean exhausted = false;
     protected volatile boolean closed = false;
     protected boolean initialized = false;
+
+    // Cached flat arrays for direct access (bypasses dataView virtual dispatch)
+    private Object[] flatValueArrays;
+    private BitSet[] flatNulls;
+    private boolean flatFastPath;
 
     /**
      * Computes a batch size that keeps all column arrays for one batch within the L2 cache.
@@ -96,6 +102,39 @@ abstract class AbstractRowReader implements RowReader {
      */
     protected abstract boolean loadNextBatch();
 
+    /**
+     * Populates cached flat arrays from the current batch data for direct access.
+     * This eliminates virtual dispatch through BatchDataView for primitive accessors.
+     */
+    private void cacheFlatBatch() {
+        FlatColumnData[] fcd = dataView.getFlatColumnData();
+        if (fcd == null) {
+            flatFastPath = false;
+            return;
+        }
+        flatFastPath = true;
+        int cols = fcd.length;
+        if (flatValueArrays == null || flatValueArrays.length != cols) {
+            flatValueArrays = new Object[cols];
+            flatNulls = new BitSet[cols];
+        }
+        for (int i = 0; i < cols; i++) {
+            flatNulls[i] = fcd[i].nulls();
+            flatValueArrays[i] = extractValueArray(fcd[i]);
+        }
+    }
+
+    private static Object extractValueArray(FlatColumnData fcd) {
+        return switch (fcd) {
+            case FlatColumnData.LongColumn lc -> lc.values();
+            case FlatColumnData.DoubleColumn dc -> dc.values();
+            case FlatColumnData.IntColumn ic -> ic.values();
+            case FlatColumnData.FloatColumn fc -> fc.values();
+            case FlatColumnData.BooleanColumn bc -> bc.values();
+            case FlatColumnData.ByteArrayColumn bac -> bac.values();
+        };
+    }
+
     // ==================== Iteration Control ====================
 
     @Override
@@ -105,19 +144,27 @@ abstract class AbstractRowReader implements RowReader {
         }
         if (!initialized) {
             initialize();
+            if (!exhausted) {
+                cacheFlatBatch();
+            }
             // Re-check after initialization since it loads the first batch
             return !exhausted && rowIndex + 1 < batchSize;
         }
         if (rowIndex + 1 < batchSize) {
             return true;
         }
-        return loadNextBatch();
+        boolean loaded = loadNextBatch();
+        if (loaded) {
+            cacheFlatBatch();
+        }
+        return loaded;
     }
 
     @Override
     public void next() {
-        if (!hasNext()) {
-            throw new NoSuchElementException("No more rows available");
+        if (!initialized) {
+            initialize();
+            cacheFlatBatch();
         }
         rowIndex++;
         dataView.setRowIndex(rowIndex);
@@ -132,6 +179,9 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public int getInt(int columnIndex) {
+        if (flatFastPath) {
+            return ((int[]) flatValueArrays[columnIndex])[rowIndex];
+        }
         return dataView.getInt(columnIndex);
     }
 
@@ -142,6 +192,9 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public long getLong(int columnIndex) {
+        if (flatFastPath) {
+            return ((long[]) flatValueArrays[columnIndex])[rowIndex];
+        }
         return dataView.getLong(columnIndex);
     }
 
@@ -152,6 +205,9 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public float getFloat(int columnIndex) {
+        if (flatFastPath) {
+            return ((float[]) flatValueArrays[columnIndex])[rowIndex];
+        }
         return dataView.getFloat(columnIndex);
     }
 
@@ -162,6 +218,9 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public double getDouble(int columnIndex) {
+        if (flatFastPath) {
+            return ((double[]) flatValueArrays[columnIndex])[rowIndex];
+        }
         return dataView.getDouble(columnIndex);
     }
 
@@ -172,6 +231,9 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public boolean getBoolean(int columnIndex) {
+        if (flatFastPath) {
+            return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
+        }
         return dataView.getBoolean(columnIndex);
     }
 
@@ -332,6 +394,10 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public boolean isNull(int columnIndex) {
+        if (flatFastPath) {
+            BitSet n = flatNulls[columnIndex];
+            return n != null && n.get(rowIndex);
+        }
         return dataView.isNull(columnIndex);
     }
 

@@ -106,4 +106,11 @@ public sealed interface BatchDataView permits FlatBatchDataView, NestedBatchData
     // Metadata
     int getFieldCount();
     String getFieldName(int projectedIndex);
+
+    /**
+     * Get the underlying flat column data arrays for direct primitive access.
+     *
+     * @return the flat column data array, or null if nested schema
+     */
+    FlatColumnData[] getFlatColumnData();
 }

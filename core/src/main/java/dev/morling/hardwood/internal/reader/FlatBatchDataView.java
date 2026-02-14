@@ -390,4 +390,9 @@ public final class FlatBatchDataView implements BatchDataView {
         int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
         return schema.getColumn(originalIndex).name();
     }
+
+    @Override
+    public FlatColumnData[] getFlatColumnData() {
+        return columnData;
+    }
 }
