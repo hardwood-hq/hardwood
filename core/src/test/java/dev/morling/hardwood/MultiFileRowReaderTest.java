@@ -29,12 +29,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
  */
 class MultiFileRowReaderTest {
 
-    private static final Path TEST_FILE = Paths.get("src/test/resources/plain_uncompressed.parquet");
-    private static final Path TEST_FILE_WITH_NULLS = Paths.get("src/test/resources/plain_uncompressed_with_nulls.parquet");
-
     @Test
     void testReadSingleFile() throws Exception {
-        List<Path> files = List.of(TEST_FILE);
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files)) {
@@ -56,7 +54,8 @@ class MultiFileRowReaderTest {
     @Test
     void testReadMultipleIdenticalFiles() throws Exception {
         // Read the same file multiple times to test cross-file prefetching
-        List<Path> files = List.of(TEST_FILE, TEST_FILE, TEST_FILE);
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath, filePath, filePath);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files)) {
@@ -82,7 +81,8 @@ class MultiFileRowReaderTest {
 
     @Test
     void testReadMultipleFilesWithProjection() throws Exception {
-        List<Path> files = List.of(TEST_FILE, TEST_FILE);
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath, filePath);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files, ColumnProjection.columns("id"))) {
@@ -102,7 +102,8 @@ class MultiFileRowReaderTest {
 
     @Test
     void testFieldCount() throws Exception {
-        List<Path> files = List.of(TEST_FILE);
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files)) {
@@ -115,7 +116,8 @@ class MultiFileRowReaderTest {
 
     @Test
     void testFieldCountWithProjection() throws Exception {
-        List<Path> files = List.of(TEST_FILE);
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files, ColumnProjection.columns("value"))) {
@@ -127,7 +129,8 @@ class MultiFileRowReaderTest {
 
     @Test
     void testAccessByIndex() throws Exception {
-        List<Path> files = List.of(TEST_FILE);
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files)) {
@@ -152,7 +155,8 @@ class MultiFileRowReaderTest {
 
     @Test
     void testRowCountMatchesSingleFileReading() throws Exception {
-        List<Path> files = List.of(TEST_FILE, TEST_FILE);
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath, filePath);
 
         // Count rows using MultiFileRowReader
         long multiFileCount = 0;
@@ -183,7 +187,8 @@ class MultiFileRowReaderTest {
 
     @Test
     void testReadFileWithNulls() throws Exception {
-        List<Path> files = List.of(TEST_FILE_WITH_NULLS);
+        Path filePathWithNulls = Paths.get("src/test/resources/plain_uncompressed_with_nulls.parquet");
+        List<Path> files = List.of(filePathWithNulls);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files)) {
@@ -209,7 +214,8 @@ class MultiFileRowReaderTest {
     @Test
     void testReadMultipleFilesPreservesDataIntegrity() throws Exception {
         // Test that data is not corrupted across file boundaries
-        List<Path> files = List.of(TEST_FILE, TEST_FILE);
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath, filePath);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files)) {
@@ -235,13 +241,54 @@ class MultiFileRowReaderTest {
         }
     }
 
-    // ==================== Non-Flat Schema Tests ====================
+    @Test
+    void testWiderSchemaAdaptiveBatchSize() throws Exception {
+        Path wideFile = Paths.get("src/test/resources/primitive_types_test.parquet");
+        List<Path> files = List.of(wideFile, wideFile);
 
-    private static final Path NESTED_STRUCT_FILE = Paths.get("src/test/resources/nested_struct_test.parquet");
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileRowReader reader = hardwood.openAll(files)) {
+
+            int rowCount = 0;
+            while (reader.hasNext()) {
+                reader.next();
+                rowCount++;
+
+                // Verify first column is consistent across all rows
+                int id = reader.getInt("int_col");
+                assertThat(id).isBetween(1, 3);
+            }
+
+            // 3 rows per file * 2 files = 6 rows
+            assertThat(rowCount).isEqualTo(6);
+        }
+    }
+
+    @Test
+    void testSingleColumnProjectionAdaptiveBatchSize() throws Exception {
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath, filePath, filePath);
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileRowReader reader = hardwood.openAll(files, ColumnProjection.columns("id"))) {
+
+            List<Long> ids = new ArrayList<>();
+            while (reader.hasNext()) {
+                reader.next();
+                ids.add(reader.getLong("id"));
+            }
+
+            assertThat(ids).hasSize(9);
+            assertThat(ids).containsExactly(1L, 2L, 3L, 1L, 2L, 3L, 1L, 2L, 3L);
+        }
+    }
+
+    // ==================== Non-Flat Schema Tests ====================
 
     @Test
     void testReadNestedStructSingleFile() throws Exception {
-        List<Path> files = List.of(NESTED_STRUCT_FILE);
+        Path nestedStructFile = Paths.get("src/test/resources/nested_struct_test.parquet");
+        List<Path> files = List.of(nestedStructFile);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files)) {
@@ -280,7 +327,8 @@ class MultiFileRowReaderTest {
     @Test
     void testReadNestedStructMultipleFiles() throws Exception {
         // Read the same nested struct file multiple times to test cross-file transitions
-        List<Path> files = List.of(NESTED_STRUCT_FILE, NESTED_STRUCT_FILE);
+        Path nestedStructFile = Paths.get("src/test/resources/nested_struct_test.parquet");
+        List<Path> files = List.of(nestedStructFile, nestedStructFile);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files)) {
@@ -316,7 +364,8 @@ class MultiFileRowReaderTest {
     @Test
     void testReadNestedStructWithProjection() throws Exception {
         // Project only the nested struct column (not the id)
-        List<Path> files = List.of(NESTED_STRUCT_FILE, NESTED_STRUCT_FILE);
+        Path nestedStructFile = Paths.get("src/test/resources/nested_struct_test.parquet");
+        List<Path> files = List.of(nestedStructFile, nestedStructFile);
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileRowReader reader = hardwood.openAll(files, ColumnProjection.columns("address"))) {
@@ -348,7 +397,8 @@ class MultiFileRowReaderTest {
 
     @Test
     void testNestedStructRowCountMatchesSingleFileReading() throws Exception {
-        List<Path> files = List.of(NESTED_STRUCT_FILE, NESTED_STRUCT_FILE);
+        Path nestedStructFile = Paths.get("src/test/resources/nested_struct_test.parquet");
+        List<Path> files = List.of(nestedStructFile, nestedStructFile);
 
         // Count rows using MultiFileRowReader
         long multiFileCount = 0;

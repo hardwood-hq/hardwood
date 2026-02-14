@@ -1125,6 +1125,33 @@ public class PqRowApiTest {
         }
     }
 
+    @Test
+    void testByNameAndByIndexConsistency() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            while (rowReader.hasNext()) {
+                rowReader.next();
+
+                assertThat(rowReader.getInt(0)).isEqualTo(rowReader.getInt("int_col"));
+                assertThat(rowReader.getLong(1)).isEqualTo(rowReader.getLong("long_col"));
+                assertThat(rowReader.getFloat(2)).isEqualTo(rowReader.getFloat("float_col"));
+                assertThat(rowReader.getDouble(3)).isEqualTo(rowReader.getDouble("double_col"));
+                assertThat(rowReader.getBoolean(4)).isEqualTo(rowReader.getBoolean("bool_col"));
+                assertThat(rowReader.getString(5)).isEqualTo(rowReader.getString("string_col"));
+                assertThat(rowReader.getBinary(6)).isEqualTo(rowReader.getBinary("binary_col"));
+
+                // isNull should also be consistent
+                for (int i = 0; i < rowReader.getFieldCount(); i++) {
+                    assertThat(rowReader.isNull(i))
+                            .isEqualTo(rowReader.isNull(rowReader.getFieldName(i)));
+                }
+            }
+        }
+    }
+
     // ==================== Primitive List Tests ====================
 
     @Test
