@@ -35,6 +35,15 @@ public class ColumnValueIterator {
     private boolean recordActive;
     private boolean exhausted = false;
 
+    // Reusable arrays for flat batch computation (avoids per-batch allocation)
+    private long[] reusableLongArray;
+    private double[] reusableDoubleArray;
+    private int[] reusableIntArray;
+    private float[] reusableFloatArray;
+    private boolean[] reusableBooleanArray;
+    private byte[][] reusableByteArrayArray;
+    private BitSet reusableNulls;
+
     public ColumnValueIterator(PageCursor pageCursor, ColumnSchema column, boolean flatSchema) {
         this.pageCursor = pageCursor;
         this.column = column;
@@ -99,6 +108,19 @@ public class ColumnValueIterator {
 
     // ==================== Flat Batch Computation ====================
 
+    private BitSet reuseOrCreateNulls(int maxDefLevel, int maxRecords) {
+        if (maxDefLevel <= 0) {
+            return null;
+        }
+        if (reusableNulls == null) {
+            reusableNulls = new BitSet(maxRecords);
+        }
+        else {
+            reusableNulls.clear();
+        }
+        return reusableNulls;
+    }
+
     private void markNulls(BitSet nulls, int[] defLevels, int srcPos, int destPos, int count, int maxDefLevel) {
         if (nulls == null) {
             return;
@@ -128,8 +150,11 @@ public class ColumnValueIterator {
     }
 
     private TypedColumnData computeFlatInt(int maxRecords, int maxDefLevel) {
-        int[] values = new int[maxRecords];
-        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
+        if (reusableIntArray == null || reusableIntArray.length < maxRecords) {
+            reusableIntArray = new int[maxRecords];
+        }
+        int[] values = reusableIntArray;
+        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -144,16 +169,15 @@ public class ColumnValueIterator {
             recordCount += toCopy;
         }
 
-        if (recordCount < maxRecords) {
-            values = Arrays.copyOf(values, recordCount);
-        }
-
         return new FlatColumnData.IntColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatLong(int maxRecords, int maxDefLevel) {
-        long[] values = new long[maxRecords];
-        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
+        if (reusableLongArray == null || reusableLongArray.length < maxRecords) {
+            reusableLongArray = new long[maxRecords];
+        }
+        long[] values = reusableLongArray;
+        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -168,16 +192,15 @@ public class ColumnValueIterator {
             recordCount += toCopy;
         }
 
-        if (recordCount < maxRecords) {
-            values = Arrays.copyOf(values, recordCount);
-        }
-
         return new FlatColumnData.LongColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatFloat(int maxRecords, int maxDefLevel) {
-        float[] values = new float[maxRecords];
-        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
+        if (reusableFloatArray == null || reusableFloatArray.length < maxRecords) {
+            reusableFloatArray = new float[maxRecords];
+        }
+        float[] values = reusableFloatArray;
+        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -192,16 +215,15 @@ public class ColumnValueIterator {
             recordCount += toCopy;
         }
 
-        if (recordCount < maxRecords) {
-            values = Arrays.copyOf(values, recordCount);
-        }
-
         return new FlatColumnData.FloatColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatDouble(int maxRecords, int maxDefLevel) {
-        double[] values = new double[maxRecords];
-        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
+        if (reusableDoubleArray == null || reusableDoubleArray.length < maxRecords) {
+            reusableDoubleArray = new double[maxRecords];
+        }
+        double[] values = reusableDoubleArray;
+        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -216,16 +238,15 @@ public class ColumnValueIterator {
             recordCount += toCopy;
         }
 
-        if (recordCount < maxRecords) {
-            values = Arrays.copyOf(values, recordCount);
-        }
-
         return new FlatColumnData.DoubleColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatBoolean(int maxRecords, int maxDefLevel) {
-        boolean[] values = new boolean[maxRecords];
-        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
+        if (reusableBooleanArray == null || reusableBooleanArray.length < maxRecords) {
+            reusableBooleanArray = new boolean[maxRecords];
+        }
+        boolean[] values = reusableBooleanArray;
+        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -240,16 +261,15 @@ public class ColumnValueIterator {
             recordCount += toCopy;
         }
 
-        if (recordCount < maxRecords) {
-            values = Arrays.copyOf(values, recordCount);
-        }
-
         return new FlatColumnData.BooleanColumn(column, values, nulls, recordCount);
     }
 
     private TypedColumnData computeFlatByteArray(int maxRecords, int maxDefLevel) {
-        byte[][] values = new byte[maxRecords][];
-        BitSet nulls = maxDefLevel > 0 ? new BitSet(maxRecords) : null;
+        if (reusableByteArrayArray == null || reusableByteArrayArray.length < maxRecords) {
+            reusableByteArrayArray = new byte[maxRecords][];
+        }
+        byte[][] values = reusableByteArrayArray;
+        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
 
         int recordCount = 0;
         while (recordCount < maxRecords && ensurePageLoaded()) {
@@ -262,10 +282,6 @@ public class ColumnValueIterator {
 
             position += toCopy;
             recordCount += toCopy;
-        }
-
-        if (recordCount < maxRecords) {
-            values = Arrays.copyOf(values, recordCount);
         }
 
         return new FlatColumnData.ByteArrayColumn(column, values, nulls, recordCount);
