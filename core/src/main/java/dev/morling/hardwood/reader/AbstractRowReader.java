@@ -107,25 +107,25 @@ abstract class AbstractRowReader implements RowReader {
      * This eliminates virtual dispatch through BatchDataView for primitive accessors.
      */
     private void cacheFlatBatch() {
-        FlatColumnData[] fcd = dataView.getFlatColumnData();
-        if (fcd == null) {
+        FlatColumnData[] flatColumnData = dataView.getFlatColumnData();
+        if (flatColumnData == null) {
             flatFastPath = false;
             return;
         }
         flatFastPath = true;
-        int cols = fcd.length;
-        if (flatValueArrays == null || flatValueArrays.length != cols) {
-            flatValueArrays = new Object[cols];
-            flatNulls = new BitSet[cols];
+        int columns = flatColumnData.length;
+        if (flatValueArrays == null || flatValueArrays.length != columns) {
+            flatValueArrays = new Object[columns];
+            flatNulls = new BitSet[columns];
         }
-        for (int i = 0; i < cols; i++) {
-            flatNulls[i] = fcd[i].nulls();
-            flatValueArrays[i] = extractValueArray(fcd[i]);
+        for (int i = 0; i < columns; i++) {
+            flatNulls[i] = flatColumnData[i].nulls();
+            flatValueArrays[i] = extractValueArray(flatColumnData[i]);
         }
     }
 
-    private static Object extractValueArray(FlatColumnData fcd) {
-        return switch (fcd) {
+    private static Object extractValueArray(FlatColumnData flatColumnData) {
+        return switch (flatColumnData) {
             case FlatColumnData.LongColumn lc -> lc.values();
             case FlatColumnData.DoubleColumn dc -> dc.values();
             case FlatColumnData.IntColumn ic -> ic.values();
