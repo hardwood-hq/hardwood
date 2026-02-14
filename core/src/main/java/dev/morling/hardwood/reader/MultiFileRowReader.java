@@ -42,13 +42,12 @@ import dev.morling.hardwood.schema.ProjectedSchema;
  */
 public class MultiFileRowReader extends AbstractRowReader {
 
-    private static final int BATCH_SIZE = 16384;
-
     private final FileSchema schema;
     private final ProjectedSchema projectedSchema;
     private final HardwoodContext context;
     private final FileManager fileManager;
     private final FileManager.InitResult initResult;
+    private final int adaptiveBatchSize;
 
     // Iterators for each projected column
     private ColumnValueIterator[] iterators;
@@ -71,6 +70,7 @@ public class MultiFileRowReader extends AbstractRowReader {
         this.initResult = fileManager.initialize(projection);
         this.schema = initResult.schema();
         this.projectedSchema = initResult.projectedSchema();
+        this.adaptiveBatchSize = computeOptimalBatchSize(projectedSchema);
     }
 
     @Override
@@ -106,7 +106,7 @@ public class MultiFileRowReader extends AbstractRowReader {
         for (int i = 0; i < iterators.length; i++) {
             final int col = i;
             futures[i] = CompletableFuture.supplyAsync(
-                    () -> iterators[col].readBatch(BATCH_SIZE), ForkJoinPool.commonPool());
+                    () -> iterators[col].readBatch(adaptiveBatchSize), ForkJoinPool.commonPool());
         }
 
         CompletableFuture.allOf(futures).join();

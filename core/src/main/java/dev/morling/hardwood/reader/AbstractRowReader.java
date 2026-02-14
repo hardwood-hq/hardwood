@@ -21,6 +21,8 @@ import dev.morling.hardwood.row.PqList;
 import dev.morling.hardwood.row.PqLongList;
 import dev.morling.hardwood.row.PqMap;
 import dev.morling.hardwood.row.PqStruct;
+import dev.morling.hardwood.schema.ColumnSchema;
+import dev.morling.hardwood.schema.ProjectedSchema;
 
 /**
  * Base class for RowReader implementations providing iteration control and accessor methods.
@@ -36,6 +38,51 @@ abstract class AbstractRowReader implements RowReader {
     protected boolean exhausted = false;
     protected volatile boolean closed = false;
     protected boolean initialized = false;
+
+    /**
+     * Computes a batch size that keeps all column arrays for one batch within the L2 cache.
+     *
+     * <p>Each batch allocates one primitive array per projected column. The total memory for a
+     * batch is approximately {@code batchSize * sum(bytesPerColumn)}. This method sizes the batch
+     * so that total stays under the target (6 MB), clamped to [{@code 16 384}, {@code 524 288}]
+     * rows.</p>
+     *
+     * <p>For example, 3 projected DOUBLE columns (8 bytes each = 24 bytes/row) yields
+     * {@code 6 MB / 24 = 262 144} rows per batch.</p>
+     */
+    static int computeOptimalBatchSize(ProjectedSchema projectedSchema) {
+        // Initally target 6 MB (fits comfortably in L2 cache)
+        long targetBytes = 6L * 1024 * 1024; 
+        int minBatch = 16384;
+        int maxBatch = 524288;
+
+        int bytesPerRow = 0;
+        for (int i = 0; i < projectedSchema.getProjectedColumnCount(); i++) {
+            bytesPerRow += columnByteWidth(projectedSchema.getProjectedColumn(i));
+        }
+
+        if (bytesPerRow == 0) {
+            bytesPerRow = 8;
+        }
+
+        int batchSize = (int) (targetBytes / bytesPerRow);
+        return Math.max(minBatch, Math.min(maxBatch, batchSize));
+    }
+
+    /**
+     * Returns the estimated byte width of a single value for the given column's physical type.
+     * Variable-length types use a 16-byte estimate (pointer + average payload).
+     */
+    private static int columnByteWidth(ColumnSchema col) {
+        return switch (col.type()) {
+            case INT32, FLOAT -> 4;
+            case INT64, DOUBLE -> 8;
+            case BOOLEAN -> 1;
+            case INT96 -> 12;
+            case BYTE_ARRAY -> 16;
+            case FIXED_LEN_BYTE_ARRAY -> col.typeLength() != null ? col.typeLength() : 16;
+        };
+    }
 
     /**
      * Ensures the reader is initialized. Called by metadata methods that may be
