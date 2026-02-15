@@ -129,7 +129,10 @@ public class PageCursor {
                     if (nextPageIndex >= pageInfos.size()) {
                         return null;
                     }
-                    return decodePage(pageInfos.get(nextPageIndex++));
+                    int pageIndex = nextPageIndex++;
+                    Page page = decodePage(pageInfos.get(pageIndex));
+                    pageInfos.set(pageIndex, null);
+                    return page;
                 }
                 // Fall through to get from prefetch queue
             }
@@ -137,7 +140,10 @@ public class PageCursor {
                 // Queue empty but pages remain - decode synchronously and increase depth
                 LOG.log(System.Logger.Level.DEBUG, "Prefetch queue empty for column ''{0}''", columnName);
                 targetPrefetchDepth = Math.min(targetPrefetchDepth + 1, MAX_PREFETCH_DEPTH);
-                return decodePage(pageInfos.get(nextPageIndex++));
+                int pageIndex = nextPageIndex++;
+                Page page = decodePage(pageInfos.get(pageIndex));
+                pageInfos.set(pageIndex, null);
+                return page;
             }
         }
 
@@ -240,8 +246,11 @@ public class PageCursor {
 
             int pageIndex = nextPageIndex++;
             PageReader reader = this.pageReader;
-            prefetchQueue.addLast(CompletableFuture.supplyAsync(
-                    () -> decodePage(pageInfos.get(pageIndex), reader), executor));
+            prefetchQueue.addLast(CompletableFuture.supplyAsync(() -> {
+                Page page = decodePage(pageInfos.get(pageIndex), reader);
+                pageInfos.set(pageIndex, null);
+                return page;
+            }, executor));
         }
     }
 
