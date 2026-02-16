@@ -17,7 +17,7 @@
     <version>1.0.0-SNAPSHOT</version>
   </parent>
 
-  <artifactId>integration-test</artifactId>
+  <artifactId>hardwood-integration-test</artifactId>
 
   <name>Integration Tests</name>
   <description>Integration tests for Hardwood</description>
@@ -48,4 +48,29 @@
       <scope>test</scope>
     </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-surefire-plugin</artifactId>
+        <configuration>
+          <argLine>--enable-native-access=ALL-UNNAMED</argLine>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
+  <profiles>
+    <!-- Skip enforcer on Java 21 since it requires Java 25+ for building -->
+    <profile>
+      <id>java21</id>
+      <activation>
+        <jdk>[21,25)</jdk>
+      </activation>
+      <properties>
+        <enforcer.skip>true</enforcer.skip>
+      </properties>
+    </profile>
+  </profiles>
 </project>

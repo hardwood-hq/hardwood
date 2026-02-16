@@ -1068,3 +1068,34 @@ pq.write_table(
 print("\nGenerated primitive_lists_test.parquet:")
 print("  - Schema: id, int_list: list<int32>, long_list: list<int64>, double_list: list<float64>")
 print("  - Data: 4 rows with primitive lists including empty and null cases")
+
+# ============================================================================
+# GZIP Compressed Test File (for libdeflate integration testing)
+# ============================================================================
+
+# 20. GZIP compressed file for testing libdeflate decompression
+gzip_test_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('name', pa.string(), False),
+    ('value', pa.int64(), False),
+])
+
+gzip_test_data = {
+    'id': [1, 2, 3, 4, 5],
+    'name': ['Alice', 'Bob', 'Charlie', 'Diana', 'Eve'],
+    'value': [100, 200, 300, 400, 500],
+}
+
+gzip_test_table = pa.table(gzip_test_data, schema=gzip_test_schema)
+pq.write_table(
+    gzip_test_table,
+    'integration-test/src/test/resources/gzip_compressed.parquet',
+    use_dictionary=False,
+    compression='gzip',
+    data_page_version='1.0'
+)
+
+print("\nGenerated gzip_compressed.parquet (in integration-test):")
+print("  - Encoding: PLAIN")
+print("  - Compression: GZIP")
+print("  - Data: 5 rows with id, name, value")

@@ -7,9 +7,14 @@
  */
 package dev.morling.hardwood.internal.compression.libdeflate;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardOpenOption;
 import java.util.Random;
 import java.util.zip.GZIPOutputStream;
 
@@ -17,9 +22,9 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import dev.morling.hardwood.internal.compression.DecompressorFactory;
 import dev.morling.hardwood.internal.compression.GzipDecompressor;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import dev.morling.hardwood.metadata.CompressionCodec;
 
 class LibdeflateDecompressorIT {
 
@@ -106,6 +111,14 @@ class LibdeflateDecompressorIT {
         assertThat(result).isEqualTo(expectedOutput);
     }
 
+    @Test
+    void factorySelectsLibdeflateWhenAvailable() {
+        DecompressorFactory factory = new DecompressorFactory(pool);
+        var decompressor = factory.getDecompressor(CompressionCodec.GZIP);
+
+        assertThat(decompressor).isInstanceOf(LibdeflateDecompressor.class);
+    }
+
     private static byte[] gzipCompress(byte[] data) throws Exception {
         ByteArrayOutputStream baos = new ByteArrayOutputStream();
         try (GZIPOutputStream gzip = new GZIPOutputStream(baos)) {
@@ -135,12 +148,12 @@ class LibdeflateDecompressorIT {
 
     private static MappedByteBuffer createMappedBuffer(byte[] data) {
         try {
-            java.nio.file.Path tempFile = java.nio.file.Files.createTempFile("libdeflate-test", ".gz");
-            java.nio.file.Files.write(tempFile, data);
+            Path tempFile = Files.createTempFile("libdeflate-test", ".gz");
+            Files.write(tempFile, data);
             try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(
-                    tempFile, java.nio.file.StandardOpenOption.READ)) {
+                    tempFile, StandardOpenOption.READ)) {
                 MappedByteBuffer buffer = channel.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, data.length);
-                java.nio.file.Files.delete(tempFile);
+                Files.delete(tempFile);
                 return buffer;
             }
         }
