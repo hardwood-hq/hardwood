@@ -92,7 +92,8 @@
       "Bash(../../mvnw compile:*)",
       "Bash(../../mvnw test-compile:*)",
       "WebFetch(domain:www.morling.dev)",
-      "WebFetch(domain:inside.java)"
+      "WebFetch(domain:inside.java)",
+      "Bash(git -C /app log --oneline -20)"
     ]
   }
 }

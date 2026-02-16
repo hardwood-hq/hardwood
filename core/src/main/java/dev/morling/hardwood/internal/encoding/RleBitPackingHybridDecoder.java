@@ -13,11 +13,16 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
 
+import dev.morling.hardwood.internal.encoding.simd.SimdOperations;
+import dev.morling.hardwood.internal.encoding.simd.VectorSupport;
+
 /**
  * Decoder for RLE/Bit-Packing Hybrid encoding.
  * Used primarily for definition/repetition levels and dictionary indices.
  */
 public class RleBitPackingHybridDecoder {
+
+    private static final SimdOperations SIMD_OPS = VectorSupport.operations();
 
     private final byte[] data;
     private final ByteBuffer dataBuffer;
@@ -134,9 +139,7 @@ public class RleBitPackingHybridDecoder {
 
     private void applyDictionary(long[] output, long[] dict, int[] indices, int[] defLevels, int maxDef) {
         if (defLevels == null) {
-            for (int i = 0; i < output.length; i++) {
-                output[i] = dict[indices[i]];
-            }
+            SIMD_OPS.applyDictionaryLongs(output, dict, indices, output.length);
         }
         else {
             int idx = 0;
@@ -150,9 +153,7 @@ public class RleBitPackingHybridDecoder {
 
     private void applyDictionary(double[] output, double[] dict, int[] indices, int[] defLevels, int maxDef) {
         if (defLevels == null) {
-            for (int i = 0; i < output.length; i++) {
-                output[i] = dict[indices[i]];
-            }
+            SIMD_OPS.applyDictionaryDoubles(output, dict, indices, output.length);
         }
         else {
             int idx = 0;
@@ -166,9 +167,7 @@ public class RleBitPackingHybridDecoder {
 
     private void applyDictionary(int[] output, int[] dict, int[] indices, int[] defLevels, int maxDef) {
         if (defLevels == null) {
-            for (int i = 0; i < output.length; i++) {
-                output[i] = dict[indices[i]];
-            }
+            SIMD_OPS.applyDictionaryInts(output, dict, indices, output.length);
         }
         else {
             int idx = 0;
@@ -182,9 +181,7 @@ public class RleBitPackingHybridDecoder {
 
     private void applyDictionary(float[] output, float[] dict, int[] indices, int[] defLevels, int maxDef) {
         if (defLevels == null) {
-            for (int i = 0; i < output.length; i++) {
-                output[i] = dict[indices[i]];
-            }
+            SIMD_OPS.applyDictionaryFloats(output, dict, indices, output.length);
         }
         else {
             int idx = 0;
@@ -213,22 +210,7 @@ public class RleBitPackingHybridDecoder {
     }
 
     private static int countNonNulls(int[] defLevels, int maxDef) {
-        int count0 = 0, count1 = 0, count2 = 0, count3 = 0;
-        int i = 0;
-        int len = defLevels.length;
-        for (; i + 8 <= len; i += 8) {
-            count0 += (defLevels[i] == maxDef ? 1 : 0) + (defLevels[i + 4] == maxDef ? 1 : 0);
-            count1 += (defLevels[i + 1] == maxDef ? 1 : 0) + (defLevels[i + 5] == maxDef ? 1 : 0);
-            count2 += (defLevels[i + 2] == maxDef ? 1 : 0) + (defLevels[i + 6] == maxDef ? 1 : 0);
-            count3 += (defLevels[i + 3] == maxDef ? 1 : 0) + (defLevels[i + 7] == maxDef ? 1 : 0);
-        }
-        int count = count0 + count1 + count2 + count3;
-        for (; i < len; i++) {
-            if (defLevels[i] == maxDef) {
-                count++;
-            }
-        }
-        return count;
+        return SIMD_OPS.countNonNulls(defLevels, maxDef);
     }
 
     private void readNextRun() {

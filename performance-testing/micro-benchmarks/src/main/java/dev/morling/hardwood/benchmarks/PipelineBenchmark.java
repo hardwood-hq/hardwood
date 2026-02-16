@@ -55,7 +55,7 @@ import dev.morling.hardwood.schema.FileSchema;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
-@Fork(value = 2, jvmArgs = { "-Xms2g", "-Xmx2g", "-XX:+UnlockDiagnosticVMOptions", "-XX:+DebugNonSafepoints", "-XX:+UseZGC" })
+@Fork(value = 2, jvmArgs = { "-Xms2g", "-Xmx2g", "-XX:+UnlockDiagnosticVMOptions", "-XX:+DebugNonSafepoints", "-XX:+UseZGC", "--add-modules", "jdk.incubator.vector" })
 @Warmup(iterations = 5, time = 1)
 @Measurement(iterations = 10, time = 1)
 public class PipelineBenchmark {

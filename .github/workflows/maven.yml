@@ -63,17 +63,17 @@ jobs:
       matrix:
         include:
           - java: '21'
-            preview: false
             install_libdeflate: false
+            enable_incubating: false
             name: 'Java 21'
           - java: '25'
-            preview: false
             install_libdeflate: true
+            enable_incubating: false
             name: 'Java 25'
           - java: '25'
-            preview: true
             install_libdeflate: true
-            name: 'Java 25 (preview)'
+            enable_incubating: true
+            name: 'Java 25 (incubating)'
 
     name: Integration Tests - ${{ matrix.name }}
 
@@ -106,17 +106,17 @@ jobs:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwoodhq/
 
-      - name: 'Run integration tests'
-        if: ${{ !matrix.preview && !matrix.install_libdeflate }}
+      - name: 'Run integration tests (Java 21)'
+        if: ${{ !matrix.install_libdeflate && !matrix.enable_incubating }}
         run: ./mvnw -B verify -pl :hardwood-integration-test
 
       - name: 'Run integration tests (with libdeflate)'
-        if: ${{ !matrix.preview && matrix.install_libdeflate }}
-        run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true
+        if: ${{ matrix.install_libdeflate && !matrix.enable_incubating }}
+        run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED"
 
-      - name: 'Run integration tests (preview features)'
-        if: ${{ matrix.preview }}
-        run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED --enable-preview"
+      - name: 'Run integration tests (with incubating APIs)'
+        if: ${{ matrix.install_libdeflate && matrix.enable_incubating }}
+        run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector"
 
   performance-tests:
     needs: build
@@ -153,5 +153,7 @@ jobs:
           path: performance-testing/test-data-setup/target/tlc-trip-record-data/
           key: taxi-data-2023-01-to-2025-12
 
-      - name: 'Run performance tests'
+      - name: 'Run performance tests (with SIMD)'
         run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start=2023-01 -Dperf.end=2025-12
+        env:
+          MAVEN_OPTS: '--add-modules jdk.incubator.vector'
