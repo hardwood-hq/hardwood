@@ -128,10 +128,7 @@ public class PageCursor {
                     if (nextPageIndex >= pageInfos.size()) {
                         return null;
                     }
-                    int pageIndex = nextPageIndex++;
-                    Page page = decodePage(pageInfos.get(pageIndex));
-                    pageInfos.set(pageIndex, null);
-                    return page;
+                    return decodePageAndRelease(nextPageIndex++);
                 }
                 // Fall through to get from prefetch queue
             }
@@ -140,10 +137,7 @@ public class PageCursor {
                 LOG.log(System.Logger.Level.DEBUG, "[{0}] Prefetch queue empty for column ''{1}''",
                         getCurrentFileName(), columnName);
                 targetPrefetchDepth = Math.min(targetPrefetchDepth + 1, MAX_PREFETCH_DEPTH);
-                int pageIndex = nextPageIndex++;
-                Page page = decodePage(pageInfos.get(pageIndex));
-                pageInfos.set(pageIndex, null);
-                return page;
+                return decodePageAndRelease(nextPageIndex++);
             }
         }
 
@@ -230,11 +224,8 @@ public class PageCursor {
 
             int pageIndex = nextPageIndex++;
             PageReader reader = this.pageReader;
-            prefetchQueue.addLast(CompletableFuture.supplyAsync(() -> {
-                Page page = decodePage(pageInfos.get(pageIndex), reader);
-                pageInfos.set(pageIndex, null);
-                return page;
-            }, executor));
+            prefetchQueue.addLast(CompletableFuture.supplyAsync(
+                    () -> decodePageAndRelease(pageIndex, reader), executor));
         }
     }
 
@@ -300,19 +291,25 @@ public class PageCursor {
     }
 
     /**
-     * Decode a page from its PageInfo using the current pageReader.
-     * Used for synchronous decoding when the prefetch queue is empty.
+     * Decode the page at the given index, release its PageInfo reference, and return the decoded page.
+     * Uses the current pageReader for decoding.
      */
-    private Page decodePage(PageInfo pageInfo) {
-        return decodePage(pageInfo, pageReader);
+    private Page decodePageAndRelease(int pageIndex) {
+        return decodePageAndRelease(pageIndex, pageReader);
     }
 
     /**
-     * Decode a page from its PageInfo using the specified PageReader.
+     * Decode the page at the given index, release its PageInfo reference, and return the decoded page.
      * The reader is passed explicitly to ensure pages are decoded with the correct
      * reader even when async tasks execute after the pageReader has been updated
      * for a subsequent file.
      */
+    private Page decodePageAndRelease(int pageIndex, PageReader reader) {
+        Page page = decodePage(pageInfos.get(pageIndex), reader);
+        pageInfos.set(pageIndex, null);
+        return page;
+    }
+
     private Page decodePage(PageInfo pageInfo, PageReader reader) {
         try {
             return reader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
