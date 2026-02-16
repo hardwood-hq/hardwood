@@ -128,6 +128,29 @@ When libdeflate is installed and available on the library path, Hardwood will au
 -Dhardwood.uselibdeflate=false
 ```
 
+#### Optional: SIMD Acceleration with Vector API (Java 22+)
+
+Hardwood can use the Java Vector API (SIMD) to accelerate certain decoding operations like counting non-null values, marking nulls, and dictionary lookups. This feature requires **Java 22 or newer** and is enabled automatically when available.
+
+To enable the Vector API incubator module, add this JVM argument:
+
+```bash
+--add-modules jdk.incubator.vector
+```
+
+When SIMD is available and enabled, you'll see an INFO log message at startup:
+```
+SIMD support: enabled (256-bit vectors)
+```
+
+The vector width depends on your CPU (128-bit for SSE/NEON, 256-bit for AVX2, 512-bit for AVX-512).
+
+To disable SIMD and force scalar operations (for debugging or comparison), set the system property:
+
+```bash
+-Dhardwood.simd.disabled=true
+```
+
 ---
 
 ## Usage
@@ -1186,23 +1209,25 @@ For detailed micro-benchmarks, build the JMH benchmark JAR and run it directly:
 # Build the benchmark JAR
 ./mvnw package -Pperformance-test -pl performance-testing/micro-benchmarks -am -DskipTests
 
-# Run all benchmarks
-java -jar performance-testing/micro-benchmarks/target/benchmarks.jar \
+# Run all benchmarks (with Vector API for SIMD support)
+java --add-modules jdk.incubator.vector \
+  -jar performance-testing/micro-benchmarks/target/benchmarks.jar \
   -p dataDir=performance-testing/test-data-setup/target/tlc-trip-record-data
 
 # Run a specific benchmark
-java -jar performance-testing/micro-benchmarks/target/benchmarks.jar \
-  "PageDecompressionBenchmark.decodePages" \
+java --add-modules jdk.incubator.vector \
+  -jar performance-testing/micro-benchmarks/target/benchmarks.jar \
+  "PageHandlingBenchmark.decodePages" \
   -p dataDir=performance-testing/test-data-setup/target/tlc-trip-record-data
 
-# Run with custom iterations (e.g., 5x default)
-java -jar performance-testing/micro-benchmarks/target/benchmarks.jar \
-  "PageDecompressionBenchmark.decodePages" \
-  -p dataDir=performance-testing/test-data-setup/target/tlc-trip-record-data \
-  -wi 15 -i 25
+# Run SIMD benchmark comparing scalar vs vectorized operations
+java --add-modules jdk.incubator.vector \
+  -jar performance-testing/micro-benchmarks/target/benchmarks.jar SimdBenchmark \
+  -p size=1024,8192,65536 -p implementation=scalar,auto
 
 # List available benchmarks
-java -jar performance-testing/micro-benchmarks/target/benchmarks.jar -l
+java --add-modules jdk.incubator.vector \
+  -jar performance-testing/micro-benchmarks/target/benchmarks.jar -l
 ```
 
 **Available benchmarks:**
@@ -1210,8 +1235,11 @@ java -jar performance-testing/micro-benchmarks/target/benchmarks.jar -l
 | Benchmark | Description |
 |-----------|-------------|
 | `MemoryMapBenchmark.memoryMapToByteArray` | Memory map a file and copy to byte array |
-| `PageDecompressionBenchmark.decompressPages` | Scan and decompress all pages |
-| `PageDecompressionBenchmark.decodePages` | Scan, decompress, and decode all pages |
+| `PageHandlingBenchmark.a_decompressPages` | Scan and decompress all pages |
+| `PageHandlingBenchmark.b_decodePages` | Scan, decompress, and decode all pages |
+| `PipelineBenchmark.a_assembleColumns` | Synchronous page decoding + column assembly |
+| `PipelineBenchmark.b_consumeRows` | Full pipeline with row-oriented access |
+| `SimdBenchmark.*` | SIMD operations (countNonNulls, markNulls, dictionary, bit unpacking) |
 
 **JMH options:**
 

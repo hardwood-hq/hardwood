@@ -7,8 +7,6 @@
  */
 package dev.morling.hardwood.internal.compression.libdeflate;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
@@ -25,6 +23,8 @@ import org.junit.jupiter.api.Test;
 import dev.morling.hardwood.internal.compression.DecompressorFactory;
 import dev.morling.hardwood.internal.compression.GzipDecompressor;
 import dev.morling.hardwood.metadata.CompressionCodec;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 class LibdeflateDecompressorIT {
 

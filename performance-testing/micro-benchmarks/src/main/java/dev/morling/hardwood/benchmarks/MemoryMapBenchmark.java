@@ -30,7 +30,7 @@ import org.openjdk.jmh.infra.Blackhole;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
-@Fork(value = 2, jvmArgs = { "-Xms512m", "-Xmx512m" })
+@Fork(value = 2, jvmArgs = { "-Xms512m", "-Xmx512m", "--add-modules", "jdk.incubator.vector" })
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
 public class MemoryMapBenchmark {

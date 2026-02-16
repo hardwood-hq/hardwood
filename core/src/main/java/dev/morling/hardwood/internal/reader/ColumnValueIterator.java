@@ -10,6 +10,8 @@ package dev.morling.hardwood.internal.reader;
 import java.util.Arrays;
 import java.util.BitSet;
 
+import dev.morling.hardwood.internal.encoding.simd.SimdOperations;
+import dev.morling.hardwood.internal.encoding.simd.VectorSupport;
 import dev.morling.hardwood.schema.ColumnSchema;
 
 /**
@@ -23,6 +25,8 @@ import dev.morling.hardwood.schema.ColumnSchema;
  * arrays. For nested schemas, it tracks repetition/definition levels.</p>
  */
 public class ColumnValueIterator {
+
+    private static final SimdOperations SIMD_OPS = VectorSupport.operations();
 
     private final PageCursor pageCursor;
     private final ColumnSchema column;
@@ -122,14 +126,7 @@ public class ColumnValueIterator {
     }
 
     private void markNulls(BitSet nulls, int[] defLevels, int srcPos, int destPos, int count, int maxDefLevel) {
-        if (nulls == null) {
-            return;
-        }
-        for (int i = 0; i < count; i++) {
-            if (defLevels[srcPos + i] < maxDefLevel) {
-                nulls.set(destPos + i);
-            }
-        }
+        SIMD_OPS.markNulls(nulls, defLevels, srcPos, destPos, count, maxDefLevel);
     }
 
     private TypedColumnData computeFlatBatch(int maxRecords) {

@@ -49,7 +49,7 @@ import dev.morling.hardwood.schema.FileSchema;
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
-@Fork(value = 2, jvmArgs = { "-Xms1g", "-Xmx1g" })
+@Fork(value = 2, jvmArgs = { "-Xms1g", "-Xmx1g", "--add-modules", "jdk.incubator.vector" })
 @Warmup(iterations = 3, time = 1)
 @Measurement(iterations = 5, time = 1)
 public class PageHandlingBenchmark {
