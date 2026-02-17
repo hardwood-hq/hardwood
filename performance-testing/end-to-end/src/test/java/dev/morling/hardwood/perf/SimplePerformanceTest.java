@@ -401,9 +401,8 @@ class SimplePerformanceTest {
     /**
      * Run using MultiFileRowReader with cross-file prefetching.
      * <p>
-     * Since NYC taxi data has schema variations (passenger_count type changes between years),
-     * files are grouped by schema compatibility and each group is processed with cross-file
-     * prefetching enabled.
+     * Groups files by schema compatibility (passenger_count type varies across files)
+     * and uses MultiFileRowReader for each group.
      * </p>
      */
     private Result runHardwoodMultiFile(List<Path> files) {
@@ -412,20 +411,18 @@ class SimplePerformanceTest {
         double fareAmount = 0.0;
         long rowCount = 0;
 
-        // Only read the 3 columns we need
         ColumnProjection projection = ColumnProjection.columns(
                 "passenger_count", "trip_distance", "fare_amount");
+        // Projected indices: 0=passenger_count, 1=trip_distance, 2=fare_amount
 
-        // Group files by passenger_count type for schema compatibility
-        // SchemaGroup includes type info, avoiding need to re-probe files
-        List<SchemaGroup> schemaGroups = groupFilesBySchema(files);
+        // Group files by schema to handle passenger_count type differences
+        List<SchemaGroup> groups = groupFilesBySchema(files);
 
         try (Hardwood hardwood = Hardwood.create()) {
-            for (SchemaGroup group : schemaGroups) {
-                boolean pcIsLong = group.passengerCountIsLong();
-
-                // Process all files in this group with cross-file prefetching
+            for (SchemaGroup group : groups) {
                 try (MultiFileRowReader rowReader = hardwood.openAll(group.files(), projection)) {
+                    boolean pcIsLong = group.passengerCountIsLong();
+
                     while (rowReader.hasNext()) {
                         rowReader.next();
                         rowCount++;
@@ -448,10 +445,10 @@ class SimplePerformanceTest {
                         }
                     }
                 }
-                catch (IOException e) {
-                    throw new RuntimeException("Failed to read files with MultiFileRowReader", e);
-                }
             }
+        }
+        catch (IOException e) {
+            throw new RuntimeException("Failed to read files with MultiFileRowReader", e);
         }
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }

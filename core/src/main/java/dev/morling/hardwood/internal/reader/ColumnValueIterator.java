@@ -8,25 +8,17 @@
 package dev.morling.hardwood.internal.reader;
 
 import java.util.Arrays;
-import java.util.BitSet;
 
-import dev.morling.hardwood.internal.encoding.simd.SimdOperations;
-import dev.morling.hardwood.internal.encoding.simd.VectorSupport;
 import dev.morling.hardwood.schema.ColumnSchema;
 
 /**
  * Reads column values from pages into TypedColumnData batches.
  *
- * <p>Batch computation is done synchronously when requested. Page-level prefetching
- * (handled by {@link PageCursor}) ensures decoded pages are ready, while column-level
- * parallelism (handled by the row reader) ensures all columns compute in parallel.</p>
- *
- * <p>For flat schemas, {@link #readBatch(int)} copies directly into typed primitive
- * arrays. For nested schemas, it tracks repetition/definition levels.</p>
+ * <p>For flat schemas, batches are pre-assembled by the {@link PageCursor}'s assembly
+ * thread and this class simply returns them. For nested schemas, on-demand batch
+ * computation is used to track repetition/definition levels.</p>
  */
 public class ColumnValueIterator {
-
-    private static final SimdOperations SIMD_OPS = VectorSupport.operations();
 
     private final PageCursor pageCursor;
     private final ColumnSchema column;
@@ -38,15 +30,6 @@ public class ColumnValueIterator {
     private int currentRecordStart;
     private boolean recordActive;
     private boolean exhausted = false;
-
-    // Reusable arrays for flat batch computation (avoids per-batch allocation)
-    private long[] reusableLongArray;
-    private double[] reusableDoubleArray;
-    private int[] reusableIntArray;
-    private float[] reusableFloatArray;
-    private boolean[] reusableBooleanArray;
-    private byte[][] reusableByteArrayArray;
-    private BitSet reusableNulls;
 
     public ColumnValueIterator(PageCursor pageCursor, ColumnSchema column, boolean flatSchema) {
         this.pageCursor = pageCursor;
@@ -60,13 +43,9 @@ public class ColumnValueIterator {
     /**
      * Read values for up to {@code maxRecords} records into typed arrays.
      *
-     * <p>Page-level prefetching ensures decoded pages are typically ready.
-     * Column-level parallelism is handled by the row reader calling this
-     * method on all columns concurrently.</p>
-     *
-     * <p>If a shared stop count is configured and this column approaches a file
-     * transition, it will update the shared counter to signal other columns to
-     * stop at the same point.</p>
+     * <p>For flat schemas, eager assembly is used: batches are pre-assembled by
+     * the assembly thread and this method just returns them. For nested schemas,
+     * on-demand assembly is used.</p>
      *
      * @param maxRecords maximum number of records to read
      * @return typed column data containing values, levels, and record boundaries
@@ -76,13 +55,35 @@ public class ColumnValueIterator {
             return emptyTypedColumnData();
         }
 
-        TypedColumnData result = flatSchema ? computeFlatBatch(maxRecords) : computeNestedBatch(maxRecords);
+        // Flat schemas use eager assembly (assembly buffer is always provided)
+        ColumnAssemblyBuffer assemblyBuffer = pageCursor.getAssemblyBuffer();
+        if (assemblyBuffer != null) {
+            return readEagerBatch(assemblyBuffer);
+        }
+
+        // Nested schemas use on-demand batch computation
+        TypedColumnData result = computeNestedBatch(maxRecords);
 
         if (result.recordCount() == 0) {
             exhausted = true;
         }
 
         return result;
+    }
+
+    /**
+     * Returns the next pre-assembled batch from the assembly buffer.
+     * The assembly thread has already done all the work (copying, null bitmap creation).
+     */
+    private TypedColumnData readEagerBatch(ColumnAssemblyBuffer assemblyBuffer) {
+        TypedColumnData data = assemblyBuffer.awaitNextBatch();
+
+        if (data == null) {
+            exhausted = true;
+            return emptyTypedColumnData();
+        }
+
+        return data;
     }
 
     /**
@@ -108,180 +109,6 @@ public class ColumnValueIterator {
             case BOOLEAN -> new NestedColumnData.BooleanColumn(column, new boolean[0], new int[0], null, null, maxDefLevel, 0);
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> new NestedColumnData.ByteArrayColumn(column, new byte[0][], new int[0], null, null, maxDefLevel, 0);
         };
-    }
-
-    // ==================== Flat Batch Computation ====================
-
-    private BitSet reuseOrCreateNulls(int maxDefLevel, int maxRecords) {
-        if (maxDefLevel <= 0) {
-            return null;
-        }
-        if (reusableNulls == null) {
-            reusableNulls = new BitSet(maxRecords);
-        }
-        else {
-            reusableNulls.clear();
-        }
-        return reusableNulls;
-    }
-
-    private void markNulls(BitSet nulls, int[] defLevels, int srcPos, int destPos, int count, int maxDefLevel) {
-        SIMD_OPS.markNulls(nulls, defLevels, srcPos, destPos, count, maxDefLevel);
-    }
-
-    private TypedColumnData computeFlatBatch(int maxRecords) {
-        int maxDefLevel = column.maxDefinitionLevel();
-
-        if (!ensurePageLoaded()) {
-            return emptyTypedColumnData();
-        }
-
-        return switch (currentPage) {
-            case Page.IntPage p -> computeFlatInt(maxRecords, maxDefLevel);
-            case Page.LongPage p -> computeFlatLong(maxRecords, maxDefLevel);
-            case Page.FloatPage p -> computeFlatFloat(maxRecords, maxDefLevel);
-            case Page.DoublePage p -> computeFlatDouble(maxRecords, maxDefLevel);
-            case Page.BooleanPage p -> computeFlatBoolean(maxRecords, maxDefLevel);
-            case Page.ByteArrayPage p -> computeFlatByteArray(maxRecords, maxDefLevel);
-        };
-    }
-
-    private TypedColumnData computeFlatInt(int maxRecords, int maxDefLevel) {
-        if (reusableIntArray == null || reusableIntArray.length < maxRecords) {
-            reusableIntArray = new int[maxRecords];
-        }
-        int[] values = reusableIntArray;
-        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
-
-        int recordCount = 0;
-        while (recordCount < maxRecords && ensurePageLoaded()) {
-            Page.IntPage page = (Page.IntPage) currentPage;
-            int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - recordCount);
-
-            System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
-
-            position += toCopy;
-            recordCount += toCopy;
-        }
-
-        return new FlatColumnData.IntColumn(column, values, nulls, recordCount);
-    }
-
-    private TypedColumnData computeFlatLong(int maxRecords, int maxDefLevel) {
-        if (reusableLongArray == null || reusableLongArray.length < maxRecords) {
-            reusableLongArray = new long[maxRecords];
-        }
-        long[] values = reusableLongArray;
-        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
-
-        int recordCount = 0;
-        while (recordCount < maxRecords && ensurePageLoaded()) {
-            Page.LongPage page = (Page.LongPage) currentPage;
-            int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - recordCount);
-
-            System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
-
-            position += toCopy;
-            recordCount += toCopy;
-        }
-
-        return new FlatColumnData.LongColumn(column, values, nulls, recordCount);
-    }
-
-    private TypedColumnData computeFlatFloat(int maxRecords, int maxDefLevel) {
-        if (reusableFloatArray == null || reusableFloatArray.length < maxRecords) {
-            reusableFloatArray = new float[maxRecords];
-        }
-        float[] values = reusableFloatArray;
-        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
-
-        int recordCount = 0;
-        while (recordCount < maxRecords && ensurePageLoaded()) {
-            Page.FloatPage page = (Page.FloatPage) currentPage;
-            int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - recordCount);
-
-            System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
-
-            position += toCopy;
-            recordCount += toCopy;
-        }
-
-        return new FlatColumnData.FloatColumn(column, values, nulls, recordCount);
-    }
-
-    private TypedColumnData computeFlatDouble(int maxRecords, int maxDefLevel) {
-        if (reusableDoubleArray == null || reusableDoubleArray.length < maxRecords) {
-            reusableDoubleArray = new double[maxRecords];
-        }
-        double[] values = reusableDoubleArray;
-        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
-
-        int recordCount = 0;
-        while (recordCount < maxRecords && ensurePageLoaded()) {
-            Page.DoublePage page = (Page.DoublePage) currentPage;
-            int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - recordCount);
-
-            System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
-
-            position += toCopy;
-            recordCount += toCopy;
-        }
-
-        return new FlatColumnData.DoubleColumn(column, values, nulls, recordCount);
-    }
-
-    private TypedColumnData computeFlatBoolean(int maxRecords, int maxDefLevel) {
-        if (reusableBooleanArray == null || reusableBooleanArray.length < maxRecords) {
-            reusableBooleanArray = new boolean[maxRecords];
-        }
-        boolean[] values = reusableBooleanArray;
-        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
-
-        int recordCount = 0;
-        while (recordCount < maxRecords && ensurePageLoaded()) {
-            Page.BooleanPage page = (Page.BooleanPage) currentPage;
-            int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - recordCount);
-
-            System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
-
-            position += toCopy;
-            recordCount += toCopy;
-        }
-
-        return new FlatColumnData.BooleanColumn(column, values, nulls, recordCount);
-    }
-
-    private TypedColumnData computeFlatByteArray(int maxRecords, int maxDefLevel) {
-        if (reusableByteArrayArray == null || reusableByteArrayArray.length < maxRecords) {
-            reusableByteArrayArray = new byte[maxRecords][];
-        }
-        byte[][] values = reusableByteArrayArray;
-        BitSet nulls = reuseOrCreateNulls(maxDefLevel, maxRecords);
-
-        int recordCount = 0;
-        while (recordCount < maxRecords && ensurePageLoaded()) {
-            Page.ByteArrayPage page = (Page.ByteArrayPage) currentPage;
-            int available = page.size() - position;
-            int toCopy = Math.min(available, maxRecords - recordCount);
-
-            System.arraycopy(page.values(), position, values, recordCount, toCopy);
-            markNulls(nulls, page.definitionLevels(), position, recordCount, toCopy, maxDefLevel);
-
-            position += toCopy;
-            recordCount += toCopy;
-        }
-
-        return new FlatColumnData.ByteArrayColumn(column, values, nulls, recordCount);
     }
 
     // ==================== Nested Batch Computation ====================

@@ -16,6 +16,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 
 import dev.morling.hardwood.internal.reader.BatchDataView;
+import dev.morling.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.morling.hardwood.internal.reader.ColumnValueIterator;
 import dev.morling.hardwood.internal.reader.PageCursor;
 import dev.morling.hardwood.internal.reader.PageInfo;
@@ -118,11 +119,20 @@ final class SingleFileRowReader extends AbstractRowReader {
                 totalPages, projectedColumnCount);
 
         // Create iterators for each projected column
+        boolean flatSchema = schema.isFlatSchema();
         iterators = new ColumnValueIterator[projectedColumnCount];
         for (int i = 0; i < projectedColumnCount; i++) {
             int originalIndex = projectedSchema.toOriginalIndex(i);
-            PageCursor pageCursor = new PageCursor(pageInfosByColumn.get(i), context);
-            iterators[i] = new ColumnValueIterator(pageCursor, schema.getColumn(originalIndex), schema.isFlatSchema());
+            ColumnSchema columnSchema = schema.getColumn(originalIndex);
+
+            // Create assembly buffer for eager batch assembly (flat schemas only)
+            ColumnAssemblyBuffer assemblyBuffer = null;
+            if (flatSchema) {
+                assemblyBuffer = new ColumnAssemblyBuffer(columnSchema, adaptiveBatchSize);
+            }
+
+            PageCursor pageCursor = new PageCursor(pageInfosByColumn.get(i), context, assemblyBuffer);
+            iterators[i] = new ColumnValueIterator(pageCursor, columnSchema, flatSchema);
         }
 
         // Initialize the data view

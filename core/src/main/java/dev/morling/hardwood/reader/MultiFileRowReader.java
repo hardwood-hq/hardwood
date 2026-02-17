@@ -14,10 +14,12 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 
 import dev.morling.hardwood.internal.reader.BatchDataView;
+import dev.morling.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.morling.hardwood.internal.reader.ColumnValueIterator;
 import dev.morling.hardwood.internal.reader.FileManager;
 import dev.morling.hardwood.internal.reader.PageCursor;
 import dev.morling.hardwood.internal.reader.TypedColumnData;
+import dev.morling.hardwood.schema.ColumnSchema;
 import dev.morling.hardwood.schema.FileSchema;
 import dev.morling.hardwood.schema.ProjectedSchema;
 
@@ -86,15 +88,25 @@ public class MultiFileRowReader extends AbstractRowReader {
         initialized = true;
 
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
+        boolean flatSchema = schema.isFlatSchema();
 
         // Create iterators using pages from the first file
         String firstFileName = initResult.firstFileState().path().getFileName().toString();
         iterators = new ColumnValueIterator[projectedColumnCount];
         for (int i = 0; i < projectedColumnCount; i++) {
             int originalIndex = projectedSchema.toOriginalIndex(i);
+            ColumnSchema columnSchema = schema.getColumn(originalIndex);
+
+            // Create assembly buffer for eager batch assembly (flat schemas only)
+            ColumnAssemblyBuffer assemblyBuffer = null;
+            if (flatSchema) {
+                assemblyBuffer = new ColumnAssemblyBuffer(columnSchema, adaptiveBatchSize);
+            }
+
             PageCursor pageCursor = new PageCursor(
-                    initResult.firstFileState().pageInfosByColumn().get(i), context, fileManager, i, firstFileName);
-            iterators[i] = new ColumnValueIterator(pageCursor, schema.getColumn(originalIndex), schema.isFlatSchema());
+                    initResult.firstFileState().pageInfosByColumn().get(i), context, fileManager, i, firstFileName,
+                    assemblyBuffer);
+            iterators[i] = new ColumnValueIterator(pageCursor, columnSchema, flatSchema);
         }
 
         // Initialize the unified data view
