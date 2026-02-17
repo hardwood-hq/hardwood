@@ -29,6 +29,10 @@ import dev.morling.hardwood.reader.HardwoodContext;
  * <p>
  * For multi-file reading, the cursor automatically fetches pages from the next file
  * when the remaining pages in the current file fall below the prefetch depth.
+ * <p>
+ * <b>Eager Assembly Mode:</b> When a {@link ColumnAssemblyBuffer} is provided, a virtual
+ * thread is started to continuously consume decoded pages and assemble them into batches.
+ * This pipelines assembly with decoding, so batches are ready when the consumer needs them.
  */
 public class PageCursor {
 
@@ -56,11 +60,25 @@ public class PageCursor {
     private final Deque<CompletableFuture<Page>> prefetchQueue = new ArrayDeque<>();
     private int targetPrefetchDepth = INITIAL_PREFETCH_DEPTH;
 
+    // Eager assembly support (optional)
+    private final ColumnAssemblyBuffer assemblyBuffer;
+
     /**
-     * Creates a PageCursor for single-file reading.
+     * Creates a PageCursor for single-file reading without eager assembly.
      */
     public PageCursor(List<PageInfo> pageInfos, HardwoodContext context) {
-        this(pageInfos, context, null, -1, null);
+        this(pageInfos, context, null, -1, null, null);
+    }
+
+    /**
+     * Creates a PageCursor for single-file reading with optional eager assembly.
+     *
+     * @param pageInfos pages from the file
+     * @param context hardwood context with executor
+     * @param assemblyBuffer optional buffer for eager batch assembly (may be null for nested schemas)
+     */
+    public PageCursor(List<PageInfo> pageInfos, HardwoodContext context, ColumnAssemblyBuffer assemblyBuffer) {
+        this(pageInfos, context, null, -1, null, assemblyBuffer);
     }
 
     /**
@@ -74,6 +92,22 @@ public class PageCursor {
      */
     public PageCursor(List<PageInfo> pageInfos, HardwoodContext context,
                       FileManager fileManager, int projectedColumnIndex, String initialFileName) {
+        this(pageInfos, context, fileManager, projectedColumnIndex, initialFileName, null);
+    }
+
+    /**
+     * Creates a PageCursor with optional multi-file support and eager assembly.
+     *
+     * @param pageInfos initial pages from the first file
+     * @param context hardwood context with executor
+     * @param fileManager file manager for fetching pages from subsequent files (may be null)
+     * @param projectedColumnIndex the projected column index for multi-file page requests
+     * @param initialFileName the initial file name for logging (may be null)
+     * @param assemblyBuffer optional buffer for eager batch assembly (may be null)
+     */
+    public PageCursor(List<PageInfo> pageInfos, HardwoodContext context,
+                      FileManager fileManager, int projectedColumnIndex, String initialFileName,
+                      ColumnAssemblyBuffer assemblyBuffer) {
         this.pageInfos = new ArrayList<>(pageInfos);
         this.context = context;
         this.executor = context.executor();
@@ -81,6 +115,7 @@ public class PageCursor {
         this.projectedColumnIndex = projectedColumnIndex;
         this.initialFileName = initialFileName;
         this.currentFileEndIndex = pageInfos.size();
+        this.assemblyBuffer = assemblyBuffer;
 
         if (pageInfos.isEmpty()) {
             this.columnName = "unknown";
@@ -94,8 +129,41 @@ public class PageCursor {
                     first.columnSchema(),
                     context.decompressorFactory());
         }
+
         // Start prefetching immediately
         fillPrefetchQueue();
+
+        // For eager assembly, start a virtual thread to continuously consume pages
+        // and assemble them into batches. Virtual threads are ideal here because:
+        // 1. The thread blocks waiting for decoded pages (I/O-like wait)
+        // 2. Virtual threads are lightweight and managed by the JVM
+        // 3. No need for daemon thread management
+        if (assemblyBuffer != null) {
+            Thread.startVirtualThread(this::runAssemblyThread);
+        }
+    }
+
+    /**
+     * Assembly thread that continuously consumes decoded pages and assembles them into batches.
+     * <p>
+     * This is the single producer for the assembly buffer's ring buffer. Decoded pages
+     * come from parallel decoder threads via nextPage(), but batch assembly happens
+     * here sequentially to maintain the single-producer guarantee.
+     * <p>
+     * When exhausted, signals the assembly buffer to finish.
+     */
+    private void runAssemblyThread() {
+        try {
+            while (hasNext()) {
+                Page page = nextPage();
+                if (page != null) {
+                    assemblyBuffer.appendPage(page);
+                }
+            }
+        }
+        finally {
+            signalExhausted();
+        }
     }
 
     /**
@@ -119,6 +187,7 @@ public class PageCursor {
             if (nextPageIndex >= pageInfos.size()) {
                 // Current file exhausted - try to load next file (blocking if needed)
                 if (!tryLoadNextFileBlocking()) {
+                    signalExhausted();
                     return null; // Truly exhausted
                 }
                 // Pages were added from next file, try to fill prefetch queue
@@ -227,6 +296,23 @@ public class PageCursor {
             prefetchQueue.addLast(CompletableFuture.supplyAsync(
                     () -> decodePageAndRelease(pageIndex, reader), executor));
         }
+    }
+
+    /**
+     * Signals that this cursor is exhausted and no more pages will be produced.
+     * If eager assembly is enabled, this signals the assembly buffer to finish.
+     */
+    private void signalExhausted() {
+        if (assemblyBuffer != null) {
+            assemblyBuffer.finish();
+        }
+    }
+
+    /**
+     * Returns the assembly buffer if eager assembly is enabled.
+     */
+    public ColumnAssemblyBuffer getAssemblyBuffer() {
+        return assemblyBuffer;
     }
 
     /**
