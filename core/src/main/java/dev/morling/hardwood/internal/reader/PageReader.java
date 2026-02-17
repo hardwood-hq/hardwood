@@ -174,10 +174,8 @@ public class PageReader {
             definitionLevels = decodeLevels(defLevelData, header.numValues(), column.maxDefinitionLevel());
         }
 
-        int numNonNullValues = countNonNullValues(header.numValues(), definitionLevels);
-
         return decodeTypedValues(
-                header.encoding(), dataStream, header.numValues(), numNonNullValues,
+                header.encoding(), dataStream, header.numValues(),
                 definitionLevels, repetitionLevels, dictionary);
     }
 
@@ -216,10 +214,9 @@ public class PageReader {
         }
 
         ByteArrayInputStream valuesStream = new ByteArrayInputStream(valuesData);
-        int numNonNullValues = header.numValues() - header.numNulls();
 
         return decodeTypedValues(
-                header.encoding(), valuesStream, header.numValues(), numNonNullValues,
+                header.encoding(), valuesStream, header.numValues(),
                 definitionLevels, repetitionLevels, dictionary);
     }
 
@@ -227,7 +224,7 @@ public class PageReader {
      * Decode values into Page using primitive arrays where possible.
      */
     private Page decodeTypedValues(Encoding encoding, InputStream dataStream,
-                                   int numValues, int numNonNullValues,
+                                   int numValues,
                                    int[] definitionLevels, int[] repetitionLevels,
                                    Dictionary dictionary) throws IOException {
         int maxDefLevel = column.maxDefinitionLevel();
@@ -288,6 +285,7 @@ public class PageReader {
                 };
             }
             case BYTE_STREAM_SPLIT -> {
+                int numNonNullValues = countNonNullValues(numValues, definitionLevels);
                 byte[] allData = dataStream.readAllBytes();
                 ByteStreamSplitDecoder decoder = new ByteStreamSplitDecoder(
                         allData, numNonNullValues, type, column.typeLength());
@@ -357,6 +355,7 @@ public class PageReader {
                 return new Page.BooleanPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
             }
             case DELTA_LENGTH_BYTE_ARRAY -> {
+                int numNonNullValues = countNonNullValues(numValues, definitionLevels);
                 DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(dataStream);
                 decoder.initialize(numNonNullValues);
                 byte[][] values = new byte[numValues][];
@@ -364,6 +363,7 @@ public class PageReader {
                 return new Page.ByteArrayPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
             }
             case DELTA_BYTE_ARRAY -> {
+                int numNonNullValues = countNonNullValues(numValues, definitionLevels);
                 DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(dataStream);
                 decoder.initialize(numNonNullValues);
                 byte[][] values = new byte[numValues][];
