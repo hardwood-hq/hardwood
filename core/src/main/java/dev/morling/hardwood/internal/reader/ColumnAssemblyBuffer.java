@@ -276,8 +276,21 @@ public class ColumnAssemblyBuffer {
             checkError();
 
             if (finished) {
+                // Drain any batch that was put before the flag was set
+                data = readyBatches.poll();
+                if (data != null) {
+                    previousBatch = data;
+                    return data;
+                }
                 return null;  // No more batches
             }
+
+            // Consumer must block — assembly pipeline can't keep up
+            long waitStart = System.nanoTime();
+            BatchWaitEvent event = new BatchWaitEvent();
+            event.column = column.name();
+            event.begin();
+
             // Block waiting for batch
             try {
                 while (!finished) {
@@ -287,6 +300,10 @@ public class ColumnAssemblyBuffer {
                     }
                 }
                 if (data == null) {
+                    // finished became true — drain any batch that was put before the flag was set
+                    data = readyBatches.poll();
+                }
+                if (data == null) {
                     checkError();
                     return null;  // Finished while waiting
                 }
@@ -294,6 +311,15 @@ public class ColumnAssemblyBuffer {
             catch (InterruptedException e) {
                 Thread.currentThread().interrupt();
                 return null;
+            }
+            finally {
+                long waitDurationMs = (System.nanoTime() - waitStart) / 1_000_000;
+                event.waitDurationMs = waitDurationMs;
+                event.end();
+                event.commit();
+                LOG.log(System.Logger.Level.DEBUG,
+                        "Consumer blocked {0} ms waiting for batch from column ''{1}''",
+                        waitDurationMs, column.name());
             }
         }
 

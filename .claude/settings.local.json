@@ -95,7 +95,8 @@
       "WebFetch(domain:inside.java)",
       "Bash(git -C /app log --oneline -20)",
       "Bash(jar:*)",
-      "Bash(../mvnw surefire:test:*)"
+      "Bash(../mvnw surefire:test:*)",
+      "Bash(git status:*)"
     ]
   }
 }
