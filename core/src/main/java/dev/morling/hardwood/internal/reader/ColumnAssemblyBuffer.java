@@ -55,6 +55,9 @@ public class ColumnAssemblyBuffer {
     // Signals that no more data will be produced
     private volatile boolean finished = false;
 
+    // Stores any error from the producer thread
+    private volatile Throwable error = null;
+
     /**
      * Creates a new column assembly buffer.
      *
@@ -125,11 +128,24 @@ public class ColumnAssemblyBuffer {
     /**
      * Signals that no more pages will be produced.
      * Publishes any partial batch remaining.
+     * This method is idempotent - subsequent calls have no effect.
      */
     public void finish() {
+        if (finished) {
+            return;
+        }
         if (rowsInCurrentBatch > 0) {
             publishCurrentBatch();
         }
+        finished = true;
+    }
+
+    /**
+     * Signals that an error occurred in the producer thread.
+     * The consumer will receive this error when calling awaitNextBatch().
+     */
+    public void signalError(Throwable t) {
+        this.error = t;
         finished = true;
     }
 
@@ -238,8 +254,13 @@ public class ColumnAssemblyBuffer {
     /**
      * Waits for and returns the next ready TypedColumnData.
      * Blocks until data is available or the producer signals completion.
+     * <p>
+     * If the producer encountered an error, this method will first return any
+     * batches that were successfully queued before the error, then throw the
+     * error when the queue is empty.
      *
      * @return the next TypedColumnData, or null if no more data
+     * @throws RuntimeException if the producer encountered an error and the queue is empty
      */
     public TypedColumnData awaitNextBatch() {
         // Return previous batch's array to the pool for reuse
@@ -248,9 +269,12 @@ public class ColumnAssemblyBuffer {
             previousBatch = null;
         }
 
-        // Try to get next batch
+        // Try to get next batch from queue first (drain before checking error)
         TypedColumnData data = readyBatches.poll();
         if (data == null) {
+            // Queue is empty - check for error before returning null
+            checkError();
+
             if (finished) {
                 return null;  // No more batches
             }
@@ -263,6 +287,7 @@ public class ColumnAssemblyBuffer {
                     }
                 }
                 if (data == null) {
+                    checkError();
                     return null;  // Finished while waiting
                 }
             }
@@ -274,6 +299,19 @@ public class ColumnAssemblyBuffer {
 
         previousBatch = data;
         return data;
+    }
+
+    /**
+     * Checks if the producer encountered an error and throws it.
+     */
+    private void checkError() {
+        Throwable t = error;
+        if (t != null) {
+            if (t instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException("Error in assembly thread for column '" + column.name() + "'", t);
+        }
     }
 
     /**
@@ -299,6 +337,13 @@ public class ColumnAssemblyBuffer {
      */
     public boolean hasMore() {
         return !readyBatches.isEmpty() || !finished;
+    }
+
+    /**
+     * Checks if the producer has finished (either normally or with error).
+     */
+    public boolean isProducerFinished() {
+        return finished;
     }
 
     /**

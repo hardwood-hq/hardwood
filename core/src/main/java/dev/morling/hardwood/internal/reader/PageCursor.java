@@ -150,7 +150,8 @@ public class PageCursor {
      * come from parallel decoder threads via nextPage(), but batch assembly happens
      * here sequentially to maintain the single-producer guarantee.
      * <p>
-     * When exhausted, signals the assembly buffer to finish.
+     * When exhausted, signals the assembly buffer to finish. If an error occurs,
+     * it is reported to the assembly buffer so the consumer can receive it.
      */
     private void runAssemblyThread() {
         try {
@@ -160,9 +161,10 @@ public class PageCursor {
                     assemblyBuffer.appendPage(page);
                 }
             }
+            assemblyBuffer.finish();
         }
-        finally {
-            signalExhausted();
+        catch (Throwable t) {
+            assemblyBuffer.signalError(t);
         }
     }
 
