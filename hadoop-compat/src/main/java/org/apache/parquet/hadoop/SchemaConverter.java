@@ -16,12 +16,12 @@ import org.apache.parquet.schema.OriginalType;
 import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.Type;
 
-import dev.morling.hardwood.metadata.ConvertedType;
-import dev.morling.hardwood.metadata.LogicalType;
-import dev.morling.hardwood.metadata.PhysicalType;
-import dev.morling.hardwood.metadata.RepetitionType;
-import dev.morling.hardwood.schema.FileSchema;
-import dev.morling.hardwood.schema.SchemaNode;
+import dev.hardwood.metadata.ConvertedType;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 /**
  * Converts Hardwood schema to parquet-java compatible schema types.

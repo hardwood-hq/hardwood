@@ -22,7 +22,7 @@ In the future:
 
 ```xml
 <dependency>
-    <groupId>dev.hardwoodhq</groupId>
+    <groupId>dev.hardwood</groupId>
     <artifactId>hardwood-core</artifactId>
     <version>1.0.0-SNAPSHOT</version>
 </dependency>
@@ -31,7 +31,7 @@ In the future:
 **Gradle:**
 
 ```groovy
-implementation 'dev.hardwoodhq:hardwood-core:1.0.0-SNAPSHOT'
+implementation 'dev.hardwood:hardwood-core:1.0.0-SNAPSHOT'
 ```
 
 ### Compression Libraries
@@ -160,12 +160,12 @@ To disable SIMD and force scalar operations (for debugging or comparison), set t
 The `RowReader` provides a convenient row-oriented interface for reading Parquet files with typed accessor methods for type-safe field access.
 
 ```java
-import dev.morling.hardwood.reader.ParquetFileReader;
-import dev.morling.hardwood.reader.RowReader;
-import dev.morling.hardwood.row.PqStruct;
-import dev.morling.hardwood.row.PqList;
-import dev.morling.hardwood.row.PqIntList;
-import dev.morling.hardwood.row.PqMap;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqList;
+import dev.hardwood.row.PqIntList;
+import dev.hardwood.row.PqMap;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -302,9 +302,9 @@ while (rowReader.hasNext()) {
 Column projection allows reading only a subset of columns from a Parquet file, improving performance by skipping I/O, decoding, and memory allocation for unneeded columns.
 
 ```java
-import dev.morling.hardwood.reader.ColumnProjection;
-import dev.morling.hardwood.reader.ParquetFileReader;
-import dev.morling.hardwood.reader.RowReader;
+import dev.hardwood.reader.ColumnProjection;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 
 try (ParquetFileReader fileReader = ParquetFileReader.open(path);
      RowReader rowReader = fileReader.createRowReader(
@@ -372,8 +372,8 @@ When processing multiple Parquet files, use the `Hardwood` class to share a thre
 For reading multiple files as a single logical dataset, use `openAll()` which returns a `MultiFileRowReader`:
 
 ```java
-import dev.morling.hardwood.reader.Hardwood;
-import dev.morling.hardwood.reader.MultiFileRowReader;
+import dev.hardwood.reader.Hardwood;
+import dev.hardwood.reader.MultiFileRowReader;
 
 List<Path> files = List.of(
     Path.of("data_2024_01.parquet"),
@@ -414,9 +414,9 @@ try (Hardwood hardwood = Hardwood.create();
 When you need to process files independently (e.g., different handling per file), use individual readers:
 
 ```java
-import dev.morling.hardwood.reader.Hardwood;
-import dev.morling.hardwood.reader.ParquetFileReader;
-import dev.morling.hardwood.reader.RowReader;
+import dev.hardwood.reader.Hardwood;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 
 try (Hardwood hardwood = Hardwood.create()) {
     for (Path file : parquetFiles) {
@@ -446,12 +446,12 @@ For single-file usage, `ParquetFileReader.open(path)` remains the simplest optio
 The `ColumnReader` provides lower-level columnar access, useful when you need to process specific columns independently or when working with the columnar nature of Parquet directly.
 
 ```java
-import dev.morling.hardwood.reader.ParquetFileReader;
-import dev.morling.hardwood.reader.ColumnReader;
-import dev.morling.hardwood.schema.FileSchema;
-import dev.morling.hardwood.schema.ColumnSchema;
-import dev.morling.hardwood.metadata.RowGroup;
-import dev.morling.hardwood.metadata.ColumnChunk;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.ColumnChunk;
 
 try (ParquetFileReader reader = ParquetFileReader.open(path)) {
     // Get schema information

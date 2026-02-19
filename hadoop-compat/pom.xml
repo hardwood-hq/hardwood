@@ -12,7 +12,7 @@
   <modelVersion>4.0.0</modelVersion>
 
   <parent>
-    <groupId>dev.hardwoodhq</groupId>
+    <groupId>dev.hardwood</groupId>
     <artifactId>hardwood-parent</artifactId>
     <version>1.0.0-SNAPSHOT</version>
   </parent>
@@ -25,7 +25,7 @@
   <dependencies>
     <!-- Only runtime dependency: hardwood-core -->
     <dependency>
-      <groupId>dev.hardwoodhq</groupId>
+      <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-core</artifactId>
     </dependency>
 

@@ -57,7 +57,7 @@ Hardwood reads Parquet files without requiring Hadoop or parquet-java. It implem
 ## Package Structure
 
 ```
-dev.morling.hardwood/
+dev.hardwood.hardwood/
 ├── reader/              # PUBLIC API - Entry points
 │   ├── ParquetFileReader    Main entry: open(), createRowReader()
 │   ├── RowReader            Row iteration interface

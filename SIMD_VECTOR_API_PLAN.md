@@ -18,12 +18,12 @@ Add Java Vector API optimizations to accelerate Parquet decoding operations. The
 ### Strategy Pattern with Runtime Detection
 
 ```
-core/src/main/java/dev/morling/hardwood/internal/encoding/simd/
+core/src/main/java/dev/hardwood/hardwood/internal/encoding/simd/
 ├── VectorSupport.java        # Runtime detection (isVectorAvailable())
 ├── SimdOperations.java       # Interface for vectorized operations
 └── ScalarOperations.java     # Scalar fallback implementation
 
-core/src/main/java25/dev/morling/hardwood/internal/encoding/simd/
+core/src/main/java25/dev/hardwood/hardwood/internal/encoding/simd/
 └── VectorOperations.java     # Vector API implementation (multi-release)
 ```
 
@@ -203,13 +203,13 @@ public void gatherDoubles(byte[] data, int numValues, double[] output,
 
 | Path | Purpose |
 |------|---------|
-| `core/src/main/java/dev/morling/hardwood/internal/encoding/simd/VectorSupport.java` | Runtime detection |
-| `core/src/main/java/dev/morling/hardwood/internal/encoding/simd/SimdOperations.java` | Operations interface |
-| `core/src/main/java/dev/morling/hardwood/internal/encoding/simd/ScalarOperations.java` | Scalar fallback |
-| `core/src/main/java25/dev/morling/hardwood/internal/encoding/simd/VectorOperations.java` | SIMD implementation |
-| `core/src/main/java25/dev/morling/hardwood/internal/encoding/simd/VectorSupport.java` | SIMD-enabled override |
-| `core/src/test/java/dev/morling/hardwood/internal/encoding/simd/SimdOperationsTest.java` | Unit tests |
-| `performance-testing/micro-benchmarks/src/main/java/dev/morling/hardwood/benchmarks/SimdBenchmark.java` | JMH benchmarks |
+| `core/src/main/java/dev/hardwood/hardwood/internal/encoding/simd/VectorSupport.java` | Runtime detection |
+| `core/src/main/java/dev/hardwood/hardwood/internal/encoding/simd/SimdOperations.java` | Operations interface |
+| `core/src/main/java/dev/hardwood/hardwood/internal/encoding/simd/ScalarOperations.java` | Scalar fallback |
+| `core/src/main/java25/dev/hardwood/hardwood/internal/encoding/simd/VectorOperations.java` | SIMD implementation |
+| `core/src/main/java25/dev/hardwood/hardwood/internal/encoding/simd/VectorSupport.java` | SIMD-enabled override |
+| `core/src/test/java/dev/hardwood/hardwood/internal/encoding/simd/SimdOperationsTest.java` | Unit tests |
+| `performance-testing/micro-benchmarks/src/main/java/dev/hardwood/hardwood/benchmarks/SimdBenchmark.java` | JMH benchmarks |
 
 ## 5. Files to Modify
 
@@ -301,7 +301,7 @@ public void gatherDoubles(byte[] data, int numValues, double[] output,
 ## 7. Implementation Phases
 
 ### Phase 1: Infrastructure ✅ COMPLETE
-- [x] Create `core/src/main/java/dev/morling/hardwood/internal/encoding/simd/` package
+- [x] Create `core/src/main/java/dev/hardwood/hardwood/internal/encoding/simd/` package
 - [x] Implement `VectorSupport.java` (base version returns scalar, Java 22+ has runtime detection)
 - [x] Implement `SimdOperations.java` interface
 - [x] Implement `ScalarOperations.java` (loop-unrolled scalar fallback)
@@ -485,7 +485,7 @@ java --add-modules jdk.incubator.vector \
 The project already uses multi-release JAR for FFM/libdeflate:
 
 ```
-core/src/main/java22/dev/morling/hardwood/internal/compression/libdeflate/
+core/src/main/java22/dev/hardwood/hardwood/internal/compression/libdeflate/
 ├── LibdeflateLoader.java      # FFM implementation
 └── LibdeflateDecompressor.java
 ```

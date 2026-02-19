@@ -15,9 +15,9 @@ import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
 import org.apache.parquet.schema.Type;
 
-import dev.morling.hardwood.reader.RowReader;
-import dev.morling.hardwood.row.PqList;
-import dev.morling.hardwood.row.PqStruct;
+import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqList;
+import dev.hardwood.row.PqStruct;
 
 /**
  * SimpleGroup implementation that wraps Hardwood's RowReader.

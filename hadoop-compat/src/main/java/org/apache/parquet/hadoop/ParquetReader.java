@@ -15,8 +15,8 @@ import org.apache.parquet.example.data.Group;
 import org.apache.parquet.example.data.simple.SimpleGroup;
 import org.apache.parquet.schema.MessageType;
 
-import dev.morling.hardwood.reader.ParquetFileReader;
-import dev.morling.hardwood.reader.RowReader;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 
 /**
  * Parquet reader with parquet-java compatible API.

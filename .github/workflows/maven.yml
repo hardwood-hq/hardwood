@@ -52,7 +52,7 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: maven-repo
-          path: ~/.m2/repository/dev/hardwoodhq/
+          path: ~/.m2/repository/dev/hardwood/
           retention-days: 1
 
   integration-tests:
@@ -104,7 +104,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: maven-repo
-          path: ~/.m2/repository/dev/hardwoodhq/
+          path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Run integration tests (Java 21)'
         if: ${{ !matrix.install_libdeflate && !matrix.enable_incubating }}
@@ -145,7 +145,7 @@ jobs:
         uses: actions/download-artifact@v4
         with:
           name: maven-repo
-          path: ~/.m2/repository/dev/hardwoodhq/
+          path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Cache taxi data'
         uses: actions/cache@v4

@@ -11,7 +11,7 @@
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
 
-  <groupId>dev.hardwoodhq</groupId>
+  <groupId>dev.hardwood</groupId>
   <artifactId>hardwood-parent</artifactId>
   <version>1.0.0-SNAPSHOT</version>
   <packaging>pom</packaging>
@@ -19,7 +19,7 @@
   <name>Hardwood Parent</name>
   <description>A minimal dependency parser for the Apache Parquet file format</description>
   <inceptionYear>2026</inceptionYear>
-  <url>https://github.com/gunnarmorling/hardwood</url>
+  <url>https://github.com/hardwood-hq/hardwood</url>
 
   <licenses>
     <license>
@@ -115,12 +115,12 @@
 
       <!-- Hardwood modules -->
       <dependency>
-        <groupId>dev.hardwoodhq</groupId>
+        <groupId>dev.hardwood</groupId>
         <artifactId>hardwood-core</artifactId>
         <version>${project.version}</version>
       </dependency>
       <dependency>
-        <groupId>dev.hardwoodhq</groupId>
+        <groupId>dev.hardwood</groupId>
         <artifactId>hardwood-hadoop-compat</artifactId>
         <version>${project.version}</version>
       </dependency>
