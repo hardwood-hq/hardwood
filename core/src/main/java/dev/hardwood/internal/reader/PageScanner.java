@@ -12,6 +12,7 @@ import java.nio.MappedByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -19,7 +20,6 @@ import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PageHeader;
-import dev.hardwood.reader.HardwoodContext;
 import dev.hardwood.schema.ColumnSchema;
 
 /**

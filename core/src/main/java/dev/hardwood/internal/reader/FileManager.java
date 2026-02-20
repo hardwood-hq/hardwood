@@ -18,12 +18,12 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnProjection;
-import dev.hardwood.reader.HardwoodContext;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
@@ -56,6 +56,7 @@ public class FileManager {
     // Set after first file is opened
     private volatile ProjectedSchema projectedSchema;
     private volatile FileSchema referenceSchema;
+    private MappedFile firstMappedFile;
 
     /**
      * Creates a FileManager for the given files.
@@ -72,24 +73,42 @@ public class FileManager {
     }
 
     /**
-     * Opens the first file, creates schemas, and prepares pages for reading.
-     * Also triggers prefetch of the second file if available.
+     * Opens the first file and reads its schema. This is a lightweight operation
+     * that does not scan pages. Call {@link #initialize(ColumnProjection)} afterwards
+     * to prepare for reading with a specific column projection.
+     *
+     * @return the file schema from the first file
+     * @throws IOException if the first file cannot be read
+     */
+    public FileSchema openFirst() throws IOException {
+        firstMappedFile = mapAndReadMetadata(files.get(0));
+        referenceSchema = firstMappedFile.schema;
+        return referenceSchema;
+    }
+
+    /**
+     * Applies a column projection, scans pages for the first file, and triggers
+     * prefetching. Must be called after {@link #openFirst()}.
      *
      * @param projection column projection (use {@link ColumnProjection#all()} for all columns)
      * @return result containing the file state, file schema, and projected schema
-     * @throws IOException if the first file cannot be read
      */
-    public InitResult initialize(ColumnProjection projection) throws IOException {
-        MappedFile mappedFile = mapAndReadMetadata(files.get(0));
-        referenceSchema = mappedFile.schema;
+    public InitResult initialize(ColumnProjection projection) {
+        if (firstMappedFile == null) {
+            throw new IllegalStateException("openFirst() must be called before initialize()");
+        }
+
         projectedSchema = ProjectedSchema.create(referenceSchema, projection);
 
         // Scan pages for the first file
-        List<List<PageInfo>> pageInfosByColumn = scanAllProjectedColumns(mappedFile);
+        List<List<PageInfo>> pageInfosByColumn = scanAllProjectedColumns(firstMappedFile);
 
         FileState firstFileState = new FileState(
-                files.get(0), mappedFile.mapping,
-                mappedFile.metaData, mappedFile.schema, pageInfosByColumn);
+                files.get(0), firstMappedFile.mapping,
+                firstMappedFile.metaData, firstMappedFile.schema, pageInfosByColumn);
+
+        // No longer needed
+        firstMappedFile = null;
 
         // Store as completed future
         fileFutures.put(0, CompletableFuture.completedFuture(firstFileState));

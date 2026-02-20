@@ -9,16 +9,14 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.List;
+import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -56,32 +54,38 @@ class ParquetReaderTest {
             assertThat(valueColumn.type()).isEqualTo(PhysicalType.INT64);
             assertThat(valueColumn.repetitionType()).isEqualTo(RepetitionType.REQUIRED);
 
-            // Read row group
-            RowGroup rowGroup = metadata.rowGroups().get(0);
-            assertThat(rowGroup.numRows()).isEqualTo(3);
-            assertThat(rowGroup.columns()).hasSize(2);
+            // Read and verify 'id' column using batch API
+            try (ColumnReader idReader = reader.createColumnReader("id")) {
+                assertThat(idReader.nextBatch()).isTrue();
+                assertThat(idReader.getRecordCount()).isEqualTo(3);
+                assertThat(idReader.getValueCount()).isEqualTo(3);
 
-            // Read and verify 'id' column
-            ColumnChunk idColumnChunk = rowGroup.columns().get(0);
-            assertThat(idColumnChunk.metaData().codec())
-                    .isEqualTo(CompressionCodec.UNCOMPRESSED);
-            assertThat(idColumnChunk.metaData().numValues()).isEqualTo(3);
+                long[] idValues = idReader.getLongs();
+                assertThat(idValues[0]).isEqualTo(1L);
+                assertThat(idValues[1]).isEqualTo(2L);
+                assertThat(idValues[2]).isEqualTo(3L);
 
-            ColumnReader idReader = reader.getColumnReader(idColumn, idColumnChunk);
-            List<Object> idValues = idReader.readAll();
-            assertThat(idValues).hasSize(3);
-            assertThat(idValues).containsExactly(1L, 2L, 3L);
+                // No nulls for required column
+                assertThat(idReader.getElementNulls()).isNull();
 
-            // Read and verify 'value' column
-            ColumnChunk valueColumnChunk = rowGroup.columns().get(1);
-            assertThat(valueColumnChunk.metaData().codec())
-                    .isEqualTo(CompressionCodec.UNCOMPRESSED);
-            assertThat(valueColumnChunk.metaData().numValues()).isEqualTo(3);
+                // Flat column
+                assertThat(idReader.getNestingDepth()).isEqualTo(0);
 
-            ColumnReader valueReader = reader.getColumnReader(valueColumn, valueColumnChunk);
-            List<Object> valueValues = valueReader.readAll();
-            assertThat(valueValues).hasSize(3);
-            assertThat(valueValues).containsExactly(100L, 200L, 300L);
+                assertThat(idReader.nextBatch()).isFalse();
+            }
+
+            // Read and verify 'value' column using batch API
+            try (ColumnReader valueReader = reader.createColumnReader("value")) {
+                assertThat(valueReader.nextBatch()).isTrue();
+                assertThat(valueReader.getRecordCount()).isEqualTo(3);
+
+                long[] valueValues = valueReader.getLongs();
+                assertThat(valueValues[0]).isEqualTo(100L);
+                assertThat(valueValues[1]).isEqualTo(200L);
+                assertThat(valueValues[2]).isEqualTo(300L);
+
+                assertThat(valueReader.nextBatch()).isFalse();
+            }
         }
     }
 
@@ -113,38 +117,37 @@ class ParquetReaderTest {
             assertThat(nameColumn.type()).isEqualTo(PhysicalType.BYTE_ARRAY);
             assertThat(nameColumn.repetitionType()).isEqualTo(RepetitionType.OPTIONAL);
 
-            // Read row group
-            RowGroup rowGroup = metadata.rowGroups().get(0);
-            assertThat(rowGroup.numRows()).isEqualTo(3);
-            assertThat(rowGroup.columns()).hasSize(2);
-
             // Read and verify 'id' column (all non-null)
-            ColumnChunk idColumnChunk = rowGroup.columns().get(0);
-            assertThat(idColumnChunk.metaData().codec())
-                    .isEqualTo(CompressionCodec.UNCOMPRESSED);
-            assertThat(idColumnChunk.metaData().numValues()).isEqualTo(3);
+            try (ColumnReader idReader = reader.createColumnReader("id")) {
+                assertThat(idReader.nextBatch()).isTrue();
+                assertThat(idReader.getRecordCount()).isEqualTo(3);
 
-            ColumnReader idReader = reader.getColumnReader(idColumn, idColumnChunk);
-            List<Object> idValues = idReader.readAll();
-            assertThat(idValues).hasSize(3);
-            assertThat(idValues).containsExactly(1L, 2L, 3L);
+                long[] idValues = idReader.getLongs();
+                assertThat(idValues[0]).isEqualTo(1L);
+                assertThat(idValues[1]).isEqualTo(2L);
+                assertThat(idValues[2]).isEqualTo(3L);
+
+                assertThat(idReader.nextBatch()).isFalse();
+            }
 
             // Read and verify 'name' column (with one null)
-            ColumnChunk nameColumnChunk = rowGroup.columns().get(1);
-            assertThat(nameColumnChunk.metaData().codec())
-                    .isEqualTo(CompressionCodec.UNCOMPRESSED);
-            assertThat(nameColumnChunk.metaData().numValues()).isEqualTo(3);
+            try (ColumnReader nameReader = reader.createColumnReader("name")) {
+                assertThat(nameReader.nextBatch()).isTrue();
+                assertThat(nameReader.getRecordCount()).isEqualTo(3);
 
-            ColumnReader nameReader = reader.getColumnReader(nameColumn, nameColumnChunk);
-            List<Object> nameValues = nameReader.readAll();
-            assertThat(nameValues).hasSize(3);
+                byte[][] nameValues = nameReader.getBinaries();
+                BitSet nulls = nameReader.getElementNulls();
 
-            // Verify the exact values: 'alice', null, 'charlie'
-            assertThat(nameValues.get(0)).isInstanceOf(byte[].class);
-            assertThat(new String((byte[]) nameValues.get(0))).isEqualTo("alice");
-            assertThat(nameValues.get(1)).isNull();
-            assertThat(nameValues.get(2)).isInstanceOf(byte[].class);
-            assertThat(new String((byte[]) nameValues.get(2))).isEqualTo("charlie");
+                // Verify: 'alice', null, 'charlie'
+                assertThat(nulls).isNotNull();
+                assertThat(nulls.get(0)).isFalse();
+                assertThat(new String(nameValues[0])).isEqualTo("alice");
+                assertThat(nulls.get(1)).isTrue(); // null
+                assertThat(nulls.get(2)).isFalse();
+                assertThat(new String(nameValues[2])).isEqualTo("charlie");
+
+                assertThat(nameReader.nextBatch()).isFalse();
+            }
         }
     }
 
@@ -165,43 +168,59 @@ class ParquetReaderTest {
             assertThat(schema).isNotNull();
             assertThat(schema.getColumnCount()).isEqualTo(2);
 
-            // Verify column names and types
-            ColumnSchema idColumn = schema.getColumn(0);
-            assertThat(idColumn.name()).isEqualTo("id");
-            assertThat(idColumn.type()).isEqualTo(PhysicalType.INT64);
-            assertThat(idColumn.repetitionType()).isEqualTo(RepetitionType.REQUIRED);
-
-            ColumnSchema valueColumn = schema.getColumn(1);
-            assertThat(valueColumn.name()).isEqualTo("value");
-            assertThat(valueColumn.type()).isEqualTo(PhysicalType.INT64);
-            assertThat(valueColumn.repetitionType()).isEqualTo(RepetitionType.REQUIRED);
-
-            // Read row group
-            RowGroup rowGroup = metadata.rowGroups().get(0);
-            assertThat(rowGroup.numRows()).isEqualTo(3);
-            assertThat(rowGroup.columns()).hasSize(2);
-
             // Read and verify 'id' column - should be SNAPPY compressed
-            ColumnChunk idColumnChunk = rowGroup.columns().get(0);
-            assertThat(idColumnChunk.metaData().codec())
+            assertThat(metadata.rowGroups().get(0).columns().get(0).metaData().codec())
                     .isEqualTo(CompressionCodec.SNAPPY);
-            assertThat(idColumnChunk.metaData().numValues()).isEqualTo(3);
 
-            ColumnReader idReader = reader.getColumnReader(idColumn, idColumnChunk);
-            List<Object> idValues = idReader.readAll();
-            assertThat(idValues).hasSize(3);
-            assertThat(idValues).containsExactly(1L, 2L, 3L);
+            try (ColumnReader idReader = reader.createColumnReader("id")) {
+                assertThat(idReader.nextBatch()).isTrue();
+                assertThat(idReader.getRecordCount()).isEqualTo(3);
+
+                long[] idValues = idReader.getLongs();
+                assertThat(idValues[0]).isEqualTo(1L);
+                assertThat(idValues[1]).isEqualTo(2L);
+                assertThat(idValues[2]).isEqualTo(3L);
+
+                assertThat(idReader.nextBatch()).isFalse();
+            }
 
             // Read and verify 'value' column - should be SNAPPY compressed
-            ColumnChunk valueColumnChunk = rowGroup.columns().get(1);
-            assertThat(valueColumnChunk.metaData().codec())
+            assertThat(metadata.rowGroups().get(0).columns().get(1).metaData().codec())
                     .isEqualTo(CompressionCodec.SNAPPY);
-            assertThat(valueColumnChunk.metaData().numValues()).isEqualTo(3);
 
-            ColumnReader valueReader = reader.getColumnReader(valueColumn, valueColumnChunk);
-            List<Object> valueValues = valueReader.readAll();
-            assertThat(valueValues).hasSize(3);
-            assertThat(valueValues).containsExactly(100L, 200L, 300L);
+            try (ColumnReader valueReader = reader.createColumnReader("value")) {
+                assertThat(valueReader.nextBatch()).isTrue();
+                assertThat(valueReader.getRecordCount()).isEqualTo(3);
+
+                long[] valueValues = valueReader.getLongs();
+                assertThat(valueValues[0]).isEqualTo(100L);
+                assertThat(valueValues[1]).isEqualTo(200L);
+                assertThat(valueValues[2]).isEqualTo(300L);
+
+                assertThat(valueReader.nextBatch()).isFalse();
+            }
         }
     }
+
+    @Test
+    void testColumnReaderByIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+            // Read column by index
+            try (ColumnReader idReader = reader.createColumnReader(0)) {
+                assertThat(idReader.getColumnSchema().name()).isEqualTo("id");
+                assertThat(idReader.nextBatch()).isTrue();
+                assertThat(idReader.getRecordCount()).isEqualTo(3);
+
+                long[] values = idReader.getLongs();
+                assertThat(values[0]).isEqualTo(1L);
+                assertThat(values[1]).isEqualTo(2L);
+                assertThat(values[2]).isEqualTo(3L);
+
+                assertThat(idReader.nextBatch()).isFalse();
+            }
+        }
+    }
+
 }

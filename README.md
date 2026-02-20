@@ -369,10 +369,11 @@ When processing multiple Parquet files, use the `Hardwood` class to share a thre
 
 #### Unified Multi-File Reader
 
-For reading multiple files as a single logical dataset, use `openAll()` which returns a `MultiFileRowReader`:
+For reading multiple files as a single logical dataset, use `openAll()` which returns a `MultiFileParquetReader`. From there, create a row reader or column readers:
 
 ```java
-import dev.hardwood.reader.Hardwood;
+import dev.hardwood.Hardwood;
+import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.MultiFileRowReader;
 
 List<Path> files = List.of(
@@ -382,7 +383,8 @@ List<Path> files = List.of(
 );
 
 try (Hardwood hardwood = Hardwood.create();
-     MultiFileRowReader reader = hardwood.openAll(files)) {
+     MultiFileParquetReader parquet = hardwood.openAll(files);
+     MultiFileRowReader reader = parquet.createRowReader()) {
 
     while (reader.hasNext()) {
         reader.next();
@@ -393,13 +395,22 @@ try (Hardwood hardwood = Hardwood.create();
 }
 ```
 
+A varargs overload is available when the paths are known at compile time:
+
+```java
+MultiFileParquetReader parquet = hardwood.openAll(
+    Path.of("data_2024_01.parquet"),
+    Path.of("data_2024_02.parquet"));
+```
+
 The `MultiFileRowReader` provides cross-file prefetching: when pages from file N are running low, pages from file N+1 are already being prefetched. This eliminates I/O stalls at file boundaries.
 
 **With column projection:**
 
 ```java
 try (Hardwood hardwood = Hardwood.create();
-     MultiFileRowReader reader = hardwood.openAll(files,
+     MultiFileParquetReader parquet = hardwood.openAll(files);
+     MultiFileRowReader reader = parquet.createRowReader(
          ColumnProjection.columns("id", "name", "amount"))) {
 
     while (reader.hasNext()) {
@@ -409,12 +420,14 @@ try (Hardwood hardwood = Hardwood.create();
 }
 ```
 
+The `MultiFileParquetReader` reads the schema eagerly (from the first file), but defers page scanning until a reader is created. This lets you inspect `parquet.getFileSchema()` before deciding which columns to project.
+
 #### Individual File Processing
 
 When you need to process files independently (e.g., different handling per file), use individual readers:
 
 ```java
-import dev.hardwood.reader.Hardwood;
+import dev.hardwood.Hardwood;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
@@ -443,42 +456,102 @@ For single-file usage, `ParquetFileReader.open(path)` remains the simplest optio
 
 ### Column-Oriented Reading (ColumnReader)
 
-The `ColumnReader` provides lower-level columnar access, useful when you need to process specific columns independently or when working with the columnar nature of Parquet directly.
+The `ColumnReader` provides batch-oriented columnar access with typed primitive arrays, avoiding per-row method calls and boxing. This is the fastest way to consume Parquet data when you process columns independently.
+
+#### Single-File Column Reading
 
 ```java
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ColumnReader;
-import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ColumnSchema;
-import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.metadata.ColumnChunk;
 
 try (ParquetFileReader reader = ParquetFileReader.open(path)) {
-    // Get schema information
-    FileSchema schema = reader.getFileSchema();
-    System.out.println("Columns: " + schema.getColumnCount());
+    // Create a column reader by name (spans all row groups automatically)
+    try (ColumnReader fare = reader.createColumnReader("fare_amount")) {
+        double sum = 0;
+        while (fare.nextBatch()) {
+            int count = fare.getRecordCount();
+            double[] values = fare.getDoubles();
+            BitSet nulls = fare.getElementNulls(); // null if column is required
 
-    // Access first row group
-    RowGroup rowGroup = reader.getFileMetaData().rowGroups().get(0);
-
-    // Read a specific column
-    ColumnSchema idColumn = schema.getColumn("id");
-    ColumnChunk idColumnChunk = rowGroup.columns().get(idColumn.columnIndex());
-
-    ColumnReader idReader = reader.getColumnReader(idColumn, idColumnChunk);
-    List<Object> idValues = idReader.readAll();
-
-    // Process column values
-    for (Object value : idValues) {
-        if (value != null) {
-            Long id = (Long) value;
-            System.out.println("ID: " + id);
-        } else {
-            System.out.println("ID: null");
+            for (int i = 0; i < count; i++) {
+                if (nulls == null || !nulls.get(i)) {
+                    sum += values[i];
+                }
+            }
         }
     }
 }
 ```
+
+Typed accessors are available for each physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`, `getBinaries()`, and `getStrings()`. Column readers can also be created by index via `createColumnReader(int columnIndex)`.
+
+#### Multi-File Column Reading
+
+For reading columns across multiple files with cross-file prefetching, use `MultiFileColumnReaders`:
+
+```java
+import dev.hardwood.Hardwood;
+import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.MultiFileColumnReaders;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnProjection;
+
+try (Hardwood hardwood = Hardwood.create();
+     MultiFileParquetReader parquet = hardwood.openAll(files);
+     MultiFileColumnReaders columns = parquet.createColumnReaders(
+         ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
+
+    ColumnReader col0 = columns.getColumnReader("passenger_count");
+    ColumnReader col1 = columns.getColumnReader("trip_distance");
+    ColumnReader col2 = columns.getColumnReader("fare_amount");
+
+    long passengerCount = 0;
+    double tripDistance = 0, fareAmount = 0;
+
+    while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
+        int count = col0.getRecordCount();
+        double[] v0 = col0.getDoubles();
+        double[] v1 = col1.getDoubles();
+        double[] v2 = col2.getDoubles();
+
+        for (int i = 0; i < count; i++) {
+            passengerCount += (long) v0[i];
+            tripDistance += v1[i];
+            fareAmount += v2[i];
+        }
+    }
+}
+```
+
+#### Nested and Repeated Columns
+
+For nested columns (lists, maps), `ColumnReader` provides multi-level offsets and per-level null bitmaps:
+
+```java
+try (ColumnReader reader = fileReader.createColumnReader("tags")) {
+    while (reader.nextBatch()) {
+        int recordCount = reader.getRecordCount();
+        int valueCount = reader.getValueCount();
+        byte[][] values = reader.getBinaries();
+        int[] offsets = reader.getOffsets(0);            // record → value position
+        BitSet recordNulls = reader.getLevelNulls(0);    // null list records
+        BitSet elementNulls = reader.getElementNulls();  // null elements within lists
+
+        for (int r = 0; r < recordCount; r++) {
+            if (recordNulls != null && recordNulls.get(r)) continue;
+            int start = offsets[r];
+            int end = (r + 1 < recordCount) ? offsets[r + 1] : valueCount;
+            for (int i = start; i < end; i++) {
+                if (elementNulls == null || !elementNulls.get(i)) {
+                    // process values[i]
+                }
+            }
+        }
+    }
+}
+```
+
+`getNestingDepth()` returns 0 for flat columns, or the number of offset levels for nested columns.
 
 ### Accessing File Metadata
 
