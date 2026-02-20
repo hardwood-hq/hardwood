@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.reader;
+package dev.hardwood;
 
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
@@ -16,6 +16,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateLoader;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
+import dev.hardwood.reader.ParquetFileReader;
 
 /**
  * Context object that manages shared resources for Parquet file reading.

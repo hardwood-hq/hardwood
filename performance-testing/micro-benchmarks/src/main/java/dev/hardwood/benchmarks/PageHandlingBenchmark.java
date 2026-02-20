@@ -30,6 +30,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.reader.Page;
 import dev.hardwood.internal.reader.PageInfo;
@@ -41,7 +42,6 @@ import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.PageHeader;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.reader.HardwoodContext;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;

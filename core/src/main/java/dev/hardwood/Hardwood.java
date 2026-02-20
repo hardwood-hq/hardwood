@@ -5,12 +5,17 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.reader;
+package dev.hardwood;
 
 import java.io.IOException;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.ExecutorService;
+import java.util.Objects;
+
+import dev.hardwood.reader.ColumnProjection;
+import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.ParquetFileReader;
 
 /**
  * Entry point for reading Parquet files with a shared thread pool.
@@ -58,43 +63,36 @@ public class Hardwood implements AutoCloseable {
     /**
      * Open multiple Parquet files for reading with cross-file prefetching.
      * <p>
-     * This method returns a MultiFileRowReader that coordinates prefetching across file
-     * boundaries. When pages from file N are running low, pages from file N+1 are already
-     * being prefetched, eliminating queue misses at file transitions.
+     * Returns a {@link MultiFileParquetReader} that reads the schema from the first file
+     * and provides factory methods for row-oriented
+     * ({@link MultiFileParquetReader#createRowReader(ColumnProjection)}) or column-oriented
+     * ({@link MultiFileParquetReader#createColumnReaders(ColumnProjection)}) access.
      * </p>
      *
      * @param paths the Parquet files to read (must not be empty)
-     * @return a MultiFileRowReader for iterating over all rows in all files
-     * @throws IOException if any file cannot be opened or read
+     * @return a MultiFileParquetReader for the given files
+     * @throws IOException if the first file cannot be opened or read
      * @throws IllegalArgumentException if the paths list is empty
      */
-    public MultiFileRowReader openAll(List<Path> paths) throws IOException {
-        return openAll(paths, ColumnProjection.all());
+    public MultiFileParquetReader openAll(List<Path> paths) throws IOException {
+        return new MultiFileParquetReader(paths, context);
     }
 
     /**
-     * Open multiple Parquet files for reading with cross-file prefetching and column projection.
-     * <p>
-     * This method returns a MultiFileRowReader that coordinates prefetching across file
-     * boundaries. When pages from file N are running low, pages from file N+1 are already
-     * being prefetched, eliminating queue misses at file transitions.
-     * </p>
+     * Open multiple Parquet files for reading with cross-file prefetching.
      *
-     * @param paths the Parquet files to read (must not be empty)
-     * @param projection specifies which columns to read
-     * @return a MultiFileRowReader for iterating over all rows in all files
-     * @throws IOException if any file cannot be opened or read
-     * @throws IllegalArgumentException if the paths list is empty
+     * @param first the first Parquet file to read
+     * @param furtherPaths additional Parquet files to read
+     * @return a MultiFileParquetReader for the given files
+     * @throws IOException if the first file cannot be opened or read
      */
-    public MultiFileRowReader openAll(List<Path> paths, ColumnProjection projection) throws IOException {
-        return new MultiFileRowReader(paths, context, projection);
-    }
+    public MultiFileParquetReader openAll(Path first, Path... furtherPaths) throws IOException {
+        Objects.requireNonNull(first, "At least one path required");
 
-    /**
-     * Get the executor service used by this instance.
-     */
-    public ExecutorService executor() {
-        return context.executor();
+        List<Path> paths = new ArrayList<>(1 + furtherPaths.length);
+        paths.add(first);
+        paths.addAll(List.of(furtherPaths));
+        return openAll(paths);
     }
 
     @Override

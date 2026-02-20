@@ -7,12 +7,10 @@
  */
 package dev.hardwood.reader;
 
-import java.io.IOException;
-import java.nio.file.Path;
-import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnValueIterator;
@@ -34,7 +32,8 @@ import dev.hardwood.schema.ProjectedSchema;
  * <p>Usage:</p>
  * <pre>{@code
  * try (Hardwood hardwood = Hardwood.create();
- *      MultiFileRowReader reader = hardwood.openAll(files)) {
+ *      MultiFileParquetReader parquet = hardwood.openAll(files);
+ *      MultiFileRowReader reader = parquet.createRowReader()) {
  *     while (reader.hasNext()) {
  *         reader.next();
  *         // access data using same API as RowReader
@@ -57,21 +56,18 @@ public class MultiFileRowReader extends AbstractRowReader {
     private ColumnValueIterator[] iterators;
 
     /**
-     * Creates a MultiFileRowReader for the given files.
+     * Creates a MultiFileRowReader from a pre-initialized FileManager.
      *
-     * @param files the Parquet files to read (must not be empty)
+     * @param files the Parquet files (for logging)
      * @param context the Hardwood context
-     * @param projection column projection
-     * @throws IOException if the first file cannot be opened or read
+     * @param fileManager the shared file manager
+     * @param initResult the initialization result from the first file
      */
-    MultiFileRowReader(List<Path> files, HardwoodContext context, ColumnProjection projection) throws IOException {
-        if (files.isEmpty()) {
-            throw new IllegalArgumentException("At least one file must be provided");
-        }
-
+    MultiFileRowReader(java.util.List<java.nio.file.Path> files, HardwoodContext context,
+                       FileManager fileManager, FileManager.InitResult initResult) {
         this.context = context;
-        this.fileManager = new FileManager(files, context);
-        this.initResult = fileManager.initialize(projection);
+        this.fileManager = fileManager;
+        this.initResult = initResult;
         this.schema = initResult.schema();
         this.projectedSchema = initResult.projectedSchema();
         this.adaptiveBatchSize = computeOptimalBatchSize(projectedSchema);
@@ -155,6 +151,5 @@ public class MultiFileRowReader extends AbstractRowReader {
     @Override
     public void close() {
         closed = true;
-        fileManager.close();
     }
 }

@@ -17,9 +17,9 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.reader.HardwoodContext;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;

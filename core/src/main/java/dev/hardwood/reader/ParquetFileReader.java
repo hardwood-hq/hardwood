@@ -13,11 +13,11 @@ import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
+import dev.hardwood.Hardwood;
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.FileMappingEvent;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
-import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
@@ -66,7 +66,7 @@ public class ParquetFileReader implements AutoCloseable {
      * Open a Parquet file with a shared context.
      * The context is NOT closed when this reader is closed.
      */
-    static ParquetFileReader open(Path path, HardwoodContext context) throws IOException {
+    public static ParquetFileReader open(Path path, HardwoodContext context) throws IOException {
         return open(path, context, false);
     }
 
@@ -113,8 +113,20 @@ public class ParquetFileReader implements AutoCloseable {
         return FileSchema.fromSchemaElements(fileMetaData.schema());
     }
 
-    public ColumnReader getColumnReader(ColumnSchema idColumn, ColumnChunk idColumnChunk) throws IOException {
-        return new ColumnReader(path, idColumn, idColumnChunk, context);
+    /**
+     * Create a ColumnReader for a named column, spanning all row groups.
+     */
+    public ColumnReader createColumnReader(String columnName) {
+        FileSchema schema = getFileSchema();
+        return ColumnReader.create(columnName, schema, fileMapping, fileMetaData.rowGroups(), context);
+    }
+
+    /**
+     * Create a ColumnReader for a column by index, spanning all row groups.
+     */
+    public ColumnReader createColumnReader(int columnIndex) {
+        FileSchema schema = getFileSchema();
+        return ColumnReader.create(columnIndex, schema, fileMapping, fileMetaData.rowGroups(), context);
     }
 
     /**

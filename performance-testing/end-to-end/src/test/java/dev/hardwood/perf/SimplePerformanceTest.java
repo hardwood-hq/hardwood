@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.BitSet;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -28,9 +29,12 @@ import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
+import dev.hardwood.Hardwood;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ColumnProjection;
-import dev.hardwood.reader.Hardwood;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.MultiFileColumnReaders;
+import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.MultiFileRowReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -64,6 +68,8 @@ class SimplePerformanceTest {
         HARDWOOD_NAMED("Hardwood (named)"),
         HARDWOOD_PROJECTION("Hardwood (projection)"),
         HARDWOOD_MULTIFILE("Hardwood (multifile)"),
+        HARDWOOD_COLUMN_READER("Hardwood (column reader)"),
+        HARDWOOD_COLUMN_READER_MULTIFILE("Hardwood (column reader multifile)"),
         PARQUET_JAVA_INDEXED("parquet-java (indexed)"),
         PARQUET_JAVA_NAMED("parquet-java (named)");
 
@@ -237,6 +243,8 @@ class SimplePerformanceTest {
             case HARDWOOD_NAMED -> this::runHardwoodNamed;
             case HARDWOOD_PROJECTION -> this::runHardwoodProjection;
             case HARDWOOD_MULTIFILE -> this::runHardwoodMultiFile;
+            case HARDWOOD_COLUMN_READER -> this::runHardwoodColumnReader;
+            case HARDWOOD_COLUMN_READER_MULTIFILE -> this::runHardwoodColumnReaderMultiFile;
             case PARQUET_JAVA_INDEXED -> this::runParquetJavaIndexed;
             case PARQUET_JAVA_NAMED -> this::runParquetJavaNamed;
         };
@@ -420,7 +428,8 @@ class SimplePerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
-                try (MultiFileRowReader rowReader = hardwood.openAll(group.files(), projection)) {
+                try (MultiFileParquetReader parquet = hardwood.openAll(group.files());
+                     MultiFileRowReader rowReader = parquet.createRowReader(projection)) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
                     while (rowReader.hasNext()) {
@@ -449,6 +458,138 @@ class SimplePerformanceTest {
         }
         catch (IOException e) {
             throw new RuntimeException("Failed to read files with MultiFileRowReader", e);
+        }
+        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+    }
+
+    /**
+     * Run using the batch ColumnReader API for maximum throughput.
+     * Reads columns independently using typed arrays with zero boxing.
+     */
+    private Result runHardwoodColumnReader(List<Path> files) {
+        long passengerCount = 0;
+        double tripDistance = 0.0;
+        double fareAmount = 0.0;
+        long rowCount = 0;
+
+        try (Hardwood hardwood = Hardwood.create()) {
+            for (Path file : files) {
+                try (ParquetFileReader reader = hardwood.open(file)) {
+                    // Check column type once per file
+                    SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
+                    boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
+                            && pn.type() == PhysicalType.INT64;
+
+                    try (ColumnReader col0 = reader.createColumnReader("passenger_count");
+                         ColumnReader col1 = reader.createColumnReader("trip_distance");
+                         ColumnReader col2 = reader.createColumnReader("fare_amount")) {
+
+                        if (pcIsLong) {
+                            while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
+                                int count = col0.getRecordCount();
+                                long[] v0 = col0.getLongs();
+                                double[] v1 = col1.getDoubles();
+                                double[] v2 = col2.getDoubles();
+                                BitSet n0 = col0.getElementNulls();
+                                BitSet n1 = col1.getElementNulls();
+                                BitSet n2 = col2.getElementNulls();
+
+                                for (int i = 0; i < count; i++) {
+                                    if (n0 == null || !n0.get(i)) passengerCount += v0[i];
+                                    if (n1 == null || !n1.get(i)) tripDistance += v1[i];
+                                    if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                                }
+                                rowCount += count;
+                            }
+                        } else {
+                            while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
+                                int count = col0.getRecordCount();
+                                double[] v0 = col0.getDoubles();
+                                double[] v1 = col1.getDoubles();
+                                double[] v2 = col2.getDoubles();
+                                BitSet n0 = col0.getElementNulls();
+                                BitSet n1 = col1.getElementNulls();
+                                BitSet n2 = col2.getElementNulls();
+
+                                for (int i = 0; i < count; i++) {
+                                    if (n0 == null || !n0.get(i)) passengerCount += (long) v0[i];
+                                    if (n1 == null || !n1.get(i)) tripDistance += v1[i];
+                                    if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                                }
+                                rowCount += count;
+                            }
+                        }
+                    }
+                }
+                catch (IOException e) {
+                    throw new RuntimeException("Failed to read file: " + file, e);
+                }
+            }
+        }
+        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+    }
+
+    /**
+     * Column-oriented reader with cross-file prefetching via shared FileManager.
+     * Uses MultiFileColumnReaders to share a single FileManager across columns.
+     */
+    private Result runHardwoodColumnReaderMultiFile(List<Path> files) {
+        long passengerCount = 0;
+        double tripDistance = 0.0;
+        double fareAmount = 0.0;
+        long rowCount = 0;
+
+        try (Hardwood hardwood = Hardwood.create()) {
+            for (SchemaGroup group : groupFilesBySchema(files)) {
+                try (MultiFileParquetReader parquet = hardwood.openAll(group.files());
+                     MultiFileColumnReaders columns = parquet.createColumnReaders(
+                        ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
+
+                    ColumnReader col0 = columns.getColumnReader("passenger_count");
+                    ColumnReader col1 = columns.getColumnReader("trip_distance");
+                    ColumnReader col2 = columns.getColumnReader("fare_amount");
+
+                    if (group.passengerCountIsLong()) {
+                        while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
+                            int count = col0.getRecordCount();
+                            long[] v0 = col0.getLongs();
+                            double[] v1 = col1.getDoubles();
+                            double[] v2 = col2.getDoubles();
+                            BitSet n0 = col0.getElementNulls();
+                            BitSet n1 = col1.getElementNulls();
+                            BitSet n2 = col2.getElementNulls();
+
+                            for (int i = 0; i < count; i++) {
+                                if (n0 == null || !n0.get(i)) passengerCount += v0[i];
+                                if (n1 == null || !n1.get(i)) tripDistance += v1[i];
+                                if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                            }
+                            rowCount += count;
+                        }
+                    }
+                    else {
+                        while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
+                            int count = col0.getRecordCount();
+                            double[] v0 = col0.getDoubles();
+                            double[] v1 = col1.getDoubles();
+                            double[] v2 = col2.getDoubles();
+                            BitSet n0 = col0.getElementNulls();
+                            BitSet n1 = col1.getElementNulls();
+                            BitSet n2 = col2.getElementNulls();
+
+                            for (int i = 0; i < count; i++) {
+                                if (n0 == null || !n0.get(i)) passengerCount += (long) v0[i];
+                                if (n1 == null || !n1.get(i)) tripDistance += v1[i];
+                                if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                            }
+                            rowCount += count;
+                        }
+                    }
+                }
+                catch (IOException e) {
+                    throw new RuntimeException("Failed to read files in schema group", e);
+                }
+            }
         }
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
@@ -674,7 +815,8 @@ class SimplePerformanceTest {
 
     private boolean isHardwood(Contender c) {
         return c == Contender.HARDWOOD_INDEXED || c == Contender.HARDWOOD_NAMED
-                || c == Contender.HARDWOOD_PROJECTION || c == Contender.HARDWOOD_MULTIFILE;
+                || c == Contender.HARDWOOD_PROJECTION || c == Contender.HARDWOOD_MULTIFILE
+                || c == Contender.HARDWOOD_COLUMN_READER || c == Contender.HARDWOOD_COLUMN_READER_MULTIFILE;
     }
 
     private void printResultRow(String name, Result result, int cpuCores, long totalBytes) {

@@ -7,305 +7,555 @@
  */
 package dev.hardwood.reader;
 
-import java.io.Closeable;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
+import java.util.concurrent.CompletableFuture;
 
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
-import dev.hardwood.internal.reader.FileMappingEvent;
-import dev.hardwood.internal.reader.Page;
+import dev.hardwood.HardwoodContext;
+import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
+import dev.hardwood.internal.reader.ColumnValueIterator;
+import dev.hardwood.internal.reader.FileManager;
+import dev.hardwood.internal.reader.FlatColumnData;
+import dev.hardwood.internal.reader.NestedColumnData;
 import dev.hardwood.internal.reader.PageCursor;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
+import dev.hardwood.internal.reader.TypedColumnData;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.FileSchema;
 
 /**
- * Reader for a column chunk.
+ * Batch-oriented column reader for reading a single column across all row groups.
  * <p>
- * Uses the same infrastructure as RowReader: PageScanner for page scanning
- * and PageCursor for async prefetching.
+ * Provides typed primitive arrays for zero-boxing access. For nested/repeated columns,
+ * multi-level offsets and per-level null bitmaps enable efficient traversal without
+ * per-row virtual dispatch.
  * </p>
+ *
+ * <h3>Flat column usage:</h3>
+ * <pre>{@code
+ * try (ColumnReader reader = fileReader.createColumnReader("fare_amount")) {
+ *     while (reader.nextBatch()) {
+ *         int count = reader.getRecordCount();
+ *         double[] values = reader.getDoubles();
+ *         BitSet nulls = reader.getElementNulls();
+ *         for (int i = 0; i < count; i++) {
+ *             if (nulls == null || !nulls.get(i)) sum += values[i];
+ *         }
+ *     }
+ * }
+ * }</pre>
+ *
+ * <h3>Simple list usage (nestingDepth=1):</h3>
+ * <pre>{@code
+ * try (ColumnReader reader = fileReader.createColumnReader("fare_components")) {
+ *     while (reader.nextBatch()) {
+ *         int recordCount = reader.getRecordCount();
+ *         int valueCount = reader.getValueCount();
+ *         double[] values = reader.getDoubles();
+ *         int[] offsets = reader.getOffsets(0);
+ *         BitSet recordNulls = reader.getLevelNulls(0);
+ *         BitSet elementNulls = reader.getElementNulls();
+ *         for (int r = 0; r < recordCount; r++) {
+ *             if (recordNulls != null && recordNulls.get(r)) continue;
+ *             int start = offsets[r];
+ *             int end = (r + 1 < recordCount) ? offsets[r + 1] : valueCount;
+ *             for (int i = start; i < end; i++) {
+ *                 if (elementNulls == null || !elementNulls.get(i)) sum += values[i];
+ *             }
+ *         }
+ *     }
+ * }
+ * }</pre>
  */
-public class ColumnReader implements Closeable {
+public class ColumnReader implements AutoCloseable {
+
+    static final int DEFAULT_BATCH_SIZE = 262_144;
 
     private final ColumnSchema column;
-    private final ColumnMetaData columnMetaData;
-    private final PageCursor pageCursor;
-    private final int maxDefinitionLevel;
     private final int maxRepetitionLevel;
-    private final long totalValues;
-    private final FileChannel channel;
+    private final ColumnValueIterator iterator;
+    private final int batchSize;
 
-    // State for incremental reading
-    private Page currentPage;
-    private int currentPagePosition;
-    private long valuesRead;
+    // Current batch state
+    private TypedColumnData currentBatch;
+    private boolean exhausted;
 
-    // Lookahead buffer (single value)
-    private ValueWithLevels lookahead;
+    // Computed nested data (lazily populated per batch)
+    private int[][] multiLevelOffsets;
+    private BitSet[] levelNulls;
+    private BitSet elementNulls;
+    private boolean nestedDataComputed;
 
-    public ColumnReader(Path path, ColumnSchema column, ColumnChunk columnChunk,
-                        HardwoodContext context) throws IOException {
+    /**
+     * Single-file constructor. Delegates to the multi-file constructor with no FileManager.
+     */
+    ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContext context, int batchSize) {
+        this(column, pageInfos, context, batchSize, null, -1, null);
+    }
+
+    /**
+     * Full constructor. When {@code fileManager} is non-null, creates a {@link PageCursor}
+     * with cross-file prefetching — matching the pattern used by {@link MultiFileRowReader}.
+     */
+    ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContext context,
+                 int batchSize, FileManager fileManager, int projectedColumnIndex, String fileName) {
         this.column = column;
-        this.columnMetaData = columnChunk.metaData();
-        this.maxDefinitionLevel = column.maxDefinitionLevel();
         this.maxRepetitionLevel = column.maxRepetitionLevel();
-        this.totalValues = columnMetaData.numValues();
+        this.batchSize = batchSize;
 
-        // Open a dedicated FileChannel for this column chunk
-        this.channel = FileChannel.open(path, StandardOpenOption.READ);
+        boolean flat = maxRepetitionLevel == 0;
 
-        // Calculate chunk bounds and create mapping
-        Long dictOffset = columnMetaData.dictionaryPageOffset();
-        long chunkStart = (dictOffset != null && dictOffset > 0)
-                ? dictOffset
-                : columnMetaData.dataPageOffset();
-        long chunkSize = columnMetaData.totalCompressedSize();
-
-        FileMappingEvent event = new FileMappingEvent();
-        event.begin();
-
-        MappedByteBuffer mapping = channel.map(FileChannel.MapMode.READ_ONLY, chunkStart, chunkSize);
-
-        event.path = path.toString();
-        event.offset = chunkStart;
-        event.size = chunkSize;
-        event.column = column.name();
-        event.commit();
-
-        // Scan pages using PageScanner
-        PageScanner scanner = new PageScanner(column, columnChunk, context, mapping, chunkStart);
-        List<PageInfo> pageInfos = scanner.scanPages();
-
-        // Create PageCursor for async prefetching
-        this.pageCursor = new PageCursor(pageInfos, context);
-    }
-
-    @Override
-    public void close() throws IOException {
-        channel.close();
-    }
-
-    /**
-     * Read all values from this column chunk.
-     * Null values are represented as null in the returned list.
-     */
-    public List<Object> readAll() throws IOException {
-        List<Object> allValues = new ArrayList<>();
-
-        while (hasNext()) {
-            allValues.add(readNext());
+        ColumnAssemblyBuffer assemblyBuffer = null;
+        if (flat) {
+            assemblyBuffer = new ColumnAssemblyBuffer(column, batchSize);
         }
 
-        return allValues;
+        PageCursor pageCursor = new PageCursor(
+                pageInfos, context, fileManager, projectedColumnIndex, fileName, assemblyBuffer);
+        this.iterator = new ColumnValueIterator(pageCursor, column, flat);
     }
 
-    /**
-     * Check if there are more values to read from this column.
-     */
-    public boolean hasNext() {
-        return lookahead != null || valuesRead < totalValues;
-    }
+    // ==================== Batch Iteration ====================
 
     /**
-     * Read the next value from this column.
-     * For columns with repetition levels (lists), returns a List containing all elements.
-     * Returns null for optional fields when the value is not present.
-     */
-    public Object readNext() throws IOException {
-        if (!hasNext()) {
-            throw new IllegalStateException("No more values to read");
-        }
-
-        // For columns with repetition levels, assemble a list
-        if (maxRepetitionLevel > 0) {
-            return readList();
-        }
-
-        // Simple case - no repetition levels
-        return readSingleValue();
-    }
-
-    /**
-     * Read a single value (no list assembly needed).
-     */
-    private Object readSingleValue() throws IOException {
-        ensurePageLoaded();
-
-        Object value;
-        if (maxDefinitionLevel == 0) {
-            // Required field - all values present
-            value = getPageValue(currentPage, currentPagePosition);
-        }
-        else {
-            // Optional field - check definition level
-            if (currentPage.definitionLevels()[currentPagePosition] == maxDefinitionLevel) {
-                value = getPageValue(currentPage, currentPagePosition);
-            }
-            else {
-                value = null;
-            }
-        }
-
-        currentPagePosition++;
-        valuesRead++;
-        return value;
-    }
-
-    /**
-     * Read a list by consuming values until the next rep=0.
-     * Uses a stack-based algorithm that works for any nesting depth.
+     * Advance to the next batch.
      *
-     * For list<list<list<T>>> with maxRep=3:
-     *   rep=0: new record (start fresh)
-     *   rep=1: new list at depth 1
-     *   rep=2: new list at depth 2
-     *   rep=3: continue list at depth 2 (add element)
-     *
-     * The repetition level tells us "at which level did we start a new list?"
-     * Lower rep = deeper restart (closer to root).
+     * @return true if a batch is available, false if exhausted
      */
-    @SuppressWarnings("unchecked")
-    private List<?> readList() throws IOException {
-        ValueWithLevels first = nextValue();
-        if (first == null || first.defLevel == 0) {
-            return null;
+    public boolean nextBatch() {
+        if (exhausted) {
+            return false;
         }
 
-        // Stack of lists at each nesting level (index 0 = outermost)
-        int depth = maxRepetitionLevel;
-        List<Object>[] stack = new List[depth];
-        stack[0] = new ArrayList<>();
+        currentBatch = iterator.readBatch(batchSize);
 
-        // Empty list (def=1 means outermost list exists but has no elements)
-        if (first.defLevel == 1) {
-            return stack[0];
+        if (currentBatch.recordCount() == 0) {
+            exhausted = true;
+            currentBatch = null;
+            return false;
         }
 
-        // Initialize nested lists for the first value
-        for (int i = 1; i < depth; i++) {
-            stack[i] = new ArrayList<>();
-            stack[i - 1].add(stack[i]);
-        }
+        // Reset lazy nested computation
+        nestedDataComputed = false;
+        multiLevelOffsets = null;
+        levelNulls = null;
+        elementNulls = null;
 
-        // Add first value if present
-        if (first.defLevel == maxDefinitionLevel) {
-            stack[depth - 1].add(convertValue(first.value));
-        }
-
-        // Continue reading while rep > 0 (same record)
-        while (peekRepLevel() > 0) {
-            ValueWithLevels v = nextValue();
-
-            // Create new lists from v.repLevel to the deepest level
-            for (int i = v.repLevel; i < depth; i++) {
-                stack[i] = new ArrayList<>();
-                stack[i - 1].add(stack[i]);
-            }
-
-            // Add value if present
-            if (v.defLevel == maxDefinitionLevel) {
-                stack[depth - 1].add(convertValue(v.value));
-            }
-        }
-
-        return stack[0];
+        return true;
     }
 
     /**
-     * Convert a raw value to its logical type representation.
+     * Number of top-level records in the current batch.
      */
-    private Object convertValue(Object rawValue) {
-        if (rawValue == null) {
-            return null;
-        }
-        return LogicalTypeConverter.convert(rawValue, column.type(), column.logicalType());
+    public int getRecordCount() {
+        checkBatchAvailable();
+        return currentBatch.recordCount();
     }
 
     /**
-     * Read the next value with its levels. Uses lookahead if available.
+     * Total number of leaf values in the current batch.
+     * For flat columns, this equals {@link #getRecordCount()}.
      */
-    private ValueWithLevels nextValue() throws IOException {
-        if (lookahead != null) {
-            ValueWithLevels result = lookahead;
-            lookahead = null;
-            return result;
-        }
-        return readFromPage();
+    public int getValueCount() {
+        checkBatchAvailable();
+        return currentBatch.valueCount();
     }
 
-    /**
-     * Peek at the next repetition level without consuming the value.
-     * Returns -1 if no more values (which will fail the > 0 check in callers).
-     */
-    private int peekRepLevel() throws IOException {
-        if (lookahead == null) {
-            lookahead = readFromPage();
-        }
-        return lookahead != null ? lookahead.repLevel : -1;
-    }
+    // ==================== Typed Value Arrays ====================
 
-    /**
-     * Read a single value with levels from the current page.
-     */
-    private ValueWithLevels readFromPage() throws IOException {
-        ensurePageLoaded();
-        if (currentPage == null || currentPagePosition >= currentPage.size()) {
-            return null;
-        }
-
-        int defLevel = maxDefinitionLevel > 0 ? currentPage.definitionLevels()[currentPagePosition] : 0;
-        int repLevel = maxRepetitionLevel > 0 && currentPage.repetitionLevels() != null
-                ? currentPage.repetitionLevels()[currentPagePosition]
-                : 0;
-        Object value = getPageValue(currentPage, currentPagePosition);
-
-        currentPagePosition++;
-        valuesRead++;
-        return new ValueWithLevels(value, defLevel, repLevel);
-    }
-
-    /**
-     * Get a value from a page at a given index using typed accessors.
-     */
-    private static Object getPageValue(Page page, int index) {
-        return switch (page) {
-            case Page.BooleanPage p -> p.get(index);
-            case Page.IntPage p -> p.get(index);
-            case Page.LongPage p -> p.get(index);
-            case Page.FloatPage p -> p.get(index);
-            case Page.DoublePage p -> p.get(index);
-            case Page.ByteArrayPage p -> p.get(index);
+    public int[] getInts() {
+        checkBatchAvailable();
+        return switch (currentBatch) {
+            case FlatColumnData.IntColumn c -> c.values();
+            case NestedColumnData.IntColumn c -> c.values();
+            default -> throw typeMismatch("int");
         };
     }
 
-    /**
-     * Ensure a page is loaded.
-     */
-    private void ensurePageLoaded() throws IOException {
-        if (currentPage == null || currentPagePosition >= currentPage.size()) {
-            if (pageCursor.hasNext()) {
-                currentPage = pageCursor.nextPage();
-                currentPagePosition = 0;
-            }
-        }
+    public long[] getLongs() {
+        checkBatchAvailable();
+        return switch (currentBatch) {
+            case FlatColumnData.LongColumn c -> c.values();
+            case NestedColumnData.LongColumn c -> c.values();
+            default -> throw typeMismatch("long");
+        };
     }
 
-    private record ValueWithLevels(Object value, int defLevel, int repLevel) {
+    public float[] getFloats() {
+        checkBatchAvailable();
+        return switch (currentBatch) {
+            case FlatColumnData.FloatColumn c -> c.values();
+            case NestedColumnData.FloatColumn c -> c.values();
+            default -> throw typeMismatch("float");
+        };
     }
+
+    public double[] getDoubles() {
+        checkBatchAvailable();
+        return switch (currentBatch) {
+            case FlatColumnData.DoubleColumn c -> c.values();
+            case NestedColumnData.DoubleColumn c -> c.values();
+            default -> throw typeMismatch("double");
+        };
+    }
+
+    public boolean[] getBooleans() {
+        checkBatchAvailable();
+        return switch (currentBatch) {
+            case FlatColumnData.BooleanColumn c -> c.values();
+            case NestedColumnData.BooleanColumn c -> c.values();
+            default -> throw typeMismatch("boolean");
+        };
+    }
+
+    public byte[][] getBinaries() {
+        checkBatchAvailable();
+        return switch (currentBatch) {
+            case FlatColumnData.ByteArrayColumn c -> c.values();
+            case NestedColumnData.ByteArrayColumn c -> c.values();
+            default -> throw typeMismatch("byte[]");
+        };
+    }
+
+    // ==================== Logical Type Accessors ====================
+
+    /**
+     * String values for STRING/JSON/BSON logical type columns.
+     * Converts the underlying byte arrays to UTF-8 strings.
+     * Null values are represented as null entries in the array.
+     *
+     * @return String array with converted values
+     * @throws IllegalStateException if the column is not a BYTE_ARRAY type
+     */
+    public String[] getStrings() {
+        byte[][] raw = getBinaries();
+        int count = currentBatch.valueCount();
+        BitSet nulls = getElementNulls();
+        String[] result = new String[count];
+        for (int i = 0; i < count; i++) {
+            if (nulls != null && nulls.get(i)) {
+                result[i] = null;
+            }
+            else {
+                result[i] = new String(raw[i], StandardCharsets.UTF_8);
+            }
+        }
+        return result;
+    }
+
+    // ==================== Null Handling ====================
+
+    /**
+     * Null bitmap over leaf values. For flat columns this doubles as record-level nulls.
+     *
+     * @return BitSet where set bits indicate null values, or null if all elements are required
+     */
+    public BitSet getElementNulls() {
+        checkBatchAvailable();
+        if (currentBatch instanceof FlatColumnData flat) {
+            return flat.nulls();
+        }
+        ensureNestedDataComputed();
+        return elementNulls;
+    }
+
+    /**
+     * Null bitmap at a given nesting level. Only valid for nested columns
+     * ({@code 0 <= level < getNestingDepth()}).
+     *
+     * @param level the nesting level (0 = outermost group)
+     * @return BitSet where set bits indicate null groups, or null if that level is required
+     */
+    public BitSet getLevelNulls(int level) {
+        checkBatchAvailable();
+        checkNestedLevel(level);
+        ensureNestedDataComputed();
+        return levelNulls[level];
+    }
+
+    // ==================== Offsets for Repeated Columns ====================
+
+    /**
+     * Nesting depth: 0 for flat, maxRepetitionLevel for nested.
+     */
+    public int getNestingDepth() {
+        return maxRepetitionLevel;
+    }
+
+    /**
+     * Offset array for a given nesting level. Maps items at level k to positions
+     * in the next level (or leaf values for the innermost level).
+     *
+     * @param level the nesting level (0-indexed)
+     * @return offset array for the given level
+     */
+    public int[] getOffsets(int level) {
+        checkBatchAvailable();
+        checkNestedLevel(level);
+        ensureNestedDataComputed();
+        return multiLevelOffsets[level];
+    }
+
+    // ==================== Metadata ====================
 
     public ColumnSchema getColumnSchema() {
         return column;
     }
 
-    public ColumnMetaData getColumnMetaData() {
-        return columnMetaData;
+    @Override
+    public void close() {
+        // No resources to close; PageCursor/assembly buffer clean up via GC
+    }
+
+    // ==================== Internal ====================
+
+    private void checkBatchAvailable() {
+        if (currentBatch == null) {
+            throw new IllegalStateException("No batch available. Call nextBatch() first.");
+        }
+    }
+
+    private void checkNestedLevel(int level) {
+        if (maxRepetitionLevel == 0) {
+            throw new IllegalStateException("Not valid for flat columns (nestingDepth=0)");
+        }
+        if (level < 0 || level >= maxRepetitionLevel) {
+            throw new IndexOutOfBoundsException(
+                    "Level " + level + " out of range [0, " + maxRepetitionLevel + ")");
+        }
+    }
+
+    private IllegalStateException typeMismatch(String expected) {
+        return new IllegalStateException(
+                "Column '" + column.name() + "' is " + column.type() + ", not " + expected);
+    }
+
+    /**
+     * Compute multi-level offsets and per-level null bitmaps from the nested batch data.
+     */
+    private void ensureNestedDataComputed() {
+        if (nestedDataComputed) {
+            return;
+        }
+        nestedDataComputed = true;
+
+        if (!(currentBatch instanceof NestedColumnData nested)) {
+            return;
+        }
+
+        int[] repLevels = nested.repetitionLevels();
+        int[] defLevels = nested.definitionLevels();
+        int valueCount = nested.valueCount();
+        int recordCount = nested.recordCount();
+        int maxDefLevel = nested.maxDefinitionLevel();
+
+        if (repLevels == null || valueCount == 0) {
+            multiLevelOffsets = new int[maxRepetitionLevel][];
+            levelNulls = new BitSet[maxRepetitionLevel];
+            elementNulls = computeElementNulls(defLevels, valueCount, maxDefLevel);
+            return;
+        }
+
+        multiLevelOffsets = computeMultiLevelOffsets(repLevels, valueCount, recordCount, maxRepetitionLevel);
+        computeNullBitmaps(defLevels, repLevels, valueCount, maxDefLevel, maxRepetitionLevel);
+    }
+
+    /**
+     * Compute multi-level offset arrays from repetition levels.
+     * <p>
+     * For maxRepLevel=1 (simple list): one offset array mapping records to value positions.
+     * For maxRepLevel=N (nested list): N offset arrays, chained.
+     * Level k boundary: positions where repLevel[i] <= k.
+     */
+    static int[][] computeMultiLevelOffsets(int[] repLevels, int valueCount,
+                                            int recordCount, int maxRepLevel) {
+        if (maxRepLevel == 1) {
+            // Simple list: single offset array from record offsets
+            // repLevel == 0 starts a new record
+            int[] offsets = new int[recordCount];
+            int recordIdx = 0;
+            for (int i = 0; i < valueCount; i++) {
+                if (repLevels[i] == 0) {
+                    if (recordIdx < recordCount) {
+                        offsets[recordIdx] = i;
+                    }
+                    recordIdx++;
+                }
+            }
+            return new int[][] { offsets };
+        }
+
+        // General case: multi-level offsets
+        // First pass: count items at each level
+        int[] itemCounts = new int[maxRepLevel];
+        for (int i = 0; i < valueCount; i++) {
+            int rep = repLevels[i];
+            // A value with repLevel <= k starts a new item at level k
+            for (int k = rep; k < maxRepLevel; k++) {
+                itemCounts[k]++;
+            }
+        }
+
+        // Allocate offset arrays
+        int[][] offsets = new int[maxRepLevel][];
+        for (int k = 0; k < maxRepLevel; k++) {
+            offsets[k] = new int[itemCounts[k]];
+        }
+
+        // Second pass: fill offsets
+        // offsets[k] maps level-k items to level-(k+1) item indices (or value indices for last)
+        int[] itemIndices = new int[maxRepLevel]; // current item index at each level
+        int[] nextLevelPositions = new int[maxRepLevel]; // next position in the child level
+
+        for (int i = 0; i < valueCount; i++) {
+            int rep = repLevels[i];
+
+            // For each level from rep to maxRepLevel-1, start a new item
+            for (int k = rep; k < maxRepLevel; k++) {
+                int idx = itemIndices[k];
+                if (k == maxRepLevel - 1) {
+                    // Innermost level: offset points to value position
+                    offsets[k][idx] = i;
+                } else {
+                    // Intermediate level: offset points to child level item index
+                    offsets[k][idx] = itemIndices[k + 1];
+                }
+                itemIndices[k]++;
+            }
+        }
+
+        return offsets;
+    }
+
+    /**
+     * Compute null bitmaps for element level and each nesting level.
+     */
+    private void computeNullBitmaps(int[] defLevels, int[] repLevels,
+                                    int valueCount, int maxDefLevel, int maxRepLevel) {
+        // Element nulls: leaf values where defLevel < maxDefLevel
+        elementNulls = computeElementNulls(defLevels, valueCount, maxDefLevel);
+
+        // Level nulls: for each nesting level k, a null at that level means
+        // the definition level at a group boundary is below the threshold for that level.
+        // The def level threshold for level k is: k + 1 (since each repeated/optional
+        // group adds one def level, and the root starts at 0).
+        // A group at level k is null when defLevel < defLevelThreshold(k).
+        levelNulls = new BitSet[maxRepLevel];
+
+        for (int k = 0; k < maxRepLevel; k++) {
+            // The def level needed for level k to be non-null:
+            // For a list schema like: optional group (def=1) -> repeated group (def=2) -> element (def=3)
+            // Level 0 null = record-level null = defLevel at boundary < 1
+            // The threshold is (k + 1) for simple schemas but we need to derive from the
+            // actual schema path. Since maxDefLevel includes all optional/repeated ancestors,
+            // and maxRepLevel is the count of repeated levels:
+            // defThreshold for level k = maxDefLevel - maxRepLevel + k
+            // This works because the last maxRepLevel def levels correspond to the repeated groups,
+            // and we need at least (maxDefLevel - maxRepLevel + k + 1) to be non-null at level k.
+            int defThreshold = maxDefLevel - maxRepLevel + k + 1;
+            BitSet nullBits = null;
+
+            int itemIdx = 0;
+            for (int i = 0; i < valueCount; i++) {
+                if (repLevels[i] <= k) {
+                    // This is a boundary for level k
+                    if (defLevels[i] < defThreshold) {
+                        if (nullBits == null) {
+                            nullBits = new BitSet();
+                        }
+                        nullBits.set(itemIdx);
+                    }
+                    itemIdx++;
+                }
+            }
+
+            levelNulls[k] = nullBits;
+        }
+    }
+
+    /**
+     * Compute element-level null bitmap.
+     */
+    private static BitSet computeElementNulls(int[] defLevels, int valueCount, int maxDefLevel) {
+        if (defLevels == null || maxDefLevel == 0) {
+            return null; // All required — no nulls possible
+        }
+        BitSet nulls = null;
+        for (int i = 0; i < valueCount; i++) {
+            if (defLevels[i] < maxDefLevel) {
+                if (nulls == null) {
+                    nulls = new BitSet(valueCount);
+                }
+                nulls.set(i);
+            }
+        }
+        return nulls;
+    }
+
+    // ==================== Factory ====================
+
+    /**
+     * Create a ColumnReader for a named column, scanning pages across all row groups.
+     */
+    static ColumnReader create(String columnName, FileSchema schema,
+                               MappedByteBuffer fileMapping, List<RowGroup> rowGroups,
+                               HardwoodContext context) {
+        ColumnSchema columnSchema = schema.getColumn(columnName);
+        return create(columnSchema, schema, fileMapping, rowGroups, context);
+    }
+
+    /**
+     * Create a ColumnReader for a column by index, scanning pages across all row groups.
+     */
+    static ColumnReader create(int columnIndex, FileSchema schema,
+                               MappedByteBuffer fileMapping, List<RowGroup> rowGroups,
+                               HardwoodContext context) {
+        ColumnSchema columnSchema = schema.getColumn(columnIndex);
+        return create(columnSchema, schema, fileMapping, rowGroups, context);
+    }
+
+    /**
+     * Create a ColumnReader for a given ColumnSchema, scanning pages across all row groups.
+     */
+    @SuppressWarnings("unchecked")
+    private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
+                                       MappedByteBuffer fileMapping, List<RowGroup> rowGroups,
+                                       HardwoodContext context) {
+        int originalIndex = columnSchema.columnIndex();
+
+        // Scan pages for this column across all row groups in parallel
+        CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[rowGroups.size()];
+
+        for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
+            final int rg = rgIdx;
+            scanFutures[rg] = CompletableFuture.supplyAsync(() -> {
+                ColumnChunk columnChunk = rowGroups.get(rg).columns().get(originalIndex);
+                PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, fileMapping, 0);
+                try {
+                    return scanner.scanPages();
+                }
+                catch (IOException e) {
+                    throw new UncheckedIOException(
+                            "Failed to scan pages for column " + columnSchema.name(), e);
+                }
+            }, context.executor());
+        }
+
+        CompletableFuture.allOf(scanFutures).join();
+
+        List<PageInfo> allPages = new ArrayList<>();
+        for (CompletableFuture<List<PageInfo>> future : scanFutures) {
+            allPages.addAll(future.join());
+        }
+
+        return new ColumnReader(columnSchema, allPages, context, DEFAULT_BATCH_SIZE);
     }
 }

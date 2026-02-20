@@ -13,9 +13,9 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.reader.HardwoodContext;
 import dev.hardwood.schema.ColumnSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;

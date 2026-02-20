@@ -2,7 +2,7 @@
 
 To run Maven, always run ./mvnw (Maven wrapper).
 Run ./mvnw verify to build the project.
-When doing changes in hardwood-core, install that module before running the performance tests.
+When doing changes in hardwood-core, install that module before running the performance tests or any other module.
 When running Maven commands, always apply a timeout of 180 seconds to detect deadlocks early on.
 Enable -Pperformance-test to run performance tests.
 

@@ -152,50 +152,25 @@ class ParquetTestingRepoTest {
             System.out.println("Row groups: " + metadata.rowGroups().size());
             System.out.println("Columns: " + reader.getFileSchema().getColumnCount());
 
-            // Try to read ALL columns from ALL row groups to verify we can parse everything
+            // Read ALL columns using batch API to verify we can parse everything
             int totalValuesRead = 0;
-            for (int rgIdx = 0; rgIdx < metadata.rowGroups().size(); rgIdx++) {
-                var rowGroup = metadata.rowGroups().get(rgIdx);
+            for (int colIdx = 0; colIdx < reader.getFileSchema().getColumnCount(); colIdx++) {
+                var column = reader.getFileSchema().getColumn(colIdx);
 
-                for (int colIdx = 0; colIdx < reader.getFileSchema().getColumnCount(); colIdx++) {
-                    var column = reader.getFileSchema().getColumn(colIdx);
-                    var columnChunk = rowGroup.columns().get(colIdx);
+                if (colIdx == 0) {
+                    System.out.println("Column " + colIdx + ": " + column.name() + " (" + column.type() + ")");
+                }
 
-                    if (rgIdx == 0 && colIdx == 0) {
-                        System.out.println("Column " + colIdx + ": " + column.name() + " (" + column.type() + ")");
-                        System.out.println("  Encoding: " + columnChunk.metaData().encodings());
-                        System.out.println("  Codec: " + columnChunk.metaData().codec());
+                try (ColumnReader columnReader = reader.createColumnReader(colIdx)) {
+                    int columnValues = 0;
+                    while (columnReader.nextBatch()) {
+                        columnValues += columnReader.getRecordCount();
                     }
-
-                    // Try to create a column reader and read all values
-                    ColumnReader columnReader = reader.getColumnReader(column, columnChunk);
-                    List<Object> values = columnReader.readAll();
-                    totalValuesRead += values.size();
-
-                    // Show first few values from first column only
-                    if (rgIdx == 0 && colIdx == 0) {
-                        int displayCount = Math.min(5, values.size());
-                        for (int i = 0; i < displayCount; i++) {
-                            Object value = values.get(i);
-                            if (value instanceof byte[]) {
-                                System.out.println("    [" + i + "]: <byte array, length=" + ((byte[]) value).length + ">");
-                            }
-                            else if (value instanceof String s && s.length() > 100) {
-                                System.out.println("    [" + i + "]: <string, length=" + s.length() + ">");
-                            }
-                            else {
-                                System.out.println("    [" + i + "]: " + value);
-                            }
-                        }
-                        if (values.size() > displayCount) {
-                            System.out.println("    ... and " + (values.size() - displayCount) + " more");
-                        }
-                    }
+                    totalValuesRead += columnValues;
                 }
             }
 
-            System.out.println("  Total values read from all columns: " + totalValuesRead);
-
+            System.out.println("  Total records read from all columns: " + totalValuesRead);
             System.out.println("✓ SUCCESS: Can read " + relativePath);
         }
         catch (Exception e) {

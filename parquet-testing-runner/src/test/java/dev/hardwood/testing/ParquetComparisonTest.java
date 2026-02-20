@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.BitSet;
 import java.util.List;
 import java.util.Set;
 import java.util.stream.Stream;
@@ -28,8 +29,12 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
@@ -128,6 +133,183 @@ class ParquetComparisonTest {
                 "Skipping " + fileName + " (in skip list)");
 
         compareParquetFile(testFile);
+    }
+
+    /**
+     * Additional files to skip in column-level comparison tests.
+     */
+    private static final Set<String> COLUMN_SKIPPED_FILES = Set.of(
+            // Files with nested/repeated columns where column-level comparison
+            // requires list reconstruction from offsets (deferred)
+            "list_columns.parquet",
+            "nested_lists.snappy.parquet",
+            "nested_maps.snappy.parquet",
+            "nested_structs.rust.parquet",
+            "nonnullable.impala.parquet",
+            "nullable.impala.parquet",
+            "null_list.parquet",
+            "old_list_structure.parquet",
+            "repeated_no_annotation.parquet",
+            "repeated_primitive_no_list.parquet",
+            "incorrect_map_schema.parquet",
+            "map_no_value.parquet"
+    );
+
+    @ParameterizedTest(name = "column: {0}")
+    @MethodSource("parquetTestFiles")
+    void compareColumnsWithReference(Path testFile) throws IOException {
+        String fileName = testFile.getFileName().toString();
+
+        // Skip files that are in either skip list
+        assumeFalse(SKIPPED_FILES.contains(fileName),
+                "Skipping " + fileName + " (in skip list)");
+        assumeFalse(COLUMN_SKIPPED_FILES.contains(fileName),
+                "Skipping " + fileName + " (in column skip list)");
+
+        compareColumnsParquetFile(testFile);
+    }
+
+    /**
+     * Compare a Parquet file column-by-column using the batch ColumnReader API
+     * against parquet-java reference data.
+     */
+    private void compareColumnsParquetFile(Path testFile) throws IOException {
+        System.out.println("Column comparing: " + testFile.getFileName());
+
+        // Read reference data with parquet-java
+        List<GenericRecord> referenceRows = readWithParquetJava(testFile);
+
+        // Read with Hardwood column-by-column and compare
+        try (ParquetFileReader fileReader = ParquetFileReader.open(testFile)) {
+            FileSchema schema = fileReader.getFileSchema();
+
+            for (int colIdx = 0; colIdx < schema.getColumnCount(); colIdx++) {
+                ColumnSchema colSchema = schema.getColumn(colIdx);
+
+                // Skip nested/repeated columns for now
+                if (colSchema.maxRepetitionLevel() > 0) {
+                    continue;
+                }
+
+                String colName = colSchema.name();
+                try (ColumnReader columnReader = fileReader.createColumnReader(colIdx)) {
+                    int rowIdx = 0;
+
+                    while (columnReader.nextBatch()) {
+                        int count = columnReader.getRecordCount();
+                        BitSet nulls = columnReader.getElementNulls();
+
+                        for (int i = 0; i < count; i++) {
+                            if (rowIdx >= referenceRows.size()) {
+                                break;
+                            }
+                            GenericRecord refRow = referenceRows.get(rowIdx);
+                            Object refValue = getRefColumnValue(refRow, colName);
+
+                            if (refValue == null || refValue == SkipMarker.INSTANCE) {
+                                // null or skipped
+                                if (refValue == null) {
+                                    assertThat(nulls != null && nulls.get(i))
+                                            .as("Row %d, column '%s' should be null", rowIdx, colName)
+                                            .isTrue();
+                                }
+                            } else if (nulls != null && nulls.get(i)) {
+                                assertThat(refValue)
+                                        .as("Row %d, column '%s' should not be null", rowIdx, colName)
+                                        .isNull();
+                            } else {
+                                compareColumnValue(rowIdx, colName, refValue, columnReader, i);
+                            }
+                            rowIdx++;
+                        }
+                    }
+
+                    assertThat(rowIdx)
+                            .as("Column '%s' row count", colName)
+                            .isEqualTo(referenceRows.size());
+                }
+            }
+        }
+
+        System.out.println("  Column comparison passed!");
+    }
+
+    /**
+     * Get reference value for a flat column from a GenericRecord.
+     */
+    private Object getRefColumnValue(GenericRecord record, String fieldName) {
+        var field = record.getSchema().getField(fieldName);
+        if (field == null) {
+            return SkipMarker.INSTANCE;
+        }
+        Object value = record.get(fieldName);
+        if (value == null) {
+            return null;
+        }
+        // Handle union types (nullable fields)
+        var fieldSchema = field.schema();
+        if (fieldSchema.getType() == org.apache.avro.Schema.Type.UNION) {
+            for (var subSchema : fieldSchema.getTypes()) {
+                if (subSchema.getType() != org.apache.avro.Schema.Type.NULL) {
+                    fieldSchema = subSchema;
+                    break;
+                }
+            }
+        }
+        // Skip complex types
+        return switch (fieldSchema.getType()) {
+            case RECORD, ARRAY, MAP -> SkipMarker.INSTANCE;
+            case FIXED -> SkipMarker.INSTANCE; // INT96
+            default -> convertToComparable(value);
+        };
+    }
+
+    /**
+     * Compare a single column value from the ColumnReader batch against the reference.
+     */
+    private void compareColumnValue(int rowIdx, String colName, Object refValue,
+                                    ColumnReader reader, int batchIdx) {
+        String context = String.format("Row %d, column '%s'", rowIdx, colName);
+        Object actual = getColumnReaderValue(reader, batchIdx);
+        Object comparableActual = convertToComparable(actual);
+
+        if (refValue instanceof String refStr && comparableActual instanceof byte[] actualBytes) {
+            // FIXED_LEN_BYTE_ARRAY without STRING logical type — Avro reader may produce String
+            assertThat(new String(actualBytes, java.nio.charset.StandardCharsets.UTF_8))
+                    .as(context).isEqualTo(refStr);
+        } else if (refValue instanceof Float f) {
+            assertThat((Float) comparableActual).as(context).isCloseTo(f, within(0.0001f));
+        } else if (refValue instanceof Double d) {
+            assertThat((Double) comparableActual).as(context).isCloseTo(d, within(0.0000001d));
+        } else if (refValue instanceof byte[] refBytes) {
+            assertThat((byte[]) comparableActual).as(context).isEqualTo(refBytes);
+        } else {
+            assertThat(comparableActual).as(context).isEqualTo(refValue);
+        }
+    }
+
+    /**
+     * Get a value from the ColumnReader at a batch index, using the appropriate typed array.
+     * Applies logical type conversion (e.g. BYTE_ARRAY + STRING → String).
+     */
+    private Object getColumnReaderValue(ColumnReader reader, int index) {
+        var colSchema = reader.getColumnSchema();
+        return switch (colSchema.type()) {
+            case INT32 -> reader.getInts()[index];
+            case INT64 -> reader.getLongs()[index];
+            case FLOAT -> reader.getFloats()[index];
+            case DOUBLE -> reader.getDoubles()[index];
+            case BOOLEAN -> reader.getBooleans()[index];
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {
+                // Use logical type conversion for STRING/JSON/BSON columns
+                if (colSchema.logicalType() instanceof LogicalType.StringType
+                        || colSchema.logicalType() instanceof LogicalType.JsonType
+                        || colSchema.logicalType() instanceof LogicalType.BsonType) {
+                    yield reader.getStrings()[index];
+                }
+                yield reader.getBinaries()[index];
+            }
+        };
     }
 
     /**
