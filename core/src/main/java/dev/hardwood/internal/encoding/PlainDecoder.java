@@ -38,9 +38,8 @@ public class PlainDecoder implements ValueDecoder {
      * Read a fixed-length byte array value.
      */
     public byte[] readFixedLenByteArray(int length) throws IOException {
-        byte[] bytes = new byte[length];
-        int read = input.read(bytes);
-        if (read != length) {
+        byte[] bytes = input.readNBytes(length);
+        if (bytes.length != length) {
             throw new IOException("Unexpected EOF while reading fixed-length byte array");
         }
         return bytes;
@@ -255,9 +254,8 @@ public class PlainDecoder implements ValueDecoder {
     }
 
     private byte[] readInt96() throws IOException {
-        byte[] bytes = new byte[12];
-        int read = input.read(bytes);
-        if (read != 12) {
+        byte[] bytes = input.readNBytes(12);
+        if (bytes.length != 12) {
             throw new IOException("Unexpected EOF while reading INT96");
         }
         return bytes;
@@ -265,9 +263,8 @@ public class PlainDecoder implements ValueDecoder {
 
     private byte[] readByteArray() throws IOException {
         // Read length (4 bytes, little-endian)
-        byte[] lengthBytes = new byte[4];
-        int read = input.read(lengthBytes);
-        if (read != 4) {
+        byte[] lengthBytes = input.readNBytes(4);
+        if (lengthBytes.length != 4) {
             throw new IOException("Unexpected EOF while reading BYTE_ARRAY length");
         }
         int length = ByteBuffer.wrap(lengthBytes).order(ByteOrder.LITTLE_ENDIAN).getInt();
@@ -276,10 +273,13 @@ public class PlainDecoder implements ValueDecoder {
             throw new IOException("Invalid BYTE_ARRAY length: " + length);
         }
 
+        if (length == 0) {
+            return new byte[0];
+        }
+
         // Read data
-        byte[] data = new byte[length];
-        read = input.read(data);
-        if (read != length) {
+        byte[] data = input.readNBytes(length);
+        if (data.length != length) {
             throw new IOException("Unexpected EOF while reading BYTE_ARRAY data");
         }
         return data;

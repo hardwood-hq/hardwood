@@ -75,7 +75,19 @@ public class PageScanner {
         long chunkSize = metaData.totalCompressedSize();
 
         int sliceOffset = (int) (chunkStartOffset - fileMappingBaseOffset);
-        MappedByteBuffer buffer = fileMapping.slice(sliceOffset, (int) chunkSize);
+        MappedByteBuffer buffer;
+        try {
+            buffer = fileMapping.slice(sliceOffset, (int) chunkSize);
+        }
+        catch (IndexOutOfBoundsException e) {
+            throw new IOException("Invalid column chunk bounds for '" + columnSchema.name()
+                    + "': chunkStart=" + chunkStartOffset
+                    + ", chunkSize=" + chunkSize
+                    + ", dictOffset=" + dictOffset
+                    + ", dataPageOffset=" + metaData.dataPageOffset()
+                    + ", mappingBase=" + fileMappingBaseOffset
+                    + ", mappingSize=" + fileMapping.capacity(), e);
+        }
 
         List<PageInfo> pageInfos = new ArrayList<>();
         long valuesRead = 0;
@@ -123,9 +135,20 @@ public class PageScanner {
 
     private Dictionary parseDictionary(MappedByteBuffer compressedData, int numValues,
             int uncompressedSize, ColumnSchema column, CompressionCodec codec) throws IOException {
-        Decompressor decompressor = context.decompressorFactory().getDecompressor(codec);
-        byte[] data = decompressor.decompress(compressedData, uncompressedSize);
-        return Dictionary.parse(data, numValues, column.type(), column.typeLength());
+        int compressedSize = compressedData.remaining();
+        try {
+            Decompressor decompressor = context.decompressorFactory().getDecompressor(codec);
+            byte[] data = decompressor.decompress(compressedData, uncompressedSize);
+            return Dictionary.parse(data, numValues, column.type(), column.typeLength());
+        }
+        catch (Exception e) {
+            throw new IOException("Failed to parse dictionary for column '" + column.name()
+                    + "' (type=" + column.type()
+                    + ", numValues=" + numValues
+                    + ", uncompressedSize=" + uncompressedSize
+                    + ", compressedSize=" + compressedSize
+                    + ", codec=" + codec + ")", e);
+        }
     }
 
     private long getValueCount(PageHeader header) {

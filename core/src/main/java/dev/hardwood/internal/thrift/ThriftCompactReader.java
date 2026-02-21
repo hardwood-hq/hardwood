@@ -243,8 +243,9 @@ public class ThriftCompactReader {
             case TYPE_MAP:
                 int mapSize = (int) readVarint();
                 if (mapSize > 0) {
-                    byte keyType = readByte();
-                    byte valueType = readByte();
+                    byte kvTypes = readByte();
+                    byte keyType = (byte) ((kvTypes >> 4) & 0x0F);
+                    byte valueType = (byte) (kvTypes & 0x0F);
                     for (int i = 0; i < mapSize; i++) {
                         skipField(keyType);
                         skipField(valueType);

@@ -52,7 +52,7 @@ import static org.assertj.core.api.Assertions.withinPercentage;
  * </p>
  */
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
-class SimplePerformanceTest {
+class FlatPerformanceTest {
 
     private static final Path DATA_DIR = Path.of("../test-data-setup/target/tlc-trip-record-data");
     private static final YearMonth DEFAULT_START = YearMonth.of(2016, 1);

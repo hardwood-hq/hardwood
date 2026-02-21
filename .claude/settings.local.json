@@ -85,7 +85,9 @@
       "Bash(git -C /app log --oneline -20)",
       "Bash(jar:*)",
       "Bash(../mvnw surefire:test:*)",
-      "Bash(git status:*)"
+      "Bash(git status:*)",
+      "WebFetch(domain:docs.overturemaps.org)",
+      "WebFetch(domain:registry.opendata.aws)"
     ]
   }
 }

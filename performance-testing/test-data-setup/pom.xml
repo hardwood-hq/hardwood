@@ -44,6 +44,22 @@
               </systemProperties>
             </configuration>
           </execution>
+          <execution>
+            <id>download-overture-maps-data</id>
+            <phase>generate-test-resources</phase>
+            <goals>
+              <goal>java</goal>
+            </goals>
+            <configuration>
+              <mainClass>dev.hardwood.testdata.OvertureMapsDownloader</mainClass>
+              <systemProperties>
+                <systemProperty>
+                  <key>data.dir</key>
+                  <value>${project.build.directory}/overture-maps-data</value>
+                </systemProperty>
+              </systemProperties>
+            </configuration>
+          </execution>
         </executions>
       </plugin>
     </plugins>
