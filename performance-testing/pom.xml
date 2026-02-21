@@ -23,6 +23,18 @@
   <name>Performance Testing</name>
   <description>Performance testing modules for Hardwood</description>
 
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-bom</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <modules>
     <module>test-data-setup</module>
     <module>end-to-end</module>

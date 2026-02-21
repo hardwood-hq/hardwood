@@ -22,6 +22,18 @@
   <name>Integration Tests</name>
   <description>Integration tests for Hardwood</description>
 
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-bom</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <!-- Hardwood (module under test) -->
     <dependency>

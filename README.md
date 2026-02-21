@@ -16,7 +16,47 @@ In the future:
 
 ## Set-Up
 
+### Using the BOM (Bill of Materials)
+
+The `hardwood-bom` manages versions for all Hardwood modules and their optional runtime dependencies.
+Import it in your dependency management so you can declare Hardwood dependencies without specifying versions:
+
+**Maven:**
+
+```xml
+<dependencyManagement>
+    <dependencies>
+        <dependency>
+            <groupId>dev.hardwood</groupId>
+            <artifactId>hardwood-bom</artifactId>
+            <version>1.0.0-SNAPSHOT</version>
+            <type>pom</type>
+            <scope>import</scope>
+        </dependency>
+    </dependencies>
+</dependencyManagement>
+```
+
+**Gradle:**
+
+```groovy
+dependencies {
+    implementation platform('dev.hardwood:hardwood-bom:1.0.0-SNAPSHOT')
+}
+```
+
+Then declare dependencies without versions:
+
+```xml
+<dependency>
+    <groupId>dev.hardwood</groupId>
+    <artifactId>hardwood-core</artifactId>
+</dependency>
+```
+
 ### Adding the Core Dependency
+
+If you prefer not to use the BOM, you can specify the version directly:
 
 **Maven:**
 
@@ -36,7 +76,8 @@ implementation 'dev.hardwood:hardwood-core:1.0.0-SNAPSHOT'
 
 ### Compression Libraries
 
-Hardwood supports reading Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4, and Brotli. The compression libraries are optional dependencies—add only the ones you need:
+Hardwood supports reading Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4, and Brotli. The compression libraries are optional dependencies—add only the ones you need.
+When using the BOM, no version is required:
 
 **Maven:**
 
@@ -45,24 +86,64 @@ Hardwood supports reading Parquet files compressed with GZIP (built into Java), 
 <dependency>
     <groupId>org.xerial.snappy</groupId>
     <artifactId>snappy-java</artifactId>
-    <version>1.1.10.8</version>
 </dependency>
 
 <!-- ZSTD compression -->
 <dependency>
     <groupId>com.github.luben</groupId>
     <artifactId>zstd-jni</artifactId>
-    <version>1.5.7-6</version>
 </dependency>
 
 <!-- LZ4 compression -->
 <dependency>
     <groupId>org.lz4</groupId>
     <artifactId>lz4-java</artifactId>
-    <version>1.8.1</version>
 </dependency>
 
 <!-- Brotli compression -->
+<dependency>
+    <groupId>com.aayushatharva.brotli4j</groupId>
+    <artifactId>brotli4j</artifactId>
+</dependency>
+```
+
+**Gradle:**
+
+```groovy
+// Snappy compression
+implementation 'org.xerial.snappy:snappy-java'
+
+// ZSTD compression
+implementation 'com.github.luben:zstd-jni'
+
+// LZ4 compression
+implementation 'org.lz4:lz4-java'
+
+// Brotli compression
+implementation 'com.aayushatharva.brotli4j:brotli4j'
+```
+
+<details>
+<summary>Without the BOM (explicit versions)</summary>
+
+**Maven:**
+
+```xml
+<dependency>
+    <groupId>org.xerial.snappy</groupId>
+    <artifactId>snappy-java</artifactId>
+    <version>1.1.10.8</version>
+</dependency>
+<dependency>
+    <groupId>com.github.luben</groupId>
+    <artifactId>zstd-jni</artifactId>
+    <version>1.5.7-6</version>
+</dependency>
+<dependency>
+    <groupId>org.lz4</groupId>
+    <artifactId>lz4-java</artifactId>
+    <version>1.8.1</version>
+</dependency>
 <dependency>
     <groupId>com.aayushatharva.brotli4j</groupId>
     <artifactId>brotli4j</artifactId>
@@ -73,18 +154,13 @@ Hardwood supports reading Parquet files compressed with GZIP (built into Java), 
 **Gradle:**
 
 ```groovy
-// Snappy compression
 implementation 'org.xerial.snappy:snappy-java:1.1.10.8'
-
-// ZSTD compression
 implementation 'com.github.luben:zstd-jni:1.5.7-6'
-
-// LZ4 compression
 implementation 'org.lz4:lz4-java:1.8.1'
-
-// Brotli compression
 implementation 'com.aayushatharva.brotli4j:brotli4j:1.20.0'
 ```
+
+</details>
 
 If you attempt to read a file using a compression codec whose library is not on the classpath, Hardwood will throw an exception with a message indicating which dependency to add.
 

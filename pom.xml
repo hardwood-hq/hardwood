@@ -30,6 +30,7 @@
   </licenses>
 
   <modules>
+    <module>bom</module>
     <module>core</module>
     <module>hadoop-compat</module>
     <module>integration-test</module>
