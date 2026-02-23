@@ -7,10 +7,9 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.HashMap;
 import java.util.List;
-import java.util.Map;
 
+import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -24,59 +23,92 @@ final class TopLevelFieldMap {
 
         record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {}
 
-        record Struct(SchemaNode.GroupNode schema, Map<String, FieldDesc> children) implements FieldDesc {}
+        /**
+         * @param nameToIndex     name → child ordinal (boundary lookup)
+         * @param children        ordinal → descriptor (internal lookup)
+         * @param firstPrimitiveCol projected column of first primitive child, or -1 if none
+         */
+        record Struct(SchemaNode.GroupNode schema,
+                      StringToIntMap nameToIndex,
+                      FieldDesc[] children,
+                      int firstPrimitiveCol) implements FieldDesc {
+
+            FieldDesc getChild(String name) {
+                int idx = nameToIndex.get(name);
+                return idx >= 0 ? children[idx] : null;
+            }
+
+            FieldDesc getChild(int ordinal) {
+                return children[ordinal];
+            }
+        }
 
         /**
          * @param nullDefLevel     def level below which the list itself is null
          * @param elementDefLevel  def level at or above which an actual element exists
+         * @param elementDesc      pre-built descriptor for struct/list/map elements, null for primitives
          */
         record ListOf(SchemaNode.GroupNode schema, SchemaNode elementSchema,
                       int firstLeafProjCol, int leafColCount,
-                      int nullDefLevel, int elementDefLevel) implements FieldDesc {}
+                      int nullDefLevel, int elementDefLevel,
+                      FieldDesc elementDesc) implements FieldDesc {}
 
         /**
          * @param nullDefLevel   def level below which the map itself is null
          * @param entryDefLevel  def level at or above which an actual entry exists
+         * @param valueDesc      pre-built descriptor for struct/list/map values, null for primitives
          */
         record MapOf(SchemaNode.GroupNode schema, int keyProjCol, int valueProjCol,
-                     int nullDefLevel, int entryDefLevel) implements FieldDesc {}
+                     int nullDefLevel, int entryDefLevel,
+                     FieldDesc valueDesc) implements FieldDesc {}
     }
 
-    private final Map<String, FieldDesc> byName;
-    private final Map<Integer, FieldDesc> byOriginalIndex;
+    private final StringToIntMap nameToIndex;
+    private final FieldDesc[] byIndex;
+    private final FieldDesc[] byOriginalIndex;
 
-    private TopLevelFieldMap(Map<String, FieldDesc> byName, Map<Integer, FieldDesc> byOriginalIndex) {
-        this.byName = byName;
+    private TopLevelFieldMap(StringToIntMap nameToIndex, FieldDesc[] byIndex, FieldDesc[] byOriginalIndex) {
+        this.nameToIndex = nameToIndex;
+        this.byIndex = byIndex;
         this.byOriginalIndex = byOriginalIndex;
     }
 
     FieldDesc getByName(String name) {
-        FieldDesc desc = byName.get(name);
-        if (desc == null) {
+        int idx = nameToIndex.get(name);
+        if (idx < 0) {
             throw new IllegalArgumentException("Field '" + name + "' not in projection");
         }
-        return desc;
+        return byIndex[idx];
     }
 
     FieldDesc getByOriginalIndex(int originalFieldIndex) {
-        return byOriginalIndex.get(originalFieldIndex);
+        if (originalFieldIndex < 0 || originalFieldIndex >= byOriginalIndex.length) {
+            return null;
+        }
+        return byOriginalIndex[originalFieldIndex];
     }
 
     static TopLevelFieldMap build(FileSchema schema, ProjectedSchema projectedSchema) {
         List<SchemaNode> rootChildren = schema.getRootNode().children();
         int[] projectedFieldIndices = projectedSchema.getProjectedFieldIndices();
 
-        Map<String, FieldDesc> byName = new HashMap<>();
-        Map<Integer, FieldDesc> byOriginalIndex = new HashMap<>();
+        int fieldCount = projectedFieldIndices.length;
+        StringToIntMap nameToIndex = new StringToIntMap(fieldCount);
+        FieldDesc[] byIndex = new FieldDesc[fieldCount];
 
-        for (int projFieldIdx : projectedFieldIndices) {
+        int maxOriginalIndex = rootChildren.size();
+        FieldDesc[] byOriginalIndex = new FieldDesc[maxOriginalIndex];
+
+        for (int i = 0; i < fieldCount; i++) {
+            int projFieldIdx = projectedFieldIndices[i];
             SchemaNode topLevelNode = rootChildren.get(projFieldIdx);
             FieldDesc desc = buildDesc(topLevelNode, schema, projectedSchema);
-            byName.put(topLevelNode.name(), desc);
-            byOriginalIndex.put(projFieldIdx, desc);
+            nameToIndex.put(topLevelNode.name(), i);
+            byIndex[i] = desc;
+            byOriginalIndex[projFieldIdx] = desc;
         }
 
-        return new TopLevelFieldMap(byName, byOriginalIndex);
+        return new TopLevelFieldMap(nameToIndex, byIndex, byOriginalIndex);
     }
 
     private static FieldDesc buildDesc(SchemaNode node, FileSchema schema, ProjectedSchema projectedSchema) {
@@ -99,23 +131,41 @@ final class TopLevelFieldMap {
         };
     }
 
-    private static FieldDesc.Struct buildStructDesc(SchemaNode.GroupNode group,
-                                                    FileSchema schema,
-                                                    ProjectedSchema projectedSchema) {
-        Map<String, FieldDesc> children = new HashMap<>();
-        for (int i = 0; i < group.children().size(); i++) {
-            SchemaNode child = group.children().get(i);
-            FieldDesc childDesc = buildDescForChild(child, schema, projectedSchema);
-            if (childDesc != null) {
-                children.put(child.name(), childDesc);
+    static FieldDesc.Struct buildStructDesc(SchemaNode.GroupNode group,
+                                            FileSchema schema,
+                                            ProjectedSchema projectedSchema) {
+        List<SchemaNode> schemaChildren = group.children();
+        int childCount = schemaChildren.size();
+        StringToIntMap nameToIndex = new StringToIntMap(childCount);
+        // Count projected children first
+        int projected = 0;
+        for (int i = 0; i < childCount; i++) {
+            SchemaNode child = schemaChildren.get(i);
+            if (isChildProjected(child, projectedSchema)) {
+                projected++;
             }
         }
-        return new FieldDesc.Struct(group, children);
+        FieldDesc[] children = new FieldDesc[projected];
+        int firstPrimitiveCol = -1;
+        int idx = 0;
+        for (int i = 0; i < childCount; i++) {
+            SchemaNode child = schemaChildren.get(i);
+            FieldDesc childDesc = buildDescForChild(child, schema, projectedSchema);
+            if (childDesc != null) {
+                nameToIndex.put(child.name(), idx);
+                children[idx] = childDesc;
+                if (firstPrimitiveCol < 0 && childDesc instanceof FieldDesc.Primitive p) {
+                    firstPrimitiveCol = p.projectedCol();
+                }
+                idx++;
+            }
+        }
+        return new FieldDesc.Struct(group, nameToIndex, children, firstPrimitiveCol);
     }
 
-    private static FieldDesc.ListOf buildListDesc(SchemaNode.GroupNode listGroup,
-                                                  FileSchema schema,
-                                                  ProjectedSchema projectedSchema) {
+    static FieldDesc.ListOf buildListDesc(SchemaNode.GroupNode listGroup,
+                                          FileSchema schema,
+                                          ProjectedSchema projectedSchema) {
         SchemaNode elementSchema = listGroup.getListElement();
 
         // Compute defLevel thresholds
@@ -130,13 +180,19 @@ final class TopLevelFieldMap {
         int lastProjCol = range[1];
         int leafCount = (firstProjCol <= lastProjCol) ? (lastProjCol - firstProjCol + 1) : 0;
 
+        // Pre-build element descriptor for nested types
+        FieldDesc elementDesc = null;
+        if (elementSchema instanceof SchemaNode.GroupNode group) {
+            elementDesc = buildDescForChild(elementSchema, schema, projectedSchema);
+        }
+
         return new FieldDesc.ListOf(listGroup, elementSchema, firstProjCol, leafCount,
-                nullDefLevel, elementDefLevel);
+                nullDefLevel, elementDefLevel, elementDesc);
     }
 
-    private static FieldDesc.MapOf buildMapDesc(SchemaNode.GroupNode mapGroup,
-                                                FileSchema schema,
-                                                ProjectedSchema projectedSchema) {
+    static FieldDesc.MapOf buildMapDesc(SchemaNode.GroupNode mapGroup,
+                                        FileSchema schema,
+                                        ProjectedSchema projectedSchema) {
         // Compute defLevel thresholds
         int nullDefLevel = mapGroup.maxDefinitionLevel();
         // The inner repeated key_value group
@@ -148,7 +204,14 @@ final class TopLevelFieldMap {
 
         int keyProjCol = findFirstLeafProjCol(keyNode, projectedSchema);
         int valueProjCol = findFirstLeafProjCol(valueNode, projectedSchema);
-        return new FieldDesc.MapOf(mapGroup, keyProjCol, valueProjCol, nullDefLevel, entryDefLevel);
+
+        // Pre-build value descriptor for nested types
+        FieldDesc valueDesc = null;
+        if (valueNode instanceof SchemaNode.GroupNode) {
+            valueDesc = buildDescForChild(valueNode, schema, projectedSchema);
+        }
+
+        return new FieldDesc.MapOf(mapGroup, keyProjCol, valueProjCol, nullDefLevel, entryDefLevel, valueDesc);
     }
 
     private static FieldDesc buildDescForChild(SchemaNode node, FileSchema schema,
@@ -171,6 +234,20 @@ final class TopLevelFieldMap {
                 else {
                     yield buildStructDesc(group, schema, projectedSchema);
                 }
+            }
+        };
+    }
+
+    private static boolean isChildProjected(SchemaNode node, ProjectedSchema projectedSchema) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> projectedSchema.toProjectedIndex(prim.columnIndex()) >= 0;
+            case SchemaNode.GroupNode group -> {
+                for (SchemaNode child : group.children()) {
+                    if (isChildProjected(child, projectedSchema)) {
+                        yield true;
+                    }
+                }
+                yield false;
             }
         };
     }

@@ -12,7 +12,6 @@ import java.util.PrimitiveIterator;
 import java.util.function.DoubleConsumer;
 
 import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.schema.SchemaNode;
 
 /**
  * Flyweight {@link PqDoubleList} that reads double values directly from a column array.
@@ -21,15 +20,12 @@ final class PqDoubleListImpl implements PqDoubleList {
 
     private final NestedBatchIndex batch;
     private final int projectedCol;
-    private final SchemaNode elementSchema;
     private final int start;
     private final int end;
 
-    PqDoubleListImpl(NestedBatchIndex batch, int projectedCol, SchemaNode elementSchema,
-                         int start, int end) {
+    PqDoubleListImpl(NestedBatchIndex batch, int projectedCol, int start, int end) {
         this.batch = batch;
         this.projectedCol = projectedCol;
-        this.elementSchema = elementSchema;
         this.start = start;
         this.end = end;
     }

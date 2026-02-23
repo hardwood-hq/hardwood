@@ -14,6 +14,7 @@ import java.time.LocalTime;
 import java.util.Iterator;
 import java.util.NoSuchElementException;
 import java.util.UUID;
+import java.util.function.IntFunction;
 
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
@@ -74,8 +75,7 @@ final class PqListImpl implements PqList {
         if (range == null) {
             return null;
         }
-        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(),
-                listDesc.elementSchema(), range.start, range.end);
+        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(), range.start, range.end);
     }
 
     static PqLongList createLongList(NestedBatchIndex batch,
@@ -85,8 +85,7 @@ final class PqListImpl implements PqList {
         if (range == null) {
             return null;
         }
-        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(),
-                listDesc.elementSchema(), range.start, range.end);
+        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(), range.start, range.end);
     }
 
     static PqDoubleList createDoubleList(NestedBatchIndex batch,
@@ -96,8 +95,7 @@ final class PqListImpl implements PqList {
         if (range == null) {
             return null;
         }
-        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(),
-                listDesc.elementSchema(), range.start, range.end);
+        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(), range.start, range.end);
     }
 
     static boolean isListNull(NestedBatchIndex batch,
@@ -354,24 +352,17 @@ final class PqListImpl implements PqList {
                 batch.columns[projCol].column().maxRepetitionLevel());
         int defLevel = batch.columns[projCol].getDefLevel(firstValue);
 
-        if (group.isList()) {
-            return defLevel < group.maxDefinitionLevel();
-        } else if (group.isMap()) {
-            return defLevel < group.maxDefinitionLevel();
-        } else {
-            return defLevel < group.maxDefinitionLevel();
-        }
+        return defLevel < group.maxDefinitionLevel();
     }
 
     // ==================== Internal: Inner List/Struct Creation ====================
 
     private PqStruct createInnerStruct(int index) {
         int valueIdx = start + index;
-        if (!(elementSchema instanceof SchemaNode.GroupNode group) || !group.isStruct()) {
+        TopLevelFieldMap.FieldDesc elementDesc = listDesc.elementDesc();
+        if (!(elementDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
             throw new IllegalArgumentException("Element is not a struct");
         }
-        TopLevelFieldMap.FieldDesc.Struct structDesc =
-                DescriptorBuilder.buildStructDesc(group, batch.projectedSchema);
         if (isStructElementNull(structDesc, valueIdx)) {
             return null;
         }
@@ -415,8 +406,7 @@ final class PqListImpl implements PqList {
             return null;
         }
         PqListImpl innerList = (PqListImpl) inner;
-        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(),
-                innerList.elementSchema, innerList.start, innerList.end);
+        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(), innerList.start, innerList.end);
     }
 
     private PqLongList createInnerLongList(int index) {
@@ -425,8 +415,7 @@ final class PqListImpl implements PqList {
             return null;
         }
         PqListImpl innerList = (PqListImpl) inner;
-        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(),
-                innerList.elementSchema, innerList.start, innerList.end);
+        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(), innerList.start, innerList.end);
     }
 
     private PqDoubleList createInnerDoubleList(int index) {
@@ -435,8 +424,7 @@ final class PqListImpl implements PqList {
             return null;
         }
         PqListImpl innerList = (PqListImpl) inner;
-        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(),
-                innerList.elementSchema, innerList.start, innerList.end);
+        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(), innerList.start, innerList.end);
     }
 
     private PqMap createInnerMap(int index) {
@@ -444,22 +432,23 @@ final class PqListImpl implements PqList {
             throw new IllegalArgumentException("Element is not a map");
         }
         int valueIdx = start + index;
-        TopLevelFieldMap.FieldDesc.MapOf innerMapDesc =
-                DescriptorBuilder.buildMapDesc(group, batch.projectedSchema);
+        TopLevelFieldMap.FieldDesc elementDesc = listDesc.elementDesc();
+        if (!(elementDesc instanceof TopLevelFieldMap.FieldDesc.MapOf innerMapDesc)) {
+            // Fallback: build on the fly (should not happen with properly cached descriptors)
+            TopLevelFieldMap.FieldDesc.MapOf builtDesc =
+                    DescriptorBuilder.buildMapDesc(group, batch.projectedSchema);
+            return PqMapImpl.create(batch, builtDesc, -1, valueIdx);
+        }
         return PqMapImpl.create(batch, innerMapDesc, -1, valueIdx);
     }
 
     private boolean isStructElementNull(TopLevelFieldMap.FieldDesc.Struct structDesc, int valueIdx) {
-        for (TopLevelFieldMap.FieldDesc childDesc : structDesc.children().values()) {
-            if (childDesc instanceof TopLevelFieldMap.FieldDesc.Primitive p) {
-                int projCol = p.projectedCol();
-                NestedColumnData data = batch.columns[projCol];
-                int defLevel = data.getDefLevel(valueIdx);
-                int structDefLevel = structDesc.schema().maxDefinitionLevel();
-                return defLevel < structDefLevel;
-            }
+        int projCol = structDesc.firstPrimitiveCol();
+        if (projCol < 0) {
+            return false;
         }
-        return false;
+        int defLevel = batch.columns[projCol].getDefLevel(valueIdx);
+        return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 
     // ==================== Internal: Bounds Check ====================
@@ -518,10 +507,10 @@ final class PqListImpl implements PqList {
     }
 
     private class NestedListIterator<T> implements Iterator<T> {
-        private final java.util.function.IntFunction<T> creator;
+        private final IntFunction<T> creator;
         private int pos = 0;
 
-        NestedListIterator(java.util.function.IntFunction<T> creator) {
+        NestedListIterator(IntFunction<T> creator) {
             this.creator = creator;
         }
 

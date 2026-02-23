@@ -12,7 +12,6 @@ import java.util.PrimitiveIterator;
 import java.util.function.LongConsumer;
 
 import dev.hardwood.row.PqLongList;
-import dev.hardwood.schema.SchemaNode;
 
 /**
  * Flyweight {@link PqLongList} that reads long values directly from a column array.
@@ -21,15 +20,12 @@ final class PqLongListImpl implements PqLongList {
 
     private final NestedBatchIndex batch;
     private final int projectedCol;
-    private final SchemaNode elementSchema;
     private final int start;
     private final int end;
 
-    PqLongListImpl(NestedBatchIndex batch, int projectedCol, SchemaNode elementSchema,
-                       int start, int end) {
+    PqLongListImpl(NestedBatchIndex batch, int projectedCol, int start, int end) {
         this.batch = batch;
         this.projectedCol = projectedCol;
-        this.elementSchema = elementSchema;
         this.start = start;
         this.end = end;
     }

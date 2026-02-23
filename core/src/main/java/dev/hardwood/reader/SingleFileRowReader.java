@@ -19,6 +19,9 @@ import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnValueIterator;
+import dev.hardwood.internal.reader.IndexedNestedColumnData;
+import dev.hardwood.internal.reader.NestedBatchDataView;
+import dev.hardwood.internal.reader.NestedColumnData;
 import dev.hardwood.internal.reader.PageCursor;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
@@ -46,6 +49,7 @@ final class SingleFileRowReader extends AbstractRowReader {
     private final int adaptiveBatchSize;
 
     private ColumnValueIterator[] iterators;
+    private CompletableFuture<IndexedNestedColumnData[]> pendingBatch;
 
     SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, MappedByteBuffer fileMapping,
                         List<RowGroup> rowGroups, HardwoodContext context, String fileName) {
@@ -149,8 +153,15 @@ final class SingleFileRowReader extends AbstractRowReader {
     }
 
     @Override
-    @SuppressWarnings("unchecked")
     protected boolean loadNextBatch() {
+        if (!schema.isFlatSchema()) {
+            return loadNextNestedBatch();
+        }
+        return loadNextFlatBatch();
+    }
+
+    @SuppressWarnings("unchecked")
+    private boolean loadNextFlatBatch() {
         // Use commonPool for batch tasks to avoid deadlock with prefetch tasks on context.executor().
         // Batch tasks block waiting for prefetches; using separate pools prevents thread starvation.
         CompletableFuture<TypedColumnData>[] futures = new CompletableFuture[iterators.length];
@@ -175,5 +186,60 @@ final class SingleFileRowReader extends AbstractRowReader {
         batchSize = newColumnData[0].recordCount();
         rowIndex = -1;
         return batchSize > 0;
+    }
+
+    /**
+     * Load the next nested batch. Index computation is fused into the column futures
+     * (Optimization A) and the next batch is pre-launched while the consumer iterates
+     * the current batch (Optimization B).
+     */
+    private boolean loadNextNestedBatch() {
+        IndexedNestedColumnData[] indexed;
+        if (pendingBatch != null) {
+            indexed = pendingBatch.join();
+            pendingBatch = null;
+        }
+        else {
+            indexed = launchNestedColumnFutures().join();
+        }
+
+        for (IndexedNestedColumnData icd : indexed) {
+            if (icd.data().recordCount() == 0) {
+                exhausted = true;
+                return false;
+            }
+        }
+
+        ((NestedBatchDataView) dataView).setBatchData(indexed);
+
+        batchSize = indexed[0].data().recordCount();
+        rowIndex = -1;
+
+        // Pipeline: launch column futures for the next batch while consumer iterates this one
+        pendingBatch = launchNestedColumnFutures();
+
+        return batchSize > 0;
+    }
+
+    @SuppressWarnings("unchecked")
+    private CompletableFuture<IndexedNestedColumnData[]> launchNestedColumnFutures() {
+        CompletableFuture<IndexedNestedColumnData>[] futures = new CompletableFuture[iterators.length];
+        for (int i = 0; i < iterators.length; i++) {
+            final int col = i;
+            futures[i] = CompletableFuture.supplyAsync(() -> {
+                TypedColumnData data = iterators[col].readBatch(adaptiveBatchSize);
+                if (data.recordCount() == 0) {
+                    return new IndexedNestedColumnData((NestedColumnData) data, null, null, null, null);
+                }
+                return IndexedNestedColumnData.compute((NestedColumnData) data);
+            }, ForkJoinPool.commonPool());
+        }
+        return CompletableFuture.allOf(futures).thenApply(v -> {
+            IndexedNestedColumnData[] result = new IndexedNestedColumnData[futures.length];
+            for (int i = 0; i < futures.length; i++) {
+                result[i] = futures[i].join();
+            }
+            return result;
+        });
     }
 }

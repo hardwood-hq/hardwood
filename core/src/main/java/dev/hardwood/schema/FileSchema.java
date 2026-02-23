@@ -10,6 +10,7 @@ package dev.hardwood.schema;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.SchemaNode.GroupNode;
