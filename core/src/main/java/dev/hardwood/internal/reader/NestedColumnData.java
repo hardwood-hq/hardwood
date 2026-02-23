@@ -13,7 +13,7 @@ import dev.hardwood.schema.ColumnSchema;
  * Typed column data for nested schemas.
  * <p>
  * Stores definition levels, repetition levels, and record offsets needed by
- * {@link RecordAssembler} to reconstruct hierarchical row structures.
+ * {@link NestedBatchIndex} to enable flyweight navigation over hierarchical row structures.
  * </p>
  */
 public sealed interface NestedColumnData extends TypedColumnData {

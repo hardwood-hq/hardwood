@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.DoubleConsumer;
@@ -16,51 +15,59 @@ import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.schema.SchemaNode;
 
 /**
- * Implementation of PqDoubleList interface.
+ * Flyweight {@link PqDoubleList} that reads double values directly from a column array.
  */
-public class PqDoubleListImpl implements PqDoubleList {
+final class PqDoubleListImpl implements PqDoubleList {
 
-    private final MutableList elements;
+    private final NestedBatchIndex batch;
+    private final int projectedCol;
     private final SchemaNode elementSchema;
+    private final int start;
+    private final int end;
 
-    public PqDoubleListImpl(MutableList elements, SchemaNode elementSchema) {
-        this.elements = elements;
+    PqDoubleListImpl(NestedBatchIndex batch, int projectedCol, SchemaNode elementSchema,
+                         int start, int end) {
+        this.batch = batch;
+        this.projectedCol = projectedCol;
         this.elementSchema = elementSchema;
+        this.start = start;
+        this.end = end;
     }
 
     @Override
     public int size() {
-        return elements.size();
+        return end - start;
     }
 
     @Override
     public boolean isEmpty() {
-        return elements.size() == 0;
+        return start >= end;
     }
 
     @Override
     public double get(int index) {
-        Double val = ValueConverter.convertToDouble(elements.elements().get(index), elementSchema);
-        if (val == null) {
+        checkBounds(index);
+        int valueIdx = start + index;
+        if (batch.isElementNull(projectedCol, valueIdx)) {
             throw new NullPointerException("Element at index " + index + " is null");
         }
-        return val;
+        return ((NestedColumnData.DoubleColumn) batch.columns[projectedCol]).get(valueIdx);
     }
 
     @Override
     public boolean isNull(int index) {
-        return elements.elements().get(index) == null;
+        checkBounds(index);
+        return batch.isElementNull(projectedCol, start + index);
     }
 
     @Override
     public PrimitiveIterator.OfDouble iterator() {
         return new PrimitiveIterator.OfDouble() {
-            private final List<Object> list = elements.elements();
-            private int pos = 0;
+            private int pos = start;
 
             @Override
             public boolean hasNext() {
-                return pos < list.size();
+                return pos < end;
             }
 
             @Override
@@ -68,38 +75,42 @@ public class PqDoubleListImpl implements PqDoubleList {
                 if (!hasNext()) {
                     throw new NoSuchElementException();
                 }
-                Object val = list.get(pos++);
-                if (val == null) {
+                if (batch.isElementNull(projectedCol, pos)) {
                     throw new NullPointerException("Element is null");
                 }
-                return (Double) val;
+                return ((NestedColumnData.DoubleColumn) batch.columns[projectedCol]).get(pos++);
             }
         };
     }
 
     @Override
     public void forEach(DoubleConsumer action) {
-        List<Object> list = elements.elements();
-        for (int i = 0; i < list.size(); i++) {
-            Object val = list.get(i);
-            if (val == null) {
-                throw new NullPointerException("Element at index " + i + " is null");
+        NestedColumnData.DoubleColumn col = (NestedColumnData.DoubleColumn) batch.columns[projectedCol];
+        for (int i = start; i < end; i++) {
+            if (batch.isElementNull(projectedCol, i)) {
+                throw new NullPointerException("Element at index " + (i - start) + " is null");
             }
-            action.accept((Double) val);
+            action.accept(col.get(i));
         }
     }
 
     @Override
     public double[] toArray() {
-        List<Object> list = elements.elements();
-        double[] result = new double[list.size()];
-        for (int i = 0; i < list.size(); i++) {
-            Object val = list.get(i);
-            if (val == null) {
+        int size = size();
+        double[] result = new double[size];
+        NestedColumnData.DoubleColumn col = (NestedColumnData.DoubleColumn) batch.columns[projectedCol];
+        for (int i = 0; i < size; i++) {
+            if (batch.isElementNull(projectedCol, start + i)) {
                 throw new NullPointerException("Element at index " + i + " is null");
             }
-            result[i] = (Double) val;
+            result[i] = col.get(start + i);
         }
         return result;
+    }
+
+    private void checkBounds(int index) {
+        if (index < 0 || index >= size()) {
+            throw new IndexOutOfBoundsException("Index " + index + " out of range [0, " + size() + ")");
+        }
     }
 }

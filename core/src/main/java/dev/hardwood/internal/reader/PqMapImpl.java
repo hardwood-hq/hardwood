@@ -11,8 +11,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.Collections;
+import java.util.AbstractList;
 import java.util.List;
 import java.util.UUID;
 
@@ -22,75 +21,132 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.SchemaNode;
 
 /**
- * Implementation of PqMap interface.
+ * Flyweight {@link PqMap} that reads key-value entries directly from parallel column arrays.
  */
-public class PqMapImpl implements PqMap {
+final class PqMapImpl implements PqMap {
 
-    private final List<Entry> entries;
+    private final NestedBatchIndex batch;
+    private final TopLevelFieldMap.FieldDesc.MapOf mapDesc;
+    private final int start;
+    private final int end;
+    private final SchemaNode keySchema;
+    private final SchemaNode valueSchema;
 
-    /**
-     * Constructor for a map from assembled data.
-     *
-     * @param map the MutableMap containing key-value entries
-     * @param mapSchema the MAP schema node
-     */
-    public PqMapImpl(MutableMap map, SchemaNode.GroupNode mapSchema) {
-        if (map == null || map.size() == 0) {
-            this.entries = Collections.emptyList();
-            return;
-        }
+    PqMapImpl(NestedBatchIndex batch, TopLevelFieldMap.FieldDesc.MapOf mapDesc,
+                  int start, int end) {
+        this.batch = batch;
+        this.mapDesc = mapDesc;
+        this.start = start;
+        this.end = end;
 
         // Get key/value schemas from MAP -> key_value -> (key, value)
-        SchemaNode.GroupNode keyValueGroup = (SchemaNode.GroupNode) mapSchema.children().get(0);
-        SchemaNode keySchema = keyValueGroup.children().get(0);
-        SchemaNode valueSchema = keyValueGroup.children().get(1);
-
-        List<Entry> entryList = new ArrayList<>();
-        for (MutableStruct entry : map.entries()) {
-            if (entry != null) {
-                entryList.add(new EntryImpl(entry.getChild(0), entry.getChild(1), keySchema, valueSchema));
-            }
-        }
-        this.entries = Collections.unmodifiableList(entryList);
+        SchemaNode.GroupNode keyValueGroup = (SchemaNode.GroupNode) mapDesc.schema().children().get(0);
+        this.keySchema = keyValueGroup.children().get(0);
+        this.valueSchema = keyValueGroup.children().get(1);
     }
+
+    // ==================== Factory Methods ====================
+
+    static PqMap create(NestedBatchIndex batch, TopLevelFieldMap.FieldDesc.MapOf mapDesc,
+                        int rowIndex, int valueIndex) {
+        int keyProjCol = mapDesc.keyProjCol();
+        int mlLevel = mapDesc.schema().maxRepetitionLevel();
+        int leafMaxRep = batch.columns[keyProjCol].column().maxRepetitionLevel();
+
+        int start, end;
+        if (valueIndex >= 0 && mlLevel > 0) {
+            start = batch.getLevelStart(keyProjCol, mlLevel, valueIndex);
+            end = batch.getLevelEnd(keyProjCol, mlLevel, valueIndex);
+        } else {
+            start = batch.getListStart(keyProjCol, rowIndex);
+            end = batch.getListEnd(keyProjCol, rowIndex);
+        }
+
+        // Chase to value level for defLevel check
+        int firstValue = start;
+        for (int level = mlLevel + 1; level < leafMaxRep; level++) {
+            firstValue = batch.getLevelStart(keyProjCol, level, firstValue);
+        }
+
+        int defLevel = batch.columns[keyProjCol].getDefLevel(firstValue);
+        if (defLevel < mapDesc.nullDefLevel()) {
+            return null; // null map
+        }
+        if (defLevel < mapDesc.entryDefLevel()) {
+            // Empty map
+            return new PqMapImpl(batch, mapDesc, start, start);
+        }
+        return new PqMapImpl(batch, mapDesc, start, end);
+    }
+
+    static boolean isMapNull(NestedBatchIndex batch, TopLevelFieldMap.FieldDesc.MapOf mapDesc,
+                             int rowIndex, int valueIndex) {
+        int keyProjCol = mapDesc.keyProjCol();
+        int mlLevel = mapDesc.schema().maxRepetitionLevel();
+        int leafMaxRep = batch.columns[keyProjCol].column().maxRepetitionLevel();
+
+        int start;
+        if (valueIndex >= 0 && mlLevel > 0) {
+            start = batch.getLevelStart(keyProjCol, mlLevel, valueIndex);
+        } else {
+            start = batch.getListStart(keyProjCol, rowIndex);
+        }
+
+        int firstValue = start;
+        for (int level = mlLevel + 1; level < leafMaxRep; level++) {
+            firstValue = batch.getLevelStart(keyProjCol, level, firstValue);
+        }
+
+        int defLevel = batch.columns[keyProjCol].getDefLevel(firstValue);
+        return defLevel < mapDesc.nullDefLevel();
+    }
+
+    // ==================== PqMap Interface ====================
 
     @Override
     public List<Entry> getEntries() {
-        return entries;
+        return new AbstractList<>() {
+            @Override
+            public Entry get(int index) {
+                if (index < 0 || index >= size()) {
+                    throw new IndexOutOfBoundsException(
+                            "Index " + index + " out of range [0, " + size() + ")");
+                }
+                return new ColumnarEntry(start + index);
+            }
+
+            @Override
+            public int size() {
+                return end - start;
+            }
+        };
     }
 
     @Override
     public int size() {
-        return entries.size();
+        return end - start;
     }
 
     @Override
     public boolean isEmpty() {
-        return entries.isEmpty();
+        return start >= end;
     }
 
-    /**
-     * Implementation of a map entry.
-     */
-    private static class EntryImpl implements Entry {
+    // ==================== Flyweight Entry ====================
 
-        private final Object key;
-        private final Object value;
-        private final SchemaNode keySchema;
-        private final SchemaNode valueSchema;
+    private class ColumnarEntry implements Entry {
+        private final int valueIdx;
 
-        EntryImpl(Object key, Object value, SchemaNode keySchema, SchemaNode valueSchema) {
-            this.key = key;
-            this.value = value;
-            this.keySchema = keySchema;
-            this.valueSchema = valueSchema;
+        ColumnarEntry(int valueIdx) {
+            this.valueIdx = valueIdx;
         }
 
-        // ==================== Key Accessors - Primitives ====================
+        // ==================== Key Accessors ====================
 
         @Override
         public int getIntKey() {
-            Integer val = ValueConverter.convertToInt(key, keySchema);
+            Object raw = readKey();
+            Integer val = ValueConverter.convertToInt(raw, keySchema);
             if (val == null) {
                 throw new NullPointerException("Key is null");
             }
@@ -99,50 +155,55 @@ public class PqMapImpl implements PqMap {
 
         @Override
         public long getLongKey() {
-            Long val = ValueConverter.convertToLong(key, keySchema);
+            Object raw = readKey();
+            Long val = ValueConverter.convertToLong(raw, keySchema);
             if (val == null) {
                 throw new NullPointerException("Key is null");
             }
             return val;
         }
 
-        // ==================== Key Accessors - Objects ====================
-
         @Override
         public String getStringKey() {
-            return ValueConverter.convertToString(key, keySchema);
+            Object raw = readKey();
+            return ValueConverter.convertToString(raw, keySchema);
         }
 
         @Override
         public byte[] getBinaryKey() {
-            return ValueConverter.convertToBinary(key, keySchema);
+            Object raw = readKey();
+            return ValueConverter.convertToBinary(raw, keySchema);
         }
 
         @Override
         public LocalDate getDateKey() {
-            return ValueConverter.convertToDate(key, keySchema);
+            Object raw = readKey();
+            return ValueConverter.convertToDate(raw, keySchema);
         }
 
         @Override
         public Instant getTimestampKey() {
-            return ValueConverter.convertToTimestamp(key, keySchema);
+            Object raw = readKey();
+            return ValueConverter.convertToTimestamp(raw, keySchema);
         }
 
         @Override
         public UUID getUuidKey() {
-            return ValueConverter.convertToUuid(key, keySchema);
+            Object raw = readKey();
+            return ValueConverter.convertToUuid(raw, keySchema);
         }
 
         @Override
         public Object getKey() {
-            return key;
+            return readKey();
         }
 
-        // ==================== Value Accessors - Primitives ====================
+        // ==================== Value Accessors ====================
 
         @Override
         public int getIntValue() {
-            Integer val = ValueConverter.convertToInt(value, valueSchema);
+            Object raw = readValue();
+            Integer val = ValueConverter.convertToInt(raw, valueSchema);
             if (val == null) {
                 throw new NullPointerException("Value is null");
             }
@@ -151,7 +212,8 @@ public class PqMapImpl implements PqMap {
 
         @Override
         public long getLongValue() {
-            Long val = ValueConverter.convertToLong(value, valueSchema);
+            Object raw = readValue();
+            Long val = ValueConverter.convertToLong(raw, valueSchema);
             if (val == null) {
                 throw new NullPointerException("Value is null");
             }
@@ -160,7 +222,8 @@ public class PqMapImpl implements PqMap {
 
         @Override
         public float getFloatValue() {
-            Float val = ValueConverter.convertToFloat(value, valueSchema);
+            Object raw = readValue();
+            Float val = ValueConverter.convertToFloat(raw, valueSchema);
             if (val == null) {
                 throw new NullPointerException("Value is null");
             }
@@ -169,7 +232,8 @@ public class PqMapImpl implements PqMap {
 
         @Override
         public double getDoubleValue() {
-            Double val = ValueConverter.convertToDouble(value, valueSchema);
+            Object raw = readValue();
+            Double val = ValueConverter.convertToDouble(raw, valueSchema);
             if (val == null) {
                 throw new NullPointerException("Value is null");
             }
@@ -178,75 +242,123 @@ public class PqMapImpl implements PqMap {
 
         @Override
         public boolean getBooleanValue() {
-            Boolean val = ValueConverter.convertToBoolean(value, valueSchema);
+            Object raw = readValue();
+            Boolean val = ValueConverter.convertToBoolean(raw, valueSchema);
             if (val == null) {
                 throw new NullPointerException("Value is null");
             }
             return val;
         }
 
-        // ==================== Value Accessors - Objects ====================
-
         @Override
         public String getStringValue() {
-            return ValueConverter.convertToString(value, valueSchema);
+            Object raw = readValue();
+            return ValueConverter.convertToString(raw, valueSchema);
         }
 
         @Override
         public byte[] getBinaryValue() {
-            return ValueConverter.convertToBinary(value, valueSchema);
+            Object raw = readValue();
+            return ValueConverter.convertToBinary(raw, valueSchema);
         }
 
         @Override
         public LocalDate getDateValue() {
-            return ValueConverter.convertToDate(value, valueSchema);
+            Object raw = readValue();
+            return ValueConverter.convertToDate(raw, valueSchema);
         }
 
         @Override
         public LocalTime getTimeValue() {
-            return ValueConverter.convertToTime(value, valueSchema);
+            Object raw = readValue();
+            return ValueConverter.convertToTime(raw, valueSchema);
         }
 
         @Override
         public Instant getTimestampValue() {
-            return ValueConverter.convertToTimestamp(value, valueSchema);
+            Object raw = readValue();
+            return ValueConverter.convertToTimestamp(raw, valueSchema);
         }
 
         @Override
         public BigDecimal getDecimalValue() {
-            return ValueConverter.convertToDecimal(value, valueSchema);
+            Object raw = readValue();
+            return ValueConverter.convertToDecimal(raw, valueSchema);
         }
 
         @Override
         public UUID getUuidValue() {
-            return ValueConverter.convertToUuid(value, valueSchema);
+            Object raw = readValue();
+            return ValueConverter.convertToUuid(raw, valueSchema);
         }
-
-        // ==================== Value Accessors - Nested Types ====================
 
         @Override
         public PqStruct getStructValue() {
-            return ValueConverter.convertToStruct(value, valueSchema);
+            if (!(valueSchema instanceof SchemaNode.GroupNode group) || !group.isStruct()) {
+                throw new IllegalArgumentException("Value is not a struct");
+            }
+            TopLevelFieldMap.FieldDesc.Struct structDesc =
+                    DescriptorBuilder.buildStructDesc(group, batch.projectedSchema);
+            // Check null via first primitive child's defLevel
+            for (TopLevelFieldMap.FieldDesc childDesc : structDesc.children().values()) {
+                if (childDesc instanceof TopLevelFieldMap.FieldDesc.Primitive p) {
+                    int defLevel = batch.columns[p.projectedCol()].getDefLevel(valueIdx);
+                    if (defLevel < group.maxDefinitionLevel()) {
+                        return null;
+                    }
+                    break;
+                }
+            }
+            return PqStructImpl.atPosition(batch, structDesc, valueIdx);
         }
 
         @Override
         public PqList getListValue() {
-            return ValueConverter.convertToList(value, valueSchema);
+            if (!(valueSchema instanceof SchemaNode.GroupNode group) || !group.isList()) {
+                throw new IllegalArgumentException("Value is not a list");
+            }
+            TopLevelFieldMap.FieldDesc.ListOf listDesc =
+                    DescriptorBuilder.buildListDesc(group, batch.projectedSchema);
+            return PqListImpl.createGenericList(batch, listDesc, -1, valueIdx);
         }
 
         @Override
         public PqMap getMapValue() {
-            return ValueConverter.convertToMap(value, valueSchema);
+            if (!(valueSchema instanceof SchemaNode.GroupNode group) || !group.isMap()) {
+                throw new IllegalArgumentException("Value is not a map");
+            }
+            TopLevelFieldMap.FieldDesc.MapOf innerMapDesc =
+                    DescriptorBuilder.buildMapDesc(group, batch.projectedSchema);
+            return PqMapImpl.create(batch, innerMapDesc, -1, valueIdx);
         }
 
         @Override
         public Object getValue() {
-            return value;
+            return readValue();
         }
 
         @Override
         public boolean isValueNull() {
-            return value == null;
+            int valueProjCol = mapDesc.valueProjCol();
+            return batch.isElementNull(valueProjCol, valueIdx);
+        }
+
+        // ==================== Internal ====================
+
+        private Object readKey() {
+            int keyProjCol = mapDesc.keyProjCol();
+            if (batch.isElementNull(keyProjCol, valueIdx)) {
+                return null;
+            }
+            return batch.columns[keyProjCol].getValue(valueIdx);
+        }
+
+        private Object readValue() {
+            int valueProjCol = mapDesc.valueProjCol();
+            if (batch.isElementNull(valueProjCol, valueIdx)) {
+                return null;
+            }
+            return batch.columns[valueProjCol].getValue(valueIdx);
         }
     }
 }

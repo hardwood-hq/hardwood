@@ -22,6 +22,7 @@ import dev.hardwood.internal.reader.ColumnValueIterator;
 import dev.hardwood.internal.reader.FileManager;
 import dev.hardwood.internal.reader.FlatColumnData;
 import dev.hardwood.internal.reader.NestedColumnData;
+import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageCursor;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
@@ -360,144 +361,15 @@ public class ColumnReader implements AutoCloseable {
         if (repLevels == null || valueCount == 0) {
             multiLevelOffsets = new int[maxRepetitionLevel][];
             levelNulls = new BitSet[maxRepetitionLevel];
-            elementNulls = computeElementNulls(defLevels, valueCount, maxDefLevel);
+            elementNulls = NestedLevelComputer.computeElementNulls(defLevels, valueCount, maxDefLevel);
             return;
         }
 
-        multiLevelOffsets = computeMultiLevelOffsets(repLevels, valueCount, recordCount, maxRepetitionLevel);
-        computeNullBitmaps(defLevels, repLevels, valueCount, maxDefLevel, maxRepetitionLevel);
-    }
-
-    /**
-     * Compute multi-level offset arrays from repetition levels.
-     * <p>
-     * For maxRepLevel=1 (simple list): one offset array mapping records to value positions.
-     * For maxRepLevel=N (nested list): N offset arrays, chained.
-     * Level k boundary: positions where repLevel[i] <= k.
-     */
-    static int[][] computeMultiLevelOffsets(int[] repLevels, int valueCount,
-                                            int recordCount, int maxRepLevel) {
-        if (maxRepLevel == 1) {
-            // Simple list: single offset array from record offsets
-            // repLevel == 0 starts a new record
-            int[] offsets = new int[recordCount];
-            int recordIdx = 0;
-            for (int i = 0; i < valueCount; i++) {
-                if (repLevels[i] == 0) {
-                    if (recordIdx < recordCount) {
-                        offsets[recordIdx] = i;
-                    }
-                    recordIdx++;
-                }
-            }
-            return new int[][] { offsets };
-        }
-
-        // General case: multi-level offsets
-        // First pass: count items at each level
-        int[] itemCounts = new int[maxRepLevel];
-        for (int i = 0; i < valueCount; i++) {
-            int rep = repLevels[i];
-            // A value with repLevel <= k starts a new item at level k
-            for (int k = rep; k < maxRepLevel; k++) {
-                itemCounts[k]++;
-            }
-        }
-
-        // Allocate offset arrays
-        int[][] offsets = new int[maxRepLevel][];
-        for (int k = 0; k < maxRepLevel; k++) {
-            offsets[k] = new int[itemCounts[k]];
-        }
-
-        // Second pass: fill offsets
-        // offsets[k] maps level-k items to level-(k+1) item indices (or value indices for last)
-        int[] itemIndices = new int[maxRepLevel]; // current item index at each level
-        int[] nextLevelPositions = new int[maxRepLevel]; // next position in the child level
-
-        for (int i = 0; i < valueCount; i++) {
-            int rep = repLevels[i];
-
-            // For each level from rep to maxRepLevel-1, start a new item
-            for (int k = rep; k < maxRepLevel; k++) {
-                int idx = itemIndices[k];
-                if (k == maxRepLevel - 1) {
-                    // Innermost level: offset points to value position
-                    offsets[k][idx] = i;
-                } else {
-                    // Intermediate level: offset points to child level item index
-                    offsets[k][idx] = itemIndices[k + 1];
-                }
-                itemIndices[k]++;
-            }
-        }
-
-        return offsets;
-    }
-
-    /**
-     * Compute null bitmaps for element level and each nesting level.
-     */
-    private void computeNullBitmaps(int[] defLevels, int[] repLevels,
-                                    int valueCount, int maxDefLevel, int maxRepLevel) {
-        // Element nulls: leaf values where defLevel < maxDefLevel
-        elementNulls = computeElementNulls(defLevels, valueCount, maxDefLevel);
-
-        // Level nulls: for each nesting level k, a null at that level means
-        // the definition level at a group boundary is below the threshold for that level.
-        // The def level threshold for level k is: k + 1 (since each repeated/optional
-        // group adds one def level, and the root starts at 0).
-        // A group at level k is null when defLevel < defLevelThreshold(k).
-        levelNulls = new BitSet[maxRepLevel];
-
-        for (int k = 0; k < maxRepLevel; k++) {
-            // The def level needed for level k to be non-null:
-            // For a list schema like: optional group (def=1) -> repeated group (def=2) -> element (def=3)
-            // Level 0 null = record-level null = defLevel at boundary < 1
-            // The threshold is (k + 1) for simple schemas but we need to derive from the
-            // actual schema path. Since maxDefLevel includes all optional/repeated ancestors,
-            // and maxRepLevel is the count of repeated levels:
-            // defThreshold for level k = maxDefLevel - maxRepLevel + k
-            // This works because the last maxRepLevel def levels correspond to the repeated groups,
-            // and we need at least (maxDefLevel - maxRepLevel + k + 1) to be non-null at level k.
-            int defThreshold = maxDefLevel - maxRepLevel + k + 1;
-            BitSet nullBits = null;
-
-            int itemIdx = 0;
-            for (int i = 0; i < valueCount; i++) {
-                if (repLevels[i] <= k) {
-                    // This is a boundary for level k
-                    if (defLevels[i] < defThreshold) {
-                        if (nullBits == null) {
-                            nullBits = new BitSet();
-                        }
-                        nullBits.set(itemIdx);
-                    }
-                    itemIdx++;
-                }
-            }
-
-            levelNulls[k] = nullBits;
-        }
-    }
-
-    /**
-     * Compute element-level null bitmap.
-     */
-    private static BitSet computeElementNulls(int[] defLevels, int valueCount, int maxDefLevel) {
-        if (defLevels == null || maxDefLevel == 0) {
-            return null; // All required — no nulls possible
-        }
-        BitSet nulls = null;
-        for (int i = 0; i < valueCount; i++) {
-            if (defLevels[i] < maxDefLevel) {
-                if (nulls == null) {
-                    nulls = new BitSet(valueCount);
-                }
-                nulls.set(i);
-            }
-        }
-        return nulls;
+        multiLevelOffsets = NestedLevelComputer.computeMultiLevelOffsets(
+                repLevels, valueCount, recordCount, maxRepetitionLevel);
+        elementNulls = NestedLevelComputer.computeElementNulls(defLevels, valueCount, maxDefLevel);
+        levelNulls = NestedLevelComputer.computeLevelNulls(
+                defLevels, repLevels, valueCount, maxDefLevel, maxRepetitionLevel);
     }
 
     // ==================== Factory ====================

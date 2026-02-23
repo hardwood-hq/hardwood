@@ -17,12 +17,6 @@ import java.util.UUID;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
-import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
-import dev.hardwood.row.PqMap;
-import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.SchemaNode;
 
 /**
@@ -136,83 +130,21 @@ public final class ValueConverter {
         return convertLogicalType(rawValue, schema, UUID.class);
     }
 
-    // ==================== Nested Type Conversions ====================
-
-    public static PqStruct convertToStruct(Object rawValue, SchemaNode schema) {
-        if (rawValue == null) {
-            return null;
-        }
-        validateGroupType(schema, false, false);
-        return new PqStructImpl((MutableStruct) rawValue, (SchemaNode.GroupNode) schema);
-    }
-
-    public static PqList convertToList(Object rawValue, SchemaNode schema) {
-        if (rawValue == null) {
-            return null;
-        }
-        validateGroupType(schema, true, false);
-        SchemaNode elementSchema = ((SchemaNode.GroupNode) schema).getListElement();
-        return new PqListImpl((MutableList) rawValue, elementSchema);
-    }
-
-    public static PqMap convertToMap(Object rawValue, SchemaNode schema) {
-        if (rawValue == null) {
-            return null;
-        }
-        validateGroupType(schema, false, true);
-        return new PqMapImpl((MutableMap) rawValue, (SchemaNode.GroupNode) schema);
-    }
-
-    // ==================== Typed List Conversions ====================
-
-    public static PqIntList convertToIntList(Object rawValue, SchemaNode schema) {
-        if (rawValue == null) {
-            return null;
-        }
-        validateGroupType(schema, true, false);
-        SchemaNode elementSchema = ((SchemaNode.GroupNode) schema).getListElement();
-        return new PqIntListImpl((MutableList) rawValue, elementSchema);
-    }
-
-    public static PqLongList convertToLongList(Object rawValue, SchemaNode schema) {
-        if (rawValue == null) {
-            return null;
-        }
-        validateGroupType(schema, true, false);
-        SchemaNode elementSchema = ((SchemaNode.GroupNode) schema).getListElement();
-        return new PqLongListImpl((MutableList) rawValue, elementSchema);
-    }
-
-    public static PqDoubleList convertToDoubleList(Object rawValue, SchemaNode schema) {
-        if (rawValue == null) {
-            return null;
-        }
-        validateGroupType(schema, true, false);
-        SchemaNode elementSchema = ((SchemaNode.GroupNode) schema).getListElement();
-        return new PqDoubleListImpl((MutableList) rawValue, elementSchema);
-    }
-
     // ==================== Generic Type Conversion ====================
 
     /**
-     * Convert a value based on schema type. Automatically determines the appropriate
-     * conversion based on the schema's physical and logical types.
+     * Convert a primitive value based on schema type.
+     * Group types (struct/list/map) are handled directly by flyweight implementations.
      */
     static Object convertValue(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
         }
 
-        if (schema instanceof SchemaNode.GroupNode group) {
-            if (group.isList()) {
-                return convertToList(rawValue, schema);
-            }
-            else if (group.isMap()) {
-                return convertToMap(rawValue, schema);
-            }
-            else {
-                return convertToStruct(rawValue, schema);
-            }
+        if (schema instanceof SchemaNode.GroupNode) {
+            // Group types should not pass through ValueConverter in the flyweight path;
+            // return raw value as-is.
+            return rawValue;
         }
 
         SchemaNode.PrimitiveNode primitive = (SchemaNode.PrimitiveNode) schema;

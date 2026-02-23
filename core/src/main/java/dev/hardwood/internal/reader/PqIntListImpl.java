@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.IntConsumer;
@@ -16,51 +15,60 @@ import dev.hardwood.row.PqIntList;
 import dev.hardwood.schema.SchemaNode;
 
 /**
- * Implementation of PqIntList interface.
+ * Flyweight {@link PqIntList} that reads int values directly from a column array.
+ * Zero boxing for {@link #forEach(IntConsumer)}, {@link #toArray()}, and {@link #get(int)}.
  */
-public class PqIntListImpl implements PqIntList {
+final class PqIntListImpl implements PqIntList {
 
-    private final MutableList elements;
+    private final NestedBatchIndex batch;
+    private final int projectedCol;
     private final SchemaNode elementSchema;
+    private final int start;
+    private final int end;
 
-    public PqIntListImpl(MutableList elements, SchemaNode elementSchema) {
-        this.elements = elements;
+    PqIntListImpl(NestedBatchIndex batch, int projectedCol, SchemaNode elementSchema,
+                      int start, int end) {
+        this.batch = batch;
+        this.projectedCol = projectedCol;
         this.elementSchema = elementSchema;
+        this.start = start;
+        this.end = end;
     }
 
     @Override
     public int size() {
-        return elements.size();
+        return end - start;
     }
 
     @Override
     public boolean isEmpty() {
-        return elements.size() == 0;
+        return start >= end;
     }
 
     @Override
     public int get(int index) {
-        Integer val = ValueConverter.convertToInt(elements.elements().get(index), elementSchema);
-        if (val == null) {
+        checkBounds(index);
+        int valueIdx = start + index;
+        if (batch.isElementNull(projectedCol, valueIdx)) {
             throw new NullPointerException("Element at index " + index + " is null");
         }
-        return val;
+        return ((NestedColumnData.IntColumn) batch.columns[projectedCol]).get(valueIdx);
     }
 
     @Override
     public boolean isNull(int index) {
-        return elements.elements().get(index) == null;
+        checkBounds(index);
+        return batch.isElementNull(projectedCol, start + index);
     }
 
     @Override
     public PrimitiveIterator.OfInt iterator() {
         return new PrimitiveIterator.OfInt() {
-            private final List<Object> list = elements.elements();
-            private int pos = 0;
+            private int pos = start;
 
             @Override
             public boolean hasNext() {
-                return pos < list.size();
+                return pos < end;
             }
 
             @Override
@@ -68,38 +76,42 @@ public class PqIntListImpl implements PqIntList {
                 if (!hasNext()) {
                     throw new NoSuchElementException();
                 }
-                Object val = list.get(pos++);
-                if (val == null) {
+                if (batch.isElementNull(projectedCol, pos)) {
                     throw new NullPointerException("Element is null");
                 }
-                return (Integer) val;
+                return ((NestedColumnData.IntColumn) batch.columns[projectedCol]).get(pos++);
             }
         };
     }
 
     @Override
     public void forEach(IntConsumer action) {
-        List<Object> list = elements.elements();
-        for (int i = 0; i < list.size(); i++) {
-            Object val = list.get(i);
-            if (val == null) {
-                throw new NullPointerException("Element at index " + i + " is null");
+        NestedColumnData.IntColumn col = (NestedColumnData.IntColumn) batch.columns[projectedCol];
+        for (int i = start; i < end; i++) {
+            if (batch.isElementNull(projectedCol, i)) {
+                throw new NullPointerException("Element at index " + (i - start) + " is null");
             }
-            action.accept((Integer) val);
+            action.accept(col.get(i));
         }
     }
 
     @Override
     public int[] toArray() {
-        List<Object> list = elements.elements();
-        int[] result = new int[list.size()];
-        for (int i = 0; i < list.size(); i++) {
-            Object val = list.get(i);
-            if (val == null) {
+        int size = size();
+        int[] result = new int[size];
+        NestedColumnData.IntColumn col = (NestedColumnData.IntColumn) batch.columns[projectedCol];
+        for (int i = 0; i < size; i++) {
+            if (batch.isElementNull(projectedCol, start + i)) {
                 throw new NullPointerException("Element at index " + i + " is null");
             }
-            result[i] = (Integer) val;
+            result[i] = col.get(start + i);
         }
         return result;
+    }
+
+    private void checkBounds(int index) {
+        if (index < 0 || index >= size()) {
+            throw new IndexOutOfBoundsException("Index " + index + " out of range [0, " + size() + ")");
+        }
     }
 }
