@@ -13,7 +13,6 @@ import java.util.List;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
-import dev.hardwood.schema.SchemaNode.GroupNode;
 
 /**
  * Root schema container representing the complete Parquet schema.
@@ -25,13 +24,11 @@ public class FileSchema {
     private final List<ColumnSchema> columns;
     private final StringToIntMap columnNameToIndex;
     private final SchemaNode.GroupNode rootNode;
-    private final List<FieldPath> fieldPaths;
 
-    private FileSchema(String name, List<ColumnSchema> columns, SchemaNode.GroupNode rootNode, List<FieldPath> fieldPaths) {
+    private FileSchema(String name, List<ColumnSchema> columns, SchemaNode.GroupNode rootNode) {
         this.name = name;
         this.columns = columns;
         this.rootNode = rootNode;
-        this.fieldPaths = fieldPaths;
 
         // Pre-compute name -> index mapping for O(1) lookup
         this.columnNameToIndex = new StringToIntMap(columns.size());
@@ -81,10 +78,6 @@ public class FileSchema {
             }
         }
         throw new IllegalArgumentException("Field not found: " + name);
-    }
-
-    public List<FieldPath> getFieldPaths() {
-        return fieldPaths;
     }
 
     /**
@@ -139,9 +132,7 @@ public class FileSchema {
                 0 // Root has rep level 0
         );
 
-        List<FieldPath> fieldPaths = buildFieldPaths(rootNode);
-
-        return new FileSchema(root.name(), columns, rootNode, fieldPaths);
+        return new FileSchema(root.name(), columns, rootNode);
     }
 
     /**
@@ -240,66 +231,6 @@ public class FileSchema {
         }
 
         return count;
-    }
-
-    // ==================== Field Path Building ====================
-
-    private static List<FieldPath> buildFieldPaths(GroupNode rootNode) {
-        PathBuilder builder = new PathBuilder();
-        for (int i = 0; i < rootNode.children().size(); i++) {
-            buildPath(rootNode.children().get(i), rootNode, i, builder);
-        }
-        return builder.results();
-    }
-
-    /**
-     * Build field paths recursively.
-     */
-    private static void buildPath(SchemaNode node, SchemaNode parent, int fieldIndex, PathBuilder path) {
-        FieldPath.PathStep step = createStep(node, parent, fieldIndex);
-        path.push(step);
-
-        switch (node) {
-            case SchemaNode.PrimitiveNode prim -> path.materialize(fieldIndex, prim.maxDefinitionLevel());
-            case SchemaNode.GroupNode group -> {
-                if (group.isList()) {
-                    buildPath(group.getListElement(), group, 0, path);
-                }
-                else if (group.isMap()) {
-                    buildPath(group.children().get(0), group, 0, path);
-                }
-                else {
-                    for (int i = 0; i < group.children().size(); i++) {
-                        buildPath(group.children().get(i), group, i, path);
-                    }
-                }
-            }
-        }
-
-        path.pop();
-    }
-
-    /**
-     * Create the appropriate step for a node based on its type and parent context.
-     */
-    private static FieldPath.PathStep createStep(SchemaNode node, SchemaNode parent, int fieldIndex) {
-        boolean parentIsList = parent instanceof SchemaNode.GroupNode pg && pg.isList();
-        boolean parentIsMap = parent instanceof SchemaNode.GroupNode pg && pg.isMap();
-        boolean isRepeated = parentIsList || parentIsMap;
-
-        int defLevel = node.maxDefinitionLevel();
-        String name = parentIsList ? "element" : parentIsMap ? "key_value" : node.name();
-        int idx = isRepeated ? 0 : fieldIndex;
-
-        return switch (node) {
-            case SchemaNode.PrimitiveNode prim -> FieldPath.PathStep.forPrimitive(name, idx, defLevel, isRepeated);
-            case SchemaNode.GroupNode group -> {
-                boolean isList = !parentIsMap && group.isList();
-                boolean isMap = !parentIsMap && group.isMap();
-                int numChildren = (isList || isMap) ? 0 : group.children().size();
-                yield FieldPath.PathStep.forGroup(name, idx, defLevel, isRepeated, isList, isMap, numChildren);
-            }
-        };
     }
 
     @Override
