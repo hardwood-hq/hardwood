@@ -12,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.BitSet;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
@@ -40,26 +41,41 @@ public final class NestedBatchDataView implements BatchDataView {
 
     // Maps projected field index -> original field index in root children
     private final int[] projectedFieldToOriginal;
-    // Maps original field index -> projected field index (-1 if not projected)
-    private final int[] originalFieldToProjected;
 
     private NestedBatchIndex batchIndex;
     private int rowIndex;
+
+    // Cached value indices: precomputed per row to avoid repeated offset lookups.
+    // cachedValueIndex[projCol] = offsets[projCol][rowIndex] (or rowIndex if no offsets)
+    private int[] cachedValueIndex;
+
+    // Direct-access cache for by-index accessors (built once in constructor, arrays refreshed per batch)
+    private final TopLevelFieldMap.FieldDesc[] fieldDescs;     // projFieldIdx → FieldDesc
+    private final int[] fieldToProjCol;                        // projFieldIdx → projectedColumnIdx (-1 for non-primitives)
+    private Object[] fieldValueArrays;                         // projFieldIdx → raw value array (int[], long[], etc.)
+    private BitSet[] fieldElementNulls;                        // projFieldIdx → element null BitSet
 
     public NestedBatchDataView(FileSchema schema, ProjectedSchema projectedSchema) {
         this.schema = schema;
         this.projectedSchema = projectedSchema;
         this.fieldMap = TopLevelFieldMap.build(schema, projectedSchema);
         this.projectedFieldToOriginal = projectedSchema.getProjectedFieldIndices().clone();
+        this.cachedValueIndex = new int[projectedSchema.getProjectedColumnCount()];
 
-        // Build reverse mapping
-        int totalFields = schema.getRootNode().children().size();
-        this.originalFieldToProjected = new int[totalFields];
-        for (int i = 0; i < totalFields; i++) {
-            originalFieldToProjected[i] = -1;
-        }
-        for (int projIdx = 0; projIdx < projectedFieldToOriginal.length; projIdx++) {
-            originalFieldToProjected[projectedFieldToOriginal[projIdx]] = projIdx;
+        // Build direct-access mappings from projected field index
+        int fieldCount = projectedFieldToOriginal.length;
+        this.fieldDescs = new TopLevelFieldMap.FieldDesc[fieldCount];
+        this.fieldToProjCol = new int[fieldCount];
+        this.fieldValueArrays = new Object[fieldCount];
+        this.fieldElementNulls = new BitSet[fieldCount];
+        for (int f = 0; f < fieldCount; f++) {
+            TopLevelFieldMap.FieldDesc desc = fieldMap.getByOriginalIndex(projectedFieldToOriginal[f]);
+            fieldDescs[f] = desc;
+            if (desc instanceof TopLevelFieldMap.FieldDesc.Primitive p) {
+                fieldToProjCol[f] = p.projectedCol();
+            } else {
+                fieldToProjCol[f] = -1;
+            }
         }
     }
 
@@ -70,6 +86,7 @@ public final class NestedBatchDataView implements BatchDataView {
             nested[i] = (NestedColumnData) newColumnData[i];
         }
         this.batchIndex = NestedBatchIndex.build(nested, schema, projectedSchema, fieldMap);
+        cacheFieldArrays();
     }
 
     /**
@@ -78,26 +95,23 @@ public final class NestedBatchDataView implements BatchDataView {
      */
     public void setBatchData(IndexedNestedColumnData[] indexedData) {
         this.batchIndex = NestedBatchIndex.buildFromIndexed(indexedData, schema, projectedSchema, fieldMap);
+        cacheFieldArrays();
     }
 
     @Override
     public void setRowIndex(int rowIndex) {
         this.rowIndex = rowIndex;
+        int[][] offsets = batchIndex.offsets;
+        for (int col = 0; col < cachedValueIndex.length; col++) {
+            int[] recordOffsets = offsets[col];
+            cachedValueIndex[col] = recordOffsets != null ? recordOffsets[rowIndex] : rowIndex;
+        }
     }
 
     // ==================== Index Lookup ====================
 
     private TopLevelFieldMap.FieldDesc lookupField(String name) {
         return fieldMap.getByName(name);
-    }
-
-    private TopLevelFieldMap.FieldDesc lookupFieldByIndex(int projectedIndex) {
-        int originalFieldIndex = projectedFieldToOriginal[projectedIndex];
-        TopLevelFieldMap.FieldDesc desc = fieldMap.getByOriginalIndex(originalFieldIndex);
-        if (desc == null) {
-            throw new IllegalArgumentException("Column not in projection: index " + projectedIndex);
-        }
-        return desc;
     }
 
     private TopLevelFieldMap.FieldDesc.Primitive lookupPrimitive(String name) {
@@ -109,8 +123,7 @@ public final class NestedBatchDataView implements BatchDataView {
     }
 
     private TopLevelFieldMap.FieldDesc.Primitive lookupPrimitiveByIndex(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc desc = lookupFieldByIndex(projectedIndex);
-        if (!(desc instanceof TopLevelFieldMap.FieldDesc.Primitive prim)) {
+        if (!(fieldDescs[projectedIndex] instanceof TopLevelFieldMap.FieldDesc.Primitive prim)) {
             throw new IllegalArgumentException("Field at index " + projectedIndex + " is not a primitive type");
         }
         return prim;
@@ -124,14 +137,19 @@ public final class NestedBatchDataView implements BatchDataView {
 
     @Override
     public boolean isNull(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc desc = lookupFieldByIndex(projectedIndex);
-        return isFieldNull(desc);
+        int projCol = fieldToProjCol[projectedIndex];
+        if (projCol >= 0) {
+            int valueIdx = cachedValueIndex[projCol];
+            BitSet nulls = fieldElementNulls[projectedIndex];
+            return nulls != null && nulls.get(valueIdx);
+        }
+        return isFieldNull(fieldDescs[projectedIndex]);
     }
 
     private boolean isFieldNull(TopLevelFieldMap.FieldDesc desc) {
         return switch (desc) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int valueIdx = batchIndex.getValueIndex(p.projectedCol(), rowIndex);
+                int valueIdx = cachedValueIndex[p.projectedCol()];
                 yield batchIndex.isElementNull(p.projectedCol(), valueIdx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> isStructNull(s);
@@ -147,7 +165,7 @@ public final class NestedBatchDataView implements BatchDataView {
         if (projCol < 0) {
             return false;
         }
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int valueIdx = cachedValueIndex[projCol];
         int defLevel = batchIndex.columns[projCol].getDefLevel(valueIdx);
         return defLevel < structDesc.schema().maxDefinitionLevel();
     }
@@ -158,7 +176,7 @@ public final class NestedBatchDataView implements BatchDataView {
     public int getInt(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
         int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
@@ -169,7 +187,7 @@ public final class NestedBatchDataView implements BatchDataView {
     public long getLong(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
         int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
@@ -180,7 +198,7 @@ public final class NestedBatchDataView implements BatchDataView {
     public float getFloat(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
         int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
@@ -191,7 +209,7 @@ public final class NestedBatchDataView implements BatchDataView {
     public double getDouble(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
         int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
@@ -202,7 +220,7 @@ public final class NestedBatchDataView implements BatchDataView {
     public boolean getBoolean(String name) {
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
         int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
@@ -213,57 +231,52 @@ public final class NestedBatchDataView implements BatchDataView {
 
     @Override
     public int getInt(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
-        int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
-        if (batchIndex.isElementNull(projCol, valueIdx)) {
+        int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
+        BitSet nulls = fieldElementNulls[projectedIndex];
+        if (nulls != null && nulls.get(valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((NestedColumnData.IntColumn) batchIndex.columns[projCol]).get(valueIdx);
+        return ((int[]) fieldValueArrays[projectedIndex])[valueIdx];
     }
 
     @Override
     public long getLong(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
-        int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
-        if (batchIndex.isElementNull(projCol, valueIdx)) {
+        int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
+        BitSet nulls = fieldElementNulls[projectedIndex];
+        if (nulls != null && nulls.get(valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((NestedColumnData.LongColumn) batchIndex.columns[projCol]).get(valueIdx);
+        return ((long[]) fieldValueArrays[projectedIndex])[valueIdx];
     }
 
     @Override
     public float getFloat(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
-        int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
-        if (batchIndex.isElementNull(projCol, valueIdx)) {
+        int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
+        BitSet nulls = fieldElementNulls[projectedIndex];
+        if (nulls != null && nulls.get(valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((NestedColumnData.FloatColumn) batchIndex.columns[projCol]).get(valueIdx);
+        return ((float[]) fieldValueArrays[projectedIndex])[valueIdx];
     }
 
     @Override
     public double getDouble(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
-        int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
-        if (batchIndex.isElementNull(projCol, valueIdx)) {
+        int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
+        BitSet nulls = fieldElementNulls[projectedIndex];
+        if (nulls != null && nulls.get(valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((NestedColumnData.DoubleColumn) batchIndex.columns[projCol]).get(valueIdx);
+        return ((double[]) fieldValueArrays[projectedIndex])[valueIdx];
     }
 
     @Override
     public boolean getBoolean(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
-        int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
-        if (batchIndex.isElementNull(projCol, valueIdx)) {
+        int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
+        BitSet nulls = fieldElementNulls[projectedIndex];
+        if (nulls != null && nulls.get(valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        return ((NestedColumnData.BooleanColumn) batchIndex.columns[projCol]).get(valueIdx);
+        return ((boolean[]) fieldValueArrays[projectedIndex])[valueIdx];
     }
 
     // ==================== Object Type Accessors (by name) ====================
@@ -307,12 +320,23 @@ public final class NestedBatchDataView implements BatchDataView {
 
     @Override
     public String getString(int projectedIndex) {
-        return getString(lookupPrimitiveByIndex(projectedIndex));
+        int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
+        BitSet nulls = fieldElementNulls[projectedIndex];
+        if (nulls != null && nulls.get(valueIdx)) {
+            return null;
+        }
+        byte[] raw = ((byte[][]) fieldValueArrays[projectedIndex])[valueIdx];
+        return new String(raw, StandardCharsets.UTF_8);
     }
 
     @Override
     public byte[] getBinary(int projectedIndex) {
-        return getBinary(lookupPrimitiveByIndex(projectedIndex));
+        int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
+        BitSet nulls = fieldElementNulls[projectedIndex];
+        if (nulls != null && nulls.get(valueIdx)) {
+            return null;
+        }
+        return ((byte[][]) fieldValueArrays[projectedIndex])[valueIdx];
     }
 
     @Override
@@ -391,8 +415,7 @@ public final class NestedBatchDataView implements BatchDataView {
 
     @Override
     public PqStruct getStruct(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc desc = lookupFieldByIndex(projectedIndex);
-        if (!(desc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
+        if (!(fieldDescs[projectedIndex] instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
             throw new IllegalArgumentException("Field at index " + projectedIndex + " is not a struct");
         }
         if (isStructNull(structDesc)) {
@@ -403,28 +426,27 @@ public final class NestedBatchDataView implements BatchDataView {
 
     @Override
     public PqIntList getListOfInts(int projectedIndex) {
-        return createIntList(lookupListByIndex(projectedIndex));
+        return createIntList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
     }
 
     @Override
     public PqLongList getListOfLongs(int projectedIndex) {
-        return createLongList(lookupListByIndex(projectedIndex));
+        return createLongList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
     }
 
     @Override
     public PqDoubleList getListOfDoubles(int projectedIndex) {
-        return createDoubleList(lookupListByIndex(projectedIndex));
+        return createDoubleList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
     }
 
     @Override
     public PqList getList(int projectedIndex) {
-        return createList(lookupListByIndex(projectedIndex));
+        return createList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
     }
 
     @Override
     public PqMap getMap(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc desc = lookupFieldByIndex(projectedIndex);
-        if (!(desc instanceof TopLevelFieldMap.FieldDesc.MapOf mapDesc)) {
+        if (!(fieldDescs[projectedIndex] instanceof TopLevelFieldMap.FieldDesc.MapOf mapDesc)) {
             throw new IllegalArgumentException("Field at index " + projectedIndex + " is not a map");
         }
         return createMap(mapDesc);
@@ -440,8 +462,7 @@ public final class NestedBatchDataView implements BatchDataView {
 
     @Override
     public Object getValue(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc desc = lookupFieldByIndex(projectedIndex);
-        return readRawValue(desc);
+        return readRawValue(fieldDescs[projectedIndex]);
     }
 
     // ==================== Metadata ====================
@@ -464,9 +485,34 @@ public final class NestedBatchDataView implements BatchDataView {
 
     // ==================== Internal Helpers ====================
 
+    /**
+     * Populate per-field cached value arrays and null BitSets from the current batch.
+     * Called once per setBatchData() to enable direct-access by-index primitive accessors.
+     */
+    private void cacheFieldArrays() {
+        for (int f = 0; f < fieldToProjCol.length; f++) {
+            int projCol = fieldToProjCol[f];
+            if (projCol >= 0) {
+                fieldValueArrays[f] = extractValueArray(batchIndex.columns[projCol]);
+                fieldElementNulls[f] = batchIndex.elementNulls[projCol];
+            }
+        }
+    }
+
+    private static Object extractValueArray(NestedColumnData data) {
+        return switch (data) {
+            case NestedColumnData.IntColumn ic -> ic.values();
+            case NestedColumnData.LongColumn lc -> lc.values();
+            case NestedColumnData.FloatColumn fc -> fc.values();
+            case NestedColumnData.DoubleColumn dc -> dc.values();
+            case NestedColumnData.BooleanColumn bc -> bc.values();
+            case NestedColumnData.ByteArrayColumn bac -> bac.values();
+        };
+    }
+
     private String getString(TopLevelFieldMap.FieldDesc.Primitive p) {
         int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
@@ -476,7 +522,7 @@ public final class NestedBatchDataView implements BatchDataView {
 
     private byte[] getBinary(TopLevelFieldMap.FieldDesc.Primitive p) {
         int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
@@ -487,7 +533,7 @@ public final class NestedBatchDataView implements BatchDataView {
                                   Class<? extends LogicalType> expectedLogicalType,
                                   Class<T> resultClass) {
         int projCol = p.projectedCol();
-        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int valueIdx = cachedValueIndex[projCol];
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
@@ -503,14 +549,6 @@ public final class NestedBatchDataView implements BatchDataView {
         TopLevelFieldMap.FieldDesc desc = lookupField(name);
         if (!(desc instanceof TopLevelFieldMap.FieldDesc.ListOf listDesc)) {
             throw new IllegalArgumentException("Field '" + name + "' is not a list");
-        }
-        return listDesc;
-    }
-
-    private TopLevelFieldMap.FieldDesc.ListOf lookupListByIndex(int projectedIndex) {
-        TopLevelFieldMap.FieldDesc desc = lookupFieldByIndex(projectedIndex);
-        if (!(desc instanceof TopLevelFieldMap.FieldDesc.ListOf listDesc)) {
-            throw new IllegalArgumentException("Field at index " + projectedIndex + " is not a list");
         }
         return listDesc;
     }
@@ -538,7 +576,7 @@ public final class NestedBatchDataView implements BatchDataView {
     private Object readRawValue(TopLevelFieldMap.FieldDesc desc) {
         return switch (desc) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int valueIdx = batchIndex.getValueIndex(p.projectedCol(), rowIndex);
+                int valueIdx = cachedValueIndex[p.projectedCol()];
                 if (batchIndex.isElementNull(p.projectedCol(), valueIdx)) {
                     yield null;
                 }
