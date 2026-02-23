@@ -22,6 +22,7 @@ import dev.hardwood.internal.reader.ColumnValueIterator;
 import dev.hardwood.internal.reader.IndexedNestedColumnData;
 import dev.hardwood.internal.reader.NestedBatchDataView;
 import dev.hardwood.internal.reader.NestedColumnData;
+import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageCursor;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
@@ -49,6 +50,7 @@ final class SingleFileRowReader extends AbstractRowReader {
     private final int adaptiveBatchSize;
 
     private ColumnValueIterator[] iterators;
+    private int[][] levelNullThresholds; // [projectedCol] -> thresholds for nested columns
     private CompletableFuture<IndexedNestedColumnData[]> pendingBatch;
 
     SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, MappedByteBuffer fileMapping,
@@ -140,6 +142,19 @@ final class SingleFileRowReader extends AbstractRowReader {
             iterators[i] = new ColumnValueIterator(pageCursor, columnSchema, flatSchema);
         }
 
+        // Precompute level-null thresholds per projected column (for nested schemas)
+        if (!flatSchema) {
+            levelNullThresholds = new int[projectedColumnCount][];
+            for (int i = 0; i < projectedColumnCount; i++) {
+                int originalIndex = projectedSchema.toOriginalIndex(i);
+                ColumnSchema columnSchema = schema.getColumn(originalIndex);
+                if (columnSchema.maxRepetitionLevel() > 0) {
+                    levelNullThresholds[i] = NestedLevelComputer.computeLevelNullThresholds(
+                            schema.getRootNode(), columnSchema.columnIndex());
+                }
+            }
+        }
+
         // Initialize the data view
         dataView = BatchDataView.create(schema, projectedSchema);
 
@@ -226,12 +241,13 @@ final class SingleFileRowReader extends AbstractRowReader {
         CompletableFuture<IndexedNestedColumnData>[] futures = new CompletableFuture[iterators.length];
         for (int i = 0; i < iterators.length; i++) {
             final int col = i;
+            final int[] thresholds = levelNullThresholds[col];
             futures[i] = CompletableFuture.supplyAsync(() -> {
                 TypedColumnData data = iterators[col].readBatch(adaptiveBatchSize);
                 if (data.recordCount() == 0) {
                     return new IndexedNestedColumnData((NestedColumnData) data, null, null, null, null);
                 }
-                return IndexedNestedColumnData.compute((NestedColumnData) data);
+                return IndexedNestedColumnData.compute((NestedColumnData) data, thresholds);
             }, ForkJoinPool.commonPool());
         }
         return CompletableFuture.allOf(futures).thenApply(v -> {

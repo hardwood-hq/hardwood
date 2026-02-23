@@ -12,6 +12,7 @@ import java.util.Map;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.FileManager;
+import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
@@ -58,11 +59,17 @@ public class MultiFileColumnReaders implements AutoCloseable {
             int originalIndex = projectedSchema.toOriginalIndex(i);
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
 
+            int[] thresholds = null;
+            if (columnSchema.maxRepetitionLevel() > 0) {
+                thresholds = NestedLevelComputer.computeLevelNullThresholds(
+                        schema.getRootNode(), columnSchema.columnIndex());
+            }
             ColumnReader reader = new ColumnReader(
                     columnSchema,
                     initResult.firstFileState().pageInfosByColumn().get(i),
                     context,
                     ColumnReader.DEFAULT_BATCH_SIZE,
+                    thresholds,
                     fileManager,
                     i,
                     firstFileName);

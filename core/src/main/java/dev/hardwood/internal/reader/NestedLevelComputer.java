@@ -7,7 +7,12 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.util.ArrayList;
 import java.util.BitSet;
+import java.util.List;
+
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.SchemaNode;
 
 /**
  * Computes multi-level offsets and null bitmaps from Parquet repetition/definition levels.
@@ -79,16 +84,75 @@ public final class NestedLevelComputer {
     }
 
     /**
+     * Compute the definition level thresholds for each repetition level by walking the
+     * schema tree from the root to the leaf column.
+     * <p>
+     * At each REPEATED group node on the path, the threshold is
+     * {@code repeatedNode.maxDefinitionLevel() - 1} — i.e. the definition level of its
+     * parent. Values with {@code defLevel < threshold} at that nesting level indicate
+     * that the enclosing container is null.
+     * </p>
+     *
+     * @param root        the schema root node
+     * @param columnIndex the leaf column index to find
+     * @return int array of length maxRepLevel, one threshold per nesting level
+     */
+    public static int[] computeLevelNullThresholds(SchemaNode.GroupNode root, int columnIndex) {
+        List<Integer> thresholds = new ArrayList<>();
+        walkToLeaf(root, columnIndex, thresholds);
+        int[] result = new int[thresholds.size()];
+        for (int i = 0; i < result.length; i++) {
+            result[i] = thresholds.get(i);
+        }
+        return result;
+    }
+
+    private static boolean walkToLeaf(SchemaNode node, int columnIndex, List<Integer> thresholds) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> {
+                if (prim.columnIndex() != columnIndex) {
+                    yield false;
+                }
+                // A repeated primitive (2-level list encoding) contributes a rep level
+                if (prim.repetitionType() == RepetitionType.REPEATED) {
+                    thresholds.add(prim.maxDefinitionLevel() - 1);
+                }
+                yield true;
+            }
+            case SchemaNode.GroupNode group -> {
+                boolean isRepeated = group.repetitionType() == RepetitionType.REPEATED;
+                if (isRepeated) {
+                    thresholds.add(group.maxDefinitionLevel() - 1);
+                }
+                boolean found = false;
+                for (SchemaNode child : group.children()) {
+                    if (walkToLeaf(child, columnIndex, thresholds)) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (!found && isRepeated) {
+                    thresholds.remove(thresholds.size() - 1);
+                }
+                yield found;
+            }
+        };
+    }
+
+    /**
      * Compute per-level null bitmaps from definition and repetition levels.
      *
+     * @param levelNullThresholds per-level definition level thresholds from
+     *                            {@link #computeLevelNullThresholds}
      * @return array of BitSets, one per nesting level; null entries mean all-non-null at that level
      */
     public static BitSet[] computeLevelNulls(int[] defLevels, int[] repLevels,
-                                             int valueCount, int maxDefLevel, int maxRepLevel) {
+                                             int valueCount, int maxRepLevel,
+                                             int[] levelNullThresholds) {
         BitSet[] levelNulls = new BitSet[maxRepLevel];
 
         for (int k = 0; k < maxRepLevel; k++) {
-            int defThreshold = maxDefLevel - maxRepLevel + k + 1;
+            int defThreshold = levelNullThresholds[k];
             BitSet nullBits = null;
 
             int itemIdx = 0;

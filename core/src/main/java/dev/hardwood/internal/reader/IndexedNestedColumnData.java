@@ -27,8 +27,12 @@ public record IndexedNestedColumnData(
 
     /**
      * Compute index data for a nested column and wrap it.
+     *
+     * @param data                the nested column data
+     * @param levelNullThresholds per-level definition level thresholds from
+     *                            {@link NestedLevelComputer#computeLevelNullThresholds}
      */
-    public static IndexedNestedColumnData compute(NestedColumnData data) {
+    public static IndexedNestedColumnData compute(NestedColumnData data, int[] levelNullThresholds) {
         int maxRepLevel = data.column().maxRepetitionLevel();
         int maxDefLevel = data.maxDefinitionLevel();
         int[] repLevels = data.repetitionLevels();
@@ -45,7 +49,7 @@ public record IndexedNestedColumnData(
             multiLevelOffsets = NestedLevelComputer.computeMultiLevelOffsets(
                     repLevels, valueCount, recordCount, maxRepLevel);
             levelNulls = NestedLevelComputer.computeLevelNulls(
-                    defLevels, repLevels, valueCount, maxDefLevel, maxRepLevel);
+                    defLevels, repLevels, valueCount, maxRepLevel, levelNullThresholds);
         }
 
         return new IndexedNestedColumnData(data, recordOffsets, multiLevelOffsets, levelNulls, elementNulls);

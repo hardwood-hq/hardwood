@@ -633,6 +633,9 @@ class NestedPerformanceTest {
         int maxSourceCount = 0;
         long totalAddressCount = 0;
         int maxAddressCount = 0;
+        long totalNameEntries = 0;
+        int maxNameEntries = 0;
+        int maxPrimaryNameLength = 0;
 
         try (Hardwood hardwood = Hardwood.create();
              ParquetFileReader reader = hardwood.open(DATA_FILE)) {
@@ -651,6 +654,11 @@ class NestedPerformanceTest {
             int websiteLeafColIdx = findFirstLeafColumnIndex(findChild(root, "websites"));
             int sourceLeafColIdx = findFirstLeafColumnIndex(findChild(root, "sources"));
             int addressLeafColIdx = findFirstLeafColumnIndex(findChild(root, "addresses"));
+
+            // Names struct: common (map) and primary (string)
+            SchemaNode.GroupNode namesNode = (SchemaNode.GroupNode) findChild(root, "names");
+            int namesCommonKeyColIdx = findFirstLeafColumnIndex(findChild(namesNode, "common"));
+            int namesPrimaryColIdx = ((SchemaNode.PrimitiveNode) findChild(namesNode, "primary")).columnIndex();
 
             // Read flat primitives: version and confidence
             try (ColumnReader versionCol = reader.createColumnReader(versionColIdx);
@@ -710,16 +718,35 @@ class NestedPerformanceTest {
             long[] addressSizes = new long[2];
             totalAddressCount = computeListSizes(reader, addressLeafColIdx, addressSizes);
             maxAddressCount = (int) addressSizes[1];
+
+            // names.common map: count entries using key column offsets
+            long[] commonSizes = new long[2];
+            totalNameEntries = computeListSizes(reader, namesCommonKeyColIdx, commonSizes);
+            maxNameEntries = (int) commonSizes[1];
+
+            // names.primary: find max string length
+            try (ColumnReader primaryCol = reader.createColumnReader(namesPrimaryColIdx)) {
+                while (primaryCol.nextBatch()) {
+                    int count = primaryCol.getRecordCount();
+                    byte[][] values = primaryCol.getBinaries();
+                    BitSet nulls = primaryCol.getElementNulls();
+                    for (int i = 0; i < count; i++) {
+                        if (nulls == null || !nulls.get(i)) {
+                            int len = new String(values[i], java.nio.charset.StandardCharsets.UTF_8).length();
+                            if (len > maxPrimaryNameLength) maxPrimaryNameLength = len;
+                        }
+                    }
+                }
+            }
         }
         catch (IOException e) {
             throw new RuntimeException("Failed to read file: " + DATA_FILE, e);
         }
 
-        // Columnar doesn't compute name entries or primary name length (requires row assembly)
         return new Result(rowCount, 0, minVersion, maxVersion, minConfidence, maxConfidence,
                 minBboxXmin, maxBboxXmax, totalWebsiteCount, maxWebsiteCount,
-                totalSourceCount, maxSourceCount, 0, 0, 0,
-                totalAddressCount, maxAddressCount);
+                totalSourceCount, maxSourceCount, totalNameEntries, maxNameEntries,
+                maxPrimaryNameLength, totalAddressCount, maxAddressCount);
     }
 
     /**
@@ -898,10 +925,6 @@ class NestedPerformanceTest {
             Result other = entry.getValue().get(0);
             String otherName = entry.getKey().displayName();
 
-            // Columnar computes list sizes from leaf columns, which undercounts when
-            // the leaf field is null within a present list entry. Skip list/name checks.
-            boolean isColumnar = entry.getKey() == Contender.HARDWOOD_COLUMNAR;
-
             assertThat(other.rowCount())
                     .as("%s rowCount should match %s", otherName, referenceName)
                     .isEqualTo(reference.rowCount());
@@ -923,24 +946,21 @@ class NestedPerformanceTest {
             assertThat(other.maxBboxXmax())
                     .as("%s maxBboxXmax should match %s", otherName, referenceName)
                     .isCloseTo(reference.maxBboxXmax(), withinPercentage(0.0001));
-
-            if (!isColumnar) {
-                assertThat(other.totalWebsiteCount())
-                        .as("%s totalWebsiteCount should match %s", otherName, referenceName)
-                        .isEqualTo(reference.totalWebsiteCount());
-                assertThat(other.totalSourceCount())
-                        .as("%s totalSourceCount should match %s", otherName, referenceName)
-                        .isEqualTo(reference.totalSourceCount());
-                assertThat(other.totalAddressCount())
-                        .as("%s totalAddressCount should match %s", otherName, referenceName)
-                        .isEqualTo(reference.totalAddressCount());
-                assertThat(other.totalNameEntries())
-                        .as("%s totalNameEntries should match %s", otherName, referenceName)
-                        .isEqualTo(reference.totalNameEntries());
-                assertThat(other.maxPrimaryNameLength())
-                        .as("%s maxPrimaryNameLength should match %s", otherName, referenceName)
-                        .isEqualTo(reference.maxPrimaryNameLength());
-            }
+            assertThat(other.totalWebsiteCount())
+                    .as("%s totalWebsiteCount should match %s", otherName, referenceName)
+                    .isEqualTo(reference.totalWebsiteCount());
+            assertThat(other.totalSourceCount())
+                    .as("%s totalSourceCount should match %s", otherName, referenceName)
+                    .isEqualTo(reference.totalSourceCount());
+            assertThat(other.totalAddressCount())
+                    .as("%s totalAddressCount should match %s", otherName, referenceName)
+                    .isEqualTo(reference.totalAddressCount());
+            assertThat(other.totalNameEntries())
+                    .as("%s totalNameEntries should match %s", otherName, referenceName)
+                    .isEqualTo(reference.totalNameEntries());
+            assertThat(other.maxPrimaryNameLength())
+                    .as("%s maxPrimaryNameLength should match %s", otherName, referenceName)
+                    .isEqualTo(reference.maxPrimaryNameLength());
         }
 
         System.out.println("\nAll results match!");

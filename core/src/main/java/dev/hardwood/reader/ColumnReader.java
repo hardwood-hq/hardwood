@@ -84,6 +84,7 @@ public class ColumnReader implements AutoCloseable {
     private final int maxRepetitionLevel;
     private final ColumnValueIterator iterator;
     private final int batchSize;
+    private final int[] levelNullThresholds; // pre-computed per rep level
 
     // Current batch state
     private TypedColumnData currentBatch;
@@ -98,8 +99,9 @@ public class ColumnReader implements AutoCloseable {
     /**
      * Single-file constructor. Delegates to the multi-file constructor with no FileManager.
      */
-    ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContext context, int batchSize) {
-        this(column, pageInfos, context, batchSize, null, -1, null);
+    ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContext context,
+                 int batchSize, int[] levelNullThresholds) {
+        this(column, pageInfos, context, batchSize, levelNullThresholds, null, -1, null);
     }
 
     /**
@@ -107,10 +109,12 @@ public class ColumnReader implements AutoCloseable {
      * with cross-file prefetching — matching the pattern used by {@link MultiFileRowReader}.
      */
     ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContext context,
-                 int batchSize, FileManager fileManager, int projectedColumnIndex, String fileName) {
+                 int batchSize, int[] levelNullThresholds,
+                 FileManager fileManager, int projectedColumnIndex, String fileName) {
         this.column = column;
         this.maxRepetitionLevel = column.maxRepetitionLevel();
         this.batchSize = batchSize;
+        this.levelNullThresholds = levelNullThresholds;
 
         boolean flat = maxRepetitionLevel == 0;
 
@@ -369,7 +373,7 @@ public class ColumnReader implements AutoCloseable {
                 repLevels, valueCount, recordCount, maxRepetitionLevel);
         elementNulls = NestedLevelComputer.computeElementNulls(defLevels, valueCount, maxDefLevel);
         levelNulls = NestedLevelComputer.computeLevelNulls(
-                defLevels, repLevels, valueCount, maxDefLevel, maxRepetitionLevel);
+                defLevels, repLevels, valueCount, maxRepetitionLevel, levelNullThresholds);
     }
 
     // ==================== Factory ====================
@@ -428,6 +432,11 @@ public class ColumnReader implements AutoCloseable {
             allPages.addAll(future.join());
         }
 
-        return new ColumnReader(columnSchema, allPages, context, DEFAULT_BATCH_SIZE);
+        int[] thresholds = null;
+        if (columnSchema.maxRepetitionLevel() > 0) {
+            thresholds = NestedLevelComputer.computeLevelNullThresholds(
+                    schema.getRootNode(), columnSchema.columnIndex());
+        }
+        return new ColumnReader(columnSchema, allPages, context, DEFAULT_BATCH_SIZE, thresholds);
     }
 }

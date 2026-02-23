@@ -101,8 +101,10 @@ final class NestedBatchIndex {
             if (maxRepLevel > 0 && repLevels != null && valueCount > 0) {
                 multiOffsets[col] = NestedLevelComputer.computeMultiLevelOffsets(
                         repLevels, valueCount, recordCount, maxRepLevel);
+                int[] thresholds = NestedLevelComputer.computeLevelNullThresholds(
+                        schema.getRootNode(), data.column().columnIndex());
                 levelNulls[col] = NestedLevelComputer.computeLevelNulls(
-                        defLevels, repLevels, valueCount, maxDefLevel, maxRepLevel);
+                        defLevels, repLevels, valueCount, maxRepLevel, thresholds);
             }
         }
 
