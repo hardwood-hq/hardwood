@@ -46,6 +46,32 @@ final class NestedBatchIndex {
     }
 
     /**
+     * Build the batch index from pre-computed indexed column data.
+     * Index computation has already been done in parallel by the column futures.
+     */
+    static NestedBatchIndex buildFromIndexed(IndexedNestedColumnData[] indexed, FileSchema schema,
+                                              ProjectedSchema projectedSchema, TopLevelFieldMap fieldMap) {
+        int colCount = indexed.length;
+        NestedColumnData[] columns = new NestedColumnData[colCount];
+        int[][] offsets = new int[colCount][];
+        int[][][] multiOffsets = new int[colCount][][];
+        BitSet[][] levelNulls = new BitSet[colCount][];
+        BitSet[] elementNulls = new BitSet[colCount];
+
+        for (int col = 0; col < colCount; col++) {
+            IndexedNestedColumnData icd = indexed[col];
+            columns[col] = icd.data();
+            offsets[col] = icd.recordOffsets();
+            multiOffsets[col] = icd.multiLevelOffsets();
+            levelNulls[col] = icd.levelNulls();
+            elementNulls[col] = icd.elementNulls();
+        }
+
+        return new NestedBatchIndex(columns, offsets, multiOffsets, levelNulls,
+                elementNulls, schema, projectedSchema, fieldMap);
+    }
+
+    /**
      * Build the batch index for the given columns.
      */
     static NestedBatchIndex build(NestedColumnData[] columns, FileSchema schema,

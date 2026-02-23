@@ -72,6 +72,14 @@ public final class NestedBatchDataView implements BatchDataView {
         this.batchIndex = NestedBatchIndex.build(nested, schema, projectedSchema, fieldMap);
     }
 
+    /**
+     * Install batch data from pre-indexed columns where index computation
+     * was already done in parallel by the column futures.
+     */
+    public void setBatchData(IndexedNestedColumnData[] indexedData) {
+        this.batchIndex = NestedBatchIndex.buildFromIndexed(indexedData, schema, projectedSchema, fieldMap);
+    }
+
     @Override
     public void setRowIndex(int rowIndex) {
         this.rowIndex = rowIndex;
@@ -135,17 +143,13 @@ public final class NestedBatchDataView implements BatchDataView {
     }
 
     private boolean isStructNull(TopLevelFieldMap.FieldDesc.Struct structDesc) {
-        for (TopLevelFieldMap.FieldDesc childDesc : structDesc.children().values()) {
-            if (childDesc instanceof TopLevelFieldMap.FieldDesc.Primitive p) {
-                int projCol = p.projectedCol();
-                int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
-                NestedColumnData data = batchIndex.columns[projCol];
-                int defLevel = data.getDefLevel(valueIdx);
-                int structDefLevel = structDesc.schema().maxDefinitionLevel();
-                return defLevel < structDefLevel;
-            }
+        int projCol = structDesc.firstPrimitiveCol();
+        if (projCol < 0) {
+            return false;
         }
-        return false;
+        int valueIdx = batchIndex.getValueIndex(projCol, rowIndex);
+        int defLevel = batchIndex.columns[projCol].getDefLevel(valueIdx);
+        return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 
     // ==================== Primitive Type Accessors (by name) ====================
@@ -158,7 +162,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
-        ValidateHelper.validateInt(p.schema());
         return ((NestedColumnData.IntColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -170,7 +173,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
-        ValidateHelper.validateLong(p.schema());
         return ((NestedColumnData.LongColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -182,7 +184,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
-        ValidateHelper.validateFloat(p.schema());
         return ((NestedColumnData.FloatColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -194,7 +195,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
-        ValidateHelper.validateDouble(p.schema());
         return ((NestedColumnData.DoubleColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -206,7 +206,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column '" + name + "' is null");
         }
-        ValidateHelper.validateBoolean(p.schema());
         return ((NestedColumnData.BooleanColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -220,7 +219,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        ValidateHelper.validateInt(p.schema());
         return ((NestedColumnData.IntColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -232,7 +230,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        ValidateHelper.validateLong(p.schema());
         return ((NestedColumnData.LongColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -244,7 +241,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        ValidateHelper.validateFloat(p.schema());
         return ((NestedColumnData.FloatColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -256,7 +252,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        ValidateHelper.validateDouble(p.schema());
         return ((NestedColumnData.DoubleColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -268,7 +263,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException("Column " + projectedIndex + " is null");
         }
-        ValidateHelper.validateBoolean(p.schema());
         return ((NestedColumnData.BooleanColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -476,7 +470,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        ValidateHelper.validateString(p.schema());
         byte[] raw = ((NestedColumnData.ByteArrayColumn) batchIndex.columns[projCol]).get(valueIdx);
         return new String(raw, StandardCharsets.UTF_8);
     }
@@ -487,7 +480,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        ValidateHelper.validateBinary(p.schema());
         return ((NestedColumnData.ByteArrayColumn) batchIndex.columns[projCol]).get(valueIdx);
     }
 
@@ -499,7 +491,6 @@ public final class NestedBatchDataView implements BatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        ValidateHelper.validateLogicalType(p.schema(), expectedLogicalType);
         Object rawValue = batchIndex.columns[projCol].getValue(valueIdx);
         if (resultClass.isInstance(rawValue)) {
             return resultClass.cast(rawValue);

@@ -12,7 +12,6 @@ import java.util.PrimitiveIterator;
 import java.util.function.IntConsumer;
 
 import dev.hardwood.row.PqIntList;
-import dev.hardwood.schema.SchemaNode;
 
 /**
  * Flyweight {@link PqIntList} that reads int values directly from a column array.
@@ -22,15 +21,12 @@ final class PqIntListImpl implements PqIntList {
 
     private final NestedBatchIndex batch;
     private final int projectedCol;
-    private final SchemaNode elementSchema;
     private final int start;
     private final int end;
 
-    PqIntListImpl(NestedBatchIndex batch, int projectedCol, SchemaNode elementSchema,
-                      int start, int end) {
+    PqIntListImpl(NestedBatchIndex batch, int projectedCol, int start, int end) {
         this.batch = batch;
         this.projectedCol = projectedCol;
-        this.elementSchema = elementSchema;
         this.start = start;
         this.end = end;
     }

@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -145,34 +146,39 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public int getIntKey() {
-            Object raw = readKey();
-            Integer val = ValueConverter.convertToInt(raw, keySchema);
-            if (val == null) {
+            int keyProjCol = mapDesc.keyProjCol();
+            if (batch.isElementNull(keyProjCol, valueIdx)) {
                 throw new NullPointerException("Key is null");
             }
-            return val;
+            return ((NestedColumnData.IntColumn) batch.columns[keyProjCol]).get(valueIdx);
         }
 
         @Override
         public long getLongKey() {
-            Object raw = readKey();
-            Long val = ValueConverter.convertToLong(raw, keySchema);
-            if (val == null) {
+            int keyProjCol = mapDesc.keyProjCol();
+            if (batch.isElementNull(keyProjCol, valueIdx)) {
                 throw new NullPointerException("Key is null");
             }
-            return val;
+            return ((NestedColumnData.LongColumn) batch.columns[keyProjCol]).get(valueIdx);
         }
 
         @Override
         public String getStringKey() {
-            Object raw = readKey();
-            return ValueConverter.convertToString(raw, keySchema);
+            int keyProjCol = mapDesc.keyProjCol();
+            if (batch.isElementNull(keyProjCol, valueIdx)) {
+                return null;
+            }
+            byte[] raw = ((NestedColumnData.ByteArrayColumn) batch.columns[keyProjCol]).get(valueIdx);
+            return new String(raw, StandardCharsets.UTF_8);
         }
 
         @Override
         public byte[] getBinaryKey() {
-            Object raw = readKey();
-            return ValueConverter.convertToBinary(raw, keySchema);
+            int keyProjCol = mapDesc.keyProjCol();
+            if (batch.isElementNull(keyProjCol, valueIdx)) {
+                return null;
+            }
+            return ((NestedColumnData.ByteArrayColumn) batch.columns[keyProjCol]).get(valueIdx);
         }
 
         @Override
@@ -202,64 +208,66 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public int getIntValue() {
-            Object raw = readValue();
-            Integer val = ValueConverter.convertToInt(raw, valueSchema);
-            if (val == null) {
+            int valueProjCol = mapDesc.valueProjCol();
+            if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return val;
+            return ((NestedColumnData.IntColumn) batch.columns[valueProjCol]).get(valueIdx);
         }
 
         @Override
         public long getLongValue() {
-            Object raw = readValue();
-            Long val = ValueConverter.convertToLong(raw, valueSchema);
-            if (val == null) {
+            int valueProjCol = mapDesc.valueProjCol();
+            if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return val;
+            return ((NestedColumnData.LongColumn) batch.columns[valueProjCol]).get(valueIdx);
         }
 
         @Override
         public float getFloatValue() {
-            Object raw = readValue();
-            Float val = ValueConverter.convertToFloat(raw, valueSchema);
-            if (val == null) {
+            int valueProjCol = mapDesc.valueProjCol();
+            if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return val;
+            return ((NestedColumnData.FloatColumn) batch.columns[valueProjCol]).get(valueIdx);
         }
 
         @Override
         public double getDoubleValue() {
-            Object raw = readValue();
-            Double val = ValueConverter.convertToDouble(raw, valueSchema);
-            if (val == null) {
+            int valueProjCol = mapDesc.valueProjCol();
+            if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return val;
+            return ((NestedColumnData.DoubleColumn) batch.columns[valueProjCol]).get(valueIdx);
         }
 
         @Override
         public boolean getBooleanValue() {
-            Object raw = readValue();
-            Boolean val = ValueConverter.convertToBoolean(raw, valueSchema);
-            if (val == null) {
+            int valueProjCol = mapDesc.valueProjCol();
+            if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return val;
+            return ((NestedColumnData.BooleanColumn) batch.columns[valueProjCol]).get(valueIdx);
         }
 
         @Override
         public String getStringValue() {
-            Object raw = readValue();
-            return ValueConverter.convertToString(raw, valueSchema);
+            int valueProjCol = mapDesc.valueProjCol();
+            if (batch.isElementNull(valueProjCol, valueIdx)) {
+                return null;
+            }
+            byte[] raw = ((NestedColumnData.ByteArrayColumn) batch.columns[valueProjCol]).get(valueIdx);
+            return new String(raw, StandardCharsets.UTF_8);
         }
 
         @Override
         public byte[] getBinaryValue() {
-            Object raw = readValue();
-            return ValueConverter.convertToBinary(raw, valueSchema);
+            int valueProjCol = mapDesc.valueProjCol();
+            if (batch.isElementNull(valueProjCol, valueIdx)) {
+                return null;
+            }
+            return ((NestedColumnData.ByteArrayColumn) batch.columns[valueProjCol]).get(valueIdx);
         }
 
         @Override
@@ -294,19 +302,16 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public PqStruct getStructValue() {
-            if (!(valueSchema instanceof SchemaNode.GroupNode group) || !group.isStruct()) {
+            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+            if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
                 throw new IllegalArgumentException("Value is not a struct");
             }
-            TopLevelFieldMap.FieldDesc.Struct structDesc =
-                    DescriptorBuilder.buildStructDesc(group, batch.projectedSchema);
-            // Check null via first primitive child's defLevel
-            for (TopLevelFieldMap.FieldDesc childDesc : structDesc.children().values()) {
-                if (childDesc instanceof TopLevelFieldMap.FieldDesc.Primitive p) {
-                    int defLevel = batch.columns[p.projectedCol()].getDefLevel(valueIdx);
-                    if (defLevel < group.maxDefinitionLevel()) {
-                        return null;
-                    }
-                    break;
+            // Check null via firstPrimitiveCol
+            int projCol = structDesc.firstPrimitiveCol();
+            if (projCol >= 0) {
+                int defLevel = batch.columns[projCol].getDefLevel(valueIdx);
+                if (defLevel < structDesc.schema().maxDefinitionLevel()) {
+                    return null;
                 }
             }
             return PqStructImpl.atPosition(batch, structDesc, valueIdx);
@@ -314,21 +319,19 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public PqList getListValue() {
-            if (!(valueSchema instanceof SchemaNode.GroupNode group) || !group.isList()) {
+            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+            if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.ListOf listDesc)) {
                 throw new IllegalArgumentException("Value is not a list");
             }
-            TopLevelFieldMap.FieldDesc.ListOf listDesc =
-                    DescriptorBuilder.buildListDesc(group, batch.projectedSchema);
             return PqListImpl.createGenericList(batch, listDesc, -1, valueIdx);
         }
 
         @Override
         public PqMap getMapValue() {
-            if (!(valueSchema instanceof SchemaNode.GroupNode group) || !group.isMap()) {
+            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+            if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.MapOf innerMapDesc)) {
                 throw new IllegalArgumentException("Value is not a map");
             }
-            TopLevelFieldMap.FieldDesc.MapOf innerMapDesc =
-                    DescriptorBuilder.buildMapDesc(group, batch.projectedSchema);
             return PqMapImpl.create(batch, innerMapDesc, -1, valueIdx);
         }
 

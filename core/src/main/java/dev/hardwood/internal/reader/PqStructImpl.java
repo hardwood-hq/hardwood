@@ -78,7 +78,6 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        ValidateHelper.validateInt(child.schema());
         return ((NestedColumnData.IntColumn) batch.columns[projCol]).get(idx);
     }
 
@@ -90,7 +89,6 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        ValidateHelper.validateLong(child.schema());
         return ((NestedColumnData.LongColumn) batch.columns[projCol]).get(idx);
     }
 
@@ -102,7 +100,6 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        ValidateHelper.validateFloat(child.schema());
         return ((NestedColumnData.FloatColumn) batch.columns[projCol]).get(idx);
     }
 
@@ -114,7 +111,6 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        ValidateHelper.validateDouble(child.schema());
         return ((NestedColumnData.DoubleColumn) batch.columns[projCol]).get(idx);
     }
 
@@ -126,7 +122,6 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        ValidateHelper.validateBoolean(child.schema());
         return ((NestedColumnData.BooleanColumn) batch.columns[projCol]).get(idx);
     }
 
@@ -140,7 +135,6 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        ValidateHelper.validateString(child.schema());
         byte[] raw = ((NestedColumnData.ByteArrayColumn) batch.columns[projCol]).get(idx);
         return new String(raw, StandardCharsets.UTF_8);
     }
@@ -153,7 +147,6 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        ValidateHelper.validateBinary(child.schema());
         return ((NestedColumnData.ByteArrayColumn) batch.columns[projCol]).get(idx);
     }
 
@@ -257,7 +250,7 @@ final class PqStructImpl implements PqStruct {
     // ==================== Internal Helpers ====================
 
     private TopLevelFieldMap.FieldDesc lookupChild(String name) {
-        TopLevelFieldMap.FieldDesc child = desc.children().get(name);
+        TopLevelFieldMap.FieldDesc child = desc.getChild(name);
         if (child == null) {
             throw new IllegalArgumentException("Field not found: " + name);
         }
@@ -287,7 +280,6 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        ValidateHelper.validateLogicalType(child.schema(), expectedLogicalType);
         Object rawValue = batch.columns[projCol].getValue(idx);
         if (resultClass.isInstance(rawValue)) {
             return resultClass.cast(rawValue);
@@ -312,17 +304,13 @@ final class PqStructImpl implements PqStruct {
     }
 
     private boolean isStructNull(TopLevelFieldMap.FieldDesc.Struct structDesc) {
-        for (TopLevelFieldMap.FieldDesc childDesc : structDesc.children().values()) {
-            if (childDesc instanceof TopLevelFieldMap.FieldDesc.Primitive p) {
-                int projCol = p.projectedCol();
-                int idx = resolveValueIndex(projCol);
-                NestedColumnData data = batch.columns[projCol];
-                int defLevel = data.getDefLevel(idx);
-                int structDefLevel = structDesc.schema().maxDefinitionLevel();
-                return defLevel < structDefLevel;
-            }
+        int projCol = structDesc.firstPrimitiveCol();
+        if (projCol < 0) {
+            return false;
         }
-        return false;
+        int idx = resolveValueIndex(projCol);
+        int defLevel = batch.columns[projCol].getDefLevel(idx);
+        return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 
     private Object readRawValue(TopLevelFieldMap.FieldDesc child) {

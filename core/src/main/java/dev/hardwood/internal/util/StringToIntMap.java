@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.schema;
+package dev.hardwood.internal.util;
 
 /**
  * A simple open-addressed hash map with linear probing for String -> int mappings.
@@ -13,7 +13,7 @@ package dev.hardwood.schema;
  * <p>
  * Uses open addressing for better cache locality compared to HashMap's separate chaining.
  */
-final class StringToIntMap {
+public final class StringToIntMap {
 
     private static final int EMPTY = -1;
 
@@ -24,7 +24,7 @@ final class StringToIntMap {
     /**
      * Create a map with the given capacity (will be rounded up to next power of 2).
      */
-    StringToIntMap(int expectedSize) {
+    public StringToIntMap(int expectedSize) {
         // Use ~75% load factor, round up to power of 2
         int capacity = tableSizeFor(expectedSize + (expectedSize >> 1) + 1);
         this.keys = new String[capacity];
@@ -40,7 +40,7 @@ final class StringToIntMap {
     /**
      * Put a key-value pair into the map.
      */
-    void put(String key, int value) {
+    public void put(String key, int value) {
         int index = key.hashCode() & mask;
 
         while (keys[index] != null) {
@@ -58,7 +58,7 @@ final class StringToIntMap {
     /**
      * Get the value for a key, or EMPTY (-1) if not found.
      */
-    int get(String key) {
+    public int get(String key) {
         int index = key.hashCode() & mask;
 
         while (keys[index] != null) {
@@ -74,7 +74,7 @@ final class StringToIntMap {
     /**
      * Check if the map contains the given key.
      */
-    boolean containsKey(String key) {
+    public boolean containsKey(String key) {
         return get(key) != EMPTY;
     }
 
