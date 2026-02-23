@@ -75,10 +75,12 @@ public class PageCursor {
      *
      * @param pageInfos pages from the file
      * @param context hardwood context with executor
+     * @param fileName the file name for logging and JFR events (may be null)
      * @param assemblyBuffer optional buffer for eager batch assembly (may be null for nested schemas)
      */
-    public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context, ColumnAssemblyBuffer assemblyBuffer) {
-        this(pageInfos, context, null, -1, null, assemblyBuffer);
+    public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context,
+                      String fileName, ColumnAssemblyBuffer assemblyBuffer) {
+        this(pageInfos, context, null, -1, fileName, assemblyBuffer);
     }
 
     /**
