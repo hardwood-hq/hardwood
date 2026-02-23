@@ -10,11 +10,11 @@ package dev.hardwood.reader;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnValueIterator;
 import dev.hardwood.internal.reader.FileManager;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.PageCursor;
 import dev.hardwood.internal.reader.TypedColumnData;
 import dev.hardwood.schema.ColumnSchema;
@@ -47,7 +47,7 @@ public class MultiFileRowReader extends AbstractRowReader {
 
     private final FileSchema schema;
     private final ProjectedSchema projectedSchema;
-    private final HardwoodContext context;
+    private final HardwoodContextImpl context;
     private final FileManager fileManager;
     private final FileManager.InitResult initResult;
     private final int adaptiveBatchSize;
@@ -63,7 +63,7 @@ public class MultiFileRowReader extends AbstractRowReader {
      * @param fileManager the shared file manager
      * @param initResult the initialization result from the first file
      */
-    MultiFileRowReader(java.util.List<java.nio.file.Path> files, HardwoodContext context,
+    MultiFileRowReader(java.util.List<java.nio.file.Path> files, HardwoodContextImpl context,
                        FileManager fileManager, FileManager.InitResult initResult) {
         this.context = context;
         this.fileManager = fileManager;

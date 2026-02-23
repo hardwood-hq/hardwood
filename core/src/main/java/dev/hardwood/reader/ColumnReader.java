@@ -16,11 +16,11 @@ import java.util.BitSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnValueIterator;
 import dev.hardwood.internal.reader.FileManager;
 import dev.hardwood.internal.reader.FlatColumnData;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedColumnData;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageCursor;
@@ -99,7 +99,7 @@ public class ColumnReader implements AutoCloseable {
     /**
      * Single-file constructor. Delegates to the multi-file constructor with no FileManager.
      */
-    ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContext context,
+    ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContextImpl context,
                  int batchSize, int[] levelNullThresholds) {
         this(column, pageInfos, context, batchSize, levelNullThresholds, null, -1, null);
     }
@@ -108,7 +108,7 @@ public class ColumnReader implements AutoCloseable {
      * Full constructor. When {@code fileManager} is non-null, creates a {@link PageCursor}
      * with cross-file prefetching — matching the pattern used by {@link MultiFileRowReader}.
      */
-    ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContext context,
+    ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContextImpl context,
                  int batchSize, int[] levelNullThresholds,
                  FileManager fileManager, int projectedColumnIndex, String fileName) {
         this.column = column;
@@ -383,7 +383,7 @@ public class ColumnReader implements AutoCloseable {
      */
     static ColumnReader create(String columnName, FileSchema schema,
                                MappedByteBuffer fileMapping, List<RowGroup> rowGroups,
-                               HardwoodContext context) {
+                               HardwoodContextImpl context) {
         ColumnSchema columnSchema = schema.getColumn(columnName);
         return create(columnSchema, schema, fileMapping, rowGroups, context);
     }
@@ -393,7 +393,7 @@ public class ColumnReader implements AutoCloseable {
      */
     static ColumnReader create(int columnIndex, FileSchema schema,
                                MappedByteBuffer fileMapping, List<RowGroup> rowGroups,
-                               HardwoodContext context) {
+                               HardwoodContextImpl context) {
         ColumnSchema columnSchema = schema.getColumn(columnIndex);
         return create(columnSchema, schema, fileMapping, rowGroups, context);
     }
@@ -404,7 +404,7 @@ public class ColumnReader implements AutoCloseable {
     @SuppressWarnings("unchecked")
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        MappedByteBuffer fileMapping, List<RowGroup> rowGroups,
-                                       HardwoodContext context) {
+                                       HardwoodContextImpl context) {
         int originalIndex = columnSchema.columnIndex();
 
         // Scan pages for this column across all row groups in parallel

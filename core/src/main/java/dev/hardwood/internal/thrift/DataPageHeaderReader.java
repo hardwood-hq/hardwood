@@ -9,7 +9,7 @@ package dev.hardwood.internal.thrift;
 
 import java.io.IOException;
 
-import dev.hardwood.metadata.DataPageHeader;
+import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.metadata.Encoding;
 
 /**

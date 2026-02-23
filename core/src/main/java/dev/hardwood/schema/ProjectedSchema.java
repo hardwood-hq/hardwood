@@ -12,8 +12,6 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
-import dev.hardwood.reader.ColumnProjection;
-
 /**
  * Represents a projected view of a Parquet schema containing only selected columns.
  *

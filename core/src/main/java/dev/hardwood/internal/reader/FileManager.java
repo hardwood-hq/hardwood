@@ -18,12 +18,11 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.reader.ColumnProjection;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
@@ -48,7 +47,7 @@ public class FileManager {
     private static final System.Logger LOG = System.getLogger(FileManager.class.getName());
 
     private final List<Path> files;
-    private final HardwoodContext context;
+    private final HardwoodContextImpl context;
 
     // Thread-safe storage for file states and loading futures
     private final ConcurrentHashMap<Integer, CompletableFuture<FileState>> fileFutures = new ConcurrentHashMap<>();
@@ -64,7 +63,7 @@ public class FileManager {
      * @param files the Parquet files to read (must not be empty)
      * @param context the Hardwood context with executor and decompressor
      */
-    public FileManager(List<Path> files, HardwoodContext context) {
+    public FileManager(List<Path> files, HardwoodContextImpl context) {
         if (files.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }

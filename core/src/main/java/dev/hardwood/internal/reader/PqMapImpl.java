@@ -16,6 +16,11 @@ import java.util.AbstractList;
 import java.util.List;
 import java.util.UUID;
 
+import dev.hardwood.internal.reader.NestedColumnData.ByteArrayColumn;
+import dev.hardwood.internal.reader.NestedColumnData.IntColumn;
+import dev.hardwood.internal.reader.NestedColumnData.LongColumn;
+import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
+import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.MapOf;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;

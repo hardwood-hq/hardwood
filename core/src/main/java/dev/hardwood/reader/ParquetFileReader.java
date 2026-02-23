@@ -16,8 +16,10 @@ import java.nio.file.StandardOpenOption;
 import dev.hardwood.Hardwood;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.FileMappingEvent;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
@@ -40,11 +42,11 @@ public class ParquetFileReader implements AutoCloseable {
     private final FileChannel channel;
     private final MappedByteBuffer fileMapping;
     private final FileMetaData fileMetaData;
-    private final HardwoodContext context;
+    private final HardwoodContextImpl context;
     private final boolean ownsContext;
 
     private ParquetFileReader(Path path, FileChannel channel, MappedByteBuffer fileMapping,
-                              FileMetaData fileMetaData, HardwoodContext context, boolean ownsContext) {
+                              FileMetaData fileMetaData, HardwoodContextImpl context, boolean ownsContext) {
         this.path = path;
         this.channel = channel;
         this.fileMapping = fileMapping;
@@ -58,7 +60,7 @@ public class ParquetFileReader implements AutoCloseable {
      * The context is closed when this reader is closed.
      */
     public static ParquetFileReader open(Path path) throws IOException {
-        HardwoodContext context = HardwoodContext.create();
+        HardwoodContextImpl context = HardwoodContextImpl.create();
         return open(path, context, true);
     }
 
@@ -67,10 +69,10 @@ public class ParquetFileReader implements AutoCloseable {
      * The context is NOT closed when this reader is closed.
      */
     public static ParquetFileReader open(Path path, HardwoodContext context) throws IOException {
-        return open(path, context, false);
+        return open(path, (HardwoodContextImpl) context, false);
     }
 
-    private static ParquetFileReader open(Path path, HardwoodContext context,
+    private static ParquetFileReader open(Path path, HardwoodContextImpl context,
                                           boolean ownsContext) throws IOException {
         FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
         try {

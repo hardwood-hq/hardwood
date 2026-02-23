@@ -15,6 +15,15 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.reader.NestedColumnData.BooleanColumn;
+import dev.hardwood.internal.reader.NestedColumnData.ByteArrayColumn;
+import dev.hardwood.internal.reader.NestedColumnData.DoubleColumn;
+import dev.hardwood.internal.reader.NestedColumnData.FloatColumn;
+import dev.hardwood.internal.reader.NestedColumnData.IntColumn;
+import dev.hardwood.internal.reader.NestedColumnData.LongColumn;
+import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
+import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Primitive;
+import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Struct;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;

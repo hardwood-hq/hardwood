@@ -16,6 +16,8 @@ import java.util.NoSuchElementException;
 import java.util.UUID;
 import java.util.function.IntFunction;
 
+import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
+import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqList;

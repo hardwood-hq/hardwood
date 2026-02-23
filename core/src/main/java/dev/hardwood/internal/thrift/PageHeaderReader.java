@@ -9,10 +9,10 @@ package dev.hardwood.internal.thrift;
 
 import java.io.IOException;
 
-import dev.hardwood.metadata.DataPageHeader;
-import dev.hardwood.metadata.DataPageHeaderV2;
-import dev.hardwood.metadata.DictionaryPageHeader;
-import dev.hardwood.metadata.PageHeader;
+import dev.hardwood.internal.metadata.DataPageHeader;
+import dev.hardwood.internal.metadata.DataPageHeaderV2;
+import dev.hardwood.internal.metadata.DictionaryPageHeader;
+import dev.hardwood.internal.metadata.PageHeader;
 
 /**
  * Reader for PageHeader from Thrift Compact Protocol.

@@ -11,8 +11,9 @@ import java.io.IOException;
 import java.nio.file.Path;
 import java.util.List;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.FileManager;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
 /**
@@ -43,11 +44,11 @@ import dev.hardwood.schema.FileSchema;
 public class MultiFileParquetReader implements AutoCloseable {
 
     private final List<Path> files;
-    private final HardwoodContext context;
+    private final HardwoodContextImpl context;
     private final FileManager fileManager;
     private final FileSchema schema;
 
-    public MultiFileParquetReader(List<Path> files, HardwoodContext context) throws IOException {
+    public MultiFileParquetReader(List<Path> files, HardwoodContextImpl context) throws IOException {
         if (files.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }

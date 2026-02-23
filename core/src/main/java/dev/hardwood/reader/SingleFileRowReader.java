@@ -15,10 +15,10 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnValueIterator;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.IndexedNestedColumnData;
 import dev.hardwood.internal.reader.NestedBatchDataView;
 import dev.hardwood.internal.reader.NestedColumnData;
@@ -45,7 +45,7 @@ final class SingleFileRowReader extends AbstractRowReader {
     private final ProjectedSchema projectedSchema;
     private final MappedByteBuffer fileMapping;
     private final List<RowGroup> rowGroups;
-    private final HardwoodContext context;
+    private final HardwoodContextImpl context;
     private final String fileName;
     private final int adaptiveBatchSize;
 
@@ -54,7 +54,7 @@ final class SingleFileRowReader extends AbstractRowReader {
     private CompletableFuture<IndexedNestedColumnData[]> pendingBatch;
 
     SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, MappedByteBuffer fileMapping,
-                        List<RowGroup> rowGroups, HardwoodContext context, String fileName) {
+                        List<RowGroup> rowGroups, HardwoodContextImpl context, String fileName) {
         this.schema = schema;
         this.projectedSchema = projectedSchema;
         this.fileMapping = fileMapping;

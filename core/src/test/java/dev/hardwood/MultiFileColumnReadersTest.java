@@ -14,11 +14,11 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.reader.ColumnProjection;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.MultiFileColumnReaders;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;

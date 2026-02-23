@@ -22,13 +22,13 @@ import dev.hardwood.internal.encoding.DeltaByteArrayDecoder;
 import dev.hardwood.internal.encoding.DeltaLengthByteArrayDecoder;
 import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
+import dev.hardwood.internal.metadata.DataPageHeader;
+import dev.hardwood.internal.metadata.DataPageHeaderV2;
+import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.DataPageHeader;
-import dev.hardwood.metadata.DataPageHeaderV2;
 import dev.hardwood.metadata.Encoding;
-import dev.hardwood.metadata.PageHeader;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 

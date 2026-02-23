@@ -701,6 +701,21 @@ try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(),
 
 ---
 
+## Package Structure
+
+The library is organized into public API packages and internal implementation packages:
+
+| Package | Visibility | Purpose |
+|---------|-----------|---------|
+| `dev.hardwood` | **Public API** | Entry point for creating readers and managing shared resources (thread pool, decompressor pool). |
+| `dev.hardwood.reader` | **Public API** | Single-file and multi-file readers for row-oriented and column-oriented access. |
+| `dev.hardwood.metadata` | **Public API** | Parquet file metadata: row groups, column chunks, physical/logical types, and compression codecs. |
+| `dev.hardwood.schema` | **Public API** | Schema representation: file schema, column schemas, and column projection. |
+| `dev.hardwood.row` | **Public API** | Value types for nested data access: structs, lists, and maps. |
+| `dev.hardwood.internal.*` | **Internal** | Implementation details — not part of the public API and may change without notice. |
+
+---
+
 ## Status
 
 This is Alpha quality software, resulting from a handful of coding sessions with Claude Code.

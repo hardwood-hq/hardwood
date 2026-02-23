@@ -12,10 +12,10 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.reader.ColumnProjection;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 

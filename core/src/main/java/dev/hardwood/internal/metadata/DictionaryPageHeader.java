@@ -5,7 +5,9 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.metadata;
+package dev.hardwood.internal.metadata;
+
+import dev.hardwood.metadata.Encoding;
 
 /**
  * Header for dictionary page.

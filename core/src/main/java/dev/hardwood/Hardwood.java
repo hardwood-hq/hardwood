@@ -13,9 +13,10 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import dev.hardwood.reader.ColumnProjection;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.schema.ColumnProjection;
 
 /**
  * Entry point for reading Parquet files with a shared thread pool.
@@ -33,9 +34,9 @@ import dev.hardwood.reader.ParquetFileReader;
  */
 public class Hardwood implements AutoCloseable {
 
-    private final HardwoodContext context;
+    private final HardwoodContextImpl context;
 
-    private Hardwood(HardwoodContext context) {
+    private Hardwood(HardwoodContextImpl context) {
         this.context = context;
     }
 
@@ -43,14 +44,14 @@ public class Hardwood implements AutoCloseable {
      * Create a new Hardwood instance with a thread pool sized to available processors.
      */
     public static Hardwood create() {
-        return new Hardwood(HardwoodContext.create());
+        return new Hardwood(HardwoodContextImpl.create());
     }
 
     /**
      * Create a new Hardwood instance with a thread pool of the specified size.
      */
     public static Hardwood create(int threads) {
-        return new Hardwood(HardwoodContext.create(threads));
+        return new Hardwood(HardwoodContextImpl.create(threads));
     }
 
     /**

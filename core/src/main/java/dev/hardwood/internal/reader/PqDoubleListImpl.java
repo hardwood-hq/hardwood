@@ -11,6 +11,7 @@ import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.DoubleConsumer;
 
+import dev.hardwood.internal.reader.NestedColumnData.DoubleColumn;
 import dev.hardwood.row.PqDoubleList;
 
 /**

@@ -5,17 +5,16 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.metadata;
+package dev.hardwood.internal.metadata;
+
+import dev.hardwood.metadata.Encoding;
 
 /**
- * Header for DataPage v2.
+ * Header for DataPage (v1).
  */
-public record DataPageHeaderV2(
+public record DataPageHeader(
         int numValues,
-        int numNulls,
-        int numRows,
         Encoding encoding,
-        int definitionLevelsByteLength,
-        int repetitionLevelsByteLength,
-        boolean isCompressed) {
+        Encoding definitionLevelEncoding,
+        Encoding repetitionLevelEncoding) {
 }

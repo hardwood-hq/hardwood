@@ -12,14 +12,13 @@ import java.nio.MappedByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.compression.Decompressor;
+import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
-import dev.hardwood.metadata.PageHeader;
 import dev.hardwood.schema.ColumnSchema;
 
 /**
@@ -33,7 +32,7 @@ public class PageScanner {
 
     private final ColumnSchema columnSchema;
     private final ColumnChunk columnChunk;
-    private final HardwoodContext context;
+    private final HardwoodContextImpl context;
     private final MappedByteBuffer fileMapping;
     private final long fileMappingBaseOffset;
 
@@ -46,7 +45,7 @@ public class PageScanner {
      * @param fileMapping pre-mapped buffer covering the data region
      * @param fileMappingBaseOffset the file offset where fileMapping starts
      */
-    public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContext context,
+    public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
                        MappedByteBuffer fileMapping, long fileMappingBaseOffset) {
         this.columnSchema = columnSchema;
         this.columnChunk = columnChunk;

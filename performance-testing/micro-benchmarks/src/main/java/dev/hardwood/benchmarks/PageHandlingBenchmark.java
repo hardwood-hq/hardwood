@@ -30,8 +30,9 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.compression.Decompressor;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.Page;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageReader;
@@ -40,7 +41,6 @@ import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.PageHeader;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -62,7 +62,7 @@ public class PageHandlingBenchmark {
 
     private Path path;
     private FileChannel channel;
-    private HardwoodContext context;
+    private HardwoodContextImpl context;
     private List<PageInfo> allPages;
 
     @Setup
@@ -74,7 +74,7 @@ public class PageHandlingBenchmark {
         }
 
         channel = FileChannel.open(path, StandardOpenOption.READ);
-        context = HardwoodContext.create();
+        context = HardwoodContextImpl.create();
         allPages = new ArrayList<>();
 
         // Scan all pages from all columns in all row groups

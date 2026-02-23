@@ -13,7 +13,6 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
@@ -43,7 +42,7 @@ public class ColumnAssemblyBufferTest {
         Page page2 = new Page.IntPage(new int[]{5, 6, 7}, null, null, 0, 3);
         Page page3 = new Page.IntPage(new int[]{8, 9, 10}, null, null, 0, 3);
 
-        try (HardwoodContext context = HardwoodContext.create()) {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             ErrorInducingPageCursor cursor = new ErrorInducingPageCursor(
                     List.of(page1, page2, page3),
                     context,
@@ -80,7 +79,7 @@ public class ColumnAssemblyBufferTest {
         Page page2 = new Page.IntPage(new int[]{5, 6, 7}, null, null, 0, 3);
         Page page3 = new Page.IntPage(new int[]{8, 9, 10}, null, null, 0, 3);
 
-        try (HardwoodContext context = HardwoodContext.create()) {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
             // Create a PageCursor that processes all pages successfully
             ErrorInducingPageCursor cursor = new ErrorInducingPageCursor(
                     List.of(page1, page2, page3),
@@ -114,7 +113,7 @@ public class ColumnAssemblyBufferTest {
         private final int errorAfterPage;  // -1 means no error
         private int currentPage = 0;
 
-        ErrorInducingPageCursor(List<Page> pages, HardwoodContext context,
+        ErrorInducingPageCursor(List<Page> pages, HardwoodContextImpl context,
                                 ColumnAssemblyBuffer assemblyBuffer, int errorAfterPage) {
             // Pass empty pageInfos - we override nextPage() and hasNext()
             super(List.of(), context, assemblyBuffer);

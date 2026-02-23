@@ -17,7 +17,6 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -39,7 +38,7 @@ public class PageCursorTest {
             schema = reader.getFileSchema();
         }
 
-        try (HardwoodContext context = HardwoodContext.create();
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
             // Open the file
             FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
 

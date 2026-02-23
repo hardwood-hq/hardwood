@@ -11,6 +11,7 @@ import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.IntConsumer;
 
+import dev.hardwood.internal.reader.NestedColumnData.IntColumn;
 import dev.hardwood.row.PqIntList;
 
 /**

@@ -10,8 +10,8 @@ package dev.hardwood.reader;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import dev.hardwood.HardwoodContext;
 import dev.hardwood.internal.reader.FileManager;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -45,7 +45,7 @@ public class MultiFileColumnReaders implements AutoCloseable {
     private final Map<String, ColumnReader> readersByName;
     private final ColumnReader[] readersByIndex;
 
-    MultiFileColumnReaders(HardwoodContext context, FileManager fileManager,
+    MultiFileColumnReaders(HardwoodContextImpl context, FileManager fileManager,
                            FileManager.InitResult initResult) {
         FileSchema schema = initResult.schema();
         ProjectedSchema projectedSchema = initResult.projectedSchema();

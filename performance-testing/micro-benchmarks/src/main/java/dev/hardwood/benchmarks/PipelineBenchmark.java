@@ -30,7 +30,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
-import dev.hardwood.HardwoodContext;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.internal.reader.TypedColumnData;
@@ -70,7 +70,7 @@ public class PipelineBenchmark {
 
     private Path path;
     private FileChannel channel;
-    private HardwoodContext context;
+    private HardwoodContextImpl context;
     private FileSchema schema;
     private List<RowGroup> rowGroups;
     private List<List<PageInfo>> pagesByColumn;
@@ -85,7 +85,7 @@ public class PipelineBenchmark {
         }
 
         channel = FileChannel.open(path, StandardOpenOption.READ);
-        context = HardwoodContext.create();
+        context = HardwoodContextImpl.create();
         pagesByColumn = new ArrayList<>();
         columnNames = new ArrayList<>();
 

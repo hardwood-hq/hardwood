@@ -14,8 +14,6 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
-import dev.hardwood.HardwoodContext;
-
 /**
  * Cursor over a column's pages with async prefetching.
  * Pages are decoded in parallel using the provided executor.
@@ -42,7 +40,7 @@ public class PageCursor {
     private static final int MAX_PREFETCH_DEPTH = 8;
 
     private final ArrayList<PageInfo> pageInfos;
-    private final HardwoodContext context;
+    private final HardwoodContextImpl context;
     private final Executor executor;
     private final String columnName;
     private final int projectedColumnIndex;
@@ -66,7 +64,7 @@ public class PageCursor {
     /**
      * Creates a PageCursor for single-file reading without eager assembly.
      */
-    public PageCursor(List<PageInfo> pageInfos, HardwoodContext context) {
+    public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context) {
         this(pageInfos, context, null, -1, null, null);
     }
 
@@ -77,7 +75,7 @@ public class PageCursor {
      * @param context hardwood context with executor
      * @param assemblyBuffer optional buffer for eager batch assembly (may be null for nested schemas)
      */
-    public PageCursor(List<PageInfo> pageInfos, HardwoodContext context, ColumnAssemblyBuffer assemblyBuffer) {
+    public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context, ColumnAssemblyBuffer assemblyBuffer) {
         this(pageInfos, context, null, -1, null, assemblyBuffer);
     }
 
@@ -90,7 +88,7 @@ public class PageCursor {
      * @param projectedColumnIndex the projected column index for multi-file page requests
      * @param initialFileName the initial file name for logging (may be null)
      */
-    public PageCursor(List<PageInfo> pageInfos, HardwoodContext context,
+    public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context,
                       FileManager fileManager, int projectedColumnIndex, String initialFileName) {
         this(pageInfos, context, fileManager, projectedColumnIndex, initialFileName, null);
     }
@@ -105,7 +103,7 @@ public class PageCursor {
      * @param initialFileName the initial file name for logging (may be null)
      * @param assemblyBuffer optional buffer for eager batch assembly (may be null)
      */
-    public PageCursor(List<PageInfo> pageInfos, HardwoodContext context,
+    public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context,
                       FileManager fileManager, int projectedColumnIndex, String initialFileName,
                       ColumnAssemblyBuffer assemblyBuffer) {
         this.pageInfos = new ArrayList<>(pageInfos);

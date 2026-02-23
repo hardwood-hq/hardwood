@@ -31,13 +31,13 @@ import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.reader.ColumnProjection;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.MultiFileColumnReaders;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.MultiFileRowReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
