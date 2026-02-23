@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+import dev.hardwood.internal.reader.event.PrefetchMissEvent;
+
 /**
  * Cursor over a column's pages with async prefetching.
  * Pages are decoded in parallel using the provided executor.
@@ -206,6 +208,14 @@ public class PageCursor {
                 LOG.log(System.Logger.Level.DEBUG, "[{0}] Prefetch queue empty for column ''{1}''",
                         getCurrentFileName(), columnName);
                 targetPrefetchDepth = Math.min(targetPrefetchDepth + 1, MAX_PREFETCH_DEPTH);
+
+                PrefetchMissEvent missEvent = new PrefetchMissEvent();
+                missEvent.file = getCurrentFileName();
+                missEvent.column = columnName;
+                missEvent.newDepth = targetPrefetchDepth;
+                missEvent.queueEmpty = true;
+                missEvent.commit();
+
                 return decodePageAndRelease(nextPageIndex++);
             }
         }
@@ -217,6 +227,13 @@ public class PageCursor {
             targetPrefetchDepth++;
             LOG.log(System.Logger.Level.DEBUG, "[{0}] Prefetch miss for column ''{1}'', increasing depth to {2}",
                     getCurrentFileName(), columnName, targetPrefetchDepth);
+
+            PrefetchMissEvent missEvent = new PrefetchMissEvent();
+            missEvent.file = getCurrentFileName();
+            missEvent.column = columnName;
+            missEvent.newDepth = targetPrefetchDepth;
+            missEvent.queueEmpty = false;
+            missEvent.commit();
         }
 
         // Refill queue after consuming

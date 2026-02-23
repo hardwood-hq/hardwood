@@ -99,10 +99,10 @@ final class SingleFileRowReader extends AbstractRowReader {
 
             scanFutures[projIdx] = CompletableFuture.supplyAsync(() -> {
                 List<PageInfo> columnPages = new ArrayList<>();
-                for (RowGroup rowGroup : rowGroups) {
-                    ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
+                for (int rowGroupIndex = 0; rowGroupIndex < rowGroups.size(); rowGroupIndex++) {
+                    ColumnChunk columnChunk = rowGroups.get(rowGroupIndex).columns().get(originalIndex);
                     PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                            fileMapping, mappingBaseOffset);
+                            fileMapping, mappingBaseOffset, fileName, rowGroupIndex);
                     try {
                         columnPages.addAll(scanner.scanPages());
                     }

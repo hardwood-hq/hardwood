@@ -410,11 +410,12 @@ public class ColumnReader implements AutoCloseable {
         // Scan pages for this column across all row groups in parallel
         CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[rowGroups.size()];
 
-        for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
-            final int rg = rgIdx;
-            scanFutures[rg] = CompletableFuture.supplyAsync(() -> {
-                ColumnChunk columnChunk = rowGroups.get(rg).columns().get(originalIndex);
-                PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, fileMapping, 0);
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroups.size(); rowGroupIndex++) {
+            final int rowGroup = rowGroupIndex;
+            scanFutures[rowGroup] = CompletableFuture.supplyAsync(() -> {
+                ColumnChunk columnChunk = rowGroups.get(rowGroup).columns().get(originalIndex);
+                PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, fileMapping, 0,
+                        null, rowGroup);
                 try {
                     return scanner.scanPages();
                 }
