@@ -14,6 +14,7 @@ import java.util.List;
 
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.reader.event.RowGroupScannedEvent;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
@@ -35,6 +36,8 @@ public class PageScanner {
     private final HardwoodContextImpl context;
     private final MappedByteBuffer fileMapping;
     private final long fileMappingBaseOffset;
+    private final String filePath;
+    private final int rowGroupIndex;
 
     /**
      * Creates a PageScanner that uses a pre-mapped file buffer.
@@ -47,11 +50,30 @@ public class PageScanner {
      */
     public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
                        MappedByteBuffer fileMapping, long fileMappingBaseOffset) {
+        this(columnSchema, columnChunk, context, fileMapping, fileMappingBaseOffset, null, -1);
+    }
+
+    /**
+     * Creates a PageScanner that uses a pre-mapped file buffer with file context for JFR events.
+     *
+     * @param columnSchema the column schema
+     * @param columnChunk the column chunk metadata
+     * @param context the Hardwood context
+     * @param fileMapping pre-mapped buffer covering the data region
+     * @param fileMappingBaseOffset the file offset where fileMapping starts
+     * @param filePath the file path for JFR event reporting (may be null)
+     * @param rowGroupIndex the row group index for JFR event reporting
+     */
+    public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
+                       MappedByteBuffer fileMapping, long fileMappingBaseOffset,
+                       String filePath, int rowGroupIndex) {
         this.columnSchema = columnSchema;
         this.columnChunk = columnChunk;
         this.context = context;
         this.fileMapping = fileMapping;
         this.fileMappingBaseOffset = fileMappingBaseOffset;
+        this.filePath = filePath;
+        this.rowGroupIndex = rowGroupIndex;
     }
 
     /**
@@ -65,6 +87,9 @@ public class PageScanner {
      * @return list of PageInfo objects for data pages in this chunk
      */
     public List<PageInfo> scanPages() throws IOException {
+        RowGroupScannedEvent event = new RowGroupScannedEvent();
+        event.begin();
+
         ColumnMetaData metaData = columnChunk.metaData();
 
         Long dictOffset = metaData.dictionaryPageOffset();
@@ -128,6 +153,12 @@ public class PageScanner {
 
             position += totalPageSize;
         }
+
+        event.file = filePath;
+        event.rowGroupIndex = rowGroupIndex;
+        event.column = columnSchema.name();
+        event.pageCount = pageInfos.size();
+        event.commit();
 
         return pageInfos;
     }

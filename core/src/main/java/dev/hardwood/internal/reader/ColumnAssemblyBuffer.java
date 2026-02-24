@@ -11,6 +11,7 @@ import java.util.BitSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.BlockingQueue;
 
+import dev.hardwood.internal.reader.event.BatchWaitEvent;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -313,10 +314,9 @@ public class ColumnAssemblyBuffer {
                 return null;
             }
             finally {
-                long waitDurationMs = (System.nanoTime() - waitStart) / 1_000_000;
-                event.waitDurationMs = waitDurationMs;
                 event.end();
                 event.commit();
+                long waitDurationMs = (System.nanoTime() - waitStart) / 1_000_000;
                 LOG.log(System.Logger.Level.DEBUG,
                         "Consumer blocked {0} ms waiting for batch from column ''{1}''",
                         waitDurationMs, column.name());

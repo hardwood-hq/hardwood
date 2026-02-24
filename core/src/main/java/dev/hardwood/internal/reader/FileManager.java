@@ -18,6 +18,8 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
+import dev.hardwood.internal.reader.event.FileMappingEvent;
+import dev.hardwood.internal.reader.event.FileOpenedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
@@ -100,7 +102,8 @@ public class FileManager {
         projectedSchema = ProjectedSchema.create(referenceSchema, projection);
 
         // Scan pages for the first file
-        List<List<PageInfo>> pageInfosByColumn = scanAllProjectedColumns(firstMappedFile);
+        List<List<PageInfo>> pageInfosByColumn = scanAllProjectedColumns(firstMappedFile,
+                files.get(0).toString());
 
         FileState firstFileState = new FileState(
                 files.get(0), firstMappedFile.mapping,
@@ -236,7 +239,7 @@ public class FileManager {
         validateSchemaCompatibility(path, mappedFile.schema);
 
         // Scan pages for all projected columns
-        List<List<PageInfo>> pageInfosByColumn = scanAllProjectedColumns(mappedFile);
+        List<List<PageInfo>> pageInfosByColumn = scanAllProjectedColumns(mappedFile, path.toString());
 
         LOG.log(System.Logger.Level.DEBUG, "Loaded file {0}: {1}", fileIndex, path);
 
@@ -249,16 +252,20 @@ public class FileManager {
      * Maps a file and reads its metadata. The file channel is closed immediately after mapping.
      */
     private MappedFile mapAndReadMetadata(Path path) {
+        FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
+        fileOpenedEvent.begin();
+
         MappedByteBuffer mapping;
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
             long fileSize = channel.size();
+            String fileName = path.getFileName().toString();
 
             FileMappingEvent event = new FileMappingEvent();
             event.begin();
 
             mapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize);
 
-            event.path = path.toString();
+            event.file = fileName;
             event.offset = 0;
             event.size = fileSize;
             event.column = "(entire file)";
@@ -266,6 +273,12 @@ public class FileManager {
 
             FileMetaData metaData = ParquetMetadataReader.readMetadata(mapping, path);
             FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
+
+            fileOpenedEvent.file = fileName;
+            fileOpenedEvent.fileSize = fileSize;
+            fileOpenedEvent.rowGroupCount = metaData.rowGroups().size();
+            fileOpenedEvent.columnCount = schema.getColumnCount();
+            fileOpenedEvent.commit();
 
             return new MappedFile(mapping, metaData, schema);
         }
@@ -314,9 +327,10 @@ public class FileManager {
      * Scans pages for all projected columns.
      *
      * @param mappedFile the mapped file with metadata and schema
+     * @param filePath the file path for JFR event reporting
      * @return list of page info lists, one per projected column
      */
-    private List<List<PageInfo>> scanAllProjectedColumns(MappedFile mappedFile) {
+    private List<List<PageInfo>> scanAllProjectedColumns(MappedFile mappedFile, String filePath) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         List<RowGroup> rowGroups = mappedFile.metaData.rowGroups();
 
@@ -340,10 +354,10 @@ public class FileManager {
 
             scanFutures[projectedIndex] = CompletableFuture.supplyAsync(() -> {
                 List<PageInfo> columnPages = new ArrayList<>();
-                for (RowGroup rowGroup : rowGroups) {
-                    ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
+                for (int rowGroupIndex = 0; rowGroupIndex < rowGroups.size(); rowGroupIndex++) {
+                    ColumnChunk columnChunk = rowGroups.get(rowGroupIndex).columns().get(columnIndex);
                     PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                            mappedFile.mapping, 0);
+                            mappedFile.mapping, 0, filePath, rowGroupIndex);
                     try {
                         columnPages.addAll(scanner.scanPages());
                     }

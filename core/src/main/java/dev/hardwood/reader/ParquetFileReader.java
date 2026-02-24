@@ -15,9 +15,10 @@ import java.nio.file.StandardOpenOption;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.HardwoodContext;
-import dev.hardwood.internal.reader.FileMappingEvent;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.event.FileMappingEvent;
+import dev.hardwood.internal.reader.event.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
@@ -74,17 +75,21 @@ public class ParquetFileReader implements AutoCloseable {
 
     private static ParquetFileReader open(Path path, HardwoodContextImpl context,
                                           boolean ownsContext) throws IOException {
+        FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
+        fileOpenedEvent.begin();
+
         FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
         try {
             // Map the entire file once - used for both metadata and data reading
             long fileSize = channel.size();
+            String fileName = path.getFileName().toString();
 
             FileMappingEvent event = new FileMappingEvent();
             event.begin();
 
             MappedByteBuffer fileMapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize);
 
-            event.path = path.toString();
+            event.file = fileName;
             event.offset = 0;
             event.size = fileSize;
             event.column = "(entire file)";
@@ -92,6 +97,13 @@ public class ParquetFileReader implements AutoCloseable {
 
             // Read metadata from the mapping
             FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(fileMapping, path);
+            FileSchema fileSchema = FileSchema.fromSchemaElements(fileMetaData.schema());
+
+            fileOpenedEvent.file = fileName;
+            fileOpenedEvent.fileSize = fileSize;
+            fileOpenedEvent.rowGroupCount = fileMetaData.rowGroups().size();
+            fileOpenedEvent.columnCount = fileSchema.getColumnCount();
+            fileOpenedEvent.commit();
 
             return new ParquetFileReader(path, channel, fileMapping, fileMetaData, context, ownsContext);
         }

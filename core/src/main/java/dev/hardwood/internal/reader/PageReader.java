@@ -25,6 +25,7 @@ import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.reader.event.PageDecodedEvent;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -89,6 +90,9 @@ public class PageReader {
      * @return decoded page
      */
     public Page decodePage(MappedByteBuffer pageBuffer, Dictionary dictionary) throws IOException {
+        PageDecodedEvent event = new PageDecodedEvent();
+        event.begin();
+
         // Parse page header directly from buffer
         ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
         PageHeader pageHeader = PageHeaderReader.read(headerReader);
@@ -98,7 +102,7 @@ public class PageReader {
         int compressedSize = pageHeader.compressedPageSize();
         MappedByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
 
-        return switch (pageHeader.type()) {
+        Page result = switch (pageHeader.type()) {
             case DATA_PAGE -> {
                 Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
                 byte[] uncompressedData = decompressor.decompress(pageData, pageHeader.uncompressedPageSize());
@@ -109,6 +113,13 @@ public class PageReader {
             }
             default -> throw new IOException("Unexpected page type for single-page decode: " + pageHeader.type());
         };
+
+        event.column = column.name();
+        event.compressedSize = compressedSize;
+        event.uncompressedSize = pageHeader.uncompressedPageSize();
+        event.commit();
+
+        return result;
     }
 
     /**

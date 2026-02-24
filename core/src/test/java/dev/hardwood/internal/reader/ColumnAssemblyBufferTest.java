@@ -116,7 +116,7 @@ public class ColumnAssemblyBufferTest {
         ErrorInducingPageCursor(List<Page> pages, HardwoodContextImpl context,
                                 ColumnAssemblyBuffer assemblyBuffer, int errorAfterPage) {
             // Pass empty pageInfos - we override nextPage() and hasNext()
-            super(List.of(), context, assemblyBuffer);
+            super(List.of(), context, null, assemblyBuffer);
             this.pages = pages;
             this.errorAfterPage = errorAfterPage;
         }

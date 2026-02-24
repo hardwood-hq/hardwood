@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.internal.reader;
+package dev.hardwood.internal.reader.event;
 
 import jdk.jfr.Category;
 import jdk.jfr.Description;
@@ -32,8 +32,4 @@ public class BatchWaitEvent extends Event {
     @Label("Column")
     @Description("Name of the column being waited on")
     public String column;
-
-    @Label("Wait Duration (ms)")
-    @Description("Time spent waiting for the batch (milliseconds)")
-    public long waitDurationMs;
 }
