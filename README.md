@@ -1365,6 +1365,51 @@ This will download test data on the first run (up to ~4GB for the full 2016-2025
 ./mvnw test -Pperformance-test -Dperf.start=2025-06 -Dperf.end=2025-06
 ```
 
+#### PyArrow Comparison Tests
+
+Python counterparts of the Java performance tests using PyArrow, for cross-platform comparison.
+These scripts require a Python environment with PyArrow installed (use the `.venv` venv).
+
+**Flat schema** (`flat_performance_test.py`) — counterpart of `FlatPerformanceTest.java`:
+
+```shell
+cd performance-testing/end-to-end
+
+# Run all contenders (single-threaded and multi-threaded), 5 runs each
+python flat_performance_test.py
+
+# Single-threaded only
+python flat_performance_test.py -c single_threaded
+
+# Multi-threaded, 10 runs
+python flat_performance_test.py -c multi_threaded -r 10
+```
+
+**Nested schema** (`nested_performance_test.py`) — counterpart of `NestedPerformanceTest.java`:
+
+```shell
+cd performance-testing/end-to-end
+
+# Run all contenders, 5 runs each
+python nested_performance_test.py
+
+# Single-threaded only, 3 runs
+python nested_performance_test.py -c single_threaded -r 3
+```
+
+**Options:**
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `-c`, `--contenders` | `all` | Contenders to run: `single_threaded`, `multi_threaded`, or `all` |
+| `-r`, `--runs` | `5` | Number of timed runs per contender |
+
+**Notes on comparability:**
+
+- The flat test uses column projection (reads only the 3 summed columns), matching the Hardwood projection and column-reader contenders. The parquet-java contenders in `FlatPerformanceTest.java` read all columns without projection, so direct comparison against parquet-java is not apples-to-apples.
+- PyArrow uses vectorized columnar operations (C++ engine) rather than row-by-row iteration.
+- The `single_threaded` contender (`use_threads=False`) is most comparable to single-threaded parquet-java; `multi_threaded` is comparable to Hardwood's parallel reading.
+
 #### JMH Micro-Benchmarks
 
 For detailed micro-benchmarks, build the JMH benchmark JAR and run it directly:
