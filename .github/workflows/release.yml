@@ -9,10 +9,19 @@ on:
       development-version:
         description: 'Development version'
         required: true
+      stage:
+        description: 'Stage ("UPLOAD" deploys to a staging repo, "PUBLISH" publishes right away)'
+        required: true
+        type: choice
+        options:
+          - 'UPLOAD'
+          - 'PUBLISH'
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
     steps:
       - name: 'Check out repository'
         uses: actions/checkout@v6
@@ -22,7 +31,7 @@ jobs:
       - name: 'Set up Java'
         uses: actions/setup-java@v5
         with:
-          java-version: '21'
+          java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
 
@@ -33,17 +42,20 @@ jobs:
         run: |
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --global user.name "GitHub Action"
-          git config --global url."https://x-access-token:${JRELEASER_GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+          git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
           ./mvnw -ntp -B -Prelease release:prepare release:perform \
+                 -DskipTestRunner \
                  -DreleaseVersion=${{ inputs.release-version }} \
-                 -DdevelopmentVersion=${{ inputs.development-versio }}
+                 -DdevelopmentVersion=${{ inputs.development-version }}
         env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JRELEASER_MAVENCENTRAL_USERNAME: ${{ secrets.JRELEASER_MAVENCENTRAL_USERNAME }}
           JRELEASER_MAVENCENTRAL_TOKEN: ${{ secrets.JRELEASER_MAVENCENTRAL_TOKEN }}
           JRELEASER_GPG_PASSPHRASE: ${{ secrets.JRELEASER_GPG_PASSPHRASE }}
           JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.JRELEASER_GPG_PUBLIC_KEY }}
           JRELEASER_GPG_SECRET_KEY: ${{ secrets.JRELEASER_GPG_SECRET_KEY }}
           JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JRELEASER_DEPLOY_MAVEN_MAVENCENTRAL_STAGE: ${{ inputs.stage }}
 
       - name: 'JReleaser output'
         if: always()

@@ -19,7 +19,7 @@
 
   <artifactId>hardwood-performance-testing-end-to-end</artifactId>
 
-  <name>End-to-End Performance Test</name>
+  <name>Hardwood End-to-End Performance Tests</name>
   <description>Performance comparison tests between Hardwood and parquet-java</description>
 
   <dependencies>

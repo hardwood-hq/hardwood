@@ -19,7 +19,7 @@
 
   <artifactId>hardwood-performance-testing-test-data-setup</artifactId>
 
-  <name>Test Data Setup</name>
+  <name>Hardwood Performance Test Data Setup</name>
   <description>Downloads and manages test data files for performance testing</description>
 
   <build>
