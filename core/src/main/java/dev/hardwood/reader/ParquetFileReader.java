@@ -92,7 +92,6 @@ public class ParquetFileReader implements AutoCloseable {
             event.file = fileName;
             event.offset = 0;
             event.size = fileSize;
-            event.column = "(entire file)";
             event.commit();
 
             // Read metadata from the mapping

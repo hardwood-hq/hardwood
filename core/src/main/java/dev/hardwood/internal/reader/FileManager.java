@@ -268,7 +268,6 @@ public class FileManager {
             event.file = fileName;
             event.offset = 0;
             event.size = fileSize;
-            event.column = "(entire file)";
             event.commit();
 
             FileMetaData metaData = ParquetMetadataReader.readMetadata(mapping, path);

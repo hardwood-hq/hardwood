@@ -42,8 +42,4 @@ public class FileMappingEvent extends Event {
     @Description("Size of the mapped region (bytes)")
     @DataAmount
     public long size;
-
-    @Label("Column")
-    @Description("Name of the column chunk being mapped")
-    public String column;
 }
