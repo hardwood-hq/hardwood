@@ -43,5 +43,7 @@ out/
 
 .venv
 .docker-venv
+.release-env
 
 **/dependency-reduced-pom.xml
+.flattened-pom.xml

@@ -24,6 +24,30 @@
   <description>Bill of Materials for Hardwood dependencies</description>
   <url>https://github.com/hardwood-hq/hardwood</url>
 
+  <scm>
+    <connection>scm:git:git://github.com/hardwood-hq/hardwood.git</connection>
+    <developerConnection>scm:git:git@github.com:hardwood-hq/hardwood.git</developerConnection>
+    <url>https://github.com/hardwood-hq/hardwood/</url>
+    <tag>HEAD</tag>
+  </scm>
+
+  <build>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>flatten-maven-plugin</artifactId>
+        <configuration>
+          <flattenMode>bom</flattenMode>
+          <pomElements>
+            <properties>remove</properties>
+            <dependencyManagement>resolve</dependencyManagement>
+            <scm>keep</scm>
+          </pomElements>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
+
   <dependencyManagement>
     <dependencies>
       <!-- Hardwood modules -->

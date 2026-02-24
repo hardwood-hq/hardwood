@@ -38,17 +38,29 @@ jobs:
       - name: 'Build'
         run: ./mvnw -ntp -B verify
 
-      - name: 'Release'
+      - name: 'Create release branch'
         run: |
           git config --global user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git config --global user.name "GitHub Action"
           git config --global url."https://x-access-token:${GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
+          git checkout -b release/${{ inputs.release-version }}
+          git push -u origin release/${{ inputs.release-version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Prepare and perform release'
+        run: |
           ./mvnw -ntp -B -Prelease release:prepare release:perform \
-                 -DskipTestRunner \
+                 -DskipNonDeployedModules \
                  -DreleaseVersion=${{ inputs.release-version }} \
                  -DdevelopmentVersion=${{ inputs.development-version }}
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 'Publish to Maven Central'
+        run: ./mvnw -ntp -B -N -Ppublication jreleaser:release
+        working-directory: target/checkout
+        env:
           JRELEASER_MAVENCENTRAL_USERNAME: ${{ secrets.JRELEASER_MAVENCENTRAL_USERNAME }}
           JRELEASER_MAVENCENTRAL_TOKEN: ${{ secrets.JRELEASER_MAVENCENTRAL_TOKEN }}
           JRELEASER_GPG_PASSPHRASE: ${{ secrets.JRELEASER_GPG_PASSPHRASE }}
@@ -57,11 +69,20 @@ jobs:
           JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           JRELEASER_DEPLOY_MAVEN_MAVENCENTRAL_STAGE: ${{ inputs.stage }}
 
+      - name: 'Merge release branch'
+        run: |
+          git checkout ${{ github.ref_name }}
+          git merge --ff-only release/${{ inputs.release-version }}
+          git push origin ${{ github.ref_name }}
+          git push origin --delete release/${{ inputs.release-version }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
       - name: 'JReleaser output'
         if: always()
         uses: actions/upload-artifact@v6
         with:
           name: jreleaser-release
           path: |
-            target/jreleaser/trace.log
-            target/jreleaser/output.properties
+            target/checkout/target/jreleaser/trace.log
+            target/checkout/target/jreleaser/output.properties

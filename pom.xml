@@ -48,8 +48,6 @@
   <modules>
     <module>bom</module>
     <module>core</module>
-    <module>hadoop-compat</module>
-    <module>integration-test</module>
   </modules>
 
   <properties>
@@ -262,8 +260,41 @@
             <artifactId>jreleaser-maven-plugin</artifactId>
             <version>1.22.0</version>
           </plugin>
+        <plugin>
+          <groupId>org.codehaus.mojo</groupId>
+          <artifactId>flatten-maven-plugin</artifactId>
+          <version>1.7.0</version>
+        </plugin>
       </plugins>
     </pluginManagement>
+    <plugins>
+      <plugin>
+        <groupId>org.codehaus.mojo</groupId>
+        <artifactId>flatten-maven-plugin</artifactId>
+        <configuration>
+          <flattenMode>oss</flattenMode>
+          <pomElements>
+            <scm>keep</scm>
+          </pomElements>
+        </configuration>
+        <executions>
+          <execution>
+            <id>flatten</id>
+            <phase>process-resources</phase>
+            <goals>
+              <goal>flatten</goal>
+            </goals>
+          </execution>
+          <execution>
+            <id>flatten-clean</id>
+            <phase>clean</phase>
+            <goals>
+              <goal>clean</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
+    </plugins>
   </build>
 
   <profiles>
@@ -280,16 +311,21 @@
             <groupId>com.mycila</groupId>
             <artifactId>license-maven-plugin</artifactId>
             <configuration>
-              <header>${maven.multiModuleProjectDirectory}/etc/license.txt</header>
               <strictCheck>true</strictCheck>
               <aggregate>true</aggregate>
-              <excludes>
-                <exclude>.venv/**</exclude>
-                <exclude>.docker-venv/**</exclude>
-                <exclude>LICENSE.txt</exclude>
-                <exclude>**/.dontdelete</exclude>
-                <exclude>*.html</exclude>
-              </excludes>
+              <licenseSets>
+                <licenseSet>
+                  <header>${maven.multiModuleProjectDirectory}/etc/license.txt</header>
+                  <excludes>
+                    <exclude>.venv/**</exclude>
+                    <exclude>.docker-venv/**</exclude>
+                    <exclude>LICENSE.txt</exclude>
+                    <exclude>**/.dontdelete</exclude>
+                    <exclude>*.html</exclude>
+                    <exclude>**/*.parquet</exclude>
+                  </excludes>
+                </licenseSet>
+              </licenseSets>
             </configuration>
             <executions>
               <execution>
@@ -375,20 +411,22 @@
       </modules>
     </profile>
     <profile>
-      <id>test-runner</id>
+      <id>non-deployed-modules</id>
       <activation>
         <property>
-          <name>!skipTestRunner</name>
+          <name>!skipNonDeployedModules</name>
         </property>
       </activation>
       <modules>
+        <module>hadoop-compat</module>
+        <module>integration-test</module>
         <module>parquet-testing-runner</module>
       </modules>
     </profile>
     <profile>
       <id>deployment</id>
       <properties>
-        <altDeploymentRepository>local::file:./target/staging-deploy</altDeploymentRepository>
+        <altDeploymentRepository>local::file:${maven.multiModuleProjectDirectory}/target/staging-deploy</altDeploymentRepository>
       </properties>
       <build>
         <defaultGoal>deploy</defaultGoal>
@@ -482,8 +520,8 @@
             <version>3.3.1</version>
             <configuration>
               <tagNameFormat>v@{project.version}</tagNameFormat>
-              <goals>deploy jreleaser:release</goals>
-              <arguments>-ntp -B -DskipTestRunner</arguments>
+              <goals>deploy</goals>
+              <arguments>-ntp -B -DskipNonDeployedModules</arguments>
               <scmCommentPrefix>[release] </scmCommentPrefix>
               <scmReleaseCommitComment>@{prefix} Releasing version @{releaseLabel}</scmReleaseCommitComment>
               <scmDevelopmentCommitComment>@{prefix} Bump for next development cycle</scmDevelopmentCommitComment>
