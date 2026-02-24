@@ -64,52 +64,39 @@ public class PageCursor {
     private final ColumnAssemblyBuffer assemblyBuffer;
 
     /**
+     * Creates a PageCursor for single-file reading with optional eager assembly.
+     * Starts the assembly thread before returning if an assembly buffer is provided.
+     */
+    public static PageCursor create(List<PageInfo> pageInfos, HardwoodContextImpl context,
+                                    String fileName, ColumnAssemblyBuffer assemblyBuffer) {
+        PageCursor cursor = new PageCursor(pageInfos, context, null, -1, fileName, assemblyBuffer);
+        cursor.startAssemblyThread();
+        return cursor;
+    }
+
+    /**
+     * Creates a PageCursor with multi-file support and optional eager assembly.
+     * Starts the assembly thread before returning if an assembly buffer is provided.
+     */
+    public static PageCursor create(List<PageInfo> pageInfos, HardwoodContextImpl context,
+                                    FileManager fileManager, int projectedColumnIndex, String initialFileName,
+                                    ColumnAssemblyBuffer assemblyBuffer) {
+        PageCursor cursor = new PageCursor(pageInfos, context, fileManager, projectedColumnIndex,
+                initialFileName, assemblyBuffer);
+        cursor.startAssemblyThread();
+        return cursor;
+    }
+
+    /**
      * Creates a PageCursor for single-file reading without eager assembly.
      */
     public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context) {
         this(pageInfos, context, null, -1, null, null);
     }
 
-    /**
-     * Creates a PageCursor for single-file reading with optional eager assembly.
-     *
-     * @param pageInfos pages from the file
-     * @param context hardwood context with executor
-     * @param fileName the file name for logging and JFR events (may be null)
-     * @param assemblyBuffer optional buffer for eager batch assembly (may be null for nested schemas)
-     */
-    public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context,
-                      String fileName, ColumnAssemblyBuffer assemblyBuffer) {
-        this(pageInfos, context, null, -1, fileName, assemblyBuffer);
-    }
-
-    /**
-     * Creates a PageCursor with optional multi-file support.
-     *
-     * @param pageInfos initial pages from the first file
-     * @param context hardwood context with executor
-     * @param fileManager file manager for fetching pages from subsequent files (may be null)
-     * @param projectedColumnIndex the projected column index for multi-file page requests
-     * @param initialFileName the initial file name for logging (may be null)
-     */
-    public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context,
-                      FileManager fileManager, int projectedColumnIndex, String initialFileName) {
-        this(pageInfos, context, fileManager, projectedColumnIndex, initialFileName, null);
-    }
-
-    /**
-     * Creates a PageCursor with optional multi-file support and eager assembly.
-     *
-     * @param pageInfos initial pages from the first file
-     * @param context hardwood context with executor
-     * @param fileManager file manager for fetching pages from subsequent files (may be null)
-     * @param projectedColumnIndex the projected column index for multi-file page requests
-     * @param initialFileName the initial file name for logging (may be null)
-     * @param assemblyBuffer optional buffer for eager batch assembly (may be null)
-     */
-    public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context,
-                      FileManager fileManager, int projectedColumnIndex, String initialFileName,
-                      ColumnAssemblyBuffer assemblyBuffer) {
+    private PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context,
+               FileManager fileManager, int projectedColumnIndex, String initialFileName,
+               ColumnAssemblyBuffer assemblyBuffer) {
         this.pageInfos = new ArrayList<>(pageInfos);
         this.context = context;
         this.executor = context.executor();
@@ -134,12 +121,16 @@ public class PageCursor {
 
         // Start prefetching immediately
         fillPrefetchQueue();
+    }
 
-        // For eager assembly, start a virtual thread to continuously consume pages
-        // and assemble them into batches. Virtual threads are ideal here because:
-        // 1. The thread blocks waiting for decoded pages (I/O-like wait)
-        // 2. Virtual threads are lightweight and managed by the JVM
-        // 3. No need for daemon thread management
+    /**
+     * Starts the assembly thread for eager batch assembly.
+     * Must be called after construction when an assembly buffer is provided.
+     * <p>
+     * This is intentionally separate from the constructor to avoid leaking {@code this}
+     * before subclass constructors have completed (constructor escape).
+     */
+    private void startAssemblyThread() {
         if (assemblyBuffer != null) {
             Thread.startVirtualThread(this::runAssemblyThread);
         }

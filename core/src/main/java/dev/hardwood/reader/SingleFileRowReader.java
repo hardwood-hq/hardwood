@@ -138,7 +138,7 @@ final class SingleFileRowReader extends AbstractRowReader {
                 assemblyBuffer = new ColumnAssemblyBuffer(columnSchema, adaptiveBatchSize);
             }
 
-            PageCursor pageCursor = new PageCursor(pageInfosByColumn.get(i), context, fileName, assemblyBuffer);
+            PageCursor pageCursor = PageCursor.create(pageInfosByColumn.get(i), context, fileName, assemblyBuffer);
             iterators[i] = new ColumnValueIterator(pageCursor, columnSchema, flatSchema);
         }
 
