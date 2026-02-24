@@ -113,17 +113,24 @@ public class ColumnAssemblyBufferTest {
         private final int errorAfterPage;  // -1 means no error
         private int currentPage = 0;
 
+        /**
+         * Guards against access before complete initialization by the assembly thread started
+         * in the parent constructor.
+         */
+        private final boolean initialized;
+
         ErrorInducingPageCursor(List<Page> pages, HardwoodContextImpl context,
                                 ColumnAssemblyBuffer assemblyBuffer, int errorAfterPage) {
             // Pass empty pageInfos - we override nextPage() and hasNext()
             super(List.of(), context, null, assemblyBuffer);
             this.pages = pages;
             this.errorAfterPage = errorAfterPage;
+            this.initialized = true;
         }
 
         @Override
         public boolean hasNext() {
-            return currentPage < pages.size();
+            return initialized && currentPage < pages.size();
         }
 
         @Override
