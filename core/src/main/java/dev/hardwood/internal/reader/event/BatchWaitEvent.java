@@ -32,8 +32,4 @@ public class BatchWaitEvent extends Event {
     @Label("Column")
     @Description("Name of the column being waited on")
     public String column;
-
-    @Label("Wait Duration (ms)")
-    @Description("Time spent waiting for the batch (milliseconds)")
-    public long waitDurationMs;
 }

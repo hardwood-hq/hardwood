@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader.event;
 
 import jdk.jfr.Category;
+import jdk.jfr.DataAmount;
 import jdk.jfr.Description;
 import jdk.jfr.Event;
 import jdk.jfr.Label;
@@ -35,9 +36,11 @@ public class PageDecodedEvent extends Event {
 
     @Label("Compressed Size")
     @Description("Compressed size of the page data (bytes)")
+    @DataAmount
     public int compressedSize;
 
     @Label("Uncompressed Size")
     @Description("Uncompressed size of the page data (bytes)")
+    @DataAmount
     public int uncompressedSize;
 }

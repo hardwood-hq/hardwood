@@ -258,13 +258,14 @@ public class FileManager {
         MappedByteBuffer mapping;
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
             long fileSize = channel.size();
+            String fileName = path.getFileName().toString();
 
             FileMappingEvent event = new FileMappingEvent();
             event.begin();
 
             mapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize);
 
-            event.path = path.toString();
+            event.file = fileName;
             event.offset = 0;
             event.size = fileSize;
             event.column = "(entire file)";
@@ -273,7 +274,7 @@ public class FileManager {
             FileMetaData metaData = ParquetMetadataReader.readMetadata(mapping, path);
             FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
 
-            fileOpenedEvent.path = path.toString();
+            fileOpenedEvent.file = fileName;
             fileOpenedEvent.fileSize = fileSize;
             fileOpenedEvent.rowGroupCount = metaData.rowGroups().size();
             fileOpenedEvent.columnCount = schema.getColumnCount();

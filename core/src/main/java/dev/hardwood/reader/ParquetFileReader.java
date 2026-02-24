@@ -82,13 +82,14 @@ public class ParquetFileReader implements AutoCloseable {
         try {
             // Map the entire file once - used for both metadata and data reading
             long fileSize = channel.size();
+            String fileName = path.getFileName().toString();
 
             FileMappingEvent event = new FileMappingEvent();
             event.begin();
 
             MappedByteBuffer fileMapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize);
 
-            event.path = path.toString();
+            event.file = fileName;
             event.offset = 0;
             event.size = fileSize;
             event.column = "(entire file)";
@@ -98,7 +99,7 @@ public class ParquetFileReader implements AutoCloseable {
             FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(fileMapping, path);
             FileSchema fileSchema = FileSchema.fromSchemaElements(fileMetaData.schema());
 
-            fileOpenedEvent.path = path.toString();
+            fileOpenedEvent.file = fileName;
             fileOpenedEvent.fileSize = fileSize;
             fileOpenedEvent.rowGroupCount = fileMetaData.rowGroups().size();
             fileOpenedEvent.columnCount = fileSchema.getColumnCount();

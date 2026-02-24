@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader.event;
 
 import jdk.jfr.Category;
+import jdk.jfr.DataAmount;
 import jdk.jfr.Description;
 import jdk.jfr.Event;
 import jdk.jfr.Label;
@@ -30,12 +31,13 @@ import jdk.jfr.StackTrace;
 @StackTrace(false)
 public class FileOpenedEvent extends Event {
 
-    @Label("Path")
-    @Description("Path to the Parquet file")
-    public String path;
+    @Label("File")
+    @Description("Name of the Parquet file")
+    public String file;
 
     @Label("File Size")
     @Description("Size of the file (bytes)")
+    @DataAmount
     public long fileSize;
 
     @Label("Row Group Count")
