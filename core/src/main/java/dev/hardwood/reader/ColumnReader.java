@@ -123,7 +123,7 @@ public class ColumnReader implements AutoCloseable {
             assemblyBuffer = new ColumnAssemblyBuffer(column, batchSize);
         }
 
-        PageCursor pageCursor = new PageCursor(
+        PageCursor pageCursor = PageCursor.create(
                 pageInfos, context, fileManager, projectedColumnIndex, fileName, assemblyBuffer);
         this.iterator = new ColumnValueIterator(pageCursor, column, flat);
     }
