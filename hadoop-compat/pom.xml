@@ -23,11 +23,6 @@
   <description>Parquet-java API compatibility layer (no parquet-java/hadoop dependencies)</description>
   <url>https://github.com/hardwood-hq/hardwood</url>
 
-  <properties>
-    <jreleaser.skip>true</jreleaser.skip>
-    <maven.deploy.skip>true</maven.deploy.skip>
-  </properties>
-
   <dependencies>
     <!-- Only runtime dependency: hardwood-core -->
     <dependency>

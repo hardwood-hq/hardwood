@@ -1,0 +1,38 @@
+<!--
+
+     SPDX-License-Identifier: Apache-2.0
+
+     Copyright The original authors
+
+     Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+
+-->
+<settings xmlns="http://maven.apache.org/SETTINGS/1.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+          xsi:schemaLocation="http://maven.apache.org/SETTINGS/1.0.0 https://maven.apache.org/xsd/settings-1.0.0.xsd">
+  <servers>
+    <server>
+      <id>central.manual.testing</id>
+      <configuration>
+        <httpHeaders>
+          <property>
+            <name>Authorization</name>
+            <value>Bearer ${env.MAVEN_CENTRAL_BEARER_TOKEN}</value>
+          </property>
+        </httpHeaders>
+      </configuration>
+    </server>
+  </servers>
+
+  <profiles>
+    <profile>
+      <id>central.manual.testing</id>
+      <repositories>
+        <repository>
+          <id>central.manual.testing</id>
+          <name>Central Testing repository</name>
+          <url>https://central.sonatype.com/api/v1/publisher/deployments/download</url>
+        </repository>
+      </repositories>
+    </profile>
+  </profiles>
+</settings>
