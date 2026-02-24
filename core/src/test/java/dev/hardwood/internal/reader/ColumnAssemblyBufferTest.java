@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
 
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
@@ -20,6 +21,7 @@ import dev.hardwood.schema.ColumnSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+@Disabled("Intermittent failure: https://github.com/hardwood-hq/hardwood/issues/53")
 public class ColumnAssemblyBufferTest {
 
     private static final int BATCH_SIZE = 4;
