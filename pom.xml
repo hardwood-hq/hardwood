@@ -137,22 +137,14 @@
         <artifactId>parquet-avro</artifactId>
         <version>1.16.0</version>
       </dependency>
-      <dependency>
-        <groupId>org.apache.hadoop</groupId>
-        <artifactId>hadoop-common</artifactId>
-        <version>${hadoop.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.hadoop</groupId>
-        <artifactId>hadoop-mapreduce-client-core</artifactId>
-        <version>${hadoop.version}</version>
-      </dependency>
+
       <!-- Git cloning -->
       <dependency>
         <groupId>org.eclipse.jgit</groupId>
         <artifactId>org.eclipse.jgit</artifactId>
         <version>7.5.0.202512021534-r</version>
       </dependency>
+
       <!-- JFR testing -->
       <dependency>
         <groupId>org.moditect.jfrunit</groupId>

@@ -55,6 +55,7 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-common</artifactId>
+      <version>${hadoop.version}</version>
       <scope>test</scope>
       <exclusions>
         <!-- Exclude heavy/unnecessary Hadoop dependencies for testing -->
@@ -83,6 +84,7 @@
     <dependency>
       <groupId>org.apache.hadoop</groupId>
       <artifactId>hadoop-mapreduce-client-core</artifactId>
+      <version>${hadoop.version}</version>
       <scope>test</scope>
     </dependency>
 
