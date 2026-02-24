@@ -42,6 +42,7 @@ jobs:
           git config --global user.name "GitHub Action"
           git config --global url."https://x-access-token:${JRELEASER_GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
           ./mvnw -ntp -B -Prelease release:prepare release:perform \
+                 -DskipTestRunner \
                  -DreleaseVersion=${{ inputs.release-version }} \
                  -DdevelopmentVersion=${{ inputs.development-version }}
         env:

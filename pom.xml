@@ -41,7 +41,6 @@
     <module>core</module>
     <module>hadoop-compat</module>
     <module>integration-test</module>
-    <module>parquet-testing-runner</module>
   </modules>
 
   <properties>
@@ -55,21 +54,6 @@
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
   </properties>
-
-  <!-- Apache snapshots repo for Hadoop 3.4.4-SNAPSHOT (HADOOP-19212 fix for Java 24+) -->
-  <!-- TODO: Remove once 3.4.3+ is in Central -->
-  <repositories>
-    <repository>
-      <id>apache-hadoop-snapshots</id>
-      <url>https://repository.apache.org/content/repositories/snapshots/</url>
-      <releases>
-        <enabled>false</enabled>
-      </releases>
-      <snapshots>
-        <enabled>true</enabled>
-      </snapshots>
-    </repository>
-  </repositories>
 
   <dependencyManagement>
     <dependencies>
@@ -390,6 +374,17 @@
       </modules>
     </profile>
     <profile>
+      <id>test-runner</id>
+      <activation>
+        <property>
+          <name>!skipTestRunner</name>
+        </property>
+      </activation>
+      <modules>
+        <module>parquet-testing-runner</module>
+      </modules>
+    </profile>
+    <profile>
       <id>deployment</id>
       <properties>
         <altDeploymentRepository>local::file:./target/staging-deploy</altDeploymentRepository>
@@ -487,7 +482,7 @@
             <configuration>
               <tagNameFormat>v@{project.version}</tagNameFormat>
               <goals>deploy jreleaser:release</goals>
-              <arguments>-ntp -B</arguments>
+              <arguments>-ntp -B -DskipTestRunner</arguments>
               <scmCommentPrefix>[release] </scmCommentPrefix>
               <scmReleaseCommitComment>@{prefix} Releasing version @{releaseLabel}</scmReleaseCommitComment>
               <scmDevelopmentCommitComment>@{prefix} Bump for next development cycle</scmDevelopmentCommitComment>
