@@ -22,6 +22,11 @@
   <name>Parquet Testing Runner</name>
   <description>Comparison tests between Hardwood and parquet-java reference implementation</description>
 
+  <properties>
+    <jreleaser.skip>true</jreleaser.skip>
+    <maven.deploy.skip>true</maven.deploy.skip>
+  </properties>
+
   <dependencies>
     <!-- Hardwood (module under test) -->
     <dependency>
