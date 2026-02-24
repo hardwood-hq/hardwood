@@ -30,9 +30,9 @@
   </licenses>
 
   <scm>
-    <connection>scm:git:${repository.url}</connection>
-    <developerConnection>scm:git:${repository.url}</developerConnection>
-    <url>${repository.url}</url>
+    <connection>scm:git:git://github.com/hardwood-hq/hardwood.git</connection>
+    <developerConnection>scm:git:git@github.com:hardwood-hq/hardwood.git</developerConnection>
+    <url>https://github.com/hardwood-hq/hardwood/</url>
     <tag>HEAD</tag>
   </scm>
 
