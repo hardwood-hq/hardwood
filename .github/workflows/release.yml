@@ -9,6 +9,13 @@ on:
       development-version:
         description: 'Development version'
         required: true
+      stage:
+        description: 'Stage ("UPLOAD" deploys to a staging repo, "PUBLISH" publishes right away)'
+        required: true
+        type: choice
+        options:
+          - 'UPLOAD'
+          - 'PUBLISH'
 
 jobs:
   release:
@@ -36,7 +43,7 @@ jobs:
           git config --global url."https://x-access-token:${JRELEASER_GITHUB_TOKEN}@github.com/".insteadOf "git@github.com:"
           ./mvnw -ntp -B -Prelease release:prepare release:perform \
                  -DreleaseVersion=${{ inputs.release-version }} \
-                 -DdevelopmentVersion=${{ inputs.development-versio }}
+                 -DdevelopmentVersion=${{ inputs.development-version }}
         env:
           JRELEASER_MAVENCENTRAL_USERNAME: ${{ secrets.JRELEASER_MAVENCENTRAL_USERNAME }}
           JRELEASER_MAVENCENTRAL_TOKEN: ${{ secrets.JRELEASER_MAVENCENTRAL_TOKEN }}
@@ -44,6 +51,7 @@ jobs:
           JRELEASER_GPG_PUBLIC_KEY: ${{ secrets.JRELEASER_GPG_PUBLIC_KEY }}
           JRELEASER_GPG_SECRET_KEY: ${{ secrets.JRELEASER_GPG_SECRET_KEY }}
           JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          JRELEASER_DEPLOY_MAVEN_MAVENCENTRAL_STAGE: ${{ inputs.stage }}
 
       - name: 'JReleaser output'
         if: always()
