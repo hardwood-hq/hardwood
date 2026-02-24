@@ -40,7 +40,7 @@ import dev.hardwood.schema.FileSchema;
  * per-row virtual dispatch.
  * </p>
  *
- * <h3>Flat column usage:</h3>
+ * <p><strong>Flat column usage:</strong></p>
  * <pre>{@code
  * try (ColumnReader reader = fileReader.createColumnReader("fare_amount")) {
  *     while (reader.nextBatch()) {
@@ -54,7 +54,7 @@ import dev.hardwood.schema.FileSchema;
  * }
  * }</pre>
  *
- * <h3>Simple list usage (nestingDepth=1):</h3>
+ * <p><strong>Simple list usage (nestingDepth=1):</strong></p>
  * <pre>{@code
  * try (ColumnReader reader = fileReader.createColumnReader("fare_components")) {
  *     while (reader.nextBatch()) {

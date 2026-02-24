@@ -24,7 +24,6 @@ import dev.hardwood.reader.ParquetFileReader;
  *   <li>{@link Hardwood} instance (for multi-file usage)</li>
  *   <li>{@link ParquetFileReader} instance (for standalone single-file usage)</li>
  * </ul>
- * </p>
  */
 public interface HardwoodContext extends AutoCloseable {
 

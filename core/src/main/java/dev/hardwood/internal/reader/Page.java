@@ -23,7 +23,6 @@ package dev.hardwood.internal.reader;
  *   <li>{@link DoublePage} - DOUBLE</li>
  *   <li>{@link ByteArrayPage} - BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96</li>
  * </ul>
- * </p>
  */
 public sealed interface Page {
 

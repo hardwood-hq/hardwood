@@ -49,6 +49,32 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
           retention-days: 1
 
+  javadoc:
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 'Check out repository'
+        uses: actions/checkout@v6
+        with:
+          submodules: 'true'
+
+      - name: 'Set up Java'
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: 'Download built artifacts'
+        uses: actions/download-artifact@v4
+        with:
+          name: maven-repo
+          path: ~/.m2/repository/dev/hardwood/
+
+      - name: 'Generate Javadoc'
+        run: ./mvnw -B javadoc:javadoc
+
   integration-tests:
     needs: build
     runs-on: ubuntu-latest

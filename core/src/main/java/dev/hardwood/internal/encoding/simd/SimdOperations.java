@@ -30,7 +30,7 @@ public interface SimdOperations {
     int countNonNulls(int[] defLevels, int maxDef);
 
     /**
-     * Mark null positions in a BitSet where defLevels[srcPos + i] < maxDefLevel.
+     * Mark null positions in a BitSet where defLevels[srcPos + i] &lt; maxDefLevel.
      *
      * @param nulls BitSet to mark (may be null for required fields)
      * @param defLevels definition levels array
