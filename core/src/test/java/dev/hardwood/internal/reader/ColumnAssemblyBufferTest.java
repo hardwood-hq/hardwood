@@ -21,7 +21,6 @@ import dev.hardwood.schema.ColumnSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-@Disabled("Intermittent failure: https://github.com/hardwood-hq/hardwood/issues/53")
 public class ColumnAssemblyBufferTest {
 
     private static final int BATCH_SIZE = 4;
@@ -102,6 +101,68 @@ public class ColumnAssemblyBufferTest {
 
             // All 10 rows should be received
             assertThat(totalRows).isEqualTo(10);
+        }
+    }
+
+    /**
+     * Sample test that attempts to reproduce (<a href="https://github.com/hardwood-hq/hardwood/issues/53">#53</a>)
+     * that appears to be a race condition during
+     */
+    @Test
+    @Timeout(value = 5, unit = TimeUnit.SECONDS)
+    void testAssemblyThreadRaceCondition() throws Exception {
+        ColumnSchema column = new ColumnSchema(
+                "test_col", PhysicalType.INT32, RepetitionType.REQUIRED,
+                null, 0, 0, 0, null);
+
+        ColumnAssemblyBuffer buffer = new ColumnAssemblyBuffer(column, BATCH_SIZE);
+
+        Page page1 = new Page.IntPage(new int[]{1, 2, 3, 4}, null, null, 0, 4);
+        Page page2 = new Page.IntPage(new int[]{5, 6, 7}, null, null, 0, 3);
+
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            new SlowInitPageCursor(List.of(page1, page2), context, buffer);
+
+            TypedColumnData batch1 = buffer.awaitNextBatch();
+            assertThat(batch1).as("First batch should be available").isNotNull();
+            assertThat(batch1.recordCount()).isEqualTo(4);
+
+            TypedColumnData batch2 = buffer.awaitNextBatch();
+            assertThat(batch2).as("Second batch should be available").isNotNull();
+            assertThat(batch2.recordCount()).isEqualTo(3);
+
+            assertThat(buffer.awaitNextBatch()).isNull();
+        }
+    }
+
+    /**
+     * A PageCursor subclass that simulates intentionally slow assembly thread initialization
+     * to attempt to demonstrate possible race conditions
+     */
+    private static class SlowInitPageCursor extends PageCursor {
+
+        private final List<Page> pages;
+        private int currentPage = 0;
+
+        SlowInitPageCursor(List<Page> pages, HardwoodContextImpl context,
+                           ColumnAssemblyBuffer assemblyBuffer) {
+            super(List.of(), context, null, assemblyBuffer);
+            // Take a bit before initializing the assembly thread
+            try { Thread.sleep(100); } catch (InterruptedException e) { Thread.currentThread().interrupt(); }
+            this.pages = pages;
+        }
+
+        @Override
+        public boolean hasNext() {
+            return currentPage < pages.size();
+        }
+
+        @Override
+        public Page nextPage() {
+            if (currentPage >= pages.size()) {
+                return null;
+            }
+            return pages.get(currentPage++);
         }
     }
 
