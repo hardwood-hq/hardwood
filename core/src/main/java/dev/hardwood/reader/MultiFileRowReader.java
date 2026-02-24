@@ -99,7 +99,7 @@ public class MultiFileRowReader extends AbstractRowReader {
                 assemblyBuffer = new ColumnAssemblyBuffer(columnSchema, adaptiveBatchSize);
             }
 
-            PageCursor pageCursor = new PageCursor(
+            PageCursor pageCursor = PageCursor.create(
                     initResult.firstFileState().pageInfosByColumn().get(i), context, fileManager, i, firstFileName,
                     assemblyBuffer);
             iterators[i] = new ColumnValueIterator(pageCursor, columnSchema, flatSchema);
