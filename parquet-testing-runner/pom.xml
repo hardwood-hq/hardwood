@@ -19,7 +19,7 @@
 
   <artifactId>parquet-testing-runner</artifactId>
 
-  <name>Parquet Testing Runner</name>
+  <name>Hardwood Parquet Testing Runner</name>
   <description>Comparison tests between Hardwood and parquet-java reference implementation</description>
 
   <properties>

@@ -19,7 +19,7 @@
 
   <artifactId>hardwood-performance-testing-micro-benchmarks</artifactId>
 
-  <name>Micro Benchmarks</name>
+  <name>Hardwood Micro Benchmarks</name>
   <description>JMH micro-benchmarks for Hardwood</description>
 
   <properties>

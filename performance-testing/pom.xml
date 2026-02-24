@@ -20,7 +20,7 @@
   <artifactId>hardwood-performance-testing</artifactId>
   <packaging>pom</packaging>
 
-  <name>Performance Testing</name>
+  <name>Hardwood Performance Testing</name>
   <description>Performance testing modules for Hardwood</description>
 
   <dependencyManagement>

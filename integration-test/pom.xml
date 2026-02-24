@@ -19,7 +19,7 @@
 
   <artifactId>hardwood-integration-test</artifactId>
 
-  <name>Integration Tests</name>
+  <name>Hardwood Integration Tests</name>
   <description>Integration tests for Hardwood</description>
 
   <dependencyManagement>
