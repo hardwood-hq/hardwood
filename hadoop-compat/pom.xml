@@ -23,6 +23,25 @@
   <description>Parquet-java API compatibility layer (no parquet-java/hadoop dependencies)</description>
   <url>https://github.com/hardwood-hq/hardwood</url>
 
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-bom</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-test-bom</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
+
   <dependencies>
     <!-- Only runtime dependency: hardwood-core -->
     <dependency>
