@@ -378,7 +378,7 @@ while (rowReader.hasNext()) {
 Column projection allows reading only a subset of columns from a Parquet file, improving performance by skipping I/O, decoding, and memory allocation for unneeded columns.
 
 ```java
-import dev.hardwood.reader.ColumnProjection;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
@@ -570,7 +570,7 @@ import dev.hardwood.Hardwood;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.MultiFileColumnReaders;
 import dev.hardwood.reader.ColumnReader;
-import dev.hardwood.reader.ColumnProjection;
+import dev.hardwood.schema.ColumnProjection;
 
 try (Hardwood hardwood = Hardwood.create();
      MultiFileParquetReader parquet = hardwood.openAll(files);
@@ -656,9 +656,9 @@ try (ParquetFileReader reader = ParquetFileReader.open(path)) {
 }
 ```
 
-### Hadoop Compatibility (hardwood-hadoop-compat)
+### Parquet-Java Compatibility (hardwood-parquet-java-compat)
 
-The `hardwood-hadoop-compat` module provides a drop-in replacement for parquet-java's `ParquetReader<Group>` API. This allows users migrating from parquet-java to use Hardwood with minimal code changes.
+The `hardwood-parquet-java-compat` module provides a drop-in replacement for parquet-java's `ParquetReader<Group>` API. This allows users migrating from parquet-java to use Hardwood with minimal code changes.
 
 **Features:**
 - Provides `org.apache.parquet.*` namespace classes compatible with parquet-java

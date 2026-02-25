@@ -58,7 +58,7 @@
       </dependency>
       <dependency>
         <groupId>dev.hardwood</groupId>
-        <artifactId>hardwood-hadoop-compat</artifactId>
+        <artifactId>hardwood-parquet-java-compat</artifactId>
         <version>${project.version}</version>
       </dependency>
 

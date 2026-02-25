@@ -147,7 +147,7 @@ Only compression libraries are external dependencies. Everything else (Thrift pa
 | Module | Purpose |
 |--------|---------|
 | `core` | The Parquet reader library |
-| `hadoop-compat` | Drop-in parquet-java API compatibility layer |
+| `parquet-java-compat` | Drop-in parquet-java API compatibility layer |
 | `integration-test` | Cross-implementation compatibility tests |
 | `parquet-testing-runner` | Test runner for parquet-testing files |
 | `performance-testing` | Benchmarks (enable with `-Pperformance-test`) |

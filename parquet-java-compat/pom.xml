@@ -17,9 +17,9 @@
     <version>1.0.0-SNAPSHOT</version>
   </parent>
 
-  <artifactId>hardwood-hadoop-compat</artifactId>
+  <artifactId>hardwood-parquet-java-compat</artifactId>
 
-  <name>Hardwood Hadoop Compatibility</name>
+  <name>Hardwood Parquet-Java Compatibility</name>
   <description>Parquet-java API compatibility layer (no parquet-java/hadoop dependencies)</description>
   <url>https://github.com/hardwood-hq/hardwood</url>
 

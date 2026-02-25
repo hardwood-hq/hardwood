@@ -354,7 +354,7 @@
         </property>
       </activation>
       <modules>
-        <module>hadoop-compat</module>
+        <module>parquet-java-compat</module>
         <module>integration-test</module>
         <module>parquet-testing-runner</module>
       </modules>
