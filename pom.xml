@@ -47,6 +47,7 @@
 
   <modules>
     <module>bom</module>
+    <module>test-bom</module>
     <module>core</module>
   </modules>
 
@@ -64,33 +65,6 @@
 
   <dependencyManagement>
     <dependencies>
-      <dependency>
-        <groupId>org.junit</groupId>
-        <artifactId>junit-bom</artifactId>
-        <version>6.0.2</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
-      <dependency>
-        <groupId>org.assertj</groupId>
-        <artifactId>assertj-core</artifactId>
-        <version>3.27.6</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.logging.log4j</groupId>
-        <artifactId>log4j-api</artifactId>
-        <version>2.24.3</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.logging.log4j</groupId>
-        <artifactId>log4j-core</artifactId>
-        <version>2.24.3</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.logging.log4j</groupId>
-        <artifactId>log4j-jpl</artifactId>
-        <version>2.24.3</version>
-      </dependency>
       <dependency>
         <groupId>org.xerial.snappy</groupId>
         <artifactId>snappy-java</artifactId>
@@ -110,44 +84,6 @@
         <groupId>com.aayushatharva.brotli4j</groupId>
         <artifactId>brotli4j</artifactId>
         <version>1.20.0</version>
-      </dependency>
-
-      <!-- Hardwood modules -->
-      <dependency>
-        <groupId>dev.hardwood</groupId>
-        <artifactId>hardwood-core</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-      <dependency>
-        <groupId>dev.hardwood</groupId>
-        <artifactId>hardwood-hadoop-compat</artifactId>
-        <version>${project.version}</version>
-      </dependency>
-
-      <!-- Parquet reference implementation -->
-      <dependency>
-        <groupId>org.apache.parquet</groupId>
-        <artifactId>parquet-hadoop</artifactId>
-        <version>1.16.0</version>
-      </dependency>
-      <dependency>
-        <groupId>org.apache.parquet</groupId>
-        <artifactId>parquet-avro</artifactId>
-        <version>1.16.0</version>
-      </dependency>
-
-      <!-- Git cloning -->
-      <dependency>
-        <groupId>org.eclipse.jgit</groupId>
-        <artifactId>org.eclipse.jgit</artifactId>
-        <version>7.5.0.202512021534-r</version>
-      </dependency>
-
-      <!-- JFR testing -->
-      <dependency>
-        <groupId>org.moditect.jfrunit</groupId>
-        <artifactId>jfrunit-core</artifactId>
-        <version>1.0.0.Alpha2</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
