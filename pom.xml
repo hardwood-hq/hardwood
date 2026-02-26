@@ -13,7 +13,7 @@
 
   <groupId>dev.hardwood</groupId>
   <artifactId>hardwood-parent</artifactId>
-  <version>1.0.0-SNAPSHOT</version>
+  <version>1.0.0.Alpha1</version>
   <packaging>pom</packaging>
 
   <name>Hardwood Parent</name>
@@ -42,7 +42,7 @@
     <connection>scm:git:git://github.com/hardwood-hq/hardwood.git</connection>
     <developerConnection>scm:git:git@github.com:hardwood-hq/hardwood.git</developerConnection>
     <url>https://github.com/hardwood-hq/hardwood/</url>
-    <tag>HEAD</tag>
+    <tag>v1.0.0.Alpha1</tag>
   </scm>
 
   <modules>
