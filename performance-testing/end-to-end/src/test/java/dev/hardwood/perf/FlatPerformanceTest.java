@@ -67,7 +67,8 @@ class FlatPerformanceTest {
         HARDWOOD_INDEXED("Hardwood (indexed)"),
         HARDWOOD_NAMED("Hardwood (named)"),
         HARDWOOD_PROJECTION("Hardwood (projection)"),
-        HARDWOOD_MULTIFILE("Hardwood (multifile)"),
+        HARDWOOD_MULTIFILE_INDEXED("Hardwood (multifile indexed)"),
+        HARDWOOD_MULTIFILE_NAMED("Hardwood (multifile named)"),
         HARDWOOD_COLUMN_READER("Hardwood (column reader)"),
         HARDWOOD_COLUMN_READER_MULTIFILE("Hardwood (column reader multifile)"),
         PARQUET_JAVA_INDEXED("parquet-java (indexed)"),
@@ -110,7 +111,7 @@ class FlatPerformanceTest {
     private Set<Contender> getEnabledContenders() {
         String property = System.getProperty(CONTENDERS_PROPERTY);
         if (property == null || property.isBlank()) {
-            return EnumSet.of(Contender.HARDWOOD_MULTIFILE);
+            return EnumSet.of(Contender.HARDWOOD_MULTIFILE_INDEXED);
         }
         if (property.equalsIgnoreCase("all")) {
             return EnumSet.allOf(Contender.class);
@@ -242,7 +243,8 @@ class FlatPerformanceTest {
             case HARDWOOD_INDEXED -> this::runHardwoodIndexed;
             case HARDWOOD_NAMED -> this::runHardwoodNamed;
             case HARDWOOD_PROJECTION -> this::runHardwoodProjection;
-            case HARDWOOD_MULTIFILE -> this::runHardwoodMultiFile;
+            case HARDWOOD_MULTIFILE_INDEXED -> this::runHardwoodMultiFile;
+            case HARDWOOD_MULTIFILE_NAMED -> this::runHardwoodMultiFileNamed;
             case HARDWOOD_COLUMN_READER -> this::runHardwoodColumnReader;
             case HARDWOOD_COLUMN_READER_MULTIFILE -> this::runHardwoodColumnReaderMultiFile;
             case PARQUET_JAVA_INDEXED -> this::runParquetJavaIndexed;
@@ -451,6 +453,59 @@ class FlatPerformanceTest {
 
                         if (!rowReader.isNull(2)) { // fare_amount
                             fareAmount += rowReader.getDouble(2);
+                        }
+                    }
+                }
+            }
+        }
+        catch (IOException e) {
+            throw new RuntimeException("Failed to read files with MultiFileRowReader", e);
+        }
+        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+    }
+
+    /**
+     * Run using MultiFileRowReader with named (string) field access.
+     * <p>
+     * Same as {@link #runHardwoodMultiFile} but uses field names instead of projected indices.
+     * </p>
+     */
+    private Result runHardwoodMultiFileNamed(List<Path> files) {
+        long passengerCount = 0;
+        double tripDistance = 0.0;
+        double fareAmount = 0.0;
+        long rowCount = 0;
+
+        ColumnProjection projection = ColumnProjection.columns(
+                "passenger_count", "trip_distance", "fare_amount");
+
+        List<SchemaGroup> groups = groupFilesBySchema(files);
+
+        try (Hardwood hardwood = Hardwood.create()) {
+            for (SchemaGroup group : groups) {
+                try (MultiFileParquetReader parquet = hardwood.openAll(group.files());
+                     MultiFileRowReader rowReader = parquet.createRowReader(projection)) {
+                    boolean pcIsLong = group.passengerCountIsLong();
+
+                    while (rowReader.hasNext()) {
+                        rowReader.next();
+                        rowCount++;
+
+                        if (!rowReader.isNull("passenger_count")) {
+                            if (pcIsLong) {
+                                passengerCount += rowReader.getLong("passenger_count");
+                            }
+                            else {
+                                passengerCount += (long) rowReader.getDouble("passenger_count");
+                            }
+                        }
+
+                        if (!rowReader.isNull("trip_distance")) {
+                            tripDistance += rowReader.getDouble("trip_distance");
+                        }
+
+                        if (!rowReader.isNull("fare_amount")) {
+                            fareAmount += rowReader.getDouble("fare_amount");
                         }
                     }
                 }
@@ -815,7 +870,8 @@ class FlatPerformanceTest {
 
     private boolean isHardwood(Contender c) {
         return c == Contender.HARDWOOD_INDEXED || c == Contender.HARDWOOD_NAMED
-                || c == Contender.HARDWOOD_PROJECTION || c == Contender.HARDWOOD_MULTIFILE
+                || c == Contender.HARDWOOD_PROJECTION || c == Contender.HARDWOOD_MULTIFILE_INDEXED
+                || c == Contender.HARDWOOD_MULTIFILE_NAMED
                 || c == Contender.HARDWOOD_COLUMN_READER || c == Contender.HARDWOOD_COLUMN_READER_MULTIFILE;
     }
 

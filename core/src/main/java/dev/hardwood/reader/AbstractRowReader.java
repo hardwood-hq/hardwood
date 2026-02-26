@@ -16,6 +16,7 @@ import java.util.UUID;
 
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.FlatColumnData;
+import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqList;
@@ -44,6 +45,8 @@ abstract class AbstractRowReader implements RowReader {
     private Object[] flatValueArrays;
     private BitSet[] flatNulls;
     private boolean flatFastPath;
+    // Cached name-to-projected-index mapping for named fast path (built once)
+    private StringToIntMap nameCache;
 
     /**
      * Computes a batch size that keeps all column arrays for one batch within the L2 cache.
@@ -122,6 +125,14 @@ abstract class AbstractRowReader implements RowReader {
             flatNulls[i] = flatColumnData[i].nulls();
             flatValueArrays[i] = extractValueArray(flatColumnData[i]);
         }
+        // Build name cache once for named fast path
+        if (nameCache == null) {
+            int fieldCount = dataView.getFieldCount();
+            nameCache = new StringToIntMap(fieldCount);
+            for (int i = 0; i < fieldCount; i++) {
+                nameCache.put(dataView.getFieldName(i), i);
+            }
+        }
     }
 
     private static Object extractValueArray(FlatColumnData flatColumnData) {
@@ -174,6 +185,12 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public int getInt(String name) {
+        if (flatFastPath) {
+            int idx = nameCache.get(name);
+            if (idx >= 0 && flatValueArrays[idx] instanceof int[]) {
+                return ((int[]) flatValueArrays[idx])[rowIndex];
+            }
+        }
         return dataView.getInt(name);
     }
 
@@ -187,6 +204,12 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public long getLong(String name) {
+        if (flatFastPath) {
+            int idx = nameCache.get(name);
+            if (idx >= 0 && flatValueArrays[idx] instanceof long[]) {
+                return ((long[]) flatValueArrays[idx])[rowIndex];
+            }
+        }
         return dataView.getLong(name);
     }
 
@@ -200,6 +223,12 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public float getFloat(String name) {
+        if (flatFastPath) {
+            int idx = nameCache.get(name);
+            if (idx >= 0 && flatValueArrays[idx] instanceof float[]) {
+                return ((float[]) flatValueArrays[idx])[rowIndex];
+            }
+        }
         return dataView.getFloat(name);
     }
 
@@ -213,6 +242,12 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public double getDouble(String name) {
+        if (flatFastPath) {
+            int idx = nameCache.get(name);
+            if (idx >= 0 && flatValueArrays[idx] instanceof double[]) {
+                return ((double[]) flatValueArrays[idx])[rowIndex];
+            }
+        }
         return dataView.getDouble(name);
     }
 
@@ -226,6 +261,12 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public boolean getBoolean(String name) {
+        if (flatFastPath) {
+            int idx = nameCache.get(name);
+            if (idx >= 0 && flatValueArrays[idx] instanceof boolean[]) {
+                return ((boolean[]) flatValueArrays[idx])[rowIndex];
+            }
+        }
         return dataView.getBoolean(name);
     }
 
@@ -389,6 +430,13 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public boolean isNull(String name) {
+        if (flatFastPath) {
+            int idx = nameCache.get(name);
+            if (idx >= 0) {
+                BitSet n = flatNulls[idx];
+                return n != null && n.get(rowIndex);
+            }
+        }
         return dataView.isNull(name);
     }
 

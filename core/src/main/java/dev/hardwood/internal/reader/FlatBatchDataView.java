@@ -12,11 +12,11 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.Arrays;
 import java.util.BitSet;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
@@ -37,6 +37,9 @@ public final class FlatBatchDataView implements BatchDataView {
 
     private final FileSchema schema;
     private final ProjectedSchema projectedSchema;
+    // Precomputed for fast named lookups: maps column name directly to projected index
+    private final StringToIntMap nameToProjectedIndex;
+    private final PhysicalType[] projectedTypes;
 
     private FlatColumnData[] columnData;
     // Pre-extracted null BitSets to avoid megamorphic FlatColumnData::nulls() calls
@@ -46,6 +49,16 @@ public final class FlatBatchDataView implements BatchDataView {
     public FlatBatchDataView(FileSchema schema, ProjectedSchema projectedSchema) {
         this.schema = schema;
         this.projectedSchema = projectedSchema;
+
+        int projectedCount = projectedSchema.getProjectedColumnCount();
+        this.nameToProjectedIndex = new StringToIntMap(projectedCount);
+        this.projectedTypes = new PhysicalType[projectedCount];
+        for (int pi = 0; pi < projectedCount; pi++) {
+            int originalIndex = projectedSchema.toOriginalIndex(pi);
+            ColumnSchema col = schema.getColumn(originalIndex);
+            nameToProjectedIndex.put(col.name(), pi);
+            projectedTypes[pi] = col.type();
+        }
     }
 
     @Override
@@ -67,26 +80,21 @@ public final class FlatBatchDataView implements BatchDataView {
     // ==================== Index Lookup ====================
 
     private int lookupProjectedIndex(String name) {
-        ColumnSchema col = schema.getColumn(name);
-        int projectedIndex = projectedSchema.toProjectedIndex(col.columnIndex());
+        int projectedIndex = nameToProjectedIndex.get(name);
         if (projectedIndex < 0) {
             throw new IllegalArgumentException("Column not in projection: " + name);
         }
         return projectedIndex;
     }
 
-    private void validatePhysicalType(String name, PhysicalType... expectedTypes) {
-        ColumnSchema col = schema.getColumn(name);
-        for (PhysicalType expected : expectedTypes) {
-            if (col.type() == expected) {
-                return;
-            }
+    private int lookupAndValidate(String name, PhysicalType expectedType) {
+        int projectedIndex = lookupProjectedIndex(name);
+        if (projectedTypes[projectedIndex] != expectedType) {
+            throw new IllegalArgumentException(
+                    "Field '" + name + "' has physical type " + projectedTypes[projectedIndex]
+                            + ", expected " + expectedType);
         }
-        String expectedStr = expectedTypes.length == 1
-                ? expectedTypes[0].toString()
-                : Arrays.toString(expectedTypes);
-        throw new IllegalArgumentException(
-                "Field '" + col.name() + "' has physical type " + col.type() + ", expected " + expectedStr);
+        return projectedIndex;
     }
 
     @Override
@@ -104,32 +112,27 @@ public final class FlatBatchDataView implements BatchDataView {
 
     @Override
     public int getInt(String name) {
-        validatePhysicalType(name, PhysicalType.INT32);
-        return getInt(lookupProjectedIndex(name));
+        return getInt(lookupAndValidate(name, PhysicalType.INT32));
     }
 
     @Override
     public long getLong(String name) {
-        validatePhysicalType(name, PhysicalType.INT64);
-        return getLong(lookupProjectedIndex(name));
+        return getLong(lookupAndValidate(name, PhysicalType.INT64));
     }
 
     @Override
     public float getFloat(String name) {
-        validatePhysicalType(name, PhysicalType.FLOAT);
-        return getFloat(lookupProjectedIndex(name));
+        return getFloat(lookupAndValidate(name, PhysicalType.FLOAT));
     }
 
     @Override
     public double getDouble(String name) {
-        validatePhysicalType(name, PhysicalType.DOUBLE);
-        return getDouble(lookupProjectedIndex(name));
+        return getDouble(lookupAndValidate(name, PhysicalType.DOUBLE));
     }
 
     @Override
     public boolean getBoolean(String name) {
-        validatePhysicalType(name, PhysicalType.BOOLEAN);
-        return getBoolean(lookupProjectedIndex(name));
+        return getBoolean(lookupAndValidate(name, PhysicalType.BOOLEAN));
     }
 
     // ==================== Primitive Type Accessors (by index) ====================
