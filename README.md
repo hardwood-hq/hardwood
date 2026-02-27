@@ -86,7 +86,7 @@ Hardwood supports reading Parquet files compressed with GZIP (built into Java), 
 |-------|----------|-------------|
 | Snappy | `org.xerial.snappy` | `snappy-java` |
 | ZSTD | `com.github.luben` | `zstd-jni` |
-| LZ4 | `org.lz4` | `lz4-java` |
+| LZ4 | `at.yawk.lz4` | `lz4-java` |
 | Brotli | `com.aayushatharva.brotli4j` | `brotli4j` |
 
 When using the BOM, declare without a version — for example, to add Snappy:
@@ -121,7 +121,7 @@ implementation 'org.xerial.snappy:snappy-java'
     <version>1.5.7-6</version>
 </dependency>
 <dependency>
-    <groupId>org.lz4</groupId>
+    <groupId>at.yawk.lz4</groupId>
     <artifactId>lz4-java</artifactId>
     <version>1.8.1</version>
 </dependency>
@@ -135,7 +135,7 @@ implementation 'org.xerial.snappy:snappy-java'
 ```groovy
 implementation 'org.xerial.snappy:snappy-java:1.1.10.8'
 implementation 'com.github.luben:zstd-jni:1.5.7-6'
-implementation 'org.lz4:lz4-java:1.8.1'
+implementation 'at.yawk.lz4:lz4-java:1.8.1'
 implementation 'com.aayushatharva.brotli4j:brotli4j:1.20.0'
 ```
 
