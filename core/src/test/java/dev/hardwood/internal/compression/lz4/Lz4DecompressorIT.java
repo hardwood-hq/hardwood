@@ -10,14 +10,8 @@ package dev.hardwood.internal.compression.lz4;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Random;
 
-import org.junit.jupiter.api.Assumptions;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.compression.Decompressor;
@@ -30,15 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class Lz4DecompressorIT {
 
-    private static LZ4Factory lz4Factory;
-
-    @BeforeAll
-    static void checkAvailability() {
-        Assumptions.assumeTrue(
-                Lz4Loader.isAvailable(),
-                "lz4-java not available on the classpath");
-        lz4Factory = LZ4Factory.fastestInstance();
-    }
+    private final LZ4Factory lz4Factory = LZ4Factory.fastestInstance();
 
     @Test
     void decompressRawLz4() throws Exception {
@@ -144,17 +130,9 @@ class Lz4DecompressorIT {
     }
 
     private static MappedByteBuffer createMappedBuffer(byte[] data) {
-        try {
-            Path tempFile = Files.createTempFile("lz4-test", ".lz4");
-            Files.write(tempFile, data);
-            try (FileChannel channel = FileChannel.open(tempFile, StandardOpenOption.READ)) {
-                MappedByteBuffer buffer = channel.map(FileChannel.MapMode.READ_ONLY, 0, data.length);
-                Files.delete(tempFile);
-                return buffer;
-            }
-        }
-        catch (Exception e) {
-            throw new RuntimeException("Failed to create mapped buffer", e);
-        }
+        ByteBuffer direct = ByteBuffer.allocateDirect(data.length);
+        direct.put(data);
+        direct.flip();
+        return (MappedByteBuffer) direct;
     }
 }
