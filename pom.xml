@@ -52,9 +52,7 @@
   </modules>
 
   <properties>
-    <!-- Hadoop 3.4.3+ required for Java 24+ (HADOOP-19212: Subject.getSubject() removed) -->
-    <!-- TODO: Update to 3.4.3 when available in Maven Central -->
-    <hadoop.version>3.4.4-SNAPSHOT</hadoop.version>
+    <hadoop.version>3.4.3</hadoop.version>
     <java.version>21</java.version>
     <java.version.build>25</java.version.build>
     <maven.compiler.parameters>true</maven.compiler.parameters>
