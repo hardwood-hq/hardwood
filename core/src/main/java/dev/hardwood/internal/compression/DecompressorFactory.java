@@ -12,6 +12,8 @@ import java.lang.System.Logger.Level;
 
 import dev.hardwood.internal.compression.libdeflate.LibdeflateDecompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
+import dev.hardwood.internal.compression.lz4.Lz4Decompressor;
+import dev.hardwood.internal.compression.lz4.Lz4RawDecompressor;
 import dev.hardwood.metadata.CompressionCodec;
 
 /**
@@ -67,13 +69,13 @@ public class DecompressorFactory {
             case LZ4 -> {
                 checkClassAvailable("net.jpountz.lz4.LZ4Factory",
                         "LZ4",
-                        "org.lz4:lz4-java");
+                        "at.yawk.lz4:lz4-java");
                 yield new Lz4Decompressor();
             }
             case LZ4_RAW -> {
                 checkClassAvailable("net.jpountz.lz4.LZ4Factory",
                         "LZ4_RAW",
-                        "org.lz4:lz4-java");
+                        "at.yawk.lz4:lz4-java");
                 yield new Lz4RawDecompressor();
             }
             case BROTLI -> {
