@@ -22,21 +22,6 @@
   <name>Hardwood Parquet Testing Runner</name>
   <description>Comparison tests between Hardwood and parquet-java reference implementation</description>
 
-  <!-- Apache snapshots repo for Hadoop 3.4.4-SNAPSHOT (HADOOP-19212 fix for Java 24+) -->
-  <!-- TODO: Remove once 3.4.3+ is in Central -->
-  <repositories>
-    <repository>
-      <id>apache-hadoop-snapshots</id>
-      <url>https://repository.apache.org/content/repositories/snapshots/</url>
-      <releases>
-        <enabled>false</enabled>
-      </releases>
-      <snapshots>
-        <enabled>true</enabled>
-      </snapshots>
-    </repository>
-  </repositories>
-
   <dependencyManagement>
     <dependencies>
       <dependency>
