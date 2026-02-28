@@ -258,10 +258,6 @@ public class FileManager {
         MappedByteBuffer mapping;
         try (FileChannel channel = FileChannel.open(path, StandardOpenOption.READ)) {
             long fileSize = channel.size();
-            if (fileSize > Integer.MAX_VALUE) {
-                throw new IOException("File too large: " + path + " (" + (fileSize / (1024 * 1024)) +
-                        " MB). Maximum supported file size is 2 GB.");
-            }
             String fileName = path.getFileName().toString();
 
             FileMappingEvent event = new FileMappingEvent();
