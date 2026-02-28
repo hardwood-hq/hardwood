@@ -632,6 +632,9 @@ The library is organized into public API packages and internal implementation pa
 
 This is Alpha quality software, under active development.
 
+Currently, individual Parquet files must be **at most 2 GB**.
+Larger datasets should be split across multiple files and read via `MultiFileParquetReader`.
+
 Note that while this project welcomes the usage of LLMs,
 vibe coding (i.e. blindly accepting AI-generated changes without understanding them) is not accepted.
 While there's currently a focus on quick iteration (closing feature gaps),
