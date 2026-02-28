@@ -36,6 +36,11 @@ import dev.hardwood.schema.ProjectedSchema;
  * }</pre>
  *
  * <p>For multi-file usage with shared thread pool, use {@link Hardwood}.</p>
+ *
+ * <p><b>Limitation:</b> Individual files must be at most 2 GB ({@link Integer#MAX_VALUE} bytes)
+ * due to the use of {@link MappedByteBuffer} which is limited to {@code int}-addressable regions.
+ * Larger datasets should be split across multiple files and read via
+ * {@link MultiFileParquetReader}.</p>
  */
 public class ParquetFileReader implements AutoCloseable {
 
@@ -82,6 +87,10 @@ public class ParquetFileReader implements AutoCloseable {
         try {
             // Map the entire file once - used for both metadata and data reading
             long fileSize = channel.size();
+            if (fileSize > Integer.MAX_VALUE) {
+                throw new IOException("File too large: " + path + " (" + (fileSize / (1024 * 1024)) +
+                        " MB). Maximum supported file size is 2 GB.");
+            }
             String fileName = path.getFileName().toString();
 
             FileMappingEvent event = new FileMappingEvent();
