@@ -1099,3 +1099,39 @@ print("\nGenerated gzip_compressed.parquet (in integration-test):")
 print("  - Encoding: PLAIN")
 print("  - Compression: GZIP")
 print("  - Data: 5 rows with id, name, value")
+
+# ============================================================================
+# Page Index Test File (for Offset Index support testing)
+# ============================================================================
+
+# 21. File with page index enabled and small page size to produce multiple data pages
+page_index_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('value', pa.int64(), False),
+    ('category', pa.string(), False),
+])
+
+# Generate enough rows so that with a small page size we get multiple data pages
+num_rows = 10000
+page_index_data = {
+    'id': list(range(1, num_rows + 1)),
+    'value': [i * 7 for i in range(1, num_rows + 1)],
+    'category': [f'cat_{i % 50}' for i in range(1, num_rows + 1)],
+}
+
+page_index_table = pa.table(page_index_data, schema=page_index_schema)
+
+pq.write_table(
+    page_index_table,
+    'core/src/test/resources/page_index_test.parquet',
+    use_dictionary=['category'],
+    compression=None,
+    data_page_version='1.0',
+    data_page_size=4096,  # Small page size to produce many pages
+    write_page_index=True
+)
+
+print("\nGenerated page_index_test.parquet:")
+print("  - Encoding: PLAIN for id/value, DICTIONARY for category")
+print("  - Compression: UNCOMPRESSED")
+print(f"  - Data: {num_rows} rows with small page size (4096) and page index enabled")

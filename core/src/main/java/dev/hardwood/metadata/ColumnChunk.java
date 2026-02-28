@@ -9,6 +9,10 @@ package dev.hardwood.metadata;
 
 /**
  * Column chunk metadata.
+ *
+ * @param metaData column metadata
+ * @param offsetIndexOffset file offset of the offset index for this column chunk, or null if absent
+ * @param offsetIndexLength length of the offset index in bytes, or null if absent
  */
-public record ColumnChunk(ColumnMetaData metaData) {
+public record ColumnChunk(ColumnMetaData metaData, Long offsetIndexOffset, Integer offsetIndexLength) {
 }

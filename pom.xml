@@ -253,7 +253,10 @@
                   <excludes>
                     <exclude>.venv/**</exclude>
                     <exclude>.docker-venv/**</exclude>
+                    <exclude>.release-env</exclude>
                     <exclude>LICENSE.txt</exclude>
+                    <exclude>requirements.txt</exclude>
+                    <exclude>**/.jfr</exclude>
                     <exclude>**/.dontdelete</exclude>
                     <exclude>*.html</exclude>
                     <exclude>**/*.parquet</exclude>

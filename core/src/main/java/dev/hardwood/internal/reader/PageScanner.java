@@ -15,11 +15,14 @@ import java.util.List;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.event.RowGroupScannedEvent;
+import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.OffsetIndex;
+import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.schema.ColumnSchema;
 
 /**
@@ -27,6 +30,10 @@ import dev.hardwood.schema.ColumnSchema;
  * <p>
  * Reads page headers and parses dictionary pages upfront, then creates
  * PageInfo records that can be used for on-demand page decoding.
+ * </p>
+ * <p>
+ * When an Offset Index is available in the file metadata, pages are located
+ * by direct lookup instead of sequentially scanning all page headers.
  * </p>
  */
 public class PageScanner {
@@ -79,14 +86,25 @@ public class PageScanner {
     /**
      * Scan pages in this column chunk and return PageInfo objects.
      * <p>
-     * Dictionary pages are parsed upfront and the parsed dictionary is shared
-     * with all data page PageInfo objects. Each PageInfo receives a ByteBuffer
-     * slice of the pre-mapped chunk, avoiding per-page memory mapping overhead.
+     * Automatically selects between index-based and sequential scanning
+     * depending on whether an Offset Index is available.
      * </p>
      *
      * @return list of PageInfo objects for data pages in this chunk
      */
     public List<PageInfo> scanPages() throws IOException {
+        if (columnChunk.offsetIndexOffset() != null) {
+            return scanPagesFromIndex();
+        }
+        return scanPagesSequential();
+    }
+
+    /**
+     * Scan pages by sequentially reading all page headers through the column chunk.
+     *
+     * @return list of PageInfo objects for data pages in this chunk
+     */
+    List<PageInfo> scanPagesSequential() throws IOException {
         RowGroupScannedEvent event = new RowGroupScannedEvent();
         event.begin();
 
@@ -169,6 +187,89 @@ public class PageScanner {
         event.rowGroupIndex = rowGroupIndex;
         event.column = columnSchema.name();
         event.pageCount = pageInfos.size();
+        event.scanStrategy = RowGroupScannedEvent.STRATEGY_SEQUENTIAL;
+        event.commit();
+
+        return pageInfos;
+    }
+
+    /**
+     * Scan pages using the Offset Index for direct page location lookup.
+     * <p>
+     * Reads the Offset Index from the file mapping, then locates each data page
+     * by its recorded offset and size. If a dictionary page exists, only the
+     * dictionary page header at chunk start is parsed.
+     * </p>
+     *
+     * @return list of PageInfo objects for data pages in this chunk
+     */
+    List<PageInfo> scanPagesFromIndex() throws IOException {
+        RowGroupScannedEvent event = new RowGroupScannedEvent();
+        event.begin();
+
+        ColumnMetaData metaData = columnChunk.metaData();
+
+        // Read and parse the OffsetIndex
+        int indexSliceOffset = (int) (columnChunk.offsetIndexOffset() - fileMappingBaseOffset);
+        MappedByteBuffer indexBuffer = fileMapping.slice(indexSliceOffset, columnChunk.offsetIndexLength());
+        ThriftCompactReader indexReader = new ThriftCompactReader(indexBuffer);
+        OffsetIndex offsetIndex = OffsetIndexReader.read(indexReader);
+
+        if (offsetIndex.pageLocations().isEmpty()) {
+            throw new IOException("Empty Offset Index for column '" + columnSchema.name()
+                    + "': the Offset Index contains no page locations");
+        }
+
+        // Parse dictionary page if present
+        Dictionary dictionary = null;
+        Long dictOffset = metaData.dictionaryPageOffset();
+        if (dictOffset == null || dictOffset <= 0) {
+            // Some writers (e.g. parquet-mr <= 1.12) omit dictionary_page_offset.
+            // Probe the first page at data_page_offset — if it is a dictionary page,
+            // parse it here so data pages can reference it.
+            int probeOffset = (int) (metaData.dataPageOffset() - fileMappingBaseOffset);
+            ThriftCompactReader probeReader = new ThriftCompactReader(fileMapping, probeOffset);
+            PageHeader probeHeader = PageHeaderReader.read(probeReader);
+            if (probeHeader.type() == PageHeader.PageType.DICTIONARY_PAGE) {
+                dictOffset = metaData.dataPageOffset();
+            }
+        }
+        if (dictOffset != null && dictOffset > 0) {
+            int dictSliceOffset = (int) (dictOffset - fileMappingBaseOffset);
+            // Read just the dictionary page header
+            ThriftCompactReader dictHeaderReader = new ThriftCompactReader(fileMapping, dictSliceOffset);
+            PageHeader dictHeader = PageHeaderReader.read(dictHeaderReader);
+            int dictHeaderSize = dictHeaderReader.getBytesRead();
+
+            int compressedSize = dictHeader.compressedPageSize();
+            MappedByteBuffer compressedData = fileMapping.slice(dictSliceOffset + dictHeaderSize, compressedSize);
+            int numValues = dictHeader.dictionaryPageHeader().numValues();
+            int uncompressedSize = dictHeader.uncompressedPageSize();
+
+            dictionary = parseDictionary(compressedData, numValues, uncompressedSize,
+                    columnSchema, metaData.codec());
+        }
+
+        // Create PageInfo for each data page using offset index locations
+        List<PageInfo> pageInfos = new ArrayList<>(offsetIndex.pageLocations().size());
+        for (PageLocation loc : offsetIndex.pageLocations()) {
+            int pageSliceOffset = (int) (loc.offset() - fileMappingBaseOffset);
+            MappedByteBuffer pageSlice = fileMapping.slice(pageSliceOffset, loc.compressedPageSize());
+
+            PageInfo pageInfo = new PageInfo(
+                    pageSlice,
+                    columnSchema,
+                    metaData,
+                    dictionary
+            );
+            pageInfos.add(pageInfo);
+        }
+
+        event.file = filePath;
+        event.rowGroupIndex = rowGroupIndex;
+        event.column = columnSchema.name();
+        event.pageCount = pageInfos.size();
+        event.scanStrategy = RowGroupScannedEvent.STRATEGY_OFFSET_INDEX;
         event.commit();
 
         return pageInfos;

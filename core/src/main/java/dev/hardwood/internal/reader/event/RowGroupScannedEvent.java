@@ -30,6 +30,9 @@ import jdk.jfr.StackTrace;
 @StackTrace(false)
 public class RowGroupScannedEvent extends Event {
 
+    public static final String STRATEGY_SEQUENTIAL = "sequential";
+    public static final String STRATEGY_OFFSET_INDEX = "offset-index";
+
     @Label("File")
     @Description("Path to the Parquet file")
     public String file;
@@ -45,4 +48,8 @@ public class RowGroupScannedEvent extends Event {
     @Label("Page Count")
     @Description("Number of data pages found in this row group column chunk")
     public int pageCount;
+
+    @Label("Scan Strategy")
+    @Description("How pages were located: 'sequential' (header scan) or 'offset-index' (direct lookup)")
+    public String scanStrategy;
 }
