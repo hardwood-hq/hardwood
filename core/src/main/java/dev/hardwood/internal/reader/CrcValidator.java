@@ -22,8 +22,8 @@ class CrcValidator {
         crc.update(pageData.duplicate());
         int actualCrc = (int) crc.getValue();
         if (actualCrc != expectedCrc) {
-            throw new IOException("CRC mismatch for column ‘" + columnName
-                    + "’: expected " + Integer.toHexString(expectedCrc)
+            throw new IOException("CRC mismatch for column " + columnName
+                    + ": expected " + Integer.toHexString(expectedCrc)
                     + " but computed " + Integer.toHexString(actualCrc));
         }
     }
