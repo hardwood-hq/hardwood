@@ -1099,3 +1099,20 @@ print("\nGenerated gzip_compressed.parquet (in integration-test):")
 print("  - Encoding: PLAIN")
 print("  - Compression: GZIP")
 print("  - Data: 5 rows with id, name, value")
+
+# ============================================================================
+# CRC Checksum Test File
+# ============================================================================
+
+# 21. Plain encoding with CRC page checksums enabled
+pq.write_table(simple_table, 'core/src/test/resources/plain_with_crc.parquet',
+               write_page_checksum=True,
+               use_dictionary=False,
+               compression=None,
+               data_page_version='1.0')
+
+print("\nGenerated plain_with_crc.parquet:")
+print("  - Encoding: PLAIN (use_dictionary=False)")
+print("  - Compression: UNCOMPRESSED (compression=None)")
+print("  - CRC: Enabled (write_page_checksum=True)")
+print("  - Data: id=[1,2,3], value=[100,200,300] - NO NULLS")
