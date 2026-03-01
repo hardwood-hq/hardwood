@@ -8,7 +8,7 @@
 package dev.hardwood.internal.compression;
 
 import java.io.IOException;
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 
 import com.aayushatharva.brotli4j.Brotli4jLoader;
 import com.aayushatharva.brotli4j.decoder.Decoder;
@@ -35,11 +35,11 @@ public class BrotliDecompressor implements Decompressor {
     }
 
     @Override
-    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
         ensureInitialized();
 
         try {
-            // Brotli4j doesn't have a direct MappedByteBuffer API, so extract to byte array
+            // Brotli4j doesn't have a direct ByteBuffer API, so extract to byte array
             byte[] compressedBytes = new byte[compressed.remaining()];
             compressed.duplicate().get(compressedBytes);
 

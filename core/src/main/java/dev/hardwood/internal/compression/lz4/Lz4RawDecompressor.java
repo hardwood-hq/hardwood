@@ -9,7 +9,6 @@ package dev.hardwood.internal.compression.lz4;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
 
 import dev.hardwood.internal.compression.Decompressor;
 import net.jpountz.lz4.LZ4Factory;
@@ -30,9 +29,9 @@ public class Lz4RawDecompressor implements Decompressor {
     }
 
     @Override
-    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
         try {
-            // Decompress directly from MappedByteBuffer - no copying
+            // Decompress directly from ByteBuffer - no copying
             byte[] uncompressed = new byte[uncompressedSize];
             ByteBuffer dest = ByteBuffer.wrap(uncompressed);
 

@@ -11,7 +11,7 @@ import java.io.IOException;
 import java.lang.foreign.Arena;
 import java.lang.foreign.MemorySegment;
 import java.lang.foreign.ValueLayout;
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.compression.Decompressor;
 
@@ -32,7 +32,7 @@ public final class LibdeflateDecompressor implements Decompressor {
     }
 
     @Override
-    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
         LibdeflatePool.DecompressorHandle decompressor = pool.acquire();
         try {
             LibdeflateBindings bindings = LibdeflateBindings.get();

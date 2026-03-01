@@ -9,10 +9,6 @@ package dev.hardwood.internal.compression.libdeflate;
 
 import java.io.ByteArrayOutputStream;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.Random;
 import java.util.zip.GZIPOutputStream;
 
@@ -51,7 +47,7 @@ class LibdeflateDecompressorIT {
         byte[] compressed = gzipCompress(original);
 
         LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
-        MappedByteBuffer buffer = wrapAsMappedBuffer(compressed);
+        ByteBuffer buffer = createDirectBuffer(compressed);
 
         byte[] result = decompressor.decompress(buffer, original.length);
 
@@ -66,7 +62,7 @@ class LibdeflateDecompressorIT {
         byte[] compressed = gzipCompress(original);
 
         LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
-        MappedByteBuffer buffer = wrapAsMappedBuffer(compressed);
+        ByteBuffer buffer = createDirectBuffer(compressed);
 
         byte[] result = decompressor.decompress(buffer, original.length);
 
@@ -78,8 +74,8 @@ class LibdeflateDecompressorIT {
         byte[] original = "Test data for comparison between libdeflate and Java implementation".getBytes();
         byte[] compressed = gzipCompress(original);
 
-        MappedByteBuffer buffer1 = wrapAsMappedBuffer(compressed);
-        MappedByteBuffer buffer2 = wrapAsMappedBuffer(compressed);
+        ByteBuffer buffer1 = createDirectBuffer(compressed);
+        ByteBuffer buffer2 = createDirectBuffer(compressed);
 
         byte[] libdeflateResult = new LibdeflateDecompressor(pool).decompress(buffer1, original.length);
         byte[] javaResult = new GzipDecompressor().decompress(buffer2, original.length);
@@ -105,7 +101,7 @@ class LibdeflateDecompressorIT {
         System.arraycopy(part1, 0, expectedOutput, 0, part1.length);
         System.arraycopy(part2, 0, expectedOutput, part1.length, part2.length);
 
-        MappedByteBuffer buffer = wrapAsMappedBuffer(concatenated);
+        ByteBuffer buffer = createDirectBuffer(concatenated);
         byte[] result = new LibdeflateDecompressor(pool).decompress(buffer, expectedOutput.length);
 
         assertThat(result).isEqualTo(expectedOutput);
@@ -127,38 +123,10 @@ class LibdeflateDecompressorIT {
         return baos.toByteArray();
     }
 
-    private static MappedByteBuffer wrapAsMappedBuffer(byte[] data) {
-        // MappedByteBuffer is a direct buffer, so we create one and copy data into it
-        // This simulates the memory-mapped file access pattern
+    private static ByteBuffer createDirectBuffer(byte[] data) {
         ByteBuffer direct = ByteBuffer.allocateDirect(data.length);
         direct.put(data);
         direct.flip();
-
-        // We can't directly create a MappedByteBuffer, but we can use sun.misc.Unsafe
-        // or just cast for testing. For test purposes, we'll use a workaround.
-        // The decompressor only uses position(), remaining(), and get() methods
-        // which work on any ByteBuffer. Cast will fail, so we need another approach.
-
-        // Actually, we need to create a file and map it. For simplicity in tests,
-        // let's just test that the code compiles and works with the actual implementation
-        // by reading from a temporary file.
-
-        return createMappedBuffer(data);
-    }
-
-    private static MappedByteBuffer createMappedBuffer(byte[] data) {
-        try {
-            Path tempFile = Files.createTempFile("libdeflate-test", ".gz");
-            Files.write(tempFile, data);
-            try (java.nio.channels.FileChannel channel = java.nio.channels.FileChannel.open(
-                    tempFile, StandardOpenOption.READ)) {
-                MappedByteBuffer buffer = channel.map(java.nio.channels.FileChannel.MapMode.READ_ONLY, 0, data.length);
-                Files.delete(tempFile);
-                return buffer;
-            }
-        }
-        catch (Exception e) {
-            throw new RuntimeException("Failed to create mapped buffer", e);
-        }
+        return direct;
     }
 }

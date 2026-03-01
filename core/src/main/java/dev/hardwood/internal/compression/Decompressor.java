@@ -8,22 +8,22 @@
 package dev.hardwood.internal.compression;
 
 import java.io.IOException;
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 
 /**
- * Interface for decompressing compressed page data from memory-mapped files.
+ * Interface for decompressing compressed page data.
  */
 public interface Decompressor {
 
     /**
-     * Decompress the given compressed data from a memory-mapped buffer.
+     * Decompress the given compressed data from a buffer.
      *
-     * @param compressed the memory-mapped buffer slice containing compressed data
+     * @param compressed the buffer slice containing compressed data
      * @param uncompressedSize the expected size of uncompressed data
      * @return the uncompressed data
      * @throws IOException if decompression fails
      */
-    byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException;
+    byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException;
 
     /**
      * Get the name of this decompressor.

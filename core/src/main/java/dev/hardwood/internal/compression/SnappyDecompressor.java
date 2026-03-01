@@ -9,7 +9,6 @@ package dev.hardwood.internal.compression;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
 
 import org.xerial.snappy.Snappy;
 
@@ -19,7 +18,7 @@ import org.xerial.snappy.Snappy;
 public class SnappyDecompressor implements Decompressor {
 
     @Override
-    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
         // Snappy requires both buffers to be direct for ByteBuffer API, so allocate direct output
         ByteBuffer output = ByteBuffer.allocateDirect(uncompressedSize);
         int actualSize = Snappy.uncompress(compressed, output);

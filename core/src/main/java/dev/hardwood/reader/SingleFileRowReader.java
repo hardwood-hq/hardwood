@@ -9,7 +9,7 @@ package dev.hardwood.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -43,7 +43,7 @@ final class SingleFileRowReader extends AbstractRowReader {
 
     private final FileSchema schema;
     private final ProjectedSchema projectedSchema;
-    private final MappedByteBuffer fileMapping;
+    private final ByteBuffer fileMapping;
     private final List<RowGroup> rowGroups;
     private final HardwoodContextImpl context;
     private final String fileName;
@@ -53,7 +53,7 @@ final class SingleFileRowReader extends AbstractRowReader {
     private int[][] levelNullThresholds; // [projectedCol] -> thresholds for nested columns
     private CompletableFuture<IndexedNestedColumnData[]> pendingBatch;
 
-    SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, MappedByteBuffer fileMapping,
+    SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, ByteBuffer fileMapping,
                         List<RowGroup> rowGroups, HardwoodContextImpl context, String fileName) {
         this.schema = schema;
         this.projectedSchema = projectedSchema;

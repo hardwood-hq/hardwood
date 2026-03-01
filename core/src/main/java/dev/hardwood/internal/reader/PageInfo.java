@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.schema.ColumnSchema;
@@ -15,12 +15,12 @@ import dev.hardwood.schema.ColumnSchema;
 /**
  * Holds metadata about a page and the data needed to decode it.
  * <p>
- * The pageData buffer is a slice from the pre-mapped column chunk, avoiding
- * per-page memory mapping overhead.
+ * The pageData buffer is a slice from the file data, avoiding
+ * per-page copy overhead.
  * </p>
  */
 public record PageInfo(
-    MappedByteBuffer pageData,
+    ByteBuffer pageData,
     ColumnSchema columnSchema,
     ColumnMetaData columnMetaData,
     Dictionary dictionary

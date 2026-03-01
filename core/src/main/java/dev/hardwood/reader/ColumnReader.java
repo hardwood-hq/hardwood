@@ -9,7 +9,7 @@ package dev.hardwood.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -382,7 +382,7 @@ public class ColumnReader implements AutoCloseable {
      * Create a ColumnReader for a named column, scanning pages across all row groups.
      */
     static ColumnReader create(String columnName, FileSchema schema,
-                               MappedByteBuffer fileMapping, List<RowGroup> rowGroups,
+                               ByteBuffer fileMapping, List<RowGroup> rowGroups,
                                HardwoodContextImpl context) {
         ColumnSchema columnSchema = schema.getColumn(columnName);
         return create(columnSchema, schema, fileMapping, rowGroups, context);
@@ -392,7 +392,7 @@ public class ColumnReader implements AutoCloseable {
      * Create a ColumnReader for a column by index, scanning pages across all row groups.
      */
     static ColumnReader create(int columnIndex, FileSchema schema,
-                               MappedByteBuffer fileMapping, List<RowGroup> rowGroups,
+                               ByteBuffer fileMapping, List<RowGroup> rowGroups,
                                HardwoodContextImpl context) {
         ColumnSchema columnSchema = schema.getColumn(columnIndex);
         return create(columnSchema, schema, fileMapping, rowGroups, context);
@@ -403,7 +403,7 @@ public class ColumnReader implements AutoCloseable {
      */
     @SuppressWarnings("unchecked")
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
-                                       MappedByteBuffer fileMapping, List<RowGroup> rowGroups,
+                                       ByteBuffer fileMapping, List<RowGroup> rowGroups,
                                        HardwoodContextImpl context) {
         int originalIndex = columnSchema.columnIndex();
 

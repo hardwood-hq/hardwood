@@ -9,7 +9,6 @@ package dev.hardwood.internal.compression.lz4;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.MappedByteBuffer;
 import java.util.Random;
 
 import org.junit.jupiter.api.Test;
@@ -32,7 +31,7 @@ class Lz4DecompressorIT {
         byte[] compressed = lz4Factory.fastCompressor().compress(original);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4);
-        byte[] result = decompressor.decompress(createMappedBuffer(compressed), original.length);
+        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length);
 
         assertThat(result).isEqualTo(original);
     }
@@ -50,7 +49,7 @@ class Lz4DecompressorIT {
         hadoop.put(compressedBlock);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4);
-        byte[] result = decompressor.decompress(createMappedBuffer(hadoop.array()), original.length);
+        byte[] result = decompressor.decompress(createDirectBuffer(hadoop.array()), original.length);
 
         assertThat(result).isEqualTo(original);
     }
@@ -77,7 +76,7 @@ class Lz4DecompressorIT {
         System.arraycopy(part2, 0, expected, part1.length, part2.length);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4);
-        byte[] result = decompressor.decompress(createMappedBuffer(hadoop.array()), expected.length);
+        byte[] result = decompressor.decompress(createDirectBuffer(hadoop.array()), expected.length);
 
         assertThat(result).isEqualTo(expected);
     }
@@ -89,7 +88,7 @@ class Lz4DecompressorIT {
         byte[] compressed = lz4Factory.fastCompressor().compress(original);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4);
-        byte[] result = decompressor.decompress(createMappedBuffer(compressed), original.length);
+        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length);
 
         assertThat(result).isEqualTo(original);
     }
@@ -100,7 +99,7 @@ class Lz4DecompressorIT {
         byte[] compressed = lz4Factory.fastCompressor().compress(original);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4_RAW);
-        byte[] result = decompressor.decompress(createMappedBuffer(compressed), original.length);
+        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length);
 
         assertThat(result).isEqualTo(original);
     }
@@ -112,7 +111,7 @@ class Lz4DecompressorIT {
         byte[] compressed = lz4Factory.fastCompressor().compress(original);
 
         Decompressor decompressor = factory().getDecompressor(CompressionCodec.LZ4_RAW);
-        byte[] result = decompressor.decompress(createMappedBuffer(compressed), original.length);
+        byte[] result = decompressor.decompress(createDirectBuffer(compressed), original.length);
 
         assertThat(result).isEqualTo(original);
     }
@@ -129,10 +128,10 @@ class Lz4DecompressorIT {
         return new DecompressorFactory(null);
     }
 
-    private static MappedByteBuffer createMappedBuffer(byte[] data) {
+    private static ByteBuffer createDirectBuffer(byte[] data) {
         ByteBuffer direct = ByteBuffer.allocateDirect(data.length);
         direct.put(data);
         direct.flip();
-        return (MappedByteBuffer) direct;
+        return direct;
     }
 }
