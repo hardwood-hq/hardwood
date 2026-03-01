@@ -8,7 +8,7 @@
 package dev.hardwood.internal.compression;
 
 import java.io.IOException;
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
@@ -27,7 +27,7 @@ public class GzipDecompressor implements Decompressor {
     private static final int FCOMMENT = 16;
 
     @Override
-    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
         byte[] result = new byte[uncompressedSize];
         int totalDecompressed = 0;
 
@@ -38,7 +38,7 @@ public class GzipDecompressor implements Decompressor {
             Inflater inflater = new Inflater(true); // true = nowrap (raw deflate)
             try {
                 // slice() with indices is absolute - must add current position
-                MappedByteBuffer dataSlice = compressed.slice(compressed.position() + headerEnd, compressed.remaining() - headerEnd);
+            	ByteBuffer dataSlice = compressed.slice(compressed.position() + headerEnd, compressed.remaining() - headerEnd);
                 inflater.setInput(dataSlice);
 
                 while (totalDecompressed < uncompressedSize) {
@@ -76,7 +76,7 @@ public class GzipDecompressor implements Decompressor {
         return result;
     }
 
-    private int skipGzipHeader(MappedByteBuffer buffer) throws IOException {
+    private int skipGzipHeader(ByteBuffer buffer) throws IOException {
         int start = buffer.position();
         if (buffer.remaining() < 10) {
             throw new IOException("GZIP data too short for header");

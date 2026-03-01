@@ -12,7 +12,6 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.MappedByteBuffer;
 
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
@@ -89,7 +88,7 @@ public class PageReader {
      * @param dictionary dictionary for this page, or null if not dictionary-encoded
      * @return decoded page
      */
-    public Page decodePage(MappedByteBuffer pageBuffer, Dictionary dictionary) throws IOException {
+    public Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary) throws IOException {
         PageDecodedEvent event = new PageDecodedEvent();
         event.begin();
 
@@ -100,7 +99,7 @@ public class PageReader {
 
         // Slice the page data (avoids copying)
         int compressedSize = pageHeader.compressedPageSize();
-        MappedByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
+        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
 
         Page result = switch (pageHeader.type()) {
             case DATA_PAGE -> {
@@ -190,7 +189,7 @@ public class PageReader {
                 definitionLevels, repetitionLevels, dictionary);
     }
 
-    private Page parseDataPageV2(DataPageHeaderV2 header, MappedByteBuffer pageData, int uncompressedPageSize,
+    private Page parseDataPageV2(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
             Dictionary dictionary) throws IOException {
         int repLevelLen = header.repetitionLevelsByteLength();
         int defLevelLen = header.definitionLevelsByteLength();
@@ -215,7 +214,7 @@ public class PageReader {
         int uncompressedValuesSize = uncompressedPageSize - repLevelLen - defLevelLen;
 
         if (header.isCompressed() && compressedValuesLen > 0) {
-            MappedByteBuffer compressedValues = pageData.slice(valuesOffset, compressedValuesLen);
+        	ByteBuffer compressedValues = pageData.slice(valuesOffset, compressedValuesLen);
             Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
             valuesData = decompressor.decompress(compressedValues, uncompressedValuesSize);
         }

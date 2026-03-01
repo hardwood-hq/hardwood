@@ -10,7 +10,6 @@ package dev.hardwood.internal.compression.lz4;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.MappedByteBuffer;
 
 import dev.hardwood.internal.compression.Decompressor;
 import net.jpountz.lz4.LZ4Factory;
@@ -39,7 +38,7 @@ public class Lz4Decompressor implements Decompressor {
     }
 
     @Override
-    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
         // Try raw LZ4 first (most common case), then fall back to Hadoop format
         try {
             return decompressRaw(compressed, uncompressedSize);
@@ -132,7 +131,7 @@ public class Lz4Decompressor implements Decompressor {
     /**
      * Decompress using raw LZ4 block format (no framing).
      */
-    private byte[] decompressRaw(MappedByteBuffer compressed, int uncompressedSize) {
+    private byte[] decompressRaw(ByteBuffer compressed, int uncompressedSize) {
         byte[] uncompressed = new byte[uncompressedSize];
         ByteBuffer dest = ByteBuffer.wrap(uncompressed);
         fastDecompressor.decompress(compressed, 0, dest, 0, uncompressedSize);
