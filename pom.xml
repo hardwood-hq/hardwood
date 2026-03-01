@@ -157,6 +157,15 @@
           <version>3.12.0</version>
           <configuration>
             <doclint>all,-missing</doclint>
+            <doclet>nl.talsmasoftware.umldoclet.UMLDoclet</doclet>
+            <docletArtifact>
+              <groupId>nl.talsmasoftware</groupId>
+              <artifactId>umldoclet</artifactId>
+              <version>2.2.5</version>
+            </docletArtifact>
+            <additionalOptions>
+              <option>-umlImageFormat svg</option>
+            </additionalOptions>
           </configuration>
         </plugin>
         <plugin>

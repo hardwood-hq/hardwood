@@ -14,6 +14,17 @@ import dev.hardwood.metadata.RepetitionType;
 /**
  * Represents a primitive column in a Parquet schema. Stores computed definition
  * and repetition levels based on schema hierarchy.
+ *
+ * @param name column name
+ * @param type physical (storage) type of the column
+ * @param repetitionType whether the column is required, optional, or repeated
+ * @param typeLength fixed byte length for {@link PhysicalType#FIXED_LEN_BYTE_ARRAY} columns, or {@code null} otherwise
+ * @param columnIndex zero-based index of this column among all leaf columns in the schema
+ * @param maxDefinitionLevel maximum definition level, computed from the schema hierarchy
+ * @param maxRepetitionLevel maximum repetition level, computed from the schema hierarchy
+ * @param logicalType logical type annotation, or {@code null} if absent
+ * @see <a href="https://parquet.apache.org/docs/file-format/nestedencoding/">File Format – Nested Encoding</a>
+ * @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
  */
 public record ColumnSchema(
         String name,

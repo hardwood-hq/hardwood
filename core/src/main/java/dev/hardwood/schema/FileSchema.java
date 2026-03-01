@@ -17,6 +17,9 @@ import dev.hardwood.metadata.SchemaElement;
 /**
  * Root schema container representing the complete Parquet schema.
  * Supports both flat schemas and nested structures (structs, lists).
+ *
+ * @see <a href="https://parquet.apache.org/docs/file-format/">File Format</a>
+ * @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
  */
 public class FileSchema {
 
@@ -37,18 +40,35 @@ public class FileSchema {
         }
     }
 
+    /**
+     * Returns the schema name (typically "schema" or "message").
+     */
     public String getName() {
         return name;
     }
 
+    /**
+     * Returns an unmodifiable list of all leaf columns in schema order.
+     */
     public List<ColumnSchema> getColumns() {
         return columns;
     }
 
+    /**
+     * Returns the column at the given zero-based index.
+     *
+     * @param index zero-based column index
+     */
     public ColumnSchema getColumn(int index) {
         return columns.get(index);
     }
 
+    /**
+     * Returns the column with the given name.
+     *
+     * @param name column name
+     * @throws IllegalArgumentException if no column with the given name exists
+     */
     public ColumnSchema getColumn(String name) {
         int index = columnNameToIndex.get(name);
         if (index < 0) {
@@ -57,6 +77,9 @@ public class FileSchema {
         return columns.get(index);
     }
 
+    /**
+     * Returns the total number of leaf columns in this schema.
+     */
     public int getColumnCount() {
         return columns.size();
     }

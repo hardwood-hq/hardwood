@@ -17,21 +17,36 @@ import dev.hardwood.metadata.RepetitionType;
 /**
  * Tree-based representation of Parquet schema for nested data support.
  * Each node represents either a primitive column or a group (struct/list/map).
+ *
+ * @see <a href="https://parquet.apache.org/docs/file-format/nestedencoding/">File Format – Nested Encoding</a>
+ * @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
  */
 public sealed
 
 interface SchemaNode {
 
+    /** Returns the field name. */
     String name();
 
+    /** Returns the repetition type (required, optional, or repeated). */
     RepetitionType repetitionType();
 
+    /** Returns the maximum definition level, computed from the schema hierarchy. */
     int maxDefinitionLevel();
 
+    /** Returns the maximum repetition level, computed from the schema hierarchy. */
     int maxRepetitionLevel();
 
     /**
      * Primitive leaf node representing an actual data column.
+     *
+     * @param name field name
+     * @param type physical (storage) type
+     * @param repetitionType whether the field is required, optional, or repeated
+     * @param logicalType logical type annotation, or {@code null} if absent
+     * @param columnIndex zero-based index among all leaf columns
+     * @param maxDefinitionLevel maximum definition level
+     * @param maxRepetitionLevel maximum repetition level
      */
     record PrimitiveNode(
             String name,
@@ -45,6 +60,13 @@ interface SchemaNode {
 
     /**
      * Group node representing a struct, list, or map.
+     *
+     * @param name field name
+     * @param repetitionType whether the group is required, optional, or repeated
+     * @param convertedType legacy annotation indicating list, map, or map-key-value semantics, or {@code null} for plain structs
+     * @param children child nodes of this group
+     * @param maxDefinitionLevel maximum definition level
+     * @param maxRepetitionLevel maximum repetition level
      */
     record GroupNode(
             String name,
