@@ -33,6 +33,7 @@ public class PageHeaderReader {
         PageHeader.PageType type = null;
         int uncompressedPageSize = 0;
         int compressedPageSize = 0;
+        Integer crc = null;
         DataPageHeader dataPageHeader = null;
         DataPageHeaderV2 dataPageHeaderV2 = null;
         DictionaryPageHeader dictionaryPageHeader = null;
@@ -68,8 +69,13 @@ public class PageHeaderReader {
                         reader.skipField(header.type());
                     }
                     break;
-                case 4: // crc (optional) - skipped for now
-                    reader.skipField(header.type());
+                case 4: // crc
+                    if (header.type() == 0x05) {
+                        crc = reader.readI32();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 5: // data_page_header
                     if (header.type() == 0x0C) {
@@ -110,6 +116,6 @@ public class PageHeaderReader {
         }
 
         return new PageHeader(type, uncompressedPageSize, compressedPageSize,
-                dataPageHeader, dataPageHeaderV2, dictionaryPageHeader);
+                dataPageHeader, dataPageHeaderV2, dictionaryPageHeader, crc);
     }
 }

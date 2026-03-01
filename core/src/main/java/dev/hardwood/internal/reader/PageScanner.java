@@ -125,6 +125,10 @@ public class PageScanner {
             int totalPageSize = headerSize + compressedSize;
 
             if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
+                MappedByteBuffer compressedData = buffer.slice(pageDataOffset, compressedSize);
+                if (header.crc() != null) {
+                    CrcValidator.validate(header.crc(), compressedData, columnSchema.name());
+                }
                 int numValues = header.dictionaryPageHeader().numValues();
                 if (numValues < 0) {
                     throw new IOException("Invalid dictionary page for column '" + columnSchema.name()

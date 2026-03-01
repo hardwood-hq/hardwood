@@ -101,6 +101,10 @@ public class PageReader {
         int compressedSize = pageHeader.compressedPageSize();
         ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
 
+        if (pageHeader.crc() != null) {
+            CrcValidator.validate(pageHeader.crc(), pageData, column.name());
+        }
+
         Page result = switch (pageHeader.type()) {
             case DATA_PAGE -> {
                 Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());

@@ -16,7 +16,8 @@ public record PageHeader(
         int compressedPageSize,
         DataPageHeader dataPageHeader,
         DataPageHeaderV2 dataPageHeaderV2,
-        DictionaryPageHeader dictionaryPageHeader) {
+        DictionaryPageHeader dictionaryPageHeader,
+        Integer crc) {
 
     public enum PageType {
         DATA_PAGE(0),
