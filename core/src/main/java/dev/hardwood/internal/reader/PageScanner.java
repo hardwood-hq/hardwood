@@ -130,6 +130,9 @@ public class PageScanner {
 
             if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
                 MappedByteBuffer compressedData = buffer.slice(pageDataOffset, compressedSize);
+                if (header.crc() != null) {
+                    CrcValidator.validate(header.crc(), compressedData, columnSchema.name());
+                }
                 int numValues = header.dictionaryPageHeader().numValues();
                 int uncompressedSize = header.uncompressedPageSize();
 
