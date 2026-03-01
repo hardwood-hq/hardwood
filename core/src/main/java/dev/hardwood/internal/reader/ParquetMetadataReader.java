@@ -38,7 +38,7 @@ public final class ParquetMetadataReader {
     /**
      * Reads file metadata from a memory-mapped buffer covering the entire file.
      *
-     * @param fileMapping the memory-mapped buffer of the entire file
+     * @param buffer the buffer of the entire file
      * @param path the file path (used for error messages)
      * @return the parsed FileMetaData
      * @throws IOException if the file is not a valid Parquet file

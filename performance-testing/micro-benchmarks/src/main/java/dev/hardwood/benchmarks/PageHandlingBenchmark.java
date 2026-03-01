@@ -8,6 +8,7 @@
 package dev.hardwood.benchmarks;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
@@ -126,7 +127,7 @@ public class PageHandlingBenchmark {
     @Benchmark
     public void a_decompressPages(Blackhole blackhole) throws IOException {
         for (PageInfo pageInfo : allPages) {
-            MappedByteBuffer pageData = pageInfo.pageData();
+            ByteBuffer pageData = pageInfo.pageData();
 
             // Parse page header to get compressed/uncompressed sizes
             ThriftCompactReader headerReader = new ThriftCompactReader(pageData, 0);
@@ -137,7 +138,7 @@ public class PageHandlingBenchmark {
             int uncompressedSize = header.uncompressedPageSize();
 
             // Slice compressed data
-            MappedByteBuffer compressedData = pageData.slice(headerSize, compressedSize);
+            ByteBuffer compressedData = pageData.slice(headerSize, compressedSize);
 
             // Decompress using the file's actual codec
             Decompressor decompressor = context.decompressorFactory().getDecompressor(pageInfo.columnMetaData().codec());
