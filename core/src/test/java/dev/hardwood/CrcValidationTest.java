@@ -118,6 +118,7 @@ class CrcValidationTest {
                 corruptOffset = meta.dictionaryPageOffset() + meta.totalCompressedSize() - 1;
             }
 
+            // Invoke explicit byte corruption
             flipByte(corrupted, corruptOffset);
 
             assertThatThrownBy(() -> {
@@ -152,6 +153,9 @@ class CrcValidationTest {
         }
     }
 
+    /**
+     * Flips a given file byte to simulate potential corruption
+     */
     private static void flipByte(Path file, long offset) throws IOException {
         try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "rw")) {
             raf.seek(offset);
