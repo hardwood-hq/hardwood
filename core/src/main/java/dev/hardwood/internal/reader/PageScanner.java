@@ -8,7 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -34,7 +34,7 @@ public class PageScanner {
     private final ColumnSchema columnSchema;
     private final ColumnChunk columnChunk;
     private final HardwoodContextImpl context;
-    private final MappedByteBuffer fileMapping;
+    private final ByteBuffer fileMapping;
     private final long fileMappingBaseOffset;
     private final String filePath;
     private final int rowGroupIndex;
@@ -49,7 +49,7 @@ public class PageScanner {
      * @param fileMappingBaseOffset the file offset where fileMapping starts
      */
     public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
-                       MappedByteBuffer fileMapping, long fileMappingBaseOffset) {
+                       ByteBuffer fileMapping, long fileMappingBaseOffset) {
         this(columnSchema, columnChunk, context, fileMapping, fileMappingBaseOffset, null, -1);
     }
 
@@ -65,7 +65,7 @@ public class PageScanner {
      * @param rowGroupIndex the row group index for JFR event reporting
      */
     public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
-                       MappedByteBuffer fileMapping, long fileMappingBaseOffset,
+                       ByteBuffer fileMapping, long fileMappingBaseOffset,
                        String filePath, int rowGroupIndex) {
         this.columnSchema = columnSchema;
         this.columnChunk = columnChunk;
@@ -99,7 +99,7 @@ public class PageScanner {
         long chunkSize = metaData.totalCompressedSize();
 
         int sliceOffset = (int) (chunkStartOffset - fileMappingBaseOffset);
-        MappedByteBuffer buffer;
+        ByteBuffer buffer;
         try {
             buffer = fileMapping.slice(sliceOffset, (int) chunkSize);
         }
@@ -129,7 +129,7 @@ public class PageScanner {
             int totalPageSize = headerSize + compressedSize;
 
             if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
-                MappedByteBuffer compressedData = buffer.slice(pageDataOffset, compressedSize);
+                ByteBuffer compressedData = buffer.slice(pageDataOffset, compressedSize);
                 int numValues = header.dictionaryPageHeader().numValues();
                 int uncompressedSize = header.uncompressedPageSize();
 
@@ -138,7 +138,7 @@ public class PageScanner {
             }
             else if (header.type() == PageHeader.PageType.DATA_PAGE ||
                      header.type() == PageHeader.PageType.DATA_PAGE_V2) {
-                MappedByteBuffer pageSlice = buffer.slice(position, totalPageSize);
+                ByteBuffer pageSlice = buffer.slice(position, totalPageSize);
 
                 PageInfo pageInfo = new PageInfo(
                     pageSlice,
@@ -163,7 +163,7 @@ public class PageScanner {
         return pageInfos;
     }
 
-    private Dictionary parseDictionary(MappedByteBuffer compressedData, int numValues,
+    private Dictionary parseDictionary(ByteBuffer compressedData, int numValues,
             int uncompressedSize, ColumnSchema column, CompressionCodec codec) throws IOException {
         int compressedSize = compressedData.remaining();
         try {

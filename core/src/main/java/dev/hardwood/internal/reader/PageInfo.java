@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.schema.ColumnSchema;
@@ -20,7 +20,7 @@ import dev.hardwood.schema.ColumnSchema;
  * </p>
  */
 public record PageInfo(
-    MappedByteBuffer pageData,
+    ByteBuffer pageData,
     ColumnSchema columnSchema,
     ColumnMetaData columnMetaData,
     Dictionary dictionary

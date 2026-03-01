@@ -8,7 +8,7 @@
 package dev.hardwood.internal.compression;
 
 import java.io.IOException;
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 
 import com.github.luben.zstd.Zstd;
 
@@ -18,7 +18,7 @@ import com.github.luben.zstd.Zstd;
 public class ZstdDecompressor implements Decompressor {
 
     @Override
-    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) throws IOException {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
         // Decompress directly from MappedByteBuffer to byte[] - no copying
         byte[] uncompressed = new byte[uncompressedSize];
         int actualSize = Zstd.decompress(uncompressed, compressed);

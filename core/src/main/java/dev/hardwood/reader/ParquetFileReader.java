@@ -8,6 +8,7 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
 import java.nio.file.Path;
@@ -46,11 +47,21 @@ public class ParquetFileReader implements AutoCloseable {
 
     private final Path path;
     private final FileChannel channel;
-    private final MappedByteBuffer fileMapping;
+    private final ByteBuffer fileMapping;
     private final FileMetaData fileMetaData;
     private final HardwoodContextImpl context;
     private final boolean ownsContext;
 
+    private ParquetFileReader(ByteBuffer fileMapping,
+            FileMetaData fileMetaData, HardwoodContextImpl context, boolean ownsContext) {
+		this.path = null;
+		this.channel = null;
+		this.fileMapping = fileMapping;
+		this.fileMetaData = fileMetaData;
+		this.context = context;
+		this.ownsContext = ownsContext;
+	}
+    
     private ParquetFileReader(Path path, FileChannel channel, MappedByteBuffer fileMapping,
                               FileMetaData fileMetaData, HardwoodContextImpl context, boolean ownsContext) {
         this.path = path;
@@ -59,6 +70,15 @@ public class ParquetFileReader implements AutoCloseable {
         this.fileMetaData = fileMetaData;
         this.context = context;
         this.ownsContext = ownsContext;
+    }
+    
+    /**
+     * Open a Parquet file from memory with a dedicated context.
+     * The context is closed when this reader is closed.
+     */
+    public static ParquetFileReader open(ByteBuffer buffer) throws IOException {
+        HardwoodContextImpl context = HardwoodContextImpl.create();
+        return open(buffer, context, true);
     }
 
     /**
@@ -126,6 +146,12 @@ public class ParquetFileReader implements AutoCloseable {
             throw e;
         }
     }
+    
+    private static ParquetFileReader open(ByteBuffer buffer, HardwoodContextImpl context,
+            boolean ownsContext) throws IOException {
+        FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(buffer, null);
+        return new ParquetFileReader(buffer, fileMetaData, context, ownsContext);
+    }
 
     public FileMetaData getFileMetaData() {
         return fileMetaData;
@@ -167,7 +193,7 @@ public class ParquetFileReader implements AutoCloseable {
     public RowReader createRowReader(ColumnProjection projection) {
         FileSchema schema = getFileSchema();
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        String fileName = path.getFileName().toString();
+        String fileName = path != null ? path.getFileName().toString() : "";
         return new SingleFileRowReader(schema, projectedSchema, fileMapping, fileMetaData.rowGroups(), context, fileName);
     }
 

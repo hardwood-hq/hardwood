@@ -10,7 +10,6 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.nio.MappedByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.Arrays;
@@ -44,22 +43,22 @@ public final class ParquetMetadataReader {
      * @return the parsed FileMetaData
      * @throws IOException if the file is not a valid Parquet file
      */
-    public static FileMetaData readMetadata(MappedByteBuffer fileMapping, Path path) throws IOException {
-        int fileSize = fileMapping.limit();
+    public static FileMetaData readMetadata(ByteBuffer buffer, Path path) throws IOException {
+        int fileSize = buffer.limit();
         if (fileSize < MAGIC_SIZE + MAGIC_SIZE + FOOTER_LENGTH_SIZE) {
             throw new IOException("File too small to be a valid Parquet file: " + path);
         }
 
         // Validate magic number at start
         byte[] startMagic = new byte[MAGIC_SIZE];
-        fileMapping.get(0, startMagic);
+        buffer.get(0, startMagic);
         if (!Arrays.equals(startMagic, MAGIC)) {
             throw new IOException("Not a Parquet file (invalid magic number at start): " + path);
         }
 
         // Read footer size and magic number at end
         int footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
-        ByteBuffer footerInfoBuf = fileMapping.slice(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
+        ByteBuffer footerInfoBuf = buffer.slice(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
         footerInfoBuf.order(ByteOrder.LITTLE_ENDIAN);
         int footerLength = footerInfoBuf.getInt();
         byte[] endMagic = new byte[MAGIC_SIZE];
@@ -75,7 +74,7 @@ public final class ParquetMetadataReader {
         }
 
         // Parse file metadata directly from the mapping (no copy needed)
-        ByteBuffer footerBuffer = fileMapping.slice(footerStart, footerLength);
+        ByteBuffer footerBuffer = buffer.slice(footerStart, footerLength);
         ThriftCompactReader reader = new ThriftCompactReader(footerBuffer);
         return FileMetaDataReader.read(reader);
     }

@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.compression;
 
-import java.nio.MappedByteBuffer;
+import java.nio.ByteBuffer;
 
 /**
  * Decompressor for uncompressed data (passthrough).
@@ -15,7 +15,7 @@ import java.nio.MappedByteBuffer;
 public class UncompressedDecompressor implements Decompressor {
 
     @Override
-    public byte[] decompress(MappedByteBuffer compressed, int uncompressedSize) {
+    public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
         byte[] data = new byte[compressed.remaining()];
         compressed.get(data);
         return data;
