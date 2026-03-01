@@ -406,8 +406,19 @@ public class ColumnValueIterator {
             return false;
         }
 
+        boolean firstPage = (currentPage == null);
         currentPage = pageCursor.nextPage();
         position = 0;
+
+        if (firstPage && currentPage != null) {
+            int[] repLevels = currentPage.repetitionLevels();
+            if (repLevels != null && repLevels.length > 0 && repLevels[0] != 0) {
+                throw new IllegalStateException(
+                        "Invalid column chunk for '" + column.name()
+                        + "': first repetition level must be 0 but was " + repLevels[0]);
+            }
+        }
+
         return currentPage != null;
     }
 

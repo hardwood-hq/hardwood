@@ -95,7 +95,8 @@ class ThriftEnumLookup {
         if (value >= 0 && value < PHYSICAL_TYPES.length) {
             return PHYSICAL_TYPES[value];
         }
-        throw new IllegalArgumentException("Unknown physical type: " + value);
+        throw new IllegalArgumentException("Invalid or corrupt physical type value: " + value
+                + " (expected 0-7). File metadata may be corrupted");
     }
 
     static RepetitionType repetitionType(int value) {

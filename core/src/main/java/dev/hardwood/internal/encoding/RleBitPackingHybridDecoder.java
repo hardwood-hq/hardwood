@@ -44,6 +44,10 @@ public class RleBitPackingHybridDecoder {
     }
 
     public RleBitPackingHybridDecoder(byte[] data, int bitWidth) {
+        if (bitWidth < 0 || bitWidth > 32) {
+            throw new IllegalArgumentException("Invalid RLE bit width: " + bitWidth
+                    + ". Must be between 0 and 32");
+        }
         this.data = data;
         this.dataBuffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
         this.bitWidth = bitWidth;
@@ -78,6 +82,11 @@ public class RleBitPackingHybridDecoder {
             outPos += toRead;
             remainingInRun -= toRead;
             remaining -= toRead;
+        }
+
+        if (remaining > 0) {
+            throw new IllegalStateException("Insufficient RLE/Bit-Packing data: decoded "
+                    + (count - remaining) + " of " + count + " requested values");
         }
     }
 

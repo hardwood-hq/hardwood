@@ -25,6 +25,7 @@ import org.apache.parquet.avro.AvroParquetReader;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.junit.jupiter.api.BeforeAll;
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -37,6 +38,7 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.assertj.core.api.Assertions.within;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
@@ -81,7 +83,15 @@ class ParquetComparisonTest {
             "case-138.parquet", // NullPointer on Schema field
 
             // shredded_variant files with Hardwood issues
-            "case-046.parquet" // EOF while reading BYTE_ARRAY
+            "case-046.parquet", // EOF while reading BYTE_ARRAY
+
+            // bad_data files (intentionally malformed, rejected by Hardwood)
+            "PARQUET-1481.parquet",
+            "ARROW-RS-GH-6229-DICTHEADER.parquet",
+            "ARROW-RS-GH-6229-LEVELS.parquet",
+            "ARROW-GH-41317.parquet",
+            "ARROW-GH-41321.parquet",
+            "ARROW-GH-45185.parquet"
     );
 
     /**
@@ -101,6 +111,7 @@ class ParquetComparisonTest {
      */
     private static final List<String> TEST_DIRECTORIES = List.of(
             "data",
+            "bad_data",
             "shredded_variant");
 
     /**
@@ -167,6 +178,103 @@ class ParquetComparisonTest {
                 "Skipping " + fileName + " (in column skip list)");
 
         compareColumnsParquetFile(testFile);
+    }
+
+    // ==================== Bad Data Tests ====================
+
+    @Test
+    void rejectParquet1481() throws IOException {
+        // Corrupted schema Thrift value: physical type field is -7
+        assertBadDataRejected("PARQUET-1481.parquet",
+                "Invalid or corrupt physical type value: -7");
+    }
+
+    @Test
+    void rejectDictheader() throws IOException {
+        // Dictionary page header has negative numValues.
+        // All 4 columns are corrupted differently; parallel column scanning
+        // means any column's error may surface first.
+        assertBadDataRejected("ARROW-RS-GH-6229-DICTHEADER.parquet");
+    }
+
+    @Test
+    void rejectLevels() throws IOException {
+        // Page has insufficient repetition levels: the page header declares
+        // 21 values but column metadata expects only 1.
+        assertBadDataRejected("ARROW-RS-GH-6229-LEVELS.parquet",
+                "Value count mismatch for column 'c': metadata declares 1 values but pages contain 21");
+    }
+
+    @Test
+    void rejectArrowGH41317() throws IOException {
+        // Columns do not have the same size: timestamp_us_no_tz has no data
+        // pages (0 values vs 3 declared in metadata).
+        assertBadDataRejected("ARROW-GH-41317.parquet",
+                "Value count mismatch for column 'timestamp_us_no_tz': metadata declares 3 values but pages contain 0");
+    }
+
+    @Test
+    void rejectArrowGH41321() throws IOException {
+        // Decoded rep/def levels less than num_values in page header.
+        // Column 'value' also has negative dictionary numValues which is
+        // caught first during page scanning.
+        assertBadDataRejected("ARROW-GH-41321.parquet",
+                "Invalid dictionary page for column 'value': negative numValues");
+    }
+
+    @Test
+    void rejectArrowGH45185() throws IOException {
+        // Repetition levels start with 1 instead of the required 0
+        assertBadDataRejected("ARROW-GH-45185.parquet",
+                "first repetition level must be 0 but was 1");
+    }
+
+    @Test
+    void acceptArrowGH43605() throws IOException {
+        // Dictionary index page uses RLE encoding with bit-width 0.
+        // This is valid for a single-entry dictionary (ceil(log2(1)) = 0);
+        // parquet-java also accepts this file.
+        Path repoDir = ParquetTestingRepoCloner.ensureCloned();
+        Path testFile = repoDir.resolve("bad_data/ARROW-GH-43605.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(testFile);
+             RowReader rowReader = fileReader.createRowReader()) {
+            int count = 0;
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                count++;
+            }
+            assertThat(count).isGreaterThan(0);
+        }
+    }
+
+    private void assertBadDataRejected(String fileName) throws IOException {
+        Path repoDir = ParquetTestingRepoCloner.ensureCloned();
+        Path testFile = repoDir.resolve("bad_data/" + fileName);
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader fileReader = ParquetFileReader.open(testFile);
+                 RowReader rowReader = fileReader.createRowReader()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                }
+            }
+        }).as("Expected %s to be rejected", fileName);
+    }
+
+    private void assertBadDataRejected(String fileName, String expectedMessage) throws IOException {
+        Path repoDir = ParquetTestingRepoCloner.ensureCloned();
+        Path testFile = repoDir.resolve("bad_data/" + fileName);
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader fileReader = ParquetFileReader.open(testFile);
+                 RowReader rowReader = fileReader.createRowReader()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                }
+            }
+        }).as("Expected %s to be rejected", fileName)
+          .hasStackTraceContaining(expectedMessage);
     }
 
     /**

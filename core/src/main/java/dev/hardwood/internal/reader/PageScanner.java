@@ -129,8 +129,13 @@ public class PageScanner {
             int totalPageSize = headerSize + compressedSize;
 
             if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
-                MappedByteBuffer compressedData = buffer.slice(pageDataOffset, compressedSize);
                 int numValues = header.dictionaryPageHeader().numValues();
+                if (numValues < 0) {
+                    throw new IOException("Invalid dictionary page for column '" + columnSchema.name()
+                            + "': negative numValues (" + numValues + ")");
+                }
+
+                MappedByteBuffer compressedData = buffer.slice(pageDataOffset, compressedSize);
                 int uncompressedSize = header.uncompressedPageSize();
 
                 dictionary = parseDictionary(compressedData, numValues, uncompressedSize,
@@ -152,6 +157,12 @@ public class PageScanner {
             }
 
             position += totalPageSize;
+        }
+
+        if (valuesRead != metaData.numValues()) {
+            throw new IOException("Value count mismatch for column '" + columnSchema.name()
+                    + "': metadata declares " + metaData.numValues()
+                    + " values but pages contain " + valuesRead);
         }
 
         event.file = filePath;

@@ -258,4 +258,5 @@ final class SingleFileRowReader extends AbstractRowReader {
             return result;
         });
     }
+
 }

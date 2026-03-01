@@ -87,7 +87,8 @@
       "Bash(../mvnw surefire:test:*)",
       "Bash(git status:*)",
       "WebFetch(domain:docs.overturemaps.org)",
-      "WebFetch(domain:registry.opendata.aws)"
+      "WebFetch(domain:registry.opendata.aws)",
+      "WebFetch(domain:www.mail-archive.com)"
     ]
   }
 }

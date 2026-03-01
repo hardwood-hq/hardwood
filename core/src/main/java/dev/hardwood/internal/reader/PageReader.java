@@ -338,6 +338,10 @@ public class PageReader {
                 if (bitWidth < 0) {
                     throw new IOException("Failed to read bit width for dictionary indices");
                 }
+                if (bitWidth > 32) {
+                    throw new IOException("Invalid dictionary index bit width: " + bitWidth
+                            + " for column '" + column.name() + "'. Must be between 0 and 32");
+                }
                 byte[] indicesData = dataStream.readAllBytes();
                 RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(indicesData, bitWidth);
 
