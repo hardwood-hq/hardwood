@@ -8,11 +8,10 @@
 package dev.hardwood;
 
 import java.io.IOException;
-import java.io.RandomAccessFile;
+import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardCopyOption;
 
 import org.junit.jupiter.api.Test;
 
@@ -29,7 +28,7 @@ class CrcValidationTest {
     void testReadFileWithCrc() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_with_crc.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(3);
 
             try (ColumnReader idReader = reader.createColumnReader("id")) {
@@ -55,39 +54,34 @@ class CrcValidationTest {
     @Test
     void testCorruptedDataDetected() throws Exception {
         Path source = Paths.get("src/test/resources/plain_with_crc.parquet");
-        Path corrupted = Files.createTempFile("corrupted_crc_", ".parquet");
-        try {
-            Files.copy(source, corrupted, StandardCopyOption.REPLACE_EXISTING);
+        byte[] bytes = Files.readAllBytes(source);
 
-            // Derive the corruption offset from metadata: corrupt the last byte
-            // of the first column chunk, which is always within page data.
-            long corruptOffset;
-            try (ParquetFileReader reader = ParquetFileReader.open(source)) {
-                ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
-                corruptOffset = meta.dataPageOffset() + meta.totalCompressedSize() - 1;
-            }
+        // Read metadata to find the corruption offset
+        long corruptOffset;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            corruptOffset = meta.dataPageOffset() + meta.totalCompressedSize() - 1;
+        }
 
-            flipByte(corrupted, corruptOffset);
+        // Flip a byte to corrupt the data page
+        bytes[(int) corruptOffset] ^= 0xFF;
 
-            assertThatThrownBy(() -> {
-                try (ParquetFileReader reader = ParquetFileReader.open(corrupted)) {
-                    try (ColumnReader colReader = reader.createColumnReader("id")) {
-                        colReader.nextBatch();
-                    }
+        ByteBuffer corrupted = ByteBuffer.wrap(bytes);
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted))) {
+                try (ColumnReader colReader = reader.createColumnReader("id")) {
+                    colReader.nextBatch();
                 }
-            }).hasRootCauseInstanceOf(IOException.class)
-              .rootCause().hasMessageContaining("CRC mismatch");
-        }
-        finally {
-            Files.deleteIfExists(corrupted);
-        }
+            }
+        }).hasRootCauseInstanceOf(IOException.class)
+          .rootCause().hasMessageContaining("CRC mismatch");
     }
 
     @Test
     void testReadDictionaryFileWithCrc() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/dictionary_with_crc.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(5);
 
             try (ColumnReader categoryReader = reader.createColumnReader("category")) {
@@ -106,40 +100,34 @@ class CrcValidationTest {
     @Test
     void testCorruptedDictionaryPageDetected() throws Exception {
         Path source = Paths.get("src/test/resources/dictionary_with_crc.parquet");
-        Path corrupted = Files.createTempFile("corrupted_dict_crc_", ".parquet");
-        try {
-            Files.copy(source, corrupted, StandardCopyOption.REPLACE_EXISTING);
+        byte[] bytes = Files.readAllBytes(source);
 
-            // Corrupt the last byte of the dictionary column chunk (column 1),
-            // which covers the dictionary page data.
-            long corruptOffset;
-            try (ParquetFileReader reader = ParquetFileReader.open(source)) {
-                ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(1).metaData();
-                corruptOffset = meta.dictionaryPageOffset() + meta.totalCompressedSize() - 1;
-            }
+        // Read metadata to find the dictionary page corruption offset
+        long corruptOffset;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(1).metaData();
+            corruptOffset = meta.dictionaryPageOffset() + meta.totalCompressedSize() - 1;
+        }
 
-            // Invoke explicit byte corruption
-            flipByte(corrupted, corruptOffset);
+        // Flip a byte to corrupt the dictionary page
+        bytes[(int) corruptOffset] ^= 0xFF;
 
-            assertThatThrownBy(() -> {
-                try (ParquetFileReader reader = ParquetFileReader.open(corrupted)) {
-                    try (ColumnReader colReader = reader.createColumnReader("category")) {
-                        colReader.nextBatch();
-                    }
+        ByteBuffer corrupted = ByteBuffer.wrap(bytes);
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted))) {
+                try (ColumnReader colReader = reader.createColumnReader("category")) {
+                    colReader.nextBatch();
                 }
-            }).hasRootCauseInstanceOf(IOException.class)
-              .rootCause().hasMessageContaining("CRC mismatch");
-        }
-        finally {
-            Files.deleteIfExists(corrupted);
-        }
+            }
+        }).hasRootCauseInstanceOf(IOException.class)
+          .rootCause().hasMessageContaining("CRC mismatch");
     }
 
     @Test
     void testFilesWithoutCrc() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(3);
 
             try (ColumnReader idReader = reader.createColumnReader("id")) {
@@ -150,18 +138,6 @@ class CrcValidationTest {
                 assertThat(values[2]).isEqualTo(3L);
                 assertThat(idReader.nextBatch()).isFalse();
             }
-        }
-    }
-
-    /**
-     * Flips a given file byte to simulate potential corruption
-     */
-    private static void flipByte(Path file, long offset) throws IOException {
-        try (RandomAccessFile raf = new RandomAccessFile(file.toFile(), "rw")) {
-            raf.seek(offset);
-            byte original = raf.readByte();
-            raf.seek(offset);
-            raf.writeByte(original ^ 0xFF);
         }
     }
 }
