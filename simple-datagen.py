@@ -1153,7 +1153,7 @@ print("  - Compression: UNCOMPRESSED (compression=None)")
 print("  - CRC: Enabled (write_page_checksum=True)")
 print("  - Data: id=[1,2,3], value=[100,200,300] - NO NULLS")
 
-# 22. Dictionary encoding with CRC page checksums enabled
+# 23. Dictionary encoding with CRC page checksums enabled
 pq.write_table(table_dict, 'core/src/test/resources/dictionary_with_crc.parquet',
                write_page_checksum=True,
                use_dictionary=['category'],
