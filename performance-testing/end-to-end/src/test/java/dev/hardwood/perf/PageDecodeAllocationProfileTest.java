@@ -44,6 +44,8 @@ import dev.hardwood.schema.FileSchema;
  */
 public class PageDecodeAllocationProfileTest {
 
+    private static final int MEASUREMENT_ITERATIONS = 5;
+
     private static final String[] PROFILING_FILES = {
             "profiling_uncompressed_plain.parquet",
             "profiling_snappy_plain.parquet",
@@ -148,16 +150,25 @@ public class PageDecodeAllocationProfileTest {
                                 context.decompressorFactory());
                         warmupReader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
 
-                        // Measure: decode again and track allocations
-                        long beforeBytes = threadMXBean.getThreadAllocatedBytes(threadId);
+                        // Measure: decode multiple times and take the minimum
+                        // to filter out JVM noise (JIT recompilation, TLAB refills, etc.)
+                        long minAllocated = Long.MAX_VALUE;
+                        Page page = null;
 
-                        PageReader pageReader = new PageReader(
-                                pageInfo.columnMetaData(), pageInfo.columnSchema(),
-                                context.decompressorFactory());
-                        Page page = pageReader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
+                        for (int iter = 0; iter < MEASUREMENT_ITERATIONS; iter++) {
+                            long beforeBytes = threadMXBean.getThreadAllocatedBytes(threadId);
 
-                        long afterBytes = threadMXBean.getThreadAllocatedBytes(threadId);
-                        long allocated = afterBytes - beforeBytes;
+                            PageReader pageReader = new PageReader(
+                                    pageInfo.columnMetaData(), pageInfo.columnSchema(),
+                                    context.decompressorFactory());
+                            page = pageReader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
+
+                            long afterBytes = threadMXBean.getThreadAllocatedBytes(threadId);
+                            long allocated = afterBytes - beforeBytes;
+                            minAllocated = Math.min(minAllocated, allocated);
+                        }
+
+                        long allocated = minAllocated;
 
                         // Estimate uncompressed data size from the decoded page
                         int uncompressedSize = estimatePageDataSize(page);
