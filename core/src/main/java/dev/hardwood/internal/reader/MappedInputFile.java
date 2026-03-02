@@ -15,7 +15,7 @@ import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.event.FileMappingEvent;
+import dev.hardwood.jfr.FileMappingEvent;
 
 /**
  * {@link InputFile} backed by a memory-mapped file.

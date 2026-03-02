@@ -89,7 +89,8 @@
       "WebFetch(domain:docs.overturemaps.org)",
       "WebFetch(domain:registry.opendata.aws)",
       "WebFetch(domain:www.mail-archive.com)",
-      "WebFetch(domain:parquet.apache.org)"
+      "WebFetch(domain:parquet.apache.org)",
+      "WebFetch(domain:siom79.github.io)"
     ]
   }
 }

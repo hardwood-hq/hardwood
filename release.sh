@@ -82,6 +82,12 @@ BASE_BRANCH="$(git rev-parse --abbrev-ref HEAD)"
 echo "Creating release branch release/${RELEASE_VERSION} from ${BASE_BRANCH}..."
 git checkout -b "release/${RELEASE_VERSION}"
 
+# -- Generate API change report ----------------------------------------------
+
+echo "Generating API change report..."
+JAPICMP_OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
+./mvnw -ntp -B japicmp:cmp -pl :hardwood-core -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
+
 # -- Update README versions and date -----------------------------------------
 
 echo "Updating README.md versions and date..."

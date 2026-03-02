@@ -628,6 +628,7 @@ The library is organized into public API packages and internal implementation pa
 | `dev.hardwood.metadata` | **Public API** | Parquet file metadata: row groups, column chunks, physical/logical types, and compression codecs. |
 | `dev.hardwood.schema` | **Public API** | Schema representation: file schema, column schemas, and column projection. |
 | `dev.hardwood.row` | **Public API** | Value types for nested data access: structs, lists, and maps. |
+| `dev.hardwood.jfr` | **Public API** | JFR event types emitted during file reading, decoding, and pipeline operations. |
 | `dev.hardwood.internal.*` | **Internal** | Implementation details — not part of the public API and may change without notice. |
 
 ---
@@ -876,6 +877,16 @@ python nested_performance_test.py -c single_threaded -r 3
 - The flat test uses column projection (reads only the 3 summed columns), matching the Hardwood projection and column-reader contenders. The parquet-java contenders in `FlatPerformanceTest.java` read all columns without projection, so direct comparison against parquet-java is not apples-to-apples.
 - PyArrow uses vectorized columnar operations (C++ engine) rather than row-by-row iteration.
 - The `single_threaded` contender (`use_threads=False`) is most comparable to single-threaded parquet-java; `multi_threaded` is comparable to Hardwood's parallel reading.
+
+### API Change Report
+
+To generate an API change report comparing the current build against a previous release:
+
+```shell
+./mvnw japicmp:cmp -pl :hardwood-core -Djapicmp.oldVersion=<PREVIOUS_VERSION>
+```
+
+The report is written to `core/target/japicmp/`. Internal packages (`dev.hardwood.internal`) are excluded. This is run automatically during releases.
 
 #### JMH Micro-Benchmarks
 

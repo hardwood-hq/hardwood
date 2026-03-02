@@ -14,7 +14,7 @@ import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.internal.reader.event.FileOpenedEvent;
+import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;

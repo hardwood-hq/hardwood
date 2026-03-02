@@ -132,6 +132,42 @@ jobs:
         if: ${{ matrix.install_libdeflate && matrix.enable_incubating }}
         run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector"
 
+  api-change-report:
+    if: github.event_name == 'push'
+    needs: build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: 'Check out repository'
+        uses: actions/checkout@v6
+        with:
+          submodules: 'true'
+
+      - name: 'Set up Java'
+        uses: actions/setup-java@v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+          cache: 'maven'
+
+      - name: 'Download built artifacts'
+        uses: actions/download-artifact@v4
+        with:
+          name: maven-repo
+          path: ~/.m2/repository/dev/hardwood/
+
+      - name: 'Generate API change report'
+        run: |
+          JAPICMP_OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
+          echo "Comparing against ${JAPICMP_OLD_VERSION}"
+          ./mvnw -ntp -B japicmp:cmp -pl :hardwood-core -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
+
+      - name: 'Upload API change report'
+        uses: actions/upload-artifact@v6
+        with:
+          name: japicmp-report
+          path: core/target/japicmp/
+
   performance-tests:
     needs: build
     runs-on: ubuntu-latest

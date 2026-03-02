@@ -166,6 +166,32 @@
           </execution>
         </executions>
       </plugin>
+      <!-- API change report (run manually: mvn japicmp:cmp -Djapicmp.oldVersion=...) -->
+      <plugin>
+        <groupId>com.github.siom79.japicmp</groupId>
+        <artifactId>japicmp-maven-plugin</artifactId>
+        <configuration>
+          <oldVersion>
+            <dependency>
+              <groupId>${project.groupId}</groupId>
+              <artifactId>${project.artifactId}</artifactId>
+              <version>${japicmp.oldVersion}</version>
+              <type>jar</type>
+            </dependency>
+          </oldVersion>
+          <newVersion>
+            <file>
+              <path>${project.build.directory}/${project.build.finalName}.jar</path>
+            </file>
+          </newVersion>
+          <parameter>
+            <onlyModified>true</onlyModified>
+            <excludes>
+              <exclude>dev.hardwood.internal</exclude>
+            </excludes>
+          </parameter>
+        </configuration>
+      </plugin>
     </plugins>
   </build>
 </project>

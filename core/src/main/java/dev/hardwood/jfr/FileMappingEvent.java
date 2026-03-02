@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.internal.reader.event;
+package dev.hardwood.jfr;
 
 import jdk.jfr.Category;
 import jdk.jfr.DataAmount;

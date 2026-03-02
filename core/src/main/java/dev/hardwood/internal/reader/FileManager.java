@@ -15,7 +15,7 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.event.FileOpenedEvent;
+import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;

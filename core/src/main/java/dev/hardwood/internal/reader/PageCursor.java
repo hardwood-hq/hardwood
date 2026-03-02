@@ -14,7 +14,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
-import dev.hardwood.internal.reader.event.PrefetchMissEvent;
+import dev.hardwood.jfr.PrefetchMissEvent;
 
 /**
  * Cursor over a column's pages with async prefetching.

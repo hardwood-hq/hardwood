@@ -67,6 +67,13 @@ jobs:
           JRELEASER_GPG_SECRET_KEY: ${{ secrets.JRELEASER_GPG_SECRET_KEY }}
           JRELEASER_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
+      - name: 'API change report'
+        if: always()
+        uses: actions/upload-artifact@v6
+        with:
+          name: japicmp-report
+          path: core/target/japicmp/
+
       - name: 'JReleaser output'
         if: always()
         uses: actions/upload-artifact@v6
