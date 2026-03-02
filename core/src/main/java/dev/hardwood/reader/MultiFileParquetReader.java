@@ -64,7 +64,15 @@ public class MultiFileParquetReader implements AutoCloseable {
         }
         this.context = context;
         this.fileManager = new FileManager(inputFiles, context);
-        this.schema = fileManager.openFirst();
+        try {
+            this.schema = fileManager.openFirst();
+        }
+        catch (IOException e) {
+            throw new IOException("Error reading '" + inputFiles.get(0).name() + "': " + e.getMessage(), e);
+        }
+        catch (Exception e) {
+            throw AbstractRowReader.wrapWithFileContext(inputFiles.get(0).name(), e);
+        }
     }
 
     /**

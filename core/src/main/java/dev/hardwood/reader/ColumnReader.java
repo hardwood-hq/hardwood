@@ -81,6 +81,7 @@ public class ColumnReader implements AutoCloseable {
     static final int DEFAULT_BATCH_SIZE = 262_144;
 
     private final ColumnSchema column;
+    private final String fileName;
     private final int maxRepetitionLevel;
     private final ColumnValueIterator iterator;
     private final int batchSize;
@@ -100,8 +101,8 @@ public class ColumnReader implements AutoCloseable {
      * Single-file constructor. Delegates to the multi-file constructor with no FileManager.
      */
     ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContextImpl context,
-                 int batchSize, int[] levelNullThresholds) {
-        this(column, pageInfos, context, batchSize, levelNullThresholds, null, -1, null);
+                 int batchSize, int[] levelNullThresholds, String fileName) {
+        this(column, pageInfos, context, batchSize, levelNullThresholds, null, -1, fileName);
     }
 
     /**
@@ -112,6 +113,7 @@ public class ColumnReader implements AutoCloseable {
                  int batchSize, int[] levelNullThresholds,
                  FileManager fileManager, int projectedColumnIndex, String fileName) {
         this.column = column;
+        this.fileName = fileName;
         this.maxRepetitionLevel = column.maxRepetitionLevel();
         this.batchSize = batchSize;
         this.levelNullThresholds = levelNullThresholds;
@@ -140,7 +142,12 @@ public class ColumnReader implements AutoCloseable {
             return false;
         }
 
-        currentBatch = iterator.readBatch(batchSize);
+        try {
+            currentBatch = iterator.readBatch(batchSize);
+        }
+        catch (Exception e) {
+            throw AbstractRowReader.wrapWithFileContext(fileName, e);
+        }
 
         if (currentBatch.recordCount() == 0) {
             exhausted = true;
@@ -438,6 +445,7 @@ public class ColumnReader implements AutoCloseable {
             thresholds = NestedLevelComputer.computeLevelNullThresholds(
                     schema.getRootNode(), columnSchema.columnIndex());
         }
-        return new ColumnReader(columnSchema, allPages, context, DEFAULT_BATCH_SIZE, thresholds);
+        return new ColumnReader(columnSchema, allPages, context, DEFAULT_BATCH_SIZE, thresholds,
+                inputFile.name());
     }
 }

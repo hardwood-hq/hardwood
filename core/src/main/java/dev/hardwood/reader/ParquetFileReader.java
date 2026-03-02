@@ -67,6 +67,15 @@ public class ParquetFileReader implements AutoCloseable {
         try {
             return openInternal(inputFile, HardwoodContextImpl.create(), true, true);
         }
+        catch (IOException e) {
+            try {
+                inputFile.close();
+            }
+            catch (IOException closeException) {
+                e.addSuppressed(closeException);
+            }
+            throw new IOException("Error reading '" + inputFile.name() + "': " + e.getMessage(), e);
+        }
         catch (Exception e) {
             try {
                 inputFile.close();
@@ -74,7 +83,7 @@ public class ParquetFileReader implements AutoCloseable {
             catch (IOException closeException) {
                 e.addSuppressed(closeException);
             }
-            throw e;
+            throw AbstractRowReader.wrapWithFileContext(inputFile.name(), e);
         }
     }
 
@@ -91,6 +100,15 @@ public class ParquetFileReader implements AutoCloseable {
         try {
             return openInternal(inputFile, (HardwoodContextImpl) context, false, true);
         }
+        catch (IOException e) {
+            try {
+                inputFile.close();
+            }
+            catch (IOException closeException) {
+                e.addSuppressed(closeException);
+            }
+            throw new IOException("Error reading '" + inputFile.name() + "': " + e.getMessage(), e);
+        }
         catch (Exception e) {
             try {
                 inputFile.close();
@@ -98,7 +116,7 @@ public class ParquetFileReader implements AutoCloseable {
             catch (IOException closeException) {
                 e.addSuppressed(closeException);
             }
-            throw e;
+            throw AbstractRowReader.wrapWithFileContext(inputFile.name(), e);
         }
     }
 
@@ -131,16 +149,26 @@ public class ParquetFileReader implements AutoCloseable {
      * Create a ColumnReader for a named column, spanning all row groups.
      */
     public ColumnReader createColumnReader(String columnName) {
-        FileSchema schema = getFileSchema();
-        return ColumnReader.create(columnName, schema, inputFile, fileMetaData.rowGroups(), context);
+        try {
+            FileSchema schema = getFileSchema();
+            return ColumnReader.create(columnName, schema, inputFile, fileMetaData.rowGroups(), context);
+        }
+        catch (Exception e) {
+            throw AbstractRowReader.wrapWithFileContext(inputFile.name(), e);
+        }
     }
 
     /**
      * Create a ColumnReader for a column by index, spanning all row groups.
      */
     public ColumnReader createColumnReader(int columnIndex) {
-        FileSchema schema = getFileSchema();
-        return ColumnReader.create(columnIndex, schema, inputFile, fileMetaData.rowGroups(), context);
+        try {
+            FileSchema schema = getFileSchema();
+            return ColumnReader.create(columnIndex, schema, inputFile, fileMetaData.rowGroups(), context);
+        }
+        catch (Exception e) {
+            throw AbstractRowReader.wrapWithFileContext(inputFile.name(), e);
+        }
     }
 
     /**

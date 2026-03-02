@@ -7,12 +7,15 @@
  */
 package dev.hardwood.reader;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.BitSet;
 import java.util.UUID;
+import java.util.concurrent.CompletionException;
 
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.FlatColumnData;
@@ -32,6 +35,7 @@ import dev.hardwood.schema.ProjectedSchema;
  */
 abstract class AbstractRowReader implements RowReader {
 
+    protected final String fileName;
     protected BatchDataView dataView;
 
     // Iteration state shared by all row readers
@@ -40,6 +44,10 @@ abstract class AbstractRowReader implements RowReader {
     protected boolean exhausted = false;
     protected volatile boolean closed = false;
     protected boolean initialized = false;
+
+    protected AbstractRowReader(String fileName) {
+        this.fileName = fileName;
+    }
 
     // Cached flat arrays for direct access (bypasses dataView virtual dispatch)
     private Object[] flatValueArrays;
@@ -153,29 +161,39 @@ abstract class AbstractRowReader implements RowReader {
         if (closed || exhausted) {
             return false;
         }
-        if (!initialized) {
-            initialize();
-            if (!exhausted) {
+        try {
+            if (!initialized) {
+                initialize();
+                if (!exhausted) {
+                    cacheFlatBatch();
+                }
+                // Re-check after initialization since it loads the first batch
+                return !exhausted && rowIndex + 1 < batchSize;
+            }
+            if (rowIndex + 1 < batchSize) {
+                return true;
+            }
+            boolean loaded = loadNextBatch();
+            if (loaded) {
                 cacheFlatBatch();
             }
-            // Re-check after initialization since it loads the first batch
-            return !exhausted && rowIndex + 1 < batchSize;
+            return loaded;
         }
-        if (rowIndex + 1 < batchSize) {
-            return true;
+        catch (Exception e) {
+            throw wrapWithFileContext(fileName, e);
         }
-        boolean loaded = loadNextBatch();
-        if (loaded) {
-            cacheFlatBatch();
-        }
-        return loaded;
     }
 
     @Override
     public void next() {
-        if (!initialized) {
-            initialize();
-            cacheFlatBatch();
+        try {
+            if (!initialized) {
+                initialize();
+                cacheFlatBatch();
+            }
+        }
+        catch (Exception e) {
+            throw wrapWithFileContext(fileName, e);
         }
         rowIndex++;
         dataView.setRowIndex(rowIndex);
@@ -459,5 +477,40 @@ abstract class AbstractRowReader implements RowReader {
     public String getFieldName(int index) {
         initialize();
         return dataView.getFieldName(index);
+    }
+
+    /**
+     * Wraps an exception with file name context. Used at public API boundaries
+     * to ensure every exception that escapes a reader includes the originating file name.
+     */
+    static RuntimeException wrapWithFileContext(String fileName, Throwable e) {
+        // Unwrap CompletionException to get to the actual cause
+        Throwable cause = e;
+        while (cause instanceof CompletionException && cause.getCause() != null) {
+            cause = cause.getCause();
+        }
+
+        // If the message already contains the file name, re-throw as-is
+        String causeMessage = cause.getMessage();
+        if (causeMessage != null && fileName != null && causeMessage.contains(fileName)) {
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            throw new RuntimeException(cause);
+        }
+
+        String prefix = "Error reading '" + fileName + "'";
+        String message = causeMessage != null ? prefix + ": " + causeMessage : prefix;
+
+        if (cause instanceof UncheckedIOException uio) {
+            return new UncheckedIOException(message, uio.getCause());
+        }
+        if (cause instanceof IOException io) {
+            return new UncheckedIOException(message, io);
+        }
+        if (cause instanceof RuntimeException) {
+            return new RuntimeException(message, cause);
+        }
+        return new RuntimeException(message, cause);
     }
 }

@@ -64,6 +64,7 @@ public class MultiFileRowReader extends AbstractRowReader {
      */
     MultiFileRowReader(HardwoodContextImpl context,
                        FileManager fileManager, FileManager.InitResult initResult) {
+        super(initResult.firstFileState().inputFile().name());
         this.context = context;
         this.fileManager = fileManager;
         this.initResult = initResult;

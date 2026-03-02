@@ -54,6 +54,7 @@ final class SingleFileRowReader extends AbstractRowReader {
 
     SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, InputFile inputFile,
                         List<RowGroup> rowGroups, HardwoodContextImpl context) {
+        super(inputFile.name());
         this.schema = schema;
         this.projectedSchema = projectedSchema;
         this.inputFile = inputFile;
