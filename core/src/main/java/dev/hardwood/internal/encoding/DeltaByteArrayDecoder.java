@@ -8,7 +8,6 @@
 package dev.hardwood.internal.encoding;
 
 import java.io.IOException;
-import java.io.InputStream;
 
 /**
  * Decoder for DELTA_BYTE_ARRAY encoding.
@@ -35,7 +34,8 @@ import java.io.InputStream;
  */
 public class DeltaByteArrayDecoder implements ValueDecoder {
 
-    private final InputStream input;
+    private final byte[] data;
+    private final int offset;
 
     // All prefix lengths read from the delta-encoded header
     private int[] prefixLengths;
@@ -49,8 +49,9 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
     // Previous value for prefix reconstruction
     private byte[] previousValue;
 
-    public DeltaByteArrayDecoder(InputStream input) {
-        this.input = input;
+    public DeltaByteArrayDecoder(byte[] data, int offset) {
+        this.data = data;
+        this.offset = offset;
         this.currentIndex = 0;
         this.prefixLengths = null;
         this.initialized = false;
@@ -73,13 +74,14 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
 
         // Read all prefix lengths using DELTA_BINARY_PACKED
         // Prefix lengths are always encoded as INT32 per the spec
-        DeltaBinaryPackedDecoder prefixDecoder = new DeltaBinaryPackedDecoder(input);
+        DeltaBinaryPackedDecoder prefixDecoder = new DeltaBinaryPackedDecoder(data, offset);
         for (int i = 0; i < numNonNullValues; i++) {
             prefixLengths[i] = prefixDecoder.readInt();
         }
 
         // Create the suffix decoder (uses DELTA_LENGTH_BYTE_ARRAY)
-        suffixDecoder = new DeltaLengthByteArrayDecoder(input);
+        // Continue reading from where the prefix decoder stopped
+        suffixDecoder = new DeltaLengthByteArrayDecoder(data, prefixDecoder.getPos());
         suffixDecoder.initialize(numNonNullValues);
 
         initialized = true;

@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
@@ -268,8 +267,7 @@ public class PageReader {
                 };
             }
             case DELTA_BINARY_PACKED -> {
-                DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(
-                        new ByteArrayInputStream(data, offset, data.length - offset));
+                DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(data, offset);
                 return switch (type) {
                     case INT64 -> {
                         long[] values = new long[numValues];
@@ -354,8 +352,7 @@ public class PageReader {
             }
             case DELTA_LENGTH_BYTE_ARRAY -> {
                 int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(
-                        new ByteArrayInputStream(data, offset, data.length - offset));
+                DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(data, offset);
                 decoder.initialize(numNonNullValues);
                 byte[][] values = new byte[numValues][];
                 decoder.readByteArrays(values, definitionLevels, maxDefLevel);
@@ -363,8 +360,7 @@ public class PageReader {
             }
             case DELTA_BYTE_ARRAY -> {
                 int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(
-                        new ByteArrayInputStream(data, offset, data.length - offset));
+                DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(data, offset);
                 decoder.initialize(numNonNullValues);
                 byte[][] values = new byte[numValues][];
                 decoder.readByteArrays(values, definitionLevels, maxDefLevel);

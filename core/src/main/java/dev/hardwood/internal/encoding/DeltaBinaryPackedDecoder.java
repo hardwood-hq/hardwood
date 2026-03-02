@@ -8,7 +8,6 @@
 package dev.hardwood.internal.encoding;
 
 import java.io.IOException;
-import java.io.InputStream;
 
 /**
  * Decoder for DELTA_BINARY_PACKED encoding.
@@ -29,7 +28,8 @@ import java.io.InputStream;
  */
 public class DeltaBinaryPackedDecoder implements ValueDecoder {
 
-    private final InputStream input;
+    private final byte[] data;
+    private int pos;
 
     // Header values
     private int blockSize;
@@ -53,10 +53,20 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
     private byte[] miniblockData;
     private int bitPosition;
 
-    public DeltaBinaryPackedDecoder(InputStream input) {
-        this.input = input;
+    public DeltaBinaryPackedDecoder(byte[] data, int offset) {
+        this.data = data;
+        this.pos = offset;
         this.headerRead = false;
         this.valuesRead = 0;
+    }
+
+    /**
+     * Returns the current read position.
+     * Used by composite decoders (DeltaLengthByteArray, DeltaByteArray) that share the
+     * same byte[] and need to continue reading after this decoder has consumed its portion.
+     */
+    public int getPos() {
+        return pos;
     }
 
     /**
@@ -174,11 +184,10 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
 
         // Read bit widths for all miniblocks
         for (int i = 0; i < miniblockCount; i++) {
-            int b = input.read();
-            if (b < 0) {
+            if (pos >= data.length) {
                 throw new IOException("Unexpected EOF reading bitwidths");
             }
-            bitWidths[i] = b;
+            bitWidths[i] = data[pos++] & 0xFF;
         }
 
         currentMiniblock = 0;
@@ -194,11 +203,13 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
         }
         else {
             int bytesNeeded = (valuesPerMiniblock * bitWidth + 7) / 8;
-            miniblockData = new byte[bytesNeeded];
-            int read = input.read(miniblockData);
-            if (read != bytesNeeded) {
-                throw new IOException("Unexpected EOF reading miniblock data: expected " + bytesNeeded + ", got " + read);
+            if (pos + bytesNeeded > data.length) {
+                throw new IOException("Unexpected EOF reading miniblock data: expected " + bytesNeeded
+                        + ", got " + (data.length - pos));
             }
+            miniblockData = new byte[bytesNeeded];
+            System.arraycopy(data, pos, miniblockData, 0, bytesNeeded);
+            pos += bytesNeeded;
         }
         bitPosition = 0;
     }
@@ -233,10 +244,10 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
         int shift = 0;
         int b;
         do {
-            b = input.read();
-            if (b < 0) {
+            if (pos >= data.length) {
                 throw new IOException("Unexpected EOF in ULEB128");
             }
+            b = data[pos++] & 0xFF;
             result |= (b & 0x7F) << shift;
             shift += 7;
         } while ((b & 0x80) != 0);
@@ -248,10 +259,10 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
         int shift = 0;
         int b;
         do {
-            b = input.read();
-            if (b < 0) {
+            if (pos >= data.length) {
                 throw new IOException("Unexpected EOF in ULEB128");
             }
+            b = data[pos++] & 0xFF;
             result |= (long) (b & 0x7F) << shift;
             shift += 7;
         } while ((b & 0x80) != 0);

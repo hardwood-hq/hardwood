@@ -8,7 +8,7 @@
 package dev.hardwood.internal.encoding;
 
 import java.io.IOException;
-import java.io.InputStream;
+import java.util.Arrays;
 
 /**
  * Decoder for DELTA_LENGTH_BYTE_ARRAY encoding.
@@ -29,15 +29,17 @@ import java.io.InputStream;
  */
 public class DeltaLengthByteArrayDecoder implements ValueDecoder {
 
-    private final InputStream input;
+    private final byte[] data;
+    private int pos;
 
     // All lengths read from the delta-encoded header
     private int[] lengths;
     private int currentIndex;
     private int totalValues;
 
-    public DeltaLengthByteArrayDecoder(InputStream input) {
-        this.input = input;
+    public DeltaLengthByteArrayDecoder(byte[] data, int offset) {
+        this.data = data;
+        this.pos = offset;
         this.currentIndex = 0;
         this.lengths = null;
     }
@@ -53,10 +55,11 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
 
         // Read all lengths using DELTA_BINARY_PACKED
         // Lengths are always encoded as INT32 per the spec
-        DeltaBinaryPackedDecoder lengthDecoder = new DeltaBinaryPackedDecoder(input);
+        DeltaBinaryPackedDecoder lengthDecoder = new DeltaBinaryPackedDecoder(data, pos);
         for (int i = 0; i < numNonNullValues; i++) {
             lengths[i] = lengthDecoder.readInt();
         }
+        pos = lengthDecoder.getPos();
     }
 
     /**
@@ -72,16 +75,18 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
         }
 
         int length = lengths[currentIndex++];
-        byte[] data = new byte[length];
 
-        if (length > 0) {
-            int read = input.read(data);
-            if (read != length) {
-                throw new IOException("Unexpected EOF reading byte array: expected " + length + ", got " + read);
-            }
+        if (length == 0) {
+            return new byte[0];
         }
 
-        return data;
+        if (pos + length > data.length) {
+            throw new IOException("Unexpected EOF reading byte array: expected " + length
+                    + ", got " + (data.length - pos));
+        }
+        byte[] result = Arrays.copyOfRange(data, pos, pos + length);
+        pos += length;
+        return result;
     }
 
     @Override
