@@ -24,6 +24,7 @@ public class RleBitPackingHybridDecoder {
 
     private final byte[] data;
     private final ByteBuffer dataBuffer;
+    private final int dataEnd;
     private final int bitWidth;
     private final int bitMask;
     private int pos;
@@ -38,18 +39,24 @@ public class RleBitPackingHybridDecoder {
     private int bitsInBuffer;
 
     public RleBitPackingHybridDecoder(byte[] data, int bitWidth) {
+        this(data, 0, data.length, bitWidth);
+    }
+
+    public RleBitPackingHybridDecoder(byte[] data, int offset, int length, int bitWidth) {
         if (bitWidth < 0 || bitWidth > 32) {
             throw new IllegalArgumentException("Invalid RLE bit width: " + bitWidth
                     + ". Must be between 0 and 32");
         }
         this.data = data;
         this.dataBuffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
+        this.dataEnd = offset + length;
+        this.pos = offset;
         this.bitWidth = bitWidth;
         this.bitMask = (bitWidth == 0) ? 0 : (1 << bitWidth) - 1;
     }
 
     public void readInts(int[] buffer, int offset, int count) {
-        if (bitWidth == 0 || data.length == 0) {
+        if (bitWidth == 0 || pos >= dataEnd) {
             return;
         }
 
@@ -217,7 +224,7 @@ public class RleBitPackingHybridDecoder {
     }
 
     private void readNextRun() {
-        if (pos >= data.length) {
+        if (pos >= dataEnd) {
             remainingInRun = 0;
             return;
         }
@@ -240,7 +247,7 @@ public class RleBitPackingHybridDecoder {
     private int readRleValue() {
         int bytesNeeded = (bitWidth + 7) / 8;
         int value = 0;
-        for (int i = 0; i < bytesNeeded && pos < data.length; i++) {
+        for (int i = 0; i < bytesNeeded && pos < dataEnd; i++) {
             value |= (data[pos++] & 0xFF) << (i * 8);
         }
         return value & bitMask;
@@ -263,7 +270,7 @@ public class RleBitPackingHybridDecoder {
 
         // Fast path for bit width 1 (common for definition levels)
         if (width == 1) {
-            while (count >= 8 && pos < data.length) {
+            while (count >= 8 && pos < dataEnd) {
                 int b = data[pos++] & 0xFF;
                 output[outPos]     = b & 1;
                 output[outPos + 1] = (b >> 1) & 1;
@@ -280,7 +287,7 @@ public class RleBitPackingHybridDecoder {
         // For widths 2-8: read 8 bytes at once when possible, extract 8 values
         else if (width <= 8) {
             // Process 8 values at a time using bulk long reads when we have enough data
-            while (count >= 8 && pos + 8 <= data.length) {
+            while (count >= 8 && pos + 8 <= dataEnd) {
                 long bits = dataBuffer.getLong(pos);
                 pos += width; // Only consume 'width' bytes for 8 values
 
@@ -296,7 +303,7 @@ public class RleBitPackingHybridDecoder {
                 count -= 8;
             }
             // Fallback when near end of buffer
-            while (count >= 8 && pos + width <= data.length) {
+            while (count >= 8 && pos + width <= dataEnd) {
                 long bits = 0;
                 for (int i = 0; i < width; i++) {
                     bits |= ((long) (data[pos++] & 0xFF)) << (i * 8);
@@ -316,7 +323,7 @@ public class RleBitPackingHybridDecoder {
 
         // Handle remaining values
         while (count > 0) {
-            while (bitsInBuffer < width && pos < data.length) {
+            while (bitsInBuffer < width && pos < dataEnd) {
                 bitBuffer |= ((long) (data[pos++] & 0xFF)) << bitsInBuffer;
                 bitsInBuffer += 8;
             }
@@ -333,7 +340,7 @@ public class RleBitPackingHybridDecoder {
     private long readUnsignedVarInt() {
         long result = 0;
         int shift = 0;
-        while (pos < data.length) {
+        while (pos < dataEnd) {
             int b = data[pos++] & 0xFF;
             result |= (long) (b & 0x7F) << shift;
             if ((b & 0x80) == 0) {

@@ -8,6 +8,7 @@
 package dev.hardwood.internal.encoding;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 
 /**
  * Decoder for DELTA_BYTE_ARRAY encoding.
@@ -100,16 +101,17 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
         }
 
         int prefixLength = prefixLengths[currentIndex];
-        byte[] suffix = suffixDecoder.readValue();
+        ByteBuffer suffix = suffixDecoder.readValue();
         currentIndex++;
 
         // Reconstruct the full value: prefix from previous + suffix
-        byte[] value = new byte[prefixLength + suffix.length];
+        int suffixLength = suffix.remaining();
+        byte[] value = new byte[prefixLength + suffixLength];
         if (prefixLength > 0) {
             System.arraycopy(previousValue, 0, value, 0, prefixLength);
         }
-        if (suffix.length > 0) {
-            System.arraycopy(suffix, 0, value, prefixLength, suffix.length);
+        if (suffixLength > 0) {
+            suffix.get(value, prefixLength, suffixLength);
         }
 
         previousValue = value;

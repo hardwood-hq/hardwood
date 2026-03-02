@@ -8,7 +8,7 @@
 package dev.hardwood.internal.encoding;
 
 import java.io.IOException;
-import java.util.Arrays;
+import java.nio.ByteBuffer;
 
 /**
  * Decoder for DELTA_LENGTH_BYTE_ARRAY encoding.
@@ -62,10 +62,12 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
         pos = lengthDecoder.getPos();
     }
 
+    private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
+
     /**
-     * Read a single byte array value.
+     * Read a single byte array value as a zero-copy ByteBuffer view.
      */
-    public byte[] readValue() throws IOException {
+    public ByteBuffer readValue() throws IOException {
         if (lengths == null) {
             throw new IOException("Must call initialize() before reading values");
         }
@@ -77,14 +79,14 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
         int length = lengths[currentIndex++];
 
         if (length == 0) {
-            return new byte[0];
+            return EMPTY_BUFFER.duplicate();
         }
 
         if (pos + length > data.length) {
             throw new IOException("Unexpected EOF reading byte array: expected " + length
                     + ", got " + (data.length - pos));
         }
-        byte[] result = Arrays.copyOfRange(data, pos, pos + length);
+        ByteBuffer result = ByteBuffer.wrap(data, pos, length);
         pos += length;
         return result;
     }
@@ -97,15 +99,21 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
 
         if (definitionLevels == null) {
             for (int i = 0; i < output.length; i++) {
-                output[i] = readValue();
+                output[i] = materialize(readValue());
             }
         }
         else {
             for (int i = 0; i < output.length; i++) {
                 if (definitionLevels[i] == maxDefLevel) {
-                    output[i] = readValue();
+                    output[i] = materialize(readValue());
                 }
             }
         }
+    }
+
+    private static byte[] materialize(ByteBuffer buffer) {
+        byte[] result = new byte[buffer.remaining()];
+        buffer.get(result);
+        return result;
     }
 }

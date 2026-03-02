@@ -10,7 +10,6 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.Arrays;
 
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
@@ -123,9 +122,9 @@ public class PageReader {
     /**
      * Decode levels using RLE/Bit-Packing Hybrid encoding.
      */
-    private int[] decodeLevels(byte[] levelData, int numValues, int maxLevel) {
+    private int[] decodeLevels(byte[] levelData, int offset, int length, int numValues, int maxLevel) {
         int[] levels = new int[numValues];
-        RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, getBitWidth(maxLevel));
+        RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, getBitWidth(maxLevel));
         decoder.readInts(levels, 0, numValues);
         return levels;
     }
@@ -161,18 +160,16 @@ public class PageReader {
         if (column.maxRepetitionLevel() > 0) {
             int repLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
             offset += 4;
-            byte[] repLevelData = Arrays.copyOfRange(data, offset, offset + repLevelLength);
+            repetitionLevels = decodeLevels(data, offset, repLevelLength, header.numValues(), column.maxRepetitionLevel());
             offset += repLevelLength;
-            repetitionLevels = decodeLevels(repLevelData, header.numValues(), column.maxRepetitionLevel());
         }
 
         int[] definitionLevels = null;
         if (column.maxDefinitionLevel() > 0) {
             int defLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
             offset += 4;
-            byte[] defLevelData = Arrays.copyOfRange(data, offset, offset + defLevelLength);
+            definitionLevels = decodeLevels(data, offset, defLevelLength, header.numValues(), column.maxDefinitionLevel());
             offset += defLevelLength;
-            definitionLevels = decodeLevels(defLevelData, header.numValues(), column.maxDefinitionLevel());
         }
 
         return decodeTypedValues(
@@ -191,14 +188,14 @@ public class PageReader {
         if (column.maxRepetitionLevel() > 0 && repLevelLen > 0) {
             byte[] repLevelData = new byte[repLevelLen];
             pageData.slice(0, repLevelLen).get(repLevelData);
-            repetitionLevels = decodeLevels(repLevelData, header.numValues(), column.maxRepetitionLevel());
+            repetitionLevels = decodeLevels(repLevelData, 0, repLevelLen, header.numValues(), column.maxRepetitionLevel());
         }
 
         int[] definitionLevels = null;
         if (column.maxDefinitionLevel() > 0 && defLevelLen > 0) {
             byte[] defLevelData = new byte[defLevelLen];
             pageData.slice(repLevelLen, defLevelLen).get(defLevelData);
-            definitionLevels = decodeLevels(defLevelData, header.numValues(), column.maxDefinitionLevel());
+            definitionLevels = decodeLevels(defLevelData, 0, defLevelLen, header.numValues(), column.maxDefinitionLevel());
         }
 
         byte[] valuesData;
@@ -326,8 +323,7 @@ public class PageReader {
                     throw new IOException("Invalid dictionary index bit width: " + bitWidth
                             + " for column '" + column.name() + "'. Must be between 0 and 32");
                 }
-                byte[] indicesData = Arrays.copyOfRange(data, offset, data.length);
-                RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(indicesData, bitWidth);
+                RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(data, offset, data.length - offset, bitWidth);
 
                 return dictionary.decodePage(indexDecoder, numValues, definitionLevels, repetitionLevels, maxDefLevel);
             }
@@ -342,10 +338,7 @@ public class PageReader {
                 int rleLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
                 offset += 4;
 
-                // Read the RLE-encoded data
-                byte[] rleData = Arrays.copyOfRange(data, offset, offset + rleLength);
-
-                RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(rleData, 1);
+                RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(data, offset, rleLength, 1);
                 boolean[] values = new boolean[numValues];
                 decoder.readBooleans(values, definitionLevels, maxDefLevel);
                 return new Page.BooleanPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
