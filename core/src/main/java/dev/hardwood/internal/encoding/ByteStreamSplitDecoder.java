@@ -29,21 +29,24 @@ import dev.hardwood.metadata.PhysicalType;
 public class ByteStreamSplitDecoder implements ValueDecoder {
 
     private final byte[] data;
+    private final int baseOffset;
     private final int numValues;
     private final int byteWidth;
     private int currentIndex = 0;
 
-    public ByteStreamSplitDecoder(byte[] data, int numValues, PhysicalType type, Integer typeLength) {
+    public ByteStreamSplitDecoder(byte[] data, int offset, int numValues, PhysicalType type, Integer typeLength) {
         this.data = data;
+        this.baseOffset = offset;
         this.numValues = numValues;
         this.byteWidth = getByteWidth(type, typeLength);
 
         // Validate data length
         int expectedLength = numValues * byteWidth;
-        if (data.length != expectedLength) {
+        int availableLength = data.length - offset;
+        if (availableLength != expectedLength) {
             throw new IllegalArgumentException(
                     "Data length mismatch: expected " + expectedLength + " bytes for " +
-                            numValues + " values of " + byteWidth + " bytes, got " + data.length);
+                            numValues + " values of " + byteWidth + " bytes, got " + availableLength);
         }
     }
 
@@ -198,7 +201,7 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         }
         for (int k = 0; k < valueBytes.length; k++) {
             int streamOffset = k * numValues;
-            valueBytes[k] = data[streamOffset + currentIndex];
+            valueBytes[k] = data[baseOffset + streamOffset + currentIndex];
         }
         currentIndex++;
     }

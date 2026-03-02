@@ -287,9 +287,8 @@ public class PageReader {
             }
             case BYTE_STREAM_SPLIT -> {
                 int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                byte[] allData = Arrays.copyOfRange(data, offset, data.length);
                 ByteStreamSplitDecoder decoder = new ByteStreamSplitDecoder(
-                        allData, numNonNullValues, type, column.typeLength());
+                        data, offset, numNonNullValues, type, column.typeLength());
                 return switch (type) {
                     case INT64 -> {
                         long[] values = new long[numValues];
