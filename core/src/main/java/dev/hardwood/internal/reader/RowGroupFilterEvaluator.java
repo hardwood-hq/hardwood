@@ -1,0 +1,261 @@
+/*
+ *  SPDX-License-Identifier: Apache-2.0
+ *
+ *  Copyright The original authors
+ *
+ *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+ */
+package dev.hardwood.internal.reader;
+
+import java.util.List;
+
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.Statistics;
+import dev.hardwood.reader.FilterPredicate;
+import dev.hardwood.reader.FilterPredicate.And;
+import dev.hardwood.reader.FilterPredicate.BinaryColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.BooleanColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.Or;
+import dev.hardwood.schema.FileSchema;
+
+/**
+ * Evaluates filter predicates against row group statistics to determine
+ * whether a row group can be skipped.
+ * <p>
+ * Uses a conservative approach: if statistics are absent for a column,
+ * the row group is never dropped (it may contain matching rows).
+ * </p>
+ */
+public class RowGroupFilterEvaluator {
+
+    /**
+     * Determines whether a row group can be skipped based on the given filter predicate.
+     *
+     * @param predicate the filter predicate to evaluate
+     * @param rowGroup the row group to check
+     * @param schema the file schema
+     * @return {@code true} if the row group can be safely skipped (no matching rows),
+     *         {@code false} if it may contain matching rows
+     */
+    public static boolean canDropRowGroup(FilterPredicate predicate, RowGroup rowGroup, FileSchema schema) {
+        return switch (predicate) {
+            case IntColumnPredicate p -> evaluateInt(p, rowGroup, schema);
+            case LongColumnPredicate p -> evaluateLong(p, rowGroup, schema);
+            case FloatColumnPredicate p -> evaluateFloat(p, rowGroup, schema);
+            case DoubleColumnPredicate p -> evaluateDouble(p, rowGroup, schema);
+            case BooleanColumnPredicate p -> evaluateBoolean(p, rowGroup, schema);
+            case BinaryColumnPredicate p -> evaluateBinary(p, rowGroup, schema);
+            case And a -> canDropRowGroup(a.left(), rowGroup, schema)
+                    || canDropRowGroup(a.right(), rowGroup, schema);
+            case Or o -> canDropRowGroup(o.left(), rowGroup, schema)
+                    && canDropRowGroup(o.right(), rowGroup, schema);
+        };
+    }
+
+    private static Statistics findStatistics(String columnName, RowGroup rowGroup, FileSchema schema) {
+        // First try exact leaf-name lookup (works for flat columns)
+        int columnIndex = findColumnIndex(columnName, schema);
+
+        // Fall back to path-based lookup (for nested/repeated columns where the
+        // predicate uses the top-level field name, e.g. "scores" for a list<int32>)
+        if (columnIndex < 0) {
+            columnIndex = findColumnIndexByPath(columnName, rowGroup);
+        }
+
+        if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
+            return null;
+        }
+        ColumnChunk chunk = rowGroup.columns().get(columnIndex);
+        return chunk.metaData().statistics();
+    }
+
+    private static int findColumnIndex(String columnName, FileSchema schema) {
+        try {
+            return schema.getColumn(columnName).columnIndex();
+        }
+        catch (IllegalArgumentException e) {
+            return -1;
+        }
+    }
+
+    private static int findColumnIndexByPath(String columnName, RowGroup rowGroup) {
+        List<ColumnChunk> columns = rowGroup.columns();
+        for (int i = 0; i < columns.size(); i++) {
+            List<String> path = columns.get(i).metaData().pathInSchema();
+            if (path.isEmpty()) {
+                continue;
+            }
+            // Match dotted name against full path (e.g. "address.zip" matches ["address", "zip"])
+            if (matchesDottedPath(columnName, path)) {
+                return i;
+            }
+            // Match top-level name for repeated columns (e.g. "scores" matches ["scores", "list", "element"])
+            if (path.get(0).equals(columnName)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static boolean matchesDottedPath(String dottedName, List<String> path) {
+        int pathIndex = 0;
+        int nameStart = 0;
+        while (nameStart < dottedName.length() && pathIndex < path.size()) {
+            int dot = dottedName.indexOf('.', nameStart);
+            String segment = dot < 0 ? dottedName.substring(nameStart) : dottedName.substring(nameStart, dot);
+            if (!segment.equals(path.get(pathIndex))) {
+                return false;
+            }
+            pathIndex++;
+            nameStart = dot < 0 ? dottedName.length() : dot + 1;
+        }
+        // All segments consumed and matched up to the end of the dotted name
+        return nameStart >= dottedName.length() && pathIndex <= path.size();
+    }
+
+    // ==================== INT32 ====================
+
+    private static boolean evaluateInt(IntColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
+            return false;
+        }
+        int min = StatisticsDecoder.decodeInt(stats.minValue());
+        int max = StatisticsDecoder.decodeInt(stats.maxValue());
+        int value = p.value();
+        return canDrop(p.op(), value, min, max);
+    }
+
+    // ==================== INT64 ====================
+
+    private static boolean evaluateLong(LongColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
+            return false;
+        }
+        long min = StatisticsDecoder.decodeLong(stats.minValue());
+        long max = StatisticsDecoder.decodeLong(stats.maxValue());
+        long value = p.value();
+        return canDrop(p.op(), value, min, max);
+    }
+
+    // ==================== FLOAT ====================
+
+    private static boolean evaluateFloat(FloatColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
+            return false;
+        }
+        float min = StatisticsDecoder.decodeFloat(stats.minValue());
+        float max = StatisticsDecoder.decodeFloat(stats.maxValue());
+        float value = p.value();
+        return canDropFloat(p.op(), value, min, max);
+    }
+
+    // ==================== DOUBLE ====================
+
+    private static boolean evaluateDouble(DoubleColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
+            return false;
+        }
+        double min = StatisticsDecoder.decodeDouble(stats.minValue());
+        double max = StatisticsDecoder.decodeDouble(stats.maxValue());
+        double value = p.value();
+        return canDropDouble(p.op(), value, min, max);
+    }
+
+    // ==================== BOOLEAN ====================
+
+    private static boolean evaluateBoolean(BooleanColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
+            return false;
+        }
+        boolean min = StatisticsDecoder.decodeBoolean(stats.minValue());
+        boolean max = StatisticsDecoder.decodeBoolean(stats.maxValue());
+        boolean value = p.value();
+        int minInt = min ? 1 : 0;
+        int maxInt = max ? 1 : 0;
+        int valueInt = value ? 1 : 0;
+        return canDrop(p.op(), valueInt, minInt, maxInt);
+    }
+
+    // ==================== BINARY (byte[]) ====================
+
+    private static boolean evaluateBinary(BinaryColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
+            return false;
+        }
+        byte[] min = stats.minValue();
+        byte[] max = stats.maxValue();
+        byte[] value = p.value();
+        int cmpMin = StatisticsDecoder.compareBinary(value, min);
+        int cmpMax = StatisticsDecoder.compareBinary(value, max);
+        return canDropCompared(p.op(), cmpMin, cmpMax,
+                StatisticsDecoder.compareBinary(min, max));
+    }
+
+    // ==================== Generic comparison logic ====================
+
+    /**
+     * Determines if a row group can be dropped given integer-comparable min/max statistics.
+     * Works for int, long, boolean (mapped to 0/1).
+     */
+    private static boolean canDrop(FilterPredicate.Operator op, long value, long min, long max) {
+        return switch (op) {
+            case EQ -> value < min || value > max;
+            case NOT_EQ -> min == max && value == min;
+            case LT -> min >= value;
+            case LT_EQ -> min > value;
+            case GT -> max <= value;
+            case GT_EQ -> max < value;
+        };
+    }
+
+    private static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max) {
+        return switch (op) {
+            case EQ -> Float.compare(value, min) < 0 || Float.compare(value, max) > 0;
+            case NOT_EQ -> Float.compare(min, max) == 0 && Float.compare(value, min) == 0;
+            case LT -> Float.compare(min, value) >= 0;
+            case LT_EQ -> Float.compare(min, value) > 0;
+            case GT -> Float.compare(max, value) <= 0;
+            case GT_EQ -> Float.compare(max, value) < 0;
+        };
+    }
+
+    private static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max) {
+        return switch (op) {
+            case EQ -> Double.compare(value, min) < 0 || Double.compare(value, max) > 0;
+            case NOT_EQ -> Double.compare(min, max) == 0 && Double.compare(value, min) == 0;
+            case LT -> Double.compare(min, value) >= 0;
+            case LT_EQ -> Double.compare(min, value) > 0;
+            case GT -> Double.compare(max, value) <= 0;
+            case GT_EQ -> Double.compare(max, value) < 0;
+        };
+    }
+
+    /**
+     * Determines if a row group can be dropped given pre-computed comparison results for binary values.
+     *
+     * @param cmpMin comparison of value vs min (negative if value &lt; min)
+     * @param cmpMax comparison of value vs max (positive if value &gt; max)
+     * @param minEqMax comparison of min vs max (0 if min == max)
+     */
+    private static boolean canDropCompared(FilterPredicate.Operator op, int cmpMin, int cmpMax, int minEqMax) {
+        return switch (op) {
+            case EQ -> cmpMin < 0 || cmpMax > 0;
+            case NOT_EQ -> minEqMax == 0 && cmpMin == 0;
+            case LT -> cmpMin <= 0;
+            case LT_EQ -> cmpMin < 0;
+            case GT -> cmpMax >= 0;
+            case GT_EQ -> cmpMax > 0;
+        };
+    }
+}

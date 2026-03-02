@@ -82,6 +82,15 @@ public class MultiFileParquetReader implements AutoCloseable {
     }
 
     /**
+     * Create a row reader with a filter, iterating over all columns but only matching row groups.
+     *
+     * @param filter predicate for row group filtering based on statistics
+     */
+    public MultiFileRowReader createRowReader(FilterPredicate filter) {
+        return createRowReader(ColumnProjection.all(), filter);
+    }
+
+    /**
      * Create a row reader that iterates over selected columns in all files.
      *
      * @param projection specifies which columns to read
@@ -92,12 +101,35 @@ public class MultiFileParquetReader implements AutoCloseable {
     }
 
     /**
+     * Create a row reader that iterates over selected columns in only matching row groups.
+     *
+     * @param projection specifies which columns to read
+     * @param filter predicate for row group filtering based on statistics
+     */
+    public MultiFileRowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
+        FileManager.InitResult initResult = fileManager.initialize(projection, filter);
+        return new MultiFileRowReader(context, fileManager, initResult);
+    }
+
+    /**
      * Create column readers for batch-oriented access to the requested columns.
      *
      * @param projection specifies which columns to read
      */
     public MultiFileColumnReaders createColumnReaders(ColumnProjection projection) {
         FileManager.InitResult initResult = fileManager.initialize(projection);
+        return new MultiFileColumnReaders(context, fileManager, initResult);
+    }
+
+    /**
+     * Create column readers for batch-oriented access to the requested columns,
+     * skipping row groups that don't match the filter.
+     *
+     * @param projection specifies which columns to read
+     * @param filter predicate for row group filtering based on statistics
+     */
+    public MultiFileColumnReaders createColumnReaders(ColumnProjection projection, FilterPredicate filter) {
+        FileManager.InitResult initResult = fileManager.initialize(projection, filter);
         return new MultiFileColumnReaders(context, fileManager, initResult);
     }
 

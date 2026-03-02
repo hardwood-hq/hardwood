@@ -8,6 +8,7 @@ Enable -Pperformance-test to run performance tests.
 
 # Design and Coding
 
+Write plans which affect the system design, e.g. large new features or refactorings, as a Markdown file under _designs_ before implementing.
 Keep cyclomatic complexity low.
 Avoid fully-qualified class names within the code, always add imports.
 Avoid object access and boxing as much as possible. Always prefer primitive access also if it means several similar methods.

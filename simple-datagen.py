@@ -1165,3 +1165,202 @@ print("  - Encoding: DICTIONARY for category column")
 print("  - Compression: UNCOMPRESSED (compression=None)")
 print("  - CRC: Enabled (write_page_checksum=True)")
 print("  - Data: id=[1,2,3,4,5], category=['A','B','A','C','B']")
+
+# ============================================================================
+# Predicate Push-Down Test Files (multi-row-group with known statistics)
+# ============================================================================
+
+# 22. Multi-row-group file with INT64 column for predicate push-down testing
+# RG1: id 1-100, value 1-100
+# RG2: id 101-200, value 101-200
+# RG3: id 201-300, value 201-300
+filter_int_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('value', pa.int64(), False),
+    ('label', pa.string(), False),
+])
+
+rg1 = pa.table({
+    'id': list(range(1, 101)),
+    'value': list(range(1, 101)),
+    'label': [f'rg1_{i}' for i in range(1, 101)],
+}, schema=filter_int_schema)
+
+rg2 = pa.table({
+    'id': list(range(101, 201)),
+    'value': list(range(101, 201)),
+    'label': [f'rg2_{i}' for i in range(101, 201)],
+}, schema=filter_int_schema)
+
+rg3 = pa.table({
+    'id': list(range(201, 301)),
+    'value': list(range(201, 301)),
+    'label': [f'rg3_{i}' for i in range(201, 301)],
+}, schema=filter_int_schema)
+
+combined = pa.concat_tables([rg1, rg2, rg3])
+
+# Write with max_rows_per_row_group=100 to create 3 row groups
+writer = pq.ParquetWriter(
+    'core/src/test/resources/filter_pushdown_int.parquet',
+    schema=filter_int_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    write_statistics=True,
+)
+writer.write_table(rg1)
+writer.write_table(rg2)
+writer.write_table(rg3)
+writer.close()
+
+print("\nGenerated filter_pushdown_int.parquet:")
+print("  - 3 row groups: RG1 id/value 1-100, RG2 101-200, RG3 201-300")
+print("  - Statistics enabled for predicate push-down testing")
+
+# 23. Multi-row-group file with mixed types for predicate push-down testing
+filter_mixed_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('price', pa.float64(), False),
+    ('rating', pa.float32(), False),
+    ('name', pa.string(), False),
+    ('active', pa.bool_(), False),
+])
+
+mixed_rg1 = pa.table({
+    'id': [1, 2, 3, 4, 5],
+    'price': [10.0, 20.0, 30.0, 40.0, 50.0],
+    'rating': [1.0, 2.0, 3.0, 4.0, 5.0],
+    'name': ['apple', 'banana', 'cherry', 'date', 'elderberry'],
+    'active': [True, True, True, True, True],
+}, schema=filter_mixed_schema)
+
+mixed_rg2 = pa.table({
+    'id': [6, 7, 8, 9, 10],
+    'price': [60.0, 70.0, 80.0, 90.0, 100.0],
+    'rating': [6.0, 7.0, 8.0, 9.0, 10.0],
+    'name': ['fig', 'grape', 'honeydew', 'imbe', 'jackfruit'],
+    'active': [False, False, False, False, False],
+}, schema=filter_mixed_schema)
+
+mixed_rg3 = pa.table({
+    'id': [11, 12, 13, 14, 15],
+    'price': [110.0, 120.0, 130.0, 140.0, 150.0],
+    'rating': [1.5, 2.5, 3.5, 4.5, 5.5],
+    'name': ['kiwi', 'lemon', 'mango', 'nectarine', 'orange'],
+    'active': [True, False, True, False, True],
+}, schema=filter_mixed_schema)
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/filter_pushdown_mixed.parquet',
+    schema=filter_mixed_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    write_statistics=True,
+)
+writer.write_table(mixed_rg1)
+writer.write_table(mixed_rg2)
+writer.write_table(mixed_rg3)
+writer.close()
+
+print("\nGenerated filter_pushdown_mixed.parquet:")
+print("  - 3 row groups with mixed types (int32, float64, float32, string, bool)")
+print("  - RG1: id 1-5, RG2: id 6-10, RG3: id 11-15")
+
+# 24. Multi-row-group file with repeated (list) columns for predicate push-down testing
+filter_list_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('scores', pa.list_(pa.int32())),
+])
+
+list_rg1 = pa.table({
+    'id': [1, 2, 3],
+    'scores': [[10, 20, 30], [5, 15], [25]],
+}, schema=filter_list_schema)
+# scores leaf values: 5..30
+
+list_rg2 = pa.table({
+    'id': [4, 5, 6],
+    'scores': [[100, 200], [150], [110, 190]],
+}, schema=filter_list_schema)
+# scores leaf values: 100..200
+
+list_rg3 = pa.table({
+    'id': [7, 8, 9],
+    'scores': [[300], [400, 500], [350, 450]],
+}, schema=filter_list_schema)
+# scores leaf values: 300..500
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/filter_pushdown_list.parquet',
+    schema=filter_list_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    write_statistics=True,
+)
+writer.write_table(list_rg1)
+writer.write_table(list_rg2)
+writer.write_table(list_rg3)
+writer.close()
+
+print("\nGenerated filter_pushdown_list.parquet:")
+print("  - 3 row groups with list<int32> column")
+print("  - RG0: scores 5-30, RG1: scores 100-200, RG2: scores 300-500")
+
+# 25. Multi-row-group file with nested struct columns for predicate push-down testing
+filter_nested_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('address', pa.struct([
+        ('city', pa.string()),
+        ('zip', pa.int32()),
+    ])),
+])
+
+nested_rg1 = pa.table({
+    'id': [1, 2, 3],
+    'address': [
+        {'city': 'Austin', 'zip': 70000},
+        {'city': 'Boston', 'zip': 71000},
+        {'city': 'Chicago', 'zip': 72000},
+    ],
+}, schema=filter_nested_schema)
+# city: Austin..Chicago, zip: 70000..72000
+
+nested_rg2 = pa.table({
+    'id': [4, 5, 6],
+    'address': [
+        {'city': 'Denver', 'zip': 80000},
+        {'city': 'Eugene', 'zip': 81000},
+        {'city': 'Fresno', 'zip': 82000},
+    ],
+}, schema=filter_nested_schema)
+# city: Denver..Fresno, zip: 80000..82000
+
+nested_rg3 = pa.table({
+    'id': [7, 8, 9],
+    'address': [
+        {'city': 'Gary', 'zip': 90000},
+        {'city': 'Houston', 'zip': 91000},
+        {'city': 'Irvine', 'zip': 92000},
+    ],
+}, schema=filter_nested_schema)
+# city: Gary..Irvine, zip: 90000..92000
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/filter_pushdown_nested.parquet',
+    schema=filter_nested_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    write_statistics=True,
+)
+writer.write_table(nested_rg1)
+writer.write_table(nested_rg2)
+writer.write_table(nested_rg3)
+writer.close()
+
+print("\nGenerated filter_pushdown_nested.parquet:")
+print("  - 3 row groups with struct column (address: {city, zip})")
+print("  - RG0: zip 70000-72000, RG1: zip 80000-82000, RG2: zip 90000-92000")

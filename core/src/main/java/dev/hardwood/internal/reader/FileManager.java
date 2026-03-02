@@ -16,10 +16,12 @@ import java.util.concurrent.ConcurrentHashMap;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.jfr.FileOpenedEvent;
+import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -49,6 +51,7 @@ public class FileManager {
     // Set after first file is opened
     private volatile ProjectedSchema projectedSchema;
     private volatile FileSchema referenceSchema;
+    private volatile FilterPredicate filterPredicate;
     private OpenedFile firstOpenedFile;
 
     /**
@@ -79,6 +82,19 @@ public class FileManager {
         firstOpenedFile = openAndReadMetadata(first);
         referenceSchema = firstOpenedFile.schema;
         return referenceSchema;
+    }
+
+    /**
+     * Applies a column projection and optional filter, scans pages for the first file,
+     * and triggers prefetching. Must be called after {@link #openFirst()}.
+     *
+     * @param projection column projection (use {@link ColumnProjection#all()} for all columns)
+     * @param filter predicate for row group filtering based on statistics, or {@code null} for no filtering
+     * @return result containing the file state, file schema, and projected schema
+     */
+    public InitResult initialize(ColumnProjection projection, FilterPredicate filter) {
+        this.filterPredicate = filter;
+        return initialize(projection);
     }
 
     /**
@@ -318,7 +334,8 @@ public class FileManager {
      */
     private List<List<PageInfo>> scanAllProjectedColumns(InputFile inputFile, OpenedFile openedFile) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
-        List<RowGroup> rowGroups = openedFile.metaData.rowGroups();
+        List<RowGroup> rowGroups = filterRowGroups(openedFile.metaData.rowGroups(), openedFile.schema,
+                inputFile.name());
 
         // Build column index mapping using column names for consistent lookup
         int[] columnIndices = new int[projectedColumnCount];
@@ -365,6 +382,28 @@ public class FileManager {
         }
 
         return result;
+    }
+
+    /**
+     * Filters row groups using the active filter predicate.
+     * If no filter is set, returns the original list unmodified.
+     */
+    private List<RowGroup> filterRowGroups(List<RowGroup> rowGroups, FileSchema schema, String fileName) {
+        if (filterPredicate == null) {
+            return rowGroups;
+        }
+        List<RowGroup> filtered = rowGroups.stream()
+                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filterPredicate, rg, schema))
+                .toList();
+
+        RowGroupFilterEvent event = new RowGroupFilterEvent();
+        event.file = fileName;
+        event.totalRowGroups = rowGroups.size();
+        event.rowGroupsKept = filtered.size();
+        event.rowGroupsSkipped = rowGroups.size() - filtered.size();
+        event.commit();
+
+        return filtered;
     }
 
     /**

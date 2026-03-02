@@ -8,14 +8,18 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
+import java.util.List;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.RowGroupFilterEvaluator;
 import dev.hardwood.jfr.FileOpenedEvent;
+import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
@@ -136,6 +140,17 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     /**
+     * Create a ColumnReader for a named column, spanning only row groups that match the filter.
+     *
+     * @param columnName the column to read
+     * @param filter predicate for row group filtering based on statistics
+     */
+    public ColumnReader createColumnReader(String columnName, FilterPredicate filter) {
+        FileSchema schema = getFileSchema();
+        return ColumnReader.create(columnName, schema, inputFile, filterRowGroups(schema, filter), context);
+    }
+
+    /**
      * Create a ColumnReader for a column by index, spanning all row groups.
      */
     public ColumnReader createColumnReader(int columnIndex) {
@@ -144,10 +159,30 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     /**
+     * Create a ColumnReader for a column by index, spanning only row groups that match the filter.
+     *
+     * @param columnIndex the column index to read
+     * @param filter predicate for row group filtering based on statistics
+     */
+    public ColumnReader createColumnReader(int columnIndex, FilterPredicate filter) {
+        FileSchema schema = getFileSchema();
+        return ColumnReader.create(columnIndex, schema, inputFile, filterRowGroups(schema, filter), context);
+    }
+
+    /**
      * Create a RowReader that iterates over all rows in all row groups.
      */
     public RowReader createRowReader() {
         return createRowReader(ColumnProjection.all());
+    }
+
+    /**
+     * Create a RowReader with a filter, iterating over all columns but only matching row groups.
+     *
+     * @param filter predicate for row group filtering based on statistics
+     */
+    public RowReader createRowReader(FilterPredicate filter) {
+        return createRowReader(ColumnProjection.all(), filter);
     }
 
     /**
@@ -160,6 +195,34 @@ public class ParquetFileReader implements AutoCloseable {
         FileSchema schema = getFileSchema();
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
         return new SingleFileRowReader(schema, projectedSchema, inputFile, fileMetaData.rowGroups(), context);
+    }
+
+    /**
+     * Create a RowReader that iterates over selected columns in only matching row groups.
+     *
+     * @param projection specifies which columns to read
+     * @param filter predicate for row group filtering based on statistics
+     */
+    public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
+        FileSchema schema = getFileSchema();
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        return new SingleFileRowReader(schema, projectedSchema, inputFile, filterRowGroups(schema, filter), context);
+    }
+
+    private List<RowGroup> filterRowGroups(FileSchema schema, FilterPredicate filter) {
+        List<RowGroup> allRowGroups = fileMetaData.rowGroups();
+        List<RowGroup> filtered = allRowGroups.stream()
+                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filter, rg, schema))
+                .toList();
+
+        RowGroupFilterEvent event = new RowGroupFilterEvent();
+        event.file = inputFile.name();
+        event.totalRowGroups = allRowGroups.size();
+        event.rowGroupsKept = filtered.size();
+        event.rowGroupsSkipped = allRowGroups.size() - filtered.size();
+        event.commit();
+
+        return filtered;
     }
 
     @Override
