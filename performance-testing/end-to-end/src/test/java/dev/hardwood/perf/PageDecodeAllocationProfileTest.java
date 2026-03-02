@@ -8,11 +8,8 @@
 package dev.hardwood.perf;
 
 import java.lang.management.ManagementFactory;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import com.sun.management.ThreadMXBean;
 
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.MappedInputFile;
 import dev.hardwood.internal.reader.Page;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageReader;
@@ -121,7 +119,10 @@ public class PageDecodeAllocationProfileTest {
         FileMetaData fileMetaData;
         FileSchema schema;
 
-        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+        MappedInputFile inputFile = new MappedInputFile(file);
+        inputFile.open();
+
+        try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             fileMetaData = reader.getFileMetaData();
             schema = reader.getFileSchema();
         }
@@ -130,17 +131,14 @@ public class PageDecodeAllocationProfileTest {
         long totalAllocated = 0;
         long totalUncompressed = 0;
 
-        try (HardwoodContextImpl context = HardwoodContextImpl.create();
-                FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
-
-            MappedByteBuffer mapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
 
             for (RowGroup rowGroup : fileMetaData.rowGroups()) {
                 for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
 
-                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, mapping, 0);
+                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, inputFile, 0);
                     List<PageInfo> pages = scanner.scanPages();
 
                     for (PageInfo pageInfo : pages) {
