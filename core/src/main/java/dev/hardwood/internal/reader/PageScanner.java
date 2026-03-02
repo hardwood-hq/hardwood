@@ -125,10 +125,6 @@ public class PageScanner {
             int totalPageSize = headerSize + compressedSize;
 
             if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
-                MappedByteBuffer compressedData = buffer.slice(pageDataOffset, compressedSize);
-                if (header.crc() != null) {
-                    CrcValidator.validate(header.crc(), compressedData, columnSchema.name());
-                }
                 int numValues = header.dictionaryPageHeader().numValues();
                 if (numValues < 0) {
                     throw new IOException("Invalid dictionary page for column '" + columnSchema.name()
@@ -136,6 +132,9 @@ public class PageScanner {
                 }
 
                 ByteBuffer compressedData = buffer.slice(pageDataOffset, compressedSize);
+                if (header.crc() != null) {
+                    CrcValidator.validate(header.crc(), compressedData, columnSchema.name());
+                }
                 int uncompressedSize = header.uncompressedPageSize();
 
                 dictionary = parseDictionary(compressedData, numValues, uncompressedSize,
@@ -233,6 +232,9 @@ public class PageScanner {
 
             int compressedSize = dictHeader.compressedPageSize();
             ByteBuffer compressedData = dictBuffer.slice(dictHeaderSize, compressedSize);
+            if (dictHeader.crc() != null) {
+                CrcValidator.validate(dictHeader.crc(), compressedData, columnSchema.name());
+            }
             int numValues = dictHeader.dictionaryPageHeader().numValues();
             int uncompressedSize = dictHeader.uncompressedPageSize();
 

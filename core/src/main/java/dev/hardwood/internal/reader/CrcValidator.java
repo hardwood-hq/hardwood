@@ -11,20 +11,19 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.zip.CRC32;
 
-/**
- * Validates CRC-32 checksums on Parquet page data.
- */
 class CrcValidator {
 
-    static void validate(int expectedCrc, ByteBuffer data, String columnName) throws IOException {
+    /**
+     * Validates that the CRC-32 checksum of the given page data matches the expected value
+     * from the page header. The buffer's position and limit are not modified.
+     */
+    static void validate(int expectedCrc, ByteBuffer pageData, String columnName) throws IOException {
         CRC32 crc = new CRC32();
-        byte[] buf = new byte[data.remaining()];
-        data.get(data.position(), buf);
-        crc.update(buf);
+        crc.update(pageData.duplicate());
         int actualCrc = (int) crc.getValue();
         if (actualCrc != expectedCrc) {
-            throw new IOException("CRC mismatch for column '" + columnName
-                    + "': expected " + Integer.toHexString(expectedCrc)
+            throw new IOException("CRC mismatch for column ‘" + columnName
+                    + "’: expected " + Integer.toHexString(expectedCrc)
                     + " but computed " + Integer.toHexString(actualCrc));
         }
     }
