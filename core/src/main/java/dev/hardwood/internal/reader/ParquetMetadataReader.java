@@ -11,15 +11,15 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.nio.file.Path;
 import java.util.Arrays;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.FileMetaData;
 
 /**
- * Utility class for reading Parquet file metadata from a FileChannel.
+ * Utility class for reading Parquet file metadata from an {@link InputFile}.
  * <p>
  * This centralizes the metadata reading logic used by ParquetFileReader,
  * MultiFileRowReader, and FileManager.
@@ -36,45 +36,45 @@ public final class ParquetMetadataReader {
     }
 
     /**
-     * Reads file metadata from a memory-mapped buffer covering the entire file.
+     * Reads file metadata from an {@link InputFile}.
      *
-     * @param buffer the buffer of the entire file
-     * @param path the file path (used for error messages)
+     * @param inputFile the input file to read metadata from
      * @return the parsed FileMetaData
      * @throws IOException if the file is not a valid Parquet file
      */
-    public static FileMetaData readMetadata(ByteBuffer buffer, Path path) throws IOException {
-        int fileSize = buffer.limit();
+    public static FileMetaData readMetadata(InputFile inputFile) throws IOException {
+        long fileSize = inputFile.length();
         if (fileSize < MAGIC_SIZE + MAGIC_SIZE + FOOTER_LENGTH_SIZE) {
-            throw new IOException("File too small to be a valid Parquet file: " + path);
+            throw new IOException("File too small to be a valid Parquet file: " + inputFile.name());
         }
 
         // Validate magic number at start
+        ByteBuffer startMagicBuf = inputFile.readRange(0, MAGIC_SIZE);
         byte[] startMagic = new byte[MAGIC_SIZE];
-        buffer.get(0, startMagic);
+        startMagicBuf.get(startMagic);
         if (!Arrays.equals(startMagic, MAGIC)) {
-            throw new IOException("Not a Parquet file (invalid magic number at start): " + path);
+            throw new IOException("Not a Parquet file (invalid magic number at start): " + inputFile.name());
         }
 
         // Read footer size and magic number at end
-        int footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
-        ByteBuffer footerInfoBuf = buffer.slice(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
+        long footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
+        ByteBuffer footerInfoBuf = inputFile.readRange(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
         footerInfoBuf.order(ByteOrder.LITTLE_ENDIAN);
         int footerLength = footerInfoBuf.getInt();
         byte[] endMagic = new byte[MAGIC_SIZE];
         footerInfoBuf.get(endMagic);
         if (!Arrays.equals(endMagic, MAGIC)) {
-            throw new IOException("Not a Parquet file (invalid magic number at end): " + path);
+            throw new IOException("Not a Parquet file (invalid magic number at end): " + inputFile.name());
         }
 
         // Validate footer length
-        int footerStart = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE - footerLength;
+        long footerStart = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE - footerLength;
         if (footerStart < MAGIC_SIZE) {
             throw new IOException("Invalid footer length: " + footerLength);
         }
 
-        // Parse file metadata directly from the mapping (no copy needed)
-        ByteBuffer footerBuffer = buffer.slice(footerStart, footerLength);
+        // Parse file metadata
+        ByteBuffer footerBuffer = inputFile.readRange(footerStart, footerLength);
         ThriftCompactReader reader = new ThriftCompactReader(footerBuffer);
         return FileMetaDataReader.read(reader);
     }

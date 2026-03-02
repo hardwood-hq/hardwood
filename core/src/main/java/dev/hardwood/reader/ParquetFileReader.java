@@ -8,17 +8,12 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
-import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
-import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.HardwoodContext;
+import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.internal.reader.event.FileMappingEvent;
 import dev.hardwood.internal.reader.event.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.schema.ColumnProjection;
@@ -30,7 +25,7 @@ import dev.hardwood.schema.ProjectedSchema;
  *
  * <p>For single-file usage:</p>
  * <pre>{@code
- * try (ParquetFileReader reader = ParquetFileReader.open(path)) {
+ * try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
  *     RowReader rows = reader.createRowReader();
  *     // ...
  * }
@@ -38,107 +33,43 @@ import dev.hardwood.schema.ProjectedSchema;
  *
  * <p>For multi-file usage with shared thread pool, use {@link Hardwood}.</p>
  *
- * <p><b>Limitation:</b> Individual files must be at most 2 GB ({@link Integer#MAX_VALUE} bytes)
- * due to the use of {@link MappedByteBuffer} which is limited to {@code int}-addressable regions.
+ * <p><b>Limitation:</b> When using the default memory-mapped {@link InputFile},
+ * individual files must be at most 2 GB ({@link Integer#MAX_VALUE} bytes).
  * Larger datasets should be split across multiple files and read via
  * {@link MultiFileParquetReader}.</p>
  */
 public class ParquetFileReader implements AutoCloseable {
 
-    private final Path path;
-    private final FileChannel channel;
-    private final ByteBuffer fileMapping;
+    private final InputFile inputFile;
     private final FileMetaData fileMetaData;
     private final HardwoodContextImpl context;
     private final boolean ownsContext;
+    private final boolean ownsInputFile;
 
-    private ParquetFileReader(ByteBuffer fileMapping,
-            FileMetaData fileMetaData, HardwoodContextImpl context, boolean ownsContext) {
-		this.path = null;
-		this.channel = null;
-		this.fileMapping = fileMapping;
-		this.fileMetaData = fileMetaData;
-		this.context = context;
-		this.ownsContext = ownsContext;
-	}
-    
-    private ParquetFileReader(Path path, FileChannel channel, MappedByteBuffer fileMapping,
-                              FileMetaData fileMetaData, HardwoodContextImpl context, boolean ownsContext) {
-        this.path = path;
-        this.channel = channel;
-        this.fileMapping = fileMapping;
+    private ParquetFileReader(InputFile inputFile, FileMetaData fileMetaData,
+                              HardwoodContextImpl context, boolean ownsContext, boolean ownsInputFile) {
+        this.inputFile = inputFile;
         this.fileMetaData = fileMetaData;
         this.context = context;
         this.ownsContext = ownsContext;
-    }
-    
-    /**
-     * Open a Parquet file from memory with a dedicated context.
-     * The context is closed when this reader is closed.
-     */
-    public static ParquetFileReader open(ByteBuffer buffer) throws IOException {
-        HardwoodContextImpl context = HardwoodContextImpl.create();
-        return open(buffer, context, true);
+        this.ownsInputFile = ownsInputFile;
     }
 
     /**
-     * Open a Parquet file with a dedicated context.
-     * The context is closed when this reader is closed.
+     * Open a Parquet file from an {@link InputFile} with a dedicated context.
+     * <p>
+     * This method calls {@link InputFile#open()} and takes ownership of the file;
+     * it will be closed when this reader is closed.
+     * </p>
      */
-    public static ParquetFileReader open(Path path) throws IOException {
-        HardwoodContextImpl context = HardwoodContextImpl.create();
-        return open(path, context, true);
-    }
-
-    /**
-     * Open a Parquet file with a shared context.
-     * The context is NOT closed when this reader is closed.
-     */
-    public static ParquetFileReader open(Path path, HardwoodContext context) throws IOException {
-        return open(path, (HardwoodContextImpl) context, false);
-    }
-
-    private static ParquetFileReader open(Path path, HardwoodContextImpl context,
-                                          boolean ownsContext) throws IOException {
-        FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
-        fileOpenedEvent.begin();
-
-        FileChannel channel = FileChannel.open(path, StandardOpenOption.READ);
+    public static ParquetFileReader open(InputFile inputFile) throws IOException {
+        inputFile.open();
         try {
-            // Map the entire file once - used for both metadata and data reading
-            long fileSize = channel.size();
-            if (fileSize > Integer.MAX_VALUE) {
-                throw new IOException("File too large: " + path + " (" + (fileSize / (1024 * 1024)) +
-                        " MB). Maximum supported file size is 2 GB.");
-            }
-            String fileName = path.getFileName().toString();
-
-            FileMappingEvent event = new FileMappingEvent();
-            event.begin();
-
-            MappedByteBuffer fileMapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, fileSize);
-
-            event.file = fileName;
-            event.offset = 0;
-            event.size = fileSize;
-            event.commit();
-
-            // Read metadata from the mapping
-            FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(fileMapping, path);
-            FileSchema fileSchema = FileSchema.fromSchemaElements(fileMetaData.schema());
-
-            fileOpenedEvent.file = fileName;
-            fileOpenedEvent.fileSize = fileSize;
-            fileOpenedEvent.rowGroupCount = fileMetaData.rowGroups().size();
-            fileOpenedEvent.columnCount = fileSchema.getColumnCount();
-            fileOpenedEvent.commit();
-
-            return new ParquetFileReader(path, channel, fileMapping, fileMetaData, context, ownsContext);
+            return openInternal(inputFile, HardwoodContextImpl.create(), true, true);
         }
         catch (Exception e) {
-            // Close channel if there was an error during initialization
             try {
-                channel.close();
+                inputFile.close();
             }
             catch (IOException closeException) {
                 e.addSuppressed(closeException);
@@ -146,11 +77,46 @@ public class ParquetFileReader implements AutoCloseable {
             throw e;
         }
     }
-    
-    private static ParquetFileReader open(ByteBuffer buffer, HardwoodContextImpl context,
-            boolean ownsContext) throws IOException {
-        FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(buffer, null);
-        return new ParquetFileReader(buffer, fileMetaData, context, ownsContext);
+
+    /**
+     * Open a Parquet file from an {@link InputFile} with a shared context.
+     * <p>
+     * This method calls {@link InputFile#open()} and takes ownership of the file;
+     * it will be closed when this reader is closed. The caller retains ownership
+     * of the context.
+     * </p>
+     */
+    public static ParquetFileReader open(InputFile inputFile, HardwoodContext context) throws IOException {
+        inputFile.open();
+        try {
+            return openInternal(inputFile, (HardwoodContextImpl) context, false, true);
+        }
+        catch (Exception e) {
+            try {
+                inputFile.close();
+            }
+            catch (IOException closeException) {
+                e.addSuppressed(closeException);
+            }
+            throw e;
+        }
+    }
+
+    private static ParquetFileReader openInternal(InputFile inputFile, HardwoodContextImpl context,
+                                                   boolean ownsContext, boolean ownsInputFile) throws IOException {
+        FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
+        fileOpenedEvent.begin();
+
+        FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(inputFile);
+        FileSchema fileSchema = FileSchema.fromSchemaElements(fileMetaData.schema());
+
+        fileOpenedEvent.file = inputFile.name();
+        fileOpenedEvent.fileSize = inputFile.length();
+        fileOpenedEvent.rowGroupCount = fileMetaData.rowGroups().size();
+        fileOpenedEvent.columnCount = fileSchema.getColumnCount();
+        fileOpenedEvent.commit();
+
+        return new ParquetFileReader(inputFile, fileMetaData, context, ownsContext, ownsInputFile);
     }
 
     public FileMetaData getFileMetaData() {
@@ -166,7 +132,7 @@ public class ParquetFileReader implements AutoCloseable {
      */
     public ColumnReader createColumnReader(String columnName) {
         FileSchema schema = getFileSchema();
-        return ColumnReader.create(columnName, schema, fileMapping, fileMetaData.rowGroups(), context);
+        return ColumnReader.create(columnName, schema, inputFile, fileMetaData.rowGroups(), context);
     }
 
     /**
@@ -174,7 +140,7 @@ public class ParquetFileReader implements AutoCloseable {
      */
     public ColumnReader createColumnReader(int columnIndex) {
         FileSchema schema = getFileSchema();
-        return ColumnReader.create(columnIndex, schema, fileMapping, fileMetaData.rowGroups(), context);
+        return ColumnReader.create(columnIndex, schema, inputFile, fileMetaData.rowGroups(), context);
     }
 
     /**
@@ -193,8 +159,7 @@ public class ParquetFileReader implements AutoCloseable {
     public RowReader createRowReader(ColumnProjection projection) {
         FileSchema schema = getFileSchema();
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        String fileName = path != null ? path.getFileName().toString() : "";
-        return new SingleFileRowReader(schema, projectedSchema, fileMapping, fileMetaData.rowGroups(), context, fileName);
+        return new SingleFileRowReader(schema, projectedSchema, inputFile, fileMetaData.rowGroups(), context);
     }
 
     @Override
@@ -205,7 +170,10 @@ public class ParquetFileReader implements AutoCloseable {
             context.close();
         }
 
-        // Close channel
-        channel.close();
+        // Only close InputFile if we own it
+        if (ownsInputFile) {
+            inputFile.close();
+        }
     }
+
 }

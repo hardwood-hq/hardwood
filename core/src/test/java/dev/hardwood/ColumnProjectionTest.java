@@ -71,7 +71,7 @@ public class ColumnProjectionTest {
     void testProjectedSchemaAllColumns() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             FileSchema schema = reader.getFileSchema();
             ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
 
@@ -88,7 +88,7 @@ public class ColumnProjectionTest {
     void testProjectedSchemaSubset() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             FileSchema schema = reader.getFileSchema();
             // Select only id and name from the schema
             ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.columns("id", "name"));
@@ -104,7 +104,7 @@ public class ColumnProjectionTest {
     void testProjectedSchemaUnknownColumn() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             FileSchema schema = reader.getFileSchema();
 
             assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("nonexistent")))
@@ -119,7 +119,7 @@ public class ColumnProjectionTest {
     void testFlatSchemaReadAllColumns() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.all())) {
 
             assertThat(rows.getFieldCount()).isEqualTo(2);
@@ -144,7 +144,7 @@ public class ColumnProjectionTest {
     void testFlatSchemaReadSingleColumn() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("id"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(1);
@@ -168,7 +168,7 @@ public class ColumnProjectionTest {
     void testFlatSchemaAccessNonProjectedColumnThrows() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("id"))) {
 
             rows.next();
@@ -184,7 +184,7 @@ public class ColumnProjectionTest {
     void testFlatSchemaProjectionWithNulls() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed_with_nulls.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("name"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(1);
@@ -212,7 +212,7 @@ public class ColumnProjectionTest {
     void testFlatSchemaProjectMultipleColumns() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("id", "name", "balance"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(3);
@@ -235,7 +235,7 @@ public class ColumnProjectionTest {
     void testNestedSchemaProjectTopLevelField() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("id"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(1);
@@ -261,7 +261,7 @@ public class ColumnProjectionTest {
     void testNestedSchemaProjectStructField() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("address"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(1);
@@ -294,7 +294,7 @@ public class ColumnProjectionTest {
     void testNestedSchemaAccessNonProjectedThrows() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("address"))) {
 
             rows.next();
@@ -310,7 +310,7 @@ public class ColumnProjectionTest {
     void testNestedSchemaProjectBothFields() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("id", "address"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(2);
@@ -334,7 +334,7 @@ public class ColumnProjectionTest {
     void testListFieldProjection() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("tags"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(1);
@@ -355,7 +355,7 @@ public class ColumnProjectionTest {
     void testDeepNestedStructProjection() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/deep_nested_struct_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("account"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(1);
@@ -387,7 +387,7 @@ public class ColumnProjectionTest {
     void testIndexBasedAccessWithProjection() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("value"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(1);
@@ -409,7 +409,7 @@ public class ColumnProjectionTest {
     void testNestedIndexBasedAccessWithProjection() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rows = reader.createRowReader(ColumnProjection.columns("address"))) {
 
             assertThat(rows.getFieldCount()).isEqualTo(1);

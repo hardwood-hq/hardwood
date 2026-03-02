@@ -28,6 +28,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.Hardwood;
+import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -174,7 +175,7 @@ class NestedPerformanceTest {
                 .isTrue();
 
         try (Hardwood hardwood = Hardwood.create();
-             ParquetFileReader reader = hardwood.open(DATA_FILE)) {
+             ParquetFileReader reader = hardwood.open(InputFile.of(DATA_FILE))) {
 
             System.out.println("\n=== Schema ===");
             System.out.println(reader.getFileSchema());
@@ -428,7 +429,7 @@ class NestedPerformanceTest {
         int maxAddressCount = 0;
 
         try (Hardwood hardwood = Hardwood.create();
-             ParquetFileReader reader = hardwood.open(DATA_FILE);
+             ParquetFileReader reader = hardwood.open(InputFile.of(DATA_FILE));
              RowReader rowReader = reader.createRowReader()) {
 
             while (rowReader.hasNext()) {
@@ -531,7 +532,7 @@ class NestedPerformanceTest {
         int maxAddressCount = 0;
 
         try (Hardwood hardwood = Hardwood.create();
-             ParquetFileReader reader = hardwood.open(DATA_FILE);
+             ParquetFileReader reader = hardwood.open(InputFile.of(DATA_FILE));
              RowReader rowReader = reader.createRowReader()) {
 
             // Resolve top-level field indices once (RowReader supports int-based access)
@@ -638,7 +639,7 @@ class NestedPerformanceTest {
         int maxPrimaryNameLength = 0;
 
         try (Hardwood hardwood = Hardwood.create();
-             ParquetFileReader reader = hardwood.open(DATA_FILE)) {
+             ParquetFileReader reader = hardwood.open(InputFile.of(DATA_FILE))) {
 
             // Resolve column indices from schema
             int versionColIdx = reader.getFileSchema().getColumn("version").columnIndex();

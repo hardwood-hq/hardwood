@@ -7,9 +7,6 @@
  */
 package dev.hardwood.perf;
 
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.withinPercentage;
-
 import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -27,8 +24,12 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.Hardwood;
+import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
+
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.withinPercentage;
 
 /**
  * End-to-end performance comparison of page scanning strategies.
@@ -175,7 +176,7 @@ class PageScanPerformanceTest {
         long rowCount = 0;
 
         try (Hardwood hardwood = Hardwood.create();
-             ParquetFileReader reader = hardwood.open(file);
+             ParquetFileReader reader = hardwood.open(InputFile.of(file));
              ColumnReader col0 = reader.createColumnReader("passenger_count");
              ColumnReader col1 = reader.createColumnReader("trip_distance");
              ColumnReader col2 = reader.createColumnReader("fare_amount")) {

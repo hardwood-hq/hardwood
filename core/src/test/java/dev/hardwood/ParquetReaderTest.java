@@ -30,7 +30,7 @@ class ParquetReaderTest {
     void testReadPlainParquet() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Verify file metadata
             FileMetaData metadata = reader.getFileMetaData();
             assertThat(metadata).isNotNull();
@@ -93,7 +93,7 @@ class ParquetReaderTest {
     void testReadPlainParquetWithNulls() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed_with_nulls.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Verify file metadata
             FileMetaData metadata = reader.getFileMetaData();
             assertThat(metadata).isNotNull();
@@ -155,7 +155,7 @@ class ParquetReaderTest {
     void testReadSnappyCompressedParquet() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_snappy.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Verify file metadata
             FileMetaData metadata = reader.getFileMetaData();
             assertThat(metadata).isNotNull();
@@ -206,7 +206,7 @@ class ParquetReaderTest {
     void testColumnReaderByIndex() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Read column by index
             try (ColumnReader idReader = reader.createColumnReader(0)) {
                 assertThat(idReader.getColumnSchema().name()).isEqualTo("id");

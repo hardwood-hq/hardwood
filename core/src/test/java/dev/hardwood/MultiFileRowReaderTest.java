@@ -35,7 +35,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
 
             List<Long> ids = new ArrayList<>();
@@ -59,7 +59,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(filePath, filePath, filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
 
             List<Long> ids = new ArrayList<>();
@@ -87,7 +87,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(filePath, filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader(ColumnProjection.columns("id"))) {
 
             List<Long> ids = new ArrayList<>();
@@ -109,7 +109,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
 
             assertThat(reader.getFieldCount()).isEqualTo(2);
@@ -124,7 +124,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader(ColumnProjection.columns("value"))) {
 
             assertThat(reader.getFieldCount()).isEqualTo(1);
@@ -138,7 +138,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
 
             reader.hasNext();
@@ -153,7 +153,7 @@ class MultiFileRowReaderTest {
     @Test
     void testEmptyFileListThrows() {
         try (Hardwood hardwood = Hardwood.create()) {
-            assertThatThrownBy(() -> hardwood.openAll(List.of()))
+            assertThatThrownBy(() -> hardwood.openAll(InputFile.ofPaths(List.of())))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("At least one file");
         }
@@ -167,7 +167,7 @@ class MultiFileRowReaderTest {
         // Count rows using MultiFileRowReader
         long multiFileCount = 0;
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
             while (reader.hasNext()) {
                 reader.next();
@@ -179,7 +179,7 @@ class MultiFileRowReaderTest {
         long singleFileCount = 0;
         try (Hardwood hardwood = Hardwood.create()) {
             for (Path file : files) {
-                try (ParquetFileReader fileReader = hardwood.open(file);
+                try (ParquetFileReader fileReader = hardwood.open(InputFile.of(file));
                      RowReader rowReader = fileReader.createRowReader()) {
                     while (rowReader.hasNext()) {
                         rowReader.next();
@@ -198,7 +198,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(filePathWithNulls);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
 
             int rowCount = 0;
@@ -226,7 +226,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(filePath, filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
 
             long runningSum = 0;
@@ -256,7 +256,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(wideFile, wideFile);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
 
             int rowCount = 0;
@@ -280,7 +280,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(filePath, filePath, filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader(ColumnProjection.columns("id"))) {
 
             List<Long> ids = new ArrayList<>();
@@ -302,7 +302,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(nestedStructFile);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
 
             // Row 0: id=1, address={street="123 Main St", city="New York", zip=10001}
@@ -343,7 +343,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(nestedStructFile, nestedStructFile);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
 
             List<Integer> ids = new ArrayList<>();
@@ -381,7 +381,7 @@ class MultiFileRowReaderTest {
         List<Path> files = List.of(nestedStructFile, nestedStructFile);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader(ColumnProjection.columns("address"))) {
 
             assertThat(reader.getFieldCount()).isEqualTo(1);
@@ -417,7 +417,7 @@ class MultiFileRowReaderTest {
         // Count rows using MultiFileRowReader
         long multiFileCount = 0;
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
              MultiFileRowReader reader = parquet.createRowReader()) {
             while (reader.hasNext()) {
                 reader.next();
@@ -429,7 +429,7 @@ class MultiFileRowReaderTest {
         long singleFileCount = 0;
         try (Hardwood hardwood = Hardwood.create()) {
             for (Path file : files) {
-                try (ParquetFileReader fileReader = hardwood.open(file);
+                try (ParquetFileReader fileReader = hardwood.open(InputFile.of(file));
                      RowReader rowReader = fileReader.createRowReader()) {
                     while (rowReader.hasNext()) {
                         rowReader.next();

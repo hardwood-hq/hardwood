@@ -30,6 +30,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.Hardwood;
+import dev.hardwood.InputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.MultiFileColumnReaders;
@@ -269,7 +270,7 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (Path file : files) {
-                try (ParquetFileReader reader = hardwood.open(file);
+                try (ParquetFileReader reader = hardwood.open(InputFile.of(file));
                         RowReader rowReader = reader.createRowReader()) {
 
                     // Check column type once per file
@@ -319,7 +320,7 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (Path file : files) {
-                try (ParquetFileReader reader = hardwood.open(file);
+                try (ParquetFileReader reader = hardwood.open(InputFile.of(file));
                         RowReader rowReader = reader.createRowReader()) {
 
                     // Check column type once per file
@@ -369,7 +370,7 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (Path file : files) {
-                try (ParquetFileReader reader = hardwood.open(file);
+                try (ParquetFileReader reader = hardwood.open(InputFile.of(file));
                         RowReader rowReader = reader.createRowReader(projection)) {
 
                     // Check column type once per file
@@ -430,7 +431,7 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
-                try (MultiFileParquetReader parquet = hardwood.openAll(group.files());
+                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
                      MultiFileRowReader rowReader = parquet.createRowReader(projection)) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
@@ -483,7 +484,7 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
-                try (MultiFileParquetReader parquet = hardwood.openAll(group.files());
+                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
                      MultiFileRowReader rowReader = parquet.createRowReader(projection)) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
@@ -529,7 +530,7 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (Path file : files) {
-                try (ParquetFileReader reader = hardwood.open(file)) {
+                try (ParquetFileReader reader = hardwood.open(InputFile.of(file))) {
                     // Check column type once per file
                     SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
                     boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
@@ -596,7 +597,7 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groupFilesBySchema(files)) {
-                try (MultiFileParquetReader parquet = hardwood.openAll(group.files());
+                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
                      MultiFileColumnReaders columns = parquet.createColumnReaders(
                         ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
 
@@ -660,7 +661,7 @@ class FlatPerformanceTest {
         List<Path> doubleTypeFiles = new ArrayList<>();
 
         for (Path file : files) {
-            try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
                 SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
                 boolean isLong = pcNode instanceof SchemaNode.PrimitiveNode pn
                         && pn.type() == PhysicalType.INT64;

@@ -49,7 +49,7 @@ public class MultiFileColumnReaders implements AutoCloseable {
                            FileManager.InitResult initResult) {
         FileSchema schema = initResult.schema();
         ProjectedSchema projectedSchema = initResult.projectedSchema();
-        String firstFileName = initResult.firstFileState().path().getFileName().toString();
+        String firstFileName = initResult.firstFileState().inputFile().name();
 
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         this.readersByName = new LinkedHashMap<>(projectedColumnCount);

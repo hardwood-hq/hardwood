@@ -24,7 +24,7 @@ public class DebugParquetTest {
         String file = "src/test/resources/yellow_tripdata_2025-01.parquet";
 
         System.out.println("=== " + file + " ===");
-        try (ParquetFileReader reader = ParquetFileReader.open(Paths.get(file))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(Paths.get(file)))) {
             System.out.println("Version: " + reader.getFileMetaData().version());
             System.out.println("Num rows: " + reader.getFileMetaData().numRows());
             System.out.println("Row groups: " + reader.getFileMetaData().rowGroups().size());

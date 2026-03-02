@@ -15,6 +15,7 @@ import org.apache.parquet.example.data.Group;
 import org.apache.parquet.example.data.simple.SimpleGroup;
 import org.apache.parquet.schema.MessageType;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
@@ -45,7 +46,7 @@ public class ParquetReader<T> implements AutoCloseable {
     private final MessageType messageType;
 
     private ParquetReader(Path path) throws IOException {
-        this.hardwoodReader = ParquetFileReader.open(path.toNioPath());
+        this.hardwoodReader = ParquetFileReader.open(InputFile.of(path.toNioPath()));
         this.rowReader = hardwoodReader.createRowReader();
         this.messageType = SchemaConverter.toMessageType(hardwoodReader.getFileSchema());
     }

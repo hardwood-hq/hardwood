@@ -30,6 +30,7 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
@@ -237,7 +238,7 @@ class ParquetComparisonTest {
         Path repoDir = ParquetTestingRepoCloner.ensureCloned();
         Path testFile = repoDir.resolve("bad_data/ARROW-GH-43605.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(testFile);
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile));
              RowReader rowReader = fileReader.createRowReader()) {
             int count = 0;
             while (rowReader.hasNext()) {
@@ -253,7 +254,7 @@ class ParquetComparisonTest {
         Path testFile = repoDir.resolve("bad_data/" + fileName);
 
         assertThatThrownBy(() -> {
-            try (ParquetFileReader fileReader = ParquetFileReader.open(testFile);
+            try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile));
                  RowReader rowReader = fileReader.createRowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
@@ -267,7 +268,7 @@ class ParquetComparisonTest {
         Path testFile = repoDir.resolve("bad_data/" + fileName);
 
         assertThatThrownBy(() -> {
-            try (ParquetFileReader fileReader = ParquetFileReader.open(testFile);
+            try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile));
                  RowReader rowReader = fileReader.createRowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
@@ -288,7 +289,7 @@ class ParquetComparisonTest {
         List<GenericRecord> referenceRows = readWithParquetJava(testFile);
 
         // Read with Hardwood column-by-column and compare
-        try (ParquetFileReader fileReader = ParquetFileReader.open(testFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile))) {
             FileSchema schema = fileReader.getFileSchema();
 
             for (int colIdx = 0; colIdx < schema.getColumnCount(); colIdx++) {
@@ -474,7 +475,7 @@ class ParquetComparisonTest {
     private int compareWithHardwood(Path file, List<GenericRecord> referenceRows) throws IOException {
         int rowIndex = 0;
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(file);
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
              RowReader rowReader = fileReader.createRowReader()) {
             while (rowReader.hasNext()) {
                 rowReader.next();

@@ -28,7 +28,7 @@ public class YellowTripDataTest {
     void testReadYellowTripDataSample() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/yellow_tripdata_sample.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Verify schema
             assertThat(fileReader.getFileSchema().getColumnCount()).isEqualTo(20);
             assertThat(fileReader.getFileMetaData().numRows()).isEqualTo(5);

@@ -8,15 +8,11 @@
 package dev.hardwood;
 
 import java.io.IOException;
-import java.nio.file.Path;
-import java.util.ArrayList;
 import java.util.List;
-import java.util.Objects;
 
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.schema.ColumnProjection;
 
 /**
  * Entry point for reading Parquet files with a shared thread pool.
@@ -24,13 +20,13 @@ import dev.hardwood.schema.ColumnProjection;
  * <p>Use this when reading multiple files to share the executor across readers:</p>
  * <pre>{@code
  * try (Hardwood hardwood = Hardwood.create()) {
- *     ParquetFileReader file1 = hardwood.open(path1);
- *     ParquetFileReader file2 = hardwood.open(path2);
+ *     ParquetFileReader file1 = hardwood.open(InputFile.of(path1));
+ *     ParquetFileReader file2 = hardwood.open(InputFile.of(path2));
  *     // ...
  * }
  * }</pre>
  *
- * <p>For single-file usage, {@link ParquetFileReader#open(Path)} is simpler.</p>
+ * <p>For single-file usage, {@link ParquetFileReader#open(InputFile)} is simpler.</p>
  */
 public class Hardwood implements AutoCloseable {
 
@@ -48,17 +44,14 @@ public class Hardwood implements AutoCloseable {
     }
 
     /**
-     * Create a new Hardwood instance with a thread pool of the specified size.
+     * Open a Parquet file from an {@link InputFile} for reading.
+     * <p>
+     * The file will be opened and closed automatically; closing the
+     * returned reader closes the file.
+     * </p>
      */
-    public static Hardwood create(int threads) {
-        return new Hardwood(HardwoodContextImpl.create(threads));
-    }
-
-    /**
-     * Open a Parquet file for reading.
-     */
-    public ParquetFileReader open(Path path) throws IOException {
-        return ParquetFileReader.open(path, context);
+    public ParquetFileReader open(InputFile inputFile) throws IOException {
+        return ParquetFileReader.open(inputFile, context);
     }
 
     /**
@@ -66,34 +59,18 @@ public class Hardwood implements AutoCloseable {
      * <p>
      * Returns a {@link MultiFileParquetReader} that reads the schema from the first file
      * and provides factory methods for row-oriented
-     * ({@link MultiFileParquetReader#createRowReader(ColumnProjection)}) or column-oriented
-     * ({@link MultiFileParquetReader#createColumnReaders(ColumnProjection)}) access.
+     * ({@link MultiFileParquetReader#createRowReader()}) or column-oriented
+     * ({@link MultiFileParquetReader#createColumnReaders(dev.hardwood.schema.ColumnProjection)}) access.
+     * The files will be opened automatically as needed.
      * </p>
      *
-     * @param paths the Parquet files to read (must not be empty)
+     * @param inputFiles the input files to read (must not be empty)
      * @return a MultiFileParquetReader for the given files
      * @throws IOException if the first file cannot be opened or read
-     * @throws IllegalArgumentException if the paths list is empty
+     * @throws IllegalArgumentException if the list is empty
      */
-    public MultiFileParquetReader openAll(List<Path> paths) throws IOException {
-        return new MultiFileParquetReader(paths, context);
-    }
-
-    /**
-     * Open multiple Parquet files for reading with cross-file prefetching.
-     *
-     * @param first the first Parquet file to read
-     * @param furtherPaths additional Parquet files to read
-     * @return a MultiFileParquetReader for the given files
-     * @throws IOException if the first file cannot be opened or read
-     */
-    public MultiFileParquetReader openAll(Path first, Path... furtherPaths) throws IOException {
-        Objects.requireNonNull(first, "At least one path required");
-
-        List<Path> paths = new ArrayList<>(1 + furtherPaths.length);
-        paths.add(first);
-        paths.addAll(List.of(furtherPaths));
-        return openAll(paths);
+    public MultiFileParquetReader openAll(List<InputFile> inputFiles) throws IOException {
+        return new MultiFileParquetReader(inputFiles, context);
     }
 
     @Override

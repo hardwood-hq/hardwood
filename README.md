@@ -215,6 +215,7 @@ To disable SIMD and force scalar operations (for debugging or comparison), set t
 The `RowReader` provides a convenient row-oriented interface for reading Parquet files with typed accessor methods for type-safe field access.
 
 ```java
+import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqStruct;
@@ -227,7 +228,7 @@ import java.time.LocalTime;
 import java.math.BigDecimal;
 import java.util.UUID;
 
-try (ParquetFileReader fileReader = ParquetFileReader.open(path);
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
     RowReader rowReader = fileReader.createRowReader()) {
 
     while (rowReader.hasNext()) {
@@ -364,11 +365,12 @@ while (rowReader.hasNext()) {
 Column projection allows reading only a subset of columns from a Parquet file, improving performance by skipping I/O, decoding, and memory allocation for unneeded columns.
 
 ```java
+import dev.hardwood.InputFile;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
-try (ParquetFileReader fileReader = ParquetFileReader.open(path);
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
      RowReader rowReader = fileReader.createRowReader(
          ColumnProjection.columns("id", "name", "created_at"))) {
 
@@ -403,14 +405,15 @@ For reading multiple files as a single logical dataset, use `openAll()` which re
 
 ```java
 import dev.hardwood.Hardwood;
+import dev.hardwood.InputFile;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.MultiFileRowReader;
 
-List<Path> files = List.of(
+List<InputFile> files = InputFile.ofPaths(List.of(
     Path.of("data_2024_01.parquet"),
     Path.of("data_2024_02.parquet"),
     Path.of("data_2024_03.parquet")
-);
+));
 
 try (Hardwood hardwood = Hardwood.create();
      MultiFileParquetReader parquet = hardwood.openAll(files);
@@ -449,10 +452,11 @@ The `ColumnReader` provides batch-oriented columnar access with typed primitive 
 #### Single-File Column Reading
 
 ```java
+import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ColumnReader;
 
-try (ParquetFileReader reader = ParquetFileReader.open(path)) {
+try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     // Create a column reader by name (spans all row groups automatically)
     try (ColumnReader fare = reader.createColumnReader("fare_amount")) {
         double sum = 0;
@@ -546,7 +550,7 @@ try (ColumnReader reader = fileReader.createColumnReader("tags")) {
 Both approaches allow you to inspect file metadata before reading:
 
 ```java
-try (ParquetFileReader reader = ParquetFileReader.open(path)) {
+try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     FileMetaData metadata = reader.getFileMetaData();
 
     System.out.println("Version: " + metadata.version());

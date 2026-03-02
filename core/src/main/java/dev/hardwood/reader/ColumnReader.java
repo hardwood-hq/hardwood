@@ -9,13 +9,13 @@ package dev.hardwood.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.BitSet;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnValueIterator;
 import dev.hardwood.internal.reader.FileManager;
@@ -382,20 +382,20 @@ public class ColumnReader implements AutoCloseable {
      * Create a ColumnReader for a named column, scanning pages across all row groups.
      */
     static ColumnReader create(String columnName, FileSchema schema,
-                               ByteBuffer fileMapping, List<RowGroup> rowGroups,
+                               InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context) {
         ColumnSchema columnSchema = schema.getColumn(columnName);
-        return create(columnSchema, schema, fileMapping, rowGroups, context);
+        return create(columnSchema, schema, inputFile, rowGroups, context);
     }
 
     /**
      * Create a ColumnReader for a column by index, scanning pages across all row groups.
      */
     static ColumnReader create(int columnIndex, FileSchema schema,
-                               ByteBuffer fileMapping, List<RowGroup> rowGroups,
+                               InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context) {
         ColumnSchema columnSchema = schema.getColumn(columnIndex);
-        return create(columnSchema, schema, fileMapping, rowGroups, context);
+        return create(columnSchema, schema, inputFile, rowGroups, context);
     }
 
     /**
@@ -403,7 +403,7 @@ public class ColumnReader implements AutoCloseable {
      */
     @SuppressWarnings("unchecked")
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
-                                       ByteBuffer fileMapping, List<RowGroup> rowGroups,
+                                       InputFile inputFile, List<RowGroup> rowGroups,
                                        HardwoodContextImpl context) {
         int originalIndex = columnSchema.columnIndex();
 
@@ -414,8 +414,8 @@ public class ColumnReader implements AutoCloseable {
             final int rowGroup = rowGroupIndex;
             scanFutures[rowGroup] = CompletableFuture.supplyAsync(() -> {
                 ColumnChunk columnChunk = rowGroups.get(rowGroup).columns().get(originalIndex);
-                PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, fileMapping, 0,
-                        null, rowGroup);
+                PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
+                        inputFile, rowGroup);
                 try {
                     return scanner.scanPages();
                 }

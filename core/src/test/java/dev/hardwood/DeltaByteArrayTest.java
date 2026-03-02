@@ -28,7 +28,7 @@ class DeltaByteArrayTest {
     void testDeltaByteArray() throws Exception {
         Path file = Paths.get("src/test/resources/delta_byte_array_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(8);
 
             // Verify string columns use DELTA_BYTE_ARRAY encoding

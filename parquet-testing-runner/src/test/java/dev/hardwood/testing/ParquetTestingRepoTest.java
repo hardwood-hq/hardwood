@@ -20,6 +20,7 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
@@ -144,7 +145,7 @@ class ParquetTestingRepoTest {
 
         System.out.println("\n=== Testing: " + relativePath + " ===");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(filePath)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(filePath))) {
             // Read and display file metadata
             FileMetaData metadata = reader.getFileMetaData();
             System.out.println("Version: " + metadata.version());

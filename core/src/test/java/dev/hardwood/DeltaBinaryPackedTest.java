@@ -28,7 +28,7 @@ class DeltaBinaryPackedTest {
     void testDeltaBinaryPackedInt32AndInt64() throws Exception {
         Path file = Paths.get("src/test/resources/delta_binary_packed_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(200);
 
             // Verify all columns use DELTA_BINARY_PACKED encoding
@@ -68,7 +68,7 @@ class DeltaBinaryPackedTest {
     void testDeltaBinaryPackedOptionalColumn() throws Exception {
         Path file = Paths.get("src/test/resources/delta_binary_packed_optional_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(100);
 
             // Verify all columns use DELTA_BINARY_PACKED encoding
@@ -111,7 +111,7 @@ class DeltaBinaryPackedTest {
     void testDeltaLengthByteArray() throws Exception {
         Path file = Paths.get("src/test/resources/delta_length_byte_array_test.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(5);
 
             // Verify string columns use DELTA_LENGTH_BYTE_ARRAY encoding

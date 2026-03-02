@@ -26,7 +26,7 @@ public class LogicalTypesMetadataTest {
     void testLogicalTypeMetadata() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             var schema = fileReader.getFileSchema();
 
             // Verify logical types are parsed correctly

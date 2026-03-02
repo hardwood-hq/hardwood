@@ -9,10 +9,7 @@ package dev.hardwood.benchmarks;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
-import java.nio.file.StandardOpenOption;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.TimeUnit;
@@ -31,6 +28,7 @@ import org.openjdk.jmh.annotations.TearDown;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
@@ -41,7 +39,6 @@ import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -62,7 +59,7 @@ public class PageHandlingBenchmark {
     private String fileName;
 
     private Path path;
-    private FileChannel channel;
+    private InputFile inputFile;
     private HardwoodContextImpl context;
     private List<PageInfo> allPages;
 
@@ -74,38 +71,22 @@ public class PageHandlingBenchmark {
                     ". Run './mvnw verify -Pperformance-test' first to download test data.");
         }
 
-        channel = FileChannel.open(path, StandardOpenOption.READ);
+        inputFile = InputFile.of(path);
+        inputFile.open();
         context = HardwoodContextImpl.create();
         allPages = new ArrayList<>();
 
         // Scan all pages from all columns in all row groups
-        try (ParquetFileReader reader = ParquetFileReader.open(path)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
             FileSchema schema = reader.getFileSchema();
             List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
-
-            // Calculate data region bounds
-            long minOffset = Long.MAX_VALUE;
-            long maxEnd = 0;
-            for (RowGroup rowGroup : rowGroups) {
-                for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
-                    ColumnMetaData metaData = rowGroup.columns().get(colIdx).metaData();
-                    Long dictOffset = metaData.dictionaryPageOffset();
-                    long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : metaData.dataPageOffset();
-                    long chunkEnd = chunkStart + metaData.totalCompressedSize();
-                    minOffset = Math.min(minOffset, chunkStart);
-                    maxEnd = Math.max(maxEnd, chunkEnd);
-                }
-            }
-
-            // Create single file mapping
-            MappedByteBuffer fileMapping = channel.map(FileChannel.MapMode.READ_ONLY, minOffset, maxEnd - minOffset);
 
             for (RowGroup rowGroup : rowGroups) {
                 for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
 
-                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, fileMapping, minOffset);
+                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, inputFile, 0);
                     allPages.addAll(scanner.scanPages());
                 }
             }
@@ -116,8 +97,8 @@ public class PageHandlingBenchmark {
 
     @TearDown
     public void tearDown() throws IOException {
-        if (channel != null) {
-            channel.close();
+        if (inputFile != null) {
+            inputFile.close();
         }
         if (context != null) {
             context.close();

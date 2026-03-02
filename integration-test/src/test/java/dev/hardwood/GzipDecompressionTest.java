@@ -37,7 +37,7 @@ class GzipDecompressionTest {
     void readGzipCompressedFile() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/gzip_compressed.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThat(fileReader.getFileSchema().getColumnCount()).isEqualTo(3);
             assertThat(fileReader.getFileMetaData().numRows()).isEqualTo(5);
 

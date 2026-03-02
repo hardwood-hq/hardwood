@@ -9,12 +9,12 @@ package dev.hardwood.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
-import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnValueIterator;
@@ -43,24 +43,22 @@ final class SingleFileRowReader extends AbstractRowReader {
 
     private final FileSchema schema;
     private final ProjectedSchema projectedSchema;
-    private final ByteBuffer fileMapping;
+    private final InputFile inputFile;
     private final List<RowGroup> rowGroups;
     private final HardwoodContextImpl context;
-    private final String fileName;
     private final int adaptiveBatchSize;
 
     private ColumnValueIterator[] iterators;
     private int[][] levelNullThresholds; // [projectedCol] -> thresholds for nested columns
     private CompletableFuture<IndexedNestedColumnData[]> pendingBatch;
 
-    SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, ByteBuffer fileMapping,
-                        List<RowGroup> rowGroups, HardwoodContextImpl context, String fileName) {
+    SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, InputFile inputFile,
+                        List<RowGroup> rowGroups, HardwoodContextImpl context) {
         this.schema = schema;
         this.projectedSchema = projectedSchema;
-        this.fileMapping = fileMapping;
+        this.inputFile = inputFile;
         this.rowGroups = rowGroups;
         this.context = context;
-        this.fileName = fileName;
         this.adaptiveBatchSize = computeOptimalBatchSize(projectedSchema);
     }
 
@@ -73,6 +71,7 @@ final class SingleFileRowReader extends AbstractRowReader {
 
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
 
+        String fileName = inputFile.name();
         LOG.log(System.Logger.Level.DEBUG, "Starting to parse file ''{0}'' with {1} row groups, {2} projected columns (of {3} total)",
                 fileName, rowGroups.size(), projectedColumnCount, schema.getColumnCount());
 
@@ -85,10 +84,7 @@ final class SingleFileRowReader extends AbstractRowReader {
         LOG.log(System.Logger.Level.DEBUG, "Scanning pages for {0} projected columns across {1} row groups",
                 projectedColumnCount, rowGroups.size());
 
-        // File mapping covers entire file, so base offset is 0
-        final long mappingBaseOffset = 0;
-
-        // Scan each projected column in parallel using the file mapping
+        // Scan each projected column in parallel
         @SuppressWarnings("unchecked")
         CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[projectedColumnCount];
 
@@ -102,7 +98,7 @@ final class SingleFileRowReader extends AbstractRowReader {
                 for (int rowGroupIndex = 0; rowGroupIndex < rowGroups.size(); rowGroupIndex++) {
                     ColumnChunk columnChunk = rowGroups.get(rowGroupIndex).columns().get(originalIndex);
                     PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                            fileMapping, mappingBaseOffset, fileName, rowGroupIndex);
+                            inputFile, rowGroupIndex);
                     try {
                         columnPages.addAll(scanner.scanPages());
                     }

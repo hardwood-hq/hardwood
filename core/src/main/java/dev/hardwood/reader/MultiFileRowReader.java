@@ -58,12 +58,11 @@ public class MultiFileRowReader extends AbstractRowReader {
     /**
      * Creates a MultiFileRowReader from a pre-initialized FileManager.
      *
-     * @param files the Parquet files (for logging)
      * @param context the Hardwood context
      * @param fileManager the shared file manager
      * @param initResult the initialization result from the first file
      */
-    MultiFileRowReader(java.util.List<java.nio.file.Path> files, HardwoodContextImpl context,
+    MultiFileRowReader(HardwoodContextImpl context,
                        FileManager fileManager, FileManager.InitResult initResult) {
         this.context = context;
         this.fileManager = fileManager;
@@ -72,8 +71,8 @@ public class MultiFileRowReader extends AbstractRowReader {
         this.projectedSchema = initResult.projectedSchema();
         this.adaptiveBatchSize = computeOptimalBatchSize(projectedSchema);
 
-        LOG.log(System.Logger.Level.DEBUG, "Created MultiFileRowReader for {0} files starting with {1}, {2} projected columns",
-                files.size(), files.get(0).getFileName(), projectedSchema.getProjectedColumnCount());
+        LOG.log(System.Logger.Level.DEBUG, "Created MultiFileRowReader starting with {0}, {1} projected columns",
+                fileManager.getFileName(0), projectedSchema.getProjectedColumnCount());
     }
 
     @Override
@@ -87,7 +86,7 @@ public class MultiFileRowReader extends AbstractRowReader {
         boolean flatSchema = schema.isFlatSchema();
 
         // Create iterators using pages from the first file
-        String firstFileName = initResult.firstFileState().path().getFileName().toString();
+        String firstFileName = initResult.firstFileState().inputFile().name();
         iterators = new ColumnValueIterator[projectedColumnCount];
         for (int i = 0; i < projectedColumnCount; i++) {
             int originalIndex = projectedSchema.toOriginalIndex(i);

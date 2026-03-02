@@ -8,15 +8,13 @@
 package dev.hardwood.internal.reader;
 
 import java.lang.reflect.Field;
-import java.nio.MappedByteBuffer;
-import java.nio.channels.FileChannel;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.nio.file.StandardOpenOption;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -33,22 +31,20 @@ public class PageCursorTest {
         FileMetaData fileMetaData;
         FileSchema schema;
 
-        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             fileMetaData = reader.getFileMetaData();
             schema = reader.getFileSchema();
         }
 
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-            // Open the file
-            FileChannel channel = FileChannel.open(file, StandardOpenOption.READ)) {
+             InputFile inputFile = InputFile.of(file)) {
+            inputFile.open();
 
-            // Configure buffer and metadata
-            MappedByteBuffer mapping = channel.map(FileChannel.MapMode.READ_ONLY, 0, channel.size());
             ColumnSchema columnSchema = schema.getColumn(0);
             RowGroup rowGroup = fileMetaData.rowGroups().get(0);
 
             // Begin scanning file
-            PageScanner scanner = new PageScanner(columnSchema, rowGroup.columns().get(0), context, mapping, 0);
+            PageScanner scanner = new PageScanner(columnSchema, rowGroup.columns().get(0), context, inputFile, 0);
             List<PageInfo> scannedPages = scanner.scanPages();
             assertThat(scannedPages).isNotEmpty();
             int pageCount = scannedPages.size();

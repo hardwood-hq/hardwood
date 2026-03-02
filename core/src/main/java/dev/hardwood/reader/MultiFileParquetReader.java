@@ -8,9 +8,9 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
-import java.nio.file.Path;
 import java.util.List;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.FileManager;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.schema.ColumnProjection;
@@ -43,18 +43,27 @@ import dev.hardwood.schema.FileSchema;
  */
 public class MultiFileParquetReader implements AutoCloseable {
 
-    private final List<Path> files;
     private final HardwoodContextImpl context;
     private final FileManager fileManager;
     private final FileSchema schema;
 
-    public MultiFileParquetReader(List<Path> files, HardwoodContextImpl context) throws IOException {
-        if (files.isEmpty()) {
+    /**
+     * Creates a MultiFileParquetReader for the given {@link InputFile} instances.
+     * <p>
+     * The files will be opened automatically as needed. Closing this reader
+     * closes all the files.
+     * </p>
+     *
+     * @param inputFiles the input files to read (must not be empty)
+     * @param context the shared context
+     * @throws IOException if the first file cannot be opened or read
+     */
+    public MultiFileParquetReader(List<InputFile> inputFiles, HardwoodContextImpl context) throws IOException {
+        if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
-        this.files = files;
         this.context = context;
-        this.fileManager = new FileManager(files, context);
+        this.fileManager = new FileManager(inputFiles, context);
         this.schema = fileManager.openFirst();
     }
 
@@ -79,7 +88,7 @@ public class MultiFileParquetReader implements AutoCloseable {
      */
     public MultiFileRowReader createRowReader(ColumnProjection projection) {
         FileManager.InitResult initResult = fileManager.initialize(projection);
-        return new MultiFileRowReader(files, context, fileManager, initResult);
+        return new MultiFileRowReader(context, fileManager, initResult);
     }
 
     /**

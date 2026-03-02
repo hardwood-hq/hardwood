@@ -33,7 +33,7 @@ public class MapSchemaTest {
     void testSimpleMapSchema() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             var schema = fileReader.getFileSchema();
             var root = schema.getRootNode();
 
@@ -65,7 +65,7 @@ public class MapSchemaTest {
     void testSimpleMapData() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             try (RowReader rowReader = fileReader.createRowReader()) {
                 int rowCount = 0;
 
@@ -123,7 +123,7 @@ public class MapSchemaTest {
     void testMapOfMapsSchema() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/map_of_maps_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             var schema = fileReader.getFileSchema();
             var root = schema.getRootNode();
 
@@ -150,7 +150,7 @@ public class MapSchemaTest {
     void testMapOfMapsData() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/map_of_maps_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             try (RowReader rowReader = fileReader.createRowReader()) {
                 int rowCount = 0;
 
@@ -205,7 +205,7 @@ public class MapSchemaTest {
     void testListOfMapsData() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/list_of_maps_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             try (RowReader rowReader = fileReader.createRowReader()) {
                 int rowCount = 0;
 
@@ -256,7 +256,7 @@ public class MapSchemaTest {
     void testMapWithStructValues() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/map_struct_value_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             try (RowReader rowReader = fileReader.createRowReader()) {
                 int rowCount = 0;
 
@@ -298,7 +298,7 @@ public class MapSchemaTest {
     void testMapByIndex() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             try (RowReader rowReader = fileReader.createRowReader()) {
                 rowReader.next();
 

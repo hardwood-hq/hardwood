@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import org.moditect.jfrunit.EnableEvent;
 import org.moditect.jfrunit.JfrEvents;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
@@ -33,7 +34,7 @@ public class JfrEventTest {
     @EnableEvent("dev.hardwood.FileOpened")
     @EnableEvent("dev.hardwood.FileMapping")
     void shouldEmitFileOpenedAndFileMappingEvents() throws Exception {
-        try (ParquetFileReader reader = ParquetFileReader.open(TEST_FILE)) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
             assertThat(reader.getFileMetaData()).isNotNull();
         }
 
@@ -62,7 +63,7 @@ public class JfrEventTest {
     @EnableEvent("dev.hardwood.PrefetchMiss")
     @EnableEvent("dev.hardwood.BatchWait")
     void shouldEmitAllEventsWhenReadingRows() throws Exception {
-        try (ParquetFileReader reader = ParquetFileReader.open(TEST_FILE);
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE));
              RowReader rowReader = reader.createRowReader()) {
 
             int count = 0;

@@ -28,7 +28,7 @@ public class NestedSchemaTest {
     void testNestedStructSchema() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             var schema = fileReader.getFileSchema();
             var root = schema.getRootNode();
 
@@ -72,7 +72,7 @@ public class NestedSchemaTest {
     void testListSchema() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             var schema = fileReader.getFileSchema();
             var root = schema.getRootNode();
 
@@ -113,7 +113,7 @@ public class NestedSchemaTest {
     void testListOfStructsSchema() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/list_struct_test.parquet");
 
-        try (ParquetFileReader fileReader = ParquetFileReader.open(parquetFile)) {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             var schema = fileReader.getFileSchema();
             var root = schema.getRootNode();
 
