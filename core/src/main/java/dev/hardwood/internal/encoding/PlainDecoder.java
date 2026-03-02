@@ -8,9 +8,9 @@
 package dev.hardwood.internal.encoding;
 
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 import dev.hardwood.metadata.PhysicalType;
 
@@ -20,16 +20,18 @@ import dev.hardwood.metadata.PhysicalType;
  */
 public class PlainDecoder implements ValueDecoder {
 
-    private final InputStream input;
+    private final byte[] data;
     private final PhysicalType type;
     private final Integer typeLength;
+    private int pos;
 
     // For bit-packed boolean reading
     private int currentByte = 0;
     private int bitPosition = 8; // 8 means we need to read a new byte
 
-    public PlainDecoder(InputStream input, PhysicalType type, Integer typeLength) {
-        this.input = input;
+    public PlainDecoder(byte[] data, int offset, PhysicalType type, Integer typeLength) {
+        this.data = data;
+        this.pos = offset;
         this.type = type;
         this.typeLength = typeLength;
     }
@@ -38,11 +40,12 @@ public class PlainDecoder implements ValueDecoder {
      * Read a fixed-length byte array value.
      */
     public byte[] readFixedLenByteArray(int length) throws IOException {
-        byte[] bytes = input.readNBytes(length);
-        if (bytes.length != length) {
+        if (pos + length > data.length) {
             throw new IOException("Unexpected EOF while reading fixed-length byte array");
         }
-        return bytes;
+        byte[] result = Arrays.copyOfRange(data, pos, pos + length);
+        pos += length;
+        return result;
     }
 
     /**
@@ -52,11 +55,11 @@ public class PlainDecoder implements ValueDecoder {
     public void readLongs(long[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
             int numBytes = output.length * 8;
-            byte[] bytes = input.readNBytes(numBytes);
-            if (bytes.length != numBytes) {
+            if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading INT64 values");
             }
-            ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer().get(output);
+            ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer().get(output);
+            pos += numBytes;
         }
         else {
             int numDefined = 0;
@@ -66,11 +69,11 @@ public class PlainDecoder implements ValueDecoder {
                 }
             }
             int numBytes = numDefined * 8;
-            byte[] bytes = input.readNBytes(numBytes);
-            if (bytes.length != numBytes) {
+            if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading INT64 values");
             }
-            var longBuffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer();
+            var longBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer();
+            pos += numBytes;
             for (int i = 0; i < output.length; i++) {
                 if (definitionLevels[i] == maxDefLevel) {
                     output[i] = longBuffer.get();
@@ -86,11 +89,11 @@ public class PlainDecoder implements ValueDecoder {
     public void readDoubles(double[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
             int numBytes = output.length * 8;
-            byte[] bytes = input.readNBytes(numBytes);
-            if (bytes.length != numBytes) {
+            if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading DOUBLE values");
             }
-            ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer().get(output);
+            ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer().get(output);
+            pos += numBytes;
         }
         else {
             int numDefined = 0;
@@ -100,11 +103,11 @@ public class PlainDecoder implements ValueDecoder {
                 }
             }
             int numBytes = numDefined * 8;
-            byte[] bytes = input.readNBytes(numBytes);
-            if (bytes.length != numBytes) {
+            if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading DOUBLE values");
             }
-            var doubleBuffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer();
+            var doubleBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer();
+            pos += numBytes;
             for (int i = 0; i < output.length; i++) {
                 if (definitionLevels[i] == maxDefLevel) {
                     output[i] = doubleBuffer.get();
@@ -120,11 +123,11 @@ public class PlainDecoder implements ValueDecoder {
     public void readInts(int[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
             int numBytes = output.length * 4;
-            byte[] bytes = input.readNBytes(numBytes);
-            if (bytes.length != numBytes) {
+            if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading INT32 values");
             }
-            ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().get(output);
+            ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer().get(output);
+            pos += numBytes;
         }
         else {
             int numDefined = 0;
@@ -134,11 +137,11 @@ public class PlainDecoder implements ValueDecoder {
                 }
             }
             int numBytes = numDefined * 4;
-            byte[] bytes = input.readNBytes(numBytes);
-            if (bytes.length != numBytes) {
+            if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading INT32 values");
             }
-            var intBuffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
+            var intBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
+            pos += numBytes;
             for (int i = 0; i < output.length; i++) {
                 if (definitionLevels[i] == maxDefLevel) {
                     output[i] = intBuffer.get();
@@ -154,11 +157,11 @@ public class PlainDecoder implements ValueDecoder {
     public void readFloats(float[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
             int numBytes = output.length * 4;
-            byte[] bytes = input.readNBytes(numBytes);
-            if (bytes.length != numBytes) {
+            if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading FLOAT values");
             }
-            ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(output);
+            ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(output);
+            pos += numBytes;
         }
         else {
             int numDefined = 0;
@@ -168,11 +171,11 @@ public class PlainDecoder implements ValueDecoder {
                 }
             }
             int numBytes = numDefined * 4;
-            byte[] bytes = input.readNBytes(numBytes);
-            if (bytes.length != numBytes) {
+            if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading FLOAT values");
             }
-            var floatBuffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+            var floatBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+            pos += numBytes;
             for (int i = 0; i < output.length; i++) {
                 if (definitionLevels[i] == maxDefLevel) {
                     output[i] = floatBuffer.get();
@@ -240,10 +243,10 @@ public class PlainDecoder implements ValueDecoder {
         // Booleans are bit-packed in PLAIN encoding (8 values per byte, LSB first)
         if (bitPosition == 8) {
             // Need to read a new byte
-            currentByte = input.read();
-            if (currentByte == -1) {
+            if (pos >= data.length) {
                 throw new IOException("Unexpected EOF while reading boolean");
             }
+            currentByte = data[pos++] & 0xFF;
             bitPosition = 0;
         }
 
@@ -254,20 +257,21 @@ public class PlainDecoder implements ValueDecoder {
     }
 
     private byte[] readInt96() throws IOException {
-        byte[] bytes = input.readNBytes(12);
-        if (bytes.length != 12) {
+        if (pos + 12 > data.length) {
             throw new IOException("Unexpected EOF while reading INT96");
         }
-        return bytes;
+        byte[] result = Arrays.copyOfRange(data, pos, pos + 12);
+        pos += 12;
+        return result;
     }
 
     private byte[] readByteArray() throws IOException {
         // Read length (4 bytes, little-endian)
-        byte[] lengthBytes = input.readNBytes(4);
-        if (lengthBytes.length != 4) {
+        if (pos + 4 > data.length) {
             throw new IOException("Unexpected EOF while reading BYTE_ARRAY length");
         }
-        int length = ByteBuffer.wrap(lengthBytes).order(ByteOrder.LITTLE_ENDIAN).getInt();
+        int length = ByteBuffer.wrap(data, pos, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+        pos += 4;
 
         if (length < 0) {
             throw new IOException("Invalid BYTE_ARRAY length: " + length);
@@ -278,10 +282,11 @@ public class PlainDecoder implements ValueDecoder {
         }
 
         // Read data
-        byte[] data = input.readNBytes(length);
-        if (data.length != length) {
+        if (pos + length > data.length) {
             throw new IOException("Unexpected EOF while reading BYTE_ARRAY data");
         }
-        return data;
+        byte[] result = Arrays.copyOfRange(data, pos, pos + length);
+        pos += length;
+        return result;
     }
 }

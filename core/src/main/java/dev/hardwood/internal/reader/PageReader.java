@@ -9,9 +9,9 @@ package dev.hardwood.internal.reader;
 
 import java.io.ByteArrayInputStream;
 import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.util.Arrays;
 
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
@@ -124,10 +124,9 @@ public class PageReader {
     /**
      * Decode levels using RLE/Bit-Packing Hybrid encoding.
      */
-    private int[] decodeLevels(byte[] levelData, int numValues, int maxLevel) throws IOException {
+    private int[] decodeLevels(byte[] levelData, int numValues, int maxLevel) {
         int[] levels = new int[numValues];
-        RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(
-                new ByteArrayInputStream(levelData), getBitWidth(maxLevel));
+        RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, getBitWidth(maxLevel));
         decoder.readInts(levels, 0, numValues);
         return levels;
     }
@@ -149,15 +148,6 @@ public class PageReader {
         return count;
     }
 
-    /**
-     * Read a 4-byte little-endian integer from the stream.
-     */
-    private int readLittleEndianInt(InputStream stream) throws IOException {
-        byte[] bytes = new byte[4];
-        stream.read(bytes);
-        return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getInt();
-    }
-
     private int getBitWidth(int maxValue) {
         if (maxValue == 0) {
             return 0;
@@ -166,26 +156,28 @@ public class PageReader {
     }
 
     private Page parseDataPage(DataPageHeader header, byte[] data, Dictionary dictionary) throws IOException {
-        ByteArrayInputStream dataStream = new ByteArrayInputStream(data);
+        int offset = 0;
 
         int[] repetitionLevels = null;
         if (column.maxRepetitionLevel() > 0) {
-            int repLevelLength = readLittleEndianInt(dataStream);
-            byte[] repLevelData = new byte[repLevelLength];
-            dataStream.read(repLevelData);
+            int repLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+            offset += 4;
+            byte[] repLevelData = Arrays.copyOfRange(data, offset, offset + repLevelLength);
+            offset += repLevelLength;
             repetitionLevels = decodeLevels(repLevelData, header.numValues(), column.maxRepetitionLevel());
         }
 
         int[] definitionLevels = null;
         if (column.maxDefinitionLevel() > 0) {
-            int defLevelLength = readLittleEndianInt(dataStream);
-            byte[] defLevelData = new byte[defLevelLength];
-            dataStream.read(defLevelData);
+            int defLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+            offset += 4;
+            byte[] defLevelData = Arrays.copyOfRange(data, offset, offset + defLevelLength);
+            offset += defLevelLength;
             definitionLevels = decodeLevels(defLevelData, header.numValues(), column.maxDefinitionLevel());
         }
 
         return decodeTypedValues(
-                header.encoding(), dataStream, header.numValues(),
+                header.encoding(), data, offset, header.numValues(),
                 definitionLevels, repetitionLevels, dictionary);
     }
 
@@ -223,17 +215,15 @@ public class PageReader {
             pageData.slice(valuesOffset, compressedValuesLen).get(valuesData);
         }
 
-        ByteArrayInputStream valuesStream = new ByteArrayInputStream(valuesData);
-
         return decodeTypedValues(
-                header.encoding(), valuesStream, header.numValues(),
+                header.encoding(), valuesData, 0, header.numValues(),
                 definitionLevels, repetitionLevels, dictionary);
     }
 
     /**
      * Decode values into Page using primitive arrays where possible.
      */
-    private Page decodeTypedValues(Encoding encoding, InputStream dataStream,
+    private Page decodeTypedValues(Encoding encoding, byte[] data, int offset,
                                    int numValues,
                                    int[] definitionLevels, int[] repetitionLevels,
                                    Dictionary dictionary) throws IOException {
@@ -243,7 +233,7 @@ public class PageReader {
         // Try to decode into primitive arrays for supported type/encoding combinations
         switch (encoding) {
             case PLAIN -> {
-                PlainDecoder decoder = new PlainDecoder(dataStream, type, column.typeLength());
+                PlainDecoder decoder = new PlainDecoder(data, offset, type, column.typeLength());
                 return switch (type) {
                     case INT64 -> {
                         long[] values = new long[numValues];
@@ -278,7 +268,8 @@ public class PageReader {
                 };
             }
             case DELTA_BINARY_PACKED -> {
-                DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(dataStream);
+                DeltaBinaryPackedDecoder decoder = new DeltaBinaryPackedDecoder(
+                        new ByteArrayInputStream(data, offset, data.length - offset));
                 return switch (type) {
                     case INT64 -> {
                         long[] values = new long[numValues];
@@ -296,7 +287,7 @@ public class PageReader {
             }
             case BYTE_STREAM_SPLIT -> {
                 int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                byte[] allData = dataStream.readAllBytes();
+                byte[] allData = Arrays.copyOfRange(data, offset, data.length);
                 ByteStreamSplitDecoder decoder = new ByteStreamSplitDecoder(
                         allData, numNonNullValues, type, column.typeLength());
                 return switch (type) {
@@ -333,15 +324,12 @@ public class PageReader {
                 if (dictionary == null) {
                     throw new IOException("Dictionary page not found for " + encoding + " encoding");
                 }
-                int bitWidth = dataStream.read();
-                if (bitWidth < 0) {
-                    throw new IOException("Failed to read bit width for dictionary indices");
-                }
+                int bitWidth = data[offset++] & 0xFF;
                 if (bitWidth > 32) {
                     throw new IOException("Invalid dictionary index bit width: " + bitWidth
                             + " for column '" + column.name() + "'. Must be between 0 and 32");
                 }
-                byte[] indicesData = dataStream.readAllBytes();
+                byte[] indicesData = Arrays.copyOfRange(data, offset, data.length);
                 RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(indicesData, bitWidth);
 
                 return dictionary.decodePage(indexDecoder, numValues, definitionLevels, repetitionLevels, maxDefLevel);
@@ -354,23 +342,21 @@ public class PageReader {
                 }
 
                 // Read 4-byte length prefix (little-endian)
-                byte[] lengthBytes = new byte[4];
-                dataStream.read(lengthBytes);
-                int rleLength = ByteBuffer.wrap(lengthBytes).order(ByteOrder.LITTLE_ENDIAN).getInt();
+                int rleLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+                offset += 4;
 
                 // Read the RLE-encoded data
-                byte[] rleData = new byte[rleLength];
-                dataStream.read(rleData);
+                byte[] rleData = Arrays.copyOfRange(data, offset, offset + rleLength);
 
-                RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(
-                        new ByteArrayInputStream(rleData), 1);
+                RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(rleData, 1);
                 boolean[] values = new boolean[numValues];
                 decoder.readBooleans(values, definitionLevels, maxDefLevel);
                 return new Page.BooleanPage(values, definitionLevels, repetitionLevels, maxDefLevel, numValues);
             }
             case DELTA_LENGTH_BYTE_ARRAY -> {
                 int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(dataStream);
+                DeltaLengthByteArrayDecoder decoder = new DeltaLengthByteArrayDecoder(
+                        new ByteArrayInputStream(data, offset, data.length - offset));
                 decoder.initialize(numNonNullValues);
                 byte[][] values = new byte[numValues][];
                 decoder.readByteArrays(values, definitionLevels, maxDefLevel);
@@ -378,7 +364,8 @@ public class PageReader {
             }
             case DELTA_BYTE_ARRAY -> {
                 int numNonNullValues = countNonNullValues(numValues, definitionLevels);
-                DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(dataStream);
+                DeltaByteArrayDecoder decoder = new DeltaByteArrayDecoder(
+                        new ByteArrayInputStream(data, offset, data.length - offset));
                 decoder.initialize(numNonNullValues);
                 byte[][] values = new byte[numValues][];
                 decoder.readByteArrays(values, definitionLevels, maxDefLevel);

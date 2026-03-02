@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.io.ByteArrayInputStream;
 import java.io.IOException;
 
 import dev.hardwood.internal.encoding.PlainDecoder;
@@ -40,8 +39,7 @@ public sealed interface Dictionary {
      * @return typed dictionary
      */
     static Dictionary parse(byte[] data, int numValues, PhysicalType type, Integer typeLength) throws IOException {
-        ByteArrayInputStream dataStream = new ByteArrayInputStream(data);
-        PlainDecoder decoder = new PlainDecoder(dataStream, type, typeLength);
+        PlainDecoder decoder = new PlainDecoder(data, 0, type, typeLength);
 
         return switch (type) {
             case INT32 -> {
