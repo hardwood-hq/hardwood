@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.encoding;
 
-import java.io.IOException;
-import java.io.InputStream;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.Arrays;
@@ -38,10 +36,6 @@ public class RleBitPackingHybridDecoder {
     // Bit buffer for packed values
     private long bitBuffer;
     private int bitsInBuffer;
-
-    public RleBitPackingHybridDecoder(InputStream input, int bitWidth) throws IOException {
-        this(input.readAllBytes(), bitWidth);
-    }
 
     public RleBitPackingHybridDecoder(byte[] data, int bitWidth) {
         if (bitWidth < 0 || bitWidth > 32) {
