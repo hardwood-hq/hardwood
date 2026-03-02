@@ -502,15 +502,11 @@ abstract class AbstractRowReader implements RowReader {
         String prefix = "Error reading '" + fileName + "'";
         String message = causeMessage != null ? prefix + ": " + causeMessage : prefix;
 
-        if (cause instanceof UncheckedIOException uio) {
-            return new UncheckedIOException(message, uio.getCause());
+        switch(cause) {
+            case UncheckedIOException uio -> throw new UncheckedIOException(message, uio.getCause());
+            case IOException io -> throw new UncheckedIOException(message, io);
+            case RuntimeException re -> throw new RuntimeException(message, re);
+            default -> throw new RuntimeException(message, cause);
         }
-        if (cause instanceof IOException io) {
-            return new UncheckedIOException(message, io);
-        }
-        if (cause instanceof RuntimeException) {
-            return new RuntimeException(message, cause);
-        }
-        return new RuntimeException(message, cause);
     }
 }
