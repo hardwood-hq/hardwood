@@ -22,6 +22,11 @@ public class RleBitPackingHybridDecoder {
 
     private static final SimdOperations SIMD_OPS = VectorSupport.operations();
 
+    // Thread-local reusable buffer for temporary index arrays in dictionary decoding.
+    // Safe because the executor is a fixed platform thread pool, so buffers persist
+    // across page decodes on the same thread with zero synchronization overhead.
+    private static final ThreadLocal<int[]> TEMP_INDICES = new ThreadLocal<>();
+
     private final byte[] data;
     private final ByteBuffer dataBuffer;
     private final int dataEnd;
@@ -136,15 +141,24 @@ public class RleBitPackingHybridDecoder {
     }
 
     private int[] decodeIndices(int len, int[] defLevels, int maxDef) {
-        if (defLevels == null) {
-            int[] indices = new int[len];
-            readInts(indices, 0, len);
-            return indices;
+        int count = defLevels == null ? len : countNonNulls(defLevels, maxDef);
+        int[] indices = borrowTemp(count);
+        if (bitWidth == 0) {
+            Arrays.fill(indices, 0, count, 0);
         }
-        int nonNullCount = countNonNulls(defLevels, maxDef);
-        int[] indices = new int[nonNullCount];
-        readInts(indices, 0, nonNullCount);
+        else {
+            readInts(indices, 0, count);
+        }
         return indices;
+    }
+
+    private static int[] borrowTemp(int minSize) {
+        int[] buf = TEMP_INDICES.get();
+        if (buf == null || buf.length < minSize) {
+            buf = new int[minSize];
+            TEMP_INDICES.set(buf);
+        }
+        return buf;
     }
 
     private void applyDictionary(long[] output, long[] dict, int[] indices, int[] defLevels, int maxDef) {

@@ -14,11 +14,22 @@ import java.nio.ByteBuffer;
  */
 public class UncompressedDecompressor implements Decompressor {
 
+    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
+
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) {
-        byte[] data = new byte[compressed.remaining()];
-        compressed.get(data);
+        byte[] data = borrowOutputBuffer(compressed.remaining());
+        compressed.get(data, 0, compressed.remaining());
         return data;
+    }
+
+    private static byte[] borrowOutputBuffer(int minSize) {
+        byte[] buf = OUTPUT_BUFFER.get();
+        if (buf == null || buf.length < minSize) {
+            buf = new byte[minSize];
+            OUTPUT_BUFFER.set(buf);
+        }
+        return buf;
     }
 
     @Override
