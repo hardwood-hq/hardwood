@@ -17,18 +17,28 @@ import com.github.luben.zstd.Zstd;
  */
 public class ZstdDecompressor implements Decompressor {
 
+    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
+
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
-        // Decompress directly from ByteBuffer to byte[] - no copying
-        byte[] uncompressed = new byte[uncompressedSize];
-        int actualSize = Zstd.decompress(uncompressed, compressed);
+        byte[] output = borrowOutputBuffer(uncompressedSize);
+        int actualSize = Zstd.decompress(output, compressed);
 
         if (actualSize != uncompressedSize) {
             throw new IOException(
                     "ZSTD decompression size mismatch: expected " + uncompressedSize + ", got " + actualSize);
         }
 
-        return uncompressed;
+        return output;
+    }
+
+    private static byte[] borrowOutputBuffer(int minSize) {
+        byte[] buf = OUTPUT_BUFFER.get();
+        if (buf == null || buf.length < minSize) {
+            buf = new byte[minSize];
+            OUTPUT_BUFFER.set(buf);
+        }
+        return buf;
     }
 
     @Override
