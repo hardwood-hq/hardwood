@@ -17,10 +17,11 @@ import org.xerial.snappy.Snappy;
  */
 public class SnappyDecompressor implements Decompressor {
 
+    private static final ThreadLocal<ByteBuffer> DIRECT_BUFFER = new ThreadLocal<>();
+
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
-        // Snappy requires both buffers to be direct for ByteBuffer API, so allocate direct output
-        ByteBuffer output = ByteBuffer.allocateDirect(uncompressedSize);
+        ByteBuffer output = borrowDirectBuffer(uncompressedSize);
         int actualSize = Snappy.uncompress(compressed, output);
 
         if (actualSize != uncompressedSize) {
@@ -28,11 +29,20 @@ public class SnappyDecompressor implements Decompressor {
                     "Snappy decompression size mismatch: expected " + uncompressedSize + ", got " + actualSize);
         }
 
-        // Copy from direct buffer to byte[]
         byte[] uncompressed = new byte[uncompressedSize];
         output.rewind();
         output.get(uncompressed);
         return uncompressed;
+    }
+
+    private static ByteBuffer borrowDirectBuffer(int minSize) {
+        ByteBuffer buf = DIRECT_BUFFER.get();
+        if (buf == null || buf.capacity() < minSize) {
+            buf = ByteBuffer.allocateDirect(minSize);
+            DIRECT_BUFFER.set(buf);
+        }
+        buf.clear();
+        return buf;
     }
 
     @Override
