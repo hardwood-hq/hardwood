@@ -31,6 +31,8 @@ public class ColumnChunkReader {
         ColumnMetaData metaData = null;
         Long offsetIndexOffset = null;
         Integer offsetIndexLength = null;
+        Long columnIndexOffset = null;
+        Integer columnIndexLength = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -69,12 +71,29 @@ public class ColumnChunkReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 6: // column_index_offset (optional i64)
+                    if (header.type() == 0x06) {
+                        columnIndexOffset = reader.readI64();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
+                case 7: // column_index_length (optional i32)
+                    if (header.type() == 0x05) {
+                        columnIndexLength = reader.readI32();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 default:
                     reader.skipField(header.type());
                     break;
             }
         }
 
-        return new ColumnChunk(metaData, offsetIndexOffset, offsetIndexLength);
+        return new ColumnChunk(metaData, offsetIndexOffset, offsetIndexLength, columnIndexOffset, columnIndexLength);
     }
 }
+

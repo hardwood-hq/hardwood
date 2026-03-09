@@ -8,14 +8,18 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
+import java.util.ArrayList;
+import java.util.List;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.filter.RowGroupFilter;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
@@ -151,6 +155,16 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     /**
+     * Create a RowReader with a filter that uses column statistics to skip non-matching row groups.
+     *
+     * @param filter predicate evaluated against per-column min/max statistics
+     * @return a RowReader that only processes row groups which may contain matching rows
+     */
+    public RowReader createRowReader(RowGroupFilter filter) {
+        return createRowReader(ColumnProjection.all(), filter);
+    }
+
+    /**
      * Create a RowReader that iterates over selected columns in all row groups.
      *
      * @param projection specifies which columns to read
@@ -160,6 +174,48 @@ public class ParquetFileReader implements AutoCloseable {
         FileSchema schema = getFileSchema();
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
         return new SingleFileRowReader(schema, projectedSchema, inputFile, fileMetaData.rowGroups(), context);
+    }
+
+    /**
+     * Create a RowReader with both column projection and row group filtering.
+     *
+     * @param projection specifies which columns to read
+     * @param filter predicate evaluated against per-column min/max statistics
+     * @return a RowReader that only processes row groups which may contain matching rows
+     */
+    public RowReader createRowReader(ColumnProjection projection, RowGroupFilter filter) {
+        FileSchema schema = getFileSchema();
+        List<RowGroup> filteredRowGroups = filterRowGroups(fileMetaData.rowGroups(), filter, schema);
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        return new SingleFileRowReader(schema, projectedSchema, inputFile, filteredRowGroups, context);
+    }
+
+    /**
+     * Create a ColumnReader for a named column with row group filtering.
+     */
+    public ColumnReader createColumnReader(String columnName, RowGroupFilter filter) {
+        FileSchema schema = getFileSchema();
+        List<RowGroup> filteredRowGroups = filterRowGroups(fileMetaData.rowGroups(), filter, schema);
+        return ColumnReader.create(columnName, schema, inputFile, filteredRowGroups, context);
+    }
+
+    /**
+     * Create a ColumnReader for a column by index with row group filtering.
+     */
+    public ColumnReader createColumnReader(int columnIndex, RowGroupFilter filter) {
+        FileSchema schema = getFileSchema();
+        List<RowGroup> filteredRowGroups = filterRowGroups(fileMetaData.rowGroups(), filter, schema);
+        return ColumnReader.create(columnIndex, schema, inputFile, filteredRowGroups, context);
+    }
+
+    private static List<RowGroup> filterRowGroups(List<RowGroup> rowGroups, RowGroupFilter filter, FileSchema schema) {
+        List<RowGroup> result = new ArrayList<>(rowGroups.size());
+        for (RowGroup rowGroup : rowGroups) {
+            if (!filter.canDrop(rowGroup, schema)) {
+                result.add(rowGroup);
+            }
+        }
+        return result;
     }
 
     @Override
