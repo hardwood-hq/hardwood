@@ -18,21 +18,22 @@ import org.xerial.snappy.Snappy;
 public class SnappyDecompressor implements Decompressor {
 
     private static final ThreadLocal<ByteBuffer> DIRECT_BUFFER = new ThreadLocal<>();
+    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
 
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
-        ByteBuffer output = borrowDirectBuffer(uncompressedSize);
-        int actualSize = Snappy.uncompress(compressed, output);
+        ByteBuffer directOutput = borrowDirectBuffer(uncompressedSize);
+        int actualSize = Snappy.uncompress(compressed, directOutput);
 
         if (actualSize != uncompressedSize) {
             throw new IOException(
                     "Snappy decompression size mismatch: expected " + uncompressedSize + ", got " + actualSize);
         }
 
-        byte[] uncompressed = new byte[uncompressedSize];
-        output.rewind();
-        output.get(uncompressed);
-        return uncompressed;
+        byte[] output = borrowOutputBuffer(uncompressedSize);
+        directOutput.rewind();
+        directOutput.get(output, 0, uncompressedSize);
+        return output;
     }
 
     private static ByteBuffer borrowDirectBuffer(int minSize) {
@@ -42,6 +43,15 @@ public class SnappyDecompressor implements Decompressor {
             DIRECT_BUFFER.set(buf);
         }
         buf.clear();
+        return buf;
+    }
+
+    private static byte[] borrowOutputBuffer(int minSize) {
+        byte[] buf = OUTPUT_BUFFER.get();
+        if (buf == null || buf.length < minSize) {
+            buf = new byte[minSize];
+            OUTPUT_BUFFER.set(buf);
+        }
         return buf;
     }
 

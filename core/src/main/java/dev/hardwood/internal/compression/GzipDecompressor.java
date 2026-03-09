@@ -26,9 +26,11 @@ public class GzipDecompressor implements Decompressor {
     private static final int FNAME = 8;
     private static final int FCOMMENT = 16;
 
+    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
+
     @Override
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
-        byte[] result = new byte[uncompressedSize];
+        byte[] result = borrowOutputBuffer(uncompressedSize);
         int totalDecompressed = 0;
 
         // Handle concatenated GZIP members
@@ -131,6 +133,15 @@ public class GzipDecompressor implements Decompressor {
         }
 
         return offset;
+    }
+
+    private static byte[] borrowOutputBuffer(int minSize) {
+        byte[] buf = OUTPUT_BUFFER.get();
+        if (buf == null || buf.length < minSize) {
+            buf = new byte[minSize];
+            OUTPUT_BUFFER.set(buf);
+        }
+        return buf;
     }
 
     @Override

@@ -28,6 +28,7 @@ public final class LibdeflateDecompressor implements Decompressor {
     private static final ThreadLocal<MemorySegment> NATIVE_OUTPUT = new ThreadLocal<>();
     private static final ThreadLocal<MemorySegment> IN_SIZE_PTR = new ThreadLocal<>();
     private static final ThreadLocal<MemorySegment> OUT_SIZE_PTR = new ThreadLocal<>();
+    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
 
     private final LibdeflatePool pool;
 
@@ -86,7 +87,9 @@ public final class LibdeflateDecompressor implements Decompressor {
                         uncompressedSize, outputOffset));
             }
 
-            return output.asSlice(0, uncompressedSize).toArray(ValueLayout.JAVA_BYTE);
+            byte[] result = borrowOutputBuffer(uncompressedSize);
+            MemorySegment.copy(output, ValueLayout.JAVA_BYTE, 0, result, 0, uncompressedSize);
+            return result;
         }
         finally {
             pool.release(decompressor);
@@ -100,6 +103,15 @@ public final class LibdeflateDecompressor implements Decompressor {
             NATIVE_OUTPUT.set(seg);
         }
         return seg;
+    }
+
+    private static byte[] borrowOutputBuffer(int minSize) {
+        byte[] buf = OUTPUT_BUFFER.get();
+        if (buf == null || buf.length < minSize) {
+            buf = new byte[minSize];
+            OUTPUT_BUFFER.set(buf);
+        }
+        return buf;
     }
 
     private static MemorySegment borrowSizePtr(ThreadLocal<MemorySegment> tl) {
