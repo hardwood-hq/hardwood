@@ -766,6 +766,36 @@ Run the following command to build this project:
 ./mvnw clean verify
 ```
 
+### Building the Native CLI
+
+The `hardwood` CLI can be compiled to a GraalVM native binary using the `-Dnative` flag.
+
+#### macOS — local GraalVM build
+
+Requires GraalVM (Java 21+) installed locally. Install via [SDKMAN](https://sdkman.io/):
+
+```shell
+sdk install java 21.0.2-graalce
+```
+
+Then build:
+
+```shell
+./mvnw -Dnative package -pl core -am
+```
+
+The resulting distribution is at `core/target/hardwood-<version>/bin/hardwood`.
+
+#### Linux — container build (no local GraalVM required)
+
+Requires Docker. The build runs inside a Linux container and produces a Linux x86\_64 ELF binary:
+
+```shell
+./mvnw -Dnative -Dquarkus.native.container-build=true package -pl core -am
+```
+
+> **Note:** The container build always produces a Linux binary. Running it on macOS will fail with `exec format error`. Use the local GraalVM build for macOS binaries.
+
 On Windows, run the following command:
 
 ```shell
