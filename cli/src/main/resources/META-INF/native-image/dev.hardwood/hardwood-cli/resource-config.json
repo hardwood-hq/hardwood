@@ -1,0 +1,9 @@
+{
+  "resources": {
+    "includes": [
+      {"pattern": ".*brotli.*\\.(so|dylib|dll)"},
+      {"pattern": "\\Qsoftware.amazon.awssdk.http.SdkHttpService\\E"},
+      {"pattern": "\\QMETA-INF/services/software.amazon.awssdk.http.SdkHttpService\\E"}
+    ]
+  }
+}

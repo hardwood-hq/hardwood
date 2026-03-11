@@ -51,6 +51,7 @@
     <module>core</module>
     <module>s3</module>
     <module>avro</module>
+    <module>cli</module>
   </modules>
 
   <properties>
@@ -84,6 +85,11 @@
         <groupId>com.aayushatharva.brotli4j</groupId>
         <artifactId>brotli4j</artifactId>
         <version>1.20.0</version>
+      </dependency>
+      <dependency>
+        <groupId>com.github.freva</groupId>
+        <artifactId>ascii-table</artifactId>
+        <version>1.8.0</version>
       </dependency>
     </dependencies>
   </dependencyManagement>
@@ -119,6 +125,11 @@
           <groupId>com.github.siom79.japicmp</groupId>
           <artifactId>japicmp-maven-plugin</artifactId>
           <version>0.25.4</version>
+        </plugin>
+        <plugin>
+          <groupId>org.apache.maven.plugins</groupId>
+          <artifactId>maven-assembly-plugin</artifactId>
+          <version>3.7.1</version>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>

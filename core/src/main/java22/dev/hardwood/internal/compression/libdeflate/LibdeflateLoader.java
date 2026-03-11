@@ -25,6 +25,9 @@ public final class LibdeflateLoader {
             "deflate.dll", "libdeflate.dll"
     };
 
+    private static final boolean IS_NATIVE_IMAGE =
+            System.getProperty("org.graalvm.nativeimage.imagecode") != null;
+
     private static volatile SymbolLookup symbolLookup;
     private static volatile boolean loadAttempted;
     private static volatile Throwable loadError;
@@ -34,6 +37,9 @@ public final class LibdeflateLoader {
 
     /// Returns true if libdeflate is available on this system.
     public static boolean isAvailable() {
+        if (IS_NATIVE_IMAGE) {
+            return false;
+        }
         ensureLoaded();
         return symbolLookup != null;
     }
