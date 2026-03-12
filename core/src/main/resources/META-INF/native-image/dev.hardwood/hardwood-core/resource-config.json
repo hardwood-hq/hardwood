@@ -1,0 +1,10 @@
+{
+  "resources": {
+    "includes": [
+      {"pattern": ".*libbrotli.*"},
+      {"pattern": ".*brotli.*\\.so"},
+      {"pattern": ".*brotli.*\\.dylib"},
+      {"pattern": ".*brotli.*\\.dll"}
+    ]
+  }
+}
