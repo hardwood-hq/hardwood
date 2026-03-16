@@ -100,9 +100,10 @@ public class StatisticsReader {
         }
 
         // Prefer fields 5/6 over deprecated 1/2
+        boolean deprecated = (minValue == null && maxValue == null);
         byte[] resolvedMin = minValue != null ? minValue : deprecatedMin;
         byte[] resolvedMax = maxValue != null ? maxValue : deprecatedMax;
 
-        return new Statistics(resolvedMin, resolvedMax, nullCount, distinctCount);
+        return new Statistics(resolvedMin, resolvedMax, nullCount, distinctCount, deprecated);
     }
 }

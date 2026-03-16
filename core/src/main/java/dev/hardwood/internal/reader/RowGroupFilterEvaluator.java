@@ -20,6 +20,7 @@ import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.Not;
 import dev.hardwood.reader.FilterPredicate.Or;
 import dev.hardwood.schema.FileSchema;
 
@@ -50,10 +51,24 @@ public class RowGroupFilterEvaluator {
             case DoubleColumnPredicate p -> evaluateDouble(p, rowGroup, schema);
             case BooleanColumnPredicate p -> evaluateBoolean(p, rowGroup, schema);
             case BinaryColumnPredicate p -> evaluateBinary(p, rowGroup, schema);
-            case And a -> canDropRowGroup(a.left(), rowGroup, schema)
-                    || canDropRowGroup(a.right(), rowGroup, schema);
-            case Or o -> canDropRowGroup(o.left(), rowGroup, schema)
-                    && canDropRowGroup(o.right(), rowGroup, schema);
+            case And a -> {
+                for (FilterPredicate f : a.filters()) {
+                    if (canDropRowGroup(f, rowGroup, schema)) {
+                        yield true;
+                    }
+                }
+                yield false;
+            }
+            case Or o -> {
+                for (FilterPredicate f : o.filters()) {
+                    if (!canDropRowGroup(f, rowGroup, schema)) {
+                        yield false;
+                    }
+                }
+                yield true;
+            }
+            // NOT cannot safely determine drops from statistics alone; be conservative.
+            case Not ignored -> false;
         };
     }
 

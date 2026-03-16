@@ -13,8 +13,15 @@ package dev.hardwood.metadata;
  * @param metaData column metadata
  * @param offsetIndexOffset file offset of the offset index for this column chunk, or {@code null} if absent
  * @param offsetIndexLength length of the offset index in bytes, or {@code null} if absent
+ * @param columnIndexOffset file offset of the column index for this column chunk, or {@code null} if absent
+ * @param columnIndexLength length of the column index in bytes, or {@code null} if absent
  * @see <a href="https://parquet.apache.org/docs/file-format/data-pages/columnchunks/">File Format – Column Chunks</a>
  * @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
  */
-public record ColumnChunk(ColumnMetaData metaData, Long offsetIndexOffset, Integer offsetIndexLength) {
+public record ColumnChunk(
+        ColumnMetaData metaData,
+        Long offsetIndexOffset,
+        Integer offsetIndexLength,
+        Long columnIndexOffset,
+        Integer columnIndexLength) {
 }

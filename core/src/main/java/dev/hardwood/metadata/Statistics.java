@@ -24,5 +24,6 @@ public record Statistics(
         byte[] minValue,
         byte[] maxValue,
         Long nullCount,
-        Long distinctCount) {
+        Long distinctCount,
+        boolean isMinMaxDeprecated) {
 }

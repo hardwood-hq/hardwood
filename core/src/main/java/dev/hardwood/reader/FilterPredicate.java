@@ -9,6 +9,7 @@ package dev.hardwood.reader;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
+import java.util.List;
 
 /**
  * A predicate for filtering row groups based on column statistics.
@@ -43,7 +44,8 @@ public sealed interface FilterPredicate
                 FilterPredicate.BooleanColumnPredicate,
                 FilterPredicate.BinaryColumnPredicate,
                 FilterPredicate.And,
-                FilterPredicate.Or {
+                FilterPredicate.Or,
+                FilterPredicate.Not {
 
     // ==================== Operators ====================
 
@@ -194,11 +196,23 @@ public sealed interface FilterPredicate
     // ==================== Logical Combinators ====================
 
     static FilterPredicate and(FilterPredicate left, FilterPredicate right) {
-        return new And(left, right);
+        return new And(List.of(left, right));
+    }
+
+    static FilterPredicate and(FilterPredicate... filters) {
+        return new And(List.of(filters));
     }
 
     static FilterPredicate or(FilterPredicate left, FilterPredicate right) {
-        return new Or(left, right);
+        return new Or(List.of(left, right));
+    }
+
+    static FilterPredicate or(FilterPredicate... filters) {
+        return new Or(List.of(filters));
+    }
+
+    static FilterPredicate not(FilterPredicate filter) {
+        return new Not(filter);
     }
 
     // ==================== Leaf Predicate Records ====================
@@ -238,9 +252,12 @@ public sealed interface FilterPredicate
 
     // ==================== Logical Combinator Records ====================
 
-    record And(FilterPredicate left, FilterPredicate right) implements FilterPredicate {
+    record And(List<FilterPredicate> filters) implements FilterPredicate {
     }
 
-    record Or(FilterPredicate left, FilterPredicate right) implements FilterPredicate {
+    record Or(List<FilterPredicate> filters) implements FilterPredicate {
+    }
+
+    record Not(FilterPredicate delegate) implements FilterPredicate {
     }
 }

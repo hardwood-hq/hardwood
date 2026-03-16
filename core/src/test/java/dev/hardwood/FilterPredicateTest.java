@@ -84,8 +84,9 @@ class FilterPredicateTest {
         );
         assertThat(p).isInstanceOf(FilterPredicate.And.class);
         FilterPredicate.And and = (FilterPredicate.And) p;
-        assertThat(and.left()).isInstanceOf(FilterPredicate.IntColumnPredicate.class);
-        assertThat(and.right()).isInstanceOf(FilterPredicate.IntColumnPredicate.class);
+        assertThat(and.filters()).hasSize(2);
+        assertThat(and.filters().get(0)).isInstanceOf(FilterPredicate.IntColumnPredicate.class);
+        assertThat(and.filters().get(1)).isInstanceOf(FilterPredicate.IntColumnPredicate.class);
     }
 
     @Test
@@ -404,11 +405,11 @@ class FilterPredicateTest {
     }
 
     private static RowGroup createRowGroupWithStats(PhysicalType type, byte[] min, byte[] max) {
-        Statistics stats = new Statistics(min, max, 0L, null);
+        Statistics stats = new Statistics(min, max, 0L, null, false);
         ColumnMetaData cmd = new ColumnMetaData(
                 type, List.of(Encoding.PLAIN), List.of("col"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, 0, null, stats);
-        ColumnChunk chunk = new ColumnChunk(cmd, null, null);
+        ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, 100);
     }
 
@@ -416,7 +417,7 @@ class FilterPredicateTest {
         ColumnMetaData cmd = new ColumnMetaData(
                 PhysicalType.INT32, List.of(Encoding.PLAIN), List.of("col"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, 0, null, null);
-        ColumnChunk chunk = new ColumnChunk(cmd, null, null);
+        ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, 100);
     }
 
