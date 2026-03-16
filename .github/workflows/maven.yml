@@ -40,7 +40,7 @@ jobs:
           cache: 'maven'
 
       - name: 'Build and install modules'
-        run: ./mvnw -B clean install -DskipTests
+        run: ./mvnw -B clean install
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@v4

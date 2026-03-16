@@ -86,6 +86,10 @@ class ParquetComparisonTest {
             // shredded_variant files with Hardwood issues
             "case-046.parquet", // EOF while reading BYTE_ARRAY
 
+            // Intentionally corrupted CRC checksums (rejected by Hardwood CRC validation)
+            "datapage_v1-corrupt-checksum.parquet",
+            "rle-dict-uncompressed-corrupt-checksum.parquet",
+
             // bad_data files (intentionally malformed, rejected by Hardwood)
             "PARQUET-1481.parquet",
             "ARROW-RS-GH-6229-DICTHEADER.parquet",
@@ -231,6 +235,20 @@ class ParquetComparisonTest {
     }
 
     @Test
+    void rejectCorruptChecksum() throws IOException {
+        // Intentionally corrupted CRC checksums in data pages
+        assertCorruptChecksumRejected("data/datapage_v1-corrupt-checksum.parquet",
+                "CRC mismatch");
+    }
+
+    @Test
+    void rejectCorruptDictionaryChecksum() throws IOException {
+        // Intentionally corrupted CRC checksum in dictionary page
+        assertCorruptChecksumRejected("data/rle-dict-uncompressed-corrupt-checksum.parquet",
+                "CRC mismatch");
+    }
+
+    @Test
     void acceptArrowGH43605() throws IOException {
         // Dictionary index page uses RLE encoding with bit-width 0.
         // This is valid for a single-entry dictionary (ceil(log2(1)) = 0);
@@ -247,6 +265,21 @@ class ParquetComparisonTest {
             }
             assertThat(count).isGreaterThan(0);
         }
+    }
+
+    private void assertCorruptChecksumRejected(String relativePath, String expectedMessage) throws IOException {
+        Path repoDir = ParquetTestingRepoCloner.ensureCloned();
+        Path testFile = repoDir.resolve(relativePath);
+
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile));
+                 RowReader rowReader = fileReader.createRowReader()) {
+                while (rowReader.hasNext()) {
+                    rowReader.next();
+                }
+            }
+        }).as("Expected %s to be rejected due to corrupt checksum", relativePath)
+          .hasStackTraceContaining(expectedMessage);
     }
 
     private void assertBadDataRejected(String fileName) throws IOException {
