@@ -17,8 +17,8 @@ import picocli.CommandLine;
 /**
  * Adapted from the {@link CommandLine.HelpCommand} class. There are two primary differences:
  * <ul>
- *     <li>Information on nested subcommands is available (e.g., {@code kcctl help delete connectors})</li>
- *     <li>{@link  CommandLine#setAbbreviatedSubcommandsAllowed(boolean) Abbreviation of subcommands} is not supported (this feature is not currently used in kcctl)</li>
+ *     <li>Information on nested subcommands is available (e.g., {@code hardwood inspect pages})</li>
+ *     <li>{@link  CommandLine#setAbbreviatedSubcommandsAllowed(boolean) Abbreviation of subcommands} is not supported (this feature is not currently used in hardwood)</li>
  * </ul>
  */
 @CommandLine.Command(name = "help", header = {
