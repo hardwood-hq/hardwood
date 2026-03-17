@@ -14,7 +14,7 @@ import java.util.List;
  *
  * @param type physical (storage) type of the column
  * @param encodings list of encodings used in this column chunk (including dictionary encoding if present)
- * @param pathInSchema dot-separated path components from the root schema to this column
+ * @param pathInSchema path from the root schema to this column
  * @param codec compression codec used for pages in this column chunk
  * @param numValues total number of values (including nulls) in this column chunk
  * @param totalUncompressedSize total uncompressed byte size of all pages in this column chunk
@@ -28,7 +28,7 @@ import java.util.List;
 public record ColumnMetaData(
         PhysicalType type,
         List<Encoding> encodings,
-        List<String> pathInSchema,
+        FieldPath pathInSchema,
         CompressionCodec codec,
         long numValues,
         long totalUncompressedSize,

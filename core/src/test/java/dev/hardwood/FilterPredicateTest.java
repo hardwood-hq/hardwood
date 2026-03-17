@@ -18,6 +18,7 @@ import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
@@ -407,7 +408,7 @@ class FilterPredicateTest {
     private static RowGroup createRowGroupWithStats(PhysicalType type, byte[] min, byte[] max) {
         Statistics stats = new Statistics(min, max, 0L, null, false);
         ColumnMetaData cmd = new ColumnMetaData(
-                type, List.of(Encoding.PLAIN), List.of("col"),
+                type, List.of(Encoding.PLAIN), FieldPath.of("col"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, 0, null, stats);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, 100);
@@ -415,7 +416,7 @@ class FilterPredicateTest {
 
     private static RowGroup createRowGroupWithoutStatistics() {
         ColumnMetaData cmd = new ColumnMetaData(
-                PhysicalType.INT32, List.of(Encoding.PLAIN), List.of("col"),
+                PhysicalType.INT32, List.of(Encoding.PLAIN), FieldPath.of("col"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, 0, null, null);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, 100);

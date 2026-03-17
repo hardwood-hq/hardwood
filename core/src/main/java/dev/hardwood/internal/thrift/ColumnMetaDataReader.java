@@ -14,6 +14,7 @@ import java.util.List;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
 
@@ -149,7 +150,7 @@ public class ColumnMetaDataReader {
             }
         }
 
-        return new ColumnMetaData(type, encodings, pathInSchema, codec, numValues,
+        return new ColumnMetaData(type, encodings, new FieldPath(List.copyOf(pathInSchema)), codec, numValues,
                 totalUncompressedSize, totalCompressedSize, dataPageOffset, dictionaryPageOffset, statistics);
     }
 }

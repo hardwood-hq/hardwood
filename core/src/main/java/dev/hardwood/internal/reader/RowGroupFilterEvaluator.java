@@ -101,36 +101,19 @@ public class RowGroupFilterEvaluator {
     private static int findColumnIndexByPath(String columnName, RowGroup rowGroup) {
         List<ColumnChunk> columns = rowGroup.columns();
         for (int i = 0; i < columns.size(); i++) {
-            List<String> path = columns.get(i).metaData().pathInSchema();
+            var path = columns.get(i).metaData().pathInSchema();
             if (path.isEmpty()) {
                 continue;
             }
-            // Match dotted name against full path (e.g. "address.zip" matches ["address", "zip"])
-            if (matchesDottedPath(columnName, path)) {
+            if (path.matchesDottedName(columnName)) {
                 return i;
             }
             // Match top-level name for repeated columns (e.g. "scores" matches ["scores", "list", "element"])
-            if (path.get(0).equals(columnName)) {
+            if (path.topLevelName().equals(columnName)) {
                 return i;
             }
         }
         return -1;
-    }
-
-    private static boolean matchesDottedPath(String dottedName, List<String> path) {
-        int pathIndex = 0;
-        int nameStart = 0;
-        while (nameStart < dottedName.length() && pathIndex < path.size()) {
-            int dot = dottedName.indexOf('.', nameStart);
-            String segment = dot < 0 ? dottedName.substring(nameStart) : dottedName.substring(nameStart, dot);
-            if (!segment.equals(path.get(pathIndex))) {
-                return false;
-            }
-            pathIndex++;
-            nameStart = dot < 0 ? dottedName.length() : dot + 1;
-        }
-        // All segments consumed and matched up to the end of the dotted name
-        return nameStart >= dottedName.length() && pathIndex <= path.size();
     }
 
     // ==================== INT32 ====================
