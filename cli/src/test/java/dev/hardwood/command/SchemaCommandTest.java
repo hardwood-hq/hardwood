@@ -18,8 +18,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @QuarkusMainTest
 class SchemaCommandTest {
 
-    private static final String FLAT_FILE = "src/test/resources/plain_uncompressed.parquet";
-    private static final String NESTED_FILE = "src/test/resources/nested_struct_test.parquet";
+    private final String FLAT_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
+    private final String NESTED_FILE = this.getClass().getResource("/nested_struct_test.parquet").getPath();
 
     @Test
     void displaysNativeSchemaByDefault(QuarkusMainLauncher launcher) {

@@ -34,4 +34,37 @@
             <outputDirectory>./bin</outputDirectory>
         </file>
     </files>
+    <fileSets>
+        <fileSet>
+            <directory>${project.build.directory}/zstd-native</directory>
+            <outputDirectory>./lib</outputDirectory>
+            <includes>
+                <include>darwin/**/*</include>
+                <include>linux/**/*</include>
+                <include>win/**/*</include>
+                <include>freebsd/**/*</include>
+                <include>aix/**/*</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.build.directory}/snappy-native/org/xerial/snappy/native</directory>
+            <outputDirectory>./lib</outputDirectory>
+            <includes>
+                <include>Mac/**/*</include>
+                <include>Linux/**/*</include>
+                <include>Windows/**/*</include>
+                <include>FreeBSD/**/*</include>
+                <include>AIX/**/*</include>
+            </includes>
+        </fileSet>
+        <fileSet>
+            <directory>${project.build.directory}/lz4-native/net/jpountz/util</directory>
+            <outputDirectory>./lib</outputDirectory>
+            <includes>
+                <include>darwin/**/*</include>
+                <include>linux/**/*</include>
+                <include>win32/**/*</include>
+            </includes>
+        </fileSet>
+    </fileSets>
 </assembly>

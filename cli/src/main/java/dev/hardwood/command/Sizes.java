@@ -15,7 +15,7 @@ class Sizes {
     }
 
     static String columnPath(ColumnMetaData cmd) {
-        return String.join(".", cmd.pathInSchema());
+        return cmd.pathInSchema().toString();
     }
 
     static String format(long bytes) {

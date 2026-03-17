@@ -18,7 +18,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 @QuarkusMainTest
 class FooterCommandTest {
 
-    private static final String TEST_FILE = "src/test/resources/plain_uncompressed.parquet";
+    private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
 
     @Test
     void displaysFooterInfo(QuarkusMainLauncher launcher) {

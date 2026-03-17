@@ -18,8 +18,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 @QuarkusMainTest
 class InspectPagesCommandTest {
 
-    private static final String PLAIN_FILE = "src/test/resources/plain_uncompressed.parquet";
-    private static final String DICT_FILE = "src/test/resources/dictionary_uncompressed.parquet";
+    private final String PLAIN_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
+    private final String DICT_FILE = this.getClass().getResource("/dictionary_uncompressed.parquet").getPath();
 
     @Test
     void printsPageTypeAndEncoding(QuarkusMainLauncher launcher) {

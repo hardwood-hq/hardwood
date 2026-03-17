@@ -51,6 +51,7 @@
     <module>core</module>
     <module>s3</module>
     <module>avro</module>
+    <module>cli</module>
   </modules>
 
   <properties>

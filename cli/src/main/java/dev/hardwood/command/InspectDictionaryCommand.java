@@ -8,6 +8,7 @@
 package dev.hardwood.command;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -17,6 +18,7 @@ import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
+import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -95,7 +97,17 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             RowGroup rg = rowGroups.get(rgIdx);
             ColumnChunk chunk = rg.columns().get(columnSchema.columnIndex());
 
-            PageScanner scanner = new PageScanner(columnSchema, chunk, context, inputFile, rgIdx);
+            RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rg);
+            Long dictOffset = chunk.metaData().dictionaryPageOffset();
+            long chunkStart = (dictOffset != null && dictOffset > 0)
+                    ? dictOffset
+                    : chunk.metaData().dataPageOffset();
+            int chunkLen = Math.toIntExact(chunk.metaData().totalCompressedSize());
+            ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
+
+            PageScanner scanner = new PageScanner(columnSchema, chunk, context,
+                    chunkData, chunkStart, indexBuffers.forColumn(columnSchema.columnIndex()),
+                    rgIdx, fileMixin.toPath().toString());
             List<PageInfo> pages = scanner.scanPages();
 
             Dictionary dictionary = pages.isEmpty() ? null : pages.get(0).dictionary();
