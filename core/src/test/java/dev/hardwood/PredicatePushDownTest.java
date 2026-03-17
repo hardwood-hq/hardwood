@@ -9,11 +9,15 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
+import dev.hardwood.reader.MultiFileColumnReaders;
+import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.MultiFileRowReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -426,6 +430,138 @@ class PredicatePushDownTest {
                 }
                 assertThat(totalRows).isEqualTo(100);
             }
+        }
+    }
+
+    // ==================== Multi-file RowReader with Filter ====================
+
+    @Test
+    void testMultiFileRowReaderWithFilter() throws Exception {
+        // Two copies of INT_FILE: 300 rows each, 600 total
+        // Filter: id > 200 -> RG2 from each file = 200 rows
+        List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
+        FilterPredicate filter = FilterPredicate.gt("id", 200L);
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileRowReader rows = parquet.createRowReader(filter)) {
+
+            int totalRows = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                totalRows++;
+                assertThat(rows.getLong("id")).isGreaterThan(200L);
+            }
+            assertThat(totalRows).isEqualTo(200);
+        }
+    }
+
+    @Test
+    void testMultiFileRowReaderWithProjectionAndFilter() throws Exception {
+        List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
+        FilterPredicate filter = FilterPredicate.lt("id", 101L);
+        ColumnProjection projection = ColumnProjection.columns("id", "label");
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileRowReader rows = parquet.createRowReader(projection, filter)) {
+
+            int totalRows = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                totalRows++;
+                assertThat(rows.getLong("id")).isBetween(1L, 100L);
+                assertThat(rows.getString("label")).startsWith("rg1_");
+            }
+            assertThat(totalRows).isEqualTo(200);
+        }
+    }
+
+    @Test
+    void testMultiFileRowReaderFilterMatchesNoRowGroups() throws Exception {
+        List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
+        FilterPredicate filter = FilterPredicate.gt("id", 300L);
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileRowReader rows = parquet.createRowReader(filter)) {
+
+            assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
+    // ==================== Multi-file ColumnReaders with Filter ====================
+
+    @Test
+    void testMultiFileColumnReadersWithFilter() throws Exception {
+        // Filter: id > 200 -> RG2 from each file = 200 rows
+        List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
+        FilterPredicate filter = FilterPredicate.gt("id", 200L);
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileColumnReaders columns = parquet.createColumnReaders(
+                     ColumnProjection.columns("id", "value"), filter)) {
+
+            ColumnReader idReader = columns.getColumnReader("id");
+            ColumnReader valueReader = columns.getColumnReader("value");
+
+            int totalRows = 0;
+            while (idReader.nextBatch() & valueReader.nextBatch()) {
+                int count = idReader.getRecordCount();
+                long[] ids = idReader.getLongs();
+                long[] values = valueReader.getLongs();
+                for (int i = 0; i < count; i++) {
+                    assertThat(ids[i]).isGreaterThan(200L);
+                    assertThat(values[i]).isGreaterThan(200L);
+                }
+                totalRows += count;
+            }
+            assertThat(totalRows).isEqualTo(200);
+        }
+    }
+
+    @Test
+    void testMultiFileColumnReadersFilterMatchesNoRowGroups() throws Exception {
+        List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
+        FilterPredicate filter = FilterPredicate.eq("id", 999L);
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileColumnReaders columns = parquet.createColumnReaders(
+                     ColumnProjection.columns("id"), filter)) {
+
+            ColumnReader idReader = columns.getColumnReader("id");
+            assertThat(idReader.nextBatch()).isFalse();
+        }
+    }
+
+    @Test
+    void testMultiFileColumnReadersFilterOnDifferentColumn() throws Exception {
+        // Filter on "id" but read "value" and "label"
+        List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
+        FilterPredicate filter = FilterPredicate.gt("id", 200L);
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileColumnReaders columns = parquet.createColumnReaders(
+                     ColumnProjection.columns("value", "label"), filter)) {
+
+            ColumnReader valueReader = columns.getColumnReader("value");
+            ColumnReader labelReader = columns.getColumnReader("label");
+
+            int totalRows = 0;
+            while (valueReader.nextBatch() & labelReader.nextBatch()) {
+                int count = valueReader.getRecordCount();
+                long[] values = valueReader.getLongs();
+                String[] labels = labelReader.getStrings();
+                for (int i = 0; i < count; i++) {
+                    assertThat(values[i]).isGreaterThan(200L);
+                    assertThat(labels[i]).startsWith("rg3_");
+                }
+                totalRows += count;
+            }
+            assertThat(totalRows).isEqualTo(200);
         }
     }
 }
