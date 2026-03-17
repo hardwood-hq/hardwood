@@ -92,7 +92,9 @@
       "WebFetch(domain:parquet.apache.org)",
       "WebFetch(domain:siom79.github.io)",
       "Bash(git cherry-pick:*)",
-      "Bash(git branch:*)"
+      "Bash(git branch:*)",
+      "Bash(/tmp/test.txt:*)",
+      "Read(//tmp/**)"
     ]
   }
 }

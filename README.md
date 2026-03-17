@@ -445,6 +445,64 @@ try (Hardwood hardwood = Hardwood.create();
 }
 ```
 
+### Reading from S3
+
+The `hardwood-s3` module adds support for reading Parquet files directly from Amazon S3. Add it as a dependency alongside `hardwood-core`:
+
+```xml
+<dependency>
+    <groupId>dev.hardwood</groupId>
+    <artifactId>hardwood-s3</artifactId>
+</dependency>
+```
+
+Read a single file from S3:
+
+```java
+import dev.hardwood.s3.S3InputFile;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
+import software.amazon.awssdk.services.s3.S3Client;
+
+S3Client s3 = S3Client.create(); // uses default credential chain
+
+try (ParquetFileReader reader = ParquetFileReader.open(
+        S3InputFile.of(s3, "my-bucket", "data/trips.parquet"))) {
+    try (RowReader rows = reader.createRowReader()) {
+        while (rows.hasNext()) {
+            rows.next();
+            long id = rows.getLong("id");
+        }
+    }
+}
+```
+
+Read multiple files with a shared `S3Client` and thread pool:
+
+```java
+import dev.hardwood.Hardwood;
+import dev.hardwood.InputFile;
+import dev.hardwood.s3.S3InputFile;
+
+S3Client s3 = S3Client.create();
+List<InputFile> files = List.of(
+    S3InputFile.of(s3, "my-bucket", "data/part-001.parquet"),
+    S3InputFile.of(s3, "my-bucket", "data/part-002.parquet"),
+    S3InputFile.of(s3, "my-bucket", "data/part-003.parquet")
+);
+
+try (Hardwood hardwood = Hardwood.create();
+     MultiFileParquetReader parquet = hardwood.openAll(files);
+     MultiFileRowReader reader = parquet.createRowReader()) {
+    while (reader.hasNext()) {
+        reader.next();
+        // ...
+    }
+}
+```
+
+Column projection, row group filtering, and all other reader features work transparently with S3 files. Hardwood minimizes S3 requests by pre-fetching the file footer on open and coalescing column chunk reads within each row group.
+
 ### Column-Oriented Reading (ColumnReader)
 
 The `ColumnReader` provides batch-oriented columnar access with typed primitive arrays, avoiding per-row method calls and boxing. This is the fastest way to consume Parquet data when you process columns independently.
