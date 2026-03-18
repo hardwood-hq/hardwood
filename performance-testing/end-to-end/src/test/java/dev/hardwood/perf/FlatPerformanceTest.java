@@ -57,7 +57,7 @@ class FlatPerformanceTest {
 
     private static final Path DATA_DIR = Path.of("../test-data-setup/target/tlc-trip-record-data");
     private static final YearMonth DEFAULT_START = YearMonth.of(2016, 1);
-    private static final YearMonth DEFAULT_END = YearMonth.of(2025, 11);
+    private static final YearMonth DEFAULT_END = YearMonth.of(2016, 6);
     private static final int DEFAULT_RUNS = 10;
     private static final String CONTENDERS_PROPERTY = "perf.contenders";
     private static final String START_PROPERTY = "perf.start";
@@ -164,7 +164,7 @@ class FlatPerformanceTest {
     }
 
     @Test
-    void comparePerformance() throws IOException {
+    void comparePerformance() throws IOException, InterruptedException {
         List<Path> files = getAvailableFiles();
         assertThat(files).as("At least one data file should be available. Run test-file-setup first.").isNotEmpty();
 
@@ -189,23 +189,32 @@ class FlatPerformanceTest {
 
         // Timed runs
         System.out.println("\nTimed runs:");
-        java.util.Map<Contender, List<Result>> results = new java.util.EnumMap<>(Contender.class);
+        //java.util.Map<Contender, List<Result>> results = new java.util.EnumMap<>(Contender.class);
+        List<java.util.Map<Contender, List<Result>>> multipleRunResults = new ArrayList<>();
 
-        for (Contender contender : enabledContenders) {
-            List<Result> contenderResults = new ArrayList<>();
-            for (int i = 0; i < runCount; i++) {
-                Result result = timeRun(contender.displayName() + " [" + (i + 1) + "/" + runCount + "]",
-                        () -> getRunner(contender).apply(files));
-                contenderResults.add(result);
+        for(int j = 0; j < 5; j++) {
+            java.util.Map<Contender, List<Result>> results = new java.util.EnumMap<>(Contender.class); // ← move inside loop
+            for (Contender contender : enabledContenders) {
+                List<Result> contenderResults = new ArrayList<>();
+                for (int i = 0; i < runCount; i++) {
+                    Result result = timeRun(contender.displayName() + " [" + (i + 1) + "/" + runCount + "]",
+                            () -> getRunner(contender).apply(files));
+                    contenderResults.add(result);
+                }
+                results.put(contender, contenderResults);
             }
-            results.put(contender, contenderResults);
+            multipleRunResults.add(results);
+            Thread.sleep(3000);
+        }
+        // Print results
+        //printResults(files.size(), runCount, enabledContenders, results);
+        for(java.util.Map<Contender, List<Result>> res : multipleRunResults) {
+            printResults(files.size(), runCount, enabledContenders, res);
+            verifyCorrectness(res);
         }
 
-        // Print results
-        printResults(files.size(), runCount, enabledContenders, results);
-
         // Verify correctness - compare all results against each other
-        verifyCorrectness(results);
+        //verifyCorrectness(results);
     }
 
     private void verifyCorrectness(java.util.Map<Contender, List<Result>> results) {

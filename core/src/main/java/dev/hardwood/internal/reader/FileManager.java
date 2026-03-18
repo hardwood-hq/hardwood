@@ -325,9 +325,8 @@ public class FileManager {
         ColumnSchema[] columnSchemas = new ColumnSchema[projectedColumnCount];
         for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
             int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
-            ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
-            columnSchemas[projectedIndex] = openedFile.schema.getColumn(refColumn.name());
-            columnIndices[projectedIndex] = columnSchemas[projectedIndex].columnIndex();
+            columnSchemas[projectedIndex] = openedFile.schema.getColumn(originalIndex);
+            columnIndices[projectedIndex] = originalIndex;
         }
 
         // Scan each projected column in parallel
