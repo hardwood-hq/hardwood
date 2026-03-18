@@ -44,7 +44,8 @@ public class PageCursorTest {
             RowGroup rowGroup = fileMetaData.rowGroups().get(0);
 
             // Begin scanning file
-            PageScanner scanner = new PageScanner(columnSchema, rowGroup.columns().get(0), context, inputFile, 0);
+            PageScanner scanner = PageScannerTest.createScanner(inputFile, context,
+                    rowGroup.columns().get(0), columnSchema, null, 0);
             List<PageInfo> scannedPages = scanner.scanPages();
             assertThat(scannedPages).isNotEmpty();
             int pageCount = scannedPages.size();

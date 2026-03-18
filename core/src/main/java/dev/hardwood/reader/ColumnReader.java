@@ -9,6 +9,7 @@ package dev.hardwood.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.BitSet;
@@ -16,6 +17,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.reader.ChunkRange;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnValueIterator;
 import dev.hardwood.internal.reader.FileManager;
@@ -26,6 +28,7 @@ import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageCursor;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
+import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.internal.reader.TypedColumnData;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
@@ -406,16 +409,47 @@ public class ColumnReader implements AutoCloseable {
                                        InputFile inputFile, List<RowGroup> rowGroups,
                                        HardwoodContextImpl context) {
         int originalIndex = columnSchema.columnIndex();
+        int[] projectedColumns = new int[]{ originalIndex };
+        String fileName = inputFile.name();
 
         // Scan pages for this column across all row groups in parallel
         CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[rowGroups.size()];
 
         for (int rowGroupIndex = 0; rowGroupIndex < rowGroups.size(); rowGroupIndex++) {
-            final int rowGroup = rowGroupIndex;
-            scanFutures[rowGroup] = CompletableFuture.supplyAsync(() -> {
-                ColumnChunk columnChunk = rowGroups.get(rowGroup).columns().get(originalIndex);
+            final int rgIdx = rowGroupIndex;
+            RowGroup rowGroup = rowGroups.get(rgIdx);
+
+            // Pre-fetch indexes and column chunk data for this row group
+            RowGroupIndexBuffers indexBuffers;
+            try {
+                indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException("Failed to fetch index buffers for row group " + rgIdx, e);
+            }
+
+            List<ChunkRange> chunkRanges = ChunkRange.coalesce(
+                    rowGroup.columns(), projectedColumns, ChunkRange.MAX_GAP_BYTES);
+            ByteBuffer[] rangeBuffers = new ByteBuffer[chunkRanges.size()];
+            try {
+                for (int r = 0; r < chunkRanges.size(); r++) {
+                    ChunkRange range = chunkRanges.get(r);
+                    rangeBuffers[r] = inputFile.readRange(range.offset(), range.length());
+                }
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException("Failed to fetch column chunk data for row group " + rgIdx, e);
+            }
+
+            ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
+            ByteBuffer colChunkData = SingleFileRowReader.sliceColumnChunk(
+                    chunkRanges, rangeBuffers, columnChunk);
+            long colChunkOffset = SingleFileRowReader.chunkStartOffset(columnChunk);
+
+            scanFutures[rgIdx] = CompletableFuture.supplyAsync(() -> {
                 PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                        inputFile, rowGroup);
+                        colChunkData, colChunkOffset, indexBuffers.forColumn(originalIndex),
+                        rgIdx, fileName);
                 try {
                     return scanner.scanPages();
                 }

@@ -8,6 +8,7 @@
 package dev.hardwood.benchmarks;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -32,6 +33,7 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -83,11 +85,17 @@ public class PageScanBenchmark {
             FileSchema schema = reader.getFileSchema();
             List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
 
-            for (RowGroup rowGroup : rowGroups) {
+            for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
+                RowGroup rowGroup = rowGroups.get(rgIdx);
                 for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
-                    scanTargets.add(new ScanTarget(columnSchema, columnChunk));
+                    ColumnMetaData meta = columnChunk.metaData();
+                    Long dictOffset = meta.dictionaryPageOffset();
+                    long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : meta.dataPageOffset();
+                    int chunkLen = Math.toIntExact(meta.totalCompressedSize());
+                    ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
+                    scanTargets.add(new ScanTarget(columnSchema, columnChunk, chunkData, chunkStart, rgIdx));
                 }
             }
         }
@@ -109,11 +117,14 @@ public class PageScanBenchmark {
     public void scanPages(Blackhole blackhole) throws IOException {
         for (ScanTarget target : scanTargets) {
             PageScanner scanner = new PageScanner(
-                    target.columnSchema, target.columnChunk, context, inputFile, 0);
+                    target.columnSchema, target.columnChunk, context,
+                    target.chunkData, target.chunkDataFileOffset, null,
+                    target.rowGroupIndex, inputFile.name());
             List<PageInfo> pages = scanner.scanPages();
             blackhole.consume(pages);
         }
     }
 
-    private record ScanTarget(ColumnSchema columnSchema, ColumnChunk columnChunk) {}
+    private record ScanTarget(ColumnSchema columnSchema, ColumnChunk columnChunk,
+                               ByteBuffer chunkData, long chunkDataFileOffset, int rowGroupIndex) {}
 }
