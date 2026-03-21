@@ -123,9 +123,9 @@ class ParquetReaderCompatTest {
 
     @Test
     void testStringPath() throws Exception {
-        // Test using string path
-        try (ParquetReader<Group> reader = ParquetReader.builder(
-                new GroupReadSupport(), "../core/src/test/resources/plain_uncompressed.parquet").build()) {
+        // Test using string path via Path constructor
+        Path path = new Path("../core/src/test/resources/plain_uncompressed.parquet");
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path).build()) {
             Group record = reader.read();
             assertThat(record).isNotNull();
             assertThat(record.getLong("id", 0)).isEqualTo(1L);

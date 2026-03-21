@@ -26,7 +26,7 @@ import dev.hardwood.row.PqStruct;
  * a snapshot of the row data from Hardwood's RowReader API.
  * </p>
  */
-public class SimpleGroup implements Group {
+public class SimpleGroup extends Group {
 
     private final Map<String, Object> values;
     private final Map<String, Boolean> nullFlags;
@@ -174,12 +174,7 @@ public class SimpleGroup implements Group {
         return 1;
     }
 
-    @Override
-    public int getFieldRepetitionCount(String field) {
-        return getFieldRepetitionCount(schema.getFieldIndex(field));
-    }
-
-    // ---- String getters ----
+    // ---- By-index accessors ----
 
     @Override
     public String getString(int fieldIndex, int index) {
@@ -205,13 +200,6 @@ public class SimpleGroup implements Group {
     }
 
     @Override
-    public String getString(String field, int index) {
-        return getString(schema.getFieldIndex(field), index);
-    }
-
-    // ---- Integer getters ----
-
-    @Override
     public int getInteger(int fieldIndex, int index) {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
@@ -231,13 +219,6 @@ public class SimpleGroup implements Group {
             return value != null ? value : 0;
         }
     }
-
-    @Override
-    public int getInteger(String field, int index) {
-        return getInteger(schema.getFieldIndex(field), index);
-    }
-
-    // ---- Long getters ----
 
     @Override
     public long getLong(int fieldIndex, int index) {
@@ -261,13 +242,6 @@ public class SimpleGroup implements Group {
     }
 
     @Override
-    public long getLong(String field, int index) {
-        return getLong(schema.getFieldIndex(field), index);
-    }
-
-    // ---- Double getters ----
-
-    @Override
     public double getDouble(int fieldIndex, int index) {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
@@ -287,13 +261,6 @@ public class SimpleGroup implements Group {
             return value != null ? value : 0.0;
         }
     }
-
-    @Override
-    public double getDouble(String field, int index) {
-        return getDouble(schema.getFieldIndex(field), index);
-    }
-
-    // ---- Float getters ----
 
     @Override
     public float getFloat(int fieldIndex, int index) {
@@ -317,13 +284,6 @@ public class SimpleGroup implements Group {
     }
 
     @Override
-    public float getFloat(String field, int index) {
-        return getFloat(schema.getFieldIndex(field), index);
-    }
-
-    // ---- Boolean getters ----
-
-    @Override
     public boolean getBoolean(int fieldIndex, int index) {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
@@ -343,13 +303,6 @@ public class SimpleGroup implements Group {
             return value != null ? value : false;
         }
     }
-
-    @Override
-    public boolean getBoolean(String field, int index) {
-        return getBoolean(schema.getFieldIndex(field), index);
-    }
-
-    // ---- Binary getters ----
 
     @Override
     public Binary getBinary(int fieldIndex, int index) {
@@ -373,13 +326,6 @@ public class SimpleGroup implements Group {
     }
 
     @Override
-    public Binary getBinary(String field, int index) {
-        return getBinary(schema.getFieldIndex(field), index);
-    }
-
-    // ---- Group getters ----
-
-    @Override
     public Group getGroup(int fieldIndex, int index) {
         Type fieldType = schema.getType(fieldIndex);
         String fieldName = fieldType.getName();
@@ -400,11 +346,6 @@ public class SimpleGroup implements Group {
             PqStruct nestedStruct = (PqStruct) values.get(fieldName);
             return nestedStruct != null ? new SimpleGroup(nestedStruct, nestedType) : null;
         }
-    }
-
-    @Override
-    public Group getGroup(String field, int index) {
-        return getGroup(schema.getFieldIndex(field), index);
     }
 
     @Override

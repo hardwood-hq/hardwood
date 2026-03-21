@@ -39,14 +39,32 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${aws-sdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
     </dependencies>
   </dependencyManagement>
+
+  <properties>
+    <aws-sdk.version>2.42.17</aws-sdk.version>
+  </properties>
 
   <dependencies>
     <!-- Only runtime dependency: hardwood-core -->
     <dependency>
       <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-core</artifactId>
+    </dependency>
+
+    <!-- Optional: S3 support (users must add explicitly if needed) -->
+    <dependency>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-s3</artifactId>
+      <optional>true</optional>
     </dependency>
 
     <!-- Test dependencies -->
@@ -60,5 +78,159 @@
       <artifactId>assertj-core</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>localstack</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>s3</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-api</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-jpl</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.apache.logging.log4j</groupId>
+      <artifactId>log4j-slf4j2-impl</artifactId>
+      <scope>test</scope>
+    </dependency>
   </dependencies>
+
+  <build>
+    <plugins>
+      <!-- Assemble a merged JAR from upstream parquet-java and hadoop for API comparison -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-dependency-plugin</artifactId>
+        <version>3.8.1</version>
+        <configuration>
+          <skip>true</skip>
+        </configuration>
+        <executions>
+          <execution>
+            <id>unpack-upstream-ref</id>
+            <phase>none</phase>
+            <goals>
+              <goal>unpack</goal>
+            </goals>
+            <configuration>
+              <skip>false</skip>
+              <outputDirectory>${project.build.directory}/upstream-ref-classes</outputDirectory>
+              <artifactItems>
+                <artifactItem>
+                  <groupId>org.apache.parquet</groupId>
+                  <artifactId>parquet-hadoop</artifactId>
+                  <version>1.16.0</version>
+                </artifactItem>
+                <artifactItem>
+                  <groupId>org.apache.parquet</groupId>
+                  <artifactId>parquet-column</artifactId>
+                  <version>1.16.0</version>
+                </artifactItem>
+                <artifactItem>
+                  <groupId>org.apache.parquet</groupId>
+                  <artifactId>parquet-common</artifactId>
+                  <version>1.16.0</version>
+                </artifactItem>
+                <artifactItem>
+                  <groupId>org.apache.hadoop</groupId>
+                  <artifactId>hadoop-common</artifactId>
+                  <version>3.4.3</version>
+                </artifactItem>
+              </artifactItems>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <version>3.1.0</version>
+        <executions>
+          <execution>
+            <id>upstream-ref-jar</id>
+            <phase>none</phase>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <target>
+                <jar destfile="${project.build.directory}/upstream-ref.jar"
+                     basedir="${project.build.directory}/upstream-ref-classes"/>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <!--
+        API compatibility report: compares shim classes against upstream parquet-java / hadoop.
+        Run:  mvn package dependency:unpack@unpack-upstream-ref antrun:run@upstream-ref-jar japicmp:cmp -pl parquet-java-compat -DskipTests
+        Reports: target/japicmp/default-cli.{diff,html,md,xml}
+      -->
+      <plugin>
+        <groupId>com.github.siom79.japicmp</groupId>
+        <artifactId>japicmp-maven-plugin</artifactId>
+        <configuration>
+          <oldVersion>
+            <file>
+              <path>${project.build.directory}/upstream-ref.jar</path>
+            </file>
+          </oldVersion>
+          <newVersion>
+            <file>
+              <path>${project.build.directory}/${project.build.finalName}.jar</path>
+            </file>
+          </newVersion>
+          <parameter>
+            <onlyModified>false</onlyModified>
+            <includes>
+              <!-- Hadoop shims -->
+              <include>org.apache.hadoop.conf.Configuration</include>
+              <include>org.apache.hadoop.fs.Path</include>
+              <!-- Parquet I/O shims -->
+              <include>org.apache.parquet.io.InputFile</include>
+              <include>org.apache.parquet.io.api.Binary</include>
+              <!-- Parquet reader shims -->
+              <include>org.apache.parquet.hadoop.ParquetReader</include>
+              <include>org.apache.parquet.hadoop.ParquetReader$Builder</include>
+              <include>org.apache.parquet.hadoop.GroupReadSupport</include>
+              <include>org.apache.parquet.hadoop.util.HadoopInputFile</include>
+              <!-- Schema shims -->
+              <include>org.apache.parquet.schema.GroupType</include>
+              <include>org.apache.parquet.schema.MessageType</include>
+              <include>org.apache.parquet.schema.OriginalType</include>
+              <include>org.apache.parquet.schema.PrimitiveType</include>
+              <include>org.apache.parquet.schema.PrimitiveType$PrimitiveTypeName</include>
+              <include>org.apache.parquet.schema.Type</include>
+              <include>org.apache.parquet.schema.Type$Repetition</include>
+              <!-- Example data shims -->
+              <include>org.apache.parquet.example.data.Group</include>
+              <include>org.apache.parquet.example.data.simple.SimpleGroup</include>
+            </includes>
+            <reportOnlyFilename>true</reportOnlyFilename>
+            <ignoreMissingClasses>true</ignoreMissingClasses>
+          </parameter>
+        </configuration>
+      </plugin>
+    </plugins>
+  </build>
 </project>

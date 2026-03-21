@@ -13,9 +13,11 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.example.data.simple.SimpleGroup;
+import org.apache.parquet.hadoop.util.HadoopInputFile;
+import org.apache.parquet.hadoop.util.InputFiles;
+import org.apache.parquet.io.InputFile;
 import org.apache.parquet.schema.MessageType;
 
-import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
@@ -45,8 +47,8 @@ public class ParquetReader<T> implements AutoCloseable {
     private final RowReader rowReader;
     private final MessageType messageType;
 
-    private ParquetReader(Path path) throws IOException {
-        this.hardwoodReader = ParquetFileReader.open(InputFile.of(path.toNioPath()));
+    private ParquetReader(dev.hardwood.InputFile inputFile) throws IOException {
+        this.hardwoodReader = ParquetFileReader.open(inputFile);
         this.rowReader = hardwoodReader.createRowReader();
         this.messageType = SchemaConverter.toMessageType(hardwoodReader.getFileSchema());
     }
@@ -64,15 +66,6 @@ public class ParquetReader<T> implements AutoCloseable {
             return (T) new SimpleGroup(rowReader, messageType);
         }
         return null;
-    }
-
-    /**
-     * Get the schema of the file.
-     *
-     * @return the message type schema
-     */
-    public MessageType getSchema() {
-        return messageType;
     }
 
     @Override
@@ -93,18 +86,18 @@ public class ParquetReader<T> implements AutoCloseable {
      * @return the builder
      */
     public static Builder<Group> builder(GroupReadSupport readSupport, Path path) {
-        return new Builder<>(path);
+        return new Builder<>(path, null);
     }
 
     /**
-     * Create a builder for ParquetReader using a string path.
+     * Create a builder for ParquetReader using an InputFile.
      *
      * @param readSupport the read support (must be GroupReadSupport)
-     * @param path the path to the Parquet file
+     * @param inputFile the input file (e.g. from {@link HadoopInputFile#fromPath})
      * @return the builder
      */
-    public static Builder<Group> builder(GroupReadSupport readSupport, String path) {
-        return new Builder<>(new Path(path));
+    public static Builder<Group> builder(GroupReadSupport readSupport, InputFile inputFile) {
+        return new Builder<>(null, inputFile);
     }
 
     /**
@@ -115,14 +108,20 @@ public class ParquetReader<T> implements AutoCloseable {
     public static class Builder<T> {
 
         private final Path path;
+        private final InputFile inputFile;
         private Configuration conf;
 
-        Builder(Path path) {
+        Builder(Path path, InputFile inputFile) {
             this.path = path;
+            this.inputFile = inputFile;
         }
 
         /**
-         * Set the Hadoop configuration (ignored - provided for API compatibility).
+         * Set the Hadoop configuration.
+         * <p>
+         * For S3 paths, the configuration supplies credentials and endpoint settings.
+         * For local paths, the configuration is ignored.
+         * </p>
          *
          * @param conf the configuration
          * @return this builder
@@ -139,7 +138,15 @@ public class ParquetReader<T> implements AutoCloseable {
          * @throws IOException if opening the file fails
          */
         public ParquetReader<T> build() throws IOException {
-            return new ParquetReader<>(path);
+            return new ParquetReader<>(resolveHardwoodInputFile());
+        }
+
+        private dev.hardwood.InputFile resolveHardwoodInputFile() {
+            if (inputFile != null) {
+                return InputFiles.unwrap(inputFile);
+            }
+            Configuration c = conf != null ? conf : new Configuration();
+            return InputFiles.unwrap(HadoopInputFile.fromPath(path, c));
         }
     }
 }
