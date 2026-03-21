@@ -94,7 +94,8 @@
       "Bash(git cherry-pick:*)",
       "Bash(git branch:*)",
       "Bash(/tmp/test.txt:*)",
-      "Read(//tmp/**)"
+      "Read(//tmp/**)",
+      "Bash(gh api:*)"
     ]
   }
 }
