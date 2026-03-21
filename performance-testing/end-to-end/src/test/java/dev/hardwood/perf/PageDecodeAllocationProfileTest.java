@@ -8,6 +8,7 @@
 package dev.hardwood.perf;
 
 import java.lang.management.ManagementFactory;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
@@ -26,6 +27,7 @@ import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageReader;
 import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -133,12 +135,20 @@ public class PageDecodeAllocationProfileTest {
 
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
 
-            for (RowGroup rowGroup : fileMetaData.rowGroups()) {
+            List<RowGroup> rowGroupList = fileMetaData.rowGroups();
+            for (int rgIdx = 0; rgIdx < rowGroupList.size(); rgIdx++) {
+                RowGroup rowGroup = rowGroupList.get(rgIdx);
                 for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
+                    ColumnMetaData meta = columnChunk.metaData();
+                    Long dictOffset = meta.dictionaryPageOffset();
+                    long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : meta.dataPageOffset();
+                    int chunkLen = Math.toIntExact(meta.totalCompressedSize());
+                    ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
 
-                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, inputFile, 0);
+                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
+                            chunkData, chunkStart, null, rgIdx, inputFile.name());
                     List<PageInfo> pages = scanner.scanPages();
 
                     for (PageInfo pageInfo : pages) {

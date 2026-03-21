@@ -12,7 +12,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 
-import dev.hardwood.InputFile;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
@@ -36,31 +35,46 @@ import dev.hardwood.schema.ColumnSchema;
  * When an Offset Index is available in the file metadata, pages are located
  * by direct lookup instead of sequentially scanning all page headers.
  * </p>
+ * <p>
+ * The column chunk data and index buffers are provided by the caller, which
+ * pre-fetches them via {@link ChunkRange} and {@link RowGroupIndexBuffers}
+ * to minimize network round-trips on remote backends.
+ * </p>
  */
 public class PageScanner {
 
     private final ColumnSchema columnSchema;
     private final ColumnChunk columnChunk;
     private final HardwoodContextImpl context;
-    private final InputFile inputFile;
+    private final ByteBuffer chunkData;
+    private final long chunkDataFileOffset;
+    private final ColumnIndexBuffers indexBuffers;
     private final int rowGroupIndex;
+    private final String fileName;
 
     /**
-     * Creates a PageScanner that reads from an {@link InputFile}.
+     * Creates a PageScanner with pre-fetched chunk data and index buffers.
      *
-     * @param columnSchema the column schema
-     * @param columnChunk the column chunk metadata
-     * @param context the Hardwood context
-     * @param inputFile the input file to read from
-     * @param rowGroupIndex the row group index for JFR event reporting
+     * @param columnSchema        the column schema
+     * @param columnChunk         the column chunk metadata
+     * @param context             the Hardwood context
+     * @param chunkData           pre-fetched bytes for this column chunk
+     * @param chunkDataFileOffset absolute file offset where {@code chunkData} starts
+     * @param indexBuffers        pre-fetched index buffers for this column
+     * @param rowGroupIndex       the row group index for JFR event reporting
+     * @param fileName            the file name for error messages and JFR events
      */
     public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
-                       InputFile inputFile, int rowGroupIndex) {
+                       ByteBuffer chunkData, long chunkDataFileOffset, ColumnIndexBuffers indexBuffers,
+                       int rowGroupIndex, String fileName) {
         this.columnSchema = columnSchema;
         this.columnChunk = columnChunk;
         this.context = context;
-        this.inputFile = inputFile;
+        this.chunkData = chunkData;
+        this.chunkDataFileOffset = chunkDataFileOffset;
+        this.indexBuffers = indexBuffers;
         this.rowGroupIndex = rowGroupIndex;
+        this.fileName = fileName;
     }
 
     /**
@@ -90,33 +104,14 @@ public class PageScanner {
 
         ColumnMetaData metaData = columnChunk.metaData();
 
-        Long dictOffset = metaData.dictionaryPageOffset();
-        long chunkStartOffset = (dictOffset != null && dictOffset > 0)
-                ? dictOffset
-                : metaData.dataPageOffset();
-        long chunkSize = metaData.totalCompressedSize();
-
-        ByteBuffer buffer;
-        try {
-            buffer = inputFile.readRange(chunkStartOffset, (int) chunkSize);
-        }
-        catch (IndexOutOfBoundsException e) {
-            throw new IOException("Invalid column chunk bounds for '" + columnSchema.name()
-                    + "': chunkStart=" + chunkStartOffset
-                    + ", chunkSize=" + chunkSize
-                    + ", dictOffset=" + dictOffset
-                    + ", dataPageOffset=" + metaData.dataPageOffset()
-                    + ", fileSize=" + inputFile.length(), e);
-        }
-
         List<PageInfo> pageInfos = new ArrayList<>();
         long valuesRead = 0;
         int position = 0;
 
         Dictionary dictionary = null;
 
-        while (valuesRead < metaData.numValues() && position < buffer.limit()) {
-            ThriftCompactReader headerReader = new ThriftCompactReader(buffer, position);
+        while (valuesRead < metaData.numValues() && position < chunkData.limit()) {
+            ThriftCompactReader headerReader = new ThriftCompactReader(chunkData, position);
             PageHeader header = PageHeaderReader.read(headerReader);
             int headerSize = headerReader.getBytesRead();
 
@@ -131,7 +126,7 @@ public class PageScanner {
                             + "': negative numValues (" + numValues + ")");
                 }
 
-                ByteBuffer compressedData = buffer.slice(pageDataOffset, compressedSize);
+                ByteBuffer compressedData = chunkData.slice(pageDataOffset, compressedSize);
                 if (header.crc() != null) {
                     CrcValidator.assertCorrectCrc(header.crc(), compressedData, columnSchema.name());
                 }
@@ -142,7 +137,7 @@ public class PageScanner {
             }
             else if (header.type() == PageHeader.PageType.DATA_PAGE ||
                      header.type() == PageHeader.PageType.DATA_PAGE_V2) {
-                ByteBuffer pageSlice = buffer.slice(position, totalPageSize);
+                ByteBuffer pageSlice = chunkData.slice(position, totalPageSize);
 
                 PageInfo pageInfo = new PageInfo(
                     pageSlice,
@@ -164,7 +159,7 @@ public class PageScanner {
                     + " values but pages contain " + valuesRead);
         }
 
-        event.file = inputFile.name();
+        event.file = fileName;
         event.rowGroupIndex = rowGroupIndex;
         event.column = columnSchema.name();
         event.pageCount = pageInfos.size();
@@ -177,9 +172,8 @@ public class PageScanner {
     /**
      * Scan pages using the Offset Index for direct page location lookup.
      * <p>
-     * Reads the Offset Index from the file, then locates each data page
-     * by its recorded offset and size. If a dictionary page exists, only the
-     * dictionary page header at chunk start is parsed.
+     * Parses the Offset Index from the pre-fetched index buffers, then
+     * slices each data page directly from the pre-fetched chunk data.
      * </p>
      *
      * @return list of PageInfo objects for data pages in this chunk
@@ -190,73 +184,40 @@ public class PageScanner {
 
         ColumnMetaData metaData = columnChunk.metaData();
 
-        // Read and parse the OffsetIndex
-        ByteBuffer indexBuffer = inputFile.readRange(columnChunk.offsetIndexOffset(), columnChunk.offsetIndexLength());
-        ThriftCompactReader indexReader = new ThriftCompactReader(indexBuffer);
-        OffsetIndex offsetIndex = OffsetIndexReader.read(indexReader);
+        // Parse the OffsetIndex from pre-fetched index buffers
+        ByteBuffer indexBuffer = indexBuffers.offsetIndex();
+        OffsetIndex offsetIndex = OffsetIndexReader.read(new ThriftCompactReader(indexBuffer));
 
         if (offsetIndex.pageLocations().isEmpty()) {
             throw new IOException("Empty Offset Index for column '" + columnSchema.name()
                     + "': the Offset Index contains no page locations");
         }
 
-        // Parse dictionary page if present.
-        // The dictionary (if any) lives between data_page_offset and the first
-        // data page recorded in the offset index.
-        Dictionary dictionary = null;
+        // Parse dictionary from the chunk data prefix (if present)
         long firstDataPageOffset = offsetIndex.pageLocations().get(0).offset();
         Long dictOffset = metaData.dictionaryPageOffset();
-        if (dictOffset == null || dictOffset <= 0) {
-            // Some writers (e.g. parquet-mr <= 1.12) omit dictionary_page_offset.
-            // If there is a gap before the first data page, probe to check whether
-            // it contains a dictionary page.
-            if (firstDataPageOffset > metaData.dataPageOffset()) {
-                int regionSize = (int) (firstDataPageOffset - metaData.dataPageOffset());
-                ByteBuffer probeBuffer = inputFile.readRange(metaData.dataPageOffset(), regionSize);
-                ThriftCompactReader probeReader = new ThriftCompactReader(probeBuffer, 0);
-                PageHeader probeHeader = PageHeaderReader.read(probeReader);
-                if (probeHeader.type() == PageHeader.PageType.DICTIONARY_PAGE) {
-                    dictOffset = metaData.dataPageOffset();
-                }
-            }
-        }
-        if (dictOffset != null && dictOffset > 0) {
-            // Read the region from dictOffset to the first data page
-            int dictRegionSize = (int) (firstDataPageOffset - dictOffset);
-            ByteBuffer dictBuffer = inputFile.readRange(dictOffset, dictRegionSize);
+        long chunkStart = chunkDataFileOffset;
 
-            // Parse the dictionary page header
-            ThriftCompactReader dictHeaderReader = new ThriftCompactReader(dictBuffer, 0);
-            PageHeader dictHeader = PageHeaderReader.read(dictHeaderReader);
-            int dictHeaderSize = dictHeaderReader.getBytesRead();
-
-            int compressedSize = dictHeader.compressedPageSize();
-            ByteBuffer compressedData = dictBuffer.slice(dictHeaderSize, compressedSize);
-            if (dictHeader.crc() != null) {
-                CrcValidator.assertCorrectCrc(dictHeader.crc(), compressedData, columnSchema.name());
-            }
-            int numValues = dictHeader.dictionaryPageHeader().numValues();
-            int uncompressedSize = dictHeader.uncompressedPageSize();
-
-            dictionary = parseDictionary(compressedData, numValues, uncompressedSize,
-                    columnSchema, metaData.codec());
+        // Detect implicit dictionary (writers that omit dictionary_page_offset)
+        if ((dictOffset == null || dictOffset <= 0) && firstDataPageOffset > metaData.dataPageOffset()) {
+            chunkStart = metaData.dataPageOffset();
         }
 
-        // Create PageInfo for each data page using offset index locations
+        Dictionary dictionary = null;
+        if (chunkStart < firstDataPageOffset) {
+            dictionary = parseDictionaryFromBuffer(chunkData, chunkDataFileOffset,
+                    chunkStart, firstDataPageOffset, metaData);
+        }
+
+        // Slice each data page directly from the pre-fetched chunk data
         List<PageInfo> pageInfos = new ArrayList<>(offsetIndex.pageLocations().size());
         for (PageLocation loc : offsetIndex.pageLocations()) {
-            ByteBuffer pageSlice = inputFile.readRange(loc.offset(), loc.compressedPageSize());
-
-            PageInfo pageInfo = new PageInfo(
-                    pageSlice,
-                    columnSchema,
-                    metaData,
-                    dictionary
-            );
-            pageInfos.add(pageInfo);
+            int relOffset = Math.toIntExact(loc.offset() - chunkDataFileOffset);
+            ByteBuffer pageSlice = chunkData.slice(relOffset, loc.compressedPageSize());
+            pageInfos.add(new PageInfo(pageSlice, columnSchema, metaData, dictionary));
         }
 
-        event.file = inputFile.name();
+        event.file = fileName;
         event.rowGroupIndex = rowGroupIndex;
         event.column = columnSchema.name();
         event.pageCount = pageInfos.size();
@@ -264,6 +225,37 @@ public class PageScanner {
         event.commit();
 
         return pageInfos;
+    }
+
+    /**
+     * Parses a dictionary page from a buffer. The dictionary region sits
+     * between {@code dictAreaStart} and {@code firstDataPageOffset}.
+     */
+    private Dictionary parseDictionaryFromBuffer(ByteBuffer buffer, long bufferFileOffset,
+            long dictAreaStart, long firstDataPageOffset, ColumnMetaData metaData) throws IOException {
+
+        int dictRelOffset = Math.toIntExact(dictAreaStart - bufferFileOffset);
+        int dictRegionSize = Math.toIntExact(firstDataPageOffset - dictAreaStart);
+        ByteBuffer dictSlice = buffer.slice(dictRelOffset, dictRegionSize);
+
+        ThriftCompactReader probeReader = new ThriftCompactReader(dictSlice, 0);
+        PageHeader header = PageHeaderReader.read(probeReader);
+
+        if (header.type() != PageHeader.PageType.DICTIONARY_PAGE) {
+            return null;
+        }
+
+        int headerSize = probeReader.getBytesRead();
+        int compressedSize = header.compressedPageSize();
+        ByteBuffer compressedData = dictSlice.slice(headerSize, compressedSize);
+        if (header.crc() != null) {
+            CrcValidator.assertCorrectCrc(header.crc(), compressedData, columnSchema.name());
+        }
+
+        return parseDictionary(compressedData,
+                header.dictionaryPageHeader().numValues(),
+                header.uncompressedPageSize(),
+                columnSchema, metaData.codec());
     }
 
     private Dictionary parseDictionary(ByteBuffer compressedData, int numValues,

@@ -49,6 +49,7 @@
     <module>bom</module>
     <module>test-bom</module>
     <module>core</module>
+    <module>s3</module>
   </modules>
 
   <properties>

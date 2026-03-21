@@ -40,12 +40,12 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         this.numValues = numValues;
         this.byteWidth = getByteWidth(type, typeLength);
 
-        // Validate data length
+        // Validate that the data buffer has enough room for the expected values
         int expectedLength = numValues * byteWidth;
         int availableLength = data.length - offset;
-        if (availableLength != expectedLength) {
+        if (availableLength < expectedLength) {
             throw new IllegalArgumentException(
-                    "Data length mismatch: expected " + expectedLength + " bytes for " +
+                    "Insufficient data: expected at least " + expectedLength + " bytes for " +
                             numValues + " values of " + byteWidth + " bytes, got " + availableLength);
         }
     }

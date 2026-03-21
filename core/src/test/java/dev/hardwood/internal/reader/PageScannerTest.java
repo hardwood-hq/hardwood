@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.List;
@@ -15,6 +17,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -41,6 +44,7 @@ public class PageScannerTest {
             inputFile.open();
 
             RowGroup rowGroup = fileMetaData.rowGroups().get(0);
+            RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
 
             for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                 ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
@@ -51,7 +55,8 @@ public class PageScannerTest {
                         .as("Column '%s' should have offset index", columnSchema.name())
                         .isNotNull();
 
-                PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, inputFile, 0);
+                PageScanner scanner = createScanner(inputFile, context, columnChunk, columnSchema,
+                        indexBuffers.forColumn(colIdx), 0);
 
                 // Get pages via both methods
                 List<PageInfo> sequential = scanner.scanPagesSequential();
@@ -110,6 +115,7 @@ public class PageScannerTest {
             inputFile.open();
 
             RowGroup rowGroup = fileMetaData.rowGroups().get(0);
+            RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
 
             ColumnChunk columnChunk = rowGroup.columns().get(0);
             ColumnSchema columnSchema = schema.getColumn(0);
@@ -117,7 +123,8 @@ public class PageScannerTest {
             // Verify the auto-selection works (file has offset index)
             assertThat(columnChunk.offsetIndexOffset()).isNotNull();
 
-            PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, inputFile, 0);
+            PageScanner scanner = createScanner(inputFile, context, columnChunk, columnSchema,
+                    indexBuffers.forColumn(0), 0);
             List<PageInfo> autoPages = scanner.scanPages();
             List<PageInfo> indexPages = scanner.scanPagesFromIndex();
 
@@ -148,11 +155,26 @@ public class PageScannerTest {
             // Verify no offset index
             assertThat(columnChunk.offsetIndexOffset()).isNull();
 
-            PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, inputFile, 0);
+            PageScanner scanner = createScanner(inputFile, context, columnChunk, columnSchema, null, 0);
             List<PageInfo> pages = scanner.scanPages();
 
             assertThat(pages).isNotEmpty();
         }
+    }
+
+    /**
+     * Creates a PageScanner by pre-fetching the column chunk data from the InputFile.
+     */
+    static PageScanner createScanner(InputFile inputFile, HardwoodContextImpl context,
+            ColumnChunk columnChunk, ColumnSchema columnSchema,
+            ColumnIndexBuffers indexBuffers, int rowGroupIndex) throws IOException {
+        ColumnMetaData meta = columnChunk.metaData();
+        Long dictOffset = meta.dictionaryPageOffset();
+        long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : meta.dataPageOffset();
+        int chunkLen = Math.toIntExact(meta.totalCompressedSize());
+        ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
+        return new PageScanner(columnSchema, columnChunk, context,
+                chunkData, chunkStart, indexBuffers, rowGroupIndex, inputFile.name());
     }
 
     private void assertPageValuesEqual(Page expected, Page actual, int pageIndex, String columnName) {

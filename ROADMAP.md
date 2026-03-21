@@ -118,7 +118,8 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [x] Define `DictionaryPageHeader` Thrift structure
 - [ ] Page header serialization
 - [x] Page header deserialization
-- [ ] CRC32 calculation and validation
+- [x] CRC32 validation on read (`CrcValidator`)
+- [ ] CRC32 calculation for writing
 
 ### 3.3 Definition & Repetition Levels
 - [ ] Implement `LevelEncoder` using RLE/bit-packing hybrid
@@ -267,9 +268,9 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 
 ## Phase 8: Compression Integration
 
-### 8.1 Compression Interface
-- [x] Define `CompressionCodec` interface (compress, decompress, getName)
-- [x] Implement codec registry
+### 8.1 Decompression Interface
+- [x] Define `Decompressor` interface with `DecompressorFactory` registry
+- [x] ThreadLocal buffer reuse across decompression calls to reduce allocations
 
 ### 8.2 Codec Implementations
 - [x] UNCOMPRESSED (passthrough)
@@ -278,6 +279,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [x] LZ4 (lz4-java) - supports both Hadoop and raw LZ4 formats
 - [x] ZSTD (zstd-jni)
 - [x] BROTLI (brotli4j)
+- [x] GZIP via libdeflate (optional faster alternative, Java 22+)
 - [ ] LZO (lzo-java, optional)
 
 ---
@@ -285,23 +287,26 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 ## Phase 9: Advanced Features
 
 ### 9.1 Statistics
-- [ ] Implement `Statistics<T>` class (min, max, nullCount, distinctCount)
+- [x] Implement `Statistics` record (minValue, maxValue, nullCount, distinctCount)
+- [x] Statistics deserialization (`StatisticsReader` with deprecated/preferred field fallback)
+- [x] Type-specific comparators (`StatisticsDecoder` for int, long, float, double, boolean, binary)
 - [ ] Statistics collection during writing
 - [ ] Binary min/max truncation for efficiency
-- [ ] Statistics serialization/deserialization
-- [ ] Type-specific comparators
+- [ ] Statistics serialization
 
 ### 9.2 Page Index (Column Index & Offset Index)
-- [ ] Implement `ColumnIndex` structure
-  - [ ] Null pages tracking
-  - [ ] Min/max values per page
-  - [ ] Boundary order
-  - [ ] Null counts
-- [ ] Implement `OffsetIndex` structure
-  - [ ] Page locations (offset, size, first row)
+- [x] Implement `ColumnIndex` structure (deserialized but not yet used for page-level filtering)
+  - [x] Null pages tracking
+  - [x] Min/max values per page
+  - [x] Boundary order
+  - [x] Null counts
+- [x] Implement `OffsetIndex` structure
+  - [x] Page locations (offset, size, first row)
+- [x] Page index reading (`ColumnIndexReader`, `OffsetIndexReader`)
+- [x] Coalesced index fetching (`RowGroupIndexBuffers` — single read per row group)
+- [x] OffsetIndex-based page scanning (`PageScanner.scanPagesFromIndex()`)
 - [ ] Page index writing
-- [ ] Page index reading
-- [ ] Page skipping based on index
+- [ ] Page skipping based on ColumnIndex min/max
 
 ### 9.3 Bloom Filters
 - [ ] Implement split block bloom filter
@@ -311,15 +316,15 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [ ] Bloom filter checking during reads
 
 ### 9.4 Predicate Pushdown
-- [ ] Implement `FilterPredicate` hierarchy
-  - [ ] Eq, NotEq
-  - [ ] Lt, LtEq, Gt, GtEq
+- [x] Implement `FilterPredicate` hierarchy (sealed interface)
+  - [x] Eq, NotEq
+  - [x] Lt, LtEq, Gt, GtEq
   - [ ] In
-  - [ ] And, Or, Not
-- [ ] Statistics-based row group filtering
+  - [x] And, Or, Not
+- [x] Statistics-based row group filtering (`RowGroupFilterEvaluator`)
+- [x] Filter evaluation engine (supports INT32, INT64, FLOAT, DOUBLE, BOOLEAN, BINARY/STRING)
 - [ ] Page index-based page filtering
 - [ ] Bloom filter-based filtering
-- [ ] Filter evaluation engine
 
 ---
 
@@ -338,16 +343,17 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [ ] Custom record materializer support
 
 ### 10.3 Reader API
+- [x] `ParquetFileReader` with static `open()` factory methods
+- [x] Column projection (`ColumnProjection` — select subset of columns, supports dot notation for nested)
+- [x] Filter predicate support (integrated with `ParquetFileReader` and `MultiFileParquetReader`)
+- [x] Struct-based row access (`PqStruct` — type-safe accessors for all types including nested)
 - [ ] Implement `ParquetReader.builder(path)` fluent API
-- [x] Column projection (select subset of columns to read)
-- [ ] Filter predicate support
-- [ ] GenericRecord support
 - [ ] Custom record materializer support
 
 ### 10.4 Low-Level API
-- [ ] Direct column chunk access
-- [ ] Page-level iteration
-- [ ] Raw value reading with levels
+- [x] Direct column chunk access (`ColumnReader` — batch-oriented, zero-boxing primitive access)
+- [x] Page-level iteration (`PageCursor` with async prefetching)
+- [x] Raw value reading with levels (multi-level offsets and per-level null bitmaps)
 
 ---
 
@@ -387,25 +393,30 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [x] LZ4 integration (both Hadoop and raw formats)
 - [x] **Validate**: Read files with various codecs from parquet-testing
 
-### Milestone 5: Advanced Encodings
+### Milestone 5: Advanced Encodings ✓
 - [x] DELTA_BINARY_PACKED
 - [x] DELTA_LENGTH_BYTE_ARRAY
 - [x] DELTA_BYTE_ARRAY
 - [x] BYTE_STREAM_SPLIT
 - [x] **Validate**: Read files using these encodings
 
-### Milestone 6: Optimization Features
-- [ ] Statistics collection and usage
-- [ ] Page indexes
+### Milestone 6: Optimization Features (partial)
+- [x] Statistics reading and usage for row group filtering
+- [x] Page indexes (OffsetIndex used for page scanning; ColumnIndex deserialized, not yet used for page skipping)
+- [x] Predicate pushdown (statistics-based row group filtering)
+- [x] Coalesced reads for remote backends (`ChunkRange`, `RowGroupIndexBuffers`)
 - [ ] Bloom filters
-- [ ] Predicate pushdown
+- [ ] Page-level predicate filtering via ColumnIndex
 - [ ] **Validate**: Performance improvement with filtering
 
-### Milestone 7: Production Ready
+### Milestone 7: Production Ready (partial)
+- [x] Memory management optimization (ThreadLocal buffers for decompression, `ColumnAssemblyBuffer`)
+- [x] Parallel reading support (parallel batch fetching in RowReader)
+- [x] Multi-file reading (`MultiFileParquetReader`, `MultiFileRowReader`, `MultiFileColumnReaders`)
+- [x] Remote backend abstraction (`InputFile` interface, `MappedInputFile`, `ByteBufferInputFile`)
+- [x] `FieldPath` abstraction for nested column addressing
 - [ ] Comprehensive error handling
 - [ ] Input validation
-- [ ] Memory management optimization
-- [x] Parallel reading support (parallel batch fetching in RowReader)
 - [ ] Parallel writing support
 - [ ] **Validate**: Full compatibility with parquet-java and PyArrow
 
@@ -419,7 +430,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 
 ### Test Summary
 
-**Current Pass Rate: 207/215 (96.3%) parquet-testing, 39 unit tests**
+**Current: 254 test methods across 40 test classes (core, parquet-testing, performance, integration, S3)**
 
 Progress:
 - Started (first column only): 163/215 (75.8%)
@@ -440,11 +451,11 @@ Progress:
 - After Snappy DATA_PAGE_V2 fixes: 206/215 (95.8%), 29 unit tests
 - After dict-page-offset-zero fix: 207/215 (96.3%), 29 unit tests
 - After MAP support: 207/215 (96.3%), 39 unit tests
+- Current: 254 test methods, 40 test classes (statistics, predicate pushdown, column projection, multi-file, SIMD, S3, performance)
 
-Remaining Failures by Category (8 total):
+Remaining Failures by Category (7 total):
 - Bad data files (intentionally malformed): 6 files (includes fixed_length_byte_array which has truncated page data - PyArrow also fails)
 - Java array size limit: 1 file (large_string_map.brotli - column chunk exceeds 2GB, parquet-java has same limitation)
-- Other edge cases: 1 file (case-046)
 
 ### Test Categories
 - [ ] Round-trip tests (write → read → compare)
@@ -468,7 +479,11 @@ Remaining Failures by Category (8 total):
 - [ ] Cross-compatibility tests (write files, read with other implementations)
 - [ ] Fuzz testing (random schemas and data)
 - [ ] Edge cases (empty files, single values, max nesting)
-- [ ] Performance benchmarks vs parquet-java
+- [x] Performance benchmarks vs parquet-java (JMH micro-benchmarks + end-to-end performance tests)
+- [x] Predicate pushdown tests (`PredicatePushDownTest` — 28 test methods)
+- [x] Column projection tests (`ColumnProjectionTest` — 21 test methods)
+- [x] Multi-file reader tests (`MultiFileRowReaderTest` — 16 test methods)
+- [x] SIMD operations tests (`SimdOperationsTest` — 17 test methods)
 
 ### Tools for Validation
 - [ ] Set up parquet-cli for metadata inspection

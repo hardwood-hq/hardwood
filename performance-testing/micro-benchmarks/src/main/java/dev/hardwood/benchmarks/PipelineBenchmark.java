@@ -8,6 +8,7 @@
 package dev.hardwood.benchmarks;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +34,7 @@ import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.internal.reader.TypedColumnData;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -101,13 +103,20 @@ public class PipelineBenchmark {
             }
 
             // Scan all pages
-            for (RowGroup rowGroup : rowGroups) {
+            for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
+                RowGroup rowGroup = rowGroups.get(rgIdx);
                 totalRows += rowGroup.numRows();
                 for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
+                    ColumnMetaData meta = columnChunk.metaData();
+                    Long dictOffset = meta.dictionaryPageOffset();
+                    long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : meta.dataPageOffset();
+                    int chunkLen = Math.toIntExact(meta.totalCompressedSize());
+                    ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
 
-                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, inputFile, 0);
+                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
+                            chunkData, chunkStart, null, rgIdx, inputFile.name());
                     List<PageInfo> pages = scanner.scanPages();
                     totalPages += pages.size();
                     pagesByColumn.get(colIdx).addAll(pages);

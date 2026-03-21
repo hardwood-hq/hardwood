@@ -39,6 +39,7 @@ import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -81,12 +82,19 @@ public class PageHandlingBenchmark {
             FileSchema schema = reader.getFileSchema();
             List<RowGroup> rowGroups = reader.getFileMetaData().rowGroups();
 
-            for (RowGroup rowGroup : rowGroups) {
+            for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
+                RowGroup rowGroup = rowGroups.get(rgIdx);
                 for (int colIdx = 0; colIdx < rowGroup.columns().size(); colIdx++) {
                     ColumnChunk columnChunk = rowGroup.columns().get(colIdx);
                     ColumnSchema columnSchema = schema.getColumn(colIdx);
+                    ColumnMetaData meta = columnChunk.metaData();
+                    Long dictOffset = meta.dictionaryPageOffset();
+                    long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : meta.dataPageOffset();
+                    int chunkLen = Math.toIntExact(meta.totalCompressedSize());
+                    ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
 
-                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context, inputFile, 0);
+                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
+                            chunkData, chunkStart, null, rgIdx, inputFile.name());
                     allPages.addAll(scanner.scanPages());
                 }
             }

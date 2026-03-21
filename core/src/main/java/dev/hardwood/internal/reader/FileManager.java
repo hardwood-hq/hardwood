@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CompletableFuture;
@@ -346,30 +347,68 @@ public class FileManager {
             columnIndices[projectedIndex] = originalIndex;
         }
 
-        // Scan each projected column in parallel
+        String fileName = inputFile.name();
+
+        // Scan each projected column in parallel, coalescing chunk reads per row group
         @SuppressWarnings("unchecked")
         CompletableFuture<List<PageInfo>>[] scanFutures = new CompletableFuture[projectedColumnCount];
+        for (int i = 0; i < projectedColumnCount; i++) {
+            scanFutures[i] = CompletableFuture.completedFuture(new ArrayList<>());
+        }
 
-        for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
-            final int columnIndex = columnIndices[projectedIndex];
-            final ColumnSchema columnSchema = columnSchemas[projectedIndex];
+        for (int rowGroupIndex = 0; rowGroupIndex < rowGroups.size(); rowGroupIndex++) {
+            final int rgIdx = rowGroupIndex;
+            RowGroup rowGroup = rowGroups.get(rgIdx);
 
-            scanFutures[projectedIndex] = CompletableFuture.supplyAsync(() -> {
-                List<PageInfo> columnPages = new ArrayList<>();
-                for (int rowGroupIndex = 0; rowGroupIndex < rowGroups.size(); rowGroupIndex++) {
-                    ColumnChunk columnChunk = rowGroups.get(rowGroupIndex).columns().get(columnIndex);
-                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                            inputFile, rowGroupIndex);
-                    try {
-                        columnPages.addAll(scanner.scanPages());
-                    }
-                    catch (IOException e) {
-                        throw new UncheckedIOException(
-                                "Failed to scan pages for column " + columnSchema.name(), e);
-                    }
+            // Pre-fetch indexes and coalesced column chunk data
+            RowGroupIndexBuffers indexBuffers;
+            try {
+                indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException("Failed to fetch index buffers for row group " + rgIdx, e);
+            }
+
+            List<ChunkRange> chunkRanges = ChunkRange.coalesce(
+                    rowGroup.columns(), columnIndices, ChunkRange.MAX_GAP_BYTES);
+            ByteBuffer[] rangeBuffers = new ByteBuffer[chunkRanges.size()];
+            try {
+                for (int r = 0; r < chunkRanges.size(); r++) {
+                    ChunkRange range = chunkRanges.get(r);
+                    rangeBuffers[r] = inputFile.readRange(range.offset(), range.length());
                 }
-                return columnPages;
-            }, context.executor());
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException("Failed to fetch column chunk data for row group " + rgIdx, e);
+            }
+
+            for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
+                final int columnIndex = columnIndices[projectedIndex];
+                final ColumnSchema columnSchema = columnSchemas[projectedIndex];
+                final ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
+
+                final ByteBuffer colChunkData = sliceColumnChunk(chunkRanges, rangeBuffers, columnChunk);
+                final long colChunkOffset = chunkStartOffset(columnChunk);
+
+                final CompletableFuture<List<PageInfo>> previousFuture = scanFutures[projectedIndex];
+                scanFutures[projectedIndex] = previousFuture.thenCombineAsync(
+                        CompletableFuture.supplyAsync(() -> {
+                            PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
+                                    colChunkData, colChunkOffset, indexBuffers.forColumn(columnIndex),
+                                    rgIdx, fileName);
+                            try {
+                                return scanner.scanPages();
+                            }
+                            catch (IOException e) {
+                                throw new UncheckedIOException(
+                                        "Failed to scan pages for column " + columnSchema.name(), e);
+                            }
+                        }, context.executor()),
+                        (existing, newPages) -> {
+                            existing.addAll(newPages);
+                            return existing;
+                        }, context.executor());
+            }
         }
 
         // Wait for all scans to complete
@@ -437,6 +476,27 @@ public class FileManager {
         public SchemaIncompatibleException(String message) {
             super(message);
         }
+    }
+
+    private static ByteBuffer sliceColumnChunk(List<ChunkRange> ranges, ByteBuffer[] rangeBuffers,
+            ColumnChunk columnChunk) {
+        long colStart = chunkStartOffset(columnChunk);
+        int colLen = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
+        for (int r = 0; r < ranges.size(); r++) {
+            ChunkRange range = ranges.get(r);
+            if (colStart >= range.offset() && colStart + colLen <= range.offset() + range.length()) {
+                int relOffset = Math.toIntExact(colStart - range.offset());
+                return rangeBuffers[r].slice(relOffset, colLen);
+            }
+        }
+        throw new IllegalStateException("Column chunk not found in any coalesced range");
+    }
+
+    private static long chunkStartOffset(ColumnChunk columnChunk) {
+        Long dictOffset = columnChunk.metaData().dictionaryPageOffset();
+        return (dictOffset != null && dictOffset > 0)
+                ? dictOffset
+                : columnChunk.metaData().dataPageOffset();
     }
 
 }

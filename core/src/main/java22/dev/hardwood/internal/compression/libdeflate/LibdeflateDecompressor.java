@@ -25,6 +25,11 @@ import dev.hardwood.internal.compression.Decompressor;
  */
 public final class LibdeflateDecompressor implements Decompressor {
 
+    private static final ThreadLocal<MemorySegment> NATIVE_OUTPUT = new ThreadLocal<>();
+    private static final ThreadLocal<MemorySegment> IN_SIZE_PTR = new ThreadLocal<>();
+    private static final ThreadLocal<MemorySegment> OUT_SIZE_PTR = new ThreadLocal<>();
+    private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();
+
     private final LibdeflatePool pool;
 
     public LibdeflateDecompressor(LibdeflatePool pool) {
@@ -37,59 +42,85 @@ public final class LibdeflateDecompressor implements Decompressor {
         try {
             LibdeflateBindings bindings = LibdeflateBindings.get();
 
-            try (Arena arena = Arena.ofConfined()) {
-                int compressedSize = compressed.remaining();
+            int compressedSize = compressed.remaining();
 
-                MemorySegment input = MemorySegment.ofBuffer(compressed);
+            MemorySegment input = MemorySegment.ofBuffer(compressed);
+            MemorySegment output = borrowNativeOutput(uncompressedSize);
+            MemorySegment actualInSizePtr = borrowSizePtr(IN_SIZE_PTR);
+            MemorySegment actualOutSizePtr = borrowSizePtr(OUT_SIZE_PTR);
 
-                MemorySegment output = arena.allocate(uncompressedSize);
-                MemorySegment actualInSizePtr = arena.allocate(ValueLayout.JAVA_LONG);
-                MemorySegment actualOutSizePtr = arena.allocate(ValueLayout.JAVA_LONG);
+            long inputOffset = 0;
+            long outputOffset = 0;
 
-                long inputOffset = 0;
-                long outputOffset = 0;
-
-                // Handle concatenated GZIP members
-                while (outputOffset < uncompressedSize && inputOffset < compressedSize) {
-                    int result;
-                    try {
-                        result = (int) bindings.gzipDecompressEx.invokeExact(
-                                decompressor.handle(),
-                                input.asSlice(inputOffset),
-                                compressedSize - inputOffset,
-                                output.asSlice(outputOffset),
-                                uncompressedSize - outputOffset,
-                                actualInSizePtr,
-                                actualOutSizePtr);
-                    }
-                    catch (Throwable t) {
-                        throw new IOException("libdeflate invocation failed", t);
-                    }
-
-                    if (result != LibdeflateBindings.LIBDEFLATE_SUCCESS) {
-                        throw new IOException("libdeflate decompression failed: " +
-                                LibdeflateBindings.errorMessage(result));
-                    }
-
-                    long consumedInput = actualInSizePtr.get(ValueLayout.JAVA_LONG, 0);
-                    long producedOutput = actualOutSizePtr.get(ValueLayout.JAVA_LONG, 0);
-
-                    inputOffset += consumedInput;
-                    outputOffset += producedOutput;
+            // Handle concatenated GZIP members
+            while (outputOffset < uncompressedSize && inputOffset < compressedSize) {
+                int result;
+                try {
+                    result = (int) bindings.gzipDecompressEx.invokeExact(
+                            decompressor.handle(),
+                            input.asSlice(inputOffset),
+                            compressedSize - inputOffset,
+                            output.asSlice(outputOffset),
+                            uncompressedSize - outputOffset,
+                            actualInSizePtr,
+                            actualOutSizePtr);
+                }
+                catch (Throwable t) {
+                    throw new IOException("libdeflate invocation failed", t);
                 }
 
-                if (outputOffset != uncompressedSize) {
-                    throw new IOException(String.format(
-                            "Decompressed size mismatch: expected %d, got %d",
-                            uncompressedSize, outputOffset));
+                if (result != LibdeflateBindings.LIBDEFLATE_SUCCESS) {
+                    throw new IOException("libdeflate decompression failed: " +
+                            LibdeflateBindings.errorMessage(result));
                 }
 
-                return output.toArray(ValueLayout.JAVA_BYTE);
+                long consumedInput = actualInSizePtr.get(ValueLayout.JAVA_LONG, 0);
+                long producedOutput = actualOutSizePtr.get(ValueLayout.JAVA_LONG, 0);
+
+                inputOffset += consumedInput;
+                outputOffset += producedOutput;
             }
+
+            if (outputOffset != uncompressedSize) {
+                throw new IOException(String.format(
+                        "Decompressed size mismatch: expected %d, got %d",
+                        uncompressedSize, outputOffset));
+            }
+
+            byte[] result = borrowOutputBuffer(uncompressedSize);
+            MemorySegment.copy(output, ValueLayout.JAVA_BYTE, 0, result, 0, uncompressedSize);
+            return result;
         }
         finally {
             pool.release(decompressor);
         }
+    }
+
+    private static MemorySegment borrowNativeOutput(int minSize) {
+        MemorySegment seg = NATIVE_OUTPUT.get();
+        if (seg == null || seg.byteSize() < minSize) {
+            seg = Arena.ofAuto().allocate(minSize);
+            NATIVE_OUTPUT.set(seg);
+        }
+        return seg;
+    }
+
+    private static byte[] borrowOutputBuffer(int minSize) {
+        byte[] buf = OUTPUT_BUFFER.get();
+        if (buf == null || buf.length < minSize) {
+            buf = new byte[minSize];
+            OUTPUT_BUFFER.set(buf);
+        }
+        return buf;
+    }
+
+    private static MemorySegment borrowSizePtr(ThreadLocal<MemorySegment> tl) {
+        MemorySegment seg = tl.get();
+        if (seg == null) {
+            seg = Arena.ofAuto().allocate(ValueLayout.JAVA_LONG);
+            tl.set(seg);
+        }
+        return seg;
     }
 
     @Override

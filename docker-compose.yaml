@@ -9,15 +9,20 @@
 services:
   claude:
     build: .
+    entrypoint: claude
     stdin_open: true  # -i
     tty: true         # -t
     volumes:
       - .:/workspace
       - claude-config:/claude-config
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - GH_TOKEN
       - COLORTERM=truecolor
       - CLAUDE_CONFIG_DIR=/claude-config
+      # Testcontainers: Docker-in-Docker networking
+      - TESTCONTAINERS_RYUK_DISABLED=true
+      - TESTCONTAINERS_HOST_OVERRIDE=host.docker.internal
 
 volumes:
   claude-config:
