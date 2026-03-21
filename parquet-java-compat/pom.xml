@@ -225,6 +225,33 @@
               <!-- Example data shims -->
               <include>org.apache.parquet.example.data.Group</include>
               <include>org.apache.parquet.example.data.simple.SimpleGroup</include>
+              <!-- Filter shims -->
+              <include>org.apache.parquet.filter2.predicate.FilterApi</include>
+              <include>org.apache.parquet.filter2.predicate.FilterPredicate</include>
+              <include>org.apache.parquet.filter2.predicate.Operators</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$Column</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$IntColumn</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$LongColumn</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$FloatColumn</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$DoubleColumn</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$BooleanColumn</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$BinaryColumn</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$SupportsEqNotEq</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$SupportsLtGt</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$Eq</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$NotEq</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$Lt</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$LtEq</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$Gt</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$GtEq</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$And</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$Or</include>
+              <include>org.apache.parquet.filter2.predicate.Operators$Not</include>
+              <include>org.apache.parquet.filter2.compat.FilterCompat</include>
+              <include>org.apache.parquet.filter2.compat.FilterCompat$Filter</include>
+              <include>org.apache.parquet.filter2.compat.FilterCompat$FilterPredicateCompat</include>
+              <include>org.apache.parquet.filter2.compat.FilterCompat$NoOpFilter</include>
+              <include>org.apache.parquet.hadoop.metadata.ColumnPath</include>
             </includes>
             <reportOnlyFilename>true</reportOnlyFilename>
             <ignoreMissingClasses>true</ignoreMissingClasses>

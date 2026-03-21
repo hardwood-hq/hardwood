@@ -7,15 +7,15 @@
  */
 package org.apache.parquet.hadoop.util;
 
+import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.io.InputFile;
 
 /**
- * Bridge for extracting the Hardwood {@link dev.hardwood.InputFile} from a
- * compat-layer {@link InputFile}.
+ * Bridge between the compat-layer shim types and Hardwood internals.
  * <p>
- * This class lives in the same package as {@link HadoopInputFile} so it can
- * access the package-private {@code delegate()} method without exposing
- * Hardwood types on the public API.
+ * This class lives in the same package as {@link HadoopInputFile} and
+ * {@link FilterConverter} so it can access package-private members without
+ * exposing Hardwood types on the public API.
  * </p>
  */
 public final class InputFiles {
@@ -38,5 +38,16 @@ public final class InputFiles {
         throw new UnsupportedOperationException(
                 "Unsupported InputFile implementation: " + inputFile.getClass().getName()
                         + ". Use HadoopInputFile.fromPath() to create InputFile instances.");
+    }
+
+    /**
+     * Converts a compat-layer {@link FilterPredicate} to a Hardwood
+     * {@link dev.hardwood.reader.FilterPredicate}.
+     *
+     * @param predicate the compat-layer filter predicate
+     * @return the Hardwood filter predicate
+     */
+    public static dev.hardwood.reader.FilterPredicate convertFilter(FilterPredicate predicate) {
+        return FilterConverter.convert(predicate);
     }
 }

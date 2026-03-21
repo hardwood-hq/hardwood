@@ -13,6 +13,7 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.example.data.simple.SimpleGroup;
+import org.apache.parquet.filter2.compat.FilterCompat;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.hadoop.util.InputFiles;
 import org.apache.parquet.io.InputFile;
@@ -47,9 +48,12 @@ public class ParquetReader<T> implements AutoCloseable {
     private final RowReader rowReader;
     private final MessageType messageType;
 
-    private ParquetReader(dev.hardwood.InputFile inputFile) throws IOException {
+    private ParquetReader(dev.hardwood.InputFile inputFile,
+            dev.hardwood.reader.FilterPredicate filter) throws IOException {
         this.hardwoodReader = ParquetFileReader.open(inputFile);
-        this.rowReader = hardwoodReader.createRowReader();
+        this.rowReader = filter != null
+                ? hardwoodReader.createRowReader(filter)
+                : hardwoodReader.createRowReader();
         this.messageType = SchemaConverter.toMessageType(hardwoodReader.getFileSchema());
     }
 
@@ -110,6 +114,7 @@ public class ParquetReader<T> implements AutoCloseable {
         private final Path path;
         private final InputFile inputFile;
         private Configuration conf;
+        private FilterCompat.Filter filter;
 
         Builder(Path path, InputFile inputFile) {
             this.path = path;
@@ -132,13 +137,28 @@ public class ParquetReader<T> implements AutoCloseable {
         }
 
         /**
+         * Set a filter for predicate pushdown.
+         * <p>
+         * Row groups whose statistics prove that no rows can match the
+         * predicate will be skipped entirely.
+         * </p>
+         *
+         * @param filter the filter (from {@link FilterCompat#get(org.apache.parquet.filter2.predicate.FilterPredicate)})
+         * @return this builder
+         */
+        public Builder<T> withFilter(FilterCompat.Filter filter) {
+            this.filter = filter;
+            return this;
+        }
+
+        /**
          * Build the ParquetReader.
          *
          * @return the reader
          * @throws IOException if opening the file fails
          */
         public ParquetReader<T> build() throws IOException {
-            return new ParquetReader<>(resolveHardwoodInputFile());
+            return new ParquetReader<>(resolveHardwoodInputFile(), resolveFilter());
         }
 
         private dev.hardwood.InputFile resolveHardwoodInputFile() {
@@ -147,6 +167,13 @@ public class ParquetReader<T> implements AutoCloseable {
             }
             Configuration c = conf != null ? conf : new Configuration();
             return InputFiles.unwrap(HadoopInputFile.fromPath(path, c));
+        }
+
+        private dev.hardwood.reader.FilterPredicate resolveFilter() {
+            if (filter instanceof FilterCompat.FilterPredicateCompat fpc) {
+                return InputFiles.convertFilter(fpc.getFilterPredicate());
+            }
+            return null;
         }
     }
 }
