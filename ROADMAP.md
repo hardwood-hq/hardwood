@@ -357,6 +357,40 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 
 ---
 
+## Phase 11: Ecosystem Integration
+
+### 11.1 S3 Support (`hardwood-s3`)
+- [x] `S3InputFile` implementation with suffix-range GET for footer pre-fetch
+- [x] Tail caching (64 KB) for Parquet footer locality
+- [x] Client ownership model (caller-owned vs self-owned `S3Client`)
+- [x] LocalStack integration tests
+
+### 11.2 Avro GenericRecord Support (`hardwood-avro`)
+- [x] `AvroSchemaConverter` — Parquet `FileSchema` → Avro `Schema`
+  - [x] All physical types (BOOLEAN, INT32, INT64, FLOAT, DOUBLE, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96)
+  - [x] Logical types (STRING, DATE, TIMESTAMP, TIME, DECIMAL, UUID, ENUM, JSON, BSON)
+  - [x] Nullability (OPTIONAL → union [null, type])
+  - [x] Nested structs → nested Avro RECORD
+  - [x] LIST → Avro ARRAY (3-level encoding unwrap)
+  - [x] MAP → Avro MAP
+- [x] `AvroRowReader` — wraps `RowReader`, materializes `GenericRecord` per row
+  - [x] Recursive nested record materialization
+  - [x] List and map materialization into standard Java collections
+- [x] `AvroReaders` factory — overloads for filter pushdown and column projection
+- [ ] Avro `SpecificRecord` / generated class support
+
+### 11.3 Parquet-Java Compatibility (`hardwood-parquet-java-compat`)
+- [x] Hadoop shims (`Path`, `Configuration`) — no Hadoop dependency
+- [x] `ParquetReader<Group>` with `GroupReadSupport`
+- [x] `HadoopInputFile.fromPath()` for S3 with `fs.s3a.*` configuration properties
+- [x] Filter API shims (`FilterApi`, `FilterCompat`, `Operators`) with predicate translation to Hardwood
+- [x] `org.apache.parquet.io.InputFile` shim interface
+- [x] Schema shims (`MessageType`, `GroupType`, `PrimitiveType`, `Type`)
+- [x] `Group` / `SimpleGroup` record access
+- [ ] `AvroParquetReader` shim (depends on `hardwood-avro`, tracked in #130)
+
+---
+
 ## Milestones
 
 ### Milestone 1: Minimal Viable Reader ✓
@@ -430,7 +464,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 
 ### Test Summary
 
-**Current: 254 test methods across 40 test classes (core, parquet-testing, performance, integration, S3)**
+**Current: 348 test methods across core, S3, Avro, and parquet-java-compat modules**
 
 Progress:
 - Started (first column only): 163/215 (75.8%)
@@ -451,7 +485,7 @@ Progress:
 - After Snappy DATA_PAGE_V2 fixes: 206/215 (95.8%), 29 unit tests
 - After dict-page-offset-zero fix: 207/215 (96.3%), 29 unit tests
 - After MAP support: 207/215 (96.3%), 39 unit tests
-- Current: 254 test methods, 40 test classes (statistics, predicate pushdown, column projection, multi-file, SIMD, S3, performance)
+- Current: 348 test methods across core, S3, Avro, and parquet-java-compat modules
 
 Remaining Failures by Category (7 total):
 - Bad data files (intentionally malformed): 6 files (includes fixed_length_byte_array which has truncated page data - PyArrow also fails)
@@ -484,6 +518,10 @@ Remaining Failures by Category (7 total):
 - [x] Column projection tests (`ColumnProjectionTest` — 21 test methods)
 - [x] Multi-file reader tests (`MultiFileRowReaderTest` — 16 test methods)
 - [x] SIMD operations tests (`SimdOperationsTest` — 17 test methods)
+- [x] S3 integration tests (`S3InputFileTest` — 5 test methods, LocalStack)
+- [x] Avro GenericRecord tests (`AvroRowReaderTest` — 7 test methods)
+- [x] Parquet-java compat tests (`ParquetReaderCompatTest` — 12 test methods, including filter pushdown)
+- [x] Parquet-java compat S3 tests (`ParquetReaderS3CompatTest` — 5 test methods, LocalStack)
 
 ### Tools for Validation
 - [ ] Set up parquet-cli for metadata inspection

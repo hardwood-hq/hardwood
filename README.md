@@ -360,6 +360,38 @@ while (rowReader.hasNext()) {
 
 **Type validation:** The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
 
+### Predicate Pushdown (Filter)
+
+Filter predicates allow Hardwood to skip entire row groups whose statistics prove that no rows can match the predicate, avoiding unnecessary I/O and decoding.
+
+```java
+import dev.hardwood.reader.FilterPredicate;
+
+// Simple filter
+FilterPredicate filter = FilterPredicate.gt("age", 21);
+
+// Compound filter
+FilterPredicate filter = FilterPredicate.and(
+    FilterPredicate.gtEq("salary", 50000L),
+    FilterPredicate.lt("age", 65)
+);
+
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     RowReader rowReader = fileReader.createRowReader(filter)) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+        // Only rows from non-skipped row groups are returned
+    }
+}
+```
+
+Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`.
+Supported types: `int`, `long`, `float`, `double`, `boolean`, `String`.
+Logical combinators: `and`, `or`, `not`.
+
+Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file readers.
+
 ### Column Projection
 
 Column projection allows reading only a subset of columns from a Parquet file, improving performance by skipping I/O, decoding, and memory allocation for unneeded columns.
@@ -503,6 +535,70 @@ try (Hardwood hardwood = Hardwood.create();
 
 Column projection, row group filtering, and all other reader features work transparently with S3 files. Hardwood minimizes S3 requests by pre-fetching the file footer on open and coalescing column chunk reads within each row group.
 
+### Reading into Avro GenericRecord
+
+The `hardwood-avro` module reads Parquet files into Avro `GenericRecord` instances, the most common record representation for Parquet data in the JVM ecosystem. Add it alongside `hardwood-core`:
+
+```xml
+<dependency>
+    <groupId>dev.hardwood</groupId>
+    <artifactId>hardwood-avro</artifactId>
+</dependency>
+```
+
+Read rows as `GenericRecord`:
+
+```java
+import dev.hardwood.avro.AvroReaders;
+import dev.hardwood.avro.AvroRowReader;
+import dev.hardwood.reader.ParquetFileReader;
+import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericRecord;
+
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+
+    Schema avroSchema = reader.getSchema();
+
+    while (reader.hasNext()) {
+        GenericRecord record = reader.next();
+
+        // Access fields by name
+        long id = (Long) record.get("id");
+        String name = (String) record.get("name");
+
+        // Nested structs are nested GenericRecords
+        GenericRecord address = (GenericRecord) record.get("address");
+        if (address != null) {
+            String city = (String) address.get("city");
+        }
+
+        // Lists and maps use standard Java collections
+        @SuppressWarnings("unchecked")
+        List<String> tags = (List<String>) record.get("tags");
+    }
+}
+```
+
+`AvroReaders` supports all reader options: column projection, predicate pushdown, and their combination:
+
+```java
+// With filter
+AvroRowReader reader = AvroReaders.createRowReader(fileReader,
+    FilterPredicate.gt("id", 1000L));
+
+// With projection
+AvroRowReader reader = AvroReaders.createRowReader(fileReader,
+    ColumnProjection.columns("id", "name"));
+
+// With both
+AvroRowReader reader = AvroReaders.createRowReader(fileReader,
+    ColumnProjection.columns("id", "name"),
+    FilterPredicate.gt("id", 1000L));
+```
+
+Values are stored in Avro's standard representations: timestamps as `Long` (millis/micros since epoch), dates as `Integer` (days since epoch), decimals as `ByteBuffer`, binary data as `ByteBuffer`. This matches the behavior of parquet-java's `AvroReadSupport`.
+
 ### Column-Oriented Reading (ColumnReader)
 
 The `ColumnReader` provides batch-oriented columnar access with typed primitive arrays, avoiding per-row method calls and boxing. This is the fastest way to consume Parquet data when you process columns independently.
@@ -636,10 +732,11 @@ The `hardwood-parquet-java-compat` module provides a drop-in replacement for par
 
 **Features:**
 - Provides `org.apache.parquet.*` namespace classes compatible with parquet-java
-- Includes Hadoop shims (`Path`, `Configuration`) that wrap Java NIO - no Hadoop dependency required
-- Supports the familiar builder pattern and Group-based record reading
+- Includes Hadoop shims (`Path`, `Configuration`) — no Hadoop dependency required
+- Supports S3 reading via `HadoopInputFile` with the same `fs.s3a.*` configuration properties
+- Supports filter predicate pushdown with the standard `FilterApi` / `FilterCompat` classes
 
-**Usage:**
+**Reading local files:**
 
 ```java
 import org.apache.hadoop.fs.Path;
@@ -652,32 +749,63 @@ Path path = new Path("data.parquet");
 try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path).build()) {
     Group record;
     while ((record = reader.read()) != null) {
-        // Read primitive fields
         long id = record.getLong("id", 0);
         String name = record.getString("name", 0);
-        int age = record.getInteger("age", 0);
 
-        // Read nested groups (structs)
         Group address = record.getGroup("address", 0);
         String city = address.getString("city", 0);
-        int zip = address.getInteger("zip", 0);
-
-        // Check for null/optional fields
-        int count = record.getFieldRepetitionCount("optional_field");
-        if (count > 0) {
-            String value = record.getString("optional_field", 0);
-        }
     }
 }
 ```
 
-**Note:** This module provides its own interface copies in the `org.apache.parquet.*` namespace. It cannot be used alongside parquet-java on the same classpath.
+**Reading from S3:**
+
+```java
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.hadoop.util.HadoopInputFile;
+
+Configuration conf = new Configuration();
+conf.set("fs.s3a.access.key", "...");
+conf.set("fs.s3a.secret.key", "...");
+conf.set("fs.s3a.endpoint", "https://s3.us-east-1.amazonaws.com");
+
+Path path = new Path("s3a://my-bucket/data.parquet");
+
+try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+        .withConf(conf)
+        .build()) {
+    // read as usual
+}
+```
+
+S3 support requires `hardwood-s3` on the classpath. The compat layer loads it via reflection — if missing, a clear error message indicates which dependency to add.
+
+**Filter pushdown:**
+
+```java
+import static org.apache.parquet.filter2.predicate.FilterApi.*;
+import org.apache.parquet.filter2.compat.FilterCompat;
+
+FilterPredicate pred = and(
+    gtEq(longColumn("id"), 100L),
+    lt(doubleColumn("amount"), 500.0)
+);
+
+try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+        .withFilter(FilterCompat.get(pred))
+        .build()) {
+    // only rows from matching row groups are returned
+}
+```
+
+**Note:** This module provides its own type shims in the `org.apache.parquet.*` namespace. It cannot be used alongside parquet-java on the same classpath.
 
 ---
 
 ## Package Structure
 
-The library is organized into public API packages and internal implementation packages:
+Hardwood is organized into public API packages and internal implementation packages:
 
 | Package | Visibility | Purpose |
 |---------|-----------|---------|
@@ -686,6 +814,8 @@ The library is organized into public API packages and internal implementation pa
 | `dev.hardwood.metadata` | **Public API** | Parquet file metadata: row groups, column chunks, physical/logical types, and compression codecs. |
 | `dev.hardwood.schema` | **Public API** | Schema representation: file schema, column schemas, and column projection. |
 | `dev.hardwood.row` | **Public API** | Value types for nested data access: structs, lists, and maps. |
+| `dev.hardwood.avro` | **Public API** | Avro GenericRecord support: schema conversion and row materialization (`hardwood-avro` module). |
+| `dev.hardwood.s3` | **Public API** | S3 object storage InputFile implementation (`hardwood-s3` module). |
 | `dev.hardwood.jfr` | **Public API** | JFR event types emitted during file reading, decoding, and pipeline operations. |
 | `dev.hardwood.internal.*` | **Internal** | Implementation details — not part of the public API and may change without notice. |
 

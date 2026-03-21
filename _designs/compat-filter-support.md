@@ -1,5 +1,7 @@
 # Design: Filter support in parquet-java-compat
 
+**Status: Implemented**
+
 ## Goal
 
 Support the upstream parquet-java filter idiom:

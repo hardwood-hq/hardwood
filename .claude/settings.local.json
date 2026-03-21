@@ -98,7 +98,9 @@
       "Bash(gh issue:*)",
       "WebFetch(domain:www.baeldung.com)",
       "WebFetch(domain:northconcepts.com)",
-      "WebFetch(domain:repo1.maven.org)"
+      "WebFetch(domain:repo1.maven.org)",
+      "Bash(gh pr:*)",
+      "Bash(gh api:*)"
     ]
   }
 }

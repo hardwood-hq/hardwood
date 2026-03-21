@@ -50,6 +50,7 @@
     <module>test-bom</module>
     <module>core</module>
     <module>s3</module>
+    <module>avro</module>
   </modules>
 
   <properties>

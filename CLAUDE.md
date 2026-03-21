@@ -6,9 +6,16 @@ When doing changes in hardwood-core, install that module before running the perf
 When running Maven commands, always apply a timeout of 180 seconds to detect deadlocks early on.
 Enable -Pperformance-test to run performance tests.
 
-# Design and Coding
+# Design
 
 Write plans which affect the system design, e.g. large new features or refactorings, as a Markdown file under _designs_ before implementing.
+Mark designs as completed once done.
+Update the status in the roadmap after implementing a feature.
+
+# Coding
+
+When adding or changing public APIs, update the usage documentation in the README.md accordingly.
+Minimize the surface of the public API, only make user-facing what needs to be user-facing. Keep anything else in an `internal` package.
 Never do unsafe downcasts with potential value loss. E.g. prefer Math::toIntExact() where applicable.
 Keep cyclomatic complexity low.
 Avoid fully-qualified class names within the code, always add imports.
