@@ -19,9 +19,14 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.StructAccessor;
 
 /**
  * Provides row-oriented iteration over a Parquet file.
+ * <p>
+ * A {@code RowReader} is a stateful, mutable view providing access to the current row
+ * in the iterator. The values returned by its accessors change between calls of {@link #next()}.
+ * </p>
  *
  * <p>Usage example:</p>
  * <pre>{@code
@@ -35,7 +40,7 @@ import dev.hardwood.row.PqStruct;
  * }
  * }</pre>
  */
-public interface RowReader extends AutoCloseable {
+public interface RowReader extends StructAccessor, AutoCloseable {
 
     /**
      * Check if there are more rows to read.
@@ -53,24 +58,6 @@ public interface RowReader extends AutoCloseable {
 
     @Override
     void close();
-
-
-    /**
-     * Check if a field is null by name.
-     */
-    boolean isNull(String name);
-
-    // ==================== Metadata ====================
-
-    /**
-     * Get the number of fields in the current row.
-     */
-    int getFieldCount();
-
-    /**
-     * Get the name of a field by index.
-     */
-    String getFieldName(int index);
 
     // ==================== Accessors by Index ====================
     // Faster than name-based access as they avoid the name lookup.
@@ -212,139 +199,4 @@ public interface RowReader extends AutoCloseable {
      * Check if a field is null by field index.
      */
     boolean isNull(int fieldIndex);
-
-    // ==================== Accessors by Name ====================
-
-    /**
-     * Get an INT32 field value by name.
-     *
-     * @throws NullPointerException if the field is null
-     */
-    int getInt(String name);
-
-    /**
-     * Get an INT64 field value by name.
-     *
-     * @throws NullPointerException if the field is null
-     */
-    long getLong(String name);
-
-    /**
-     * Get a FLOAT field value by name.
-     *
-     * @throws NullPointerException if the field is null
-     */
-    float getFloat(String name);
-
-    /**
-     * Get a DOUBLE field value by name.
-     *
-     * @throws NullPointerException if the field is null
-     */
-    double getDouble(String name);
-
-    /**
-     * Get a BOOLEAN field value by name.
-     *
-     * @throws NullPointerException if the field is null
-     */
-    boolean getBoolean(String name);
-
-    /**
-     * Get a STRING field value by name.
-     *
-     * @return the string value, or null if the field is null
-     */
-    String getString(String name);
-
-    /**
-     * Get a BINARY field value by name.
-     *
-     * @return the binary value, or null if the field is null
-     */
-    byte[] getBinary(String name);
-
-    /**
-     * Get a DATE field value by name.
-     *
-     * @return the date value, or null if the field is null
-     */
-    LocalDate getDate(String name);
-
-    /**
-     * Get a TIME field value by name.
-     *
-     * @return the time value, or null if the field is null
-     */
-    LocalTime getTime(String name);
-
-    /**
-     * Get a TIMESTAMP field value by name.
-     *
-     * @return the timestamp value, or null if the field is null
-     */
-    Instant getTimestamp(String name);
-
-    /**
-     * Get a DECIMAL field value by name.
-     *
-     * @return the decimal value, or null if the field is null
-     */
-    BigDecimal getDecimal(String name);
-
-    /**
-     * Get a UUID field value by name.
-     *
-     * @return the UUID value, or null if the field is null
-     */
-    UUID getUuid(String name);
-
-    /**
-     * Get a nested struct field value by name.
-     *
-     * @return the struct value, or null if the field is null
-     */
-    PqStruct getStruct(String name);
-
-    /**
-     * Get an INT32 list field by name.
-     *
-     * @return the list, or null if the field is null
-     */
-    PqIntList getListOfInts(String name);
-
-    /**
-     * Get an INT64 list field by name.
-     *
-     * @return the list, or null if the field is null
-     */
-    PqLongList getListOfLongs(String name);
-
-    /**
-     * Get a DOUBLE list field by name.
-     *
-     * @return the list, or null if the field is null
-     */
-    PqDoubleList getListOfDoubles(String name);
-
-    /**
-     * Get a LIST field value by name.
-     *
-     * @return the list, or null if the field is null
-     */
-    PqList getList(String name);
-
-    /**
-     * Get a MAP field value by name.
-     *
-     * @return the map, or null if the field is null
-     */
-    PqMap getMap(String name);
-
-    /**
-     * Get a field value by name without type conversion.
-     *
-     * @return the raw value, or null if the field is null
-     */
-    Object getValue(String name);
 }
