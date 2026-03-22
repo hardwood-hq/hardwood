@@ -815,6 +815,8 @@ Performance (all runs):
 
 This project requires **Java 25 or newer for building** (to create the multi-release JAR with Java 22+ FFM support). The resulting JAR runs on **Java 21+** (libdeflate support requires Java 22+).
 
+**Docker must be running** for the build to succeed, as the test suite uses [Testcontainers](https://www.testcontainers.org/) to spin up services (e.g. S3 integration tests). If Docker is not available, the build will fail during the test phase for these tests.
+
 It comes with the Apache [Maven wrapper](https://github.com/takari/maven-wrapper),
 i.e. a Maven distribution will be downloaded automatically, if needed.
 
