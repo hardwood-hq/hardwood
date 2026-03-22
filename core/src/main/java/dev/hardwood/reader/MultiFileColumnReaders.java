@@ -74,7 +74,7 @@ public class MultiFileColumnReaders implements AutoCloseable {
                     i,
                     firstFileName);
 
-            readersByName.put(columnSchema.name(), reader);
+            readersByName.put(columnSchema.fieldPath().toString(), reader);
             readersByIndex[i] = reader;
         }
     }
@@ -88,8 +88,9 @@ public class MultiFileColumnReaders implements AutoCloseable {
 
     /**
      * Get the ColumnReader for a named column.
+     * For nested columns, use the dot-separated field path (e.g. {@code "address.zip"}).
      *
-     * @param columnName the column name (must have been requested in the projection)
+     * @param columnName the column name or dot-separated field path (must have been requested in the projection)
      * @return the ColumnReader for the column
      * @throws IllegalArgumentException if the column was not requested
      */

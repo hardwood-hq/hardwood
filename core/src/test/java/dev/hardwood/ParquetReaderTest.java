@@ -14,6 +14,7 @@ import java.util.BitSet;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -23,6 +24,7 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ParquetReaderTest {
 
@@ -220,6 +222,83 @@ class ParquetReaderTest {
 
                 assertThat(idReader.nextBatch()).isFalse();
             }
+        }
+    }
+
+    @Test
+    void testNestedColumnLookupByFieldPath() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            FileSchema schema = reader.getFileSchema();
+
+            // Lookup nested columns by dot-separated field path
+            ColumnSchema streetCol = schema.getColumn("address.street");
+            assertThat(streetCol.name()).isEqualTo("street");
+            assertThat(streetCol.fieldPath()).isEqualTo(FieldPath.of("address", "street"));
+
+            ColumnSchema zipCol = schema.getColumn("address.zip");
+            assertThat(zipCol.name()).isEqualTo("zip");
+            assertThat(zipCol.type()).isEqualTo(PhysicalType.INT32);
+
+            // Lookup by FieldPath object
+            ColumnSchema cityCol = schema.getColumn(FieldPath.of("address", "city"));
+            assertThat(cityCol.name()).isEqualTo("city");
+
+            // Top-level column still works with plain name
+            ColumnSchema idCol = schema.getColumn("id");
+            assertThat(idCol.name()).isEqualTo("id");
+            assertThat(idCol.fieldPath()).isEqualTo(FieldPath.of("id"));
+        }
+    }
+
+    @Test
+    void testNestedColumnReaderByFieldPath() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            // Read nested column by dot-path name
+            // Data: address=[{street: "123 Main St", zip: 10001}, {street: "456 Oak Ave", zip: 90001}, null]
+            try (ColumnReader zipReader = reader.createColumnReader("address.zip")) {
+                assertThat(zipReader.getColumnSchema().name()).isEqualTo("zip");
+                assertThat(zipReader.nextBatch()).isTrue();
+                assertThat(zipReader.getRecordCount()).isEqualTo(3);
+
+                int[] values = zipReader.getInts();
+                assertThat(values[0]).isEqualTo(10001);
+                assertThat(values[1]).isEqualTo(90001);
+
+                // Row 3 has null address, so zip should be null
+                assertThat(zipReader.getElementNulls().get(2)).isTrue();
+
+                assertThat(zipReader.nextBatch()).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void testDuplicateLeafNamesResolveToDistinctColumns() throws Exception {
+        // list_basic_test.parquet has tags (list<string>) and scores (list<int32>),
+        // both with leaf name "element". Verifies that field-path-based lookup
+        // disambiguates them correctly, and bare leaf name lookup fails.
+        Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            FileSchema schema = reader.getFileSchema();
+
+            // Both leaf columns are named "element" but have different field paths
+            ColumnSchema tagsElement = schema.getColumn("tags.list.element");
+            ColumnSchema scoresElement = schema.getColumn("scores.list.element");
+
+            assertThat(tagsElement.name()).isEqualTo("element");
+            assertThat(scoresElement.name()).isEqualTo("element");
+            assertThat(tagsElement.type()).isEqualTo(PhysicalType.BYTE_ARRAY);
+            assertThat(scoresElement.type()).isEqualTo(PhysicalType.INT32);
+            assertThat(tagsElement.columnIndex()).isNotEqualTo(scoresElement.columnIndex());
+
+            // Bare leaf name "element" must not resolve — it's ambiguous
+            assertThatThrownBy(() -> schema.getColumn("element"))
+                    .isInstanceOf(IllegalArgumentException.class);
         }
     }
 

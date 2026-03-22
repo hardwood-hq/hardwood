@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
@@ -31,7 +32,7 @@ public class ColumnAssemblyBufferTest {
     @Timeout(value = 5, unit = TimeUnit.SECONDS)
     void testProducerExceptionPropagatedToConsumer() {
         ColumnSchema column = new ColumnSchema(
-                "test_col", PhysicalType.INT32, RepetitionType.REQUIRED,
+                FieldPath.of("test_col"), PhysicalType.INT32, RepetitionType.REQUIRED,
                 null, 0, 0, 0, null);
 
         ColumnAssemblyBuffer buffer = new ColumnAssemblyBuffer(column, BATCH_SIZE);
@@ -62,7 +63,7 @@ public class ColumnAssemblyBufferTest {
     @Timeout(value = 5, unit = TimeUnit.SECONDS)
     void testNormalOperationAllPagesProcessed() {
         ColumnSchema column = new ColumnSchema(
-                "test_col", PhysicalType.INT32, RepetitionType.REQUIRED,
+                FieldPath.of("test_col"), PhysicalType.INT32, RepetitionType.REQUIRED,
                 null, 0, 0, 0, null);
 
         ColumnAssemblyBuffer buffer = new ColumnAssemblyBuffer(column, BATCH_SIZE);

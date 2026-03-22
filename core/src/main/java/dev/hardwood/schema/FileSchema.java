@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 
@@ -25,7 +26,7 @@ public class FileSchema {
 
     private final String name;
     private final List<ColumnSchema> columns;
-    private final StringToIntMap columnNameToIndex;
+    private final StringToIntMap columnPathToIndex;
     private final SchemaNode.GroupNode rootNode;
 
     private FileSchema(String name, List<ColumnSchema> columns, SchemaNode.GroupNode rootNode) {
@@ -33,10 +34,12 @@ public class FileSchema {
         this.columns = columns;
         this.rootNode = rootNode;
 
-        // Pre-compute name -> index mapping for O(1) lookup
-        this.columnNameToIndex = new StringToIntMap(columns.size());
+        // Pre-compute field path -> index mapping for O(1) lookup.
+        // Uses the dot-separated field path (e.g. "address.zip") as key,
+        // which is unambiguous even when multiple nested columns share a leaf name.
+        this.columnPathToIndex = new StringToIntMap(columns.size());
         for (int i = 0; i < columns.size(); i++) {
-            columnNameToIndex.put(columns.get(i).name(), i);
+            columnPathToIndex.put(columns.get(i).fieldPath().toString(), i);
         }
     }
 
@@ -64,17 +67,31 @@ public class FileSchema {
     }
 
     /**
-     * Returns the column with the given name.
+     * Returns the column with the given name or dot-separated path.
+     * <p>
+     * For flat schemas, the name is the column name (e.g. {@code "passenger_count"}).
+     * For nested schemas, use the dot-separated field path (e.g. {@code "address.zip"})
+     * to avoid ambiguity when multiple nested columns share a leaf name.
      *
-     * @param name column name
+     * @param name column name or dot-separated field path
      * @throws IllegalArgumentException if no column with the given name exists
      */
     public ColumnSchema getColumn(String name) {
-        int index = columnNameToIndex.get(name);
+        int index = columnPathToIndex.get(name);
         if (index < 0) {
             throw new IllegalArgumentException("Column not found: " + name);
         }
         return columns.get(index);
+    }
+
+    /**
+     * Returns the column with the given field path.
+     *
+     * @param fieldPath path from schema root to leaf column
+     * @throws IllegalArgumentException if no column with the given path exists
+     */
+    public ColumnSchema getColumn(FieldPath fieldPath) {
+        return getColumn(fieldPath.toString());
     }
 
     /**
@@ -144,7 +161,7 @@ public class FileSchema {
         List<ColumnSchema> columns = new ArrayList<>();
         int[] columnIndex = { 0 }; // Mutable counter for column indexing
 
-        List<SchemaNode> rootChildren = buildChildren(elements, 1, root.numChildren() != null ? root.numChildren() : 0, 0, 0, columns, columnIndex);
+        List<SchemaNode> rootChildren = buildChildren(elements, 1, root.numChildren() != null ? root.numChildren() : 0, 0, 0, List.of(), columns, columnIndex);
 
         SchemaNode.GroupNode rootNode = new SchemaNode.GroupNode(
                 root.name(),
@@ -167,6 +184,7 @@ public class FileSchema {
                                                   int numChildren,
                                                   int parentDefLevel,
                                                   int parentRepLevel,
+                                                  List<String> parentPath,
                                                   List<ColumnSchema> columns,
                                                   int[] columnIndex) {
 
@@ -181,11 +199,16 @@ public class FileSchema {
             int defLevel = parentDefLevel + (repType != RepetitionType.REQUIRED ? 1 : 0);
             int repLevel = parentRepLevel + (repType == RepetitionType.REPEATED ? 1 : 0);
 
+            // Build path for this node
+            List<String> currentPath = new ArrayList<>(parentPath.size() + 1);
+            currentPath.addAll(parentPath);
+            currentPath.add(element.name());
+
             if (element.isPrimitive()) {
                 // Primitive node - represents an actual column
                 int colIdx = columnIndex[0]++;
                 columns.add(new ColumnSchema(
-                        element.name(),
+                        new FieldPath(List.copyOf(currentPath)),
                         element.type(),
                         repType,
                         element.typeLength(),
@@ -214,6 +237,7 @@ public class FileSchema {
                         groupNumChildren,
                         defLevel,
                         repLevel,
+                        currentPath,
                         columns,
                         columnIndex);
 

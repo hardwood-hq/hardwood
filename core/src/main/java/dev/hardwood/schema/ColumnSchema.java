@@ -7,6 +7,7 @@
  */
 package dev.hardwood.schema;
 
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -15,7 +16,7 @@ import dev.hardwood.metadata.RepetitionType;
  * Represents a primitive column in a Parquet schema. Stores computed definition
  * and repetition levels based on schema hierarchy.
  *
- * @param name column name
+ * @param fieldPath path from the schema root to this leaf column (unambiguous across schemas with duplicate leaf names)
  * @param type physical (storage) type of the column
  * @param repetitionType whether the column is required, optional, or repeated
  * @param typeLength fixed byte length for {@link PhysicalType#FIXED_LEN_BYTE_ARRAY} columns, or {@code null} otherwise
@@ -27,7 +28,7 @@ import dev.hardwood.metadata.RepetitionType;
  * @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
  */
 public record ColumnSchema(
-        String name,
+        FieldPath fieldPath,
         PhysicalType type,
         RepetitionType repetitionType,
         Integer typeLength,
@@ -35,6 +36,13 @@ public record ColumnSchema(
         int maxDefinitionLevel,
         int maxRepetitionLevel,
         LogicalType logicalType) {
+
+    /**
+     * Returns the leaf (last) element of the field path, i.e. the column name.
+     */
+    public String name() {
+        return fieldPath.leafName();
+    }
 
     @Override
     public String toString() {
@@ -46,7 +54,7 @@ public record ColumnSchema(
             sb.append("(").append(typeLength).append(")");
         }
         sb.append(" ");
-        sb.append(name);
+        sb.append(name());
         if (logicalType != null) {
             sb.append(" (").append(logicalType).append(")");
         }

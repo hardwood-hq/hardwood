@@ -7,10 +7,12 @@
  */
 package dev.hardwood.testing;
 
-import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileRowReader;
+import java.io.IOException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.util.ArrayList;
+import java.util.List;
+
 import org.apache.avro.generic.GenericRecord;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.example.data.Group;
@@ -26,11 +28,15 @@ import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
-import java.io.IOException;
-import java.nio.file.Files;
-import java.nio.file.Path;
-import java.util.ArrayList;
-import java.util.List;
+import dev.hardwood.InputFile;
+import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.MultiFileColumnReaders;
+import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.MultiFileRowReader;
+import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -160,6 +166,35 @@ class MultiFileParquetReaderComparisonTest {
         assertThat(rowIndex).isEqualTo(reference.size());
     }
 
+    @ParameterizedTest(name = "column: {0}")
+    @MethodSource("dev.hardwood.testing.Utils#parquetTestFiles")
+    void compareColumnsWithReference(Path testFile) throws IOException {
+        String fileName = testFile.getFileName().toString();
+
+        assumeFalse(Utils.SKIPPED_FILES.contains(fileName),
+                "Skipping " + fileName + " (in skip list)");
+        assumeFalse(Utils.COLUMN_SKIPPED_FILES.contains(fileName),
+                "Skipping " + fileName + " (in column skip list)");
+
+        List<GenericRecord> reference = Utils.readWithParquetJava(testFile);
+
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             MultiFileParquetReader mfReader = new MultiFileParquetReader(
+                     List.of(InputFile.of(testFile)), context);
+             MultiFileColumnReaders columns = mfReader.createColumnReaders(ColumnProjection.all())) {
+
+            FileSchema schema = mfReader.getFileSchema();
+            for (int colIdx = 0; colIdx < schema.getColumnCount(); colIdx++) {
+                ColumnSchema colSchema = schema.getColumn(colIdx);
+                if (colSchema.maxRepetitionLevel() > 0) {
+                    continue;
+                }
+                ColumnReader columnReader = columns.getColumnReader(colIdx);
+                Utils.compareColumnReader(colSchema.name(), columnReader, reference);
+            }
+        }
+    }
+
     @Test
     void rejectsBadFileWhenEncountered() throws IOException {
         Path good = repoDir.resolve("data/alltypes_plain.parquet");
@@ -182,7 +217,7 @@ class MultiFileParquetReaderComparisonTest {
         Path good = repoDir.resolve("data/good_c.parquet");
         Path bad  = repoDir.resolve("bad_data/ARROW-RS-GH-6229-LEVELS.parquet");
         Utils.assertBadDataRejected("ARROW-RS-GH-6229-LEVELS.parquet",
-                "Value count mismatch for column 'c': metadata declares 1 values but pages contain 21",
+                "Column 'c' not found in file: ARROW-RS-GH-6229-LEVELS.parquet",
                 multiFileReadAction(good, bad));
     }
 

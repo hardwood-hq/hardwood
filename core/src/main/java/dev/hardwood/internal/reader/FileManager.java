@@ -305,14 +305,14 @@ public class FileManager {
             int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
             ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
 
-            // Find column in new file by name
+            // Find column in new file by field path (unambiguous even with duplicate leaf names)
             ColumnSchema fileColumn;
             try {
-                fileColumn = fileSchema.getColumn(refColumn.name());
+                fileColumn = fileSchema.getColumn(refColumn.fieldPath());
             }
             catch (IllegalArgumentException e) {
                 throw new SchemaIncompatibleException(
-                        "Column '" + refColumn.name() + "' not found in file: " + inputFile.name());
+                        "Column '" + refColumn.fieldPath() + "' not found in file: " + inputFile.name());
             }
 
             // Validate physical type matches
@@ -320,7 +320,7 @@ public class FileManager {
             PhysicalType fileType = fileColumn.type();
             if (refType != fileType) {
                 throw new SchemaIncompatibleException(
-                        "Column '" + refColumn.name() + "' has incompatible type in file " + inputFile.name() +
+                        "Column '" + refColumn.fieldPath() + "' has incompatible type in file " + inputFile.name() +
                                 ": expected " + refType + " but found " + fileType);
             }
         }
@@ -338,13 +338,14 @@ public class FileManager {
         List<RowGroup> rowGroups = filterRowGroups(openedFile.metaData.rowGroups(), openedFile.schema,
                 inputFile.name());
 
-        // Build column index mapping using column names for consistent lookup
+        // Build column index mapping using field paths for unambiguous cross-file lookup
         int[] columnIndices = new int[projectedColumnCount];
         ColumnSchema[] columnSchemas = new ColumnSchema[projectedColumnCount];
         for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
             int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
-            columnSchemas[projectedIndex] = openedFile.schema.getColumn(originalIndex);
-            columnIndices[projectedIndex] = originalIndex;
+            ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
+            columnSchemas[projectedIndex] = openedFile.schema.getColumn(refColumn.fieldPath());
+            columnIndices[projectedIndex] = columnSchemas[projectedIndex].columnIndex();
         }
 
         String fileName = inputFile.name();
