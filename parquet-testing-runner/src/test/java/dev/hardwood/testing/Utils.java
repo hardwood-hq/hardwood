@@ -1,7 +1,12 @@
+/*
+ *  SPDX-License-Identifier: Apache-2.0
+ *
+ *  Copyright The original authors
+ *
+ *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+ */
 package dev.hardwood.testing;
 
-import dev.hardwood.InputFile;
-import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
@@ -22,7 +27,6 @@ import java.util.Set;
 import java.util.stream.Stream;
 
 import static org.assertj.core.api.Assertions.*;
-import static org.assertj.core.api.Assertions.within;
 
 public class Utils {
 
@@ -65,9 +69,9 @@ public class Utils {
             "case-131.parquet", // NullPointer on Schema field
             "case-137.parquet", // Unsupported shredded value type
             "case-138.parquet", // NullPointer on Schema field
-
-            // shredded_variant files with Hardwood issues
-            "case-046.parquet", // EOF while reading BYTE_ARRAY
+            // Intentionally corrupted CRC checksums (rejected by Hardwood CRC validation)
+            "datapage_v1-corrupt-checksum.parquet",
+            "rle-dict-uncompressed-corrupt-checksum.parquet",
 
             // bad_data files (intentionally malformed, rejected by Hardwood)
             "PARQUET-1481.parquet",
@@ -75,11 +79,7 @@ public class Utils {
             "ARROW-RS-GH-6229-LEVELS.parquet",
             "ARROW-GH-41317.parquet",
             "ARROW-GH-41321.parquet",
-            "ARROW-GH-45185.parquet",
-
-            // CRC validation rejects these files
-            "datapage_v1-corrupt-checksum.parquet",
-            "rle-dict-uncompressed-corrupt-checksum.parquet"
+            "ARROW-GH-45185.parquet"
     );
 
     /**
@@ -144,50 +144,6 @@ public class Utils {
         }
 
         return rows;
-    }
-
-    /**
-     * Compare a Parquet file using both implementations.
-     */
-    static void compareParquetFile(Path testFile) throws IOException {
-        System.out.println("Comparing: " + testFile.getFileName());
-
-        // Read with parquet-java (reference)
-        List<GenericRecord> referenceRows = Utils.readWithParquetJava(testFile);
-        System.out.println("  parquet-java rows: " + referenceRows.size());
-
-        // Compare with Hardwood row by row
-        int hardwoodRowCount = compareWithHardwood(testFile, referenceRows);
-        System.out.println("  Hardwood rows: " + hardwoodRowCount);
-
-        // Verify row counts match
-        assertThat(hardwoodRowCount)
-                .as("Row count mismatch")
-                .isEqualTo(referenceRows.size());
-
-        System.out.println("  All " + referenceRows.size() + " rows match!");
-    }
-
-    /**
-     * Read with Hardwood and compare row by row against reference.
-     * Returns the number of rows read.
-     */
-    static int compareWithHardwood(Path file, List<GenericRecord> referenceRows) throws IOException {
-        int rowIndex = 0;
-
-        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
-             RowReader rowReader = fileReader.createRowReader()) {
-            while (rowReader.hasNext()) {
-                rowReader.next();
-                assertThat(rowIndex)
-                        .as("Hardwood has more rows than reference")
-                        .isLessThan(referenceRows.size());
-                compareRow(rowIndex, referenceRows.get(rowIndex), rowReader);
-                rowIndex++;
-            }
-        }
-
-        return rowIndex;
     }
 
     /**

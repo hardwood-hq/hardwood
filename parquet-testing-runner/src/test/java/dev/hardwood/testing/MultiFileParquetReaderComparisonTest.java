@@ -1,3 +1,10 @@
+/*
+ *  SPDX-License-Identifier: Apache-2.0
+ *
+ *  Copyright The original authors
+ *
+ *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+ */
 package dev.hardwood.testing;
 
 import dev.hardwood.InputFile;
@@ -5,6 +12,13 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.MultiFileRowReader;
 import org.apache.avro.generic.GenericRecord;
+import org.apache.hadoop.conf.Configuration;
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.example.data.simple.SimpleGroupFactory;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.example.ExampleParquetWriter;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.MessageTypeParser;
 import org.assertj.core.api.ThrowableAssert;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -13,6 +27,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -33,6 +48,30 @@ class MultiFileParquetReaderComparisonTest {
     @BeforeAll
     void setUp() throws IOException {
         repoDir = ParquetTestingRepoCloner.ensureCloned();
+        createGoodCFile();
+    }
+
+    private void createGoodCFile() throws IOException {
+        // create a good file with same schema as ARROW-RS-GH-6229-LEVELS
+        Path output = repoDir.resolve("data/good_c.parquet");
+        if (Files.exists(output)) {
+            return;
+        }
+        MessageType schema = MessageTypeParser.parseMessageType(
+                "message schema { required int32 c; }");
+        Configuration conf = new Configuration();
+        org.apache.hadoop.fs.Path hadoopPath =
+                new org.apache.hadoop.fs.Path(output.toUri());
+        try (ParquetWriter<Group> writer = ExampleParquetWriter
+                .builder(hadoopPath)
+                .withConf(conf)
+                .withType(schema)
+                .build()) {
+            SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+            writer.write(factory.newGroup().append("c", 1));
+            writer.write(factory.newGroup().append("c", 2));
+            writer.write(factory.newGroup().append("c", 3));
+        }
     }
 
     @ParameterizedTest(name = "{0}")
