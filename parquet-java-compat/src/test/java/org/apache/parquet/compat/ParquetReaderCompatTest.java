@@ -12,6 +12,8 @@ import java.util.List;
 
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.example.data.Group;
+import org.apache.parquet.filter2.compat.FilterCompat;
+import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.hadoop.GroupReadSupport;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.schema.GroupType;
@@ -20,6 +22,7 @@ import org.apache.parquet.schema.PrimitiveType;
 import org.apache.parquet.schema.Type;
 import org.junit.jupiter.api.Test;
 
+import static org.apache.parquet.filter2.predicate.FilterApi.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /**
@@ -123,9 +126,9 @@ class ParquetReaderCompatTest {
 
     @Test
     void testStringPath() throws Exception {
-        // Test using string path
-        try (ParquetReader<Group> reader = ParquetReader.builder(
-                new GroupReadSupport(), "../core/src/test/resources/plain_uncompressed.parquet").build()) {
+        // Test using string path via Path constructor
+        Path path = new Path("../core/src/test/resources/plain_uncompressed.parquet");
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path).build()) {
             Group record = reader.read();
             assertThat(record).isNotNull();
             assertThat(record.getLong("id", 0)).isEqualTo(1L);
@@ -192,6 +195,71 @@ class ParquetReaderCompatTest {
                 .build()) {
             Group record = reader.read();
             assertThat(record).isNotNull();
+        }
+    }
+
+    @Test
+    void testFilterPushdown() throws Exception {
+        // filter_pushdown_int.parquet has 3 row groups: id 1-100, 101-200, 201-300
+        Path path = new Path("../core/src/test/resources/filter_pushdown_int.parquet");
+
+        // Filter: id > 200 → should only return rows from RG2 (100 rows)
+        FilterPredicate pred = gt(longColumn("id"), 200L);
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(pred))
+                .build()) {
+            List<Group> records = new ArrayList<>();
+            Group record;
+            while ((record = reader.read()) != null) {
+                records.add(record);
+            }
+            assertThat(records).hasSize(100);
+            // All returned rows should have id > 200
+            for (Group r : records) {
+                assertThat(r.getLong("id", 0)).isGreaterThan(200L);
+            }
+        }
+    }
+
+    @Test
+    void testFilterPushdownCompound() throws Exception {
+        // Filter: id >= 101 AND id <= 200 → should only return RG1 (100 rows)
+        Path path = new Path("../core/src/test/resources/filter_pushdown_int.parquet");
+
+        FilterPredicate pred = and(
+                gtEq(longColumn("id"), 101L),
+                ltEq(longColumn("id"), 200L));
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.get(pred))
+                .build()) {
+            List<Group> records = new ArrayList<>();
+            Group record;
+            while ((record = reader.read()) != null) {
+                records.add(record);
+            }
+            assertThat(records).hasSize(100);
+            for (Group r : records) {
+                long id = r.getLong("id", 0);
+                assertThat(id).isBetween(101L, 200L);
+            }
+        }
+    }
+
+    @Test
+    void testFilterNoOp() throws Exception {
+        // NOOP filter should return all rows
+        Path path = new Path("../core/src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path)
+                .withFilter(FilterCompat.NOOP)
+                .build()) {
+            int count = 0;
+            while (reader.read() != null) {
+                count++;
+            }
+            assertThat(count).isEqualTo(300);
         }
     }
 }

@@ -8,17 +8,22 @@
 package org.apache.hadoop.fs;
 
 import java.net.URI;
+import java.net.URISyntaxException;
+import java.util.Set;
 
 /**
- * Minimal Hadoop Path shim that wraps java.nio.file.Path.
+ * Minimal Hadoop Path shim that wraps a URI.
  * <p>
  * This class provides API compatibility with Hadoop's Path class without
- * requiring the Hadoop dependency. It wraps a standard Java NIO Path.
+ * requiring the Hadoop dependency. Local paths are backed by a {@code file://}
+ * URI; remote paths (e.g. {@code s3a://}) store the URI as-is.
  * </p>
  */
 public class Path {
 
-    private final java.nio.file.Path nioPath;
+    private static final Set<String> LOCAL_SCHEMES = Set.of("file", "");
+
+    private final URI uri;
 
     /**
      * Create a Path from a string path.
@@ -26,16 +31,7 @@ public class Path {
      * @param pathString the path string
      */
     public Path(String pathString) {
-        this.nioPath = java.nio.file.Path.of(pathString);
-    }
-
-    /**
-     * Create a Path from a Java NIO Path.
-     *
-     * @param nioPath the NIO path
-     */
-    public Path(java.nio.file.Path nioPath) {
-        this.nioPath = nioPath;
+        this.uri = parseUri(pathString);
     }
 
     /**
@@ -44,7 +40,7 @@ public class Path {
      * @param uri the URI
      */
     public Path(URI uri) {
-        this.nioPath = java.nio.file.Path.of(uri);
+        this.uri = uri;
     }
 
     /**
@@ -54,7 +50,17 @@ public class Path {
      * @param child the child path string
      */
     public Path(Path parent, String child) {
-        this.nioPath = parent.nioPath.resolve(child);
+        if (isLocal(parent.uri)) {
+            java.nio.file.Path resolved = java.nio.file.Path.of(parent.uri).resolve(child);
+            this.uri = resolved.toUri();
+        }
+        else {
+            String parentPath = parent.uri.getPath();
+            if (!parentPath.endsWith("/")) {
+                parentPath = parentPath + "/";
+            }
+            this.uri = parent.uri.resolve(parentPath + child);
+        }
     }
 
     /**
@@ -64,16 +70,7 @@ public class Path {
      * @param child the child path string
      */
     public Path(String parent, String child) {
-        this.nioPath = java.nio.file.Path.of(parent).resolve(child);
-    }
-
-    /**
-     * Get the underlying Java NIO Path.
-     *
-     * @return the NIO path
-     */
-    public java.nio.file.Path toNioPath() {
-        return nioPath;
+        this(new Path(parent), child);
     }
 
     /**
@@ -82,7 +79,7 @@ public class Path {
      * @return the URI representation
      */
     public URI toUri() {
-        return nioPath.toUri();
+        return uri;
     }
 
     /**
@@ -91,8 +88,12 @@ public class Path {
      * @return the file name
      */
     public String getName() {
-        java.nio.file.Path fileName = nioPath.getFileName();
-        return fileName != null ? fileName.toString() : "";
+        String path = uri.getPath();
+        if (path == null || path.isEmpty()) {
+            return "";
+        }
+        int lastSlash = path.lastIndexOf('/');
+        return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
     }
 
     /**
@@ -101,8 +102,25 @@ public class Path {
      * @return the parent path, or null if no parent
      */
     public Path getParent() {
-        java.nio.file.Path parent = nioPath.getParent();
-        return parent != null ? new Path(parent) : null;
+        if (isLocal(uri)) {
+            java.nio.file.Path parent = java.nio.file.Path.of(uri).getParent();
+            return parent != null ? new Path(parent.toUri()) : null;
+        }
+        String path = uri.getPath();
+        if (path == null || path.equals("/") || path.isEmpty()) {
+            return null;
+        }
+        int lastSlash = path.lastIndexOf('/');
+        if (lastSlash <= 0) {
+            return null;
+        }
+        try {
+            return new Path(new URI(uri.getScheme(), uri.getAuthority(),
+                    path.substring(0, lastSlash), null, null));
+        }
+        catch (URISyntaxException e) {
+            throw new IllegalArgumentException("Invalid parent path for: " + uri, e);
+        }
     }
 
     /**
@@ -111,25 +129,51 @@ public class Path {
      * @return true if absolute
      */
     public boolean isAbsolute() {
-        return nioPath.isAbsolute();
+        if (isLocal(uri)) {
+            return java.nio.file.Path.of(uri).isAbsolute();
+        }
+        return uri.getScheme() != null;
     }
 
     @Override
     public String toString() {
-        return nioPath.toString();
+        if (isLocal(uri)) {
+            return java.nio.file.Path.of(uri).toString();
+        }
+        return uri.toString();
     }
 
     @Override
     public boolean equals(Object o) {
         if (this == o)
             return true;
-        if (!(o instanceof Path))
+        if (!(o instanceof Path other))
             return false;
-        return nioPath.equals(((Path) o).nioPath);
+        return uri.equals(other.uri);
     }
 
     @Override
     public int hashCode() {
-        return nioPath.hashCode();
+        return uri.hashCode();
+    }
+
+    private static URI parseUri(String pathString) {
+        // Try parsing as a URI first (handles s3a://, file://, etc.)
+        try {
+            URI parsed = new URI(pathString);
+            if (parsed.getScheme() != null) {
+                return parsed;
+            }
+        }
+        catch (URISyntaxException e) {
+            // Fall through to local path handling
+        }
+        // Treat as local path
+        return java.nio.file.Path.of(pathString).toUri();
+    }
+
+    private static boolean isLocal(URI uri) {
+        String scheme = uri.getScheme();
+        return scheme == null || LOCAL_SCHEMES.contains(scheme);
     }
 }

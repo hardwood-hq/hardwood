@@ -11,34 +11,14 @@ import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
 
 /**
- * Interface for reading Parquet record data.
+ * Abstract class for reading Parquet record data.
  * <p>
- * Compatible with parquet-java's Group API. This interface provides type-safe
- * access to field values by name or index.
+ * Compatible with parquet-java's Group API. Provides type-safe access to field
+ * values by name or index. The by-name methods delegate to the by-index methods
+ * via {@link #getType()}.{@link GroupType#getFieldIndex(String)}.
  * </p>
- *
- * <p>
- * For repeated fields, the second parameter (index) specifies which occurrence
- * to return. For non-repeated fields, the index should always be 0.
- * </p>
- *
- * <pre>{@code
- * // Access non-repeated fields
- * String name = group.getString("name", 0);
- * int age = group.getInteger("age", 0);
- *
- * // Access repeated fields
- * int tagCount = group.getFieldRepetitionCount("tags");
- * for (int i = 0; i < tagCount; i++) {
- *     String tag = group.getString("tags", i);
- * }
- *
- * // Access nested groups
- * Group address = group.getGroup("address", 0);
- * String city = address.getString("city", 0);
- * }</pre>
  */
-public interface Group {
+public abstract class Group {
 
     // ---- Schema access ----
 
@@ -47,22 +27,17 @@ public interface Group {
      *
      * @return the group type schema
      */
-    GroupType getType();
+    public abstract GroupType getType();
 
     // ---- Field repetition count ----
 
     /**
      * Get the repetition count for a field by index.
-     * <p>
-     * For repeated fields, returns the number of values.
-     * For optional fields, returns 1 if present, 0 if null.
-     * For required fields, always returns 1.
-     * </p>
      *
      * @param fieldIndex the field index
      * @return the repetition count
      */
-    int getFieldRepetitionCount(int fieldIndex);
+    public abstract int getFieldRepetitionCount(int fieldIndex);
 
     /**
      * Get the repetition count for a field by name.
@@ -70,153 +45,59 @@ public interface Group {
      * @param field the field name
      * @return the repetition count
      */
-    int getFieldRepetitionCount(String field);
+    public int getFieldRepetitionCount(String field) {
+        return getFieldRepetitionCount(getType().getFieldIndex(field));
+    }
 
-    // ---- Value access by field index ----
+    // ---- Abstract by-index accessors ----
 
-    /**
-     * Get a string value.
-     *
-     * @param fieldIndex the field index
-     * @param index the value index (for repeated fields)
-     * @return the string value
-     */
-    String getString(int fieldIndex, int index);
+    public abstract String getString(int fieldIndex, int index);
 
-    /**
-     * Get an integer value.
-     *
-     * @param fieldIndex the field index
-     * @param index the value index (for repeated fields)
-     * @return the integer value
-     */
-    int getInteger(int fieldIndex, int index);
+    public abstract int getInteger(int fieldIndex, int index);
 
-    /**
-     * Get a long value.
-     *
-     * @param fieldIndex the field index
-     * @param index the value index (for repeated fields)
-     * @return the long value
-     */
-    long getLong(int fieldIndex, int index);
+    public abstract long getLong(int fieldIndex, int index);
 
-    /**
-     * Get a double value.
-     *
-     * @param fieldIndex the field index
-     * @param index the value index (for repeated fields)
-     * @return the double value
-     */
-    double getDouble(int fieldIndex, int index);
+    public abstract double getDouble(int fieldIndex, int index);
 
-    /**
-     * Get a float value.
-     *
-     * @param fieldIndex the field index
-     * @param index the value index (for repeated fields)
-     * @return the float value
-     */
-    float getFloat(int fieldIndex, int index);
+    public abstract float getFloat(int fieldIndex, int index);
 
-    /**
-     * Get a boolean value.
-     *
-     * @param fieldIndex the field index
-     * @param index the value index (for repeated fields)
-     * @return the boolean value
-     */
-    boolean getBoolean(int fieldIndex, int index);
+    public abstract boolean getBoolean(int fieldIndex, int index);
 
-    /**
-     * Get a binary value.
-     *
-     * @param fieldIndex the field index
-     * @param index the value index (for repeated fields)
-     * @return the binary value
-     */
-    Binary getBinary(int fieldIndex, int index);
+    public abstract Binary getBinary(int fieldIndex, int index);
 
-    /**
-     * Get a nested group.
-     *
-     * @param fieldIndex the field index
-     * @param index the value index (for repeated fields)
-     * @return the nested group
-     */
-    Group getGroup(int fieldIndex, int index);
+    public abstract Group getGroup(int fieldIndex, int index);
 
-    // ---- Value access by field name ----
+    // ---- Concrete by-name accessors (delegate to by-index) ----
 
-    /**
-     * Get a string value by field name.
-     *
-     * @param field the field name
-     * @param index the value index (for repeated fields)
-     * @return the string value
-     */
-    String getString(String field, int index);
+    public String getString(String field, int index) {
+        return getString(getType().getFieldIndex(field), index);
+    }
 
-    /**
-     * Get an integer value by field name.
-     *
-     * @param field the field name
-     * @param index the value index (for repeated fields)
-     * @return the integer value
-     */
-    int getInteger(String field, int index);
+    public int getInteger(String field, int index) {
+        return getInteger(getType().getFieldIndex(field), index);
+    }
 
-    /**
-     * Get a long value by field name.
-     *
-     * @param field the field name
-     * @param index the value index (for repeated fields)
-     * @return the long value
-     */
-    long getLong(String field, int index);
+    public long getLong(String field, int index) {
+        return getLong(getType().getFieldIndex(field), index);
+    }
 
-    /**
-     * Get a double value by field name.
-     *
-     * @param field the field name
-     * @param index the value index (for repeated fields)
-     * @return the double value
-     */
-    double getDouble(String field, int index);
+    public double getDouble(String field, int index) {
+        return getDouble(getType().getFieldIndex(field), index);
+    }
 
-    /**
-     * Get a float value by field name.
-     *
-     * @param field the field name
-     * @param index the value index (for repeated fields)
-     * @return the float value
-     */
-    float getFloat(String field, int index);
+    public float getFloat(String field, int index) {
+        return getFloat(getType().getFieldIndex(field), index);
+    }
 
-    /**
-     * Get a boolean value by field name.
-     *
-     * @param field the field name
-     * @param index the value index (for repeated fields)
-     * @return the boolean value
-     */
-    boolean getBoolean(String field, int index);
+    public boolean getBoolean(String field, int index) {
+        return getBoolean(getType().getFieldIndex(field), index);
+    }
 
-    /**
-     * Get a binary value by field name.
-     *
-     * @param field the field name
-     * @param index the value index (for repeated fields)
-     * @return the binary value
-     */
-    Binary getBinary(String field, int index);
+    public Binary getBinary(String field, int index) {
+        return getBinary(getType().getFieldIndex(field), index);
+    }
 
-    /**
-     * Get a nested group by field name.
-     *
-     * @param field the field name
-     * @param index the value index (for repeated fields)
-     * @return the nested group
-     */
-    Group getGroup(String field, int index);
+    public Group getGroup(String field, int index) {
+        return getGroup(getType().getFieldIndex(field), index);
+    }
 }

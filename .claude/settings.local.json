@@ -95,7 +95,10 @@
       "Bash(git branch:*)",
       "Bash(/tmp/test.txt:*)",
       "Read(//tmp/**)",
-      "Bash(gh issue:*)"
+      "Bash(gh issue:*)",
+      "WebFetch(domain:www.baeldung.com)",
+      "WebFetch(domain:northconcepts.com)",
+      "WebFetch(domain:repo1.maven.org)"
     ]
   }
 }
