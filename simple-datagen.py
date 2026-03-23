@@ -1364,3 +1364,161 @@ writer.close()
 print("\nGenerated filter_pushdown_nested.parquet:")
 print("  - 3 row groups with struct column (address: {city, zip})")
 print("  - RG0: zip 70000-72000, RG1: zip 80000-82000, RG2: zip 90000-92000")
+
+# ===== Key-value metadata test file =====
+
+kv_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('name', pa.string(), True)
+])
+
+kv_table = pa.table({
+    'id': [1, 2, 3],
+    'name': ['alice', 'bob', 'charlie']
+}, schema=kv_schema)
+
+kv_metadata = {
+    b'app.version': b'1.2.3',
+    b'writer.tool': b'hardwood-test',
+    b'empty.value': b'',
+}
+kv_schema_with_meta = kv_schema.with_metadata(kv_metadata)
+kv_table = kv_table.cast(kv_schema_with_meta)
+
+pq.write_table(kv_table, 'core/src/test/resources/kv_metadata_test.parquet',
+               use_dictionary=False,
+               compression=None,
+               data_page_version='1.0')
+
+print("\nGenerated kv_metadata_test.parquet:")
+print("  - Custom key-value metadata: app.version=1.2.3, writer.tool=hardwood-test, empty.value=''")
+print("  - Also contains ARROW:schema metadata from pyarrow")
+
+# ===== Column-level key-value metadata test file =====
+# pyarrow doesn't write Thrift-level ColumnMetaData key_value_metadata (field 8),
+# so we generate a base file and patch the Thrift footer manually.
+
+import struct
+
+def _write_varint(val):
+    val = val & 0xFFFFFFFFFFFFFFFF
+    buf = bytearray()
+    while val > 0x7F:
+        buf.append((val & 0x7F) | 0x80)
+        val >>= 7
+    buf.append(val & 0x7F)
+    return bytes(buf)
+
+def _write_zigzag(val):
+    return _write_varint((val << 1) ^ (val >> 63))
+
+_STOP = b'\x00'
+_T_I32, _T_I64, _T_BIN, _T_LIST, _T_STRUCT = 0x05, 0x06, 0x08, 0x09, 0x0C
+
+class _ThriftWriter:
+    def __init__(self):
+        self.buf = bytearray()
+        self.lf = 0
+    def f(self, fid, tid):
+        d = fid - self.lf
+        self.buf += bytes([(d << 4) | tid]) if 0 < d <= 15 else (bytes([tid]) + _write_zigzag(fid))
+        self.lf = fid
+        return self
+    def i32(self, v):  self.buf += _write_zigzag(v); return self
+    def i64(self, v):  self.buf += _write_zigzag(v); return self
+    def s(self, v):    b = v.encode(); self.buf += _write_varint(len(b)) + b; return self
+    def lst(self, t, n):
+        self.buf += bytes([(n << 4) | t]) if n < 15 else (bytes([0xF0 | t]) + _write_varint(n))
+        return self
+    def raw(self, d):  self.buf += d; return self
+    def end(self):     self.buf += _STOP; return self
+    def out(self):     return bytes(self.buf)
+
+def _kv_struct(k, v):
+    w = _ThriftWriter(); w.f(1,_T_BIN).s(k).f(2,_T_BIN).s(v).end(); return w.out()
+
+# SchemaElement fields: 1=type, 3=repetition_type, 4=name, 5=num_children, 6=converted_type
+def _schema_elem(name, type_val=None, rep=None, num_children=None, ct=None):
+    w = _ThriftWriter()
+    if type_val is not None: w.f(1, _T_I32).i32(type_val)
+    if rep is not None:      w.f(3, _T_I32).i32(rep)
+    w.f(4, _T_BIN).s(name)
+    if num_children is not None: w.f(5, _T_I32).i32(num_children)
+    if ct is not None:       w.f(6, _T_I32).i32(ct)
+    w.end()
+    return w.out()
+
+# Generate base file to get data pages
+col_kv_schema = pa.schema([pa.field('id', pa.int64(), False), pa.field('name', pa.string(), True)])
+col_kv_table = pa.table({'id': [1, 2, 3], 'name': ['alice', 'bob', 'charlie']}, schema=col_kv_schema)
+base_path = '/tmp/_col_kv_base.parquet'
+pq.write_table(col_kv_table, base_path, use_dictionary=False, compression=None, data_page_version='1.0')
+
+with open(base_path, 'rb') as f:
+    base_data = f.read()
+base_footer_len = struct.unpack('<I', base_data[-8:-4])[0]
+pre_footer = base_data[:len(base_data) - 8 - base_footer_len]
+base_pf = pq.ParquetFile(base_path)
+base_rg = base_pf.metadata.row_group(0)
+
+# Build FileMetaData with column-level kv metadata
+fm = _ThriftWriter()
+fm.f(1, _T_I32).i32(2)
+fm.f(2, _T_LIST).lst(_T_STRUCT, 3)
+fm.raw(_schema_elem("schema", num_children=2))
+fm.raw(_schema_elem("id", type_val=2, rep=0))
+fm.raw(_schema_elem("name", type_val=6, rep=1, ct=0))
+fm.f(3, _T_I64).i64(3)
+fm.f(4, _T_LIST).lst(_T_STRUCT, 1)
+
+rw = _ThriftWriter()
+rw.f(1, _T_LIST).lst(_T_STRUCT, 2)
+
+column_kv_metadata = [
+    [("col.origin", "primary-key")],
+    [("col.encoding", "utf-8"), ("col.source", "user-input")],
+]
+enc_map = {'PLAIN': 0, 'RLE': 3, 'RLE_DICTIONARY': 8}
+
+for ci in range(2):
+    col = base_rg.column(ci)
+    pt = 2 if ci == 0 else 6
+    encs = [enc_map.get(str(e), 0) for e in col.encodings]
+
+    cc = _ThriftWriter()
+    cc.f(2, _T_I64).i64(col.file_offset)
+    cc.f(3, _T_STRUCT)
+
+    md = _ThriftWriter()
+    md.f(1, _T_I32).i32(pt)
+    md.f(2, _T_LIST).lst(_T_I32, len(encs))
+    for e in encs: md.i32(e)
+    md.f(3, _T_LIST).lst(_T_BIN, 1).s(col.path_in_schema)
+    md.f(4, _T_I32).i32(0)
+    md.f(5, _T_I64).i64(col.num_values)
+    md.f(6, _T_I64).i64(col.total_uncompressed_size)
+    md.f(7, _T_I64).i64(col.total_compressed_size)
+    md.f(8, _T_LIST).lst(_T_STRUCT, len(column_kv_metadata[ci]))
+    for k, v in column_kv_metadata[ci]: md.raw(_kv_struct(k, v))
+    md.f(9, _T_I64).i64(col.data_page_offset)
+    md.end()
+
+    cc.raw(md.out()).end()
+    rw.raw(cc.out())
+
+rw.f(2, _T_I64).i64(base_rg.total_byte_size)
+rw.f(3, _T_I64).i64(base_rg.num_rows)
+rw.end()
+fm.raw(rw.out())
+fm.f(6, _T_BIN).s("hardwood-test-datagen")
+fm.end()
+
+footer_bytes = fm.out()
+output = pre_footer + footer_bytes + struct.pack('<I', len(footer_bytes)) + b'PAR1'
+with open('core/src/test/resources/column_kv_metadata_test.parquet', 'wb') as f:
+    f.write(output)
+
+print("\nGenerated column_kv_metadata_test.parquet:")
+print("  - Column-level kv metadata on ColumnMetaData (Thrift field 8)")
+print("  - id column: col.origin=primary-key")
+print("  - name column: col.encoding=utf-8, col.source=user-input")

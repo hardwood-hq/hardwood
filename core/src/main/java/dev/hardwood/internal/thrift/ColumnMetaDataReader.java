@@ -9,7 +9,9 @@ package dev.hardwood.internal.thrift;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -41,6 +43,7 @@ public class ColumnMetaDataReader {
         long numValues = 0;
         long totalUncompressedSize = 0;
         long totalCompressedSize = 0;
+        Map<String, String> keyValueMetadata = Collections.emptyMap();
         long dataPageOffset = 0;
         Long dictionaryPageOffset = null;
         Statistics statistics = null;
@@ -114,8 +117,13 @@ public class ColumnMetaDataReader {
                         reader.skipField(header.type());
                     }
                     break;
-                case 8: // key_value_metadata (optional) - skipped
-                    reader.skipField(header.type());
+                case 8: // key_value_metadata (optional list<KeyValue>)
+                    if (header.type() == 0x09) { // LIST
+                        keyValueMetadata = KeyValueMetadataReader.read(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 9: // data_page_offset
                     if (header.type() == 0x06) {
@@ -151,6 +159,7 @@ public class ColumnMetaDataReader {
         }
 
         return new ColumnMetaData(type, encodings, new FieldPath(List.copyOf(pathInSchema)), codec, numValues,
-                totalUncompressedSize, totalCompressedSize, dataPageOffset, dictionaryPageOffset, statistics);
+                totalUncompressedSize, totalCompressedSize, keyValueMetadata, dataPageOffset, dictionaryPageOffset,
+                statistics);
     }
 }

@@ -8,6 +8,7 @@
 package dev.hardwood.metadata;
 
 import java.util.List;
+import java.util.Map;
 
 /**
  * Metadata for a column chunk.
@@ -19,6 +20,7 @@ import java.util.List;
  * @param numValues total number of values (including nulls) in this column chunk
  * @param totalUncompressedSize total uncompressed byte size of all pages in this column chunk
  * @param totalCompressedSize total compressed byte size of all pages in this column chunk (as stored on disk)
+ * @param keyValueMetadata application-defined key-value metadata for this column, or an empty map if absent
  * @param dataPageOffset byte offset in the file where the first data page begins
  * @param dictionaryPageOffset byte offset in the file where the dictionary page begins, or {@code null} if there is no dictionary page
  * @param statistics column chunk statistics (min/max values, null count, distinct count), or {@code null} if absent
@@ -33,6 +35,7 @@ public record ColumnMetaData(
         long numValues,
         long totalUncompressedSize,
         long totalCompressedSize,
+        Map<String, String> keyValueMetadata,
         long dataPageOffset,
         Long dictionaryPageOffset,
         Statistics statistics) {
