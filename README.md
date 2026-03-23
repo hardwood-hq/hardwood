@@ -701,30 +701,85 @@ try (ColumnReader reader = fileReader.createColumnReader("tags")) {
 
 ### Accessing File Metadata
 
-Both approaches allow you to inspect file metadata before reading:
+File metadata can be inspected without reading any row data:
 
 ```java
+import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.Statistics;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.ColumnSchema;
+
 try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     FileMetaData metadata = reader.getFileMetaData();
 
     System.out.println("Version: " + metadata.version());
     System.out.println("Total rows: " + metadata.numRows());
-    System.out.println("Row groups: " + metadata.rowGroups().size());
+    System.out.println("Created by: " + metadata.createdBy());
 
+    // Schema inspection
     FileSchema schema = reader.getFileSchema();
     for (int i = 0; i < schema.getColumnCount(); i++) {
         ColumnSchema column = schema.getColumn(i);
-        System.out.print("Column " + i + ": " + column.name() +
-                         " (" + column.type() + ", " + column.repetitionType());
+        System.out.println("Column " + i + ": " + column.name()
+            + " (" + column.type() + ", " + column.repetitionType()
+            + (column.logicalType() != null ? ", " + column.logicalType() : "")
+            + ")");
+    }
 
-        // Display logical type if present
-        if (column.logicalType() != null) {
-            System.out.print(", " + column.logicalType());
+    // Row group and column chunk details
+    for (int rg = 0; rg < metadata.rowGroups().size(); rg++) {
+        RowGroup rowGroup = metadata.rowGroups().get(rg);
+        System.out.println("Row group " + rg + ": "
+            + rowGroup.numRows() + " rows, "
+            + rowGroup.totalByteSize() + " bytes");
+
+        for (ColumnChunk chunk : rowGroup.columns()) {
+            ColumnMetaData col = chunk.metaData();
+            System.out.println("  " + col.pathInSchema()
+                + " [" + col.codec() + "]"
+                + " compressed=" + col.totalCompressedSize()
+                + " uncompressed=" + col.totalUncompressedSize());
+
+            // Column statistics (if available)
+            Statistics stats = col.statistics();
+            if (stats != null && stats.nullCount() != null) {
+                System.out.println("    nulls: " + stats.nullCount());
+            }
         }
-        System.out.println(")");
     }
 }
 ```
+
+### JFR (Java Flight Recorder) Events
+
+Hardwood emits JFR events during file reading, enabling detailed performance profiling with zero overhead when recording is off. Start a JFR recording to capture them:
+
+```bash
+java -XX:StartFlightRecording=filename=recording.jfr,settings=profile ...
+```
+
+Or attach dynamically via `jcmd <pid> JFR.start`.
+
+**Available events:**
+
+| Event | Category | Description |
+|-------|----------|-------------|
+| `dev.hardwood.FileOpened` | I/O | File opened and metadata read. Fields: file, fileSize, rowGroupCount, columnCount |
+| `dev.hardwood.FileMapping` | I/O | Memory-mapping of a file region. Fields: file, offset, size |
+| `dev.hardwood.RowGroupScanned` | Decode | Page boundaries scanned in a column chunk. Fields: file, rowGroupIndex, column, pageCount, scanStrategy (`sequential` or `offset-index`) |
+| `dev.hardwood.PageDecoded` | Decode | Single data page decoded. Fields: column, compressedSize, uncompressedSize |
+| `dev.hardwood.RowGroupFilter` | Filter | Row groups filtered by predicate pushdown. Fields: file, totalRowGroups, rowGroupsKept, rowGroupsSkipped |
+| `dev.hardwood.BatchWait` | Pipeline | Consumer blocked waiting for the assembly pipeline. Fields: column |
+| `dev.hardwood.PrefetchMiss` | Pipeline | Prefetch queue miss requiring synchronous decode. Fields: file, column, newDepth, queueEmpty |
+
+Events appear under the **Hardwood** category in JDK Mission Control (JMC) or any JFR analysis tool. Use them to identify:
+- **I/O bottlenecks** — large `FileMapping` durations or frequent `PrefetchMiss` events
+- **Filter effectiveness** — `RowGroupFilter` shows how many row groups were skipped
+- **Decode hotspots** — `PageDecoded` events with large uncompressed sizes or high frequency
+- **Pipeline stalls** — `BatchWait` events indicate the reader is waiting for decoded data
 
 ### Parquet-Java Compatibility (hardwood-parquet-java-compat)
 
