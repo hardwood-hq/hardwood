@@ -7,6 +7,7 @@
  */
 package org.apache.parquet.compat;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -19,10 +20,10 @@ import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.io.InputFile;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
+
+import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 
 import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
 import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
@@ -41,17 +42,16 @@ class ParquetReaderS3CompatTest {
             .resolve("../core/src/test/resources").normalize();
 
     @Container
-    static LocalStackContainer localstack = new LocalStackContainer(
-            DockerImageName.parse("localstack/localstack:latest"))
-            .withServices(LocalStackContainer.Service.S3);
+    static S3MockContainer s3Mock = new S3MockContainer("latest");
 
     @BeforeAll
     static void setup() {
         S3Client s3 = S3Client.builder()
-                .endpointOverride(localstack.getEndpointOverride(LocalStackContainer.Service.S3))
+                .endpointOverride(URI.create(s3Mock.getHttpEndpoint()))
                 .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create(localstack.getAccessKey(), localstack.getSecretKey())))
-                .region(Region.of(localstack.getRegion()))
+                        AwsBasicCredentials.create("access", "secret")))
+                .region(Region.US_EAST_1)
+                .forcePathStyle(true)
                 .build();
 
         s3.createBucket(b -> b.bucket("test-bucket"));
@@ -66,10 +66,10 @@ class ParquetReaderS3CompatTest {
 
     private Configuration s3Config() {
         Configuration conf = new Configuration();
-        conf.set("fs.s3a.access.key", localstack.getAccessKey());
-        conf.set("fs.s3a.secret.key", localstack.getSecretKey());
-        conf.set("fs.s3a.endpoint", localstack.getEndpointOverride(LocalStackContainer.Service.S3).toString());
-        conf.set("fs.s3a.endpoint.region", localstack.getRegion());
+        conf.set("fs.s3a.access.key", "access");
+        conf.set("fs.s3a.secret.key", "secret");
+        conf.set("fs.s3a.endpoint", s3Mock.getHttpEndpoint());
+        conf.set("fs.s3a.endpoint.region", "us-east-1");
         conf.setBoolean("fs.s3a.path.style.access", true);
         return conf;
     }

@@ -7,15 +7,16 @@
  */
 package dev.hardwood.s3;
 
+import java.net.URI;
 import java.nio.file.Path;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.testcontainers.containers.localstack.LocalStackContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-import org.testcontainers.utility.DockerImageName;
+
+import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
@@ -35,19 +36,18 @@ class S3MultiFileTest {
             .resolve("../core/src/test/resources").normalize();
 
     @Container
-    static LocalStackContainer localstack = new LocalStackContainer(
-            DockerImageName.parse("localstack/localstack:latest"))
-            .withServices(LocalStackContainer.Service.S3);
+    static S3MockContainer s3Mock = new S3MockContainer("latest");
 
     static S3Client s3;
 
     @BeforeAll
     static void setup() {
         s3 = S3Client.builder()
-                .endpointOverride(localstack.getEndpointOverride(LocalStackContainer.Service.S3))
+                .endpointOverride(URI.create(s3Mock.getHttpEndpoint()))
                 .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create(localstack.getAccessKey(), localstack.getSecretKey())))
-                .region(Region.of(localstack.getRegion()))
+                        AwsBasicCredentials.create("access", "secret")))
+                .region(Region.US_EAST_1)
+                .forcePathStyle(true)
                 .build();
 
         s3.createBucket(b -> b.bucket("test-bucket"));

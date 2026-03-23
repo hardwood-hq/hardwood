@@ -96,6 +96,13 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+
+      <!-- S3 mock for integration tests -->
+      <dependency>
+        <groupId>com.adobe.testing</groupId>
+        <artifactId>s3mock-testcontainers</artifactId>
+        <version>4.9.1</version>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 </project>
