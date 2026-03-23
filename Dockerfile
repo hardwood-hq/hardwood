@@ -16,6 +16,8 @@ RUN microdnf install -y --nodocs \
       zip \
       unzip \
       tar \
+      python3 \
+      python3-pip \
     && microdnf clean all
 
 # Install SDKMAN and Java 25 (Temurin)
@@ -31,5 +33,10 @@ RUN curl -fsSL https://claude.ai/install.sh | bash
 ENV PATH="/root/.local/bin:$PATH"
 
 WORKDIR /workspace
+
+# Set up Python venv for test data generation (simple-datagen.py)
+COPY requirements.txt .
+RUN python3 -m venv .docker-venv \
+    && .docker-venv/bin/pip install --no-cache-dir -r requirements.txt
 
 CMD ["claude"]

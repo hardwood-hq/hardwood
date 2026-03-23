@@ -719,6 +719,12 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     System.out.println("Total rows: " + metadata.numRows());
     System.out.println("Created by: " + metadata.createdBy());
 
+    // Access application-defined key-value metadata (e.g. Spark schema, pandas metadata, Avro schema)
+    Map<String, String> kvMetadata = metadata.keyValueMetadata();
+    for (Map.Entry<String, String> entry : kvMetadata.entrySet()) {
+        System.out.println("  " + entry.getKey() + " = " + entry.getValue());
+    }
+
     // Schema inspection
     FileSchema schema = reader.getFileSchema();
     for (int i = 0; i < schema.getColumnCount(); i++) {

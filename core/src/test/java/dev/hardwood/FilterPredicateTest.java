@@ -10,6 +10,7 @@ package dev.hardwood;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.List;
+import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
@@ -409,7 +410,7 @@ class FilterPredicateTest {
         Statistics stats = new Statistics(min, max, 0L, null, false);
         ColumnMetaData cmd = new ColumnMetaData(
                 type, List.of(Encoding.PLAIN), FieldPath.of("col"),
-                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, 0, null, stats);
+                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, stats);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, 100);
     }
@@ -417,7 +418,7 @@ class FilterPredicateTest {
     private static RowGroup createRowGroupWithoutStatistics() {
         ColumnMetaData cmd = new ColumnMetaData(
                 PhysicalType.INT32, List.of(Encoding.PLAIN), FieldPath.of("col"),
-                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, 0, null, null);
+                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, null);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, 100);
     }

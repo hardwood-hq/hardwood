@@ -9,7 +9,9 @@ package dev.hardwood.internal.thrift;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -27,6 +29,7 @@ public class FileMetaDataReader {
         List<SchemaElement> schema = new ArrayList<>();
         long numRows = 0;
         List<RowGroup> rowGroups = new ArrayList<>();
+        Map<String, String> keyValueMetadata = Collections.emptyMap();
         String createdBy = null;
 
         while (true) {
@@ -74,6 +77,14 @@ public class FileMetaDataReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 5: // key_value_metadata (optional list<KeyValue>)
+                    if (header.type() == 0x09) { // LIST
+                        keyValueMetadata = KeyValueMetadataReader.read(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 case 6: // created_by (optional)
                     if (header.type() == 0x08) {
                         createdBy = reader.readString();
@@ -88,6 +99,6 @@ public class FileMetaDataReader {
             }
         }
 
-        return new FileMetaData(version, schema, numRows, rowGroups, createdBy);
+        return new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata, createdBy);
     }
 }
