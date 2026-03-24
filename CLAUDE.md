@@ -23,6 +23,18 @@ Avoid object access and boxing as much as possible. Always prefer primitive acce
 Before writing new code, search for existing patterns in the same class/package that accomplish the same thing (e.g., the DRY principle). Extract repeated logic into helper methods within the same class rather than duplicating it. When a pattern appears multiple times, consider consolidating it into a single well-named method with overloads if needed.
 Be conservative with base class refactoring. Do not pull implementation details up into abstract base classes unless the logic is truly identical across all subclasses with no foreseeable divergence. Shared helpers are better than shared template methods when subclasses may need different control flow.
 
+# Documentation
+
+All JavaDoc comments must use Markdown `///` syntax (JEP 467), not the legacy `/** */` block comment style.
+Key rules for `///` Markdown JavaDoc:
+- Use backtick-fenced code blocks (e.g. ` ```java `) instead of `<pre>{@code ...}</pre>`.
+- Use `[ClassName]` reference links instead of `{@link ClassName}`.
+- Use inline backticks instead of `{@code text}`.
+- Use Markdown formatting (`**bold**`, `- list items`, etc.) instead of HTML tags.
+- Block tags (`@param`, `@return`, `@throws`) work unchanged.
+- `@see` tags still require HTML `<a href="...">` for external links, not Markdown link syntax.
+- Escape literal square brackets in prose (e.g. `` `array[i]` ``) so they are not interpreted as reference links.
+
 # Testing
 
 To generate test Parquet files, extend simple-datagen.py and run: `source .docker-venv/bin/activate && python simple-datagen.py`

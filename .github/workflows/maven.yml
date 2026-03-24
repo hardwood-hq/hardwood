@@ -39,6 +39,13 @@ jobs:
           distribution: 'temurin'
           cache: 'maven'
 
+      - name: 'Check for legacy JavaDoc comments'
+        run: |
+          if grep -rn '^\s*/\*\*' --include='*.java' .; then
+            echo "::error::Found legacy /** */ JavaDoc comments. Use /// Markdown syntax (JEP 467) instead."
+            exit 1
+          fi
+
       - name: 'Build and install modules'
         run: ./mvnw -B clean install
 
