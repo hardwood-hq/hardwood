@@ -57,8 +57,7 @@ public class HeadCommand implements Callable<Integer> {
     private List<String[]> readRows(ParquetFileReader reader, int fieldCount) throws IOException {
         List<String[]> rows = new ArrayList<>();
         try (RowReader rowReader = reader.createRowReader()) {
-            int read = 0;
-            RowTable.rowToTableRow(fieldCount, rows, rowReader, read, count);
+            RowTable.rowToTableRow(fieldCount, rows, rowReader, count);
         }
         return rows;
     }

@@ -60,11 +60,10 @@ public class TailCommand implements Callable<Integer> {
 
         List<String[]> rows = new ArrayList<>();
         try (RowReader rowReader = reader.createRowReader()) {
-            int read = 0;
             for (long i = 0; i < skip; i++) {
                 rowReader.next();
             }
-            RowTable.rowToTableRow(fieldCount, rows, rowReader, read, count);
+            RowTable.rowToTableRow(fieldCount, rows, rowReader, count);
         }
         return rows;
     }

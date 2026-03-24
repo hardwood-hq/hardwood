@@ -1032,17 +1032,17 @@ sdk install java 25.0.2-graalce
 Then build:
 
 ```shell
-./mvnw -Dnative package -pl core -am
+./mvnw -Dnative package -pl cli -am
 ```
 
-The resulting distribution is at `core/target/hardwood-<version>/bin/hardwood`.
+The resulting distribution is at `cli/target/hardwood-<version>/bin/hardwood`.
 
 #### Linux — container build (no local GraalVM required)
 
 Requires Docker. The build runs inside a Linux container and produces a Linux x86\_64 ELF binary:
 
 ```shell
-./mvnw -Dnative -Dquarkus.native.container-build=true package -pl core -am
+./mvnw -Dnative -Dquarkus.native.container-build=true package -pl cli -am
 ```
 
 > **Note:** The container build always produces a Linux binary. Running it on macOS will fail with `exec format error`. Use the local GraalVM build for macOS binaries.

@@ -41,7 +41,8 @@ public final class NativeLibraryLoader {
     public static boolean inImageCode() {
         try {
             Class<?> c = Class.forName("org.graalvm.nativeimage.ImageInfo");
-            return Boolean.TRUE.equals(c.getMethod("inImageCode").invoke(null));
+            Object result = c.getMethod("inImageCode").invoke(null);
+            return result instanceof Boolean b && b;
         }
         catch (ReflectiveOperationException e) {
             return false;
@@ -52,15 +53,7 @@ public final class NativeLibraryLoader {
      * Loads zstd-jni native library. No-op on JVM (zstd-jni loads from the JAR).
      */
     public static void loadZstd() {
-        if (!inImageCode()) {
-            return;
-        }
-        Path libDir = resolveLibDir();
-        if (libDir == null) {
-            return;
-        }
-        loadNative("zstd",
-                resolveLibFile(libDir, osArchFragment(Codec.ZSTD), "libzstd-jni-" + ZSTD_JNI_VERSION, "libzstd-jni-"),
+        loadCodec("zstd", Codec.ZSTD, "libzstd-jni-" + ZSTD_JNI_VERSION, "libzstd-jni-",
                 NativeLibraryLoader::assumeZstdLoaded);
     }
 
@@ -68,42 +61,41 @@ public final class NativeLibraryLoader {
      * Loads lz4-java native library. No-op on JVM (lz4-java loads from the JAR).
      */
     public static void loadLz4() {
-        if (!inImageCode()) {
-            return;
-        }
-        Path libDir = resolveLibDir();
-        if (libDir == null) {
-            return;
-        }
-        loadNative("lz4", resolveLibFile(libDir, osArchFragment(Codec.LZ4), "liblz4-java", "liblz4-java"), null);
+        loadCodec("lz4", Codec.LZ4, "liblz4-java", "liblz4-java", null);
     }
 
     /**
      * Loads snappy-java native library. No-op on JVM (snappy-java loads from the JAR).
      */
     public static void loadSnappy() {
+        loadCodec("snappy", Codec.SNAPPY, "libsnappyjava", "libsnappyjava", NativeLibraryLoader::assumeSnappyLoaded);
+    }
+
+    /** Returns {@code libDir} on successful load, {@code null} otherwise. */
+    private static Path loadCodec(String name, Codec codec, String exactBaseName, String scanPrefix, Runnable postLoad) {
         if (!inImageCode()) {
-            return;
+            return null;
         }
         Path libDir = resolveLibDir();
         if (libDir == null) {
-            return;
+            return null;
         }
-        loadNative("snappy", resolveLibFile(libDir, osArchFragment(Codec.SNAPPY), "libsnappyjava", "libsnappyjava"), null);
+        return loadNative(name, resolveLibFile(libDir, osArchFragment(codec), exactBaseName, scanPrefix))
+                ? libDir
+                : null;
     }
 
-    private static void loadNative(String name, Path libFile, Runnable postLoad) {
+    private static boolean loadNative(String name, Path libFile) {
         if (libFile == null || !Files.isRegularFile(libFile)) {
-            return;
+            return false;
         }
         try {
             System.load(libFile.toAbsolutePath().toString());
-            if (postLoad != null) {
-                postLoad.run();
-            }
+            return true;
         }
         catch (UnsatisfiedLinkError e) {
             System.err.println("WARNING: Could not load " + name + " native library from " + libFile + ": " + e.getMessage());
+            return false;
         }
     }
 
@@ -245,6 +237,31 @@ public final class NativeLibraryLoader {
             return ".dylib";
         }
         return ".so";
+    }
+
+    /**
+     * Guides snappy-java's SnappyLoader to the native library we already loaded via
+     * {@link System#load}. snappy-java has no public "assumeLoaded" API, so we set
+     * the {@code org.xerial.snappy.lib.path} / {@code org.xerial.snappy.lib.name}
+     * system properties that its {@code findNativeLibrary()} checks, causing its own
+     * loader to call {@code System.load} on the same file (a no-op) rather than
+     * attempting JAR extraction (which fails in native images).
+     */
+    private static void assumeSnappyLoaded() {
+        Path libDir = resolveLibDir();
+        if (libDir == null) {
+            return;
+        }
+        String fragment = osArchFragment(Codec.SNAPPY);
+        if (fragment == null) {
+            return;
+        }
+        Path snappyDir = libDir.resolve(fragment);
+        if (!Files.isDirectory(snappyDir)) {
+            return;
+        }
+        System.setProperty("org.xerial.snappy.lib.path", snappyDir.toString());
+        System.setProperty("org.xerial.snappy.lib.name", "snappyjava");
     }
 
     private static void assumeZstdLoaded() {

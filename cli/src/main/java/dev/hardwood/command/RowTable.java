@@ -35,7 +35,8 @@ class RowTable {
         return names;
     }
 
-    static void rowToTableRow(int fieldCount, List<String[]> rows, RowReader rowReader, int read, int count) {
+    static void rowToTableRow(int fieldCount, List<String[]> rows, RowReader rowReader, int count) {
+        int read = 0;
         while (rowReader.hasNext() && read < count) {
             rowReader.next();
             String[] row = new String[fieldCount];

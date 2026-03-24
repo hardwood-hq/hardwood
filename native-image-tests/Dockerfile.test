@@ -1,0 +1,23 @@
+FROM ubuntu:24.04
+
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    file \
+    && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /opt/hardwood
+
+# Copy and extract inside the container so Linux's case-sensitive FS preserves
+# lib/Linux/ (snappy) and lib/linux/ (zstd/lz4) as distinct directories.
+# Extracting on macOS APFS (case-insensitive) would merge them and break snappy.
+COPY hardwood.tar.gz /tmp/hardwood.tar.gz
+RUN tar -xzf /tmp/hardwood.tar.gz -C /opt/hardwood && rm /tmp/hardwood.tar.gz
+
+COPY run-tests.sh /run-tests.sh
+RUN chmod +x /run-tests.sh && chmod +x bin/hardwood
+
+ENV PATH="/opt/hardwood/bin:$PATH"
+
+# Repo parquet files are expected at /repo via bind mount at runtime.
+# An optional /testdata bind mount is scanned for extra parquet files.
+
+ENTRYPOINT ["/run-tests.sh"]
