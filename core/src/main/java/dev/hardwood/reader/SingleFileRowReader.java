@@ -26,9 +26,11 @@ import dev.hardwood.internal.reader.NestedBatchDataView;
 import dev.hardwood.internal.reader.NestedColumnData;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageCursor;
+import dev.hardwood.internal.reader.PageFilterEvaluator;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.internal.reader.RowGroupIndexBuffers;
+import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.internal.reader.TypedColumnData;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
@@ -48,6 +50,7 @@ final class SingleFileRowReader extends AbstractRowReader {
     private final List<RowGroup> rowGroups;
     private final HardwoodContextImpl context;
     private final int adaptiveBatchSize;
+    private final FilterPredicate filterPredicate;
 
     private ColumnValueIterator[] iterators;
     private int[][] levelNullThresholds; // [projectedCol] -> thresholds for nested columns
@@ -55,12 +58,18 @@ final class SingleFileRowReader extends AbstractRowReader {
 
     SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, InputFile inputFile,
                         List<RowGroup> rowGroups, HardwoodContextImpl context) {
+        this(schema, projectedSchema, inputFile, rowGroups, context, null);
+    }
+
+    SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, InputFile inputFile,
+                        List<RowGroup> rowGroups, HardwoodContextImpl context, FilterPredicate filterPredicate) {
         this.schema = schema;
         this.projectedSchema = projectedSchema;
         this.inputFile = inputFile;
         this.rowGroups = rowGroups;
         this.context = context;
         this.adaptiveBatchSize = computeOptimalBatchSize(projectedSchema);
+        this.filterPredicate = filterPredicate;
     }
 
     @Override
@@ -111,6 +120,13 @@ final class SingleFileRowReader extends AbstractRowReader {
                 throw new UncheckedIOException("Failed to fetch index buffers for row group " + rgIdx, e);
             }
 
+            // Compute matching row ranges for page-level Column Index filtering
+            RowRanges matchingRows = null;
+            if (filterPredicate != null) {
+                matchingRows = PageFilterEvaluator.computeMatchingRows(
+                        filterPredicate, rowGroup, schema, indexBuffers);
+            }
+
             // Coalesce projected column chunks and pre-fetch data
             List<ChunkRange> chunkRanges = ChunkRange.coalesce(
                     rowGroup.columns(), projectedOriginalIndices, ChunkRange.MAX_GAP_BYTES);
@@ -126,6 +142,7 @@ final class SingleFileRowReader extends AbstractRowReader {
             }
 
             // Scan each projected column in parallel using pre-fetched data
+            final RowRanges rowRanges = matchingRows;
             for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
                 final int projIdx = projectedIndex;
                 final int originalIndex = projectedOriginalIndices[projIdx];
@@ -141,7 +158,7 @@ final class SingleFileRowReader extends AbstractRowReader {
                         CompletableFuture.supplyAsync(() -> {
                             PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
                                     colChunkData, colChunkOffset, indexBuffers.forColumn(originalIndex),
-                                    rgIdx, fileName);
+                                    rgIdx, fileName, rowRanges);
                             try {
                                 return scanner.scanPages();
                             }

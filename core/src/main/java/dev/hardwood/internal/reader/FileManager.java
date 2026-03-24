@@ -331,6 +331,13 @@ public class FileManager {
                 throw new UncheckedIOException("Failed to fetch index buffers for row group " + rgIdx, e);
             }
 
+            // Compute matching row ranges for page-level Column Index filtering
+            RowRanges matchingRows = null;
+            if (filterPredicate != null) {
+                matchingRows = PageFilterEvaluator.computeMatchingRows(
+                        filterPredicate, rowGroup, openedFile.schema, indexBuffers);
+            }
+
             List<ChunkRange> chunkRanges = ChunkRange.coalesce(
                     rowGroup.columns(), columnIndices, ChunkRange.MAX_GAP_BYTES);
             ByteBuffer[] rangeBuffers = new ByteBuffer[chunkRanges.size()];
@@ -344,6 +351,7 @@ public class FileManager {
                 throw new UncheckedIOException("Failed to fetch column chunk data for row group " + rgIdx, e);
             }
 
+            final RowRanges rowRanges = matchingRows;
             for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
                 final int columnIndex = columnIndices[projectedIndex];
                 final ColumnSchema columnSchema = columnSchemas[projectedIndex];
@@ -357,7 +365,7 @@ public class FileManager {
                         CompletableFuture.supplyAsync(() -> {
                             PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
                                     colChunkData, colChunkOffset, indexBuffers.forColumn(columnIndex),
-                                    rgIdx, fileName);
+                                    rgIdx, fileName, rowRanges);
                             try {
                                 return scanner.scanPages();
                             }

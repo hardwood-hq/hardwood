@@ -26,9 +26,11 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedColumnData;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageCursor;
+import dev.hardwood.internal.reader.PageFilterEvaluator;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.internal.reader.RowGroupIndexBuffers;
+import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.internal.reader.TypedColumnData;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
@@ -361,7 +363,15 @@ public class ColumnReader implements AutoCloseable {
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context) {
         ColumnSchema columnSchema = schema.getColumn(columnName);
-        return create(columnSchema, schema, inputFile, rowGroups, context);
+        return create(columnSchema, schema, inputFile, rowGroups, context, null);
+    }
+
+    /// Create a ColumnReader for a named column with page-level filtering.
+    static ColumnReader create(String columnName, FileSchema schema,
+                               InputFile inputFile, List<RowGroup> rowGroups,
+                               HardwoodContextImpl context, FilterPredicate filter) {
+        ColumnSchema columnSchema = schema.getColumn(columnName);
+        return create(columnSchema, schema, inputFile, rowGroups, context, filter);
     }
 
     /// Create a ColumnReader for a column by index, scanning pages across all row groups.
@@ -369,14 +379,22 @@ public class ColumnReader implements AutoCloseable {
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context) {
         ColumnSchema columnSchema = schema.getColumn(columnIndex);
-        return create(columnSchema, schema, inputFile, rowGroups, context);
+        return create(columnSchema, schema, inputFile, rowGroups, context, null);
+    }
+
+    /// Create a ColumnReader for a column by index with page-level filtering.
+    static ColumnReader create(int columnIndex, FileSchema schema,
+                               InputFile inputFile, List<RowGroup> rowGroups,
+                               HardwoodContextImpl context, FilterPredicate filter) {
+        ColumnSchema columnSchema = schema.getColumn(columnIndex);
+        return create(columnSchema, schema, inputFile, rowGroups, context, filter);
     }
 
     /// Create a ColumnReader for a given ColumnSchema, scanning pages across all row groups.
     @SuppressWarnings("unchecked")
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        InputFile inputFile, List<RowGroup> rowGroups,
-                                       HardwoodContextImpl context) {
+                                       HardwoodContextImpl context, FilterPredicate filter) {
         int originalIndex = columnSchema.columnIndex();
         int[] projectedColumns = new int[]{ originalIndex };
         String fileName = inputFile.name();
@@ -410,15 +428,23 @@ public class ColumnReader implements AutoCloseable {
                 throw new UncheckedIOException("Failed to fetch column chunk data for row group " + rgIdx, e);
             }
 
+            // Compute matching row ranges for page-level Column Index filtering
+            RowRanges matchingRows = null;
+            if (filter != null) {
+                matchingRows = PageFilterEvaluator.computeMatchingRows(
+                        filter, rowGroup, schema, indexBuffers);
+            }
+
             ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
             ByteBuffer colChunkData = SingleFileRowReader.sliceColumnChunk(
                     chunkRanges, rangeBuffers, columnChunk);
             long colChunkOffset = SingleFileRowReader.chunkStartOffset(columnChunk);
 
+            final RowRanges rowRanges = matchingRows;
             scanFutures[rgIdx] = CompletableFuture.supplyAsync(() -> {
                 PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
                         colChunkData, colChunkOffset, indexBuffers.forColumn(originalIndex),
-                        rgIdx, fileName);
+                        rgIdx, fileName, rowRanges);
                 try {
                     return scanner.scanPages();
                 }

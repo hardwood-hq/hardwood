@@ -49,7 +49,7 @@ public class PageFilterEvaluator {
     /// @param schema       the file schema for column resolution
     /// @param indexBuffers pre-fetched index buffers for the row group
     /// @return row ranges that might contain matching rows
-    static RowRanges computeMatchingRows(FilterPredicate predicate, RowGroup rowGroup,
+    public static RowRanges computeMatchingRows(FilterPredicate predicate, RowGroup rowGroup,
             FileSchema schema, RowGroupIndexBuffers indexBuffers) {
         long rowCount = rowGroup.numRows();
         return evaluate(predicate, rowGroup, schema, indexBuffers, rowCount);

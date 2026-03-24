@@ -135,7 +135,7 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param filter predicate for row group filtering based on statistics
     public ColumnReader createColumnReader(String columnName, FilterPredicate filter) {
         FileSchema schema = getFileSchema();
-        return ColumnReader.create(columnName, schema, inputFile, filterRowGroups(schema, filter), context);
+        return ColumnReader.create(columnName, schema, inputFile, filterRowGroups(schema, filter), context, filter);
     }
 
     /// Create a ColumnReader for a column by index, spanning all row groups.
@@ -150,7 +150,7 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param filter predicate for row group filtering based on statistics
     public ColumnReader createColumnReader(int columnIndex, FilterPredicate filter) {
         FileSchema schema = getFileSchema();
-        return ColumnReader.create(columnIndex, schema, inputFile, filterRowGroups(schema, filter), context);
+        return ColumnReader.create(columnIndex, schema, inputFile, filterRowGroups(schema, filter), context, filter);
     }
 
     /// Create a RowReader that iterates over all rows in all row groups.
@@ -182,7 +182,7 @@ public class ParquetFileReader implements AutoCloseable {
     public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
         FileSchema schema = getFileSchema();
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        return new SingleFileRowReader(schema, projectedSchema, inputFile, filterRowGroups(schema, filter), context);
+        return new SingleFileRowReader(schema, projectedSchema, inputFile, filterRowGroups(schema, filter), context, filter);
     }
 
     private List<RowGroup> filterRowGroups(FileSchema schema, FilterPredicate filter) {
