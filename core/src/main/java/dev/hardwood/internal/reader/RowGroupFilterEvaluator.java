@@ -84,7 +84,7 @@ public class RowGroupFilterEvaluator {
         return chunk.metaData().statistics();
     }
 
-    private static int findColumnIndex(String columnName, FileSchema schema) {
+    static int findColumnIndex(String columnName, FileSchema schema) {
         try {
             return schema.getColumn(columnName).columnIndex();
         }
@@ -93,7 +93,7 @@ public class RowGroupFilterEvaluator {
         }
     }
 
-    private static int findColumnIndexByPath(String columnName, RowGroup rowGroup) {
+    static int findColumnIndexByPath(String columnName, RowGroup rowGroup) {
         List<ColumnChunk> columns = rowGroup.columns();
         for (int i = 0; i < columns.size(); i++) {
             var path = columns.get(i).metaData().pathInSchema();
@@ -197,9 +197,10 @@ public class RowGroupFilterEvaluator {
 
     // ==================== Generic comparison logic ====================
 
-    /// Determines if a row group can be dropped given integer-comparable min/max statistics.
+    /// Determines if a range can be dropped given integer-comparable min/max statistics.
     /// Works for int, long, boolean (mapped to 0/1).
-    private static boolean canDrop(FilterPredicate.Operator op, long value, long min, long max) {
+    /// Shared with [PageFilterEvaluator] for page-level filtering.
+    static boolean canDrop(FilterPredicate.Operator op, long value, long min, long max) {
         return switch (op) {
             case EQ -> value < min || value > max;
             case NOT_EQ -> min == max && value == min;
@@ -210,7 +211,7 @@ public class RowGroupFilterEvaluator {
         };
     }
 
-    private static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max) {
+    static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max) {
         return switch (op) {
             case EQ -> Float.compare(value, min) < 0 || Float.compare(value, max) > 0;
             case NOT_EQ -> Float.compare(min, max) == 0 && Float.compare(value, min) == 0;
@@ -221,7 +222,7 @@ public class RowGroupFilterEvaluator {
         };
     }
 
-    private static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max) {
+    static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max) {
         return switch (op) {
             case EQ -> Double.compare(value, min) < 0 || Double.compare(value, max) > 0;
             case NOT_EQ -> Double.compare(min, max) == 0 && Double.compare(value, min) == 0;
@@ -232,12 +233,12 @@ public class RowGroupFilterEvaluator {
         };
     }
 
-    /// Determines if a row group can be dropped given pre-computed comparison results for binary values.
+    /// Determines if a range can be dropped given pre-computed comparison results for binary values.
     ///
     /// @param cmpMin comparison of value vs min (negative if value < min)
     /// @param cmpMax comparison of value vs max (positive if value > max)
     /// @param minEqMax comparison of min vs max (0 if min == max)
-    private static boolean canDropCompared(FilterPredicate.Operator op, int cmpMin, int cmpMax, int minEqMax) {
+    static boolean canDropCompared(FilterPredicate.Operator op, int cmpMin, int cmpMax, int minEqMax) {
         return switch (op) {
             case EQ -> cmpMin < 0 || cmpMax > 0;
             case NOT_EQ -> minEqMax == 0 && cmpMin == 0;
