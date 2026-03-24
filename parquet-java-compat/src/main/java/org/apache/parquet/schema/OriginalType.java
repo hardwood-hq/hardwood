@@ -7,57 +7,54 @@
  */
 package org.apache.parquet.schema;
 
-/**
- * Legacy original types (converted types) for parquet-java compatibility.
- * <p>
- * These correspond to the ConvertedType enum in the Parquet format specification.
- * Modern Parquet files use LogicalType instead, but this is kept for backwards
- * compatibility with older parquet-java code.
- * </p>
- */
+/// Legacy original types (converted types) for parquet-java compatibility.
+///
+/// These correspond to the ConvertedType enum in the Parquet format specification.
+/// Modern Parquet files use LogicalType instead, but this is kept for backwards
+/// compatibility with older parquet-java code.
 public enum OriginalType {
-    /** UTF-8 encoded string */
+    /// UTF-8 encoded string
     UTF8,
-    /** Map container */
+    /// Map container
     MAP,
-    /** Key-value pair within a map */
+    /// Key-value pair within a map
     MAP_KEY_VALUE,
-    /** List container */
+    /// List container
     LIST,
-    /** Enum value (stored as string) */
+    /// Enum value (stored as string)
     ENUM,
-    /** Decimal with specified precision and scale */
+    /// Decimal with specified precision and scale
     DECIMAL,
-    /** Date (days since epoch) */
+    /// Date (days since epoch)
     DATE,
-    /** Time in milliseconds */
+    /// Time in milliseconds
     TIME_MILLIS,
-    /** Time in microseconds */
+    /// Time in microseconds
     TIME_MICROS,
-    /** Timestamp in milliseconds */
+    /// Timestamp in milliseconds
     TIMESTAMP_MILLIS,
-    /** Timestamp in microseconds */
+    /// Timestamp in microseconds
     TIMESTAMP_MICROS,
-    /** Unsigned 8-bit integer */
+    /// Unsigned 8-bit integer
     UINT_8,
-    /** Unsigned 16-bit integer */
+    /// Unsigned 16-bit integer
     UINT_16,
-    /** Unsigned 32-bit integer */
+    /// Unsigned 32-bit integer
     UINT_32,
-    /** Unsigned 64-bit integer */
+    /// Unsigned 64-bit integer
     UINT_64,
-    /** Signed 8-bit integer */
+    /// Signed 8-bit integer
     INT_8,
-    /** Signed 16-bit integer */
+    /// Signed 16-bit integer
     INT_16,
-    /** Signed 32-bit integer */
+    /// Signed 32-bit integer
     INT_32,
-    /** Signed 64-bit integer */
+    /// Signed 64-bit integer
     INT_64,
-    /** JSON string */
+    /// JSON string
     JSON,
-    /** BSON binary */
+    /// BSON binary
     BSON,
-    /** Time interval */
+    /// Time interval
     INTERVAL
 }

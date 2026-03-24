@@ -9,23 +9,20 @@ package dev.hardwood.internal.reader;
 
 import dev.hardwood.schema.ColumnSchema;
 
-/**
- * Typed column data for nested schemas.
- * <p>
- * Stores definition levels, repetition levels, and record offsets needed by
- * {@link NestedBatchIndex} to enable flyweight navigation over hierarchical row structures.
- * </p>
- */
+/// Typed column data for nested schemas.
+///
+/// Stores definition levels, repetition levels, and record offsets needed by
+/// [NestedBatchIndex] to enable flyweight navigation over hierarchical row structures.
 public sealed interface NestedColumnData extends TypedColumnData {
 
     int maxDefinitionLevel();
 
     int[] definitionLevels();
 
-    /** Repetition levels, null for columns with maxRepLevel == 0. */
+    /// Repetition levels, null for columns with maxRepLevel == 0.
     int[] repetitionLevels();
 
-    /** Record offsets, null for columns with maxRepLevel == 0. */
+    /// Record offsets, null for columns with maxRepLevel == 0.
     int[] recordOffsets();
 
     @Override

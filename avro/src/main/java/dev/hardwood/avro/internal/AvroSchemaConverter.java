@@ -19,25 +19,20 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
-/**
- * Converts a Hardwood {@link FileSchema} to an Avro {@link Schema}.
- * <p>
- * The mapping follows the same conventions as parquet-java's
- * {@code AvroSchemaConverter}, producing Avro schemas that are compatible
- * with standard Avro tools and libraries.
- * </p>
- */
+/// Converts a Hardwood [FileSchema] to an Avro [Schema].
+///
+/// The mapping follows the same conventions as parquet-java's
+/// `AvroSchemaConverter`, producing Avro schemas that are compatible
+/// with standard Avro tools and libraries.
 public final class AvroSchemaConverter {
 
     private AvroSchemaConverter() {
     }
 
-    /**
-     * Convert a Hardwood FileSchema to an Avro record Schema.
-     *
-     * @param fileSchema the Parquet file schema
-     * @return the equivalent Avro record schema
-     */
+    /// Convert a Hardwood FileSchema to an Avro record Schema.
+    ///
+    /// @param fileSchema the Parquet file schema
+    /// @return the equivalent Avro record schema
     public static Schema convert(FileSchema fileSchema) {
         SchemaNode.GroupNode root = fileSchema.getRootNode();
         return convertGroup(root, fileSchema.getName());

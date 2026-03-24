@@ -17,9 +17,7 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.SchemaElement;
 
-/**
- * Reader for FileMetaData from Thrift Compact Protocol.
- */
+/// Reader for FileMetaData from Thrift Compact Protocol.
 public class FileMetaDataReader {
 
     public static FileMetaData read(ThriftCompactReader reader) throws IOException {

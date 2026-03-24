@@ -10,29 +10,27 @@ package dev.hardwood.internal.encoding;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-/**
- * Decoder for DELTA_BYTE_ARRAY encoding.
- * <p>
- * This encoding is also known as incremental encoding or front compression.
- * For each element in a sequence of byte arrays, it stores the prefix length
- * (how many bytes to copy from the previous value) plus the suffix (remaining bytes).
- * <p>
- * Format:
- * <pre>
- * &lt;Delta Encoded Prefix Lengths&gt; &lt;Delta Length Byte Array Encoded Suffixes&gt;
- * </pre>
- * <p>
- * Example: For ["apple", "application", "apply"]
- * - Prefix lengths: 0, 4, 4 (each shares prefix with previous)
- * - Suffixes: "apple", "ication", "y"
- * <p>
- * Reconstruction:
- * - value[0] = suffix[0] = "apple"
- * - value[1] = value[0][0:4] + suffix[1] = "appl" + "ication" = "application"
- * - value[2] = value[1][0:4] + suffix[2] = "appl" + "y" = "apply"
- *
- * @see <a href="https://github.com/apache/parquet-format/blob/master/Encodings.md">Parquet Encodings</a>
- */
+/// Decoder for DELTA_BYTE_ARRAY encoding.
+///
+/// This encoding is also known as incremental encoding or front compression.
+/// For each element in a sequence of byte arrays, it stores the prefix length
+/// (how many bytes to copy from the previous value) plus the suffix (remaining bytes).
+///
+/// Format:
+/// ```text
+/// <Delta Encoded Prefix Lengths> <Delta Length Byte Array Encoded Suffixes>
+/// ```
+///
+/// Example: For ["apple", "application", "apply"]
+/// - Prefix lengths: 0, 4, 4 (each shares prefix with previous)
+/// - Suffixes: "apple", "ication", "y"
+///
+/// Reconstruction:
+/// - `value[0] = suffix[0]` = "apple"
+/// - `value[1] = value[0][0:4] + suffix[1]` = "appl" + "ication" = "application"
+/// - `value[2] = value[1][0:4] + suffix[2]` = "appl" + "y" = "apply"
+///
+/// @see <a href="https://github.com/apache/parquet-format/blob/master/Encodings.md">Parquet Encodings</a>
 public class DeltaByteArrayDecoder implements ValueDecoder {
 
     private final byte[] data;
@@ -59,10 +57,8 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
         this.previousValue = new byte[0];
     }
 
-    /**
-     * Initialize the decoder by reading all prefix lengths and preparing the suffix decoder.
-     * Must be called before reading values, with the total number of non-null values expected.
-     */
+    /// Initialize the decoder by reading all prefix lengths and preparing the suffix decoder.
+    /// Must be called before reading values, with the total number of non-null values expected.
     @Override
     public void initialize(int numNonNullValues) throws IOException {
         this.totalValues = numNonNullValues;
@@ -88,9 +84,7 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
         initialized = true;
     }
 
-    /**
-     * Read a single byte array value.
-     */
+    /// Read a single byte array value.
     public byte[] readValue() throws IOException {
         if (!initialized) {
             throw new IOException("Must call initialize() before reading values");

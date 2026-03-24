@@ -25,9 +25,7 @@ import dev.hardwood.schema.FileSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.within;
 
-/**
- * Tests for reading NYC Yellow Taxi trip data.
- */
+/// Tests for reading NYC Yellow Taxi trip data.
 public class YellowTripDataTest {
 
     @Test

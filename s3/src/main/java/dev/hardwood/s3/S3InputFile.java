@@ -16,31 +16,24 @@ import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
-/**
- * {@link InputFile} backed by an object in Amazon S3.
- * <p>
- * Each {@link #readRange} call issues an S3 {@code GetObject} request with a
- * byte-range header, so only the requested bytes are transferred.
- * </p>
- * <p>
- * {@link #open()} uses a suffix-range GET instead of a HEAD request. This
- * discovers the file length from the {@code Content-Range} response header
- * and pre-fetches the Parquet footer (which sits at the end of the file) in
- * the same round-trip — eliminating a separate HEAD request per file.
- * </p>
- * <p>
- * Thread-safe once {@link #open()} has been called: the underlying
- * {@link S3Client} is thread-safe and the file length and tail cache are set
- * exactly once.
- * </p>
- */
+/// [InputFile] backed by an object in Amazon S3.
+///
+/// Each [#readRange] call issues an S3 `GetObject` request with a
+/// byte-range header, so only the requested bytes are transferred.
+///
+/// [#open()] uses a suffix-range GET instead of a HEAD request. This
+/// discovers the file length from the `Content-Range` response header
+/// and pre-fetches the Parquet footer (which sits at the end of the file) in
+/// the same round-trip — eliminating a separate HEAD request per file.
+///
+/// Thread-safe once [#open()] has been called: the underlying
+/// [S3Client] is thread-safe and the file length and tail cache are set
+/// exactly once.
 public class S3InputFile implements InputFile {
 
-    /**
-     * Number of bytes to fetch from the tail of the file during {@link #open()}.
-     * 64 KB is large enough to cover the Parquet footer in virtually all files
-     * (footer + footer length + magic is typically a few KB).
-     */
+    /// Number of bytes to fetch from the tail of the file during [#open()].
+    /// 64 KB is large enough to cover the Parquet footer in virtually all files
+    /// (footer + footer length + magic is typically a few KB).
     static final int TAIL_SIZE = 64 * 1024;
 
     private final S3Client s3;
@@ -58,52 +51,43 @@ public class S3InputFile implements InputFile {
         this.ownsClient = ownsClient;
     }
 
-    /**
-     * Creates an {@code S3InputFile} using a caller-provided {@link S3Client}.
-     * <p>
-     * The caller retains ownership of the client and is responsible for closing it.
-     * This is the preferred factory when reading multiple files, as it allows
-     * connection pooling and credential reuse.
-     * </p>
-     *
-     * @param s3     the S3 client to use
-     * @param bucket the S3 bucket name
-     * @param key    the S3 object key
-     * @return a new unopened S3InputFile
-     */
+    /// Creates an `S3InputFile` using a caller-provided [S3Client].
+    ///
+    /// The caller retains ownership of the client and is responsible for closing it.
+    /// This is the preferred factory when reading multiple files, as it allows
+    /// connection pooling and credential reuse.
+    ///
+    /// @param s3     the S3 client to use
+    /// @param bucket the S3 bucket name
+    /// @param key    the S3 object key
+    /// @return a new unopened S3InputFile
     public static S3InputFile of(S3Client s3, String bucket, String key) {
         return new S3InputFile(s3, bucket, key, false);
     }
 
-    /**
-     * Creates an {@code S3InputFile} that owns a default {@link S3Client}.
-     * <p>
-     * The client is created using the default credential provider chain and
-     * will be closed when this {@code InputFile} is closed.
-     * </p>
-     *
-     * @param bucket the S3 bucket name
-     * @param key    the S3 object key
-     * @return a new unopened S3InputFile that owns its client
-     */
+    /// Creates an `S3InputFile` that owns a default [S3Client].
+    ///
+    /// The client is created using the default credential provider chain and
+    /// will be closed when this `InputFile` is closed.
+    ///
+    /// @param bucket the S3 bucket name
+    /// @param key    the S3 object key
+    /// @return a new unopened S3InputFile that owns its client
     public static S3InputFile of(String bucket, String key) {
         return new S3InputFile(S3Client.create(), bucket, key, true);
     }
 
-    /**
-     * Creates an {@code S3InputFile} with explicit client ownership control.
-     * <p>
-     * Use this factory for custom endpoints such as LocalStack or MinIO, where
-     * the caller builds the {@link S3Client} with a custom endpoint override
-     * but wants this {@code InputFile} to close it.
-     * </p>
-     *
-     * @param s3         the S3 client to use
-     * @param bucket     the S3 bucket name
-     * @param key        the S3 object key
-     * @param ownsClient if {@code true}, the client will be closed when this InputFile is closed
-     * @return a new unopened S3InputFile
-     */
+    /// Creates an `S3InputFile` with explicit client ownership control.
+    ///
+    /// Use this factory for custom endpoints such as LocalStack or MinIO, where
+    /// the caller builds the [S3Client] with a custom endpoint override
+    /// but wants this `InputFile` to close it.
+    ///
+    /// @param s3         the S3 client to use
+    /// @param bucket     the S3 bucket name
+    /// @param key        the S3 object key
+    /// @param ownsClient if `true`, the client will be closed when this InputFile is closed
+    /// @return a new unopened S3InputFile
     public static S3InputFile of(S3Client s3, String bucket, String key, boolean ownsClient) {
         return new S3InputFile(s3, bucket, key, ownsClient);
     }
@@ -175,15 +159,12 @@ public class S3InputFile implements InputFile {
         }
     }
 
-    /**
-     * Extracts the total file length from the S3 response.
-     * <p>
-     * For suffix-range requests, S3 returns a {@code Content-Range} header like
-     * {@code bytes 1000-1999/2000} where the number after {@code /} is the total
-     * object size. If the header is absent (e.g. file smaller than TAIL_SIZE),
-     * falls back to {@code Content-Length}.
-     * </p>
-     */
+    /// Extracts the total file length from the S3 response.
+    ///
+    /// For suffix-range requests, S3 returns a `Content-Range` header like
+    /// `bytes 1000-1999/2000` where the number after `/` is the total
+    /// object size. If the header is absent (e.g. file smaller than TAIL_SIZE),
+    /// falls back to `Content-Length`.
     private static long parseFileLength(GetObjectResponse response) throws IOException {
         String contentRange = response.contentRange();
         if (contentRange != null) {

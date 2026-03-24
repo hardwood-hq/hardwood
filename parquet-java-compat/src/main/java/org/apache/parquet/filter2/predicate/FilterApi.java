@@ -9,21 +9,19 @@ package org.apache.parquet.filter2.predicate;
 
 import org.apache.parquet.hadoop.metadata.ColumnPath;
 
-/**
- * Shim for parquet-java's {@code FilterApi}.
- * <p>
- * Provides static factory methods for creating column references and
- * filter predicates. Usage mirrors the upstream API:
- * </p>
- * <pre>{@code
- * import static org.apache.parquet.filter2.predicate.FilterApi.*;
- *
- * FilterPredicate pred = and(
- *     gtEq(longColumn("id"), 2L),
- *     eq(intColumn("status"), 1)
- * );
- * }</pre>
- */
+/// Shim for parquet-java's `FilterApi`.
+///
+/// Provides static factory methods for creating column references and
+/// filter predicates. Usage mirrors the upstream API:
+///
+/// ```java
+/// import static org.apache.parquet.filter2.predicate.FilterApi.*;
+///
+/// FilterPredicate pred = and(
+///     gtEq(longColumn("id"), 2L),
+///     eq(intColumn("status"), 1)
+/// );
+/// ```
 public final class FilterApi {
 
     private FilterApi() {

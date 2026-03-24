@@ -14,13 +14,10 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/**
- * JFR event emitted when the prefetch queue cannot supply a decoded page in time.
- * <p>
- * A miss indicates that the decode pipeline cannot keep up with consumption,
- * causing the prefetch depth to increase adaptively.
- * </p>
- */
+/// JFR event emitted when the prefetch queue cannot supply a decoded page in time.
+///
+/// A miss indicates that the decode pipeline cannot keep up with consumption,
+/// causing the prefetch depth to increase adaptively.
 @Name("dev.hardwood.PrefetchMiss")
 @Label("Prefetch Miss")
 @Category({"Hardwood", "Pipeline"})

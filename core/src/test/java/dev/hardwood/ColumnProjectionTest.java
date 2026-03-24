@@ -22,9 +22,7 @@ import dev.hardwood.schema.ProjectedSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * Tests for column projection support.
- */
+/// Tests for column projection support.
 public class ColumnProjectionTest {
 
     // ==================== ColumnProjection Unit Tests ====================

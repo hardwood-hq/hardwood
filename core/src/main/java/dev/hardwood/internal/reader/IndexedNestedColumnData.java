@@ -9,14 +9,11 @@ package dev.hardwood.internal.reader;
 
 import java.util.BitSet;
 
-/**
- * Wraps a {@link NestedColumnData} with pre-computed index data.
- * <p>
- * Index computation (multi-level offsets, null bitmaps) is fused into the
- * column read future so it runs in parallel with other columns rather than
- * sequentially on the consumer thread.
- * </p>
- */
+/// Wraps a [NestedColumnData] with pre-computed index data.
+///
+/// Index computation (multi-level offsets, null bitmaps) is fused into the
+/// column read future so it runs in parallel with other columns rather than
+/// sequentially on the consumer thread.
 public record IndexedNestedColumnData(
         NestedColumnData data,
         int[] recordOffsets,
@@ -25,13 +22,11 @@ public record IndexedNestedColumnData(
         BitSet elementNulls
 ) {
 
-    /**
-     * Compute index data for a nested column and wrap it.
-     *
-     * @param data                the nested column data
-     * @param levelNullThresholds per-level definition level thresholds from
-     *                            {@link NestedLevelComputer#computeLevelNullThresholds}
-     */
+    /// Compute index data for a nested column and wrap it.
+    ///
+    /// @param data                the nested column data
+    /// @param levelNullThresholds per-level definition level thresholds from
+    ///                            [NestedLevelComputer#computeLevelNullThresholds]
     public static IndexedNestedColumnData compute(NestedColumnData data, int[] levelNullThresholds) {
         int maxRepLevel = data.column().maxRepetitionLevel();
         int maxDefLevel = data.maxDefinitionLevel();

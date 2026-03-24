@@ -20,9 +20,7 @@ import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Verifies that Hardwood JFR events are emitted during normal read operations.
- */
+/// Verifies that Hardwood JFR events are emitted during normal read operations.
 @org.moditect.jfrunit.JfrEventTest
 public class JfrEventTest {
 

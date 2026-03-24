@@ -25,22 +25,17 @@ import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.schema.ColumnSchema;
 
-/**
- * Scans page boundaries in a single column chunk and creates PageInfo objects.
- * <p>
- * Reads page headers and parses dictionary pages upfront, then creates
- * PageInfo records that can be used for on-demand page decoding.
- * </p>
- * <p>
- * When an Offset Index is available in the file metadata, pages are located
- * by direct lookup instead of sequentially scanning all page headers.
- * </p>
- * <p>
- * The column chunk data and index buffers are provided by the caller, which
- * pre-fetches them via {@link ChunkRange} and {@link RowGroupIndexBuffers}
- * to minimize network round-trips on remote backends.
- * </p>
- */
+/// Scans page boundaries in a single column chunk and creates PageInfo objects.
+///
+/// Reads page headers and parses dictionary pages upfront, then creates
+/// PageInfo records that can be used for on-demand page decoding.
+///
+/// When an Offset Index is available in the file metadata, pages are located
+/// by direct lookup instead of sequentially scanning all page headers.
+///
+/// The column chunk data and index buffers are provided by the caller, which
+/// pre-fetches them via [ChunkRange] and [RowGroupIndexBuffers]
+/// to minimize network round-trips on remote backends.
 public class PageScanner {
 
     private final ColumnSchema columnSchema;
@@ -52,18 +47,16 @@ public class PageScanner {
     private final int rowGroupIndex;
     private final String fileName;
 
-    /**
-     * Creates a PageScanner with pre-fetched chunk data and index buffers.
-     *
-     * @param columnSchema        the column schema
-     * @param columnChunk         the column chunk metadata
-     * @param context             the Hardwood context
-     * @param chunkData           pre-fetched bytes for this column chunk
-     * @param chunkDataFileOffset absolute file offset where {@code chunkData} starts
-     * @param indexBuffers        pre-fetched index buffers for this column
-     * @param rowGroupIndex       the row group index for JFR event reporting
-     * @param fileName            the file name for error messages and JFR events
-     */
+    /// Creates a PageScanner with pre-fetched chunk data and index buffers.
+    ///
+    /// @param columnSchema        the column schema
+    /// @param columnChunk         the column chunk metadata
+    /// @param context             the Hardwood context
+    /// @param chunkData           pre-fetched bytes for this column chunk
+    /// @param chunkDataFileOffset absolute file offset where `chunkData` starts
+    /// @param indexBuffers        pre-fetched index buffers for this column
+    /// @param rowGroupIndex       the row group index for JFR event reporting
+    /// @param fileName            the file name for error messages and JFR events
     public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
                        ByteBuffer chunkData, long chunkDataFileOffset, ColumnIndexBuffers indexBuffers,
                        int rowGroupIndex, String fileName) {
@@ -77,15 +70,12 @@ public class PageScanner {
         this.fileName = fileName;
     }
 
-    /**
-     * Scan pages in this column chunk and return PageInfo objects.
-     * <p>
-     * Automatically selects between index-based and sequential scanning
-     * depending on whether an Offset Index is available.
-     * </p>
-     *
-     * @return list of PageInfo objects for data pages in this chunk
-     */
+    /// Scan pages in this column chunk and return PageInfo objects.
+    ///
+    /// Automatically selects between index-based and sequential scanning
+    /// depending on whether an Offset Index is available.
+    ///
+    /// @return list of PageInfo objects for data pages in this chunk
     public List<PageInfo> scanPages() throws IOException {
         if (columnChunk.offsetIndexOffset() != null) {
             return scanPagesFromIndex();
@@ -93,11 +83,9 @@ public class PageScanner {
         return scanPagesSequential();
     }
 
-    /**
-     * Scan pages by sequentially reading all page headers through the column chunk.
-     *
-     * @return list of PageInfo objects for data pages in this chunk
-     */
+    /// Scan pages by sequentially reading all page headers through the column chunk.
+    ///
+    /// @return list of PageInfo objects for data pages in this chunk
     List<PageInfo> scanPagesSequential() throws IOException {
         RowGroupScannedEvent event = new RowGroupScannedEvent();
         event.begin();
@@ -169,15 +157,12 @@ public class PageScanner {
         return pageInfos;
     }
 
-    /**
-     * Scan pages using the Offset Index for direct page location lookup.
-     * <p>
-     * Parses the Offset Index from the pre-fetched index buffers, then
-     * slices each data page directly from the pre-fetched chunk data.
-     * </p>
-     *
-     * @return list of PageInfo objects for data pages in this chunk
-     */
+    /// Scan pages using the Offset Index for direct page location lookup.
+    ///
+    /// Parses the Offset Index from the pre-fetched index buffers, then
+    /// slices each data page directly from the pre-fetched chunk data.
+    ///
+    /// @return list of PageInfo objects for data pages in this chunk
     List<PageInfo> scanPagesFromIndex() throws IOException {
         RowGroupScannedEvent event = new RowGroupScannedEvent();
         event.begin();
@@ -227,10 +212,8 @@ public class PageScanner {
         return pageInfos;
     }
 
-    /**
-     * Parses a dictionary page from a buffer. The dictionary region sits
-     * between {@code dictAreaStart} and {@code firstDataPageOffset}.
-     */
+    /// Parses a dictionary page from a buffer. The dictionary region sits
+    /// between `dictAreaStart` and `firstDataPageOffset`.
     private Dictionary parseDictionaryFromBuffer(ByteBuffer buffer, long bufferFileOffset,
             long dictAreaStart, long firstDataPageOffset, ColumnMetaData metaData) throws IOException {
 

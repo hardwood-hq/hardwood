@@ -12,10 +12,8 @@ import java.io.IOException;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 
-/**
- * Reader for LogicalType union from Thrift Compact Protocol.
- * LogicalType is a union with different variants for each type.
- */
+/// Reader for LogicalType union from Thrift Compact Protocol.
+/// LogicalType is a union with different variants for each type.
 public class LogicalTypeReader {
 
     public static LogicalType read(ThriftCompactReader reader) throws IOException {

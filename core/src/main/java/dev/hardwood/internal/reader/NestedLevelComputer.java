@@ -14,25 +14,20 @@ import java.util.List;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.SchemaNode;
 
-/**
- * Computes multi-level offsets and null bitmaps from Parquet repetition/definition levels.
- * <p>
- * These algorithms are used by both {@link dev.hardwood.reader.ColumnReader} for columnar
- * access and by {@link NestedBatchIndex} for flyweight row-level access.
- * </p>
- */
+/// Computes multi-level offsets and null bitmaps from Parquet repetition/definition levels.
+///
+/// These algorithms are used by both [dev.hardwood.reader.ColumnReader] for columnar
+/// access and by [NestedBatchIndex] for flyweight row-level access.
 public final class NestedLevelComputer {
 
     private NestedLevelComputer() {
     }
 
-    /**
-     * Compute multi-level offset arrays from repetition levels.
-     * <p>
-     * For maxRepLevel=1 (simple list): one offset array mapping records to value positions.
-     * For maxRepLevel=N (nested list): N offset arrays, chained.
-     * Level k boundary: positions where repLevel[i] &lt;= k.
-     */
+    /// Compute multi-level offset arrays from repetition levels.
+    ///
+    /// For maxRepLevel=1 (simple list): one offset array mapping records to value positions.
+    /// For maxRepLevel=N (nested list): N offset arrays, chained.
+    /// Level k boundary: positions where `repLevel[i] <= k`.
     public static int[][] computeMultiLevelOffsets(int[] repLevels, int valueCount,
                                                    int recordCount, int maxRepLevel) {
         if (maxRepLevel == 1) {
@@ -83,20 +78,17 @@ public final class NestedLevelComputer {
         return offsets;
     }
 
-    /**
-     * Compute the definition level thresholds for each repetition level by walking the
-     * schema tree from the root to the leaf column.
-     * <p>
-     * At each REPEATED group node on the path, the threshold is
-     * {@code repeatedNode.maxDefinitionLevel() - 1} — i.e. the definition level of its
-     * parent. Values with {@code defLevel < threshold} at that nesting level indicate
-     * that the enclosing container is null.
-     * </p>
-     *
-     * @param root        the schema root node
-     * @param columnIndex the leaf column index to find
-     * @return int array of length maxRepLevel, one threshold per nesting level
-     */
+    /// Compute the definition level thresholds for each repetition level by walking the
+    /// schema tree from the root to the leaf column.
+    ///
+    /// At each REPEATED group node on the path, the threshold is
+    /// `repeatedNode.maxDefinitionLevel() - 1` — i.e. the definition level of its
+    /// parent. Values with `defLevel < threshold` at that nesting level indicate
+    /// that the enclosing container is null.
+    ///
+    /// @param root        the schema root node
+    /// @param columnIndex the leaf column index to find
+    /// @return int array of length maxRepLevel, one threshold per nesting level
     public static int[] computeLevelNullThresholds(SchemaNode.GroupNode root, int columnIndex) {
         List<Integer> thresholds = new ArrayList<>();
         walkToLeaf(root, columnIndex, thresholds);
@@ -139,13 +131,11 @@ public final class NestedLevelComputer {
         };
     }
 
-    /**
-     * Compute per-level null bitmaps from definition and repetition levels.
-     *
-     * @param levelNullThresholds per-level definition level thresholds from
-     *                            {@link #computeLevelNullThresholds}
-     * @return array of BitSets, one per nesting level; null entries mean all-non-null at that level
-     */
+    /// Compute per-level null bitmaps from definition and repetition levels.
+    ///
+    /// @param levelNullThresholds per-level definition level thresholds from
+    ///                            [#computeLevelNullThresholds]
+    /// @return array of BitSets, one per nesting level; null entries mean all-non-null at that level
     public static BitSet[] computeLevelNulls(int[] defLevels, int[] repLevels,
                                              int valueCount, int maxRepLevel,
                                              int[] levelNullThresholds) {
@@ -174,11 +164,9 @@ public final class NestedLevelComputer {
         return levelNulls;
     }
 
-    /**
-     * Compute leaf-level null bitmap.
-     *
-     * @return BitSet where set bits indicate null values, or null if all elements are required
-     */
+    /// Compute leaf-level null bitmap.
+    ///
+    /// @return BitSet where set bits indicate null values, or null if all elements are required
     public static BitSet computeElementNulls(int[] defLevels, int valueCount, int maxDefLevel) {
         if (defLevels == null || maxDefLevel == 0) {
             return null;

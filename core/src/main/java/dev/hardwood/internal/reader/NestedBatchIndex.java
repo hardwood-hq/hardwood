@@ -12,14 +12,11 @@ import java.util.BitSet;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * Pre-computed batch-level index for all projected columns.
- * <p>
- * Computed once per {@code setBatchData()} call. Holds multi-level offset arrays
- * and null bitmaps that enable flyweight cursors to navigate directly over
- * {@link NestedColumnData} column arrays without per-row tree assembly.
- * </p>
- */
+/// Pre-computed batch-level index for all projected columns.
+///
+/// Computed once per `setBatchData()` call. Holds multi-level offset arrays
+/// and null bitmaps that enable flyweight cursors to navigate directly over
+/// [NestedColumnData] column arrays without per-row tree assembly.
 final class NestedBatchIndex {
 
     final NestedColumnData[] columns;
@@ -45,10 +42,8 @@ final class NestedBatchIndex {
         this.fieldMap = fieldMap;
     }
 
-    /**
-     * Build the batch index from pre-computed indexed column data.
-     * Index computation has already been done in parallel by the column futures.
-     */
+    /// Build the batch index from pre-computed indexed column data.
+    /// Index computation has already been done in parallel by the column futures.
     static NestedBatchIndex buildFromIndexed(IndexedNestedColumnData[] indexed, FileSchema schema,
                                               ProjectedSchema projectedSchema, TopLevelFieldMap fieldMap) {
         int colCount = indexed.length;
@@ -71,9 +66,7 @@ final class NestedBatchIndex {
                 elementNulls, schema, projectedSchema, fieldMap);
     }
 
-    /**
-     * Build the batch index for the given columns.
-     */
+    /// Build the batch index for the given columns.
     static NestedBatchIndex build(NestedColumnData[] columns, FileSchema schema,
                                   ProjectedSchema projectedSchema, TopLevelFieldMap fieldMap) {
         int colCount = columns.length;
@@ -112,18 +105,14 @@ final class NestedBatchIndex {
                 elementNulls, schema, projectedSchema, fieldMap);
     }
 
-    /**
-     * Get the value index for a non-repeated column at the given record.
-     * For columns with maxRepLevel==0, the record offset is the value index.
-     */
+    /// Get the value index for a non-repeated column at the given record.
+    /// For columns with maxRepLevel==0, the record offset is the value index.
     int getValueIndex(int projectedCol, int recordIndex) {
         int[] recordOffsets = offsets[projectedCol];
         return recordOffsets != null ? recordOffsets[recordIndex] : recordIndex;
     }
 
-    /**
-     * Get the start value index for a repeated column's list at the given record.
-     */
+    /// Get the start value index for a repeated column's list at the given record.
     int getListStart(int projectedCol, int recordIndex) {
         int[][]  ml = multiOffsets[projectedCol];
         if (ml == null) {
@@ -134,10 +123,8 @@ final class NestedBatchIndex {
         return ml[0][recordIndex];
     }
 
-    /**
-     * Get the end index (exclusive) for a repeated column's list at the given record.
-     * For maxRepLevel==1, returns a value index. For maxRepLevel>1, returns a level-1 item index.
-     */
+    /// Get the end index (exclusive) for a repeated column's list at the given record.
+    /// For maxRepLevel==1, returns a value index. For maxRepLevel>1, returns a level-1 item index.
     int getListEnd(int projectedCol, int recordIndex) {
         int[][] ml = multiOffsets[projectedCol];
         if (ml == null) {
@@ -160,18 +147,14 @@ final class NestedBatchIndex {
         return columns[projectedCol].valueCount();
     }
 
-    /**
-     * Get the start index at a given multi-level offset level.
-     * Level 1 maps level-1 items to values (or to level-2 items for deeper nesting).
-     */
+    /// Get the start index at a given multi-level offset level.
+    /// Level 1 maps level-1 items to values (or to level-2 items for deeper nesting).
     int getLevelStart(int projectedCol, int level, int itemIndex) {
         int[][] ml = multiOffsets[projectedCol];
         return ml[level][itemIndex];
     }
 
-    /**
-     * Get the end index (exclusive) at a given multi-level offset level.
-     */
+    /// Get the end index (exclusive) at a given multi-level offset level.
     int getLevelEnd(int projectedCol, int level, int itemIndex) {
         int[][] ml = multiOffsets[projectedCol];
         if (itemIndex + 1 < ml[level].length) {
@@ -184,9 +167,7 @@ final class NestedBatchIndex {
         return columns[projectedCol].valueCount();
     }
 
-    /**
-     * Check if a value at the given position is null at the leaf level.
-     */
+    /// Check if a value at the given position is null at the leaf level.
     boolean isElementNull(int projectedCol, int valueIndex) {
         BitSet nulls = elementNulls[projectedCol];
         return nulls != null && nulls.get(valueIndex);

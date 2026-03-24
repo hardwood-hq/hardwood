@@ -35,50 +35,47 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-/**
- * Batch-oriented column reader for reading a single column across all row groups.
- * <p>
- * Provides typed primitive arrays for zero-boxing access. For nested/repeated columns,
- * multi-level offsets and per-level null bitmaps enable efficient traversal without
- * per-row virtual dispatch.
- * </p>
- *
- * <p><strong>Flat column usage:</strong></p>
- * <pre>{@code
- * try (ColumnReader reader = fileReader.createColumnReader("fare_amount")) {
- *     while (reader.nextBatch()) {
- *         int count = reader.getRecordCount();
- *         double[] values = reader.getDoubles();
- *         BitSet nulls = reader.getElementNulls();
- *         for (int i = 0; i < count; i++) {
- *             if (nulls == null || !nulls.get(i)) sum += values[i];
- *         }
- *     }
- * }
- * }</pre>
- *
- * <p><strong>Simple list usage (nestingDepth=1):</strong></p>
- * <pre>{@code
- * try (ColumnReader reader = fileReader.createColumnReader("fare_components")) {
- *     while (reader.nextBatch()) {
- *         int recordCount = reader.getRecordCount();
- *         int valueCount = reader.getValueCount();
- *         double[] values = reader.getDoubles();
- *         int[] offsets = reader.getOffsets(0);
- *         BitSet recordNulls = reader.getLevelNulls(0);
- *         BitSet elementNulls = reader.getElementNulls();
- *         for (int r = 0; r < recordCount; r++) {
- *             if (recordNulls != null && recordNulls.get(r)) continue;
- *             int start = offsets[r];
- *             int end = (r + 1 < recordCount) ? offsets[r + 1] : valueCount;
- *             for (int i = start; i < end; i++) {
- *                 if (elementNulls == null || !elementNulls.get(i)) sum += values[i];
- *             }
- *         }
- *     }
- * }
- * }</pre>
- */
+/// Batch-oriented column reader for reading a single column across all row groups.
+///
+/// Provides typed primitive arrays for zero-boxing access. For nested/repeated columns,
+/// multi-level offsets and per-level null bitmaps enable efficient traversal without
+/// per-row virtual dispatch.
+///
+/// **Flat column usage:**
+/// ```java
+/// try (ColumnReader reader = fileReader.createColumnReader("fare_amount")) {
+///     while (reader.nextBatch()) {
+///         int count = reader.getRecordCount();
+///         double[] values = reader.getDoubles();
+///         BitSet nulls = reader.getElementNulls();
+///         for (int i = 0; i < count; i++) {
+///             if (nulls == null || !nulls.get(i)) sum += values[i];
+///         }
+///     }
+/// }
+/// ```
+///
+/// **Simple list usage (nestingDepth=1):**
+/// ```java
+/// try (ColumnReader reader = fileReader.createColumnReader("fare_components")) {
+///     while (reader.nextBatch()) {
+///         int recordCount = reader.getRecordCount();
+///         int valueCount = reader.getValueCount();
+///         double[] values = reader.getDoubles();
+///         int[] offsets = reader.getOffsets(0);
+///         BitSet recordNulls = reader.getLevelNulls(0);
+///         BitSet elementNulls = reader.getElementNulls();
+///         for (int r = 0; r < recordCount; r++) {
+///             if (recordNulls != null && recordNulls.get(r)) continue;
+///             int start = offsets[r];
+///             int end = (r + 1 < recordCount) ? offsets[r + 1] : valueCount;
+///             for (int i = start; i < end; i++) {
+///                 if (elementNulls == null || !elementNulls.get(i)) sum += values[i];
+///             }
+///         }
+///     }
+/// }
+/// ```
 public class ColumnReader implements AutoCloseable {
 
     static final int DEFAULT_BATCH_SIZE = 262_144;
@@ -99,18 +96,14 @@ public class ColumnReader implements AutoCloseable {
     private BitSet elementNulls;
     private boolean nestedDataComputed;
 
-    /**
-     * Single-file constructor. Delegates to the multi-file constructor with no FileManager.
-     */
+    /// Single-file constructor. Delegates to the multi-file constructor with no FileManager.
     ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContextImpl context,
                  int batchSize, int[] levelNullThresholds) {
         this(column, pageInfos, context, batchSize, levelNullThresholds, null, -1, null);
     }
 
-    /**
-     * Full constructor. When {@code fileManager} is non-null, creates a {@link PageCursor}
-     * with cross-file prefetching — matching the pattern used by {@link MultiFileRowReader}.
-     */
+    /// Full constructor. When `fileManager` is non-null, creates a [PageCursor]
+    /// with cross-file prefetching — matching the pattern used by [MultiFileRowReader].
     ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContextImpl context,
                  int batchSize, int[] levelNullThresholds,
                  FileManager fileManager, int projectedColumnIndex, String fileName) {
@@ -133,11 +126,9 @@ public class ColumnReader implements AutoCloseable {
 
     // ==================== Batch Iteration ====================
 
-    /**
-     * Advance to the next batch.
-     *
-     * @return true if a batch is available, false if exhausted
-     */
+    /// Advance to the next batch.
+    ///
+    /// @return true if a batch is available, false if exhausted
     public boolean nextBatch() {
         if (exhausted) {
             return false;
@@ -160,18 +151,14 @@ public class ColumnReader implements AutoCloseable {
         return true;
     }
 
-    /**
-     * Number of top-level records in the current batch.
-     */
+    /// Number of top-level records in the current batch.
     public int getRecordCount() {
         checkBatchAvailable();
         return currentBatch.recordCount();
     }
 
-    /**
-     * Total number of leaf values in the current batch.
-     * For flat columns, this equals {@link #getRecordCount()}.
-     */
+    /// Total number of leaf values in the current batch.
+    /// For flat columns, this equals [#getRecordCount()].
     public int getValueCount() {
         checkBatchAvailable();
         return currentBatch.valueCount();
@@ -235,14 +222,12 @@ public class ColumnReader implements AutoCloseable {
 
     // ==================== Logical Type Accessors ====================
 
-    /**
-     * String values for STRING/JSON/BSON logical type columns.
-     * Converts the underlying byte arrays to UTF-8 strings.
-     * Null values are represented as null entries in the array.
-     *
-     * @return String array with converted values
-     * @throws IllegalStateException if the column is not a BYTE_ARRAY type
-     */
+    /// String values for STRING/JSON/BSON logical type columns.
+    /// Converts the underlying byte arrays to UTF-8 strings.
+    /// Null values are represented as null entries in the array.
+    ///
+    /// @return String array with converted values
+    /// @throws IllegalStateException if the column is not a BYTE_ARRAY type
     public String[] getStrings() {
         byte[][] raw = getBinaries();
         int count = currentBatch.valueCount();
@@ -261,11 +246,9 @@ public class ColumnReader implements AutoCloseable {
 
     // ==================== Null Handling ====================
 
-    /**
-     * Null bitmap over leaf values. For flat columns this doubles as record-level nulls.
-     *
-     * @return BitSet where set bits indicate null values, or null if all elements are required
-     */
+    /// Null bitmap over leaf values. For flat columns this doubles as record-level nulls.
+    ///
+    /// @return BitSet where set bits indicate null values, or null if all elements are required
     public BitSet getElementNulls() {
         checkBatchAvailable();
         if (currentBatch instanceof FlatColumnData flat) {
@@ -275,13 +258,11 @@ public class ColumnReader implements AutoCloseable {
         return elementNulls;
     }
 
-    /**
-     * Null bitmap at a given nesting level. Only valid for nested columns
-     * ({@code 0 <= level < getNestingDepth()}).
-     *
-     * @param level the nesting level (0 = outermost group)
-     * @return BitSet where set bits indicate null groups, or null if that level is required
-     */
+    /// Null bitmap at a given nesting level. Only valid for nested columns
+    /// (`0 <= level < getNestingDepth()`).
+    ///
+    /// @param level the nesting level (0 = outermost group)
+    /// @return BitSet where set bits indicate null groups, or null if that level is required
     public BitSet getLevelNulls(int level) {
         checkBatchAvailable();
         checkNestedLevel(level);
@@ -291,20 +272,16 @@ public class ColumnReader implements AutoCloseable {
 
     // ==================== Offsets for Repeated Columns ====================
 
-    /**
-     * Nesting depth: 0 for flat, maxRepetitionLevel for nested.
-     */
+    /// Nesting depth: 0 for flat, maxRepetitionLevel for nested.
     public int getNestingDepth() {
         return maxRepetitionLevel;
     }
 
-    /**
-     * Offset array for a given nesting level. Maps items at level k to positions
-     * in the next level (or leaf values for the innermost level).
-     *
-     * @param level the nesting level (0-indexed)
-     * @return offset array for the given level
-     */
+    /// Offset array for a given nesting level. Maps items at level k to positions
+    /// in the next level (or leaf values for the innermost level).
+    ///
+    /// @param level the nesting level (0-indexed)
+    /// @return offset array for the given level
     public int[] getOffsets(int level) {
         checkBatchAvailable();
         checkNestedLevel(level);
@@ -346,9 +323,7 @@ public class ColumnReader implements AutoCloseable {
                 "Column '" + column.name() + "' is " + column.type() + ", not " + expected);
     }
 
-    /**
-     * Compute multi-level offsets and per-level null bitmaps from the nested batch data.
-     */
+    /// Compute multi-level offsets and per-level null bitmaps from the nested batch data.
     private void ensureNestedDataComputed() {
         if (nestedDataComputed) {
             return;
@@ -381,9 +356,7 @@ public class ColumnReader implements AutoCloseable {
 
     // ==================== Factory ====================
 
-    /**
-     * Create a ColumnReader for a named column, scanning pages across all row groups.
-     */
+    /// Create a ColumnReader for a named column, scanning pages across all row groups.
     static ColumnReader create(String columnName, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context) {
@@ -391,9 +364,7 @@ public class ColumnReader implements AutoCloseable {
         return create(columnSchema, schema, inputFile, rowGroups, context);
     }
 
-    /**
-     * Create a ColumnReader for a column by index, scanning pages across all row groups.
-     */
+    /// Create a ColumnReader for a column by index, scanning pages across all row groups.
     static ColumnReader create(int columnIndex, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context) {
@@ -401,9 +372,7 @@ public class ColumnReader implements AutoCloseable {
         return create(columnSchema, schema, inputFile, rowGroups, context);
     }
 
-    /**
-     * Create a ColumnReader for a given ColumnSchema, scanning pages across all row groups.
-     */
+    /// Create a ColumnReader for a given ColumnSchema, scanning pages across all row groups.
     @SuppressWarnings("unchecked")
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        InputFile inputFile, List<RowGroup> rowGroups,

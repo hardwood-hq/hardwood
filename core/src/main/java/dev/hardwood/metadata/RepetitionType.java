@@ -7,17 +7,15 @@
  */
 package dev.hardwood.metadata;
 
-/**
- * Field repetition types in Parquet schema.
- *
- * @see <a href="https://parquet.apache.org/docs/file-format/nestedencoding/">File Format – Nested Encoding</a>
- * @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
- */
+/// Field repetition types in Parquet schema.
+///
+/// @see <a href="https://parquet.apache.org/docs/file-format/nestedencoding/">File Format – Nested Encoding</a>
+/// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public enum RepetitionType {
-    /** Field must be present; nulls are not allowed. */
+    /// Field must be present; nulls are not allowed.
     REQUIRED,
-    /** Field may be null. */
+    /// Field may be null.
     OPTIONAL,
-    /** Field can appear zero or more times (list semantics). */
+    /// Field can appear zero or more times (list semantics).
     REPEATED
 }

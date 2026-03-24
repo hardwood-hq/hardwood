@@ -42,10 +42,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
-/**
- * Comparison tests that validate Hardwood's output generated with MultiFileParquetReader
- * against the reference parquet-java implementation by comparing parsed results row-by-row, field-by-field.
- */
+/// Comparison tests that validate Hardwood's output generated with MultiFileParquetReader
+/// against the reference parquet-java implementation by comparing parsed results row-by-row, field-by-field.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class MultiFileParquetReaderComparisonTest {
 

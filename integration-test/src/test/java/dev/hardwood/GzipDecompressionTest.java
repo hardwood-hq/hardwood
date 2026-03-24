@@ -18,16 +18,14 @@ import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Integration tests for GZIP decompression.
- * <p>
- * On Java 21, uses Java's built-in Inflater for GZIP decompression.
- * On Java 25+, uses libdeflate via FFM for faster decompression.
- * <p>
- * Set system property {@code libdeflate.required=true} to assert that libdeflate
- * is available. This is used in CI on Java 25 to ensure libdeflate is properly
- * installed and working.
- */
+/// Integration tests for GZIP decompression.
+///
+/// On Java 21, uses Java's built-in Inflater for GZIP decompression.
+/// On Java 25+, uses libdeflate via FFM for faster decompression.
+///
+/// Set system property `libdeflate.required=true` to assert that libdeflate
+/// is available. This is used in CI on Java 25 to ensure libdeflate is properly
+/// installed and working.
 class GzipDecompressionTest {
 
     private static final boolean LIBDEFLATE_REQUIRED =

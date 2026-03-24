@@ -44,14 +44,10 @@ import dev.hardwood.schema.SchemaNode;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.withinPercentage;
 
-/**
- * Performance comparison test between Hardwood, and parquet-java.
- *
- * <p>
- * Uses NYC Yellow Taxi Trip Records (downloaded by test-file-setup module) and compares
- * reading performance while verifying correctness by comparing calculated sums.
- * </p>
- */
+/// Performance comparison test between Hardwood, and parquet-java.
+///
+/// Uses NYC Yellow Taxi Trip Records (downloaded by test-file-setup module) and compares
+/// reading performance while verifying correctness by comparing calculated sums.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class FlatPerformanceTest {
 
@@ -409,13 +405,10 @@ class FlatPerformanceTest {
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    /**
-     * Run using MultiFileRowReader with cross-file prefetching.
-     * <p>
-     * Groups files by schema compatibility (passenger_count type varies across files)
-     * and uses MultiFileRowReader for each group.
-     * </p>
-     */
+    /// Run using MultiFileRowReader with cross-file prefetching.
+    ///
+    /// Groups files by schema compatibility (passenger_count type varies across files)
+    /// and uses MultiFileRowReader for each group.
     private Result runHardwoodMultiFile(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
@@ -465,12 +458,9 @@ class FlatPerformanceTest {
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    /**
-     * Run using MultiFileRowReader with named (string) field access.
-     * <p>
-     * Same as {@link #runHardwoodMultiFile} but uses field names instead of projected indices.
-     * </p>
-     */
+    /// Run using MultiFileRowReader with named (string) field access.
+    ///
+    /// Same as [#runHardwoodMultiFile] but uses field names instead of projected indices.
     private Result runHardwoodMultiFileNamed(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
@@ -518,10 +508,8 @@ class FlatPerformanceTest {
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    /**
-     * Run using the batch ColumnReader API for maximum throughput.
-     * Reads columns independently using typed arrays with zero boxing.
-     */
+    /// Run using the batch ColumnReader API for maximum throughput.
+    /// Reads columns independently using typed arrays with zero boxing.
     private Result runHardwoodColumnReader(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
@@ -585,10 +573,8 @@ class FlatPerformanceTest {
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    /**
-     * Column-oriented reader with cross-file prefetching via shared FileManager.
-     * Uses MultiFileColumnReaders to share a single FileManager across columns.
-     */
+    /// Column-oriented reader with cross-file prefetching via shared FileManager.
+    /// Uses MultiFileColumnReaders to share a single FileManager across columns.
     private Result runHardwoodColumnReaderMultiFile(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
@@ -650,12 +636,10 @@ class FlatPerformanceTest {
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    /**
-     * Groups files by schema compatibility (based on passenger_count physical type).
-     * Files with compatible schemas are grouped together for cross-file prefetching.
-     * Returns SchemaGroup records that include both the files and the type information,
-     * avoiding the need to re-probe files later.
-     */
+    /// Groups files by schema compatibility (based on passenger_count physical type).
+    /// Files with compatible schemas are grouped together for cross-file prefetching.
+    /// Returns SchemaGroup records that include both the files and the type information,
+    /// avoiding the need to re-probe files later.
     private List<SchemaGroup> groupFilesBySchema(List<Path> files) {
         List<Path> longTypeFiles = new ArrayList<>();
         List<Path> doubleTypeFiles = new ArrayList<>();

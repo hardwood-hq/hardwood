@@ -28,17 +28,13 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * Manages file lifecycle for multi-file Parquet reading.
- * <p>
- * Handles opening, mapping, metadata reading, and page scanning for Parquet files.
- * Automatically prefetches the next file to minimize latency at file boundaries.
- * </p>
- * <p>
- * Thread safety: Uses {@link ConcurrentHashMap} to safely handle concurrent
- * page requests from multiple column cursors.
- * </p>
- */
+/// Manages file lifecycle for multi-file Parquet reading.
+///
+/// Handles opening, mapping, metadata reading, and page scanning for Parquet files.
+/// Automatically prefetches the next file to minimize latency at file boundaries.
+///
+/// Thread safety: Uses [ConcurrentHashMap] to safely handle concurrent
+/// page requests from multiple column cursors.
 public class FileManager {
 
     private static final System.Logger LOG = System.getLogger(FileManager.class.getName());
@@ -55,12 +51,10 @@ public class FileManager {
     private volatile FilterPredicate filterPredicate;
     private OpenedFile firstOpenedFile;
 
-    /**
-     * Creates a FileManager for the given input files.
-     *
-     * @param inputFiles the input files to read (must not be empty)
-     * @param context the Hardwood context with executor and decompressor
-     */
+    /// Creates a FileManager for the given input files.
+    ///
+    /// @param inputFiles the input files to read (must not be empty)
+    /// @param context the Hardwood context with executor and decompressor
     public FileManager(List<InputFile> inputFiles, HardwoodContextImpl context) {
         if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
@@ -69,14 +63,12 @@ public class FileManager {
         this.context = context;
     }
 
-    /**
-     * Opens the first file and reads its schema. This is a lightweight operation
-     * that does not scan pages. Call {@link #initialize(ColumnProjection)} afterwards
-     * to prepare for reading with a specific column projection.
-     *
-     * @return the file schema from the first file
-     * @throws IOException if the first file cannot be read
-     */
+    /// Opens the first file and reads its schema. This is a lightweight operation
+    /// that does not scan pages. Call [#initialize(ColumnProjection)] afterwards
+    /// to prepare for reading with a specific column projection.
+    ///
+    /// @return the file schema from the first file
+    /// @throws IOException if the first file cannot be read
     public FileSchema openFirst() throws IOException {
         InputFile first = inputFiles.get(0);
         first.open();
@@ -85,26 +77,22 @@ public class FileManager {
         return referenceSchema;
     }
 
-    /**
-     * Applies a column projection and optional filter, scans pages for the first file,
-     * and triggers prefetching. Must be called after {@link #openFirst()}.
-     *
-     * @param projection column projection (use {@link ColumnProjection#all()} for all columns)
-     * @param filter predicate for row group filtering based on statistics, or {@code null} for no filtering
-     * @return result containing the file state, file schema, and projected schema
-     */
+    /// Applies a column projection and optional filter, scans pages for the first file,
+    /// and triggers prefetching. Must be called after [#openFirst()].
+    ///
+    /// @param projection column projection (use [ColumnProjection#all()] for all columns)
+    /// @param filter predicate for row group filtering based on statistics, or `null` for no filtering
+    /// @return result containing the file state, file schema, and projected schema
     public InitResult initialize(ColumnProjection projection, FilterPredicate filter) {
         this.filterPredicate = filter;
         return initialize(projection);
     }
 
-    /**
-     * Applies a column projection, scans pages for the first file, and triggers
-     * prefetching. Must be called after {@link #openFirst()}.
-     *
-     * @param projection column projection (use {@link ColumnProjection#all()} for all columns)
-     * @return result containing the file state, file schema, and projected schema
-     */
+    /// Applies a column projection, scans pages for the first file, and triggers
+    /// prefetching. Must be called after [#openFirst()].
+    ///
+    /// @param projection column projection (use [ColumnProjection#all()] for all columns)
+    /// @return result containing the file state, file schema, and projected schema
     public InitResult initialize(ColumnProjection projection) {
         if (firstOpenedFile == null) {
             throw new IllegalStateException("openFirst() must be called before initialize()");
@@ -138,28 +126,22 @@ public class FileManager {
         return new InitResult(firstFileState, referenceSchema, projectedSchema);
     }
 
-    /**
-     * Result of initializing the FileManager with the first file.
-     */
+    /// Result of initializing the FileManager with the first file.
     public record InitResult(FileState firstFileState, FileSchema schema, ProjectedSchema projectedSchema) {
     }
 
-    /**
-     * Checks if a file exists at the given index.
-     *
-     * @param fileIndex the file index
-     * @return true if the file exists
-     */
+    /// Checks if a file exists at the given index.
+    ///
+    /// @param fileIndex the file index
+    /// @return true if the file exists
     public boolean hasFile(int fileIndex) {
         return fileIndex >= 0 && fileIndex < inputFiles.size();
     }
 
-    /**
-     * Gets the file name for the given index.
-     *
-     * @param fileIndex the file index
-     * @return the file name, or null if index is out of bounds
-     */
+    /// Gets the file name for the given index.
+    ///
+    /// @param fileIndex the file index
+    /// @return the file name, or null if index is out of bounds
     public String getFileName(int fileIndex) {
         if (!hasFile(fileIndex)) {
             return null;
@@ -167,40 +149,33 @@ public class FileManager {
         return inputFiles.get(fileIndex).name();
     }
 
-    /**
-     * Checks if a file is ready (fully loaded) without blocking.
-     *
-     * @param fileIndex the file index
-     * @return true if the file is loaded and ready to use
-     */
+    /// Checks if a file is ready (fully loaded) without blocking.
+    ///
+    /// @param fileIndex the file index
+    /// @return true if the file is loaded and ready to use
     public boolean isFileReady(int fileIndex) {
         CompletableFuture<FileState> future = fileFutures.get(fileIndex);
         return future != null && future.isDone() && !future.isCompletedExceptionally();
     }
 
-    /**
-     * Ensures a file is being loaded (triggers async load if not already started).
-     * This is non-blocking - it just ensures the loading process has been initiated.
-     *
-     * @param fileIndex the file index to ensure is loading
-     */
+    /// Ensures a file is being loaded (triggers async load if not already started).
+    /// This is non-blocking - it just ensures the loading process has been initiated.
+    ///
+    /// @param fileIndex the file index to ensure is loading
     public void ensureFileLoading(int fileIndex) {
         if (hasFile(fileIndex)) {
             fileFutures.computeIfAbsent(fileIndex, this::loadFileAsync);
         }
     }
 
-    /**
-     * Gets pages for the specified file and column.
-     * <p>
-     * If the file is already loaded, returns immediately. If still loading,
-     * blocks until ready. Also triggers prefetch of the next file.
-     * </p>
-     *
-     * @param fileIndex the file index
-     * @param projectedColumnIndex the projected column index
-     * @return list of PageInfo for the column, or null if file index is out of bounds
-     */
+    /// Gets pages for the specified file and column.
+    ///
+    /// If the file is already loaded, returns immediately. If still loading,
+    /// blocks until ready. Also triggers prefetch of the next file.
+    ///
+    /// @param fileIndex the file index
+    /// @param projectedColumnIndex the projected column index
+    /// @return list of PageInfo for the column, or null if file index is out of bounds
     public List<PageInfo> getPages(int fileIndex, int projectedColumnIndex) {
         if (!hasFile(fileIndex)) {
             return null;
@@ -219,18 +194,14 @@ public class FileManager {
         return state.pageInfosByColumn().get(projectedColumnIndex);
     }
 
-    /**
-     * Triggers async prefetch of a file if it exists and isn't already loading.
-     */
+    /// Triggers async prefetch of a file if it exists and isn't already loading.
     private void triggerPrefetch(int fileIndex) {
         if (hasFile(fileIndex)) {
             fileFutures.computeIfAbsent(fileIndex, this::loadFileAsync);
         }
     }
 
-    /**
-     * Starts async loading of a file.
-     */
+    /// Starts async loading of a file.
     private CompletableFuture<FileState> loadFileAsync(int fileIndex) {
         LOG.log(System.Logger.Level.DEBUG, "Starting async load of file {0}: {1}",
                 fileIndex, inputFiles.get(fileIndex).name());
@@ -239,9 +210,7 @@ public class FileManager {
                 context.executor());
     }
 
-    /**
-     * Loads a file synchronously: opens, reads metadata, validates schema, scans pages.
-     */
+    /// Loads a file synchronously: opens, reads metadata, validates schema, scans pages.
     private FileState loadFile(int fileIndex) {
         InputFile inputFile = inputFiles.get(fileIndex);
 
@@ -266,9 +235,7 @@ public class FileManager {
                 openedFile.schema, pageInfosByColumn);
     }
 
-    /**
-     * Opens a file and reads its metadata.
-     */
+    /// Opens a file and reads its metadata.
     private OpenedFile openAndReadMetadata(InputFile inputFile) {
         FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
         fileOpenedEvent.begin();
@@ -290,15 +257,11 @@ public class FileManager {
         }
     }
 
-    /**
-     * Holds the result of opening a file and reading its metadata.
-     */
+    /// Holds the result of opening a file and reading its metadata.
     private record OpenedFile(FileMetaData metaData, FileSchema schema) {
     }
 
-    /**
-     * Validates that the file schema is compatible with the reference schema.
-     */
+    /// Validates that the file schema is compatible with the reference schema.
     private void validateSchemaCompatibility(InputFile inputFile, FileSchema fileSchema) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
@@ -326,13 +289,11 @@ public class FileManager {
         }
     }
 
-    /**
-     * Scans pages for all projected columns.
-     *
-     * @param inputFile the input file
-     * @param openedFile the opened file with metadata and schema
-     * @return list of page info lists, one per projected column
-     */
+    /// Scans pages for all projected columns.
+    ///
+    /// @param inputFile the input file
+    /// @param openedFile the opened file with metadata and schema
+    /// @return list of page info lists, one per projected column
     private List<List<PageInfo>> scanAllProjectedColumns(InputFile inputFile, OpenedFile openedFile) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         List<RowGroup> rowGroups = filterRowGroups(openedFile.metaData.rowGroups(), openedFile.schema,
@@ -423,10 +384,8 @@ public class FileManager {
         return result;
     }
 
-    /**
-     * Filters row groups using the active filter predicate.
-     * If no filter is set, returns the original list unmodified.
-     */
+    /// Filters row groups using the active filter predicate.
+    /// If no filter is set, returns the original list unmodified.
     private List<RowGroup> filterRowGroups(List<RowGroup> rowGroups, FileSchema schema, String fileName) {
         if (filterPredicate == null) {
             return rowGroups;
@@ -445,9 +404,7 @@ public class FileManager {
         return filtered;
     }
 
-    /**
-     * Waits for any in-flight prefetch to finish, then closes all opened files.
-     */
+    /// Waits for any in-flight prefetch to finish, then closes all opened files.
     public void close() {
         // Wait for in-flight prefetches so we don't leak files opened by background tasks
         for (CompletableFuture<FileState> future : fileFutures.values()) {
@@ -470,9 +427,7 @@ public class FileManager {
         }
     }
 
-    /**
-     * Exception thrown when schema incompatibility is detected between files.
-     */
+    /// Exception thrown when schema incompatibility is detected between files.
     public static class SchemaIncompatibleException extends RuntimeException {
         public SchemaIncompatibleException(String message) {
             super(message);

@@ -9,13 +9,11 @@ package dev.hardwood.internal.encoding.simd;
 
 import java.util.BitSet;
 
-/**
- * Scalar (non-SIMD) implementation of vectorizable operations.
- *
- * <p>This is the fallback implementation used when Vector API is not available
- * (Java 21) or when SIMD is explicitly disabled. The implementations here use
- * loop unrolling and other scalar optimizations for reasonable performance.</p>
- */
+/// Scalar (non-SIMD) implementation of vectorizable operations.
+///
+/// This is the fallback implementation used when Vector API is not available
+/// (Java 21) or when SIMD is explicitly disabled. The implementations here use
+/// loop unrolling and other scalar optimizations for reasonable performance.
 public final class ScalarOperations implements SimdOperations {
 
     @Override

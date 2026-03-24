@@ -26,10 +26,8 @@ import dev.hardwood.reader.RowReader;
 import static org.assertj.core.api.Assertions.*;
 import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
-/**
- * Comparison tests that validate Hardwood's output against the reference
- * parquet-java implementation by comparing parsed results row-by-row, field-by-field.
- */
+/// Comparison tests that validate Hardwood's output against the reference
+/// parquet-java implementation by comparing parsed results row-by-row, field-by-field.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ParquetComparisonTest {
 
@@ -38,9 +36,7 @@ class ParquetComparisonTest {
         ParquetTestingRepoCloner.ensureCloned();
     }
 
-    /**
-     * Directories containing test parquet files.
-     */
+    /// Directories containing test parquet files.
     private static final List<String> TEST_DIRECTORIES = List.of(
             "data",
             "bad_data",
@@ -189,10 +185,8 @@ class ParquetComparisonTest {
         Utils.assertBadDataRejected(fileName, expectedMessage, singleFileReadAction(fileName));
     }
 
-    /**
-     * Compare a Parquet file column-by-column using the batch ColumnReader API
-     * against parquet-java reference data.
-     */
+    /// Compare a Parquet file column-by-column using the batch ColumnReader API
+    /// against parquet-java reference data.
     private void compareColumnsParquetFile(Path testFile) throws IOException {
         System.out.println("Column comparing: " + testFile.getFileName());
 
@@ -205,9 +199,7 @@ class ParquetComparisonTest {
         System.out.println("  Column comparison passed!");
     }
 
-    /**
-     * Compare a Parquet file using both implementations.
-     */
+    /// Compare a Parquet file using both implementations.
     private void compareParquetFile(Path testFile) throws IOException {
         System.out.println("Comparing: " + testFile.getFileName());
 
@@ -227,10 +219,8 @@ class ParquetComparisonTest {
         System.out.println("  All " + referenceRows.size() + " rows match!");
     }
 
-    /**
-     * Read with Hardwood and compare row by row against reference.
-     * Returns the number of rows read.
-     */
+    /// Read with Hardwood and compare row by row against reference.
+    /// Returns the number of rows read.
     private int compareWithHardwood(Path file, List<GenericRecord> referenceRows) throws IOException {
         int rowIndex = 0;
 

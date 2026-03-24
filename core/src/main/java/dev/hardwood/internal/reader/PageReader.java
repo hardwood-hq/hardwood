@@ -30,62 +30,50 @@ import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
-/**
- * Decoder for individual Parquet data pages.
- * <p>
- * This class provides page decoding via {@link #decodePage}.
- * Page scanning and dictionary parsing are handled by {@link PageScanner}.
- * </p>
- */
+/// Decoder for individual Parquet data pages.
+///
+/// This class provides page decoding via [#decodePage].
+/// Page scanning and dictionary parsing are handled by [PageScanner].
 public class PageReader {
 
     private final ColumnMetaData columnMetaData;
     private final ColumnSchema column;
     private final DecompressorFactory decompressorFactory;
 
-    /**
-     * Constructor for page decoding.
-     *
-     * @param columnMetaData metadata for the column
-     * @param column column schema
-     * @param decompressorFactory factory for creating decompressors
-     */
+    /// Constructor for page decoding.
+    ///
+    /// @param columnMetaData metadata for the column
+    /// @param column column schema
+    /// @param decompressorFactory factory for creating decompressors
     public PageReader(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
         this.columnMetaData = columnMetaData;
         this.column = column;
         this.decompressorFactory = decompressorFactory;
     }
 
-    /**
-     * Checks if this PageReader is compatible with the given column metadata.
-     * Used for cross-file prefetching to determine if PageReader can be reused.
-     *
-     * @param otherMetaData the column metadata to check against
-     * @return true if compatible (same codec), false otherwise
-     */
+    /// Checks if this PageReader is compatible with the given column metadata.
+    /// Used for cross-file prefetching to determine if PageReader can be reused.
+    ///
+    /// @param otherMetaData the column metadata to check against
+    /// @return true if compatible (same codec), false otherwise
     public boolean isCompatibleWith(ColumnMetaData otherMetaData) {
         return columnMetaData.codec() == otherMetaData.codec();
     }
 
-    /**
-     * Gets the decompressor factory used by this PageReader.
-     *
-     * @return the decompressor factory
-     */
+    /// Gets the decompressor factory used by this PageReader.
+    ///
+    /// @return the decompressor factory
     public DecompressorFactory getDecompressorFactory() {
         return decompressorFactory;
     }
 
-    /**
-     * Decode a single data page from a buffer.
-     * <p>
-     * The buffer should contain the complete page including header.
-     * </p>
-     *
-     * @param pageBuffer buffer containing just this page (header + data)
-     * @param dictionary dictionary for this page, or null if not dictionary-encoded
-     * @return decoded page
-     */
+    /// Decode a single data page from a buffer.
+    ///
+    /// The buffer should contain the complete page including header.
+    ///
+    /// @param pageBuffer buffer containing just this page (header + data)
+    /// @param dictionary dictionary for this page, or null if not dictionary-encoded
+    /// @return decoded page
     public Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary) throws IOException {
         PageDecodedEvent event = new PageDecodedEvent();
         event.begin();
@@ -123,9 +111,7 @@ public class PageReader {
         return result;
     }
 
-    /**
-     * Decode levels using RLE/Bit-Packing Hybrid encoding.
-     */
+    /// Decode levels using RLE/Bit-Packing Hybrid encoding.
     private int[] decodeLevels(byte[] levelData, int offset, int length, int numValues, int maxLevel) {
         int[] levels = new int[numValues];
         RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, getBitWidth(maxLevel));
@@ -133,9 +119,7 @@ public class PageReader {
         return levels;
     }
 
-    /**
-     * Count non-null values based on definition levels.
-     */
+    /// Count non-null values based on definition levels.
     private int countNonNullValues(int numValues, int[] definitionLevels) {
         if (definitionLevels == null) {
             return numValues;
@@ -220,9 +204,7 @@ public class PageReader {
                 definitionLevels, repetitionLevels, dictionary);
     }
 
-    /**
-     * Decode values into Page using primitive arrays where possible.
-     */
+    /// Decode values into Page using primitive arrays where possible.
     private Page decodeTypedValues(Encoding encoding, byte[] data, int offset,
                                    int numValues,
                                    int[] definitionLevels, int[] repetitionLevels,

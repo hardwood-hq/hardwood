@@ -13,11 +13,9 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import dev.hardwood.InputFile;
 
-/**
- * An {@link InputFile} wrapper that delegates to another {@code InputFile} and
- * counts the number of {@link #readRange} calls. Useful in tests that need to
- * assert on I/O patterns (e.g. verifying coalesced reads).
- */
+/// An [InputFile] wrapper that delegates to another `InputFile` and
+/// counts the number of [#readRange] calls. Useful in tests that need to
+/// assert on I/O patterns (e.g. verifying coalesced reads).
 class CountingInputFile implements InputFile {
 
     private final InputFile delegate;
@@ -27,9 +25,7 @@ class CountingInputFile implements InputFile {
         this.delegate = delegate;
     }
 
-    /**
-     * Convenience constructor that wraps a {@link ByteBuffer} as the delegate.
-     */
+    /// Convenience constructor that wraps a [ByteBuffer] as the delegate.
     CountingInputFile(ByteBuffer buffer) {
         this(InputFile.of(buffer));
     }

@@ -30,9 +30,7 @@ import dev.hardwood.row.PqStruct;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * Tests for the RowReader and PqStruct API.
- */
+/// Tests for the RowReader and PqStruct API.
 public class PqRowApiTest {
 
     @Test

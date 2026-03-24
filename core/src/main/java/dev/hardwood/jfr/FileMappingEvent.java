@@ -15,14 +15,11 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/**
- * JFR event emitted when Hardwood memory-maps a region of a Parquet file.
- * <p>
- * This event tracks mmap operations which are not captured by the standard
- * {@code jdk.FileRead} event. Memory-mapped I/O loads data through page faults
- * rather than explicit read() calls.
- * </p>
- */
+/// JFR event emitted when Hardwood memory-maps a region of a Parquet file.
+///
+/// This event tracks mmap operations which are not captured by the standard
+/// `jdk.FileRead` event. Memory-mapped I/O loads data through page faults
+/// rather than explicit read() calls.
 @Name("dev.hardwood.FileMapping")
 @Label("File Mapping")
 @Category({"Hardwood", "I/O"})

@@ -14,9 +14,7 @@ import java.util.function.DoubleConsumer;
 import dev.hardwood.internal.reader.NestedColumnData.DoubleColumn;
 import dev.hardwood.row.PqDoubleList;
 
-/**
- * Flyweight {@link PqDoubleList} that reads double values directly from a column array.
- */
+/// Flyweight [PqDoubleList] that reads double values directly from a column array.
 final class PqDoubleListImpl implements PqDoubleList {
 
     private final NestedBatchIndex batch;

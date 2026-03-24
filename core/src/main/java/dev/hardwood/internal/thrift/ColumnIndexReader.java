@@ -13,18 +13,15 @@ import java.util.List;
 
 import dev.hardwood.metadata.ColumnIndex;
 
-/**
- * Reader for ColumnIndex from Thrift Compact Protocol.
- *
- * <p>Parquet ColumnIndex struct fields:</p>
- * <ul>
- *   <li>1: null_pages (list&lt;bool&gt;)</li>
- *   <li>2: min_values (list&lt;binary&gt;)</li>
- *   <li>3: max_values (list&lt;binary&gt;)</li>
- *   <li>4: boundary_order (enum BoundaryOrder)</li>
- *   <li>5: null_counts (list&lt;i64&gt;, optional)</li>
- * </ul>
- */
+/// Reader for ColumnIndex from Thrift Compact Protocol.
+///
+/// Parquet ColumnIndex struct fields:
+///
+/// - 1: null_pages (list<bool>)
+/// - 2: min_values (list<binary>)
+/// - 3: max_values (list<binary>)
+/// - 4: boundary_order (enum BoundaryOrder)
+/// - 5: null_counts (list<i64>, optional)
 public class ColumnIndexReader {
 
     public static ColumnIndex read(ThriftCompactReader reader) throws IOException {

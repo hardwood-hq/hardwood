@@ -15,14 +15,12 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.compression.Decompressor;
 
-/**
- * High-performance GZIP decompressor using libdeflate via FFM API.
- * <p>
- * libdeflate decompressor instances are NOT thread-safe, so this implementation
- * uses a pool to manage decompressor instances across threads.
- * <p>
- * Performance: libdeflate is typically 2-4x faster than zlib for decompression.
- */
+/// High-performance GZIP decompressor using libdeflate via FFM API.
+///
+/// libdeflate decompressor instances are NOT thread-safe, so this implementation
+/// uses a pool to manage decompressor instances across threads.
+///
+/// Performance: libdeflate is typically 2-4x faster than zlib for decompression.
 public final class LibdeflateDecompressor implements Decompressor {
 
     private static final ThreadLocal<MemorySegment> NATIVE_OUTPUT = new ThreadLocal<>();

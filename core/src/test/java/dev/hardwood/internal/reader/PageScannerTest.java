@@ -162,9 +162,7 @@ public class PageScannerTest {
         }
     }
 
-    /**
-     * Creates a PageScanner by pre-fetching the column chunk data from the InputFile.
-     */
+    /// Creates a PageScanner by pre-fetching the column chunk data from the InputFile.
     static PageScanner createScanner(InputFile inputFile, HardwoodContextImpl context,
             ColumnChunk columnChunk, ColumnSchema columnSchema,
             ColumnIndexBuffers indexBuffers, int rowGroupIndex) throws IOException {

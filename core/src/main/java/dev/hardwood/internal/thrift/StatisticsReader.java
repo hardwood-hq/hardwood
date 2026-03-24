@@ -11,13 +11,10 @@ import java.io.IOException;
 
 import dev.hardwood.metadata.Statistics;
 
-/**
- * Reader for the Thrift Statistics struct from Parquet metadata.
- * <p>
- * Prefers fields 5/6 ({@code max_value}/{@code min_value} with correct sort order)
- * over deprecated fields 1/2 ({@code max}/{@code min}).
- * </p>
- */
+/// Reader for the Thrift Statistics struct from Parquet metadata.
+///
+/// Prefers fields 5/6 (`max_value`/`min_value` with correct sort order)
+/// over deprecated fields 1/2 (`max`/`min`).
 public class StatisticsReader {
 
     public static Statistics read(ThriftCompactReader reader) throws IOException {

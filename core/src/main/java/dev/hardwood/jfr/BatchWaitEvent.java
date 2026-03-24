@@ -14,14 +14,11 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/**
- * JFR event emitted when the consumer thread blocks waiting for a batch
- * to be assembled by the assembly thread.
- * <p>
- * This event indicates that the decode/assembly pipeline cannot keep up
- * with the consumer, causing the consumer to stall.
- * </p>
- */
+/// JFR event emitted when the consumer thread blocks waiting for a batch
+/// to be assembled by the assembly thread.
+///
+/// This event indicates that the decode/assembly pipeline cannot keep up
+/// with the consumer, causing the consumer to stall.
 @Name("dev.hardwood.BatchWait")
 @Label("Batch Wait")
 @Category({"Hardwood", "Pipeline"})

@@ -26,18 +26,15 @@ import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.SchemaNode;
 
-/**
- * Flyweight {@link PqList} that reads list elements directly from column arrays.
- * <p>
- * Supports two modes:
- * <ul>
- *   <li><b>Leaf mode</b> ({@code subLevel == -1}): start/end are value indices.
- *       Elements are primitive values or structs accessed directly from column data.</li>
- *   <li><b>Nested mode</b> ({@code subLevel >= 0}): start/end are indices at an
- *       intermediate multi-level offset level. Elements are inner lists or maps,
- *       whose boundaries come from {@code ml[subLevel]}.</li>
- * </ul>
- */
+/// Flyweight [PqList] that reads list elements directly from column arrays.
+///
+/// Supports two modes:
+///
+/// - **Leaf mode** (`subLevel == -1`): start/end are value indices.
+///       Elements are primitive values or structs accessed directly from column data.</li>
+/// - **Nested mode** (`subLevel >= 0`): start/end are indices at an
+///       intermediate multi-level offset level. Elements are inner lists or maps,
+///       whose boundaries come from `ml[subLevel]`.</li>
 final class PqListImpl implements PqList {
 
     private final NestedBatchIndex batch;

@@ -15,9 +15,7 @@ import java.net.http.HttpResponse;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/**
- * Downloads an Overture Maps places Parquet file for nested schema performance testing.
- */
+/// Downloads an Overture Maps places Parquet file for nested schema performance testing.
 public final class OvertureMapsDownloader {
 
     private static final String FILE_URL =

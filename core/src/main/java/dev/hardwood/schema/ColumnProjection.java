@@ -11,26 +11,24 @@ import java.util.Collections;
 import java.util.LinkedHashSet;
 import java.util.Set;
 
-/**
- * Specifies which columns to read from a Parquet file.
- *
- * <p>Column projection allows reading only a subset of columns,
- * improving performance by skipping I/O, decoding, and memory allocation
- * for unneeded columns.</p>
- *
- * <p>Usage examples:</p>
- * <pre>{@code
- * // Read all columns (default)
- * ColumnProjection.all()
- *
- * // Read specific columns
- * ColumnProjection.columns("id", "name", "address")
- *
- * // For nested schemas, dot notation selects nested fields
- * ColumnProjection.columns("address.city")  // specific nested field
- * ColumnProjection.columns("address")       // parent group and all children
- * }</pre>
- */
+/// Specifies which columns to read from a Parquet file.
+///
+/// Column projection allows reading only a subset of columns,
+/// improving performance by skipping I/O, decoding, and memory allocation
+/// for unneeded columns.
+///
+/// Usage examples:
+/// ```java
+/// // Read all columns (default)
+/// ColumnProjection.all()
+///
+/// // Read specific columns
+/// ColumnProjection.columns("id", "name", "address")
+///
+/// // For nested schemas, dot notation selects nested fields
+/// ColumnProjection.columns("address.city")  // specific nested field
+/// ColumnProjection.columns("address")       // parent group and all children
+/// ```
 public final class ColumnProjection {
 
     private static final ColumnProjection ALL = new ColumnProjection(null);
@@ -41,26 +39,21 @@ public final class ColumnProjection {
         this.projectedColumnNames = projectedColumnNames;
     }
 
-    /**
-     * Returns a projection that includes all columns.
-     */
+    /// Returns a projection that includes all columns.
     public static ColumnProjection all() {
         return ALL;
     }
 
-    /**
-     * Returns a projection that includes only the specified columns.
-     *
-     * <p>For flat schemas, use simple column names. For nested schemas:</p>
-     * <ul>
-     *   <li>{@code "address"} - selects the parent group and all its children</li>
-     *   <li>{@code "address.city"} - selects only a specific nested field</li>
-     * </ul>
-     *
-     * @param names the column names to project
-     * @return a projection containing only the specified columns
-     * @throws IllegalArgumentException if no column names are provided
-     */
+    /// Returns a projection that includes only the specified columns.
+    ///
+    /// For flat schemas, use simple column names. For nested schemas:
+    ///
+    /// - `"address"` - selects the parent group and all its children
+    /// - `"address.city"` - selects only a specific nested field
+    ///
+    /// @param names the column names to project
+    /// @return a projection containing only the specified columns
+    /// @throws IllegalArgumentException if no column names are provided
     public static ColumnProjection columns(String... names) {
         if (names == null || names.length == 0) {
             throw new IllegalArgumentException("At least one column name must be specified");
@@ -75,16 +68,12 @@ public final class ColumnProjection {
         return new ColumnProjection(Collections.unmodifiableSet(nameSet));
     }
 
-    /**
-     * Returns true if this projection includes all columns.
-     */
+    /// Returns true if this projection includes all columns.
     public boolean projectsAll() {
         return projectedColumnNames == null;
     }
 
-    /**
-     * Returns the set of column names to project, or null if all columns are projected.
-     */
+    /// Returns the set of column names to project, or null if all columns are projected.
     public Set<String> getProjectedColumnNames() {
         return projectedColumnNames;
     }

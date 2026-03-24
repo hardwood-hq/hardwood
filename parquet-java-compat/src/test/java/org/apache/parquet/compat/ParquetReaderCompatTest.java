@@ -25,9 +25,7 @@ import org.junit.jupiter.api.Test;
 import static org.apache.parquet.filter2.predicate.FilterApi.*;
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Tests for parquet-java API compatibility.
- */
+/// Tests for parquet-java API compatibility.
 class ParquetReaderCompatTest {
 
     @Test

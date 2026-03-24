@@ -15,15 +15,12 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/**
- * JFR event emitted when a Parquet file is opened and its metadata is read.
- * <p>
- * This event spans the full open sequence: memory-mapping the file and
- * parsing the Parquet footer metadata. It is emitted for both single-file
- * reads ({@code ParquetFileReader.open()}) and multi-file reads
- * ({@code FileManager.mapAndReadMetadata()}).
- * </p>
- */
+/// JFR event emitted when a Parquet file is opened and its metadata is read.
+///
+/// This event spans the full open sequence: memory-mapping the file and
+/// parsing the Parquet footer metadata. It is emitted for both single-file
+/// reads (`ParquetFileReader.open()`) and multi-file reads
+/// (`FileManager.mapAndReadMetadata()`).
 @Name("dev.hardwood.FileOpened")
 @Label("File Opened")
 @Category({"Hardwood", "I/O"})

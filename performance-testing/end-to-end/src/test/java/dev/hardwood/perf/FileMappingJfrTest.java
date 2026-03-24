@@ -25,9 +25,7 @@ import dev.hardwood.reader.MultiFileRowReader;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.withinPercentage;
 
-/**
- * Tests that verify file mapping (mmap) operations using JFR events.
- */
+/// Tests that verify file mapping (mmap) operations using JFR events.
 @JfrEventTest
 public class FileMappingJfrTest {
 

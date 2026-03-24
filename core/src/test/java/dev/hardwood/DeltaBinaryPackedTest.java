@@ -19,9 +19,7 @@ import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Tests for delta encoding support (DELTA_BINARY_PACKED and DELTA_LENGTH_BYTE_ARRAY).
- */
+/// Tests for delta encoding support (DELTA_BINARY_PACKED and DELTA_LENGTH_BYTE_ARRAY).
 class DeltaBinaryPackedTest {
 
     @Test

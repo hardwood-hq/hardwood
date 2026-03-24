@@ -15,22 +15,16 @@ import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Tests for ThriftCompactReader, particularly field skipping for complex types.
- */
+/// Tests for ThriftCompactReader, particularly field skipping for complex types.
 class ThriftCompactReaderTest {
 
-    /**
-     * Verifies that MAP fields are skipped correctly per the Thrift Compact Protocol spec.
-     * <p>
-     * The spec encodes MAP as: varint(size), then if size > 0, a single byte with
-     * key type in the high nibble and value type in the low nibble, followed by
-     * size key-value pairs.
-     * </p>
-     * <p>
-     * A previous bug read two separate bytes for key/value types instead of one packed byte.
-     * </p>
-     */
+    /// Verifies that MAP fields are skipped correctly per the Thrift Compact Protocol spec.
+    ///
+    /// The spec encodes MAP as: varint(size), then if size > 0, a single byte with
+    /// key type in the high nibble and value type in the low nibble, followed by
+    /// size key-value pairs.
+    ///
+    /// A previous bug read two separate bytes for key/value types instead of one packed byte.
     @Test
     void skipFieldHandlesMapWithPackedKeyValueTypes() throws IOException {
         // Build a Thrift MAP with 2 entries: map<i32, i32>
@@ -63,10 +57,8 @@ class ThriftCompactReaderTest {
         assertThat(reader.getBytesRead()).isEqualTo(6);
     }
 
-    /**
-     * Verifies that empty MAP (size=0) is skipped correctly.
-     * An empty map is just a single varint(0) with no type byte.
-     */
+    /// Verifies that empty MAP (size=0) is skipped correctly.
+    /// An empty map is just a single varint(0) with no type byte.
     @Test
     void skipFieldHandlesEmptyMap() throws IOException {
         ByteBuffer buffer = ByteBuffer.allocate(16).order(ByteOrder.LITTLE_ENDIAN);
@@ -86,10 +78,8 @@ class ThriftCompactReaderTest {
         assertThat(reader.getBytesRead()).isEqualTo(1);
     }
 
-    /**
-     * Verifies that MAP with string keys and struct values is skipped correctly.
-     * This exercises the recursive skipping through complex nested types.
-     */
+    /// Verifies that MAP with string keys and struct values is skipped correctly.
+    /// This exercises the recursive skipping through complex nested types.
     @Test
     void skipFieldHandlesMapWithStringKeysAndStructValues() throws IOException {
         ByteBuffer buffer = ByteBuffer.allocate(64).order(ByteOrder.LITTLE_ENDIAN);
@@ -123,9 +113,7 @@ class ThriftCompactReaderTest {
         assertThat(reader.getBytesRead()).isEqualTo(8);
     }
 
-    /**
-     * Verifies that nested struct skipping correctly saves/restores field ID context.
-     */
+    /// Verifies that nested struct skipping correctly saves/restores field ID context.
     @Test
     void skipStructPreservesFieldIdContext() throws IOException {
         // Build a struct with fields 1 (i32) and 2 (struct with field 1 (i32)) and 3 (i32)

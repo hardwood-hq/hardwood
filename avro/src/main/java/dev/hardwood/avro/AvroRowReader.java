@@ -22,25 +22,22 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 
-/**
- * Reads Parquet rows as Avro {@link GenericRecord} instances.
- * <p>
- * Wraps a Hardwood {@link RowReader} and materializes each row into a
- * {@code GenericRecord} using the converted Avro schema. Values are stored
- * in Avro's raw representation (e.g. timestamps as {@code Long}, decimals
- * as {@code ByteBuffer}), matching the behavior of parquet-java's
- * {@code AvroReadSupport}.
- * </p>
- *
- * <pre>{@code
- * try (AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
- *     while (reader.hasNext()) {
- *         GenericRecord record = reader.next();
- *         long id = (Long) record.get("id");
- *     }
- * }
- * }</pre>
- */
+/// Reads Parquet rows as Avro [GenericRecord] instances.
+///
+/// Wraps a Hardwood [RowReader] and materializes each row into a
+/// `GenericRecord` using the converted Avro schema. Values are stored
+/// in Avro's raw representation (e.g. timestamps as `Long`, decimals
+/// as `ByteBuffer`), matching the behavior of parquet-java's
+/// `AvroReadSupport`.
+///
+/// ```java
+/// try (AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+///     while (reader.hasNext()) {
+///         GenericRecord record = reader.next();
+///         long id = (Long) record.get("id");
+///     }
+/// }
+/// ```
 public class AvroRowReader implements AutoCloseable {
 
     private final RowReader rowReader;
@@ -51,30 +48,24 @@ public class AvroRowReader implements AutoCloseable {
         this.avroSchema = avroSchema;
     }
 
-    /**
-     * Check if there are more rows to read.
-     *
-     * @return true if there are more rows
-     */
+    /// Check if there are more rows to read.
+    ///
+    /// @return true if there are more rows
     public boolean hasNext() {
         return rowReader.hasNext();
     }
 
-    /**
-     * Advance to the next row and return it as a GenericRecord.
-     *
-     * @return the current row as a GenericRecord
-     */
+    /// Advance to the next row and return it as a GenericRecord.
+    ///
+    /// @return the current row as a GenericRecord
     public GenericRecord next() {
         rowReader.next();
         return materializeRow();
     }
 
-    /**
-     * Returns the Avro schema used for materialization.
-     *
-     * @return the Avro record schema
-     */
+    /// Returns the Avro schema used for materialization.
+    ///
+    /// @return the Avro record schema
     public Schema getSchema() {
         return avroSchema;
     }

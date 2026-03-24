@@ -36,17 +36,13 @@ import static org.assertj.core.api.Assertions.*;
 
 public class Utils {
 
-    /**
-     * Marker to indicate a field should be skipped in comparison (e.g., INT96 timestamps).
-     */
+    /// Marker to indicate a field should be skipped in comparison (e.g., INT96 timestamps).
     enum SkipMarker {
         INSTANCE
     }
 
-    /**
-     * Files to skip in comparison tests.
-     * Add files here with a comment explaining why they are skipped.
-     */
+    /// Files to skip in comparison tests.
+    /// Add files here with a comment explaining why they are skipped.
      static final Set<String> SKIPPED_FILES = Set.of(
             // parquet-java Avro reader schema parsing issues
             "delta_encoding_required_column.parquet", // Illegal character in field name (c_customer_sk:)
@@ -88,17 +84,13 @@ public class Utils {
             "ARROW-GH-45185.parquet"
     );
 
-    /**
-     * Directories containing test parquet files.
-     */
+    /// Directories containing test parquet files.
     private static final List<String> TEST_DIRECTORIES = List.of(
             "data",
             "bad_data",
             "shredded_variant");
 
-    /**
-     * Provides all .parquet files from the parquet-testing test directories.
-     */
+    /// Provides all .parquet files from the parquet-testing test directories.
     static Stream<Path> parquetTestFiles() throws IOException {
         Path repoDir = ParquetTestingRepoCloner.ensureCloned();
         return TEST_DIRECTORIES.stream()
@@ -127,9 +119,7 @@ public class Utils {
                 .hasStackTraceContaining(expectedMessage);
     }
 
-    /**
-     * Read all rows using parquet-java's AvroParquetReader.
-     */
+    /// Read all rows using parquet-java's AvroParquetReader.
     static List<GenericRecord> readWithParquetJava(Path file) throws IOException {
         List<GenericRecord> rows = new ArrayList<>();
 
@@ -152,9 +142,7 @@ public class Utils {
         return rows;
     }
 
-    /**
-     * Compare a single row field by field.
-     */
+    /// Compare a single row field by field.
     static void compareRow(int rowIndex, GenericRecord reference, RowReader rowReader) {
         var schema = reference.getSchema();
 
@@ -167,9 +155,7 @@ public class Utils {
         }
     }
 
-    /**
-     * Get a value from Hardwood RowReader, handling type conversions.
-     */
+    /// Get a value from Hardwood RowReader, handling type conversions.
     static Object getHardwoodValue(RowReader rowReader, String fieldName, org.apache.avro.Schema fieldSchema) {
         if (rowReader.isNull(fieldName)) {
             return null;
@@ -231,9 +217,7 @@ public class Utils {
         };
     }
 
-    /**
-     * Compare two values, handling type conversions between Avro and Java types.
-     */
+    /// Compare two values, handling type conversions between Avro and Java types.
     static void compareValues(int rowIndex, String fieldName, Object refValue, Object actualValue) {
         String context = String.format("Row %d, field '%s'", rowIndex, fieldName);
 
@@ -276,9 +260,7 @@ public class Utils {
         }
     }
 
-    /**
-     * Convert Avro types to comparable Java types.
-     */
+    /// Convert Avro types to comparable Java types.
     static Object convertToComparable(Object value) {
         if (value == null) {
             return null;
@@ -306,11 +288,9 @@ public class Utils {
 
     // ==================== Column-Level Comparison ====================
 
-    /**
-     * Additional files to skip in column-level comparison tests.
-     * Files with nested/repeated columns where column-level comparison
-     * requires list reconstruction from offsets (deferred).
-     */
+    /// Additional files to skip in column-level comparison tests.
+    /// Files with nested/repeated columns where column-level comparison
+    /// requires list reconstruction from offsets (deferred).
     static final Set<String> COLUMN_SKIPPED_FILES = Set.of(
             "list_columns.parquet",
             "nested_lists.snappy.parquet",
@@ -326,10 +306,8 @@ public class Utils {
             "map_no_value.parquet"
     );
 
-    /**
-     * Compare a Parquet file column-by-column using ColumnReaders against parquet-java reference data.
-     * Each column reader is created via the factory and closed after use.
-     */
+    /// Compare a Parquet file column-by-column using ColumnReaders against parquet-java reference data.
+    /// Each column reader is created via the factory and closed after use.
     static void compareColumns(FileSchema schema, ColumnReaderFactory readerFactory, List<GenericRecord> referenceRows)
             throws IOException {
 
@@ -348,9 +326,7 @@ public class Utils {
         }
     }
 
-    /**
-     * Compare a single ColumnReader's data against reference rows.
-     */
+    /// Compare a single ColumnReader's data against reference rows.
     static void compareColumnReader(String colName, ColumnReader columnReader, List<GenericRecord> referenceRows) {
         int rowIdx = 0;
 
@@ -389,17 +365,13 @@ public class Utils {
                 .isEqualTo(referenceRows.size());
     }
 
-    /**
-     * Functional interface for creating column readers (abstracts single-file vs multi-file).
-     */
+    /// Functional interface for creating column readers (abstracts single-file vs multi-file).
     @FunctionalInterface
     interface ColumnReaderFactory {
         ColumnReader createColumnReader(int columnIndex) throws IOException;
     }
 
-    /**
-     * Get reference value for a flat column from a GenericRecord.
-     */
+    /// Get reference value for a flat column from a GenericRecord.
     private static Object getRefColumnValue(GenericRecord record, String fieldName) {
         var field = record.getSchema().getField(fieldName);
         if (field == null) {
@@ -425,9 +397,7 @@ public class Utils {
         };
     }
 
-    /**
-     * Compare a single column value from the ColumnReader batch against the reference.
-     */
+    /// Compare a single column value from the ColumnReader batch against the reference.
     private static void compareColumnValue(int rowIdx, String colName, Object refValue,
                                            ColumnReader reader, int batchIdx) {
         String context = String.format("Row %d, column '%s'", rowIdx, colName);
@@ -452,9 +422,7 @@ public class Utils {
         }
     }
 
-    /**
-     * Get a value from the ColumnReader at a batch index, using the appropriate typed array.
-     */
+    /// Get a value from the ColumnReader at a batch index, using the appropriate typed array.
     private static Object getColumnReaderValue(ColumnReader reader, int index) {
         var colSchema = reader.getColumnSchema();
         return switch (colSchema.type()) {

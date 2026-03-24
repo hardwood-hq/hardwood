@@ -13,38 +13,31 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
-/**
- * Parquet group type (struct, list, or map).
- * <p>
- * Represents a group of fields, which can be a struct, list, or map depending
- * on the original type annotation.
- * </p>
- */
+/// Parquet group type (struct, list, or map).
+///
+/// Represents a group of fields, which can be a struct, list, or map depending
+/// on the original type annotation.
 public class GroupType extends Type {
 
     private final List<Type> fields;
     private final Map<String, Integer> fieldsByName;
     private final OriginalType originalType;
 
-    /**
-     * Create a group type without an original type.
-     *
-     * @param repetition the repetition
-     * @param name the field name
-     * @param fields the child fields
-     */
+    /// Create a group type without an original type.
+    ///
+    /// @param repetition the repetition
+    /// @param name the field name
+    /// @param fields the child fields
     public GroupType(Repetition repetition, String name, List<Type> fields) {
         this(repetition, name, null, fields);
     }
 
-    /**
-     * Create a group type with an original type.
-     *
-     * @param repetition the repetition
-     * @param name the field name
-     * @param originalType the original/converted type (LIST, MAP, etc.)
-     * @param fields the child fields
-     */
+    /// Create a group type with an original type.
+    ///
+    /// @param repetition the repetition
+    /// @param name the field name
+    /// @param originalType the original/converted type (LIST, MAP, etc.)
+    /// @param fields the child fields
     public GroupType(Repetition repetition, String name, OriginalType originalType, List<Type> fields) {
         super(name, repetition);
         this.fields = Collections.unmodifiableList(new ArrayList<>(fields));
@@ -57,52 +50,42 @@ public class GroupType extends Type {
         this.fieldsByName = Collections.unmodifiableMap(byName);
     }
 
-    /**
-     * Create a group type with varargs fields.
-     *
-     * @param repetition the repetition
-     * @param name the field name
-     * @param fields the child fields
-     */
+    /// Create a group type with varargs fields.
+    ///
+    /// @param repetition the repetition
+    /// @param name the field name
+    /// @param fields the child fields
     public GroupType(Repetition repetition, String name, Type... fields) {
         this(repetition, name, null, List.of(fields));
     }
 
-    /**
-     * Get the list of child fields.
-     *
-     * @return the fields
-     */
+    /// Get the list of child fields.
+    ///
+    /// @return the fields
     public List<Type> getFields() {
         return fields;
     }
 
-    /**
-     * Get the number of child fields.
-     *
-     * @return the field count
-     */
+    /// Get the number of child fields.
+    ///
+    /// @return the field count
     public int getFieldCount() {
         return fields.size();
     }
 
-    /**
-     * Get a field by index.
-     *
-     * @param index the field index
-     * @return the field type
-     */
+    /// Get a field by index.
+    ///
+    /// @param index the field index
+    /// @return the field type
     public Type getType(int index) {
         return fields.get(index);
     }
 
-    /**
-     * Get a field by name.
-     *
-     * @param name the field name
-     * @return the field type
-     * @throws IllegalArgumentException if the field is not found
-     */
+    /// Get a field by name.
+    ///
+    /// @param name the field name
+    /// @return the field type
+    /// @throws IllegalArgumentException if the field is not found
     public Type getType(String name) {
         Integer index = fieldsByName.get(name);
         if (index == null) {
@@ -111,13 +94,11 @@ public class GroupType extends Type {
         return fields.get(index);
     }
 
-    /**
-     * Get the index of a field by name.
-     *
-     * @param name the field name
-     * @return the field index
-     * @throws IllegalArgumentException if the field is not found
-     */
+    /// Get the index of a field by name.
+    ///
+    /// @param name the field name
+    /// @return the field index
+    /// @throws IllegalArgumentException if the field is not found
     public int getFieldIndex(String name) {
         Integer index = fieldsByName.get(name);
         if (index == null) {
@@ -126,21 +107,17 @@ public class GroupType extends Type {
         return index;
     }
 
-    /**
-     * Check if a field exists.
-     *
-     * @param name the field name
-     * @return true if the field exists
-     */
+    /// Check if a field exists.
+    ///
+    /// @param name the field name
+    /// @return true if the field exists
     public boolean containsField(String name) {
         return fieldsByName.containsKey(name);
     }
 
-    /**
-     * Get the original/converted type.
-     *
-     * @return the original type (LIST, MAP, etc.), or null if plain struct
-     */
+    /// Get the original/converted type.
+    ///
+    /// @return the original type (LIST, MAP, etc.), or null if plain struct
     public OriginalType getOriginalType() {
         return originalType;
     }

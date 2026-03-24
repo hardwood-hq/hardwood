@@ -9,9 +9,7 @@ package dev.hardwood.internal.compression;
 
 import java.nio.ByteBuffer;
 
-/**
- * Decompressor for uncompressed data (passthrough).
- */
+/// Decompressor for uncompressed data (passthrough).
 public class UncompressedDecompressor implements Decompressor {
 
     private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();

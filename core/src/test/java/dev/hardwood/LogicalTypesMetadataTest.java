@@ -17,9 +17,7 @@ import dev.hardwood.reader.ParquetFileReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Tests for logical type metadata in Parquet file schemas.
- */
+/// Tests for logical type metadata in Parquet file schemas.
 public class LogicalTypesMetadataTest {
 
     @Test

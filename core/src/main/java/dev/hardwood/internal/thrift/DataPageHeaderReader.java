@@ -12,9 +12,7 @@ import java.io.IOException;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.metadata.Encoding;
 
-/**
- * Reader for DataPageHeader from Thrift Compact Protocol.
- */
+/// Reader for DataPageHeader from Thrift Compact Protocol.
 public class DataPageHeaderReader {
 
     public static DataPageHeader read(ThriftCompactReader reader) throws IOException {

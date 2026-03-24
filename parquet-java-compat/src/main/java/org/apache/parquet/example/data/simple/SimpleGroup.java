@@ -19,25 +19,20 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqStruct;
 
-/**
- * SimpleGroup implementation that wraps Hardwood's RowReader.
- * <p>
- * This class provides parquet-java compatible Group access by capturing
- * a snapshot of the row data from Hardwood's RowReader API.
- * </p>
- */
+/// SimpleGroup implementation that wraps Hardwood's RowReader.
+///
+/// This class provides parquet-java compatible Group access by capturing
+/// a snapshot of the row data from Hardwood's RowReader API.
 public class SimpleGroup extends Group {
 
     private final Map<String, Object> values;
     private final Map<String, Boolean> nullFlags;
     private final GroupType schema;
 
-    /**
-     * Create a SimpleGroup by capturing data from a RowReader at its current position.
-     *
-     * @param rowReader the Hardwood RowReader positioned at the row to capture
-     * @param schema the GroupType schema
-     */
+    /// Create a SimpleGroup by capturing data from a RowReader at its current position.
+    ///
+    /// @param rowReader the Hardwood RowReader positioned at the row to capture
+    /// @param schema the GroupType schema
     public SimpleGroup(RowReader rowReader, GroupType schema) {
         this.schema = schema;
         this.values = new HashMap<>();
@@ -45,12 +40,10 @@ public class SimpleGroup extends Group {
         captureRowData(rowReader);
     }
 
-    /**
-     * Create a SimpleGroup wrapping a nested PqStruct.
-     *
-     * @param struct the Hardwood PqStruct
-     * @param schema the GroupType schema
-     */
+    /// Create a SimpleGroup wrapping a nested PqStruct.
+    ///
+    /// @param struct the Hardwood PqStruct
+    /// @param schema the GroupType schema
     public SimpleGroup(PqStruct struct, GroupType schema) {
         this.schema = schema;
         this.values = new HashMap<>();

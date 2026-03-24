@@ -14,10 +14,8 @@ import java.util.Arrays;
 import dev.hardwood.internal.encoding.simd.SimdOperations;
 import dev.hardwood.internal.encoding.simd.VectorSupport;
 
-/**
- * Decoder for RLE/Bit-Packing Hybrid encoding.
- * Used primarily for definition/repetition levels and dictionary indices.
- */
+/// Decoder for RLE/Bit-Packing Hybrid encoding.
+/// Used primarily for definition/repetition levels and dictionary indices.
 public class RleBitPackingHybridDecoder {
 
     private static final SimdOperations SIMD_OPS = VectorSupport.operations();
@@ -267,9 +265,7 @@ public class RleBitPackingHybridDecoder {
         return value & bitMask;
     }
 
-    /**
-     * Batch decode bit-packed values. Optimized paths for common bit widths.
-     */
+    /// Batch decode bit-packed values. Optimized paths for common bit widths.
     private void decodeBitPacked(int[] output, int outPos, int count) {
         final int width = bitWidth;
         final int mask = bitMask;

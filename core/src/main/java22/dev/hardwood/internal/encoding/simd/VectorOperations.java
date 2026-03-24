@@ -14,16 +14,14 @@ import jdk.incubator.vector.LongVector;
 import jdk.incubator.vector.VectorMask;
 import jdk.incubator.vector.VectorSpecies;
 
-/**
- * SIMD implementation of vectorizable operations using Java Vector API.
- *
- * <p>This implementation uses the incubator Vector API available in Java 22+
- * to accelerate common Parquet decoding operations. It automatically uses
- * the preferred vector size for the current CPU (128-bit, 256-bit, or 512-bit).</p>
- *
- * <p>Operations fall back to scalar processing for tail elements that don't
- * fill a complete vector.</p>
- */
+/// SIMD implementation of vectorizable operations using Java Vector API.
+///
+/// This implementation uses the incubator Vector API available in Java 22+
+/// to accelerate common Parquet decoding operations. It automatically uses
+/// the preferred vector size for the current CPU (128-bit, 256-bit, or 512-bit).
+///
+/// Operations fall back to scalar processing for tail elements that don't
+/// fill a complete vector.
 public final class VectorOperations implements SimdOperations {
 
     // Use preferred species for best performance on current CPU

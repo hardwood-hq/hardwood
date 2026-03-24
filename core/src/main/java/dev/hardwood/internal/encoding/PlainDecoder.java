@@ -14,10 +14,8 @@ import java.util.Arrays;
 
 import dev.hardwood.metadata.PhysicalType;
 
-/**
- * Decoder for PLAIN encoding.
- * PLAIN encoding stores values in their native binary representation.
- */
+/// Decoder for PLAIN encoding.
+/// PLAIN encoding stores values in their native binary representation.
 public class PlainDecoder implements ValueDecoder {
 
     private final byte[] data;
@@ -36,9 +34,7 @@ public class PlainDecoder implements ValueDecoder {
         this.typeLength = typeLength;
     }
 
-    /**
-     * Read a fixed-length byte array value.
-     */
+    /// Read a fixed-length byte array value.
     public byte[] readFixedLenByteArray(int length) throws IOException {
         if (pos + length > data.length) {
             throw new IOException("Unexpected EOF while reading fixed-length byte array");
@@ -48,9 +44,7 @@ public class PlainDecoder implements ValueDecoder {
         return result;
     }
 
-    /**
-     * Read INT64 values directly into a primitive long array.
-     */
+    /// Read INT64 values directly into a primitive long array.
     @Override
     public void readLongs(long[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
@@ -82,9 +76,7 @@ public class PlainDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read DOUBLE values directly into a primitive double array.
-     */
+    /// Read DOUBLE values directly into a primitive double array.
     @Override
     public void readDoubles(double[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
@@ -116,9 +108,7 @@ public class PlainDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read INT32 values directly into a primitive int array.
-     */
+    /// Read INT32 values directly into a primitive int array.
     @Override
     public void readInts(int[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
@@ -150,9 +140,7 @@ public class PlainDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read FLOAT values directly into a primitive float array.
-     */
+    /// Read FLOAT values directly into a primitive float array.
     @Override
     public void readFloats(float[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
@@ -184,9 +172,7 @@ public class PlainDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read BOOLEAN values directly into a primitive boolean array.
-     */
+    /// Read BOOLEAN values directly into a primitive boolean array.
     @Override
     public void readBooleans(boolean[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
@@ -203,9 +189,7 @@ public class PlainDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, or INT96 values directly into a byte[][] array.
-     */
+    /// Read BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, or INT96 values directly into a byte[][] array.
     @Override
     public void readByteArrays(byte[][] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
@@ -222,9 +206,7 @@ public class PlainDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read a single byte array value based on the physical type.
-     */
+    /// Read a single byte array value based on the physical type.
     private byte[] readByteArrayValue() throws IOException {
         return switch (type) {
             case BYTE_ARRAY -> readByteArray();

@@ -9,9 +9,7 @@ package dev.hardwood.internal.metadata;
 
 import dev.hardwood.metadata.Encoding;
 
-/**
- * Header for dictionary page.
- */
+/// Header for dictionary page.
 public record DictionaryPageHeader(
         int numValues,
         Encoding encoding) {

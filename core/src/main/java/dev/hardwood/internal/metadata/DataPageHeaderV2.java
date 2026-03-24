@@ -9,9 +9,7 @@ package dev.hardwood.internal.metadata;
 
 import dev.hardwood.metadata.Encoding;
 
-/**
- * Header for DataPage v2.
- */
+/// Header for DataPage v2.
 public record DataPageHeaderV2(
         int numValues,
         int numNulls,

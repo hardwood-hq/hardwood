@@ -11,31 +11,28 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
-/**
- * A predicate for filtering row groups based on column statistics.
- * <p>
- * Filter predicates enable predicate push-down: row groups whose statistics
- * prove that no rows can match the predicate are skipped entirely, avoiding
- * unnecessary I/O and decoding.
- * </p>
- *
- * <p>Usage examples:</p>
- * <pre>{@code
- * // Simple comparison
- * FilterPredicate filter = FilterPredicate.gt("age", 21);
- *
- * // Compound predicate
- * FilterPredicate filter = FilterPredicate.and(
- *     FilterPredicate.gtEq("salary", 50000L),
- *     FilterPredicate.lt("age", 65)
- * );
- *
- * // Use with reader
- * try (ColumnReader reader = fileReader.createColumnReader("salary", filter)) {
- *     while (reader.nextBatch()) { ... }
- * }
- * }</pre>
- */
+/// A predicate for filtering row groups based on column statistics.
+///
+/// Filter predicates enable predicate push-down: row groups whose statistics
+/// prove that no rows can match the predicate are skipped entirely, avoiding
+/// unnecessary I/O and decoding.
+///
+/// Usage examples:
+/// ```java
+/// // Simple comparison
+/// FilterPredicate filter = FilterPredicate.gt("age", 21);
+///
+/// // Compound predicate
+/// FilterPredicate filter = FilterPredicate.and(
+///     FilterPredicate.gtEq("salary", 50000L),
+///     FilterPredicate.lt("age", 65)
+/// );
+///
+/// // Use with reader
+/// try (ColumnReader reader = fileReader.createColumnReader("salary", filter)) {
+///     while (reader.nextBatch()) { ... }
+/// }
+/// ```
 public sealed interface FilterPredicate
         permits FilterPredicate.IntColumnPredicate,
                 FilterPredicate.LongColumnPredicate,

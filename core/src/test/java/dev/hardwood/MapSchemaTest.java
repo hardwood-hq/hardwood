@@ -24,9 +24,7 @@ import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Tests for MAP schema parsing and data reading.
- */
+/// Tests for MAP schema parsing and data reading.
 public class MapSchemaTest {
 
     @Test

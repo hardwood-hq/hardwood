@@ -24,25 +24,20 @@ import dev.hardwood.reader.FilterPredicate.Not;
 import dev.hardwood.reader.FilterPredicate.Or;
 import dev.hardwood.schema.FileSchema;
 
-/**
- * Evaluates filter predicates against row group statistics to determine
- * whether a row group can be skipped.
- * <p>
- * Uses a conservative approach: if statistics are absent for a column,
- * the row group is never dropped (it may contain matching rows).
- * </p>
- */
+/// Evaluates filter predicates against row group statistics to determine
+/// whether a row group can be skipped.
+///
+/// Uses a conservative approach: if statistics are absent for a column,
+/// the row group is never dropped (it may contain matching rows).
 public class RowGroupFilterEvaluator {
 
-    /**
-     * Determines whether a row group can be skipped based on the given filter predicate.
-     *
-     * @param predicate the filter predicate to evaluate
-     * @param rowGroup the row group to check
-     * @param schema the file schema
-     * @return {@code true} if the row group can be safely skipped (no matching rows),
-     *         {@code false} if it may contain matching rows
-     */
+    /// Determines whether a row group can be skipped based on the given filter predicate.
+    ///
+    /// @param predicate the filter predicate to evaluate
+    /// @param rowGroup the row group to check
+    /// @param schema the file schema
+    /// @return `true` if the row group can be safely skipped (no matching rows),
+    ///         `false` if it may contain matching rows
     public static boolean canDropRowGroup(FilterPredicate predicate, RowGroup rowGroup, FileSchema schema) {
         return switch (predicate) {
             case IntColumnPredicate p -> evaluateInt(p, rowGroup, schema);
@@ -202,10 +197,8 @@ public class RowGroupFilterEvaluator {
 
     // ==================== Generic comparison logic ====================
 
-    /**
-     * Determines if a row group can be dropped given integer-comparable min/max statistics.
-     * Works for int, long, boolean (mapped to 0/1).
-     */
+    /// Determines if a row group can be dropped given integer-comparable min/max statistics.
+    /// Works for int, long, boolean (mapped to 0/1).
     private static boolean canDrop(FilterPredicate.Operator op, long value, long min, long max) {
         return switch (op) {
             case EQ -> value < min || value > max;
@@ -239,13 +232,11 @@ public class RowGroupFilterEvaluator {
         };
     }
 
-    /**
-     * Determines if a row group can be dropped given pre-computed comparison results for binary values.
-     *
-     * @param cmpMin comparison of value vs min (negative if value &lt; min)
-     * @param cmpMax comparison of value vs max (positive if value &gt; max)
-     * @param minEqMax comparison of min vs max (0 if min == max)
-     */
+    /// Determines if a row group can be dropped given pre-computed comparison results for binary values.
+    ///
+    /// @param cmpMin comparison of value vs min (negative if value < min)
+    /// @param cmpMax comparison of value vs max (positive if value > max)
+    /// @param minEqMax comparison of min vs max (0 if min == max)
     private static boolean canDropCompared(FilterPredicate.Operator op, int cmpMin, int cmpMax, int minEqMax) {
         return switch (op) {
             case EQ -> cmpMin < 0 || cmpMax > 0;

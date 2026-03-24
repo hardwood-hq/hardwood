@@ -16,9 +16,7 @@ import dev.hardwood.internal.compression.lz4.Lz4Decompressor;
 import dev.hardwood.internal.compression.lz4.Lz4RawDecompressor;
 import dev.hardwood.metadata.CompressionCodec;
 
-/**
- * Factory for creating decompressor instances based on compression codec.
- */
+/// Factory for creating decompressor instances based on compression codec.
 public class DecompressorFactory {
 
     private static final Logger LOG = System.getLogger(DecompressorFactory.class.getName());
@@ -27,22 +25,18 @@ public class DecompressorFactory {
 
     private final LibdeflatePool libdeflatePool;
 
-    /**
-     * Create a new factory with the given libdeflate pool.
-     *
-     * @param libdeflatePool pool for libdeflate decompressor handles
-     */
+    /// Create a new factory with the given libdeflate pool.
+    ///
+    /// @param libdeflatePool pool for libdeflate decompressor handles
     public DecompressorFactory(LibdeflatePool libdeflatePool) {
         this.libdeflatePool = libdeflatePool;
     }
 
-    /**
-     * Get a decompressor for the given compression codec.
-     *
-     * @param codec the compression codec
-     * @return the appropriate decompressor
-     * @throws UnsupportedOperationException if the codec is not supported or the required library is missing
-     */
+    /// Get a decompressor for the given compression codec.
+    ///
+    /// @param codec the compression codec
+    /// @return the appropriate decompressor
+    /// @throws UnsupportedOperationException if the codec is not supported or the required library is missing
     public Decompressor getDecompressor(CompressionCodec codec) {
         return switch (codec) {
             case UNCOMPRESSED -> new UncompressedDecompressor();

@@ -7,23 +7,19 @@
  */
 package dev.hardwood.internal.reader;
 
-/**
- * Sealed interface for typed column page data with primitive arrays.
- * <p>
- * This eliminates boxing overhead by storing values directly in typed arrays.
- * All access is via typed accessors - there is no generic getObject() method.
- * </p>
- * <p>
- * Implementations correspond to Parquet physical types:
- * <ul>
- *   <li>{@link BooleanPage} - BOOLEAN</li>
- *   <li>{@link IntPage} - INT32</li>
- *   <li>{@link LongPage} - INT64</li>
- *   <li>{@link FloatPage} - FLOAT</li>
- *   <li>{@link DoublePage} - DOUBLE</li>
- *   <li>{@link ByteArrayPage} - BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96</li>
- * </ul>
- */
+/// Sealed interface for typed column page data with primitive arrays.
+///
+/// This eliminates boxing overhead by storing values directly in typed arrays.
+/// All access is via typed accessors - there is no generic getObject() method.
+///
+/// Implementations correspond to Parquet physical types:
+///
+/// - [BooleanPage] - BOOLEAN
+/// - [IntPage] - INT32
+/// - [LongPage] - INT64
+/// - [FloatPage] - FLOAT
+/// - [DoublePage] - DOUBLE
+/// - [ByteArrayPage] - BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96
 public sealed interface Page {
 
     int size();

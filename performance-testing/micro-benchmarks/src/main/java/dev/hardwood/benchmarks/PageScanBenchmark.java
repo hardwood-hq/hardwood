@@ -39,17 +39,14 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-/**
- * Benchmarks page scanning performance, comparing sequential header-based
- * scanning against offset-index-based lookup.
- * <p>
- * JMH cross-products the {@code fileName} parameter so a single benchmark
- * method produces results for both paths:
- * <ul>
- *   <li>{@code page_scan_with_index.parquet} &rarr; {@code scanPagesFromIndex()}</li>
- *   <li>{@code page_scan_no_index.parquet} &rarr; {@code scanPagesSequential()}</li>
- * </ul>
- */
+/// Benchmarks page scanning performance, comparing sequential header-based
+/// scanning against offset-index-based lookup.
+///
+/// JMH cross-products the `fileName` parameter so a single benchmark
+/// method produces results for both paths:
+///
+/// - `page_scan_with_index.parquet` &rarr; `scanPagesFromIndex()`
+/// - `page_scan_no_index.parquet` &rarr; `scanPagesSequential()`
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)

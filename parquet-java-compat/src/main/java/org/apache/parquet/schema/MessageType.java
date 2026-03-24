@@ -9,31 +9,24 @@ package org.apache.parquet.schema;
 
 import java.util.List;
 
-/**
- * Root message type for Parquet schema.
- * <p>
- * The MessageType is the root of a Parquet schema. It is always REQUIRED and
- * contains the top-level fields of the schema.
- * </p>
- */
+/// Root message type for Parquet schema.
+///
+/// The MessageType is the root of a Parquet schema. It is always REQUIRED and
+/// contains the top-level fields of the schema.
 public class MessageType extends GroupType {
 
-    /**
-     * Create a message type with a list of fields.
-     *
-     * @param name the message name
-     * @param fields the top-level fields
-     */
+    /// Create a message type with a list of fields.
+    ///
+    /// @param name the message name
+    /// @param fields the top-level fields
     public MessageType(String name, List<Type> fields) {
         super(Repetition.REQUIRED, name, null, fields);
     }
 
-    /**
-     * Create a message type with varargs fields.
-     *
-     * @param name the message name
-     * @param fields the top-level fields
-     */
+    /// Create a message type with varargs fields.
+    ///
+    /// @param name the message name
+    /// @param fields the top-level fields
     public MessageType(String name, Type... fields) {
         super(Repetition.REQUIRED, name, null, List.of(fields));
     }

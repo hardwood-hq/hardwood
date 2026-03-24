@@ -40,14 +40,10 @@ import dev.hardwood.schema.SchemaNode;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.withinPercentage;
 
-/**
- * Performance comparison test for deeply nested Parquet schemas.
- *
- * <p>
- * Uses an Overture Maps places file (downloaded by test-data-setup module) with
- * deeply nested structs, lists, and maps to compare reading performance.
- * </p>
- */
+/// Performance comparison test for deeply nested Parquet schemas.
+///
+/// Uses an Overture Maps places file (downloaded by test-data-setup module) with
+/// deeply nested structs, lists, and maps to compare reading performance.
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class NestedPerformanceTest {
 
@@ -750,10 +746,8 @@ class NestedPerformanceTest {
                 maxPrimaryNameLength, totalAddressCount, maxAddressCount);
     }
 
-    /**
-     * Compute list sizes from a nested leaf column using level-0 offsets.
-     * Returns totalCount, and populates sizes[0]=totalCount, sizes[1]=maxCount.
-     */
+    /// Compute list sizes from a nested leaf column using level-0 offsets.
+    /// Returns totalCount, and populates `sizes[0]`=totalCount, `sizes[1]`=maxCount.
     private long computeListSizes(ParquetFileReader reader, int colIdx, long[] sizes) {
         long totalCount = 0;
         int maxCount = 0;

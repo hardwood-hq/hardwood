@@ -16,16 +16,14 @@ import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4FastDecompressor;
 import net.jpountz.lz4.LZ4SafeDecompressor;
 
-/**
- * Decompressor for LZ4 compressed data (Hadoop-style format).
- * <p>
- * The Parquet LZ4 codec has historically been ambiguous. This implementation
- * supports the Hadoop native LZ4 format which uses blocks with headers:
- * <p>
- * Format: [4-byte original_len, LE][4-byte compressed_len, LE][compressed data]...
- * <p>
- * If the data doesn't match Hadoop format, falls back to raw LZ4 block decompression.
- */
+/// Decompressor for LZ4 compressed data (Hadoop-style format).
+///
+/// The Parquet LZ4 codec has historically been ambiguous. This implementation
+/// supports the Hadoop native LZ4 format which uses blocks with headers:
+///
+/// Format: [4-byte original_len, LE][4-byte compressed_len, LE][compressed data]...
+///
+/// If the data doesn't match Hadoop format, falls back to raw LZ4 block decompression.
 public class Lz4Decompressor implements Decompressor {
 
     private final LZ4FastDecompressor fastDecompressor;
@@ -57,14 +55,12 @@ public class Lz4Decompressor implements Decompressor {
         }
     }
 
-    /**
-     * Decompress using Hadoop's native LZ4 block format.
-     * <p>
-     * Format: [4-byte uncompressed_len, BE][4-byte compressed_len, BE][compressed data]...
-     * <p>
-     * Each block has both the uncompressed and compressed sizes in big-endian format,
-     * followed by the compressed data.
-     */
+    /// Decompress using Hadoop's native LZ4 block format.
+    ///
+    /// Format: [4-byte uncompressed_len, BE][4-byte compressed_len, BE][compressed data]...
+    ///
+    /// Each block has both the uncompressed and compressed sizes in big-endian format,
+    /// followed by the compressed data.
     private byte[] decompressHadoopFormat(byte[] compressed, int uncompressedSize) throws IOException {
         byte[] uncompressed = new byte[uncompressedSize];
         int srcOffset = 0;
@@ -128,9 +124,7 @@ public class Lz4Decompressor implements Decompressor {
         return uncompressed;
     }
 
-    /**
-     * Decompress using raw LZ4 block format (no framing).
-     */
+    /// Decompress using raw LZ4 block format (no framing).
     private byte[] decompressRaw(ByteBuffer compressed, int uncompressedSize) {
         byte[] uncompressed = new byte[uncompressedSize];
         ByteBuffer dest = ByteBuffer.wrap(uncompressed);

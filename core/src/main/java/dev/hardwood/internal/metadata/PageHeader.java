@@ -7,9 +7,7 @@
  */
 package dev.hardwood.internal.metadata;
 
-/**
- * Header for a page in Parquet.
- */
+/// Header for a page in Parquet.
 public record PageHeader(
         PageType type,
         int uncompressedPageSize,

@@ -13,10 +13,8 @@ import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 
-/**
- * Maps Thrift integer values to public enum constants.
- * Keeps the Thrift-specific mapping out of the public API types.
- */
+/// Maps Thrift integer values to public enum constants.
+/// Keeps the Thrift-specific mapping out of the public API types.
 class ThriftEnumLookup {
 
     // Indexed by Thrift value (0-7)

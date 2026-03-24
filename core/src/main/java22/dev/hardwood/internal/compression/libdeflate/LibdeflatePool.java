@@ -12,31 +12,25 @@ import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/**
- * Pool for libdeflate decompressor handles.
- * <p>
- * libdeflate decompressor instances are NOT thread-safe, so this pool
- * manages decompressor instances across threads.
- * <p>
- * Each pool instance manages its own set of native decompressor handles.
- * The pool should be closed when no longer needed to free native resources.
- */
+/// Pool for libdeflate decompressor handles.
+///
+/// libdeflate decompressor instances are NOT thread-safe, so this pool
+/// manages decompressor instances across threads.
+///
+/// Each pool instance manages its own set of native decompressor handles.
+/// The pool should be closed when no longer needed to free native resources.
 public final class LibdeflatePool {
 
     private final int maxPoolSize;
     private final ConcurrentLinkedQueue<DecompressorHandle> pool = new ConcurrentLinkedQueue<>();
     private final AtomicInteger poolSize = new AtomicInteger(0);
 
-    /**
-     * Create a new pool with default max size (2x available processors).
-     */
+    /// Create a new pool with default max size (2x available processors).
     public LibdeflatePool() {
         this(Runtime.getRuntime().availableProcessors() * 2);
     }
 
-    /**
-     * Create a new pool with the specified max size.
-     */
+    /// Create a new pool with the specified max size.
     public LibdeflatePool(int maxPoolSize) {
         this.maxPoolSize = maxPoolSize;
     }
@@ -96,10 +90,8 @@ public final class LibdeflatePool {
         }
     }
 
-    /**
-     * Clears the decompressor pool, freeing all native resources.
-     * Call this when done with decompression to avoid resource leaks.
-     */
+    /// Clears the decompressor pool, freeing all native resources.
+    /// Call this when done with decompression to avoid resource leaks.
     public void clear() {
         DecompressorHandle handle;
         while ((handle = pool.poll()) != null) {

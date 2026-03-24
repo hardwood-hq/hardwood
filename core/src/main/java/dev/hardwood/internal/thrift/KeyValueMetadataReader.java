@@ -12,15 +12,11 @@ import java.util.Collections;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-/**
- * Reads a Thrift-encoded {@code list<KeyValue>} into an unmodifiable {@code Map<String, String>}.
- */
+/// Reads a Thrift-encoded `list<KeyValue>` into an unmodifiable `Map<String, String>`.
 class KeyValueMetadataReader {
 
-    /**
-     * Reads a key-value metadata list from the given reader, which must be positioned
-     * right after the list field header has been consumed (i.e. ready to read the list header).
-     */
+    /// Reads a key-value metadata list from the given reader, which must be positioned
+    /// right after the list field header has been consumed (i.e. ready to read the list header).
     static Map<String, String> read(ThriftCompactReader reader) throws IOException {
         ThriftCompactReader.CollectionHeader listHeader = reader.readListHeader();
         Map<String, String> result = new LinkedHashMap<>(listHeader.size());
@@ -30,9 +26,7 @@ class KeyValueMetadataReader {
         return Collections.unmodifiableMap(result);
     }
 
-    /**
-     * Reads a single KeyValue Thrift struct (field 1: key, field 2: value) and puts it into the map.
-     */
+    /// Reads a single KeyValue Thrift struct (field 1: key, field 2: value) and puts it into the map.
     private static void readKeyValue(ThriftCompactReader reader, Map<String, String> target) throws IOException {
         short saved = reader.pushFieldIdContext();
         try {

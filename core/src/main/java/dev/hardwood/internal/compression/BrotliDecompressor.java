@@ -15,9 +15,7 @@ import com.aayushatharva.brotli4j.decoder.Decoder;
 import com.aayushatharva.brotli4j.decoder.DecoderJNI;
 import com.aayushatharva.brotli4j.decoder.DirectDecompress;
 
-/**
- * Decompressor for Brotli compressed data.
- */
+/// Decompressor for Brotli compressed data.
 public class BrotliDecompressor implements Decompressor {
 
     private static volatile boolean initialized = false;

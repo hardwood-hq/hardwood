@@ -12,10 +12,8 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.compression.Decompressor;
 
-/**
- * Stub implementation for Java 21 (no FFM API).
- * The real implementation using FFM is in META-INF/versions/22/ for Java 22+.
- */
+/// Stub implementation for Java 21 (no FFM API).
+/// The real implementation using FFM is in META-INF/versions/22/ for Java 22+.
 public final class LibdeflateDecompressor implements Decompressor {
 
     public LibdeflateDecompressor(LibdeflatePool pool) {

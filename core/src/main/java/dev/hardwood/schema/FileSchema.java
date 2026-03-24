@@ -15,13 +15,11 @@ import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 
-/**
- * Root schema container representing the complete Parquet schema.
- * Supports both flat schemas and nested structures (structs, lists).
- *
- * @see <a href="https://parquet.apache.org/docs/file-format/">File Format</a>
- * @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
- */
+/// Root schema container representing the complete Parquet schema.
+/// Supports both flat schemas and nested structures (structs, lists).
+///
+/// @see <a href="https://parquet.apache.org/docs/file-format/">File Format</a>
+/// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public class FileSchema {
 
     private final String name;
@@ -43,39 +41,31 @@ public class FileSchema {
         }
     }
 
-    /**
-     * Returns the schema name (typically "schema" or "message").
-     */
+    /// Returns the schema name (typically "schema" or "message").
     public String getName() {
         return name;
     }
 
-    /**
-     * Returns an unmodifiable list of all leaf columns in schema order.
-     */
+    /// Returns an unmodifiable list of all leaf columns in schema order.
     public List<ColumnSchema> getColumns() {
         return columns;
     }
 
-    /**
-     * Returns the column at the given zero-based index.
-     *
-     * @param index zero-based column index
-     */
+    /// Returns the column at the given zero-based index.
+    ///
+    /// @param index zero-based column index
     public ColumnSchema getColumn(int index) {
         return columns.get(index);
     }
 
-    /**
-     * Returns the column with the given name or dot-separated path.
-     * <p>
-     * For flat schemas, the name is the column name (e.g. {@code "passenger_count"}).
-     * For nested schemas, use the dot-separated field path (e.g. {@code "address.zip"})
-     * to avoid ambiguity when multiple nested columns share a leaf name.
-     *
-     * @param name column name or dot-separated field path
-     * @throws IllegalArgumentException if no column with the given name exists
-     */
+    /// Returns the column with the given name or dot-separated path.
+    ///
+    /// For flat schemas, the name is the column name (e.g. `"passenger_count"`).
+    /// For nested schemas, use the dot-separated field path (e.g. `"address.zip"`)
+    /// to avoid ambiguity when multiple nested columns share a leaf name.
+    ///
+    /// @param name column name or dot-separated field path
+    /// @throws IllegalArgumentException if no column with the given name exists
     public ColumnSchema getColumn(String name) {
         int index = columnPathToIndex.get(name);
         if (index < 0) {
@@ -84,33 +74,25 @@ public class FileSchema {
         return columns.get(index);
     }
 
-    /**
-     * Returns the column with the given field path.
-     *
-     * @param fieldPath path from schema root to leaf column
-     * @throws IllegalArgumentException if no column with the given path exists
-     */
+    /// Returns the column with the given field path.
+    ///
+    /// @param fieldPath path from schema root to leaf column
+    /// @throws IllegalArgumentException if no column with the given path exists
     public ColumnSchema getColumn(FieldPath fieldPath) {
         return getColumn(fieldPath.toString());
     }
 
-    /**
-     * Returns the total number of leaf columns in this schema.
-     */
+    /// Returns the total number of leaf columns in this schema.
     public int getColumnCount() {
         return columns.size();
     }
 
-    /**
-     * Returns the hierarchical schema tree representation.
-     */
+    /// Returns the hierarchical schema tree representation.
     public SchemaNode.GroupNode getRootNode() {
         return rootNode;
     }
 
-    /**
-     * Finds a top-level field by name in the schema tree.
-     */
+    /// Finds a top-level field by name in the schema tree.
     public SchemaNode getField(String name) {
         for (SchemaNode child : rootNode.children()) {
             if (child.name().equals(name)) {
@@ -120,14 +102,11 @@ public class FileSchema {
         throw new IllegalArgumentException("Field not found: " + name);
     }
 
-    /**
-     * Returns true if this schema supports direct columnar access.
-     * For such schemas, enabling direct columnar access without record assembly.
-     * <p>
-     * A schema supports columnar access if all top-level fields are primitives
-     * (no nested structs, lists, or maps) and no columns have repetition.
-     * </p>
-     */
+    /// Returns true if this schema supports direct columnar access.
+    /// For such schemas, enabling direct columnar access without record assembly.
+    ///
+    /// A schema supports columnar access if all top-level fields are primitives
+    /// (no nested structs, lists, or maps) and no columns have repetition.
     public boolean isFlatSchema() {
         // Check that all top-level fields are primitives (no nested structs)
         for (SchemaNode child : rootNode.children()) {
@@ -144,9 +123,7 @@ public class FileSchema {
         return true;
     }
 
-    /**
-     * Reconstruct schema from Thrift SchemaElement list.
-     */
+    /// Reconstruct schema from Thrift SchemaElement list.
     public static FileSchema fromSchemaElements(List<SchemaElement> elements) {
         if (elements.isEmpty()) {
             throw new IllegalArgumentException("Schema elements list is empty");
@@ -175,9 +152,7 @@ public class FileSchema {
         return new FileSchema(root.name(), columns, rootNode);
     }
 
-    /**
-     * Build children nodes from schema elements.
-     */
+    /// Build children nodes from schema elements.
     private static List<SchemaNode> buildChildren(
                                                   List<SchemaElement> elements,
                                                   int startIndex,
@@ -257,9 +232,7 @@ public class FileSchema {
         return children;
     }
 
-    /**
-     * Count total descendants of a group (including nested groups).
-     */
+    /// Count total descendants of a group (including nested groups).
     private static int countDescendants(List<SchemaElement> elements, int startIndex, int numChildren) {
         int count = 0;
         int currentIndex = startIndex;

@@ -15,14 +15,11 @@ import dev.hardwood.InputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 
-/**
- * Index buffers for all columns in a single row group.
- * <p>
- * Created by a single {@code readRange()} call spanning the contiguous
- * index region in the Parquet footer. Individual column indexes are
- * accessed by their original column index via {@link #forColumn(int)}.
- * </p>
- */
+/// Index buffers for all columns in a single row group.
+///
+/// Created by a single `readRange()` call spanning the contiguous
+/// index region in the Parquet footer. Individual column indexes are
+/// accessed by their original column index via [#forColumn(int)].
 public class RowGroupIndexBuffers {
 
     private final ColumnIndexBuffers[] columns;
@@ -31,27 +28,22 @@ public class RowGroupIndexBuffers {
         this.columns = columns;
     }
 
-    /**
-     * Returns the index buffers for the given original column index, or {@code null}
-     * if no indexes were fetched for that column.
-     */
+    /// Returns the index buffers for the given original column index, or `null`
+    /// if no indexes were fetched for that column.
     public ColumnIndexBuffers forColumn(int columnIndex) {
         return (columnIndex < columns.length) ? columns[columnIndex] : null;
     }
 
-    /**
-     * Fetches all offset/column indexes for a row group in a single
-     * {@code readRange()} call.
-     * <p>
-     * The index entries for all columns in a row group are stored
-     * contiguously in the Parquet footer, so one read covers them all.
-     * The cost of including non-projected columns is negligible (a few KB
-     * of extra metadata) compared to the cost of an additional round-trip.
-     * </p>
-     *
-     * @param inputFile the file to read from
-     * @param rowGroup  the row group whose indexes to fetch
-     */
+    /// Fetches all offset/column indexes for a row group in a single
+    /// `readRange()` call.
+    ///
+    /// The index entries for all columns in a row group are stored
+    /// contiguously in the Parquet footer, so one read covers them all.
+    /// The cost of including non-projected columns is negligible (a few KB
+    /// of extra metadata) compared to the cost of an additional round-trip.
+    ///
+    /// @param inputFile the file to read from
+    /// @param rowGroup  the row group whose indexes to fetch
     public static RowGroupIndexBuffers fetch(InputFile inputFile,
             RowGroup rowGroup) throws IOException {
 

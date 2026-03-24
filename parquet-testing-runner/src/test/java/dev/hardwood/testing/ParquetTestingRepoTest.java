@@ -25,10 +25,8 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 
-/**
- * Test reading files from the apache/parquet-testing repository.
- * This test helps identify which files we can currently parse.
- */
+/// Test reading files from the apache/parquet-testing repository.
+/// This test helps identify which files we can currently parse.
 @Disabled
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ParquetTestingRepoTest {

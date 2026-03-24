@@ -7,12 +7,9 @@
  */
 package org.apache.parquet.filter2.predicate;
 
-/**
- * Shim for parquet-java's {@code FilterPredicate} interface.
- * <p>
- * Base type for all filter predicate nodes. Concrete implementations
- * are in {@link Operators}.
- * </p>
- */
+/// Shim for parquet-java's `FilterPredicate` interface.
+///
+/// Base type for all filter predicate nodes. Concrete implementations
+/// are in [Operators].
 public interface FilterPredicate {
 }

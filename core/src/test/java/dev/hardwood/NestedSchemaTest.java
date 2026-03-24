@@ -19,9 +19,7 @@ import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Tests for parsing nested schema structures.
- */
+/// Tests for parsing nested schema structures.
 public class NestedSchemaTest {
 
     @Test

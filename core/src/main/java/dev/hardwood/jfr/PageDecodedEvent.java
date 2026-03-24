@@ -15,14 +15,11 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/**
- * JFR event emitted when a single Parquet data page is decoded.
- * <p>
- * This event covers the full page decode cycle: header parsing, decompression,
- * and value decoding. The compressed and uncompressed sizes can be used to
- * gauge compression ratios and decode cost per page.
- * </p>
- */
+/// JFR event emitted when a single Parquet data page is decoded.
+///
+/// This event covers the full page decode cycle: header parsing, decompression,
+/// and value decoding. The compressed and uncompressed sizes can be used to
+/// gauge compression ratios and decode cost per page.
 @Name("dev.hardwood.PageDecoded")
 @Label("Page Decoded")
 @Category({"Hardwood", "Decode"})

@@ -11,9 +11,7 @@ import java.io.IOException;
 
 import dev.hardwood.metadata.PageLocation;
 
-/**
- * Reader for PageLocation from Thrift Compact Protocol.
- */
+/// Reader for PageLocation from Thrift Compact Protocol.
 public class PageLocationReader {
 
     public static PageLocation read(ThriftCompactReader reader) throws IOException {

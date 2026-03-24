@@ -11,13 +11,10 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.InputFile;
 
-/**
- * {@link InputFile} backed by an in-memory {@link ByteBuffer}.
- * <p>
- * Since the data is already in memory, {@link #open()} is a no-op.
- * {@link #readRange} returns slices of the backing buffer (zero-copy).
- * </p>
- */
+/// [InputFile] backed by an in-memory [ByteBuffer].
+///
+/// Since the data is already in memory, [#open()] is a no-op.
+/// [#readRange] returns slices of the backing buffer (zero-copy).
 public class ByteBufferInputFile implements InputFile {
 
     private final ByteBuffer buffer;

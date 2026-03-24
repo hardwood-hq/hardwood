@@ -14,15 +14,12 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/**
- * JFR event emitted when all pages in a row group column chunk have been scanned.
- * <p>
- * Scanning reads page headers and parses dictionary pages upfront, producing
- * {@code PageInfo} records for on-demand decoding. A high page count relative
- * to the row group size may indicate small page sizes or high cardinality
- * dictionary encoding.
- * </p>
- */
+/// JFR event emitted when all pages in a row group column chunk have been scanned.
+///
+/// Scanning reads page headers and parses dictionary pages upfront, producing
+/// `PageInfo` records for on-demand decoding. A high page count relative
+/// to the row group size may indicate small page sizes or high cardinality
+/// dictionary encoding.
 @Name("dev.hardwood.RowGroupScanned")
 @Label("Row Group Scanned")
 @Category({"Hardwood", "Decode"})

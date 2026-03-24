@@ -29,10 +29,8 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * BatchDataView implementation for flat schemas (no nested structures).
- * Directly accesses column data arrays for optimal performance.
- */
+/// BatchDataView implementation for flat schemas (no nested structures).
+/// Directly accesses column data arrays for optimal performance.
 public final class FlatBatchDataView implements BatchDataView {
 
     private final FileSchema schema;

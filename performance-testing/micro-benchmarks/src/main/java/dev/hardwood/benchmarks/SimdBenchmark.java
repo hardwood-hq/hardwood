@@ -28,14 +28,12 @@ import dev.hardwood.internal.encoding.simd.ScalarOperations;
 import dev.hardwood.internal.encoding.simd.SimdOperations;
 import dev.hardwood.internal.encoding.simd.VectorSupport;
 
-/**
- * Benchmark for SIMD operations comparing scalar vs vectorized implementations.
- *
- * <p>Run with:</p>
- * <pre>
- * java --add-modules jdk.incubator.vector -jar benchmarks.jar SimdBenchmark
- * </pre>
- */
+/// Benchmark for SIMD operations comparing scalar vs vectorized implementations.
+///
+/// Run with:
+/// ```shell
+/// java --add-modules jdk.incubator.vector -jar benchmarks.jar SimdBenchmark
+/// ```
 @BenchmarkMode(Mode.Throughput)
 @OutputTimeUnit(TimeUnit.MICROSECONDS)
 @State(Scope.Benchmark)

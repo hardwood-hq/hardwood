@@ -17,13 +17,10 @@ import java.nio.file.StandardOpenOption;
 import dev.hardwood.InputFile;
 import dev.hardwood.jfr.FileMappingEvent;
 
-/**
- * {@link InputFile} backed by a memory-mapped file.
- * <p>
- * Starts in an unopened state. {@link #open()} memory-maps the entire file;
- * {@link #readRange} then returns zero-copy slices of the mapping.
- * </p>
- */
+/// [InputFile] backed by a memory-mapped file.
+///
+/// Starts in an unopened state. [#open()] memory-maps the entire file;
+/// [#readRange] then returns zero-copy slices of the mapping.
 public class MappedInputFile implements InputFile {
 
     private final Path path;

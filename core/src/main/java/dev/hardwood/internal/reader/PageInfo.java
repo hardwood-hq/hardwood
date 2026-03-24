@@ -12,13 +12,10 @@ import java.nio.ByteBuffer;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.schema.ColumnSchema;
 
-/**
- * Holds metadata about a page and the data needed to decode it.
- * <p>
- * The pageData buffer is a slice from the file data, avoiding
- * per-page copy overhead.
- * </p>
- */
+/// Holds metadata about a page and the data needed to decode it.
+///
+/// The pageData buffer is a slice from the file data, avoiding
+/// per-page copy overhead.
 public record PageInfo(
     ByteBuffer pageData,
     ColumnSchema columnSchema,

@@ -13,31 +13,25 @@ import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.metadata.PhysicalType;
 
-/**
- * Typed dictionary for dictionary-encoded Parquet columns.
- * Each variant holds a primitive array of dictionary values.
- */
+/// Typed dictionary for dictionary-encoded Parquet columns.
+/// Each variant holds a primitive array of dictionary values.
 public sealed interface Dictionary {
 
     int size();
 
-    /**
-     * Decode dictionary values into a Page using the given index decoder.
-     * This avoids megamorphic dispatch in the caller by moving type-specific
-     * logic into the Dictionary implementation.
-     */
+    /// Decode dictionary values into a Page using the given index decoder.
+    /// This avoids megamorphic dispatch in the caller by moving type-specific
+    /// logic into the Dictionary implementation.
     Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
                     int[] definitionLevels, int[] repetitionLevels, int maxDefLevel);
 
-    /**
-     * Parse dictionary values from decompressed data.
-     *
-     * @param data decompressed dictionary page data
-     * @param numValues number of dictionary entries
-     * @param type physical type of the column
-     * @param typeLength type length for fixed-length types (may be null for variable-length types)
-     * @return typed dictionary
-     */
+    /// Parse dictionary values from decompressed data.
+    ///
+    /// @param data decompressed dictionary page data
+    /// @param numValues number of dictionary entries
+    /// @param type physical type of the column
+    /// @param typeLength type length for fixed-length types (may be null for variable-length types)
+    /// @return typed dictionary
     static Dictionary parse(byte[] data, int numValues, PhysicalType type, Integer typeLength) throws IOException {
         PlainDecoder decoder = new PlainDecoder(data, 0, type, typeLength);
 

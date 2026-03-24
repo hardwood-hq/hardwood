@@ -14,9 +14,7 @@ import java.util.List;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 
-/**
- * Reader for RowGroup from Thrift Compact Protocol.
- */
+/// Reader for RowGroup from Thrift Compact Protocol.
 public class RowGroupReader {
 
     public static RowGroup read(ThriftCompactReader reader) throws IOException {

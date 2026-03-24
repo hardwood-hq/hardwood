@@ -12,9 +12,7 @@ import java.nio.ByteBuffer;
 
 import org.xerial.snappy.Snappy;
 
-/**
- * Decompressor for Snappy compressed data.
- */
+/// Decompressor for Snappy compressed data.
 public class SnappyDecompressor implements Decompressor {
 
     private static final ThreadLocal<ByteBuffer> DIRECT_BUFFER = new ThreadLocal<>();

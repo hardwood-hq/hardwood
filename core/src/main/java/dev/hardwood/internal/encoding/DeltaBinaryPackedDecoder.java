@@ -9,23 +9,21 @@ package dev.hardwood.internal.encoding;
 
 import java.io.IOException;
 
-/**
- * Decoder for DELTA_BINARY_PACKED encoding.
- * <p>
- * This encoding stores integers as deltas from consecutive values, organized in blocks
- * and miniblocks. Each block has a minimum delta, and values are stored as
- * (actual_delta - min_delta) to ensure non-negative values that can be efficiently bit-packed.
- * <p>
- * Format:
- * <pre>
- * HEADER: block_size (ULEB128) | miniblock_count (ULEB128) | total_count (ULEB128) | first_value (zigzag)
- * BLOCK:  min_delta (zigzag) | bitwidths[miniblock_count] | miniblock_data...
- * </pre>
- * <p>
- * Supports INT32 and INT64 physical types.
- *
- * @see <a href="https://github.com/apache/parquet-format/blob/master/Encodings.md">Parquet Encodings</a>
- */
+/// Decoder for DELTA_BINARY_PACKED encoding.
+///
+/// This encoding stores integers as deltas from consecutive values, organized in blocks
+/// and miniblocks. Each block has a minimum delta, and values are stored as
+/// (actual_delta - min_delta) to ensure non-negative values that can be efficiently bit-packed.
+///
+/// Format:
+/// ```text
+/// HEADER: block_size (ULEB128) | miniblock_count (ULEB128) | total_count (ULEB128) | first_value (zigzag)
+/// BLOCK:  min_delta (zigzag) | bitwidths[miniblock_count] | miniblock_data...
+/// ```
+///
+/// Supports INT32 and INT64 physical types.
+///
+/// @see <a href="https://github.com/apache/parquet-format/blob/master/Encodings.md">Parquet Encodings</a>
 public class DeltaBinaryPackedDecoder implements ValueDecoder {
 
     private final byte[] data;
@@ -60,32 +58,24 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
         this.valuesRead = 0;
     }
 
-    /**
-     * Returns the current read position.
-     * Used by composite decoders (DeltaLengthByteArray, DeltaByteArray) that share the
-     * same byte[] and need to continue reading after this decoder has consumed its portion.
-     */
+    /// Returns the current read position.
+    /// Used by composite decoders (DeltaLengthByteArray, DeltaByteArray) that share the
+    /// same byte[] and need to continue reading after this decoder has consumed its portion.
     public int getPos() {
         return pos;
     }
 
-    /**
-     * Read a single INT32 value from the stream.
-     */
+    /// Read a single INT32 value from the stream.
     public int readInt() throws IOException {
         return (int) readLongValue();
     }
 
-    /**
-     * Read a single INT64 value from the stream.
-     */
+    /// Read a single INT64 value from the stream.
     public long readLong() throws IOException {
         return readLongValue();
     }
 
-    /**
-     * Read INT64 values directly into a primitive long array.
-     */
+    /// Read INT64 values directly into a primitive long array.
     @Override
     public void readLongs(long[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
@@ -102,9 +92,7 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read INT32 values directly into a primitive int array.
-     */
+    /// Read INT32 values directly into a primitive int array.
     @Override
     public void readInts(int[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
@@ -121,9 +109,7 @@ public class DeltaBinaryPackedDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read a single value as a primitive long (no boxing).
-     */
+    /// Read a single value as a primitive long (no boxing).
     private long readLongValue() throws IOException {
         if (!headerRead) {
             readHeader();

@@ -23,9 +23,7 @@ import dev.hardwood.schema.ColumnProjection;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * Tests for {@link MultiFileColumnReaders} and cross-file column-oriented prefetching.
- */
+/// Tests for [MultiFileColumnReaders] and cross-file column-oriented prefetching.
 class MultiFileColumnReadersTest {
 
     @Test

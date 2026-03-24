@@ -15,9 +15,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 
-/**
- * Reader for SchemaElement from Thrift Compact Protocol.
- */
+/// Reader for SchemaElement from Thrift Compact Protocol.
 public class SchemaElementReader {
 
     public static SchemaElement read(ThriftCompactReader reader) throws IOException {

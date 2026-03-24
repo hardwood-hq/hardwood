@@ -7,22 +7,17 @@
  */
 package org.apache.parquet.hadoop;
 
-/**
- * Read support for Group-based record reading.
- * <p>
- * This is a marker class for API compatibility with parquet-java.
- * In Hardwood, it signals that the reader should return Group objects.
- * </p>
- *
- * <pre>{@code
- * ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path).build();
- * }</pre>
- */
+/// Read support for Group-based record reading.
+///
+/// This is a marker class for API compatibility with parquet-java.
+/// In Hardwood, it signals that the reader should return Group objects.
+///
+/// ```java
+/// ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path).build();
+/// ```
 public class GroupReadSupport {
 
-    /**
-     * Create a GroupReadSupport.
-     */
+    /// Create a GroupReadSupport.
     public GroupReadSupport() {
     }
 }

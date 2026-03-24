@@ -32,9 +32,7 @@ import software.amazon.awssdk.services.s3.S3Client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Tests S3 support via the parquet-java compatible API.
- */
+/// Tests S3 support via the parquet-java compatible API.
 @Testcontainers
 class ParquetReaderS3CompatTest {
 

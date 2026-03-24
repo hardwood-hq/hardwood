@@ -16,24 +16,22 @@ import java.util.concurrent.Executor;
 
 import dev.hardwood.jfr.PrefetchMissEvent;
 
-/**
- * Cursor over a column's pages with async prefetching.
- * Pages are decoded in parallel using the provided executor.
- * <p>
- * The prefetch depth automatically adapts based on whether pages are ready when needed:
- * <ul>
- *   <li>If nextPage() finds the prefetched page ready (hit), depth may decrease</li>
- *   <li>If nextPage() has to wait for a page (miss), depth increases</li>
- * </ul>
- * This ensures slow-to-decode columns automatically get more prefetch parallelism.
- * <p>
- * For multi-file reading, the cursor automatically fetches pages from the next file
- * when the remaining pages in the current file fall below the prefetch depth.
- * <p>
- * <b>Eager Assembly Mode:</b> When a {@link ColumnAssemblyBuffer} is provided, a virtual
- * thread is started to continuously consume decoded pages and assemble them into batches.
- * This pipelines assembly with decoding, so batches are ready when the consumer needs them.
- */
+/// Cursor over a column's pages with async prefetching.
+/// Pages are decoded in parallel using the provided executor.
+///
+/// The prefetch depth automatically adapts based on whether pages are ready when needed:
+///
+/// - If nextPage() finds the prefetched page ready (hit), depth may decrease
+/// - If nextPage() has to wait for a page (miss), depth increases
+///
+/// This ensures slow-to-decode columns automatically get more prefetch parallelism.
+///
+/// For multi-file reading, the cursor automatically fetches pages from the next file
+/// when the remaining pages in the current file fall below the prefetch depth.
+///
+/// **Eager Assembly Mode:** When a [ColumnAssemblyBuffer] is provided, a virtual
+/// thread is started to continuously consume decoded pages and assemble them into batches.
+/// This pipelines assembly with decoding, so batches are ready when the consumer needs them.
 public class PageCursor {
 
     private static final System.Logger LOG = System.getLogger(PageCursor.class.getName());
@@ -63,10 +61,8 @@ public class PageCursor {
     // Eager assembly support (optional)
     private final ColumnAssemblyBuffer assemblyBuffer;
 
-    /**
-     * Creates a PageCursor for single-file reading with optional eager assembly.
-     * Starts the assembly thread before returning if an assembly buffer is provided.
-     */
+    /// Creates a PageCursor for single-file reading with optional eager assembly.
+    /// Starts the assembly thread before returning if an assembly buffer is provided.
     public static PageCursor create(List<PageInfo> pageInfos, HardwoodContextImpl context,
                                     String fileName, ColumnAssemblyBuffer assemblyBuffer) {
         PageCursor cursor = new PageCursor(pageInfos, context, null, -1, fileName, assemblyBuffer);
@@ -74,10 +70,8 @@ public class PageCursor {
         return cursor;
     }
 
-    /**
-     * Creates a PageCursor with multi-file support and optional eager assembly.
-     * Starts the assembly thread before returning if an assembly buffer is provided.
-     */
+    /// Creates a PageCursor with multi-file support and optional eager assembly.
+    /// Starts the assembly thread before returning if an assembly buffer is provided.
     public static PageCursor create(List<PageInfo> pageInfos, HardwoodContextImpl context,
                                     FileManager fileManager, int projectedColumnIndex, String initialFileName,
                                     ColumnAssemblyBuffer assemblyBuffer) {
@@ -87,9 +81,7 @@ public class PageCursor {
         return cursor;
     }
 
-    /**
-     * Creates a PageCursor for single-file reading without eager assembly.
-     */
+    /// Creates a PageCursor for single-file reading without eager assembly.
     public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context) {
         this(pageInfos, context, null, -1, null, null);
     }
@@ -123,29 +115,25 @@ public class PageCursor {
         fillPrefetchQueue();
     }
 
-    /**
-     * Starts the assembly thread for eager batch assembly.
-     * Must be called after construction when an assembly buffer is provided.
-     * <p>
-     * This is intentionally separate from the constructor to avoid leaking {@code this}
-     * before subclass constructors have completed (constructor escape).
-     */
+    /// Starts the assembly thread for eager batch assembly.
+    /// Must be called after construction when an assembly buffer is provided.
+    ///
+    /// This is intentionally separate from the constructor to avoid leaking `this`
+    /// before subclass constructors have completed (constructor escape).
     private void startAssemblyThread() {
         if (assemblyBuffer != null) {
             Thread.startVirtualThread(this::runAssemblyThread);
         }
     }
 
-    /**
-     * Assembly thread that continuously consumes decoded pages and assembles them into batches.
-     * <p>
-     * This is the single producer for the assembly buffer's ring buffer. Decoded pages
-     * come from parallel decoder threads via nextPage(), but batch assembly happens
-     * here sequentially to maintain the single-producer guarantee.
-     * <p>
-     * When exhausted, signals the assembly buffer to finish. If an error occurs,
-     * it is reported to the assembly buffer so the consumer can receive it.
-     */
+    /// Assembly thread that continuously consumes decoded pages and assembles them into batches.
+    ///
+    /// This is the single producer for the assembly buffer's ring buffer. Decoded pages
+    /// come from parallel decoder threads via nextPage(), but batch assembly happens
+    /// here sequentially to maintain the single-producer guarantee.
+    ///
+    /// When exhausted, signals the assembly buffer to finish. If an error occurs,
+    /// it is reported to the assembly buffer so the consumer can receive it.
     private void runAssemblyThread() {
         try {
             while (hasNext()) {
@@ -161,9 +149,7 @@ public class PageCursor {
         }
     }
 
-    /**
-     * Check if there are more pages available.
-     */
+    /// Check if there are more pages available.
     public boolean hasNext() {
         if (!prefetchQueue.isEmpty() || nextPageIndex < pageInfos.size()) {
             return true;
@@ -172,11 +158,9 @@ public class PageCursor {
         return fileManager != null && fileManager.hasFile(currentFileIndex + 1);
     }
 
-    /**
-     * Get the next decoded page. Blocks if the page is still being decoded.
-     *
-     * @return the next page, or null if exhausted
-     */
+    /// Get the next decoded page. Blocks if the page is still being decoded.
+    ///
+    /// @return the next page, or null if exhausted
     public Page nextPage() {
         if (prefetchQueue.isEmpty()) {
             if (nextPageIndex >= pageInfos.size()) {
@@ -235,17 +219,15 @@ public class PageCursor {
         return future.join();
     }
 
-    /**
-     * Fill the prefetch queue up to targetPrefetchDepth.
-     * <p>
-     * Proactively fetches pages from the next file when remaining pages in the current
-     * file fall below the prefetch depth. File boundaries are tracked to ensure each
-     * page is decoded with the correct PageReader.
-     * <p>
-     * The next file fetch is non-blocking: pages are only added if the file is already
-     * loaded. This prevents one column from blocking while waiting for file loading,
-     * which would drain its prefetch queue and cause misses.
-     */
+    /// Fill the prefetch queue up to targetPrefetchDepth.
+    ///
+    /// Proactively fetches pages from the next file when remaining pages in the current
+    /// file fall below the prefetch depth. File boundaries are tracked to ensure each
+    /// page is decoded with the correct PageReader.
+    ///
+    /// The next file fetch is non-blocking: pages are only added if the file is already
+    /// loaded. This prevents one column from blocking while waiting for file loading,
+    /// which would drain its prefetch queue and cause misses.
     private void fillPrefetchQueue() {
         // Proactively fetch next file if current file is running low
         // Only fetch if we haven't already fetched it (nextFileReader == null)
@@ -308,29 +290,23 @@ public class PageCursor {
         }
     }
 
-    /**
-     * Signals that this cursor is exhausted and no more pages will be produced.
-     * If eager assembly is enabled, this signals the assembly buffer to finish.
-     */
+    /// Signals that this cursor is exhausted and no more pages will be produced.
+    /// If eager assembly is enabled, this signals the assembly buffer to finish.
     private void signalExhausted() {
         if (assemblyBuffer != null) {
             assemblyBuffer.finish();
         }
     }
 
-    /**
-     * Returns the assembly buffer if eager assembly is enabled.
-     */
+    /// Returns the assembly buffer if eager assembly is enabled.
     public ColumnAssemblyBuffer getAssemblyBuffer() {
         return assemblyBuffer;
     }
 
-    /**
-     * Tries to load pages from the next file, blocking if necessary.
-     * Called when we've exhausted the current file's pages and need more.
-     *
-     * @return true if pages were added from the next file, false if no more files
-     */
+    /// Tries to load pages from the next file, blocking if necessary.
+    /// Called when we've exhausted the current file's pages and need more.
+    ///
+    /// @return true if pages were added from the next file, false if no more files
     private boolean tryLoadNextFileBlocking() {
         if (fileManager == null || !fileManager.hasFile(currentFileIndex + 1)) {
             return false;
@@ -373,9 +349,7 @@ public class PageCursor {
         return true;
     }
 
-    /**
-     * Gets the current file name for logging purposes.
-     */
+    /// Gets the current file name for logging purposes.
     private String getCurrentFileName() {
         if (fileManager != null) {
             String fileName = fileManager.getFileName(currentFileIndex);
@@ -386,20 +360,16 @@ public class PageCursor {
         return initialFileName != null ? initialFileName : "unknown";
     }
 
-    /**
-     * Decode the page at the given index, release its PageInfo reference, and return the decoded page.
-     * Uses the current pageReader for decoding.
-     */
+    /// Decode the page at the given index, release its PageInfo reference, and return the decoded page.
+    /// Uses the current pageReader for decoding.
     private Page decodePageAndRelease(int pageIndex) {
         return decodePageAndRelease(pageIndex, pageReader);
     }
 
-    /**
-     * Decode the page at the given index, release its PageInfo reference, and return the decoded page.
-     * The reader is passed explicitly to ensure pages are decoded with the correct
-     * reader even when async tasks execute after the pageReader has been updated
-     * for a subsequent file.
-     */
+    /// Decode the page at the given index, release its PageInfo reference, and return the decoded page.
+    /// The reader is passed explicitly to ensure pages are decoded with the correct
+    /// reader even when async tasks execute after the pageReader has been updated
+    /// for a subsequent file.
     private Page decodePageAndRelease(int pageIndex, PageReader reader) {
         Page page = decodePage(pageInfos.get(pageIndex), reader);
         pageInfos.set(pageIndex, null);

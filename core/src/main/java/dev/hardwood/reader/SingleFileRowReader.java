@@ -36,10 +36,8 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * RowReader implementation for reading a single Parquet file.
- * Handles both flat and nested schemas using the unified RowDataView.
- */
+/// RowReader implementation for reading a single Parquet file.
+/// Handles both flat and nested schemas using the unified RowDataView.
 final class SingleFileRowReader extends AbstractRowReader {
 
     private static final System.Logger LOG = System.getLogger(SingleFileRowReader.class.getName());
@@ -248,11 +246,9 @@ final class SingleFileRowReader extends AbstractRowReader {
         return batchSize > 0;
     }
 
-    /**
-     * Load the next nested batch. Index computation is fused into the column futures
-     * (Optimization A) and the next batch is pre-launched while the consumer iterates
-     * the current batch (Optimization B).
-     */
+    /// Load the next nested batch. Index computation is fused into the column futures
+    /// (Optimization A) and the next batch is pre-launched while the consumer iterates
+    /// the current batch (Optimization B).
     private boolean loadNextNestedBatch() {
         IndexedNestedColumnData[] indexed;
         if (pendingBatch != null) {
@@ -304,9 +300,7 @@ final class SingleFileRowReader extends AbstractRowReader {
         });
     }
 
-    /**
-     * Slices a single column chunk's data from the pre-fetched ChunkRange buffers.
-     */
+    /// Slices a single column chunk's data from the pre-fetched ChunkRange buffers.
     static ByteBuffer sliceColumnChunk(List<ChunkRange> ranges, ByteBuffer[] rangeBuffers,
             ColumnChunk columnChunk) {
         long colStart = chunkStartOffset(columnChunk);
@@ -321,10 +315,8 @@ final class SingleFileRowReader extends AbstractRowReader {
         throw new IllegalStateException("Column chunk not found in any coalesced range");
     }
 
-    /**
-     * Computes the absolute file offset where a column chunk's data starts,
-     * accounting for an optional dictionary page prefix.
-     */
+    /// Computes the absolute file offset where a column chunk's data starts,
+    /// accounting for an optional dictionary page prefix.
     static long chunkStartOffset(ColumnChunk columnChunk) {
         Long dictOffset = columnChunk.metaData().dictionaryPageOffset();
         return (dictOffset != null && dictOffset > 0)

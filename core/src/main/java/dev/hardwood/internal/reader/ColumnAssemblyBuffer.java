@@ -15,26 +15,20 @@ import dev.hardwood.jfr.BatchWaitEvent;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
-/**
- * Blocking queue of pre-assembled batches for a single column.
- * <p>
- * Enables eager batch assembly: the assembly thread assembles pages into TypedColumnData
- * as they are decoded, rather than waiting for the consumer to do this work.
- * </p>
- * <p>
- * Uses a {@link BlockingQueue} for producer-consumer coordination, which is more
- * CPU-friendly than spin-waiting when waits are longer.
- * </p>
- */
+/// Blocking queue of pre-assembled batches for a single column.
+///
+/// Enables eager batch assembly: the assembly thread assembles pages into TypedColumnData
+/// as they are decoded, rather than waiting for the consumer to do this work.
+///
+/// Uses a [BlockingQueue] for producer-consumer coordination, which is more
+/// CPU-friendly than spin-waiting when waits are longer.
 public class ColumnAssemblyBuffer {
 
     private static final System.Logger LOG = System.getLogger(ColumnAssemblyBuffer.class.getName());
 
-    /**
-     * Number of batches to buffer ahead.
-     * We use 2 slots plus a pool of 3 arrays: while consumer uses one batch,
-     * producer can have one in the queue and be filling another.
-     */
+    /// Number of batches to buffer ahead.
+    /// We use 2 slots plus a pool of 3 arrays: while consumer uses one batch,
+    /// producer can have one in the queue and be filling another.
     private static final int QUEUE_CAPACITY = 2;
 
     private final ColumnSchema column;
@@ -59,12 +53,10 @@ public class ColumnAssemblyBuffer {
     // Stores any error from the producer thread
     private volatile Throwable error = null;
 
-    /**
-     * Creates a new column assembly buffer.
-     *
-     * @param column the column schema
-     * @param batchCapacity maximum rows per batch
-     */
+    /// Creates a new column assembly buffer.
+    ///
+    /// @param column the column schema
+    /// @param batchCapacity maximum rows per batch
     public ColumnAssemblyBuffer(ColumnSchema column, int batchCapacity) {
         this.column = column;
         this.physicalType = column.type();
@@ -99,12 +91,10 @@ public class ColumnAssemblyBuffer {
 
     // ==================== Producer Methods (called by assembly thread) ====================
 
-    /**
-     * Appends a decoded page to the assembly buffer.
-     * Called by the assembly thread after getting a decoded page.
-     *
-     * @param page the decoded page
-     */
+    /// Appends a decoded page to the assembly buffer.
+    /// Called by the assembly thread after getting a decoded page.
+    ///
+    /// @param page the decoded page
     public void appendPage(Page page) {
         int pageSize = page.size();
         int pagePosition = 0;
@@ -126,11 +116,9 @@ public class ColumnAssemblyBuffer {
         }
     }
 
-    /**
-     * Signals that no more pages will be produced.
-     * Publishes any partial batch remaining.
-     * This method is idempotent - subsequent calls have no effect.
-     */
+    /// Signals that no more pages will be produced.
+    /// Publishes any partial batch remaining.
+    /// This method is idempotent - subsequent calls have no effect.
     public void finish() {
         if (finished) {
             return;
@@ -141,10 +129,8 @@ public class ColumnAssemblyBuffer {
         finished = true;
     }
 
-    /**
-     * Signals that an error occurred in the producer thread.
-     * The consumer will receive this error when calling awaitNextBatch().
-     */
+    /// Signals that an error occurred in the producer thread.
+    /// The consumer will receive this error when calling awaitNextBatch().
     public void signalError(Throwable t) {
         this.error = t;
         finished = true;
@@ -179,10 +165,8 @@ public class ColumnAssemblyBuffer {
         }
     }
 
-    /**
-     * Marks null positions in currentNulls based on definition levels.
-     * A value is null if its definition level is less than maxDefinitionLevel.
-     */
+    /// Marks null positions in currentNulls based on definition levels.
+    /// A value is null if its definition level is less than maxDefinitionLevel.
     private void markNulls(int[] defLevels, int srcPos, int destPos, int length) {
         if (currentNulls != null && defLevels != null) {
             for (int i = 0; i < length; i++) {
@@ -193,10 +177,8 @@ public class ColumnAssemblyBuffer {
         }
     }
 
-    /**
-     * Creates TypedColumnData from current working arrays and publishes it.
-     * The null bitmap was already built incrementally during copyPageData().
-     */
+    /// Creates TypedColumnData from current working arrays and publishes it.
+    /// The null bitmap was already built incrementally during copyPageData().
     private void publishCurrentBatch() {
         int recordCount = rowsInCurrentBatch;
 
@@ -231,11 +213,9 @@ public class ColumnAssemblyBuffer {
         }
     }
 
-    /**
-     * Creates TypedColumnData using the provided array directly (no copy).
-     * The array will be swapped out and reused later, so the consumer must
-     * finish using it before the next batch from this slot is published.
-     */
+    /// Creates TypedColumnData using the provided array directly (no copy).
+    /// The array will be swapped out and reused later, so the consumer must
+    /// finish using it before the next batch from this slot is published.
     private TypedColumnData createTypedColumnDataDirect(Object values, int recordCount, BitSet nulls) {
         return switch (physicalType) {
             case INT32 -> new FlatColumnData.IntColumn(column, (int[]) values, nulls, recordCount);
@@ -252,17 +232,15 @@ public class ColumnAssemblyBuffer {
     // Track previous batch to return its array to pool
     private TypedColumnData previousBatch = null;
 
-    /**
-     * Waits for and returns the next ready TypedColumnData.
-     * Blocks until data is available or the producer signals completion.
-     * <p>
-     * If the producer encountered an error, this method will first return any
-     * batches that were successfully queued before the error, then throw the
-     * error when the queue is empty.
-     *
-     * @return the next TypedColumnData, or null if no more data
-     * @throws RuntimeException if the producer encountered an error and the queue is empty
-     */
+    /// Waits for and returns the next ready TypedColumnData.
+    /// Blocks until data is available or the producer signals completion.
+    ///
+    /// If the producer encountered an error, this method will first return any
+    /// batches that were successfully queued before the error, then throw the
+    /// error when the queue is empty.
+    ///
+    /// @return the next TypedColumnData, or null if no more data
+    /// @throws RuntimeException if the producer encountered an error and the queue is empty
     public TypedColumnData awaitNextBatch() {
         // Return previous batch's array to the pool for reuse
         if (previousBatch != null) {
@@ -327,9 +305,7 @@ public class ColumnAssemblyBuffer {
         return data;
     }
 
-    /**
-     * Checks if the producer encountered an error and throws it.
-     */
+    /// Checks if the producer encountered an error and throws it.
     private void checkError() {
         Throwable t = error;
         if (t != null) {
@@ -340,9 +316,7 @@ public class ColumnAssemblyBuffer {
         }
     }
 
-    /**
-     * Returns the backing array from a TypedColumnData to the pool for reuse.
-     */
+    /// Returns the backing array from a TypedColumnData to the pool for reuse.
     private void returnArrayToPool(TypedColumnData data) {
         Object array = switch (data) {
             case FlatColumnData.IntColumn c -> c.values();
@@ -358,23 +332,17 @@ public class ColumnAssemblyBuffer {
         }
     }
 
-    /**
-     * Checks if there are more batches available or pending.
-     */
+    /// Checks if there are more batches available or pending.
     public boolean hasMore() {
         return !readyBatches.isEmpty() || !finished;
     }
 
-    /**
-     * Checks if the producer has finished (either normally or with error).
-     */
+    /// Checks if the producer has finished (either normally or with error).
     public boolean isProducerFinished() {
         return finished;
     }
 
-    /**
-     * Gets the column schema.
-     */
+    /// Gets the column schema.
     public ColumnSchema column() {
         return column;
     }

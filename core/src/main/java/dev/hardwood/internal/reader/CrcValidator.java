@@ -13,11 +13,9 @@ import java.util.zip.CRC32;
 
 class CrcValidator {
 
-    /**
-     * Asserts that the CRC-32 checksum of the given page data matches the expected value
-     * from the page header. Throws if the checksum does not match.
-     * The buffer's position and limit are not modified.
-     */
+    /// Asserts that the CRC-32 checksum of the given page data matches the expected value
+    /// from the page header. Throws if the checksum does not match.
+    /// The buffer's position and limit are not modified.
     static void assertCorrectCrc(int expectedCrc, ByteBuffer pageData, String columnName) throws IOException {
         CRC32 crc = new CRC32();
         crc.update(pageData.duplicate());

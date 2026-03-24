@@ -21,9 +21,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/**
- * Tests for key-value metadata extraction from Parquet file footers.
- */
+/// Tests for key-value metadata extraction from Parquet file footers.
 class KeyValueMetadataTest {
 
     @Test

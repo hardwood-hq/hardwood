@@ -21,26 +21,23 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * A RowReader that reads across multiple Parquet files with automatic file prefetching.
- * <p>
- * This reader uses a {@link FileManager} to handle file lifecycle and prefetching.
- * The next file is automatically prepared while reading the current file, minimizing
- * latency at file boundaries.
- * </p>
- *
- * <p>Usage:</p>
- * <pre>{@code
- * try (Hardwood hardwood = Hardwood.create();
- *      MultiFileParquetReader parquet = hardwood.openAll(files);
- *      MultiFileRowReader reader = parquet.createRowReader()) {
- *     while (reader.hasNext()) {
- *         reader.next();
- *         // access data using same API as RowReader
- *     }
- * }
- * }</pre>
- */
+/// A RowReader that reads across multiple Parquet files with automatic file prefetching.
+///
+/// This reader uses a [FileManager] to handle file lifecycle and prefetching.
+/// The next file is automatically prepared while reading the current file, minimizing
+/// latency at file boundaries.
+///
+/// Usage:
+/// ```java
+/// try (Hardwood hardwood = Hardwood.create();
+///      MultiFileParquetReader parquet = hardwood.openAll(files);
+///      MultiFileRowReader reader = parquet.createRowReader()) {
+///     while (reader.hasNext()) {
+///         reader.next();
+///         // access data using same API as RowReader
+///     }
+/// }
+/// ```
 public class MultiFileRowReader extends AbstractRowReader {
 
     private static final System.Logger LOG = System.getLogger(MultiFileRowReader.class.getName());
@@ -55,13 +52,11 @@ public class MultiFileRowReader extends AbstractRowReader {
     // Iterators for each projected column
     private ColumnValueIterator[] iterators;
 
-    /**
-     * Creates a MultiFileRowReader from a pre-initialized FileManager.
-     *
-     * @param context the Hardwood context
-     * @param fileManager the shared file manager
-     * @param initResult the initialization result from the first file
-     */
+    /// Creates a MultiFileRowReader from a pre-initialized FileManager.
+    ///
+    /// @param context the Hardwood context
+    /// @param fileManager the shared file manager
+    /// @param initResult the initialization result from the first file
     MultiFileRowReader(HardwoodContextImpl context,
                        FileManager fileManager, FileManager.InitResult initResult) {
         this.context = context;

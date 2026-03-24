@@ -67,9 +67,7 @@ public class PageCursorTest {
         }
     }
 
-    /**
-     * Read the internal PageInfo values (via reflection) for testing purposes
-     */
+    /// Read the internal PageInfo values (via reflection) for testing purposes
     @SuppressWarnings("unchecked")
     private static List<PageInfo> getPageInfos(PageCursor cursor) throws Exception {
         Field field = PageCursor.class.getDeclaredField("pageInfos");

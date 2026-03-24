@@ -18,9 +18,7 @@ import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.List;
 
-/**
- * Downloads NYC Yellow Taxi Trip Records for performance testing.
- */
+/// Downloads NYC Yellow Taxi Trip Records for performance testing.
 public final class TaxiDataDownloader {
 
     private static final String BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data/";

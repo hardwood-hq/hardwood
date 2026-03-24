@@ -41,16 +41,13 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-/**
- * Benchmark measuring single-threaded performance for later stages of the Parquet reading pipeline.
- * <p>
- * Earlier stages (decompression, page decoding) are covered by {@link PageHandlingBenchmark}.
- * This benchmark adds:
- * <ul>
- *   <li>{@link #a_assembleColumns} - Synchronous page decoding + assembly into TypedColumnData batches</li>
- *   <li>{@link #b_consumeRows} - Full pipeline with row-oriented access and value conversion</li>
- * </ul>
- */
+/// Benchmark measuring single-threaded performance for later stages of the Parquet reading pipeline.
+///
+/// Earlier stages (decompression, page decoding) are covered by [PageHandlingBenchmark].
+/// This benchmark adds:
+///
+/// - [#a_assembleColumns] - Synchronous page decoding + assembly into TypedColumnData batches
+/// - [#b_consumeRows] - Full pipeline with row-oriented access and value conversion
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
@@ -138,11 +135,9 @@ public class PipelineBenchmark {
         }
     }
 
-    /**
-     * Synchronous page decoding + column assembly into TypedColumnData batches.
-     * Uses a minimal synchronous assembler to measure pure single-threaded performance
-     * without any prefetch queue overhead.
-     */
+    /// Synchronous page decoding + column assembly into TypedColumnData batches.
+    /// Uses a minimal synchronous assembler to measure pure single-threaded performance
+    /// without any prefetch queue overhead.
     @Benchmark
     public void a_assembleColumns(Blackhole blackhole) {
         for (int colIdx = 0; colIdx < schema.getColumnCount(); colIdx++) {
@@ -161,11 +156,9 @@ public class PipelineBenchmark {
         }
     }
 
-    /**
-     * Full pipeline with row-oriented access and value conversion.
-     * Uses SyncColumnAssembler for data, BenchmarkRowReader for value conversion.
-     * Calls typed accessors based on column type.
-     */
+    /// Full pipeline with row-oriented access and value conversion.
+    /// Uses SyncColumnAssembler for data, BenchmarkRowReader for value conversion.
+    /// Calls typed accessors based on column type.
     @Benchmark
     public void b_consumeRows(Blackhole blackhole) {
         int columnCount = schema.getColumnCount();

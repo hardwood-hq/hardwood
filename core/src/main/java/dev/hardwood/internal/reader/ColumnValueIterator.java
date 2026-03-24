@@ -11,13 +11,11 @@ import java.util.Arrays;
 
 import dev.hardwood.schema.ColumnSchema;
 
-/**
- * Reads column values from pages into TypedColumnData batches.
- *
- * <p>For flat schemas, batches are pre-assembled by the {@link PageCursor}'s assembly
- * thread and this class simply returns them. For nested schemas, on-demand batch
- * computation is used to track repetition/definition levels.</p>
- */
+/// Reads column values from pages into TypedColumnData batches.
+///
+/// For flat schemas, batches are pre-assembled by the [PageCursor]'s assembly
+/// thread and this class simply returns them. For nested schemas, on-demand batch
+/// computation is used to track repetition/definition levels.
 public class ColumnValueIterator {
 
     private final PageCursor pageCursor;
@@ -40,16 +38,14 @@ public class ColumnValueIterator {
 
     // ==================== Batch Reading ====================
 
-    /**
-     * Read values for up to {@code maxRecords} records into typed arrays.
-     *
-     * <p>For flat schemas, eager assembly is used: batches are pre-assembled by
-     * the assembly thread and this method just returns them. For nested schemas,
-     * on-demand assembly is used.</p>
-     *
-     * @param maxRecords maximum number of records to read
-     * @return typed column data containing values, levels, and record boundaries
-     */
+    /// Read values for up to `maxRecords` records into typed arrays.
+    ///
+    /// For flat schemas, eager assembly is used: batches are pre-assembled by
+    /// the assembly thread and this method just returns them. For nested schemas,
+    /// on-demand assembly is used.
+    ///
+    /// @param maxRecords maximum number of records to read
+    /// @return typed column data containing values, levels, and record boundaries
     public TypedColumnData readBatch(int maxRecords) {
         if (exhausted) {
             return emptyTypedColumnData();
@@ -71,10 +67,8 @@ public class ColumnValueIterator {
         return result;
     }
 
-    /**
-     * Returns the next pre-assembled batch from the assembly buffer.
-     * The assembly thread has already done all the work (copying, null bitmap creation).
-     */
+    /// Returns the next pre-assembled batch from the assembly buffer.
+    /// The assembly thread has already done all the work (copying, null bitmap creation).
     private TypedColumnData readEagerBatch(ColumnAssemblyBuffer assemblyBuffer) {
         TypedColumnData data = assemblyBuffer.awaitNextBatch();
 
@@ -86,9 +80,7 @@ public class ColumnValueIterator {
         return data;
     }
 
-    /**
-     * Return an empty TypedColumnData based on the column's physical type.
-     */
+    /// Return an empty TypedColumnData based on the column's physical type.
     private TypedColumnData emptyTypedColumnData() {
         if (flatSchema) {
             return switch (column.type()) {
@@ -476,9 +468,7 @@ public class ColumnValueIterator {
         }
     }
 
-    /**
-     * Check if there are more records available.
-     */
+    /// Check if there are more records available.
     public boolean hasMore() {
         return !exhausted && ensurePageLoaded();
     }

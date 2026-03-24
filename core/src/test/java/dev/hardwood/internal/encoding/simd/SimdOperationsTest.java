@@ -18,10 +18,8 @@ import org.junit.jupiter.params.provider.ValueSource;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Tests for SIMD operations, validating both scalar and SIMD implementations
- * produce identical results.
- */
+/// Tests for SIMD operations, validating both scalar and SIMD implementations
+/// produce identical results.
 class SimdOperationsTest {
 
     private static final SimdOperations SCALAR = new ScalarOperations();

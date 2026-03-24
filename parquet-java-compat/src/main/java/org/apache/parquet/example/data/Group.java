@@ -10,41 +10,32 @@ package org.apache.parquet.example.data;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
 
-/**
- * Abstract class for reading Parquet record data.
- * <p>
- * Compatible with parquet-java's Group API. Provides type-safe access to field
- * values by name or index. The by-name methods delegate to the by-index methods
- * via {@link #getType()}.{@link GroupType#getFieldIndex(String)}.
- * </p>
- */
+/// Abstract class for reading Parquet record data.
+///
+/// Compatible with parquet-java's Group API. Provides type-safe access to field
+/// values by name or index. The by-name methods delegate to the by-index methods
+/// via [#getType()].[GroupType#getFieldIndex(String)].
 public abstract class Group {
 
     // ---- Schema access ----
 
-    /**
-     * Get the schema type for this group.
-     *
-     * @return the group type schema
-     */
+    /// Get the schema type for this group.
+    ///
+    /// @return the group type schema
     public abstract GroupType getType();
 
     // ---- Field repetition count ----
 
-    /**
-     * Get the repetition count for a field by index.
-     *
-     * @param fieldIndex the field index
-     * @return the repetition count
-     */
+    /// Get the repetition count for a field by index.
+    ///
+    /// @param fieldIndex the field index
+    /// @return the repetition count
     public abstract int getFieldRepetitionCount(int fieldIndex);
 
-    /**
-     * Get the repetition count for a field by name.
-     *
-     * @param field the field name
-     * @return the repetition count
-     */
+    /// Get the repetition count for a field by name.
+    ///
+    /// @param field the field name
+    /// @return the repetition count
     public int getFieldRepetitionCount(String field) {
         return getFieldRepetitionCount(getType().getFieldIndex(field));
     }

@@ -26,10 +26,8 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * Base class for RowReader implementations providing iteration control and accessor methods.
- * Subclasses must implement {@link #initialize()}, {@link #loadNextBatch()}, and {@link #close()}.
- */
+/// Base class for RowReader implementations providing iteration control and accessor methods.
+/// Subclasses must implement [#initialize()], [#loadNextBatch()], and [#close()].
 abstract class AbstractRowReader implements RowReader {
 
     protected BatchDataView dataView;
@@ -48,17 +46,15 @@ abstract class AbstractRowReader implements RowReader {
     // Cached name-to-projected-index mapping for named fast path (built once)
     private StringToIntMap nameCache;
 
-    /**
-     * Computes a batch size that keeps all column arrays for one batch within the L2 cache.
-     *
-     * <p>Each batch allocates one primitive array per projected column. The total memory for a
-     * batch is approximately {@code batchSize * sum(bytesPerColumn)}. This method sizes the batch
-     * so that total stays under the target (6 MB), clamped to [{@code 16 384}, {@code 524 288}]
-     * rows.</p>
-     *
-     * <p>For example, 3 projected DOUBLE columns (8 bytes each = 24 bytes/row) yields
-     * {@code 6 MB / 24 = 262 144} rows per batch.</p>
-     */
+    /// Computes a batch size that keeps all column arrays for one batch within the L2 cache.
+    ///
+    /// Each batch allocates one primitive array per projected column. The total memory for a
+    /// batch is approximately `batchSize * sum(bytesPerColumn)`. This method sizes the batch
+    /// so that total stays under the target (6 MB), clamped to [`16 384`, `524 288`]
+    /// rows.
+    ///
+    /// For example, 3 projected DOUBLE columns (8 bytes each = 24 bytes/row) yields
+    /// `6 MB / 24 = 262 144` rows per batch.
     static int computeOptimalBatchSize(ProjectedSchema projectedSchema) {
         // Initally target 6 MB (fits comfortably in L2 cache)
         long targetBytes = 6L * 1024 * 1024; 
@@ -78,10 +74,8 @@ abstract class AbstractRowReader implements RowReader {
         return Math.max(minBatch, Math.min(maxBatch, batchSize));
     }
 
-    /**
-     * Returns the estimated byte width of a single value for the given column's physical type.
-     * Variable-length types use a 16-byte estimate (pointer + average payload).
-     */
+    /// Returns the estimated byte width of a single value for the given column's physical type.
+    /// Variable-length types use a 16-byte estimate (pointer + average payload).
     private static int columnByteWidth(ColumnSchema col) {
         return switch (col.type()) {
             case INT32, FLOAT -> 4;
@@ -93,22 +87,16 @@ abstract class AbstractRowReader implements RowReader {
         };
     }
 
-    /**
-     * Ensures the reader is initialized. Called by metadata methods that may be
-     * invoked before iteration starts.
-     */
+    /// Ensures the reader is initialized. Called by metadata methods that may be
+    /// invoked before iteration starts.
     protected abstract void initialize();
 
-    /**
-     * Loads the next batch of data.
-     * @return true if a batch was loaded, false if no more data
-     */
+    /// Loads the next batch of data.
+    /// @return true if a batch was loaded, false if no more data
     protected abstract boolean loadNextBatch();
 
-    /**
-     * Populates cached flat arrays from the current batch data for direct access.
-     * This eliminates virtual dispatch through BatchDataView for primitive accessors.
-     */
+    /// Populates cached flat arrays from the current batch data for direct access.
+    /// This eliminates virtual dispatch through BatchDataView for primitive accessors.
     private void cacheFlatBatch() {
         FlatColumnData[] flatColumnData = dataView.getFlatColumnData();
         if (flatColumnData == null) {

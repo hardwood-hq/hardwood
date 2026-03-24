@@ -14,12 +14,10 @@ import dev.hardwood.internal.compression.Decompressor;
 import net.jpountz.lz4.LZ4Factory;
 import net.jpountz.lz4.LZ4FastDecompressor;
 
-/**
- * Decompressor for LZ4_RAW compressed data (standard LZ4 block format).
- * <p>
- * This is used for the LZ4_RAW codec which uses standard LZ4 block compression
- * without any framing or headers.
- */
+/// Decompressor for LZ4_RAW compressed data (standard LZ4 block format).
+///
+/// This is used for the LZ4_RAW codec which uses standard LZ4 block compression
+/// without any framing or headers.
 public class Lz4RawDecompressor implements Decompressor {
 
     private final LZ4FastDecompressor decompressor;

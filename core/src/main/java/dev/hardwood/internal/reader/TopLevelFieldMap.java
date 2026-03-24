@@ -14,20 +14,16 @@ import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 import dev.hardwood.schema.SchemaNode;
 
-/**
- * Maps each top-level field in the root schema to its leaf column(s) within a projection.
- */
+/// Maps each top-level field in the root schema to its leaf column(s) within a projection.
 final class TopLevelFieldMap {
 
     sealed interface FieldDesc {
 
         record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {}
 
-        /**
-         * @param nameToIndex     name → child ordinal (boundary lookup)
-         * @param children        ordinal → descriptor (internal lookup)
-         * @param firstPrimitiveCol projected column of first primitive child, or -1 if none
-         */
+        /// @param nameToIndex     name → child ordinal (boundary lookup)
+        /// @param children        ordinal → descriptor (internal lookup)
+        /// @param firstPrimitiveCol projected column of first primitive child, or -1 if none
         record Struct(SchemaNode.GroupNode schema,
                       StringToIntMap nameToIndex,
                       FieldDesc[] children,
@@ -43,21 +39,17 @@ final class TopLevelFieldMap {
             }
         }
 
-        /**
-         * @param nullDefLevel     def level below which the list itself is null
-         * @param elementDefLevel  def level at or above which an actual element exists
-         * @param elementDesc      pre-built descriptor for struct/list/map elements, null for primitives
-         */
+        /// @param nullDefLevel     def level below which the list itself is null
+        /// @param elementDefLevel  def level at or above which an actual element exists
+        /// @param elementDesc      pre-built descriptor for struct/list/map elements, null for primitives
         record ListOf(SchemaNode.GroupNode schema, SchemaNode elementSchema,
                       int firstLeafProjCol, int leafColCount,
                       int nullDefLevel, int elementDefLevel,
                       FieldDesc elementDesc) implements FieldDesc {}
 
-        /**
-         * @param nullDefLevel   def level below which the map itself is null
-         * @param entryDefLevel  def level at or above which an actual entry exists
-         * @param valueDesc      pre-built descriptor for struct/list/map values, null for primitives
-         */
+        /// @param nullDefLevel   def level below which the map itself is null
+        /// @param entryDefLevel  def level at or above which an actual entry exists
+        /// @param valueDesc      pre-built descriptor for struct/list/map values, null for primitives
         record MapOf(SchemaNode.GroupNode schema, int keyProjCol, int valueProjCol,
                      int nullDefLevel, int entryDefLevel,
                      FieldDesc valueDesc) implements FieldDesc {}

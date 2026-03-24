@@ -14,10 +14,8 @@ import java.util.function.IntConsumer;
 import dev.hardwood.internal.reader.NestedColumnData.IntColumn;
 import dev.hardwood.row.PqIntList;
 
-/**
- * Flyweight {@link PqIntList} that reads int values directly from a column array.
- * Zero boxing for {@link #forEach(IntConsumer)}, {@link #toArray()}, and {@link #get(int)}.
- */
+/// Flyweight [PqIntList] that reads int values directly from a column array.
+/// Zero boxing for [#forEach(IntConsumer)], [#toArray()], and [#get(int)].
 final class PqIntListImpl implements PqIntList {
 
     private final NestedBatchIndex batch;

@@ -14,21 +14,17 @@ import java.nio.file.Path;
 import org.eclipse.jgit.api.Git;
 import org.eclipse.jgit.api.errors.GitAPIException;
 
-/**
- * Utility to clone the parquet-testing repository for comparison tests.
- */
+/// Utility to clone the parquet-testing repository for comparison tests.
 public class ParquetTestingRepoCloner {
 
     private static final String REPO_URL = "https://github.com/apache/parquet-testing.git";
     private static final Path TARGET_DIR = Path.of("target/parquet-testing");
 
-    /**
-     * Ensure the parquet-testing repository is cloned to target/parquet-testing.
-     * If already present, returns the existing path without re-cloning.
-     *
-     * @return path to the cloned repository
-     * @throws IOException if cloning fails
-     */
+    /// Ensure the parquet-testing repository is cloned to target/parquet-testing.
+    /// If already present, returns the existing path without re-cloning.
+    ///
+    /// @return path to the cloned repository
+    /// @throws IOException if cloning fails
     public static Path ensureCloned() throws IOException {
         if (Files.exists(TARGET_DIR) && Files.isDirectory(TARGET_DIR)) {
             // Already cloned
@@ -53,13 +49,11 @@ public class ParquetTestingRepoCloner {
         }
     }
 
-    /**
-     * Get the path to a test file within the parquet-testing repository.
-     *
-     * @param relativePath path relative to repo root (e.g., "data/alltypes_dictionary.parquet")
-     * @return absolute path to the file
-     * @throws IOException if repo is not cloned or file doesn't exist
-     */
+    /// Get the path to a test file within the parquet-testing repository.
+    ///
+    /// @param relativePath path relative to repo root (e.g., "data/alltypes_dictionary.parquet")
+    /// @return absolute path to the file
+    /// @throws IOException if repo is not cloned or file doesn't exist
     public static Path getTestFile(String relativePath) throws IOException {
         Path repoPath = ensureCloned();
         Path filePath = repoPath.resolve(relativePath);

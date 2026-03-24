@@ -13,19 +13,17 @@ import java.nio.ByteOrder;
 
 import dev.hardwood.metadata.PhysicalType;
 
-/**
- * Decoder for BYTE_STREAM_SPLIT encoding.
- *
- * BYTE_STREAM_SPLIT scatters bytes of values across K streams (where K is the byte width).
- * For N values of K bytes each:
- * - Stream 0 contains byte 0 of all N values
- * - Stream 1 contains byte 1 of all N values
- * - etc.
- *
- * The encoded data is the concatenation of all streams: [stream0][stream1]...[streamK-1]
- *
- * To decode value i, gather byte[i] from each stream and reassemble.
- */
+/// Decoder for BYTE_STREAM_SPLIT encoding.
+///
+/// BYTE_STREAM_SPLIT scatters bytes of values across K streams (where K is the byte width).
+/// For N values of K bytes each:
+/// - Stream 0 contains byte 0 of all N values
+/// - Stream 1 contains byte 1 of all N values
+/// - etc.
+///
+/// The encoded data is the concatenation of all streams: `[stream0][stream1]...[streamK-1]`
+///
+/// To decode value i, gather `byte[i]` from each stream and reassemble.
 public class ByteStreamSplitDecoder implements ValueDecoder {
 
     private final byte[] data;
@@ -65,9 +63,7 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         };
     }
 
-    /**
-     * Read DOUBLE values directly into a primitive double array.
-     */
+    /// Read DOUBLE values directly into a primitive double array.
     @Override
     public void readDoubles(double[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         byte[] valueBytes = new byte[8];
@@ -91,9 +87,7 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read INT64 values directly into a primitive long array.
-     */
+    /// Read INT64 values directly into a primitive long array.
     @Override
     public void readLongs(long[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         byte[] valueBytes = new byte[8];
@@ -117,9 +111,7 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read INT32 values directly into a primitive int array.
-     */
+    /// Read INT32 values directly into a primitive int array.
     @Override
     public void readInts(int[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         byte[] valueBytes = new byte[4];
@@ -143,9 +135,7 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read FLOAT values directly into a primitive float array.
-     */
+    /// Read FLOAT values directly into a primitive float array.
     @Override
     public void readFloats(float[] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         byte[] valueBytes = new byte[4];
@@ -169,9 +159,7 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Read FIXED_LEN_BYTE_ARRAY values directly into a byte[][] array.
-     */
+    /// Read FIXED_LEN_BYTE_ARRAY values directly into a byte[][] array.
     @Override
     public void readByteArrays(byte[][] output, int[] definitionLevels, int maxDefLevel) throws IOException {
         if (definitionLevels == null) {
@@ -192,9 +180,7 @@ public class ByteStreamSplitDecoder implements ValueDecoder {
         }
     }
 
-    /**
-     * Gather bytes for the current value from byte streams and advance the index.
-     */
+    /// Gather bytes for the current value from byte streams and advance the index.
     private void gatherBytes(byte[] valueBytes) throws IOException {
         if (currentIndex >= numValues) {
             throw new IOException("No more values to read");

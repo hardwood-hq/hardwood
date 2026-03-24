@@ -13,11 +13,9 @@ import java.lang.foreign.SymbolLookup;
 import java.lang.foreign.ValueLayout;
 import java.lang.invoke.MethodHandle;
 
-/**
- * FFM bindings for libdeflate native functions.
- *
- * @see <a href="https://github.com/ebiggers/libdeflate/blob/master/libdeflate.h">libdeflate.h</a>
- */
+/// FFM bindings for libdeflate native functions.
+///
+/// @see <a href="https://github.com/ebiggers/libdeflate/blob/master/libdeflate.h">libdeflate.h</a>
 final class LibdeflateBindings {
 
     static final int LIBDEFLATE_SUCCESS = 0;

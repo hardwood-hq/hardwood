@@ -14,9 +14,7 @@ import java.util.function.LongConsumer;
 import dev.hardwood.internal.reader.NestedColumnData.LongColumn;
 import dev.hardwood.row.PqLongList;
 
-/**
- * Flyweight {@link PqLongList} that reads long values directly from a column array.
- */
+/// Flyweight [PqLongList] that reads long values directly from a column array.
 final class PqLongListImpl implements PqLongList {
 
     private final NestedBatchIndex batch;

@@ -10,23 +10,21 @@ package dev.hardwood.internal.encoding;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
-/**
- * Decoder for DELTA_LENGTH_BYTE_ARRAY encoding.
- * <p>
- * This encoding stores byte arrays by first delta-encoding all lengths using
- * DELTA_BINARY_PACKED, then concatenating all byte data together.
- * <p>
- * Format:
- * <pre>
- * &lt;Delta Encoded Lengths&gt; &lt;Concatenated Byte Array Data&gt;
- * </pre>
- * <p>
- * Example: For ["Hello", "World", "Foobar"]
- * - Lengths: DeltaEncoding(5, 5, 6)
- * - Data: "HelloWorldFoobar"
- *
- * @see <a href="https://github.com/apache/parquet-format/blob/master/Encodings.md">Parquet Encodings</a>
- */
+/// Decoder for DELTA_LENGTH_BYTE_ARRAY encoding.
+///
+/// This encoding stores byte arrays by first delta-encoding all lengths using
+/// DELTA_BINARY_PACKED, then concatenating all byte data together.
+///
+/// Format:
+/// ```text
+/// <Delta Encoded Lengths> <Concatenated Byte Array Data>
+/// ```
+///
+/// Example: For ["Hello", "World", "Foobar"]
+/// - Lengths: DeltaEncoding(5, 5, 6)
+/// - Data: "HelloWorldFoobar"
+///
+/// @see <a href="https://github.com/apache/parquet-format/blob/master/Encodings.md">Parquet Encodings</a>
 public class DeltaLengthByteArrayDecoder implements ValueDecoder {
 
     private final byte[] data;
@@ -64,9 +62,7 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
 
     private static final ByteBuffer EMPTY_BUFFER = ByteBuffer.allocate(0);
 
-    /**
-     * Read a single byte array value as a zero-copy ByteBuffer view.
-     */
+    /// Read a single byte array value as a zero-copy ByteBuffer view.
     public ByteBuffer readValue() throws IOException {
         if (lengths == null) {
             throw new IOException("Must call initialize() before reading values");

@@ -22,15 +22,12 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-/**
- * A minimal row reader for benchmarking purposes.
- * <p>
- * Unlike FlatRowReader, this class operates in "manual mode" where column data
- * is explicitly loaded via {@link #loadBatch(TypedColumnData[])} rather than
- * read from a file. This allows benchmarking the row access layer in isolation
- * without file I/O overhead.
- * </p>
- */
+/// A minimal row reader for benchmarking purposes.
+///
+/// Unlike FlatRowReader, this class operates in "manual mode" where column data
+/// is explicitly loaded via [#loadBatch(TypedColumnData[])] rather than
+/// read from a file. This allows benchmarking the row access layer in isolation
+/// without file I/O overhead.
 final class BenchmarkRowReader {
 
     private final FileSchema schema;
@@ -45,9 +42,7 @@ final class BenchmarkRowReader {
         this.schema = schema;
     }
 
-    /**
-     * Load a batch of column data for row-oriented access.
-     */
+    /// Load a batch of column data for row-oriented access.
     void loadBatch(TypedColumnData[] newColumnData) {
         this.columnData = new FlatColumnData[newColumnData.length];
         this.nulls = new BitSet[newColumnData.length];

@@ -19,11 +19,9 @@ import dev.hardwood.internal.reader.PageReader;
 import dev.hardwood.internal.reader.TypedColumnData;
 import dev.hardwood.schema.ColumnSchema;
 
-/**
- * Minimal synchronous column assembler for benchmarking.
- * Decodes pages and returns TypedColumnData batches with array copying
- * to ensure consistent batch sizes across columns.
- */
+/// Minimal synchronous column assembler for benchmarking.
+/// Decodes pages and returns TypedColumnData batches with array copying
+/// to ensure consistent batch sizes across columns.
 public class SyncColumnAssembler {
 
     private final List<PageInfo> pages;

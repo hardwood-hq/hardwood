@@ -14,9 +14,7 @@ import jdk.jfr.Label;
 import jdk.jfr.Name;
 import jdk.jfr.StackTrace;
 
-/**
- * JFR event emitted when row groups are filtered by a predicate push-down filter.
- */
+/// JFR event emitted when row groups are filtered by a predicate push-down filter.
 @Name("dev.hardwood.RowGroupFilter")
 @Label("Row Group Filter")
 @Category({"Hardwood", "Filter"})

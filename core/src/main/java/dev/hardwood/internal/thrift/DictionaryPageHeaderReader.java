@@ -12,9 +12,7 @@ import java.io.IOException;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.metadata.Encoding;
 
-/**
- * Reader for DictionaryPageHeader from Thrift Compact Protocol.
- */
+/// Reader for DictionaryPageHeader from Thrift Compact Protocol.
 public class DictionaryPageHeaderReader {
 
     public static DictionaryPageHeader read(ThriftCompactReader reader) throws IOException {

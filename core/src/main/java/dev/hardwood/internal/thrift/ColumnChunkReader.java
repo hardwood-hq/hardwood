@@ -12,9 +12,7 @@ import java.io.IOException;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 
-/**
- * Reader for ColumnChunk from Thrift Compact Protocol.
- */
+/// Reader for ColumnChunk from Thrift Compact Protocol.
 public class ColumnChunkReader {
 
     public static ColumnChunk read(ThriftCompactReader reader) throws IOException {

@@ -33,17 +33,14 @@ import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.SchemaNode;
 
-/**
- * Flyweight {@link PqStruct} that navigates directly over column arrays.
- * <p>
- * Supports two modes:
- * <ul>
- *   <li><b>Record mode</b>: resolves value position via {@code getValueIndex(projCol, rowIndex)}.
- *       Used for top-level structs.</li>
- *   <li><b>Position mode</b>: uses a fixed value index directly.
- *       Used for struct elements within lists/maps.</li>
- * </ul>
- */
+/// Flyweight [PqStruct] that navigates directly over column arrays.
+///
+/// Supports two modes:
+///
+/// - **Record mode**: resolves value position via `getValueIndex(projCol, rowIndex)`.
+///       Used for top-level structs.</li>
+/// - **Position mode**: uses a fixed value index directly.
+///       Used for struct elements within lists/maps.</li>
 final class PqStructImpl implements PqStruct {
 
     private final NestedBatchIndex batch;
@@ -51,7 +48,7 @@ final class PqStructImpl implements PqStruct {
     private final int rowIndex;     // >= 0 for record mode
     private final int valueIndex;   // >= 0 for position mode, -1 for record mode
 
-    /** Record mode: value index resolved from batch offsets. */
+    /// Record mode: value index resolved from batch offsets.
     PqStructImpl(NestedBatchIndex batch, TopLevelFieldMap.FieldDesc.Struct desc, int rowIndex) {
         this.batch = batch;
         this.desc = desc;
@@ -59,7 +56,7 @@ final class PqStructImpl implements PqStruct {
         this.valueIndex = -1;
     }
 
-    /** Position mode: fixed value index (for struct elements within lists). */
+    /// Position mode: fixed value index (for struct elements within lists).
     static PqStructImpl atPosition(NestedBatchIndex batch,
                                        TopLevelFieldMap.FieldDesc.Struct desc, int valueIndex) {
         return new PqStructImpl(batch, desc, -1, valueIndex);

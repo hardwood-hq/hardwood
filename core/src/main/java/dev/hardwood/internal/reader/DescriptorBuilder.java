@@ -10,11 +10,9 @@ package dev.hardwood.internal.reader;
 import dev.hardwood.schema.ProjectedSchema;
 import dev.hardwood.schema.SchemaNode;
 
-/**
- * Builds {@link TopLevelFieldMap.FieldDesc} descriptors from schema nodes at runtime.
- * Used by flyweight implementations that need to create descriptors for nested types
- * within lists and maps.
- */
+/// Builds [TopLevelFieldMap.FieldDesc] descriptors from schema nodes at runtime.
+/// Used by flyweight implementations that need to create descriptors for nested types
+/// within lists and maps.
 final class DescriptorBuilder {
 
     private DescriptorBuilder() {

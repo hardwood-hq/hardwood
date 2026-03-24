@@ -19,9 +19,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.SchemaNode;
 
-/**
- * Shared validation and conversion logic for PqStruct, PqList, and PqMap implementations.
- */
+/// Shared validation and conversion logic for PqStruct, PqList, and PqMap implementations.
 public final class ValueConverter {
 
     private ValueConverter() {
@@ -132,10 +130,8 @@ public final class ValueConverter {
 
     // ==================== Generic Type Conversion ====================
 
-    /**
-     * Convert a primitive value based on schema type.
-     * Group types (struct/list/map) are handled directly by flyweight implementations.
-     */
+    /// Convert a primitive value based on schema type.
+    /// Group types (struct/list/map) are handled directly by flyweight implementations.
     static Object convertValue(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;

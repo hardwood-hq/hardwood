@@ -14,9 +14,7 @@ import java.util.List;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
 
-/**
- * Reader for OffsetIndex from Thrift Compact Protocol.
- */
+/// Reader for OffsetIndex from Thrift Compact Protocol.
 public class OffsetIndexReader {
 
     public static OffsetIndex read(ThriftCompactReader reader) throws IOException {

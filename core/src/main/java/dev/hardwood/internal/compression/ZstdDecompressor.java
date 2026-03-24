@@ -12,9 +12,7 @@ import java.nio.ByteBuffer;
 
 import com.github.luben.zstd.Zstd;
 
-/**
- * Decompressor for ZSTD compressed data.
- */
+/// Decompressor for ZSTD compressed data.
 public class ZstdDecompressor implements Decompressor {
 
     private static final ThreadLocal<byte[]> OUTPUT_BUFFER = new ThreadLocal<>();

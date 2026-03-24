@@ -20,9 +20,7 @@ import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
 
-/**
- * Reader for ColumnMetaData from Thrift Compact Protocol.
- */
+/// Reader for ColumnMetaData from Thrift Compact Protocol.
 public class ColumnMetaDataReader {
 
     public static ColumnMetaData read(ThriftCompactReader reader) throws IOException {

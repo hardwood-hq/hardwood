@@ -31,23 +31,17 @@ import dev.hardwood.reader.ParquetFileReader;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.withinPercentage;
 
-/**
- * End-to-end performance comparison of page scanning strategies.
- *
- * <p>
- * Reads two identical ~1GB Parquet files that differ only in whether an Offset Index
- * is present. When offset index metadata exists, {@code PageScanner} uses direct lookup
- * instead of sequentially reading page headers. This test quantifies the impact on
- * full-file read throughput.
- * </p>
- *
- * <p>
- * Generate the benchmark data first:
- * <pre>
- *   source .docker-venv/bin/activate && python performance-testing/generate_benchmark_data.py
- * </pre>
- * </p>
- */
+/// End-to-end performance comparison of page scanning strategies.
+///
+/// Reads two identical ~1GB Parquet files that differ only in whether an Offset Index
+/// is present. When offset index metadata exists, `PageScanner` uses direct lookup
+/// instead of sequentially reading page headers. This test quantifies the impact on
+/// full-file read throughput.
+///
+/// Generate the benchmark data first:
+/// ```shell
+///   source .docker-venv/bin/activate && python performance-testing/generate_benchmark_data.py
+/// ```
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 @Disabled("No significant difference between having the index or not with memory-mapped files.")
 class PageScanPerformanceTest {

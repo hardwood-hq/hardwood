@@ -25,9 +25,7 @@ public class ColumnAssemblyBufferTest {
 
     private static final int BATCH_SIZE = 4;
 
-    /**
-     * Tests that exceptions in the producer thread are propagated to the consumer.
-     */
+    /// Tests that exceptions in the producer thread are propagated to the consumer.
     @Test
     @Timeout(value = 5, unit = TimeUnit.SECONDS)
     void testProducerExceptionPropagatedToConsumer() {
@@ -56,9 +54,7 @@ public class ColumnAssemblyBufferTest {
                 .hasMessageContaining("Simulated error on page 3");
     }
 
-    /**
-     * Tests normal operation: all pages processed successfully.
-     */
+    /// Tests normal operation: all pages processed successfully.
     @Test
     @Timeout(value = 5, unit = TimeUnit.SECONDS)
     void testNormalOperationAllPagesProcessed() {

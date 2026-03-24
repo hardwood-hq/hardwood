@@ -22,26 +22,23 @@ import org.apache.parquet.schema.MessageType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
-/**
- * Parquet reader with parquet-java compatible API.
- * <p>
- * This class provides a drop-in replacement for parquet-java's ParquetReader.
- * It wraps Hardwood's ParquetFileReader and RowReader to provide the familiar
- * builder pattern and read() API.
- * </p>
- *
- * <pre>{@code
- * ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path).build();
- * Group record;
- * while ((record = reader.read()) != null) {
- *     String name = record.getString("name", 0);
- *     int age = record.getInteger("age", 0);
- * }
- * reader.close();
- * }</pre>
- *
- * @param <T> the record type (currently only Group is supported)
- */
+/// Parquet reader with parquet-java compatible API.
+///
+/// This class provides a drop-in replacement for parquet-java's ParquetReader.
+/// It wraps Hardwood's ParquetFileReader and RowReader to provide the familiar
+/// builder pattern and read() API.
+///
+/// ```java
+/// ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), path).build();
+/// Group record;
+/// while ((record = reader.read()) != null) {
+///     String name = record.getString("name", 0);
+///     int age = record.getInteger("age", 0);
+/// }
+/// reader.close();
+/// ```
+///
+/// @param <T> the record type (currently only Group is supported)
 public class ParquetReader<T> implements AutoCloseable {
 
     private final ParquetFileReader hardwoodReader;
@@ -57,12 +54,10 @@ public class ParquetReader<T> implements AutoCloseable {
         this.messageType = SchemaConverter.toMessageType(hardwoodReader.getFileSchema());
     }
 
-    /**
-     * Read the next record.
-     *
-     * @return the next record, or null if no more records
-     * @throws IOException if reading fails
-     */
+    /// Read the next record.
+    ///
+    /// @return the next record, or null if no more records
+    /// @throws IOException if reading fails
     @SuppressWarnings("unchecked")
     public T read() throws IOException {
         if (rowReader.hasNext()) {
@@ -82,33 +77,27 @@ public class ParquetReader<T> implements AutoCloseable {
         }
     }
 
-    /**
-     * Create a builder for ParquetReader.
-     *
-     * @param readSupport the read support (must be GroupReadSupport)
-     * @param path the path to the Parquet file
-     * @return the builder
-     */
+    /// Create a builder for ParquetReader.
+    ///
+    /// @param readSupport the read support (must be GroupReadSupport)
+    /// @param path the path to the Parquet file
+    /// @return the builder
     public static Builder<Group> builder(GroupReadSupport readSupport, Path path) {
         return new Builder<>(path, null);
     }
 
-    /**
-     * Create a builder for ParquetReader using an InputFile.
-     *
-     * @param readSupport the read support (must be GroupReadSupport)
-     * @param inputFile the input file (e.g. from {@link HadoopInputFile#fromPath})
-     * @return the builder
-     */
+    /// Create a builder for ParquetReader using an InputFile.
+    ///
+    /// @param readSupport the read support (must be GroupReadSupport)
+    /// @param inputFile the input file (e.g. from [HadoopInputFile#fromPath])
+    /// @return the builder
     public static Builder<Group> builder(GroupReadSupport readSupport, InputFile inputFile) {
         return new Builder<>(null, inputFile);
     }
 
-    /**
-     * Builder for ParquetReader.
-     *
-     * @param <T> the record type
-     */
+    /// Builder for ParquetReader.
+    ///
+    /// @param <T> the record type
     public static class Builder<T> {
 
         private final Path path;
@@ -121,42 +110,34 @@ public class ParquetReader<T> implements AutoCloseable {
             this.inputFile = inputFile;
         }
 
-        /**
-         * Set the Hadoop configuration.
-         * <p>
-         * For S3 paths, the configuration supplies credentials and endpoint settings.
-         * For local paths, the configuration is ignored.
-         * </p>
-         *
-         * @param conf the configuration
-         * @return this builder
-         */
+        /// Set the Hadoop configuration.
+        ///
+        /// For S3 paths, the configuration supplies credentials and endpoint settings.
+        /// For local paths, the configuration is ignored.
+        ///
+        /// @param conf the configuration
+        /// @return this builder
         public Builder<T> withConf(Configuration conf) {
             this.conf = conf;
             return this;
         }
 
-        /**
-         * Set a filter for predicate pushdown.
-         * <p>
-         * Row groups whose statistics prove that no rows can match the
-         * predicate will be skipped entirely.
-         * </p>
-         *
-         * @param filter the filter (from {@link FilterCompat#get(org.apache.parquet.filter2.predicate.FilterPredicate)})
-         * @return this builder
-         */
+        /// Set a filter for predicate pushdown.
+        ///
+        /// Row groups whose statistics prove that no rows can match the
+        /// predicate will be skipped entirely.
+        ///
+        /// @param filter the filter (from [FilterCompat#get(org.apache.parquet.filter2.predicate.FilterPredicate)])
+        /// @return this builder
         public Builder<T> withFilter(FilterCompat.Filter filter) {
             this.filter = filter;
             return this;
         }
 
-        /**
-         * Build the ParquetReader.
-         *
-         * @return the reader
-         * @throws IOException if opening the file fails
-         */
+        /// Build the ParquetReader.
+        ///
+        /// @return the reader
+        /// @throws IOException if opening the file fails
         public ParquetReader<T> build() throws IOException {
             return new ParquetReader<>(resolveHardwoodInputFile(), resolveFilter());
         }

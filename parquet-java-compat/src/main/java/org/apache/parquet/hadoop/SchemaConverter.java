@@ -23,17 +23,13 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
-/**
- * Converts Hardwood schema to parquet-java compatible schema types.
- */
+/// Converts Hardwood schema to parquet-java compatible schema types.
 class SchemaConverter {
 
-    /**
-     * Convert a Hardwood FileSchema to a parquet-java MessageType.
-     *
-     * @param fileSchema the Hardwood schema
-     * @return the MessageType
-     */
+    /// Convert a Hardwood FileSchema to a parquet-java MessageType.
+    ///
+    /// @param fileSchema the Hardwood schema
+    /// @return the MessageType
     static MessageType toMessageType(FileSchema fileSchema) {
         SchemaNode.GroupNode root = fileSchema.getRootNode();
         List<Type> fields = new ArrayList<>();

@@ -34,14 +34,12 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
-/**
- * Allocation profiling test for the page decode pipeline.
- * <p>
- * Measures byte allocations per page decode to quantify redundant copies.
- * Uses {@link ThreadMXBean#getThreadAllocatedBytes(long)} for precise per-thread measurement.
- * <p>
- * Run this test before and after refactoring to compare allocation rates.
- */
+/// Allocation profiling test for the page decode pipeline.
+///
+/// Measures byte allocations per page decode to quantify redundant copies.
+/// Uses [ThreadMXBean#getThreadAllocatedBytes(long)] for precise per-thread measurement.
+///
+/// Run this test before and after refactoring to compare allocation rates.
 public class PageDecodeAllocationProfileTest {
 
     private static final int MEASUREMENT_ITERATIONS = 5;

@@ -24,24 +24,22 @@ import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * Reader for individual Parquet files.
- *
- * <p>For single-file usage:</p>
- * <pre>{@code
- * try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
- *     RowReader rows = reader.createRowReader();
- *     // ...
- * }
- * }</pre>
- *
- * <p>For multi-file usage with shared thread pool, use {@link Hardwood}.</p>
- *
- * <p><b>Limitation:</b> When using the default memory-mapped {@link InputFile},
- * individual files must be at most 2 GB ({@link Integer#MAX_VALUE} bytes).
- * Larger datasets should be split across multiple files and read via
- * {@link MultiFileParquetReader}.</p>
- */
+/// Reader for individual Parquet files.
+///
+/// For single-file usage:
+/// ```java
+/// try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
+///     RowReader rows = reader.createRowReader();
+///     // ...
+/// }
+/// ```
+///
+/// For multi-file usage with shared thread pool, use [Hardwood].
+///
+/// **Limitation:** When using the default memory-mapped [InputFile],
+/// individual files must be at most 2 GB ([Integer#MAX_VALUE] bytes).
+/// Larger datasets should be split across multiple files and read via
+/// [MultiFileParquetReader].
 public class ParquetFileReader implements AutoCloseable {
 
     private final InputFile inputFile;
@@ -59,13 +57,10 @@ public class ParquetFileReader implements AutoCloseable {
         this.ownsInputFile = ownsInputFile;
     }
 
-    /**
-     * Open a Parquet file from an {@link InputFile} with a dedicated context.
-     * <p>
-     * This method calls {@link InputFile#open()} and takes ownership of the file;
-     * it will be closed when this reader is closed.
-     * </p>
-     */
+    /// Open a Parquet file from an [InputFile] with a dedicated context.
+    ///
+    /// This method calls [InputFile#open()] and takes ownership of the file;
+    /// it will be closed when this reader is closed.
     public static ParquetFileReader open(InputFile inputFile) throws IOException {
         inputFile.open();
         try {
@@ -82,14 +77,11 @@ public class ParquetFileReader implements AutoCloseable {
         }
     }
 
-    /**
-     * Open a Parquet file from an {@link InputFile} with a shared context.
-     * <p>
-     * This method calls {@link InputFile#open()} and takes ownership of the file;
-     * it will be closed when this reader is closed. The caller retains ownership
-     * of the context.
-     * </p>
-     */
+    /// Open a Parquet file from an [InputFile] with a shared context.
+    ///
+    /// This method calls [InputFile#open()] and takes ownership of the file;
+    /// it will be closed when this reader is closed. The caller retains ownership
+    /// of the context.
     public static ParquetFileReader open(InputFile inputFile, HardwoodContext context) throws IOException {
         inputFile.open();
         try {
@@ -131,78 +123,62 @@ public class ParquetFileReader implements AutoCloseable {
         return FileSchema.fromSchemaElements(fileMetaData.schema());
     }
 
-    /**
-     * Create a ColumnReader for a named column, spanning all row groups.
-     */
+    /// Create a ColumnReader for a named column, spanning all row groups.
     public ColumnReader createColumnReader(String columnName) {
         FileSchema schema = getFileSchema();
         return ColumnReader.create(columnName, schema, inputFile, fileMetaData.rowGroups(), context);
     }
 
-    /**
-     * Create a ColumnReader for a named column, spanning only row groups that match the filter.
-     *
-     * @param columnName the column to read
-     * @param filter predicate for row group filtering based on statistics
-     */
+    /// Create a ColumnReader for a named column, spanning only row groups that match the filter.
+    ///
+    /// @param columnName the column to read
+    /// @param filter predicate for row group filtering based on statistics
     public ColumnReader createColumnReader(String columnName, FilterPredicate filter) {
         FileSchema schema = getFileSchema();
         return ColumnReader.create(columnName, schema, inputFile, filterRowGroups(schema, filter), context);
     }
 
-    /**
-     * Create a ColumnReader for a column by index, spanning all row groups.
-     */
+    /// Create a ColumnReader for a column by index, spanning all row groups.
     public ColumnReader createColumnReader(int columnIndex) {
         FileSchema schema = getFileSchema();
         return ColumnReader.create(columnIndex, schema, inputFile, fileMetaData.rowGroups(), context);
     }
 
-    /**
-     * Create a ColumnReader for a column by index, spanning only row groups that match the filter.
-     *
-     * @param columnIndex the column index to read
-     * @param filter predicate for row group filtering based on statistics
-     */
+    /// Create a ColumnReader for a column by index, spanning only row groups that match the filter.
+    ///
+    /// @param columnIndex the column index to read
+    /// @param filter predicate for row group filtering based on statistics
     public ColumnReader createColumnReader(int columnIndex, FilterPredicate filter) {
         FileSchema schema = getFileSchema();
         return ColumnReader.create(columnIndex, schema, inputFile, filterRowGroups(schema, filter), context);
     }
 
-    /**
-     * Create a RowReader that iterates over all rows in all row groups.
-     */
+    /// Create a RowReader that iterates over all rows in all row groups.
     public RowReader createRowReader() {
         return createRowReader(ColumnProjection.all());
     }
 
-    /**
-     * Create a RowReader with a filter, iterating over all columns but only matching row groups.
-     *
-     * @param filter predicate for row group filtering based on statistics
-     */
+    /// Create a RowReader with a filter, iterating over all columns but only matching row groups.
+    ///
+    /// @param filter predicate for row group filtering based on statistics
     public RowReader createRowReader(FilterPredicate filter) {
         return createRowReader(ColumnProjection.all(), filter);
     }
 
-    /**
-     * Create a RowReader that iterates over selected columns in all row groups.
-     *
-     * @param projection specifies which columns to read
-     * @return a RowReader for the selected columns
-     */
+    /// Create a RowReader that iterates over selected columns in all row groups.
+    ///
+    /// @param projection specifies which columns to read
+    /// @return a RowReader for the selected columns
     public RowReader createRowReader(ColumnProjection projection) {
         FileSchema schema = getFileSchema();
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
         return new SingleFileRowReader(schema, projectedSchema, inputFile, fileMetaData.rowGroups(), context);
     }
 
-    /**
-     * Create a RowReader that iterates over selected columns in only matching row groups.
-     *
-     * @param projection specifies which columns to read
-     * @param filter predicate for row group filtering based on statistics
-     */
+    /// Create a RowReader that iterates over selected columns in only matching row groups.
+    ///
+    /// @param projection specifies which columns to read
+    /// @param filter predicate for row group filtering based on statistics
     public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
         FileSchema schema = getFileSchema();
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);

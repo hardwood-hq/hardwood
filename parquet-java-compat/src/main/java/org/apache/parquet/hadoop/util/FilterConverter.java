@@ -11,22 +11,18 @@ import org.apache.parquet.filter2.predicate.FilterPredicate;
 import org.apache.parquet.filter2.predicate.Operators;
 import org.apache.parquet.io.api.Binary;
 
-/**
- * Converts parquet-java {@link FilterPredicate} trees to Hardwood
- * {@link dev.hardwood.reader.FilterPredicate} trees.
- */
+/// Converts parquet-java [FilterPredicate] trees to Hardwood
+/// [dev.hardwood.reader.FilterPredicate] trees.
 final class FilterConverter {
 
     private FilterConverter() {
     }
 
-    /**
-     * Convert a parquet-java FilterPredicate to a Hardwood FilterPredicate.
-     *
-     * @param predicate the parquet-java predicate
-     * @return the equivalent Hardwood predicate
-     * @throws UnsupportedOperationException if the predicate type is not supported
-     */
+    /// Convert a parquet-java FilterPredicate to a Hardwood FilterPredicate.
+    ///
+    /// @param predicate the parquet-java predicate
+    /// @return the equivalent Hardwood predicate
+    /// @throws UnsupportedOperationException if the predicate type is not supported
     static dev.hardwood.reader.FilterPredicate convert(FilterPredicate predicate) {
         return switch (predicate) {
             case Operators.Eq<?> p -> convertComparison(p.getColumn(), p.getValue(),

@@ -26,13 +26,10 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * BatchDataView implementation for nested schemas.
- * <p>
- * Uses pre-computed {@link NestedBatchIndex} and flyweight cursor objects
- * to navigate directly over column arrays without per-row tree assembly.
- * </p>
- */
+/// BatchDataView implementation for nested schemas.
+///
+/// Uses pre-computed [NestedBatchIndex] and flyweight cursor objects
+/// to navigate directly over column arrays without per-row tree assembly.
 public final class NestedBatchDataView implements BatchDataView {
 
     private final FileSchema schema;
@@ -89,10 +86,8 @@ public final class NestedBatchDataView implements BatchDataView {
         cacheFieldArrays();
     }
 
-    /**
-     * Install batch data from pre-indexed columns where index computation
-     * was already done in parallel by the column futures.
-     */
+    /// Install batch data from pre-indexed columns where index computation
+    /// was already done in parallel by the column futures.
     public void setBatchData(IndexedNestedColumnData[] indexedData) {
         this.batchIndex = NestedBatchIndex.buildFromIndexed(indexedData, schema, projectedSchema, fieldMap);
         cacheFieldArrays();
@@ -485,10 +480,8 @@ public final class NestedBatchDataView implements BatchDataView {
 
     // ==================== Internal Helpers ====================
 
-    /**
-     * Populate per-field cached value arrays and null BitSets from the current batch.
-     * Called once per setBatchData() to enable direct-access by-index primitive accessors.
-     */
+    /// Populate per-field cached value arrays and null BitSets from the current batch.
+    /// Called once per setBatchData() to enable direct-access by-index primitive accessors.
     private void cacheFieldArrays() {
         for (int f = 0; f < fieldToProjCol.length; f++) {
             int projCol = fieldToProjCol[f];

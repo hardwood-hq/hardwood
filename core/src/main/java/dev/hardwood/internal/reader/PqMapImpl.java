@@ -26,9 +26,7 @@ import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.SchemaNode;
 
-/**
- * Flyweight {@link PqMap} that reads key-value entries directly from parallel column arrays.
- */
+/// Flyweight [PqMap] that reads key-value entries directly from parallel column arrays.
 final class PqMapImpl implements PqMap {
 
     private final NestedBatchIndex batch;

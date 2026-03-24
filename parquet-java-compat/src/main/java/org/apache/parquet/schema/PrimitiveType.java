@@ -7,33 +7,28 @@
  */
 package org.apache.parquet.schema;
 
-/**
- * Parquet primitive type (leaf column).
- * <p>
- * Represents a primitive column type such as INT32, INT64, BOOLEAN, etc.
- * </p>
- */
+/// Parquet primitive type (leaf column).
+///
+/// Represents a primitive column type such as INT32, INT64, BOOLEAN, etc.
 public class PrimitiveType extends Type {
 
-    /**
-     * Primitive type names as defined in the Parquet specification.
-     */
+    /// Primitive type names as defined in the Parquet specification.
     public enum PrimitiveTypeName {
-        /** Boolean */
+        /// Boolean
         BOOLEAN,
-        /** 32-bit signed integer */
+        /// 32-bit signed integer
         INT32,
-        /** 64-bit signed integer */
+        /// 64-bit signed integer
         INT64,
-        /** 96-bit integer (legacy timestamp) */
+        /// 96-bit integer (legacy timestamp)
         INT96,
-        /** 32-bit floating point */
+        /// 32-bit floating point
         FLOAT,
-        /** 64-bit floating point */
+        /// 64-bit floating point
         DOUBLE,
-        /** Variable length byte array */
+        /// Variable length byte array
         BINARY,
-        /** Fixed length byte array */
+        /// Fixed length byte array
         FIXED_LEN_BYTE_ARRAY
     }
 
@@ -41,39 +36,33 @@ public class PrimitiveType extends Type {
     private final OriginalType originalType;
     private final int length;
 
-    /**
-     * Create a primitive type without an original type.
-     *
-     * @param repetition the repetition
-     * @param primitive the primitive type name
-     * @param name the field name
-     */
+    /// Create a primitive type without an original type.
+    ///
+    /// @param repetition the repetition
+    /// @param primitive the primitive type name
+    /// @param name the field name
     public PrimitiveType(Repetition repetition, PrimitiveTypeName primitive, String name) {
         this(repetition, primitive, name, null);
     }
 
-    /**
-     * Create a primitive type with an original type.
-     *
-     * @param repetition the repetition
-     * @param primitive the primitive type name
-     * @param name the field name
-     * @param originalType the original/converted type
-     */
+    /// Create a primitive type with an original type.
+    ///
+    /// @param repetition the repetition
+    /// @param primitive the primitive type name
+    /// @param name the field name
+    /// @param originalType the original/converted type
     public PrimitiveType(Repetition repetition, PrimitiveTypeName primitive,
                          String name, OriginalType originalType) {
         this(repetition, primitive, 0, name, originalType);
     }
 
-    /**
-     * Create a primitive type with length (for FIXED_LEN_BYTE_ARRAY).
-     *
-     * @param repetition the repetition
-     * @param primitive the primitive type name
-     * @param length the fixed length (for FIXED_LEN_BYTE_ARRAY)
-     * @param name the field name
-     * @param originalType the original/converted type
-     */
+    /// Create a primitive type with length (for FIXED_LEN_BYTE_ARRAY).
+    ///
+    /// @param repetition the repetition
+    /// @param primitive the primitive type name
+    /// @param length the fixed length (for FIXED_LEN_BYTE_ARRAY)
+    /// @param name the field name
+    /// @param originalType the original/converted type
     public PrimitiveType(Repetition repetition, PrimitiveTypeName primitive,
                          int length, String name, OriginalType originalType) {
         super(name, repetition);
@@ -82,29 +71,23 @@ public class PrimitiveType extends Type {
         this.length = length;
     }
 
-    /**
-     * Get the primitive type name.
-     *
-     * @return the primitive type name
-     */
+    /// Get the primitive type name.
+    ///
+    /// @return the primitive type name
     public PrimitiveTypeName getPrimitiveTypeName() {
         return primitiveTypeName;
     }
 
-    /**
-     * Get the original/converted type.
-     *
-     * @return the original type, or null if none
-     */
+    /// Get the original/converted type.
+    ///
+    /// @return the original type, or null if none
     public OriginalType getOriginalType() {
         return originalType;
     }
 
-    /**
-     * Get the type length (for FIXED_LEN_BYTE_ARRAY).
-     *
-     * @return the length, or 0 if not applicable
-     */
+    /// Get the type length (for FIXED_LEN_BYTE_ARRAY).
+    ///
+    /// @return the length, or 0 if not applicable
     public int getTypeLength() {
         return length;
     }

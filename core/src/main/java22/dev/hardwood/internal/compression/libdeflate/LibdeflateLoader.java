@@ -12,9 +12,7 @@ import java.lang.foreign.SymbolLookup;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
-/**
- * Handles loading the libdeflate native library across platforms.
- */
+/// Handles loading the libdeflate native library across platforms.
 public final class LibdeflateLoader {
 
     private static final String[] LINUX_NAMES = {
@@ -34,17 +32,13 @@ public final class LibdeflateLoader {
     private LibdeflateLoader() {
     }
 
-    /**
-     * Returns true if libdeflate is available on this system.
-     */
+    /// Returns true if libdeflate is available on this system.
     public static boolean isAvailable() {
         ensureLoaded();
         return symbolLookup != null;
     }
 
-    /**
-     * Returns the symbol lookup for libdeflate, or throws if unavailable.
-     */
+    /// Returns the symbol lookup for libdeflate, or throws if unavailable.
     static SymbolLookup getSymbolLookup() {
         ensureLoaded();
         if (symbolLookup == null) {

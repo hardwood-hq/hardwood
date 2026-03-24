@@ -7,13 +7,10 @@
  */
 package org.apache.parquet.hadoop.metadata;
 
-/**
- * Minimal shim for parquet-java's {@code ColumnPath}.
- * <p>
- * Stores a dot-delimited column path string. Used by the filter API's
- * {@code Column} types to identify which column a predicate applies to.
- * </p>
- */
+/// Minimal shim for parquet-java's `ColumnPath`.
+///
+/// Stores a dot-delimited column path string. Used by the filter API's
+/// `Column` types to identify which column a predicate applies to.
 public final class ColumnPath {
 
     private final String[] parts;
@@ -22,31 +19,25 @@ public final class ColumnPath {
         this.parts = parts;
     }
 
-    /**
-     * Create a ColumnPath from dot-separated string (e.g. "address.city").
-     *
-     * @param path the dot-delimited path
-     * @return the column path
-     */
+    /// Create a ColumnPath from dot-separated string (e.g. "address.city").
+    ///
+    /// @param path the dot-delimited path
+    /// @return the column path
     public static ColumnPath fromDotString(String path) {
         return new ColumnPath(path.split("\\."));
     }
 
-    /**
-     * Create a ColumnPath from path components.
-     *
-     * @param parts the path components
-     * @return the column path
-     */
+    /// Create a ColumnPath from path components.
+    ///
+    /// @param parts the path components
+    /// @return the column path
     public static ColumnPath get(String... parts) {
         return new ColumnPath(parts.clone());
     }
 
-    /**
-     * Get the dot-delimited string representation.
-     *
-     * @return the path as a dot-separated string
-     */
+    /// Get the dot-delimited string representation.
+    ///
+    /// @return the path as a dot-separated string
     public String toDotString() {
         return String.join(".", parts);
     }

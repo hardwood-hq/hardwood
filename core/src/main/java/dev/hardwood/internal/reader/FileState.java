@@ -13,18 +13,15 @@ import dev.hardwood.InputFile;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.schema.FileSchema;
 
-/**
- * Holds prepared state for a Parquet file ready for multi-file reading.
- * <p>
- * Contains pre-scanned pages organized by column index, allowing PageCursors
- * to extend with pages from the next file without re-scanning.
- * </p>
- *
- * @param inputFile the input file
- * @param fileMetaData the parsed file metadata
- * @param fileSchema the parsed file schema
- * @param pageInfosByColumn pre-scanned pages for each column (by projected column index)
- */
+/// Holds prepared state for a Parquet file ready for multi-file reading.
+///
+/// Contains pre-scanned pages organized by column index, allowing PageCursors
+/// to extend with pages from the next file without re-scanning.
+///
+/// @param inputFile the input file
+/// @param fileMetaData the parsed file metadata
+/// @param fileSchema the parsed file schema
+/// @param pageInfosByColumn pre-scanned pages for each column (by projected column index)
 public record FileState(
     InputFile inputFile,
     FileMetaData fileMetaData,

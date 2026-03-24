@@ -11,44 +11,35 @@ import java.net.URI;
 import java.net.URISyntaxException;
 import java.util.Set;
 
-/**
- * Minimal Hadoop Path shim that wraps a URI.
- * <p>
- * This class provides API compatibility with Hadoop's Path class without
- * requiring the Hadoop dependency. Local paths are backed by a {@code file://}
- * URI; remote paths (e.g. {@code s3a://}) store the URI as-is.
- * </p>
- */
+/// Minimal Hadoop Path shim that wraps a URI.
+///
+/// This class provides API compatibility with Hadoop's Path class without
+/// requiring the Hadoop dependency. Local paths are backed by a `file://`
+/// URI; remote paths (e.g. `s3a://`) store the URI as-is.
 public class Path {
 
     private static final Set<String> LOCAL_SCHEMES = Set.of("file", "");
 
     private final URI uri;
 
-    /**
-     * Create a Path from a string path.
-     *
-     * @param pathString the path string
-     */
+    /// Create a Path from a string path.
+    ///
+    /// @param pathString the path string
     public Path(String pathString) {
         this.uri = parseUri(pathString);
     }
 
-    /**
-     * Create a Path from a URI.
-     *
-     * @param uri the URI
-     */
+    /// Create a Path from a URI.
+    ///
+    /// @param uri the URI
     public Path(URI uri) {
         this.uri = uri;
     }
 
-    /**
-     * Create a Path by resolving a child path against a parent.
-     *
-     * @param parent the parent path
-     * @param child the child path string
-     */
+    /// Create a Path by resolving a child path against a parent.
+    ///
+    /// @param parent the parent path
+    /// @param child the child path string
     public Path(Path parent, String child) {
         if (isLocal(parent.uri)) {
             java.nio.file.Path resolved = java.nio.file.Path.of(parent.uri).resolve(child);
@@ -63,30 +54,24 @@ public class Path {
         }
     }
 
-    /**
-     * Create a Path from parent string and child string.
-     *
-     * @param parent the parent path string
-     * @param child the child path string
-     */
+    /// Create a Path from parent string and child string.
+    ///
+    /// @param parent the parent path string
+    /// @param child the child path string
     public Path(String parent, String child) {
         this(new Path(parent), child);
     }
 
-    /**
-     * Convert to a URI.
-     *
-     * @return the URI representation
-     */
+    /// Convert to a URI.
+    ///
+    /// @return the URI representation
     public URI toUri() {
         return uri;
     }
 
-    /**
-     * Get the file name (last component of the path).
-     *
-     * @return the file name
-     */
+    /// Get the file name (last component of the path).
+    ///
+    /// @return the file name
     public String getName() {
         String path = uri.getPath();
         if (path == null || path.isEmpty()) {
@@ -96,11 +81,9 @@ public class Path {
         return lastSlash >= 0 ? path.substring(lastSlash + 1) : path;
     }
 
-    /**
-     * Get the parent path.
-     *
-     * @return the parent path, or null if no parent
-     */
+    /// Get the parent path.
+    ///
+    /// @return the parent path, or null if no parent
     public Path getParent() {
         if (isLocal(uri)) {
             java.nio.file.Path parent = java.nio.file.Path.of(uri).getParent();
@@ -123,11 +106,9 @@ public class Path {
         }
     }
 
-    /**
-     * Check if this is an absolute path.
-     *
-     * @return true if absolute
-     */
+    /// Check if this is an absolute path.
+    ///
+    /// @return true if absolute
     public boolean isAbsolute() {
         if (isLocal(uri)) {
             return java.nio.file.Path.of(uri).isAbsolute();

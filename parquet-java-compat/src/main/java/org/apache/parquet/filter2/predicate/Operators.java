@@ -9,15 +9,12 @@ package org.apache.parquet.filter2.predicate;
 
 import org.apache.parquet.hadoop.metadata.ColumnPath;
 
-/**
- * Shim for parquet-java's {@code Operators} class.
- * <p>
- * Contains column types, comparison predicates, and logical combinators
- * that mirror the upstream API. The shim covers the core comparison operators
- * ({@code eq}, {@code notEq}, {@code lt}, {@code ltEq}, {@code gt}, {@code gtEq})
- * and logical combinators ({@code and}, {@code or}, {@code not}).
- * </p>
- */
+/// Shim for parquet-java's `Operators` class.
+///
+/// Contains column types, comparison predicates, and logical combinators
+/// that mirror the upstream API. The shim covers the core comparison operators
+/// (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`)
+/// and logical combinators (`and`, `or`, `not`).
 public final class Operators {
 
     private Operators() {

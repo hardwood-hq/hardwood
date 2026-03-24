@@ -18,13 +18,10 @@ import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.FileMetaData;
 
-/**
- * Utility class for reading Parquet file metadata from an {@link InputFile}.
- * <p>
- * This centralizes the metadata reading logic used by ParquetFileReader,
- * MultiFileRowReader, and FileManager.
- * </p>
- */
+/// Utility class for reading Parquet file metadata from an [InputFile].
+///
+/// This centralizes the metadata reading logic used by ParquetFileReader,
+/// MultiFileRowReader, and FileManager.
 public final class ParquetMetadataReader {
 
     private static final byte[] MAGIC = "PAR1".getBytes(StandardCharsets.UTF_8);
@@ -35,13 +32,11 @@ public final class ParquetMetadataReader {
         // Utility class
     }
 
-    /**
-     * Reads file metadata from an {@link InputFile}.
-     *
-     * @param inputFile the input file to read metadata from
-     * @return the parsed FileMetaData
-     * @throws IOException if the file is not a valid Parquet file
-     */
+    /// Reads file metadata from an [InputFile].
+    ///
+    /// @param inputFile the input file to read metadata from
+    /// @return the parsed FileMetaData
+    /// @throws IOException if the file is not a valid Parquet file
     public static FileMetaData readMetadata(InputFile inputFile) throws IOException {
         long fileSize = inputFile.length();
         if (fileSize < MAGIC_SIZE + MAGIC_SIZE + FOOTER_LENGTH_SIZE) {

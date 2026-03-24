@@ -18,13 +18,10 @@ import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.compression.libdeflate.LibdeflateLoader;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
 
-/**
- * Internal implementation of {@link HardwoodContext}.
- * <p>
- * Holds the thread pool for parallel page decoding, the libdeflate
- * decompressor pool for native GZIP decompression, and the decompressor factory.
- * </p>
- */
+/// Internal implementation of [HardwoodContext].
+///
+/// Holds the thread pool for parallel page decoding, the libdeflate
+/// decompressor pool for native GZIP decompression, and the decompressor factory.
 public class HardwoodContextImpl implements HardwoodContext {
 
     private static final String USE_LIBDEFLATE_PROPERTY = "hardwood.uselibdeflate";
@@ -41,16 +38,12 @@ public class HardwoodContextImpl implements HardwoodContext {
         this.decompressorFactory = new DecompressorFactory(libdeflatePool);
     }
 
-    /**
-     * Create a new context with a thread pool sized to available processors.
-     */
+    /// Create a new context with a thread pool sized to available processors.
     public static HardwoodContextImpl create() {
         return create(Runtime.getRuntime().availableProcessors());
     }
 
-    /**
-     * Create a new context with a thread pool of the specified size.
-     */
+    /// Create a new context with a thread pool of the specified size.
     public static HardwoodContextImpl create(int threads) {
         AtomicInteger threadCounter = new AtomicInteger(0);
         ThreadFactory threadFactory = r -> {
@@ -86,9 +79,7 @@ public class HardwoodContextImpl implements HardwoodContext {
         return executor;
     }
 
-    /**
-     * Get the decompressor factory.
-     */
+    /// Get the decompressor factory.
     public DecompressorFactory decompressorFactory() {
         return decompressorFactory;
     }

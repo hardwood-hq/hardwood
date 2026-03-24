@@ -22,29 +22,21 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * Provides typed access to a batch of column data.
- * Implementations handle flat vs nested schema differences.
- */
+/// Provides typed access to a batch of column data.
+/// Implementations handle flat vs nested schema differences.
 public sealed interface BatchDataView permits FlatBatchDataView, NestedBatchDataView {
 
-    /**
-     * Creates the appropriate BatchDataView for the given schema.
-     */
+    /// Creates the appropriate BatchDataView for the given schema.
     static BatchDataView create(FileSchema schema, ProjectedSchema projectedSchema) {
         return schema.isFlatSchema()
                 ? new FlatBatchDataView(schema, projectedSchema)
                 : new NestedBatchDataView(schema, projectedSchema);
     }
 
-    /**
-     * Update with new batch data after loading.
-     */
+    /// Update with new batch data after loading.
     void setBatchData(TypedColumnData[] columnData);
 
-    /**
-     * Called after advancing to a new row.
-     */
+    /// Called after advancing to a new row.
     void setRowIndex(int rowIndex);
 
     // Primitive accessors (by name)
@@ -107,10 +99,8 @@ public sealed interface BatchDataView permits FlatBatchDataView, NestedBatchData
     int getFieldCount();
     String getFieldName(int projectedIndex);
 
-    /**
-     * Get the underlying flat column data arrays for direct primitive access.
-     *
-     * @return the flat column data array, or null if nested schema
-     */
+    /// Get the underlying flat column data arrays for direct primitive access.
+    ///
+    /// @return the flat column data array, or null if nested schema
     FlatColumnData[] getFlatColumnData();
 }

@@ -9,26 +9,23 @@ package dev.hardwood.internal.reader;
 
 import dev.hardwood.schema.ColumnSchema;
 
-/**
- * Base sealed interface for typed column data with primitive arrays.
- * <p>
- * Stores values in typed primitive arrays to eliminate boxing overhead.
- * Extended by {@link FlatColumnData} for flat schemas and {@link NestedColumnData}
- * for nested schemas.
- * </p>
- */
+/// Base sealed interface for typed column data with primitive arrays.
+///
+/// Stores values in typed primitive arrays to eliminate boxing overhead.
+/// Extended by [FlatColumnData] for flat schemas and [NestedColumnData]
+/// for nested schemas.
 public sealed interface TypedColumnData permits FlatColumnData, NestedColumnData {
 
     ColumnSchema column();
 
     int recordCount();
 
-    /** Total number of values (may differ from recordCount for nested schemas). */
+    /// Total number of values (may differ from recordCount for nested schemas).
     int valueCount();
 
-    /** Get the value at index, boxing primitives. */
+    /// Get the value at index, boxing primitives.
     Object getValue(int index);
 
-    /** Check if the value at index is null. */
+    /// Check if the value at index is null.
     boolean isNull(int index);
 }

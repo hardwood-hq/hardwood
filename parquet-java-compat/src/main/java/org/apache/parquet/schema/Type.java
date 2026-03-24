@@ -7,83 +7,66 @@
  */
 package org.apache.parquet.schema;
 
-/**
- * Base class for Parquet schema types.
- * <p>
- * This provides API compatibility with parquet-java's Type class.
- * </p>
- */
+/// Base class for Parquet schema types.
+///
+/// This provides API compatibility with parquet-java's Type class.
 public abstract class Type {
 
-    /**
-     * Repetition types for Parquet fields.
-     */
+    /// Repetition types for Parquet fields.
     public enum Repetition {
-        /** Field must be present exactly once */
+        /// Field must be present exactly once
         REQUIRED,
-        /** Field may be absent (null) */
+        /// Field may be absent (null)
         OPTIONAL,
-        /** Field may appear zero or more times */
+        /// Field may appear zero or more times
         REPEATED
     }
 
     private final String name;
     private final Repetition repetition;
 
-    /**
-     * Create a new type.
-     *
-     * @param name the field name
-     * @param repetition the repetition type
-     */
+    /// Create a new type.
+    ///
+    /// @param name the field name
+    /// @param repetition the repetition type
     protected Type(String name, Repetition repetition) {
         this.name = name;
         this.repetition = repetition;
     }
 
-    /**
-     * Get the field name.
-     *
-     * @return the name
-     */
+    /// Get the field name.
+    ///
+    /// @return the name
     public String getName() {
         return name;
     }
 
-    /**
-     * Get the repetition type.
-     *
-     * @return the repetition
-     */
+    /// Get the repetition type.
+    ///
+    /// @return the repetition
     public Repetition getRepetition() {
         return repetition;
     }
 
-    /**
-     * Check if this is a primitive type.
-     *
-     * @return true if primitive, false if group
-     */
+    /// Check if this is a primitive type.
+    ///
+    /// @return true if primitive, false if group
     public boolean isPrimitive() {
         return false;
     }
 
-    /**
-     * Cast to PrimitiveType.
-     *
-     * @return this as a PrimitiveType
-     * @throws ClassCastException if not a primitive type
-     */
+    /// Cast to PrimitiveType.
+    ///
+    /// @return this as a PrimitiveType
+    /// @throws ClassCastException if not a primitive type
     public PrimitiveType asPrimitiveType() {
         throw new ClassCastException("Not a primitive type: " + this);
     }
 
-    /**
-     * Cast to GroupType.
-     *
-     * @return this as a GroupType
-     * @throws ClassCastException if not a group type
-     */
+    /// Cast to GroupType.
+    ///
+    /// @return this as a GroupType
+    /// @throws ClassCastException if not a group type
     public GroupType asGroupType() {
         throw new ClassCastException("Not a group type: " + this);
     }

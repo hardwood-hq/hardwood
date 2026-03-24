@@ -19,15 +19,11 @@ import java.util.UUID;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 
-/**
- * Converts physical values to their logical type representations.
- */
+/// Converts physical values to their logical type representations.
 public class LogicalTypeConverter {
 
-    /**
-     * Convert a physical value to its logical type representation.
-     * Returns the original value if no conversion is needed.
-     */
+    /// Convert a physical value to its logical type representation.
+    /// Returns the original value if no conversion is needed.
     public static Object convert(Object physicalValue, PhysicalType physicalType, LogicalType logicalType) {
         if (physicalValue == null || logicalType == null) {
             return physicalValue;

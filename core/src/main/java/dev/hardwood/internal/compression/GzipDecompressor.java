@@ -12,12 +12,10 @@ import java.nio.ByteBuffer;
 import java.util.zip.DataFormatException;
 import java.util.zip.Inflater;
 
-/**
- * Decompressor for GZIP-compressed data using Inflater directly for maximum performance.
- * <p>
- * This implementation bypasses GZIPInputStream to avoid intermediate buffering and copies,
- * decompressing directly into a pre-allocated output buffer.
- */
+/// Decompressor for GZIP-compressed data using Inflater directly for maximum performance.
+///
+/// This implementation bypasses GZIPInputStream to avoid intermediate buffering and copies,
+/// decompressing directly into a pre-allocated output buffer.
 public class GzipDecompressor implements Decompressor {
 
     private static final int GZIP_MAGIC = 0x8b1f;

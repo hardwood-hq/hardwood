@@ -14,9 +14,7 @@ import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
 import dev.hardwood.internal.metadata.PageHeader;
 
-/**
- * Reader for PageHeader from Thrift Compact Protocol.
- */
+/// Reader for PageHeader from Thrift Compact Protocol.
 public class PageHeaderReader {
 
     public static PageHeader read(ThriftCompactReader reader) throws IOException {

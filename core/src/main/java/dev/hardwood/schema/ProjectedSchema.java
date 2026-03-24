@@ -12,17 +12,15 @@ import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
 
-/**
- * Represents a projected view of a Parquet schema containing only selected columns.
- *
- * <p>This class handles the mapping between projected column indices (dense, 0-based)
- * and original column indices, allowing the reader to skip I/O, decoding, and memory
- * allocation for non-projected columns.</p>
- *
- * <p>For nested schemas, projecting a parent group includes all its child columns.
- * For example, if "address" is a struct containing "city" and "street", projecting
- * "address" includes both child columns.</p>
- */
+/// Represents a projected view of a Parquet schema containing only selected columns.
+///
+/// This class handles the mapping between projected column indices (dense, 0-based)
+/// and original column indices, allowing the reader to skip I/O, decoding, and memory
+/// allocation for non-projected columns.
+///
+/// For nested schemas, projecting a parent group includes all its child columns.
+/// For example, if "address" is a struct containing "city" and "street", projecting
+/// "address" includes both child columns.
 public final class ProjectedSchema {
 
     private final FileSchema originalSchema;
@@ -41,14 +39,12 @@ public final class ProjectedSchema {
         this.projectedFieldIndices = projectedFieldIndices;
     }
 
-    /**
-     * Creates a projected schema from the given full schema and projection.
-     *
-     * @param schema the original file schema
-     * @param projection the column projection specifying which columns to include
-     * @return a projected schema containing only the selected columns
-     * @throws IllegalArgumentException if a projected column name is not found in the schema
-     */
+    /// Creates a projected schema from the given full schema and projection.
+    ///
+    /// @param schema the original file schema
+    /// @param projection the column projection specifying which columns to include
+    /// @return a projected schema containing only the selected columns
+    /// @throws IllegalArgumentException if a projected column name is not found in the schema
     public static ProjectedSchema create(FileSchema schema, ColumnProjection projection) {
         if (projection.projectsAll()) {
             return createAllColumnsProjection(schema);
@@ -100,9 +96,7 @@ public final class ProjectedSchema {
         return new ProjectedSchema(schema, projectedToOriginal, originalToProjected, projectedColumns, projectedFieldIndices);
     }
 
-    /**
-     * Creates a projection that includes all columns.
-     */
+    /// Creates a projection that includes all columns.
     private static ProjectedSchema createAllColumnsProjection(FileSchema schema) {
         int columnCount = schema.getColumnCount();
         int[] projectedToOriginal = new int[columnCount];
@@ -122,9 +116,7 @@ public final class ProjectedSchema {
                 new ArrayList<>(schema.getColumns()), projectedFieldIndices);
     }
 
-    /**
-     * Resolves a simple column name (no dot notation).
-     */
+    /// Resolves a simple column name (no dot notation).
     private static void resolveSimpleColumn(FileSchema schema, String name,
                                             List<Integer> includedOriginalIndices,
                                             List<Integer> includedFieldIndices,
@@ -159,9 +151,7 @@ public final class ProjectedSchema {
         throw new IllegalArgumentException("Column not found: " + name);
     }
 
-    /**
-     * Resolves a nested column name (dot notation).
-     */
+    /// Resolves a nested column name (dot notation).
     private static void resolveNestedColumn(FileSchema schema, String name,
                                             List<Integer> includedOriginalIndices,
                                             List<Integer> includedFieldIndices,
@@ -211,9 +201,7 @@ public final class ProjectedSchema {
         collectColumnsFromNode(current, includedOriginalIndices, originalToProjected);
     }
 
-    /**
-     * Recursively collects all column indices under a schema node.
-     */
+    /// Recursively collects all column indices under a schema node.
     private static void collectColumnsFromNode(SchemaNode node,
                                                List<Integer> includedOriginalIndices,
                                                int[] originalToProjected) {
@@ -231,37 +219,29 @@ public final class ProjectedSchema {
         }
     }
 
-    /**
-     * Returns the original file schema.
-     */
+    /// Returns the original file schema.
     public FileSchema getOriginalSchema() {
         return originalSchema;
     }
 
-    /**
-     * Returns the number of projected columns.
-     */
+    /// Returns the number of projected columns.
     public int getProjectedColumnCount() {
         return projectedToOriginal.length;
     }
 
-    /**
-     * Converts a projected column index to the original column index.
-     *
-     * @param projectedIndex the index in the projected schema (0-based)
-     * @return the corresponding index in the original schema
-     * @throws IndexOutOfBoundsException if projectedIndex is out of range
-     */
+    /// Converts a projected column index to the original column index.
+    ///
+    /// @param projectedIndex the index in the projected schema (0-based)
+    /// @return the corresponding index in the original schema
+    /// @throws IndexOutOfBoundsException if projectedIndex is out of range
     public int toOriginalIndex(int projectedIndex) {
         return projectedToOriginal[projectedIndex];
     }
 
-    /**
-     * Converts an original column index to the projected column index.
-     *
-     * @param originalIndex the index in the original schema
-     * @return the corresponding index in the projected schema, or -1 if not projected
-     */
+    /// Converts an original column index to the projected column index.
+    ///
+    /// @param originalIndex the index in the original schema
+    /// @return the corresponding index in the projected schema, or -1 if not projected
     public int toProjectedIndex(int originalIndex) {
         if (originalIndex < 0 || originalIndex >= originalToProjected.length) {
             return -1;
@@ -269,31 +249,23 @@ public final class ProjectedSchema {
         return originalToProjected[originalIndex];
     }
 
-    /**
-     * Returns the list of projected columns.
-     */
+    /// Returns the list of projected columns.
     public List<ColumnSchema> getProjectedColumns() {
         return projectedColumns;
     }
 
-    /**
-     * Returns the projected column at the given projected index.
-     */
+    /// Returns the projected column at the given projected index.
     public ColumnSchema getProjectedColumn(int projectedIndex) {
         return projectedColumns.get(projectedIndex);
     }
 
-    /**
-     * Returns the indices of projected top-level fields in the root node's children.
-     * This is used by NestedBatchDataView to build a sparse record structure.
-     */
+    /// Returns the indices of projected top-level fields in the root node's children.
+    /// This is used by NestedBatchDataView to build a sparse record structure.
     public int[] getProjectedFieldIndices() {
         return projectedFieldIndices;
     }
 
-    /**
-     * Returns true if all columns are projected.
-     */
+    /// Returns true if all columns are projected.
     public boolean projectsAll() {
         return projectedToOriginal.length == originalSchema.getColumnCount();
     }

@@ -7,12 +7,10 @@
  */
 package dev.hardwood.internal.util;
 
-/**
- * A simple open-addressed hash map with linear probing for String -> int mappings.
- * Optimized for small to medium-sized immutable maps (like column name lookups).
- * <p>
- * Uses open addressing for better cache locality compared to HashMap's separate chaining.
- */
+/// A simple open-addressed hash map with linear probing for String -> int mappings.
+/// Optimized for small to medium-sized immutable maps (like column name lookups).
+///
+/// Uses open addressing for better cache locality compared to HashMap's separate chaining.
 public final class StringToIntMap {
 
     private static final int EMPTY = -1;
@@ -21,9 +19,7 @@ public final class StringToIntMap {
     private final int[] values;
     private final int mask;
 
-    /**
-     * Create a map with the given capacity (will be rounded up to next power of 2).
-     */
+    /// Create a map with the given capacity (will be rounded up to next power of 2).
     public StringToIntMap(int expectedSize) {
         // Use ~75% load factor, round up to power of 2
         int capacity = tableSizeFor(expectedSize + (expectedSize >> 1) + 1);
@@ -37,9 +33,7 @@ public final class StringToIntMap {
         }
     }
 
-    /**
-     * Put a key-value pair into the map.
-     */
+    /// Put a key-value pair into the map.
     public void put(String key, int value) {
         int index = key.hashCode() & mask;
 
@@ -55,9 +49,7 @@ public final class StringToIntMap {
         values[index] = value;
     }
 
-    /**
-     * Get the value for a key, or EMPTY (-1) if not found.
-     */
+    /// Get the value for a key, or EMPTY (-1) if not found.
     public int get(String key) {
         int index = key.hashCode() & mask;
 
@@ -71,16 +63,12 @@ public final class StringToIntMap {
         return EMPTY;
     }
 
-    /**
-     * Check if the map contains the given key.
-     */
+    /// Check if the map contains the given key.
     public boolean containsKey(String key) {
         return get(key) != EMPTY;
     }
 
-    /**
-     * Round up to the next power of 2.
-     */
+    /// Round up to the next power of 2.
     private static int tableSizeFor(int cap) {
         int n = cap - 1;
         n |= n >>> 1;

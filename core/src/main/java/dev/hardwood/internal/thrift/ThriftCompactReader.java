@@ -13,10 +13,8 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
-/**
- * Reader for Thrift Compact Protocol using direct ByteBuffer access.
- * Reference: https://github.com/apache/thrift/blob/master/doc/specs/thrift-compact-protocol.md
- */
+/// Reader for Thrift Compact Protocol using direct ByteBuffer access.
+/// Reference: https://github.com/apache/thrift/blob/master/doc/specs/thrift-compact-protocol.md
 public class ThriftCompactReader {
 
     private static final byte TYPE_BOOLEAN_TRUE = 0x01;
@@ -36,37 +34,29 @@ public class ThriftCompactReader {
     private final int startPosition;
     private short lastFieldId = 0;
 
-    /**
-     * Creates a reader that reads directly from a ByteBuffer.
-     *
-     * @param buffer the buffer to read from (position should be at start of data)
-     */
+    /// Creates a reader that reads directly from a ByteBuffer.
+    ///
+    /// @param buffer the buffer to read from (position should be at start of data)
     public ThriftCompactReader(ByteBuffer buffer) {
         this.buffer = buffer.slice().order(ByteOrder.LITTLE_ENDIAN);
         this.startPosition = 0;
     }
 
-    /**
-     * Creates a reader that reads from a ByteBuffer starting at a specific offset.
-     *
-     * @param buffer the buffer to read from
-     * @param offset the offset within the buffer to start reading
-     */
+    /// Creates a reader that reads from a ByteBuffer starting at a specific offset.
+    ///
+    /// @param buffer the buffer to read from
+    /// @param offset the offset within the buffer to start reading
     public ThriftCompactReader(ByteBuffer buffer, int offset) {
         this.buffer = buffer.slice(offset, buffer.limit() - offset).order(ByteOrder.LITTLE_ENDIAN);
         this.startPosition = 0;
     }
 
-    /**
-     * Returns the number of bytes read from the buffer.
-     */
+    /// Returns the number of bytes read from the buffer.
     public int getBytesRead() {
         return buffer.position() - startPosition;
     }
 
-    /**
-     * Read an unsigned varint from the buffer.
-     */
+    /// Read an unsigned varint from the buffer.
     public long readVarint() throws EOFException {
         long result = 0;
         int shift = 0;
@@ -81,17 +71,13 @@ public class ThriftCompactReader {
         throw new EOFException("Unexpected EOF while reading varint");
     }
 
-    /**
-     * Read a zigzag-encoded signed integer.
-     */
+    /// Read a zigzag-encoded signed integer.
     public long readZigzag() throws IOException {
         long n = readVarint();
         return (n >>> 1) ^ -(n & 1);
     }
 
-    /**
-     * Read a single byte.
-     */
+    /// Read a single byte.
     public byte readByte() throws EOFException {
         if (!buffer.hasRemaining()) {
             throw new EOFException("Unexpected EOF while reading byte");
@@ -99,9 +85,7 @@ public class ThriftCompactReader {
         return buffer.get();
     }
 
-    /**
-     * Read multiple bytes into a destination array.
-     */
+    /// Read multiple bytes into a destination array.
     public void readBytes(byte[] dest) throws EOFException {
         if (buffer.remaining() < dest.length) {
             throw new EOFException("Unexpected EOF while reading bytes");
@@ -109,9 +93,7 @@ public class ThriftCompactReader {
         buffer.get(dest);
     }
 
-    /**
-     * Read a boolean value.
-     */
+    /// Read a boolean value.
     public boolean readBoolean() throws IOException {
         byte b = readByte();
         if (b == TYPE_BOOLEAN_TRUE) {
@@ -123,23 +105,17 @@ public class ThriftCompactReader {
         throw new IOException("Invalid boolean value: " + b);
     }
 
-    /**
-     * Read an i32 value (zigzag encoded).
-     */
+    /// Read an i32 value (zigzag encoded).
     public int readI32() throws IOException {
         return (int) readZigzag();
     }
 
-    /**
-     * Read an i64 value (zigzag encoded).
-     */
+    /// Read an i64 value (zigzag encoded).
     public long readI64() throws IOException {
         return readZigzag();
     }
 
-    /**
-     * Read a double value (8 bytes, little-endian).
-     */
+    /// Read a double value (8 bytes, little-endian).
     public double readDouble() throws EOFException {
         if (buffer.remaining() < 8) {
             throw new EOFException("Unexpected EOF while reading double");
@@ -147,9 +123,7 @@ public class ThriftCompactReader {
         return buffer.getDouble();
     }
 
-    /**
-     * Read a binary/string value (length-prefixed).
-     */
+    /// Read a binary/string value (length-prefixed).
     public byte[] readBinary() throws IOException {
         int length = (int) readVarint();
         byte[] data = new byte[length];
@@ -157,17 +131,13 @@ public class ThriftCompactReader {
         return data;
     }
 
-    /**
-     * Read a string value.
-     */
+    /// Read a string value.
     public String readString() throws IOException {
         return new String(readBinary(), StandardCharsets.UTF_8);
     }
 
-    /**
-     * Read a field header and return field info.
-     * Returns null when STOP field is encountered.
-     */
+    /// Read a field header and return field info.
+    /// Returns null when STOP field is encountered.
     public FieldHeader readFieldHeader() throws IOException {
         byte b = readByte();
 
@@ -194,9 +164,7 @@ public class ThriftCompactReader {
         return new FieldHeader(fieldId, type);
     }
 
-    /**
-     * Read a list/set header.
-     */
+    /// Read a list/set header.
     public CollectionHeader readListHeader() throws IOException {
         byte sizeAndType = readByte();
         int size = (sizeAndType >> 4) & 0x0F;
@@ -210,9 +178,7 @@ public class ThriftCompactReader {
         return new CollectionHeader(elementType, size);
     }
 
-    /**
-     * Skip a field of the given type.
-     */
+    /// Skip a field of the given type.
     public void skipField(byte type) throws IOException {
         switch (type) {
             case TYPE_BOOLEAN_TRUE:
@@ -260,9 +226,7 @@ public class ThriftCompactReader {
         }
     }
 
-    /**
-     * Skip an entire struct (read until STOP field).
-     */
+    /// Skip an entire struct (read until STOP field).
     public void skipStruct() throws IOException {
         // Save and reset field ID context for nested struct
         short saved = pushFieldIdContext();
@@ -280,25 +244,19 @@ public class ThriftCompactReader {
         }
     }
 
-    /**
-     * Reset the last field ID (call when starting to read a new struct).
-     */
+    /// Reset the last field ID (call when starting to read a new struct).
     public void resetLastFieldId() {
         lastFieldId = 0;
     }
 
-    /**
-     * Save the current last field ID and reset it for reading a nested struct.
-     */
+    /// Save the current last field ID and reset it for reading a nested struct.
     public short pushFieldIdContext() {
         short saved = lastFieldId;
         lastFieldId = 0;
         return saved;
     }
 
-    /**
-     * Restore the last field ID after reading a nested struct.
-     */
+    /// Restore the last field ID after reading a nested struct.
     public void popFieldIdContext(short savedFieldId) {
         lastFieldId = savedFieldId;
     }

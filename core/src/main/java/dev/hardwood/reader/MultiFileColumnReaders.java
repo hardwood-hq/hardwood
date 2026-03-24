@@ -17,29 +17,27 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/**
- * Holds multiple {@link ColumnReader} instances backed by a shared {@link FileManager}
- * for cross-file prefetching across multiple Parquet files.
- *
- * <p>Usage:</p>
- * <pre>{@code
- * try (Hardwood hardwood = Hardwood.create();
- *      MultiFileParquetReader parquet = hardwood.openAll(files);
- *      MultiFileColumnReaders columns = parquet.createColumnReaders(
- *          ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
- *
- *     ColumnReader col0 = columns.getColumnReader("passenger_count");
- *     ColumnReader col1 = columns.getColumnReader("trip_distance");
- *     ColumnReader col2 = columns.getColumnReader("fare_amount");
- *
- *     while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
- *         int count = col0.getRecordCount();
- *         double[] v0 = col0.getDoubles();
- *         // ...
- *     }
- * }
- * }</pre>
- */
+/// Holds multiple [ColumnReader] instances backed by a shared [FileManager]
+/// for cross-file prefetching across multiple Parquet files.
+///
+/// Usage:
+/// ```java
+/// try (Hardwood hardwood = Hardwood.create();
+///      MultiFileParquetReader parquet = hardwood.openAll(files);
+///      MultiFileColumnReaders columns = parquet.createColumnReaders(
+///          ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
+///
+///     ColumnReader col0 = columns.getColumnReader("passenger_count");
+///     ColumnReader col1 = columns.getColumnReader("trip_distance");
+///     ColumnReader col2 = columns.getColumnReader("fare_amount");
+///
+///     while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
+///         int count = col0.getRecordCount();
+///         double[] v0 = col0.getDoubles();
+///         // ...
+///     }
+/// }
+/// ```
 public class MultiFileColumnReaders implements AutoCloseable {
 
     private final Map<String, ColumnReader> readersByName;
@@ -79,21 +77,17 @@ public class MultiFileColumnReaders implements AutoCloseable {
         }
     }
 
-    /**
-     * Get the number of projected columns.
-     */
+    /// Get the number of projected columns.
     public int getColumnCount() {
         return readersByIndex.length;
     }
 
-    /**
-     * Get the ColumnReader for a named column.
-     * For nested columns, use the dot-separated field path (e.g. {@code "address.zip"}).
-     *
-     * @param columnName the column name or dot-separated field path (must have been requested in the projection)
-     * @return the ColumnReader for the column
-     * @throws IllegalArgumentException if the column was not requested
-     */
+    /// Get the ColumnReader for a named column.
+    /// For nested columns, use the dot-separated field path (e.g. `"address.zip"`).
+    ///
+    /// @param columnName the column name or dot-separated field path (must have been requested in the projection)
+    /// @return the ColumnReader for the column
+    /// @throws IllegalArgumentException if the column was not requested
     public ColumnReader getColumnReader(String columnName) {
         ColumnReader reader = readersByName.get(columnName);
         if (reader == null) {
@@ -102,12 +96,10 @@ public class MultiFileColumnReaders implements AutoCloseable {
         return reader;
     }
 
-    /**
-     * Get the ColumnReader by index within the requested columns.
-     *
-     * @param index index within the requested column names (0-based)
-     * @return the ColumnReader at the given index
-     */
+    /// Get the ColumnReader by index within the requested columns.
+    ///
+    /// @param index index within the requested column names (0-based)
+    /// @return the ColumnReader at the given index
     public ColumnReader getColumnReader(int index) {
         return readersByIndex[index];
     }

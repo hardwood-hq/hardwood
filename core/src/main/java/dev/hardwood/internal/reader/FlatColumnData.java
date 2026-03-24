@@ -11,16 +11,13 @@ import java.util.BitSet;
 
 import dev.hardwood.schema.ColumnSchema;
 
-/**
- * Typed column data for flat schemas (no nested structures).
- * <p>
- * Uses array copying from pages to provide consistent batch sizes across columns.
- * A pre-computed {@link BitSet} provides fast null checks without storing definition levels.
- * </p>
- */
+/// Typed column data for flat schemas (no nested structures).
+///
+/// Uses array copying from pages to provide consistent batch sizes across columns.
+/// A pre-computed [BitSet] provides fast null checks without storing definition levels.
 public sealed interface FlatColumnData extends TypedColumnData {
 
-    /** Pre-computed null flags for fast null checks. Null if column is non-nullable. */
+    /// Pre-computed null flags for fast null checks. Null if column is non-nullable.
     BitSet nulls();
 
     @Override

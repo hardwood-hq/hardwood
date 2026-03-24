@@ -16,18 +16,14 @@ import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.fs.Path;
 import org.apache.parquet.io.InputFile;
 
-/**
- * Shim for Hadoop's {@code HadoopInputFile}.
- * <p>
- * Implements {@link InputFile} (the parquet-java shim interface) and internally
- * wraps a Hardwood {@link dev.hardwood.InputFile} for actual I/O.
- * </p>
- * <p>
- * For local paths, delegates to {@link dev.hardwood.InputFile#of(java.nio.file.Path)}.
- * For S3 paths ({@code s3://} or {@code s3a://}), uses reflection to load
- * {@code hardwood-s3} classes, avoiding a compile-time dependency on the S3 module.
- * </p>
- */
+/// Shim for Hadoop's `HadoopInputFile`.
+///
+/// Implements [InputFile] (the parquet-java shim interface) and internally
+/// wraps a Hardwood [dev.hardwood.InputFile] for actual I/O.
+///
+/// For local paths, delegates to [dev.hardwood.InputFile#of(java.nio.file.Path)].
+/// For S3 paths (`s3://` or `s3a://`), uses reflection to load
+/// `hardwood-s3` classes, avoiding a compile-time dependency on the S3 module.
 public final class HadoopInputFile implements InputFile {
 
     private static final Set<String> S3_SCHEMES = Set.of("s3", "s3a", "s3n");
@@ -38,21 +34,18 @@ public final class HadoopInputFile implements InputFile {
         this.delegate = delegate;
     }
 
-    /**
-     * Create an {@link InputFile} from a Hadoop-style Path and Configuration.
-     * <p>
-     * For local paths, the Configuration is ignored and a local file is returned.
-     * For S3 paths, the Configuration is used to construct an S3 client with properties:
-     * <ul>
-     *   <li>{@code fs.s3a.access.key} + {@code fs.s3a.secret.key} — static credentials</li>
-     *   <li>{@code fs.s3a.endpoint} — endpoint override (e.g. LocalStack, MinIO)</li>
-     *   <li>{@code fs.s3a.path.style.access} — force path-style access</li>
-     * </ul>
-     *
-     * @param path the Hadoop path
-     * @param conf the Hadoop configuration
-     * @return an InputFile backed by the given path
-     */
+    /// Create an [InputFile] from a Hadoop-style Path and Configuration.
+    ///
+    /// For local paths, the Configuration is ignored and a local file is returned.
+    /// For S3 paths, the Configuration is used to construct an S3 client with properties:
+    ///
+    /// - `fs.s3a.access.key` + `fs.s3a.secret.key` — static credentials
+    /// - `fs.s3a.endpoint` — endpoint override (e.g. LocalStack, MinIO)
+    /// - `fs.s3a.path.style.access` — force path-style access
+    ///
+    /// @param path the Hadoop path
+    /// @param conf the Hadoop configuration
+    /// @return an InputFile backed by the given path
     public static InputFile fromPath(Path path, Configuration conf) {
         URI uri = path.toUri();
 

@@ -20,9 +20,7 @@ import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Tests for {@link InputFile#of(ByteBuffer)} and {@link InputFile#ofBuffers(List)}.
- */
+/// Tests for [InputFile#of(ByteBuffer)] and [InputFile#ofBuffers(List)].
 class ByteBufferInputFileTest {
 
     @Test

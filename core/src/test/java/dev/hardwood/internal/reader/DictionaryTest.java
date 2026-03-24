@@ -27,12 +27,10 @@ class DictionaryTest {
         assertThat(dict.size()).isEqualTo(2);
     }
 
-    /**
-     * Reproduces the "Unexpected EOF while reading BYTE_ARRAY data" bug that
-     * occurred with the Overture Maps places file. The last dictionary entry had
-     * length 0 (empty string). ByteArrayInputStream.read(byte[0]) returns -1 at
-     * stream EOF instead of 0, causing the EOF check to trip.
-     */
+    /// Reproduces the "Unexpected EOF while reading BYTE_ARRAY data" bug that
+    /// occurred with the Overture Maps places file. The last dictionary entry had
+    /// length 0 (empty string). `ByteArrayInputStream.read(byte[0])` returns -1 at
+    /// stream EOF instead of 0, causing the EOF check to trip.
     @Test
     void parseByteArrayDictionaryWithEmptyLastEntry() throws IOException {
         byte[] data = {

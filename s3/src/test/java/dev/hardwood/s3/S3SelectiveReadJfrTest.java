@@ -32,29 +32,25 @@ import software.amazon.awssdk.services.s3.S3Client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/**
- * Verifies that column projection and row group filtering reduce S3 I/O,
- * using JFR events as the assertion mechanism:
- * <ul>
- *   <li>{@code dev.hardwood.RowGroupScanned} — only projected columns are scanned</li>
- *   <li>{@code dev.hardwood.RowGroupFilter} — row groups are skipped by predicate push-down</li>
- *   <li>{@code jdk.SocketRead} — fewer bytes are transferred over the network</li>
- * </ul>
- * <p>
- * Note: {@code S3InputFile} pre-fetches a 64 KB tail on {@code open()}, so files
- * smaller than 64 KB are served entirely from that cache — no additional socket
- * reads occur. The byte-comparison tests therefore use {@code page_index_test.parquet}
- * (170 KB, larger than the tail cache) to ensure socket-level differences are observable.
- * </p>
- */
+/// Verifies that column projection and row group filtering reduce S3 I/O,
+/// using JFR events as the assertion mechanism:
+///
+/// - `dev.hardwood.RowGroupScanned` — only projected columns are scanned
+/// - `dev.hardwood.RowGroupFilter` — row groups are skipped by predicate push-down
+/// - `jdk.SocketRead` — fewer bytes are transferred over the network
+///
+/// Note: `S3InputFile` pre-fetches a 64 KB tail on `open()`, so files
+/// smaller than 64 KB are served entirely from that cache — no additional socket
+/// reads occur. The byte-comparison tests therefore use `page_index_test.parquet`
+/// (170 KB, larger than the tail cache) to ensure socket-level differences are observable.
 @Testcontainers
 @org.moditect.jfrunit.JfrEventTest
 public class S3SelectiveReadJfrTest {
 
-    /** 170 KB, 3 columns (id, value, category), many pages, offset indexes — larger than the 64 KB tail cache. */
+    /// 170 KB, 3 columns (id, value, category), many pages, offset indexes — larger than the 64 KB tail cache.
     private static final String PAGE_INDEX_FILE = "page_index_test.parquet";
 
-    /** 9.6 KB, 3 columns (id, value, label), 3 row groups — smaller than tail cache. */
+    /// 9.6 KB, 3 columns (id, value, label), 3 row groups — smaller than tail cache.
     private static final String FILTER_PUSHDOWN_FILE = "filter_pushdown_int.parquet";
 
     private static final Path TEST_RESOURCES = Path.of("").toAbsolutePath()
