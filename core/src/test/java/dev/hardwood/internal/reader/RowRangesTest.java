@@ -20,7 +20,7 @@ import static org.junit.jupiter.api.Assertions.assertTrue;
 class RowRangesTest {
 
     @Test
-    void allMatchesEverything() {
+    void testAllMatchesEverything() {
         RowRanges ranges = RowRanges.all(1000);
         assertTrue(ranges.isAll());
         assertEquals(1, ranges.intervalCount());
@@ -29,7 +29,7 @@ class RowRangesTest {
     }
 
     @Test
-    void fromPagesKeepAll() {
+    void testFromPagesKeepAll() {
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
                 new PageLocation(100, 100, 50),
@@ -42,7 +42,7 @@ class RowRangesTest {
     }
 
     @Test
-    void fromPagesKeepNone() {
+    void testFromPagesKeepNone() {
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
                 new PageLocation(100, 100, 50),
@@ -55,7 +55,7 @@ class RowRangesTest {
     }
 
     @Test
-    void fromPagesKeepFirst() {
+    void testFromPagesKeepFirst() {
         // 3 pages: rows [0,50), [50,100), [100,150)
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
@@ -71,7 +71,7 @@ class RowRangesTest {
     }
 
     @Test
-    void fromPagesKeepLast() {
+    void testFromPagesKeepLast() {
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
                 new PageLocation(100, 100, 50),
@@ -86,7 +86,7 @@ class RowRangesTest {
     }
 
     @Test
-    void fromPagesKeepFirstAndLast() {
+    void testFromPagesKeepFirstAndLast() {
         // Keep pages 0 and 2, skip page 1 → two disjoint intervals
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
@@ -102,7 +102,7 @@ class RowRangesTest {
     }
 
     @Test
-    void fromPagesMergesAdjacentKeptPages() {
+    void testFromPagesMergesAdjacentKeptPages() {
         // Keep pages 0 and 1 → should merge into single interval [0, 100)
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
@@ -117,7 +117,7 @@ class RowRangesTest {
     }
 
     @Test
-    void overlapsPagePartialOverlap() {
+    void testOverlapsPagePartialOverlap() {
         // Range [10, 30)
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
@@ -137,7 +137,7 @@ class RowRangesTest {
     }
 
     @Test
-    void intersectWithAll() {
+    void testIntersectWithAll() {
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
                 new PageLocation(100, 100, 50));
@@ -157,7 +157,7 @@ class RowRangesTest {
     }
 
     @Test
-    void intersectOverlappingRanges() {
+    void testIntersectOverlappingRanges() {
         // a: [0, 60)
         // b: [40, 100)
         // intersection: [40, 60)
@@ -179,7 +179,7 @@ class RowRangesTest {
     }
 
     @Test
-    void intersectDisjointRanges() {
+    void testIntersectDisjointRanges() {
         // a: [0, 30)
         // b: [50, 100)
         // intersection: empty
@@ -198,7 +198,7 @@ class RowRangesTest {
     }
 
     @Test
-    void unionWithAll() {
+    void testUnionWithAll() {
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
                 new PageLocation(100, 100, 50));
@@ -213,7 +213,7 @@ class RowRangesTest {
     }
 
     @Test
-    void unionDisjointRanges() {
+    void testUnionDisjointRanges() {
         // a: [0, 30), b: [60, 100)
         List<PageLocation> pagesA = List.of(
                 new PageLocation(0, 100, 0),
@@ -234,7 +234,7 @@ class RowRangesTest {
     }
 
     @Test
-    void unionOverlappingRangesMerges() {
+    void testUnionOverlappingRangesMerges() {
         // a: [0, 60), b: [40, 100) → union: [0, 100)
         List<PageLocation> pagesA = List.of(
                 new PageLocation(0, 100, 0),
@@ -252,7 +252,7 @@ class RowRangesTest {
     }
 
     @Test
-    void unionAdjacentRangesMerges() {
+    void testUnionAdjacentRangesMerges() {
         // a: [0, 50), b: [50, 100) → union: [0, 100)
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),
