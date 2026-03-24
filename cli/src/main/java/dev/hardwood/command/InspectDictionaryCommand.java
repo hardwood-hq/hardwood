@@ -38,7 +38,7 @@ public class InspectDictionaryCommand implements Callable<Integer> {
     @CommandLine.Mixin
     FileMixin fileMixin;
     @Spec
-    static CommandSpec spec;
+     CommandSpec spec;
     @CommandLine.Option(names = "--column", required = true, paramLabel = "COLUMN", description = "Column name to inspect.")
     String column;
 
@@ -81,7 +81,8 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             try {
                 inputFile.close();
             }
-            catch (IOException ignored) {
+            catch (IOException e) {
+                spec.commandLine().getErr().println("Error closing file: " + e.getMessage());
             }
         }
 
@@ -124,7 +125,7 @@ public class InspectDictionaryCommand implements Callable<Integer> {
         }
     }
 
-    private static void printDictionary(Dictionary dictionary) {
+    private void printDictionary(Dictionary dictionary) {
         spec.commandLine().getOut().printf("  Dictionary size: %d entries%n", dictionary.size());
         switch (dictionary) {
             case Dictionary.IntDictionary d -> printInts(d.values());
@@ -135,31 +136,31 @@ public class InspectDictionaryCommand implements Callable<Integer> {
         }
     }
 
-    private static void printInts(int[] values) {
+    private void printInts(int[] values) {
         for (int i = 0; i < values.length; i++) {
             spec.commandLine().getOut().printf("  [%4d] %d%n", i, values[i]);
         }
     }
 
-    private static void printLongs(long[] values) {
+    private void printLongs(long[] values) {
         for (int i = 0; i < values.length; i++) {
             spec.commandLine().getOut().printf("  [%4d] %d%n", i, values[i]);
         }
     }
 
-    private static void printFloats(float[] values) {
+    private void printFloats(float[] values) {
         for (int i = 0; i < values.length; i++) {
             spec.commandLine().getOut().printf("  [%4d] %f%n", i, values[i]);
         }
     }
 
-    private static void printDoubles(double[] values) {
+    private void printDoubles(double[] values) {
         for (int i = 0; i < values.length; i++) {
             spec.commandLine().getOut().printf("  [%4d] %f%n", i, values[i]);
         }
     }
 
-    private static void printByteArrays(byte[][] values) {
+    private void printByteArrays(byte[][] values) {
         for (int i = 0; i < values.length; i++) {
             spec.commandLine().getOut().printf("  [%4d] %s%n", i, formatBytes(values[i]));
         }

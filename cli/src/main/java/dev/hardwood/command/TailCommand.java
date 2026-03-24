@@ -44,7 +44,7 @@ public class TailCommand implements Callable<Integer> {
             FileSchema fileSchema = reader.getFileSchema();
             String[] headers = RowTable.topLevelFieldNames(fileSchema);
             List<String[]> rows = readLastRows(reader, headers.length);
-            RowTable.print(headers, rows);
+            RowTable.print(spec, headers, rows);
         }
         catch (IOException e) {
             spec.commandLine().getErr().println("Error reading file: " + e.getMessage());

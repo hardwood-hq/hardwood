@@ -1023,10 +1023,10 @@ The `hardwood` CLI can be compiled to a GraalVM native binary using the `-Dnativ
 
 #### macOS — local GraalVM build
 
-Requires GraalVM (Java 21+) installed locally. Install via [SDKMAN](https://sdkman.io/):
+Requires GraalVM (Java 25+) installed locally. Install via [SDKMAN](https://sdkman.io/):
 
 ```shell
-sdk install java 21.0.2-graalce
+sdk install java 25.0.2-graalce
 ```
 
 Then build:

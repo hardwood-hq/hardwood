@@ -34,7 +34,7 @@ public class InspectColumnSizeCommand implements Callable<Integer> {
     @CommandLine.Mixin
     FileMixin fileMixin;
     @Spec
-    static CommandSpec spec;
+     CommandSpec spec;
 
     @Override
     public Integer call() {
@@ -80,7 +80,7 @@ public class InspectColumnSizeCommand implements Callable<Integer> {
         return new ArrayList<>(byColumn.values());
     }
 
-    private static void printRanked(List<ColumnSize> sizes) {
+    private void printRanked(List<ColumnSize> sizes) {
         spec.commandLine().getOut().printf("%-4s  %-30s  %-12s  %-14s  %-14s  %-6s%n",
                 "Rank", "Column", "Type", "Compressed", "Uncompressed", "Ratio");
         spec.commandLine().getOut().println("-".repeat(88));

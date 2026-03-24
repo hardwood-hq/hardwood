@@ -8,6 +8,7 @@
 package dev.hardwood.command;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 
@@ -157,7 +158,7 @@ public class SchemaCommand implements Callable<Integer> {
         String p = "  ".repeat(indent);
         sb.append(p).append("message ").append(capitalize(group.name())).append(" {\n");
 
-        List<SchemaNode.GroupNode> nestedStructs = new java.util.ArrayList<>();
+        List<SchemaNode.GroupNode> nestedStructs = new ArrayList<>();
         int fieldNum = 1;
 
         for (SchemaNode child : group.children()) {

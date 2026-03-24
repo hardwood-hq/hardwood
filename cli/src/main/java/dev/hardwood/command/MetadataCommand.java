@@ -30,7 +30,7 @@ public class MetadataCommand implements Callable<Integer> {
     @CommandLine.Mixin
     FileMixin fileMixin;
     @Spec
-    static CommandSpec spec;
+    CommandSpec spec;
 
     @Override
     public Integer call() {
@@ -61,7 +61,7 @@ public class MetadataCommand implements Callable<Integer> {
         return CommandLine.ExitCode.OK;
     }
 
-    private static void printRowGroup(int index, RowGroup rg) {
+    private void printRowGroup(int index, RowGroup rg) {
         spec.commandLine().getOut().printf("Row Group %d  (%d rows, %s uncompressed)%n",
                 index, rg.numRows(), Sizes.format(rg.totalByteSize()));
 
@@ -71,7 +71,7 @@ public class MetadataCommand implements Callable<Integer> {
         spec.commandLine().getOut().println();
     }
 
-    private static void printColumnChunk(ColumnMetaData cmd) {
+    private void printColumnChunk(ColumnMetaData cmd) {
         String path = Sizes.columnPath(cmd);
         spec.commandLine().getOut().printf("  %-30s  type: %-25s  codec: %-14s  compressed: %-10s  uncompressed: %s%n",
                 path,

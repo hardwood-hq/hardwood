@@ -10,7 +10,13 @@
 -->
 <project xmlns="http://maven.apache.org/POM/4.0.0" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
   <modelVersion>4.0.0</modelVersion>
-
+  <properties>
+      <executable-suffix />
+      <aws-sdk.version>2.42.17</aws-sdk.version>
+      <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
+      <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
+      <quarkus.platform.version>3.27.2</quarkus.platform.version>
+  </properties>
   <parent>
     <groupId>dev.hardwood</groupId>
     <artifactId>hardwood-parent</artifactId>
@@ -46,6 +52,20 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <dependency>
+        <groupId>${quarkus.platform.group-id}</groupId>
+        <artifactId>${quarkus.platform.artifact-id}</artifactId>
+        <version>${quarkus.platform.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${aws-sdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 
@@ -58,6 +78,25 @@
     <dependency>
       <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-s3</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>apache-client</artifactId>
+        </exclusion>
+        <exclusion>
+          <groupId>software.amazon.awssdk</groupId>
+          <artifactId>crt-core</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>url-connection-client</artifactId>
+    </dependency>
+    <dependency>
+        <groupId>software.amazon.awssdk.crt</groupId>
+        <artifactId>aws-crt</artifactId>
+        <version>0.43.5 </version>
     </dependency>
     <!-- Test dependencies -->
     <dependency>
@@ -146,7 +185,22 @@
           <name>native</name>
         </property>
       </activation>
+      <properties>
+        <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
+        <skipITs>false</skipITs>
+        <quarkus.native.enabled>true</quarkus.native.enabled>
+      </properties>
       <build>
+        <pluginManagement>
+          <plugins>
+            <plugin>
+              <groupId>${quarkus.platform.group-id}</groupId>
+              <artifactId>quarkus-maven-plugin</artifactId>
+              <version>${quarkus.platform.version}</version>
+              <extensions>true</extensions>
+            </plugin>
+          </plugins>
+        </pluginManagement>
         <plugins>
           <plugin>
             <groupId>org.codehaus.mojo</groupId>
@@ -174,6 +228,7 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-dependency-plugin</artifactId>
+            <version>3.8.1</version>
             <executions>
               <execution>
                 <id>unpack-zstd-native</id>
@@ -254,6 +309,17 @@
         </plugins>
       </build>
     </profile>
+    <profile>
+      <id>windows</id>
+      <activation>
+        <os>
+          <family>windows</family>
+        </os>
+      </activation>
+      <properties>
+        <executable-suffix>.exe</executable-suffix>
+      </properties>
+    </profile>
   </profiles>
 
   <build>
@@ -303,7 +369,7 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
-          <argLine>--add-modules jdk.incubator.vector</argLine>
+          <argLine>--add-modules jdk.incubator.vector --add-opens java.base/java.lang=ALL-UNNAMED</argLine>
         </configuration>
       </plugin>
 

@@ -22,6 +22,18 @@ import java.util.stream.Stream;
 public final class NativeLibraryLoader {
 
     private static final String ZSTD_JNI_VERSION = "1.5.7-6";
+    private static final String OS_NAME_PROP = "os.name";
+    private static final String OS_ARCH_PROP = "os.arch";
+    private static final String ARCH_AARCH64 = "aarch64";
+    private static final String ARCH_ARM64 = "arm64";
+    private static final String ARCH_X86_64 = "x86_64";
+    private static final String ARCH_AMD64 = "amd64";
+    private static final String ARCH_X86 = "x86";
+    private static final String ARCH_I386 = "i386";
+
+    private enum OsFamily { DARWIN, LINUX, WINDOWS }
+
+    enum Codec { ZSTD, LZ4, SNAPPY }
 
     private NativeLibraryLoader() {
     }
@@ -47,17 +59,9 @@ public final class NativeLibraryLoader {
         if (libDir == null) {
             return;
         }
-        Path libFile = resolveZstdLibFile(libDir);
-        if (libFile == null || !Files.isRegularFile(libFile)) {
-            return;
-        }
-        try {
-            System.load(libFile.toAbsolutePath().toString());
-            assumeZstdLoaded();
-        }
-        catch (UnsatisfiedLinkError e) {
-            System.err.println("WARNING: Could not load zstd native library from " + libFile + ": " + e.getMessage());
-        }
+        loadNative("zstd",
+                resolveLibFile(libDir, osArchFragment(Codec.ZSTD), "libzstd-jni-" + ZSTD_JNI_VERSION, "libzstd-jni-"),
+                NativeLibraryLoader::assumeZstdLoaded);
     }
 
     /**
@@ -71,16 +75,7 @@ public final class NativeLibraryLoader {
         if (libDir == null) {
             return;
         }
-        Path libFile = resolveLz4LibFile(libDir);
-        if (libFile == null || !Files.isRegularFile(libFile)) {
-            return;
-        }
-        try {
-            System.load(libFile.toAbsolutePath().toString());
-        }
-        catch (UnsatisfiedLinkError e) {
-            System.err.println("WARNING: Could not load lz4 native library from " + libFile + ": " + e.getMessage());
-        }
+        loadNative("lz4", resolveLibFile(libDir, osArchFragment(Codec.LZ4), "liblz4-java", "liblz4-java"), null);
     }
 
     /**
@@ -94,19 +89,25 @@ public final class NativeLibraryLoader {
         if (libDir == null) {
             return;
         }
-        Path libFile = resolveSnappyLibFile(libDir);
+        loadNative("snappy", resolveLibFile(libDir, osArchFragment(Codec.SNAPPY), "libsnappyjava", "libsnappyjava"), null);
+    }
+
+    private static void loadNative(String name, Path libFile, Runnable postLoad) {
         if (libFile == null || !Files.isRegularFile(libFile)) {
             return;
         }
         try {
             System.load(libFile.toAbsolutePath().toString());
+            if (postLoad != null) {
+                postLoad.run();
+            }
         }
         catch (UnsatisfiedLinkError e) {
-            System.err.println("WARNING: Could not load snappy native library from " + libFile + ": " + e.getMessage());
+            System.err.println("WARNING: Could not load " + name + " native library from " + libFile + ": " + e.getMessage());
         }
     }
 
-private static Path resolveLibDir() {
+    private static Path resolveLibDir() {
         String env = System.getenv("HARDWOOD_LIB_PATH");
         if (env != null && !env.isBlank()) {
             Path p = Path.of(env.trim());
@@ -138,61 +139,105 @@ private static Path resolveLibDir() {
         }
     }
 
-    /** zstd-jni JAR uses darwin/aarch64, darwin/x86_64, linux/amd64, linux/aarch64, win/amd64. */
-    private static String zstdOsArchFragment() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
-        String osPart = os.contains("mac") || os.contains("darwin") ? "darwin"
-                : os.contains("linux") ? "linux"
-                : os.contains("windows") ? "win"
-                : null;
-        if (osPart == null) {
+    /**
+     * Resolves a platform-specific native library file within {@code libDir}.
+     *
+     * @param fragment      OS/arch path fragment (e.g. {@code darwin/aarch64})
+     * @param exactBaseName file base name to try first (without extension)
+     * @param scanPrefix    prefix used as a fallback when scanning the directory
+     */
+    private static Path resolveLibFile(Path libDir, String fragment, String exactBaseName, String scanPrefix) {
+        if (fragment == null) {
             return null;
         }
-        String archPart = arch.equals("aarch64") || arch.equals("arm64") ? "aarch64"
-                : arch.equals("x86_64") ? (osPart.equals("linux") ? "amd64" : "x86_64")
-                : arch.equals("amd64") ? "amd64"
-                : arch;
+        Path platformDir = libDir.resolve(fragment);
+        if (!Files.isDirectory(platformDir)) {
+            return null;
+        }
+        String ext = nativeLibExtension();
+        Path exact = platformDir.resolve(exactBaseName + ext);
+        if (Files.isRegularFile(exact)) {
+            return exact;
+        }
+        try (Stream<Path> list = Files.list(platformDir)) {
+            return list
+                    .filter(Files::isRegularFile)
+                    .filter(p -> p.getFileName().toString().startsWith(scanPrefix) && p.getFileName().toString().endsWith(ext))
+                    .findFirst()
+                    .orElse(null);
+        }
+        catch (Exception e) {
+            return null;
+        }
+    }
+
+    private static OsFamily detectOsFamily() {
+        String os = System.getProperty(OS_NAME_PROP, "").toLowerCase(Locale.ROOT);
+        if (os.contains("darwin") || os.contains("mac")) {
+            return OsFamily.DARWIN;
+        }
+        if (os.contains("linux")) {
+            return OsFamily.LINUX;
+        }
+        if (os.contains("windows")) {
+            return OsFamily.WINDOWS;
+        }
+        return null;
+    }
+
+    private static boolean isAarch64(String arch) {
+        return arch.equals(ARCH_AARCH64) || arch.equals(ARCH_ARM64);
+    }
+
+    private static boolean isX86_64(String arch) {
+        return arch.equals(ARCH_X86_64) || arch.equals(ARCH_AMD64);
+    }
+
+    /**
+     * Returns the OS/arch path fragment used to locate the given codec's JNI native library
+     * under {@code lib/} (e.g. {@code darwin/aarch64}, {@code linux/amd64}).
+     */
+    static String osArchFragment(Codec codec) {
+        OsFamily osFamily = detectOsFamily();
+        if (osFamily == null) {
+            return null;
+        }
+        String osPart = switch (codec) {
+            case ZSTD -> switch (osFamily) {
+                case DARWIN  -> "darwin";
+                case LINUX   -> "linux";
+                case WINDOWS -> "win";
+            };
+            case LZ4 -> switch (osFamily) {
+                case DARWIN  -> "darwin";
+                case LINUX   -> "linux";
+                case WINDOWS -> "win32";
+            };
+            case SNAPPY -> switch (osFamily) {
+                case DARWIN  -> "Mac";
+                case LINUX   -> "Linux";
+                case WINDOWS -> "Windows";
+            };
+        };
+        String arch = System.getProperty(OS_ARCH_PROP, "").toLowerCase(Locale.ROOT);
+        String archPart;
+        if (isAarch64(arch)) {
+            archPart = ARCH_AARCH64;
+        }
+        else if (isX86_64(arch)) {
+            archPart = (codec != Codec.SNAPPY && osFamily != OsFamily.DARWIN) ? ARCH_AMD64 : ARCH_X86_64;
+        }
+        else if (codec == Codec.SNAPPY && (arch.equals(ARCH_X86) || arch.equals(ARCH_I386))) {
+            archPart = ARCH_X86;
+        }
+        else {
+            archPart = arch;
+        }
         return osPart + File.separator + archPart;
     }
 
-    /** lz4-java JAR uses darwin/aarch64, darwin/x86_64, linux/amd64, linux/aarch64, win32/amd64. */
-    private static String lz4OsArchFragment() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
-        String osPart = os.contains("mac") || os.contains("darwin") ? "darwin"
-                : os.contains("linux") ? "linux"
-                : os.contains("windows") ? "win32"
-                : null;
-        if (osPart == null) {
-            return null;
-        }
-        String archPart = arch.equals("aarch64") || arch.equals("arm64") ? "aarch64"
-                : arch.equals("x86_64") || arch.equals("amd64") ? (osPart.equals("linux") ? "amd64" : "x86_64")
-                : arch;
-        return osPart + File.separator + archPart;
-    }
-
-    /** snappy-java JAR uses Mac/aarch64, Linux/x86_64, Windows/x86_64. */
-    private static String snappyOsArchFragment() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
-        String arch = System.getProperty("os.arch", "").toLowerCase(Locale.ROOT);
-        String osPart = os.contains("mac") || os.contains("darwin") ? "Mac"
-                : os.contains("linux") ? "Linux"
-                : os.contains("windows") ? "Windows"
-                : null;
-        if (osPart == null) {
-            return null;
-        }
-        String archPart = arch.equals("aarch64") || arch.equals("arm64") ? "aarch64"
-                : arch.equals("x86_64") || arch.equals("amd64") ? "x86_64"
-                : arch.equals("x86") || arch.equals("i386") ? "x86"
-                : arch;
-        return osPart + File.separator + archPart;
-    }
-
-private static String nativeLibExtension() {
-        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
+    private static String nativeLibExtension() {
+        String os = System.getProperty(OS_NAME_PROP, "").toLowerCase(Locale.ROOT);
         if (os.contains("windows")) {
             return ".dll";
         }
@@ -200,84 +245,6 @@ private static String nativeLibExtension() {
             return ".dylib";
         }
         return ".so";
-    }
-
-    private static Path resolveZstdLibFile(Path libDir) {
-        String fragment = zstdOsArchFragment();
-        if (fragment == null) {
-            return null;
-        }
-        Path platformDir = libDir.resolve(fragment);
-        if (!Files.isDirectory(platformDir)) {
-            return null;
-        }
-        String ext = nativeLibExtension();
-        Path exact = platformDir.resolve("libzstd-jni-" + ZSTD_JNI_VERSION + ext);
-        if (Files.isRegularFile(exact)) {
-            return exact;
-        }
-        try (Stream<Path> list = Files.list(platformDir)) {
-            return list
-                    .filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().startsWith("libzstd-jni-") && p.getFileName().toString().endsWith(ext))
-                    .findFirst()
-                    .orElse(null);
-        }
-        catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static Path resolveLz4LibFile(Path libDir) {
-        String fragment = lz4OsArchFragment();
-        if (fragment == null) {
-            return null;
-        }
-        Path platformDir = libDir.resolve(fragment);
-        if (!Files.isDirectory(platformDir)) {
-            return null;
-        }
-        String ext = nativeLibExtension();
-        Path exact = platformDir.resolve("liblz4-java" + ext);
-        if (Files.isRegularFile(exact)) {
-            return exact;
-        }
-        try (Stream<Path> list = Files.list(platformDir)) {
-            return list
-                    .filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().startsWith("liblz4-java") && p.getFileName().toString().endsWith(ext))
-                    .findFirst()
-                    .orElse(null);
-        }
-        catch (Exception e) {
-            return null;
-        }
-    }
-
-    private static Path resolveSnappyLibFile(Path libDir) {
-        String fragment = snappyOsArchFragment();
-        if (fragment == null) {
-            return null;
-        }
-        Path platformDir = libDir.resolve(fragment);
-        if (!Files.isDirectory(platformDir)) {
-            return null;
-        }
-        String ext = nativeLibExtension();
-        Path exact = platformDir.resolve("libsnappyjava" + ext);
-        if (Files.isRegularFile(exact)) {
-            return exact;
-        }
-        try (Stream<Path> list = Files.list(platformDir)) {
-            return list
-                    .filter(Files::isRegularFile)
-                    .filter(p -> p.getFileName().toString().startsWith("libsnappyjava") && p.getFileName().toString().endsWith(ext))
-                    .findFirst()
-                    .orElse(null);
-        }
-        catch (Exception e) {
-            return null;
-        }
     }
 
     private static void assumeZstdLoaded() {

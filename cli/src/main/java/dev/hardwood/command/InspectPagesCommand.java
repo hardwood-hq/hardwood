@@ -36,7 +36,7 @@ public class InspectPagesCommand implements Callable<Integer> {
     @CommandLine.Mixin
     FileMixin fileMixin;
     @Spec
-    static CommandSpec spec;
+     CommandSpec spec;
     @CommandLine.Option(names = "--column", paramLabel = "COLUMN", description = "Restrict output to a single column.")
     String column;
 
@@ -80,7 +80,8 @@ public class InspectPagesCommand implements Callable<Integer> {
             try {
                 inputFile.close();
             }
-            catch (IOException ignored) {
+            catch (IOException e) {
+                spec.commandLine().getErr().println("Error closing file: " + e.getMessage());
             }
         }
 
@@ -105,7 +106,7 @@ public class InspectPagesCommand implements Callable<Integer> {
         }
     }
 
-    private static void scanPageHeaders(ColumnMetaData cmd, InputFile inputFile) throws IOException {
+    private void scanPageHeaders(ColumnMetaData cmd, InputFile inputFile) throws IOException {
         Long dictOffset = cmd.dictionaryPageOffset();
         long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : cmd.dataPageOffset();
         long chunkSize = cmd.totalCompressedSize();
@@ -135,7 +136,7 @@ public class InspectPagesCommand implements Callable<Integer> {
         }
     }
 
-    private static void printPageHeader(int index, PageHeader header) {
+    private void printPageHeader(int index, PageHeader header) {
         String label = header.type() == PageHeader.PageType.DICTIONARY_PAGE ? " dict" : String.format("[%3d]", index);
         String encoding = pageEncoding(header);
         int numValues = numValues(header);
