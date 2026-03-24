@@ -41,7 +41,7 @@ public class PageFilterEvaluator {
     /// Computes the row ranges within a row group that might match the given predicate,
     /// based on per-page min/max statistics from the Column Index.
     ///
-    /// Returns [RowRanges.all] when the Column Index is absent or the predicate
+    /// Returns `RowRanges.all()` when the Column Index is absent or the predicate
     /// cannot be evaluated at the page level (conservative fallback).
     ///
     /// @param predicate    the filter predicate to evaluate
