@@ -17,6 +17,9 @@ on:
           - 'UPLOAD'
           - 'FULL'
 
+env:
+  JAVA_VERSION: '25.0.2'
+
 jobs:
   release:
     runs-on: ubuntu-latest
@@ -82,3 +85,50 @@ jobs:
           path: |
             target/checkout/target/jreleaser/trace.log
             target/checkout/target/jreleaser/output.properties
+
+
+  # Build native executable per runner
+  package:
+    needs: release
+    name: 'Build with Graal on ${{ matrix.os }}'
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ ubuntu-latest, macOS-13, macos-14, windows-latest ]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - name: 'Check out repository'
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.version.outputs.HEAD }}
+
+      - name: 'Add Developer Command Prompt for Microsoft Visual C++ '
+        if: ${{ runner.os == 'Windows' }}
+        uses: ilammy/msvc-dev-cmd@v1
+
+      - name: 'Set up Graal'
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: ${{ env.JAVA_VERSION }}
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+
+      - name: 'Build Native Image (Linux)'
+        if: ${{ runner.os == 'Linux' }}
+        run: ./mvnw -ntp -B --file pom.xml -Pnative package -DskipTests
+
+      - name: 'Build Native Image (macOS, Windows)'
+        if: ${{ runner.os != 'Linux' }}
+        run: ./mvnw -ntp -B --file pom.xml -Pnative package -DskipTests "-Dquarkus.test.profile.tags=basic"
+
+      - name: 'Create distribution'
+        run: ./mvnw -ntp -B --file pom.xml -Pdist package -DskipTests
+
+      - name: 'Upload build artifact'
+        uses: actions/upload-artifact@v4
+        with:
+          name: artifacts-${{ runner.os }}-${{ runner.arch }}
+          path: |
+            cli/target/*.zip
+            cli/target/*.tar.gz
