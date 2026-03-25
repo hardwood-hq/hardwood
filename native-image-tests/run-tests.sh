@@ -29,6 +29,23 @@ green() { printf '\033[0;32m%s\033[0m\n' "$*"; }
 red()   { printf '\033[0;31m%s\033[0m\n' "$*"; }
 yellow(){ printf '\033[0;33m%s\033[0m\n' "$*"; }
 
+run_s3_test() {
+    local label="$1"
+    local url="$2"
+    shift 2
+    local cmd=("$@")
+
+    printf '  %-60s' "$label"
+    if output=$("${cmd[@]}" -f "$url" 2>&1); then
+        green "PASS"
+        PASS=$((PASS + 1))
+    else
+        red "FAIL"
+        echo "         Output: $output"
+        FAIL=$((FAIL + 1))
+    fi
+}
+
 run_test() {
     local label="$1"
     local file="$2"
@@ -106,6 +123,27 @@ for f in /testdata/*.parquet; do
     [ -f "$f" ] || continue
     run_test "$(basename "$f")" "$f" "$HW" schema
 done
+
+if [ "${TEST_S3:-false}" = "true" ]; then
+    echo
+    echo "--- S3 tests ---"
+
+    S3_PARQUET="$REPO/performance-testing/test-data-setup/target/tlc-trip-record-data/yellow_tripdata_2016-01.parquet"
+    S3_ENDPOINT="${AWS_ENDPOINT_URL:-http://localhost:9090}"
+
+    if [ ! -f "$S3_PARQUET" ]; then
+        yellow "  SKIP  S3 tests ($S3_PARQUET not found)"
+        SKIP=$((SKIP + 1))
+    else
+        curl -sf -X PUT "$S3_ENDPOINT/test-bucket" > /dev/null
+        curl -sf -X PUT --data-binary @"$S3_PARQUET" \
+            "$S3_ENDPOINT/test-bucket/yellow_tripdata_2025-01.parquet" > /dev/null
+
+        run_s3_test "S3 info (yellow tripdata 2025-01)" \
+            "s3://test-bucket/yellow_tripdata_2025-01.parquet" \
+            "$HW" info
+    fi
+fi
 
 echo
 echo "=== Results: ${PASS} passed, ${FAIL} failed, ${SKIP} skipped ==="
