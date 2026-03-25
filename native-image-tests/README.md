@@ -15,6 +15,10 @@ Scripts for building and testing the Hardwood native binary against various Parq
 ./native-image-tests/test.sh --skip-build
 ./native-image-tests/test.sh --local --skip-build
 
+# Also run S3 tests (starts a temporary s3mock container):
+./native-image-tests/test.sh --test-s3
+./native-image-tests/test.sh --local --test-s3
+
 # Extra parquet files (mounted at /testdata in Docker, or read directly in local mode):
 TESTDATA_DIR=/path/to/parquets ./native-image-tests/test.sh
 ```
