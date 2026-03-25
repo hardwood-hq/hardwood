@@ -15,11 +15,11 @@ import dev.hardwood.completion.HelpCompletions;
 import picocli.CommandLine;
 
 /**
- * Adapted from the {@link CommandLine.HelpCommand} class. There are two primary differences:
- * <ul>
- *     <li>Information on nested subcommands is available (e.g., {@code hardwood inspect pages})</li>
- *     <li>{@link  CommandLine#setAbbreviatedSubcommandsAllowed(boolean) Abbreviation of subcommands} is not supported (this feature is not currently used in hardwood)</li>
- * </ul>
+ * Adapted from the `CommandLine.HelpCommand` class. There are two primary differences:
+ *
+ * - Information on nested subcommands is available (e.g., `hardwood inspect pages`)
+ * - Abbreviation of subcommands (`CommandLine.setAbbreviatedSubcommandsAllowed`) is not supported
+ *   (this feature is not currently used in hardwood)
  */
 @CommandLine.Command(name = "help", header = {
         "Display help information about the specified command." }, synopsisHeading = "%nUsage: ", helpCommand = true, description = {

@@ -202,6 +202,35 @@ jobs:
         env:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
 
+  # Verify the native CLI build on PRs (Linux only, no release)
+  native-build-check:
+    if: github.event_name == 'pull_request'
+    needs: build
+    name: 'Verify native CLI build'
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Check out repository'
+        uses: actions/checkout@v6
+        with:
+          submodules: 'true'
+
+      - name: 'Set up Graal'
+        uses: graalvm/setup-graalvm@v1
+        with:
+          java-version: '25'
+          distribution: 'graalvm-community'
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+          cache: maven
+
+      - name: 'Download built artifacts'
+        uses: actions/download-artifact@v4
+        with:
+          name: maven-repo
+          path: ~/.m2/repository/dev/hardwood/
+
+      - name: 'Build Native Image'
+        run: ./mvnw -ntp -B -Dnative package -pl cli -DskipTests
+
   # Build native CLI executable per runner and publish as early-access release
   package:
     if: github.event_name == 'push'
@@ -237,7 +266,7 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Build Native Image'
-        run: ./mvnw -ntp -B -Dnative package -pl cli -am -DskipTests
+        run: ./mvnw -ntp -B -Dnative package -pl cli -DskipTests
 
       - name: 'Upload build artifact (tar.gz)'
         if: ${{ runner.os != 'Windows' }}

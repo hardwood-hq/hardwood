@@ -17,7 +17,7 @@ import java.util.stream.Stream;
 /**
  * Loads compression native libraries (zstd-jni, snappy-java, lz4-java, brotli4j) when running as a
  * GraalVM native image. Libraries must be placed in a directory next to the executable (e.g. lib/...)
- * or pointed to by {@code HARDWOOD_LIB_PATH}.
+ * or pointed to by `HARDWOOD_LIB_PATH`.
  */
 public final class NativeLibraryLoader {
 
@@ -120,7 +120,7 @@ public final class NativeLibraryLoader {
     }
 
     /**
-     * Resolves a native library file within {@code libDir}.
+     * Resolves a native library file within `libDir`.
      *
      * @param exactBaseName file base name to try first (without extension)
      * @param scanPrefix    prefix used as a fallback when scanning the directory
@@ -156,10 +156,10 @@ public final class NativeLibraryLoader {
 
     /**
      * Guides snappy-java's SnappyLoader to the native library we already loaded via
-     * {@link System#load}. snappy-java has no public "assumeLoaded" API, so we set
-     * the {@code org.xerial.snappy.lib.path} / {@code org.xerial.snappy.lib.name}
-     * system properties that its {@code findNativeLibrary()} checks, causing its own
-     * loader to call {@code System.load} on the same file (a no-op) rather than
+     * `System.load`. snappy-java has no public "assumeLoaded" API, so we set
+     * the `org.xerial.snappy.lib.path` / `org.xerial.snappy.lib.name`
+     * system properties that its `findNativeLibrary()` checks, causing its own
+     * loader to call `System.load` on the same file (a no-op) rather than
      * attempting JAR extraction (which fails in native images).
      */
     private static void assumeSnappyLoaded() {
