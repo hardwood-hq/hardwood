@@ -1017,6 +1017,24 @@ Run the following command to build this project:
 ./mvnw clean verify
 ```
 
+On Windows, run the following command:
+
+```shell
+mvnw.cmd clean verify
+```
+
+Pass the `-Dquick` option to skip all non-essential plug-ins and create the output artifact as quickly as possible:
+
+```shell
+./mvnw clean verify -Dquick
+```
+
+Run the following command to format the source code and organize the imports as per the project's conventions:
+
+```shell
+./mvnw process-sources
+```
+
 ### Building the Native CLI
 
 The `hardwood` CLI can be compiled to a GraalVM native binary using the `-Dnative` flag.
@@ -1078,22 +1096,32 @@ The solution differs by codec:
 
 Container builds use Mandrel's `--link-at-build-time`, which applies stricter type resolution: all reachable bytecode must have its full type hierarchy resolvable at build time. Netty's `Log4JLoggerFactory` references `org.apache.log4j.Logger` (provided by the `log4j-1.2-api` bridge artifact), which in turn references `org.apache.logging.log4j.core.LogEvent` from `log4j-core`. Both are therefore declared at compile scope in `cli/pom.xml` so that GraalVM can resolve the full chain during container builds.
 
-On Windows, run the following command:
+#### Manual tests of the native CLI binary
 
-```shell
-mvnw.cmd clean verify
+1. Start S3Mock and set environment
+
+```bash
+docker run -d --name s3mock -p 9090:9090 adobe/s3mock
+
+export AWS_ENDPOINT_URL=http://localhost:9090
+export AWS_ACCESS_KEY_ID=foo
+export AWS_SECRET_ACCESS_KEY=bar
+export AWS_REGION=us-east-1
 ```
 
-Pass the `-Dquick` option to skip all non-essential plug-ins and create the output artifact as quickly as possible:
+2. Create bucket and upload with curl
 
-```shell
-./mvnw clean verify -Dquick
+```bash
+curl -X PUT http://localhost:9090/test-bucket
+
+curl -X PUT --data-binary @performance-testing/test-data-setup/target/tlc-trip-record-data/yellow_tripdata_2025-01.parquet \
+    http://localhost:9090/test-bucket/yellow_tripdata_2025-01.parquet
 ```
 
-Run the following command to format the source code and organize the imports as per the project's conventions:
+3. Run hardwood CLI
 
-```shell
-./mvnw process-sources
+```bash
+cli/target/hardwood-cli-early-access-osx-aarch64/bin/hardwood info -f s3://test-bucket/yellow_tripdata_2025-01.parquet
 ```
 
 ### Running Claude Code

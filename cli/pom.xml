@@ -12,6 +12,7 @@
   <modelVersion>4.0.0</modelVersion>
   <properties>
       <executable-suffix />
+      <dist.qualifier>early-access</dist.qualifier>
       <aws-sdk.version>2.42.17</aws-sdk.version>
       <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
       <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
@@ -78,57 +79,13 @@
     <dependency>
       <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-s3</artifactId>
-      <exclusions>
-        <exclusion>
-          <groupId>software.amazon.awssdk</groupId>
-          <artifactId>apache-client</artifactId>
-        </exclusion>
-        <exclusion>
-          <groupId>software.amazon.awssdk</groupId>
-          <artifactId>crt-core</artifactId>
-        </exclusion>
-      </exclusions>
     </dependency>
+
     <dependency>
-      <groupId>software.amazon.awssdk</groupId>
-      <artifactId>url-connection-client</artifactId>
+      <groupId>com.github.freva</groupId>
+      <artifactId>ascii-table</artifactId>
     </dependency>
-    <dependency>
-        <groupId>software.amazon.awssdk.crt</groupId>
-        <artifactId>aws-crt</artifactId>
-        <version>0.43.5 </version>
-    </dependency>
-    <!-- Test dependencies -->
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.assertj</groupId>
-      <artifactId>assertj-core</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.logging.log4j</groupId>
-      <artifactId>log4j-api</artifactId>
-    </dependency>
-    <!-- Provides org.apache.log4j.* classes so GraalVM can parse netty's Log4JLoggerFactory
-         bytecode during native image analysis without a missing-type error -->
-    <dependency>
-      <groupId>org.apache.logging.log4j</groupId>
-      <artifactId>log4j-1.2-api</artifactId>
-      <version>2.24.3</version>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.logging.log4j</groupId>
-      <artifactId>log4j-core</artifactId>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.logging.log4j</groupId>
-      <artifactId>log4j-jpl</artifactId>
-      <scope>test</scope>
-    </dependency>
+
     <!-- Optional compression libraries -->
     <dependency>
       <groupId>org.xerial.snappy</groupId>
@@ -150,18 +107,8 @@
       <artifactId>brotli4j</artifactId>
       <optional>true</optional>
     </dependency>
-    <!-- netty-buffer is an optional dependency of brotli4j (declared optional in its POM).
-         It must be explicitly provided so GraalVM native-image can resolve the
-         ByteBufUtil reference in DirectDecompress at build time. -->
-    <dependency>
-      <groupId>io.netty</groupId>
-      <artifactId>netty-buffer</artifactId>
-      <optional>true</optional>
-    </dependency>
-    <dependency>
-      <groupId>com.github.freva</groupId>
-      <artifactId>ascii-table</artifactId>
-    </dependency>
+
+    <!-- Quarkus -->
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-picocli</artifactId>
@@ -170,10 +117,41 @@
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-arc</artifactId>
     </dependency>
+
+    <!-- Test dependencies -->
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-junit5</artifactId>
       <scope>test</scope>
+    </dependency>
+
+    <!-- The AWS SDK's ChecksumProvider has hard bytecode references to CRT checksum
+         classes (CRC64NVME, CRC32C, etc.) that GraalVM must resolve at build time.
+         At runtime the CRT native library is not loaded, so the SDK falls back to
+         pure-Java checksums. Only the class stubs are needed; the CRT itself is inert. -->
+    <dependency>
+      <groupId>software.amazon.awssdk.crt</groupId>
+      <artifactId>aws-crt</artifactId>
+      <version>0.43.5</version>
+    </dependency>
+
+    <!-- netty-buffer is an optional dependency of brotli4j (declared optional in its POM).
+         It must be explicitly provided so GraalVM native-image can resolve the
+         ByteBufUtil reference in DirectDecompress at build time. -->
+    <dependency>
+      <groupId>io.netty</groupId>
+      <artifactId>netty-buffer</artifactId>
+      <optional>true</optional>
     </dependency>
   </dependencies>
 
@@ -287,6 +265,54 @@
             </executions>
           </plugin>
           <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>license-maven-plugin</artifactId>
+            <version>2.4.0</version>
+            <executions>
+              <execution>
+                <id>add-third-party</id>
+                <phase>generate-resources</phase>
+                <goals>
+                  <goal>add-third-party</goal>
+                </goals>
+                <configuration>
+                  <outputDirectory>${project.build.directory}</outputDirectory>
+                  <thirdPartyFilename>THIRD-PARTY.txt</thirdPartyFilename>
+                  <includedScopes>compile,runtime</includedScopes>
+                  <includeOptional>true</includeOptional>
+                  <excludedGroups>dev\.hardwood</excludedGroups>
+                  <failOnMissing>true</failOnMissing>
+                  <licenseMergesFile>${project.basedir}/src/main/license/license-merges.txt</licenseMergesFile>
+                  <fileTemplate>${project.basedir}/src/main/license/third-party.ftl</fileTemplate>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-antrun-plugin</artifactId>
+            <version>3.1.0</version>
+            <executions>
+              <execution>
+                <id>stage-native-libs</id>
+                <phase>prepare-package</phase>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+                <configuration>
+                  <target>
+                    <mkdir dir="${project.build.directory}/native-libs"/>
+                    <copy todir="${project.build.directory}/native-libs" flatten="true">
+                      <fileset dir="${project.build.directory}/zstd-native/${zstd.os.dir}/${zstd.arch.dir}" erroronmissingdir="false"/>
+                      <fileset dir="${project.build.directory}/snappy-native/org/xerial/snappy/native/${snappy.os.dir}/${snappy.arch.dir}" erroronmissingdir="false"/>
+                      <fileset dir="${project.build.directory}/lz4-native/net/jpountz/util/${lz4.os.dir}/${lz4.arch.dir}" erroronmissingdir="false"/>
+                    </copy>
+                  </target>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-assembly-plugin</artifactId>
             <executions>
@@ -297,7 +323,7 @@
                   <goal>single</goal>
                 </goals>
                 <configuration>
-                  <finalName>hardwood-${project.version}</finalName>
+                  <finalName>hardwood-cli-${dist.qualifier}-${dist.os}-${dist.arch}</finalName>
                   <appendAssemblyId>false</appendAssemblyId>
                   <descriptors>
                     <descriptor>src/main/assembly/assembly.xml</descriptor>
@@ -309,15 +335,71 @@
         </plugins>
       </build>
     </profile>
+    <!-- OS/arch detection profiles for native library staging.
+         Each profile maps the codec-specific directory names to the unified
+         lib/{os}-{arch}/ layout used by NativeLibraryLoader. -->
     <profile>
-      <id>windows</id>
+      <id>os-linux</id>
       <activation>
-        <os>
-          <family>windows</family>
-        </os>
+        <os><family>linux</family></os>
+      </activation>
+      <properties>
+        <dist.os>linux</dist.os>
+        <dist.format>tar.gz</dist.format>
+        <zstd.os.dir>linux</zstd.os.dir>
+        <snappy.os.dir>Linux</snappy.os.dir>
+        <lz4.os.dir>linux</lz4.os.dir>
+      </properties>
+    </profile>
+    <profile>
+      <id>os-mac</id>
+      <activation>
+        <os><family>mac</family></os>
+      </activation>
+      <properties>
+        <dist.os>osx</dist.os>
+        <dist.format>tar.gz</dist.format>
+        <zstd.os.dir>darwin</zstd.os.dir>
+        <snappy.os.dir>Mac</snappy.os.dir>
+        <lz4.os.dir>darwin</lz4.os.dir>
+      </properties>
+    </profile>
+    <profile>
+      <id>os-windows</id>
+      <activation>
+        <os><family>windows</family></os>
       </activation>
       <properties>
         <executable-suffix>.exe</executable-suffix>
+        <dist.os>windows</dist.os>
+        <dist.format>zip</dist.format>
+        <zstd.os.dir>win</zstd.os.dir>
+        <snappy.os.dir>Windows</snappy.os.dir>
+        <lz4.os.dir>win32</lz4.os.dir>
+      </properties>
+    </profile>
+    <profile>
+      <id>arch-aarch64</id>
+      <activation>
+        <os><arch>aarch64</arch></os>
+      </activation>
+      <properties>
+        <dist.arch>aarch64</dist.arch>
+        <zstd.arch.dir>aarch64</zstd.arch.dir>
+        <snappy.arch.dir>aarch64</snappy.arch.dir>
+        <lz4.arch.dir>aarch64</lz4.arch.dir>
+      </properties>
+    </profile>
+    <profile>
+      <id>arch-x86_64</id>
+      <activation>
+        <os><arch>amd64</arch></os>
+      </activation>
+      <properties>
+        <dist.arch>x86_64</dist.arch>
+        <zstd.arch.dir>amd64</zstd.arch.dir>
+        <snappy.arch.dir>x86_64</snappy.arch.dir>
+        <lz4.arch.dir>amd64</lz4.arch.dir>
       </properties>
     </profile>
   </profiles>

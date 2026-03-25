@@ -287,6 +287,8 @@
                     <exclude>**/.dontdelete</exclude>
                     <exclude>*.html</exclude>
                     <exclude>**/*.parquet</exclude>
+                    <exclude>**/license-merges.txt</exclude>
+                    <exclude>**/*.ftl</exclude>
                   </excludes>
                 </licenseSet>
               </licenseSets>

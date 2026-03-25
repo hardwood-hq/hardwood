@@ -14,9 +14,7 @@
         xsi:schemaLocation="http://maven.apache.org/plugins/maven-assembly-plugin/assembly/1.1.0 http://maven.apache.org/xsd/assembly-1.1.0.xsd">
     <id>dist</id>
     <formats>
-        <format>tar.gz</format>
-        <format>zip</format>
-        <format>dir</format>
+        <format>${dist.format}</format>
     </formats>
     <baseDirectory>/</baseDirectory>
     <files>
@@ -25,7 +23,11 @@
             <outputDirectory>./</outputDirectory>
         </file>
         <file>
-            <source>${project.build.directory}/hardwood-runner${executable-suffix}</source>
+            <source>${project.build.directory}/THIRD-PARTY.txt</source>
+            <outputDirectory>./</outputDirectory>
+        </file>
+        <file>
+            <source>${project.build.directory}/hardwood-cli${executable-suffix}</source>
             <outputDirectory>./bin</outputDirectory>
             <destName>hardwood${executable-suffix}</destName>
         </file>
@@ -36,34 +38,10 @@
     </files>
     <fileSets>
         <fileSet>
-            <directory>${project.build.directory}/zstd-native</directory>
+            <directory>${project.build.directory}/native-libs</directory>
             <outputDirectory>./lib</outputDirectory>
             <includes>
-                <include>darwin/**/*</include>
-                <include>linux/**/*</include>
-                <include>win/**/*</include>
-                <include>freebsd/**/*</include>
-                <include>aix/**/*</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>${project.build.directory}/snappy-native/org/xerial/snappy/native</directory>
-            <outputDirectory>./lib</outputDirectory>
-            <includes>
-                <include>Mac/**/*</include>
-                <include>Linux/**/*</include>
-                <include>Windows/**/*</include>
-                <include>FreeBSD/**/*</include>
-                <include>AIX/**/*</include>
-            </includes>
-        </fileSet>
-        <fileSet>
-            <directory>${project.build.directory}/lz4-native/net/jpountz/util</directory>
-            <outputDirectory>./lib</outputDirectory>
-            <includes>
-                <include>darwin/**/*</include>
-                <include>linux/**/*</include>
-                <include>win32/**/*</include>
+                <include>*</include>
             </includes>
         </fileSet>
     </fileSets>

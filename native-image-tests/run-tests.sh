@@ -1,4 +1,12 @@
 #!/usr/bin/env bash
+#
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Copyright The original authors
+#
+#  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+#
+
 # Platform-agnostic test runner for the Hardwood native binary.
 #
 # Environment variables (set by test.sh; defaults suit Docker):
