@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import dev.hardwood.InputFile;
 import software.amazon.awssdk.core.ResponseBytes;
 import software.amazon.awssdk.services.s3.S3Client;
+import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
 import software.amazon.awssdk.services.s3.model.S3Exception;
 
@@ -87,7 +88,19 @@ public class S3InputFile implements InputFile {
      * @return a new unopened S3InputFile that owns its client
      */
     public static S3InputFile of(String bucket, String key) {
-        return new S3InputFile(S3Client.create(), bucket, key, true);
+        return new S3InputFile(createDefaultClient(), bucket, key, true);
+    }
+
+    private static S3Client createDefaultClient() {
+        // Enable path-style access when a custom endpoint is configured (e.g.
+        // via AWS_ENDPOINT_URL) since S3-compatible services such as S3Mock
+        // typically do not support virtual-hosted-style addressing.
+        boolean customEndpoint = System.getenv("AWS_ENDPOINT_URL") != null;
+        S3ClientBuilder builder = S3Client.builder();
+        if (customEndpoint) {
+            builder.forcePathStyle(true);
+        }
+        return builder.build();
     }
 
     /**
