@@ -100,7 +100,9 @@
       "WebFetch(domain:northconcepts.com)",
       "WebFetch(domain:repo1.maven.org)",
       "Bash(gh pr:*)",
-      "Bash(gh api:*)"
+      "Bash(gh api:*)",
+      "Bash(/workspace/.docker-venv/bin/asciinema cat:*)",
+      "Bash(/workspace/.docker-venv/bin/asciinema rec:*)"
     ]
   }
 }

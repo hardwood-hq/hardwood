@@ -8,3 +8,4 @@
 
 numpy>=2.4.1
 pyarrow>=22.0.0
+asciinema

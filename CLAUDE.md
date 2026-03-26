@@ -20,6 +20,7 @@ Update the status in the roadmap after implementing a feature.
 
 When adding or changing public APIs, update the usage documentation in the README.md accordingly.
 Minimize the surface of the public API, only make user-facing what needs to be user-facing. Keep anything else in an `internal` package.
+Similarly, only expose configuration options truly needed in the CLI.
 Never do unsafe downcasts with potential value loss. E.g. prefer Math::toIntExact() where applicable.
 Keep cyclomatic complexity low.
 Avoid fully-qualified class names within the code, always add imports.
@@ -43,3 +44,7 @@ Key rules for `///` Markdown JavaDoc:
 
 To generate test Parquet files, extend simple-datagen.py and run: `source .docker-venv/bin/activate && python simple-datagen.py`
 When running Python, use _.docker-venv_ as the venv directory.
+
+# Code Reviews
+
+When reviewing a pull request, make sure the principles described here are applied.
