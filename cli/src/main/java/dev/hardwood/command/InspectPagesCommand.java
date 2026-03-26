@@ -42,13 +42,14 @@ public class InspectPagesCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        if (fileMixin.toInputFile() == null) {
+        InputFile inputFile = fileMixin.toInputFile();
+        if (inputFile == null) {
             return CommandLine.ExitCode.SOFTWARE;
         }
 
         FileMetaData metadata;
         FileSchema schema;
-        try (ParquetFileReader reader = ParquetFileReader.open(fileMixin.toInputFile())) {
+        try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             metadata = reader.getFileMetaData();
             schema = reader.getFileSchema();
         }
@@ -67,10 +68,10 @@ public class InspectPagesCommand implements Callable<Integer> {
             }
         }
 
-        InputFile inputFile = fileMixin.toInputFile();
+        InputFile pageInputFile = fileMixin.toInputFile();
         try {
-            inputFile.open();
-            printPages(metadata, schema, inputFile);
+            pageInputFile.open();
+            printPages(metadata, schema, pageInputFile);
         }
         catch (IOException e) {
             spec.commandLine().getErr().println("Error reading pages: " + e.getMessage());
@@ -78,7 +79,7 @@ public class InspectPagesCommand implements Callable<Integer> {
         }
         finally {
             try {
-                inputFile.close();
+                pageInputFile.close();
             }
             catch (IOException e) {
                 spec.commandLine().getErr().println("Error closing file: " + e.getMessage());
@@ -100,6 +101,8 @@ public class InspectPagesCommand implements Callable<Integer> {
                 }
                 ColumnChunk chunk = rg.columns().get(col.columnIndex());
                 spec.commandLine().getOut().printf("Row Group %d / %s%n", rgIdx, Sizes.columnPath(chunk.metaData()));
+                spec.commandLine().getOut().printf("  %-8s  %-18s  %-22s  %-10s  %s%n",
+                        "Page", "Type", "Encoding", "Compressed", "Values");
                 scanPageHeaders(chunk.metaData(), inputFile);
                 spec.commandLine().getOut().println();
             }
@@ -137,10 +140,10 @@ public class InspectPagesCommand implements Callable<Integer> {
     }
 
     private void printPageHeader(int index, PageHeader header) {
-        String label = header.type() == PageHeader.PageType.DICTIONARY_PAGE ? " dict" : String.format("[%3d]", index);
+        String label = header.type() == PageHeader.PageType.DICTIONARY_PAGE ? "[dict]" : String.format("[%d]", index);
         String encoding = pageEncoding(header);
         int numValues = numValues(header);
-        spec.commandLine().getOut().printf("  %s  %-18s  encoding: %-22s  compressed: %-10s  values: %d%n",
+        spec.commandLine().getOut().printf("  %-8s  %-18s  %-22s  %-10s  %d%n",
                 label,
                 header.type(),
                 encoding,

@@ -28,7 +28,8 @@ class InspectPagesCommandTest {
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput())
                 .contains("DATA_PAGE")
-                .contains("encoding:");
+                .contains("Encoding")
+                .contains("PLAIN");
     }
 
     @Test
