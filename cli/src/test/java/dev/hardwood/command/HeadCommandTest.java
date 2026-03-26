@@ -19,6 +19,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class HeadCommandTest {
 
     private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
+    private final String LOGICAL_TYPES_FILE = this.getClass().getResource("/logical_types_test.parquet").getPath();
 
     @Test
     void printsAsciiTableWithHeaders(QuarkusMainLauncher launcher) {
@@ -64,6 +65,30 @@ class HeadCommandTest {
                 .filter(l -> l.startsWith("|") && !l.contains("id"))
                 .count();
         assertThat(dataLines).isEqualTo(3);
+    }
+
+    @Test
+    void displaysStringColumnsAsText(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("head", "-f", LOGICAL_TYPES_FILE);
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput())
+                .contains("Alice")
+                .contains("Bob")
+                .contains("Charlie");
+    }
+
+    @Test
+    void displaysNestedStructStringFieldsAsText(QuarkusMainLauncher launcher) {
+        String deepNestedFile = this.getClass().getResource("/deep_nested_struct_test.parquet").getPath();
+        LaunchResult result = launcher.launch("head", "-f", deepNestedFile);
+
+        assertThat(result.exitCode()).isZero();
+        // Nested string fields are decoded; cell is truncated at 40 chars so we check a short prefix
+        assertThat(result.getOutput())
+                .contains("ACC-001")
+                .contains("ACC-002")
+                .contains("ACC-003");
     }
 
     @Test

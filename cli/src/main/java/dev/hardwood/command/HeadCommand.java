@@ -43,7 +43,7 @@ public class HeadCommand implements Callable<Integer> {
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema fileSchema = reader.getFileSchema();
             String[] headers = RowTable.topLevelFieldNames(fileSchema);
-            List<String[]> rows = readRows(reader, headers.length);
+            List<String[]> rows = readRows(reader, fileSchema, headers.length);
             RowTable.print(spec, headers, rows);
         }
         catch (IOException e) {
@@ -54,10 +54,10 @@ public class HeadCommand implements Callable<Integer> {
         return CommandLine.ExitCode.OK;
     }
 
-    private List<String[]> readRows(ParquetFileReader reader, int fieldCount) throws IOException {
+    private List<String[]> readRows(ParquetFileReader reader, FileSchema schema, int fieldCount) throws IOException {
         List<String[]> rows = new ArrayList<>();
         try (RowReader rowReader = reader.createRowReader()) {
-            RowTable.rowToTableRow(fieldCount, rows, rowReader, count);
+            RowTable.rowToTableRow(fieldCount, rows, rowReader, count, schema);
         }
         return rows;
     }

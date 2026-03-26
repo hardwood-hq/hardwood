@@ -24,6 +24,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 class ConvertCommandTest {
 
     private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
+    private final String LOGICAL_TYPES_FILE = this.getClass().getResource("/logical_types_test.parquet").getPath();
 
     @Test
     void csvOutputContainsHeaders(QuarkusMainLauncher launcher) {
@@ -84,6 +85,28 @@ class ConvertCommandTest {
         assertThat(Files.readString(out))
                 .startsWith("id,value")
                 .contains("1,100");
+    }
+
+    @Test
+    void csvOutputRendersStringColumnsAsText(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("convert", "-f", LOGICAL_TYPES_FILE, "--to", "csv", "--columns", "name");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput())
+                .contains("Alice")
+                .contains("Bob")
+                .contains("Charlie");
+    }
+
+    @Test
+    void jsonOutputRendersStringColumnsAsText(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("convert", "-f", LOGICAL_TYPES_FILE, "--to", "json", "--columns", "name");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput())
+                .contains("Alice")
+                .contains("Bob")
+                .contains("Charlie");
     }
 
     @Test

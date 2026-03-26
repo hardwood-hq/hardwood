@@ -10,12 +10,14 @@ package dev.hardwood.command;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.List;
 import java.util.concurrent.Callable;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Spec;
@@ -60,10 +62,11 @@ public class ConvertCommand implements Callable<Integer> {
             String[] headers = projectHeaders(allHeaders, columnIndices);
 
             PrintWriter out = openOutput();
+            List<SchemaNode> fields = fileSchema.getRootNode().children();
             try (RowReader rowReader = reader.createRowReader()) {
                 switch (format) {
-                    case CSV -> writeCsv(out, headers, columnIndices, rowReader);
-                    case JSON -> writeJson(out, headers, columnIndices, rowReader);
+                    case CSV -> writeCsv(out, headers, columnIndices, rowReader, fields);
+                    case JSON -> writeJson(out, headers, columnIndices, rowReader, fields);
                 }
             }
             if (outputFile != null) {
@@ -128,19 +131,22 @@ public class ConvertCommand implements Callable<Integer> {
         return result;
     }
 
-    private static void writeCsv(PrintWriter out, String[] headers, int[] columnIndices, RowReader rowReader) {
+    private static void writeCsv(PrintWriter out, String[] headers, int[] columnIndices, RowReader rowReader,
+            List<SchemaNode> fields) {
         out.println(csvRow(headers));
         while (rowReader.hasNext()) {
             rowReader.next();
             String[] values = new String[columnIndices.length];
             for (int i = 0; i < columnIndices.length; i++) {
-                values[i] = RowTable.renderValue(rowReader.getValue(columnIndices[i]));
+                int col = columnIndices[i];
+                values[i] = RowTable.renderField(rowReader, col, fields.get(col));
             }
             out.println(csvRow(values));
         }
     }
 
-    private static void writeJson(PrintWriter out, String[] headers, int[] columnIndices, RowReader rowReader) {
+    private static void writeJson(PrintWriter out, String[] headers, int[] columnIndices, RowReader rowReader,
+            List<SchemaNode> fields) {
         out.print("[");
         boolean first = true;
         while (rowReader.hasNext()) {
@@ -153,7 +159,8 @@ public class ConvertCommand implements Callable<Integer> {
             for (int i = 0; i < columnIndices.length; i++) {
                 if (i > 0)
                     out.print(",");
-                String val = RowTable.renderValue(rowReader.getValue(columnIndices[i]));
+                int col = columnIndices[i];
+                String val = RowTable.renderField(rowReader, col, fields.get(col));
                 out.print("\"" + jsonEscape(headers[i]) + "\":\"" + jsonEscape(val) + "\"");
             }
             out.print("}");

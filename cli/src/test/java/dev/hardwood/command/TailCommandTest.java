@@ -20,6 +20,7 @@ class TailCommandTest {
 
     // plain_uncompressed.parquet: 3 rows — (1,100), (2,200), (3,300)
     private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
+    private final String LOGICAL_TYPES_FILE = this.getClass().getResource("/logical_types_test.parquet").getPath();
 
     @Test
     void printsAsciiTableWithHeaders(QuarkusMainLauncher launcher) {
@@ -70,6 +71,17 @@ class TailCommandTest {
                 .filter(l -> l.startsWith("|") && !l.contains("id"))
                 .count();
         assertThat(dataLines).isEqualTo(3);
+    }
+
+    @Test
+    void displaysStringColumnsAsText(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("tail", "-f", LOGICAL_TYPES_FILE);
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput())
+                .contains("Alice")
+                .contains("Bob")
+                .contains("Charlie");
     }
 
     @Test

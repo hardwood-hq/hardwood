@@ -43,7 +43,7 @@ public class TailCommand implements Callable<Integer> {
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema fileSchema = reader.getFileSchema();
             String[] headers = RowTable.topLevelFieldNames(fileSchema);
-            List<String[]> rows = readLastRows(reader, headers.length);
+            List<String[]> rows = readLastRows(reader, fileSchema, headers.length);
             RowTable.print(spec, headers, rows);
         }
         catch (IOException e) {
@@ -54,7 +54,7 @@ public class TailCommand implements Callable<Integer> {
         return CommandLine.ExitCode.OK;
     }
 
-    private List<String[]> readLastRows(ParquetFileReader reader, int fieldCount) throws IOException {
+    private List<String[]> readLastRows(ParquetFileReader reader, FileSchema schema, int fieldCount) throws IOException {
         long totalRows = reader.getFileMetaData().numRows();
         long skip = Math.max(0, totalRows - count);
 
@@ -63,7 +63,7 @@ public class TailCommand implements Callable<Integer> {
             for (long i = 0; i < skip; i++) {
                 rowReader.next();
             }
-            RowTable.rowToTableRow(fieldCount, rows, rowReader, count);
+            RowTable.rowToTableRow(fieldCount, rows, rowReader, count, schema);
         }
         return rows;
     }
