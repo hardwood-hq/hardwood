@@ -43,12 +43,14 @@ public class PrintCommand implements Callable<Integer> {
     int sampleSize;
     @CommandLine.Option(names = {"-mw", "--max-width"}, defaultValue = "50", description = "Max width in characters of a column.")
     int maxWidth;
-    @CommandLine.Option(names = {"-t", "--truncate"}, defaultValue = "true", description = "Should rows be truncated instead of wraping on next line when too long.")
+    @CommandLine.Option(names = {"-t", "--truncate"}, negatable = true, fallbackValue = "true", defaultValue = "true", description = "Should rows be truncated instead of wraping on next line when too long.")
     boolean truncate;
     @CommandLine.Option(names = {"-tp", "--transpose"}, defaultValue = "false", description = "When true, the rows are printed with two columns, the headers and values.")
     boolean transpose;
     @CommandLine.Option(names = {"-ri", "--row-index"}, defaultValue = "false", description = "When true, a virtual column is added containing the row index.")
     boolean addRowIndex;
+    @CommandLine.Option(names = {"-rd", "--row-delimiter"}, negatable = true, fallbackValue = "true", defaultValue = "true", description = "Should a line separate rows, it is lighter without but less readable when it overlaps a single terminal line.")
+    boolean rowDelimiter;
     @CommandLine.Option(names = "-n", defaultValue = "-2147483648", description = "If >0 the number of head lines to show and if <0 and not Integer.MIN_VALUE the tail number else it shows the full file. Note that tail (negative values) is loading the rows in memory.")
     int n;
 
@@ -88,7 +90,8 @@ public class PrintCommand implements Callable<Integer> {
                                     .iterator(),
                             sampleSize,
                             maxWidth,
-                            truncate);
+                            truncate,
+                            rowDelimiter);
                 }
             }
         } catch (IOException e) {

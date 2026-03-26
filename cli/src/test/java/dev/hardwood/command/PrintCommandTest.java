@@ -42,6 +42,24 @@ class PrintCommandTest {
     }
 
     @Test
+    void noLineSeparatorBetweenRows(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", TEST_FILE, "--no-row-delimiter");
+
+        assertThat(result.exitCode()).isZero();
+        String output = result.getOutput().replace(System.lineSeparator(), "\n");
+
+        // For default small file, we know exact ASCII output
+        assertThat(output).isEqualTo("""
+                +----+-------+
+                | id | value |
+                +----+-------+
+                | 1  | 100   |
+                | 2  | 200   |
+                | 3  | 300   |
+                +----+-------+""");
+    }
+
+    @Test
     void tail(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("print", "-f", TEST_FILE, "-n", "-2");
 

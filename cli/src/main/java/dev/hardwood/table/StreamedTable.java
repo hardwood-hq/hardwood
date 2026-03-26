@@ -18,7 +18,7 @@ import java.util.stream.IntStream;
 public class StreamedTable {
     public void print(PrintWriter out, String[] headers,
                       Iterator<IntFunction<String>> iterator,
-                      int sampleSize, int maxWidth, boolean truncate) {
+                      int sampleSize, int maxWidth, boolean truncate, boolean rowDelimiter) {
         int n = headers.length;
 
         // sample a bit the rows so we can better adjust the widths
@@ -58,13 +58,21 @@ public class StreamedTable {
         // catch up the sampled rows
         for (String[] rowFunc : sampleRows) {
             printRow(out, i -> rowFunc[i], widths, truncate);
-            out.println(sep);
+            if (rowDelimiter) {
+                out.println(sep);
+            }
         }
 
         // finish the dataset content
         while (iterator.hasNext()) {
             IntFunction<String> rowFunc = iterator.next();
             printRow(out, rowFunc, widths, truncate);
+            if (rowDelimiter) {
+                out.println(sep);
+            }
+        }
+
+        if (!rowDelimiter && !sampleRows.isEmpty()) {
             out.println(sep);
         }
 
