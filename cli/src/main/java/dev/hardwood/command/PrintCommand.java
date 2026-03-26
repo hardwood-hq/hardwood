@@ -9,6 +9,7 @@ package dev.hardwood.command;
 
 import java.io.IOException;
 import java.util.ArrayDeque;
+import java.util.Iterator;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.Callable;
@@ -31,14 +32,10 @@ import picocli.CommandLine.Spec;
 
 @CommandLine.Command(name = "print", description = "Print the all rows as an ASCII table.")
 public class PrintCommand implements Callable<Integer> {
-    private static final Class<?>[] ROW_READER_API = new Class<?>[]{RowReader.class};
-
     @CommandLine.Mixin
     FileMixin fileMixin;
     @Spec
     CommandSpec spec;
-    @CommandLine.Option(names = {"-s", "--bytes-as-string"}, defaultValue = "false", description = "Render binaries as string.")
-    boolean bytesAsString;
     @CommandLine.Option(names = {"-ss", "--sample-size"}, defaultValue = "10", description = "Max number of line used to autoadjust the column width.")
     int sampleSize;
     @CommandLine.Option(names = {"-mw", "--max-width"}, defaultValue = "50", description = "Max width in characters of a column.")
@@ -70,7 +67,7 @@ public class PrintCommand implements Callable<Integer> {
                 if (transpose) {
                     stream.forEach(r -> {
                         Stream<Object[]> data = IntStream.range(0, headers.length)
-                                .mapToObj(it -> new Object[]{headers[it], RowTable.renderValue(r[it], bytesAsString)});
+                                .mapToObj(it -> new Object[]{headers[it], RowTable.renderValue(r[it], fileSchema.getRootNode().children().get(it))});
                         spec.commandLine().getOut().println(
                                 AsciiTable.builder()
                                         .data((rowIndex != null ?
@@ -85,8 +82,8 @@ public class PrintCommand implements Callable<Integer> {
                             addRowIndex ? Stream.concat(Stream.of("rowIndex"), Stream.of(headers)).toArray(String[]::new) : headers,
                             stream
                                     .map(it -> rowIndex == null ?
-                                            (IntFunction<String>) i -> RowTable.renderValue(it[i], bytesAsString) :
-                                            ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : RowTable.renderValue(it[i - 1], bytesAsString)))
+                                            (IntFunction<String>) i -> RowTable.renderValue(it[i], fileSchema.getRootNode().children().get(i)) :
+                                            ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : RowTable.renderValue(it[i - 1], fileSchema.getRootNode().children().get(i - 1))))
                                     .iterator(),
                             sampleSize,
                             maxWidth,
@@ -130,6 +127,17 @@ public class PrintCommand implements Callable<Integer> {
     }
 
     private Stream<RowReader> stream(RowReader rowReader) {
-        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(rowReader.toIterator(), Spliterator.IMMUTABLE), false);
+        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(new Iterator<>() {
+            @Override
+            public boolean hasNext() {
+                return rowReader.hasNext();
+            }
+
+            @Override
+            public RowReader next() {
+                rowReader.next();
+                return rowReader;
+            }
+        }, Spliterator.IMMUTABLE), false);
     }
 }

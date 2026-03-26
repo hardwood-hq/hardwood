@@ -97,7 +97,7 @@ class PrintCommandTest {
 
     @Test
     void byteArrayAsString(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-s", "-f", BYTE_ARRAY_FILE);
+        LaunchResult result = launcher.launch("print", "-f", BYTE_ARRAY_FILE);
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
@@ -143,7 +143,7 @@ class PrintCommandTest {
 
     @Test
     void truncatesWhenEnabled(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", BYTE_ARRAY_FILE, "-t", "-s", "-mw", "5");
+        LaunchResult result = launcher.launch("print", "-f", BYTE_ARRAY_FILE, "--no-truncate", "-mw", "5");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
@@ -177,34 +177,6 @@ class PrintCommandTest {
                         | 8  | ban   | testi |
                         |    |       | ng    |
                         +----+-------+-------+""");
-    }
-
-    @Test
-    void wrapsWhenTruncateDisabled(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", BYTE_ARRAY_FILE, "-t=false");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
-                .isEqualTo("""
-                        +----+----------------+-----------------+
-                        | id | prefix_strings | varying_strings |
-                        +----+----------------+-----------------+
-                        | 1  | <5 bytes>      | <5 bytes>       |
-                        +----+----------------+-----------------+
-                        | 2  | <11 bytes>     | <5 bytes>       |
-                        +----+----------------+-----------------+
-                        | 3  | <5 bytes>      | <9 bytes>       |
-                        +----+----------------+-----------------+
-                        | 4  | <6 bytes>      | <6 bytes>       |
-                        +----+----------------+-----------------+
-                        | 5  | <7 bytes>      | <6 bytes>       |
-                        +----+----------------+-----------------+
-                        | 6  | <4 bytes>      | <9 bytes>       |
-                        +----+----------------+-----------------+
-                        | 7  | <9 bytes>      | <4 bytes>       |
-                        +----+----------------+-----------------+
-                        | 8  | <3 bytes>      | <7 bytes>       |
-                        +----+----------------+-----------------+""");
     }
 
     @Test

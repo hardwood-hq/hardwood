@@ -11,7 +11,6 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.Iterator;
 import java.util.UUID;
 
 import dev.hardwood.row.PqDoubleList;
@@ -153,20 +152,4 @@ public interface RowReader extends StructAccessor, AutoCloseable {
 
     /// Check if a field is null by field index.
     boolean isNull(int fieldIndex);
-
-    /// Convenient method to convert this to a plain iterator simplifying stream integration.
-    default Iterator<RowReader> toIterator() {
-        return new Iterator<>() {
-            @Override
-            public boolean hasNext() {
-                return RowReader.this.hasNext();
-            }
-
-            @Override
-            public RowReader next() {
-                RowReader.this.next();
-                return RowReader.this;
-            }
-        };
-    }
 }
