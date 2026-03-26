@@ -16,8 +16,12 @@
     <formats>
         <format>${dist.format}</format>
     </formats>
-    <baseDirectory>/</baseDirectory>
+    <baseDirectory>hardwood-cli-${dist.qualifier}-${dist.os}-${dist.arch}</baseDirectory>
     <files>
+        <file>
+            <source>${maven.multiModuleProjectDirectory}/README.md</source>
+            <outputDirectory>./</outputDirectory>
+        </file>
         <file>
             <source>${maven.multiModuleProjectDirectory}/LICENSE.txt</source>
             <outputDirectory>./</outputDirectory>

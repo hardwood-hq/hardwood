@@ -8,10 +8,14 @@
 package dev.hardwood.s3;
 
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.ByteBuffer;
+import java.nio.channels.Channels;
+import java.nio.channels.ReadableByteChannel;
 
 import dev.hardwood.InputFile;
 import software.amazon.awssdk.core.ResponseBytes;
+import software.amazon.awssdk.core.sync.ResponseTransformer;
 import software.amazon.awssdk.services.s3.S3Client;
 import software.amazon.awssdk.services.s3.S3ClientBuilder;
 import software.amazon.awssdk.services.s3.model.GetObjectResponse;
@@ -141,10 +145,18 @@ public class S3InputFile implements InputFile {
         }
 
         String range = "bytes=" + offset + "-" + (offset + length - 1);
-        try {
-            ResponseBytes<GetObjectResponse> resp = s3.getObjectAsBytes(
-                    b -> b.bucket(bucket).key(key).range(range));
-            return ByteBuffer.wrap(resp.asByteArray());
+        try (InputStream stream = s3.getObject(
+                b -> b.bucket(bucket).key(key).range(range),
+                ResponseTransformer.toInputStream())) {
+            ByteBuffer buf = ByteBuffer.allocateDirect(length);
+            ReadableByteChannel channel = Channels.newChannel(stream);
+            while (buf.hasRemaining()) {
+                if (channel.read(buf) < 0) {
+                    break;
+                }
+            }
+            buf.flip();
+            return buf;
         }
         catch (S3Exception e) {
             throw new IOException("Failed to read range [" + offset + ", " + (offset + length)
