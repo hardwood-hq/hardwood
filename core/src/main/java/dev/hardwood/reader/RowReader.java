@@ -12,11 +12,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.Iterator;
-import java.util.Spliterator;
-import java.util.Spliterators;
 import java.util.UUID;
-import java.util.stream.Stream;
-import java.util.stream.StreamSupport;
 
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
@@ -172,10 +168,5 @@ public interface RowReader extends StructAccessor, AutoCloseable {
                 return RowReader.this;
             }
         };
-    }
-
-    /// Convenient method to convert this to a Stream.
-    default Stream<RowReader> toStream() {
-        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(toIterator(), Spliterator.IMMUTABLE), false);
     }
 }

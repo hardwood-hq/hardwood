@@ -24,12 +24,11 @@ public class StreamedTable {
         // sample a bit the rows so we can better adjust the widths
         List<String[]> sampleRows = new ArrayList<>();
         int count = 0;
-        while (iterator.hasNext() && count < sampleSize) {
+        while (count++ < sampleSize && iterator.hasNext()) {
             var next = iterator.next();
             sampleRows.add(IntStream.range(0, headers.length)
                     .mapToObj(next)
                     .toArray(String[]::new));
-            count++;
         }
 
         // compute column widths based on headers + sample rows

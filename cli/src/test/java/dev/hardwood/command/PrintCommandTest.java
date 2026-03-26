@@ -16,14 +16,14 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class ShowCommandTest {
+class PrintCommandTest {
 
     private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
     private final String BYTE_ARRAY_FILE = this.getClass().getResource("/delta_byte_array_test.parquet").getPath();
 
     @Test
     void printsAsciiTableDefault(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("show", "-f", TEST_FILE);
+        LaunchResult result = launcher.launch("print", "-f", TEST_FILE);
 
         assertThat(result.exitCode()).isZero();
         String output = result.getOutput().replace(System.lineSeparator(), "\n");
@@ -42,8 +42,44 @@ class ShowCommandTest {
     }
 
     @Test
+    void tail(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", TEST_FILE, "-n", "-2");
+
+        assertThat(result.exitCode()).isZero();
+        String output = result.getOutput().replace(System.lineSeparator(), "\n");
+
+        // For default small file, we know exact ASCII output
+        assertThat(output).isEqualTo("""
+                +----+-------+
+                | id | value |
+                +----+-------+
+                | 2  | 200   |
+                +----+-------+
+                | 3  | 300   |
+                +----+-------+""");
+    }
+
+    @Test
+    void head(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", TEST_FILE, "-n", "2");
+
+        assertThat(result.exitCode()).isZero();
+        String output = result.getOutput().replace(System.lineSeparator(), "\n");
+
+        // For default small file, we know exact ASCII output
+        assertThat(output).isEqualTo("""
+                +----+-------+
+                | id | value |
+                +----+-------+
+                | 1  | 100   |
+                +----+-------+
+                | 2  | 200   |
+                +----+-------+""");
+    }
+
+    @Test
     void byteArrayAsString(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("show", "-s", "-f", BYTE_ARRAY_FILE);
+        LaunchResult result = launcher.launch("print", "-s", "-f", BYTE_ARRAY_FILE);
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
@@ -71,7 +107,7 @@ class ShowCommandTest {
 
     @Test
     void showsRowIndexWhenEnabled(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("show", "-f", TEST_FILE, "-ri");
+        LaunchResult result = launcher.launch("print", "-f", TEST_FILE, "-ri");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
@@ -89,7 +125,7 @@ class ShowCommandTest {
 
     @Test
     void truncatesWhenEnabled(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("show", "-f", BYTE_ARRAY_FILE, "-t", "-s", "-mw", "5");
+        LaunchResult result = launcher.launch("print", "-f", BYTE_ARRAY_FILE, "-t", "-s", "-mw", "5");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
@@ -127,7 +163,7 @@ class ShowCommandTest {
 
     @Test
     void wrapsWhenTruncateDisabled(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("show", "-f", BYTE_ARRAY_FILE, "-t=false");
+        LaunchResult result = launcher.launch("print", "-f", BYTE_ARRAY_FILE, "-t=false");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
@@ -155,7 +191,7 @@ class ShowCommandTest {
 
     @Test
     void failsOnMissingFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("show", "-f", "nonexistent.parquet");
+        LaunchResult result = launcher.launch("print", "-f", "nonexistent.parquet");
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getOutput()).isEqualTo("");
@@ -163,7 +199,7 @@ class ShowCommandTest {
 
     @Test
     void rejectsRemoteUri(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("show", "-f", "gs://bucket/data.parquet");
+        LaunchResult result = launcher.launch("print", "-f", "gs://bucket/data.parquet");
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput().replace(System.lineSeparator(), "\n"))

@@ -8,11 +8,15 @@
 package dev.hardwood.command;
 
 import java.io.IOException;
+import java.util.ArrayDeque;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntFunction;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import com.github.freva.asciitable.AsciiTable;
 
@@ -25,8 +29,10 @@ import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "show", description = "Print the all rows as an ASCII table.")
-public class ShowCommand implements Callable<Integer> {
+@CommandLine.Command(name = "print", description = "Print the all rows as an ASCII table.")
+public class PrintCommand implements Callable<Integer> {
+    private static final Class<?>[] ROW_READER_API = new Class<?>[]{RowReader.class};
+
     @CommandLine.Mixin
     FileMixin fileMixin;
     @Spec
@@ -43,6 +49,8 @@ public class ShowCommand implements Callable<Integer> {
     boolean transpose;
     @CommandLine.Option(names = {"-ri", "--row-index"}, defaultValue = "false", description = "When true, a virtual column is added containing the row index.")
     boolean addRowIndex;
+    @CommandLine.Option(names = "-n", defaultValue = "-2147483648", description = "If >0 the number of head lines to show and if <0 and not Integer.MIN_VALUE the tail number else it shows the full file. Note that tail (negative values) is loading the rows in memory.")
+    int n;
 
     @Override
     public Integer call() {
@@ -56,10 +64,11 @@ public class ShowCommand implements Callable<Integer> {
             String[] headers = RowTable.topLevelFieldNames(fileSchema);
             AtomicLong rowIndex = addRowIndex ? new AtomicLong() : null;
             try (RowReader rowReader = reader.createRowReader()) {
+                Stream<Object[]> stream = prepareSampling(rowReader, headers);
                 if (transpose) {
-                    rowReader.toStream().forEach(r -> {
+                    stream.forEach(r -> {
                         Stream<Object[]> data = IntStream.range(0, headers.length)
-                                .mapToObj(it -> new Object[]{headers[it], RowTable.renderValue(r.getValue(it), bytesAsString)});
+                                .mapToObj(it -> new Object[]{headers[it], RowTable.renderValue(r[it], bytesAsString)});
                         spec.commandLine().getOut().println(
                                 AsciiTable.builder()
                                         .data((rowIndex != null ?
@@ -72,11 +81,10 @@ public class ShowCommand implements Callable<Integer> {
                     new StreamedTable().print(
                             spec.commandLine().getOut(),
                             addRowIndex ? Stream.concat(Stream.of("rowIndex"), Stream.of(headers)).toArray(String[]::new) : headers,
-                            rowReader
-                                    .toStream()
+                            stream
                                     .map(it -> rowIndex == null ?
-                                            (IntFunction<String>) i -> RowTable.renderValue(rowReader.getValue(i), bytesAsString) :
-                                            ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : RowTable.renderValue(rowReader.getValue(i - 1), bytesAsString)))
+                                            (IntFunction<String>) i -> RowTable.renderValue(it[i], bytesAsString) :
+                                            ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : RowTable.renderValue(it[i - 1], bytesAsString)))
                                     .iterator(),
                             sampleSize,
                             maxWidth,
@@ -89,5 +97,36 @@ public class ShowCommand implements Callable<Integer> {
         }
 
         return CommandLine.ExitCode.OK;
+    }
+
+    private Stream<Object[]> prepareSampling(RowReader rowReader, String[] headers) {
+        if (n == 0) {
+            return Stream.empty();
+        }
+        if (n > 0) {
+            return stream(rowReader).limit(n).map(it -> toData(rowReader, headers));
+        }
+        if (n != Integer.MIN_VALUE) {
+            int tailSize = -n;
+            ArrayDeque<Object[]> buffer = new ArrayDeque<>(tailSize);
+            stream(rowReader).forEach(row -> {
+                if (buffer.size() == tailSize) {
+                    buffer.removeFirst();
+                }
+                buffer.addLast(toData(rowReader, headers));
+            });
+            return buffer.stream();
+        }
+        return stream(rowReader).map(it -> toData(rowReader, headers));
+    }
+
+    private Object[] toData(RowReader rowReader, String[] headers) {
+        return IntStream.range(0, headers.length)
+                .mapToObj(rowReader::getValue)
+                .toArray(Object[]::new);
+    }
+
+    private Stream<RowReader> stream(RowReader rowReader) {
+        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(rowReader.toIterator(), Spliterator.IMMUTABLE), false);
     }
 }

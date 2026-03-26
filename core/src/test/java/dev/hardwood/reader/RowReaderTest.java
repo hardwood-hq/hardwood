@@ -39,17 +39,6 @@ class RowReaderTest {
         }
     }
 
-    @Test
-    void toStream() {
-        try (final var reader = new InMemoryRowReader()) {
-            final var iterator = reader.toStream().iterator();
-            assertTrue(iterator.hasNext());
-            assertNext(iterator, "a", "1");
-            assertNext(iterator, "b", "2");
-            assertNext(iterator, "c", "3");
-        }
-    }
-
     private void assertNext(final Iterator<RowReader> iterator, final String c1, final String c2) {
         final var next = iterator.next();
         assertEquals(c1, next.getString(0));
