@@ -64,6 +64,8 @@ public class MetadataCommand implements Callable<Integer> {
     private void printRowGroup(int index, RowGroup rg) {
         spec.commandLine().getOut().printf("Row Group %d  (%d rows, %s uncompressed)%n",
                 index, rg.numRows(), Sizes.format(rg.totalByteSize()));
+        spec.commandLine().getOut().printf("  %-30s  %-25s  %-14s  %-10s  %s%n",
+                "Column", "Type", "Codec", "Compressed", "Uncompressed");
 
         for (ColumnChunk cc : rg.columns()) {
             printColumnChunk(cc.metaData());
@@ -73,7 +75,7 @@ public class MetadataCommand implements Callable<Integer> {
 
     private void printColumnChunk(ColumnMetaData cmd) {
         String path = Sizes.columnPath(cmd);
-        spec.commandLine().getOut().printf("  %-30s  type: %-25s  codec: %-14s  compressed: %-10s  uncompressed: %s%n",
+        spec.commandLine().getOut().printf("  %-30s  %-25s  %-14s  %-10s  %s%n",
                 path,
                 cmd.type(),
                 cmd.codec(),

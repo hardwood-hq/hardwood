@@ -40,10 +40,10 @@ class MetadataCommandTest {
         assertThat(result.getOutput())
                 .contains("id")
                 .contains("value")
-                .contains("type:")
-                .contains("codec:")
-                .contains("compressed:")
-                .contains("uncompressed:");
+                .contains("Type")
+                .contains("Codec")
+                .contains("Compressed")
+                .contains("Uncompressed");
     }
 
     @Test
