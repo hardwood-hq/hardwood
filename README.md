@@ -864,6 +864,59 @@ try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(),
 
 ---
 
+## CLI
+
+The `hardwood` CLI lets you inspect and convert Parquet files from the command line.
+Pre-built native binaries for Linux, macOS, and Windows are available from the [early-access release](https://github.com/hardwood-hq/hardwood/releases/tag/1.0-early-access).
+
+### Available Commands
+
+| Command | Description |
+|---------|-------------|
+| `hardwood info` | Display high-level file information |
+| `hardwood schema` | Print the file schema |
+| `hardwood head` | Print the first N rows as an ASCII table |
+| `hardwood tail` | Print the last N rows as an ASCII table |
+| `hardwood convert` | Convert a Parquet file to CSV or JSON |
+| `hardwood metadata` | Display full file metadata including row groups and column chunks |
+| `hardwood footer` | Print decoded footer length, offset, and file structure |
+| `hardwood inspect pages` | List data and dictionary pages per column chunk |
+| `hardwood inspect dictionary` | Print dictionary entries for a column |
+| `hardwood inspect column-index` | Print min/max statistics per page for a column |
+| `hardwood inspect column-size` | Show compressed and uncompressed byte sizes per column |
+| `hardwood help` | Display help information about a command |
+
+### Examples
+
+```shell
+# Show file overview
+hardwood info -f data.parquet
+
+# Print schema
+hardwood schema -f data.parquet
+
+# Show first 20 rows
+hardwood head -n 20 -f data.parquet
+
+# Convert to CSV
+hardwood convert --format csv -f data.parquet
+
+# Read from S3
+hardwood schema -f s3://my-bucket/data.parquet
+```
+
+### Shell Completion
+
+The distribution includes a Bash completion script at `bin/hardwood_completion`. Source it in your shell to enable tab completion for commands, options, and arguments:
+
+```shell
+source hardwood_completion
+```
+
+To make it permanent, add the line above to your `~/.bashrc` or `~/.bash_profile`.
+
+---
+
 ## Package Structure
 
 Hardwood is organized into public API packages and internal implementation packages:
