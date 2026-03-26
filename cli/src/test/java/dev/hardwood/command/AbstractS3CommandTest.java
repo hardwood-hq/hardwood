@@ -24,6 +24,8 @@ import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 abstract class AbstractS3CommandTest {
     protected static final String S3_FILE = "s3://test-bucket/plain_uncompressed.parquet";
     protected static final String S3_DICT_FILE = "s3://test-bucket/dictionary_uncompressed.parquet";
+    protected static final String S3_BYTE_ARRAY_FILE = "s3://test-bucket/delta_byte_array_test.parquet";
+    protected static final String S3_DEEP_NESTED_FILE = "s3://test-bucket/deep_nested_struct_test.parquet";
     protected static final String S3_NONEXISTENT_FILE = "s3://test-bucket/nonexistent.parquet";
 
     static final S3MockContainer s3Mock = new S3MockContainer("latest");
@@ -52,6 +54,10 @@ abstract class AbstractS3CommandTest {
                         readClasspathResource("/plain_uncompressed.parquet"));
                 putS3(http, endpoint, "/test-bucket/dictionary_uncompressed.parquet",
                         readClasspathResource("/dictionary_uncompressed.parquet"));
+                putS3(http, endpoint, "/test-bucket/delta_byte_array_test.parquet",
+                        readClasspathResource("/delta_byte_array_test.parquet"));
+                putS3(http, endpoint, "/test-bucket/deep_nested_struct_test.parquet",
+                        readClasspathResource("/deep_nested_struct_test.parquet"));
             }
         }
         catch (Exception e) {

@@ -10,11 +10,21 @@ package dev.hardwood.command;
 import io.quarkus.test.junit.main.QuarkusMainTest;
 
 @QuarkusMainTest
-class TailS3CommandTest extends AbstractS3CommandTest implements TailCommandContract {
+class PrintS3CommandTest extends AbstractS3CommandTest implements PrintCommandContract {
 
     @Override
     public String plainFile() {
         return S3_FILE;
+    }
+
+    @Override
+    public String byteArrayFile() {
+        return S3_BYTE_ARRAY_FILE;
+    }
+
+    @Override
+    public String deepNestedFile() {
+        return S3_DEEP_NESTED_FILE;
     }
 
     @Override
