@@ -27,12 +27,12 @@ jobs:
       contents: write
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
 
       - name: 'Set up Java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -72,14 +72,14 @@ jobs:
 
       - name: 'API change report'
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6 — https://github.com/actions/upload-artifact/releases/tag/v6
         with:
           name: japicmp-report
           path: core/target/japicmp/
 
       - name: 'JReleaser output'
         if: always()
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6 — https://github.com/actions/upload-artifact/releases/tag/v6
         with:
           name: jreleaser-release
           path: |
@@ -98,16 +98,16 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
 
       - name: 'Add Developer Command Prompt for Microsoft Visual C++'
         if: ${{ runner.os == 'Windows' }}
-        uses: ilammy/msvc-dev-cmd@v1
+        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1 — https://github.com/ilammy/msvc-dev-cmd/releases/tag/v1
 
       - name: 'Set up Graal'
-        uses: graalvm/setup-graalvm@v1
+        uses: graalvm/setup-graalvm@03e8abf916fd0e281b2efe7b2da3378bb0a1d085  # v1 — https://github.com/graalvm/setup-graalvm/releases/tag/v1
         with:
           java-version: ${{ env.JAVA_VERSION }}
           distribution: 'graalvm-community'
@@ -119,14 +119,14 @@ jobs:
 
       - name: 'Upload build artifact (tar.gz)'
         if: ${{ runner.os != 'Windows' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4 — https://github.com/actions/upload-artifact/releases/tag/v4
         with:
           name: artifacts-${{ runner.os }}-${{ runner.arch }}
           path: cli/target/*.tar.gz
 
       - name: 'Upload build artifact (zip)'
         if: ${{ runner.os == 'Windows' }}
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4 — https://github.com/actions/upload-artifact/releases/tag/v4
         with:
           name: artifacts-${{ runner.os }}-${{ runner.arch }}
           path: cli/target/*.zip
@@ -139,7 +139,7 @@ jobs:
       contents: write
     steps:
       - name: 'Download all build artifacts'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
         with:
           path: artifacts
           pattern: artifacts-*

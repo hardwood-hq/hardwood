@@ -28,12 +28,12 @@ jobs:
 
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
 
       - name: 'Set up Java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
           java-version: '25'
           distribution: 'temurin'
@@ -50,7 +50,7 @@ jobs:
         run: ./mvnw -B clean install
 
       - name: 'Upload built artifacts'
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4 — https://github.com/actions/upload-artifact/releases/tag/v4
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
@@ -62,19 +62,19 @@ jobs:
 
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
 
       - name: 'Set up Java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
@@ -106,12 +106,12 @@ jobs:
 
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — https://github.com/actions/checkout/releases/tag/v4
         with:
           submodules: 'true'
 
       - name: 'Set up Java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
           java-version: ${{ matrix.java }}
           distribution: 'temurin'
@@ -122,7 +122,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdeflate-dev
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
@@ -146,19 +146,19 @@ jobs:
 
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
 
       - name: 'Set up Java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
@@ -170,7 +170,7 @@ jobs:
           ./mvnw -ntp -B package japicmp:cmp -pl :hardwood-core -DskipTests -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
 
       - name: 'Upload API change report'
-        uses: actions/upload-artifact@v6
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6 — https://github.com/actions/upload-artifact/releases/tag/v6
         with:
           name: japicmp-report
           path: core/target/japicmp/
@@ -181,25 +181,25 @@ jobs:
 
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@v4
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — https://github.com/actions/checkout/releases/tag/v4
         with:
           submodules: 'true'
 
       - name: 'Set up Java'
-        uses: actions/setup-java@v5
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
           java-version: '25'
           distribution: 'temurin'
           cache: 'maven'
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Cache taxi data'
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4 — https://github.com/actions/cache/releases/tag/v4
         with:
           path: performance-testing/test-data-setup/target/tlc-trip-record-data/
           key: taxi-data-2023-01-to-2025-12
@@ -217,12 +217,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@v6
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
 
       - name: 'Set up Graal'
-        uses: graalvm/setup-graalvm@v1
+        uses: graalvm/setup-graalvm@03e8abf916fd0e281b2efe7b2da3378bb0a1d085  # v1 — https://github.com/graalvm/setup-graalvm/releases/tag/v1
         with:
           java-version: '25'
           distribution: 'graalvm-community'
@@ -230,7 +230,7 @@ jobs:
           cache: maven
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
