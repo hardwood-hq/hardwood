@@ -48,6 +48,9 @@ public class ConvertCommand implements Callable<Integer> {
     @CommandLine.Option(names = "--columns", description = "Comma-separated list of columns to include.")
     String columns;
 
+    @CommandLine.Option(names = "-s", defaultValue = "false", description = "Render binaries as string.")
+    boolean bytesAsString;
+
     @Override
     public Integer call() {
         InputFile inputFile = fileMixin.toInputFile();
@@ -132,7 +135,7 @@ public class ConvertCommand implements Callable<Integer> {
     }
 
     private static void writeCsv(PrintWriter out, String[] headers, int[] columnIndices, RowReader rowReader,
-            List<SchemaNode> fields) {
+                                 List<SchemaNode> fields) {
         out.println(csvRow(headers));
         while (rowReader.hasNext()) {
             rowReader.next();
@@ -146,7 +149,7 @@ public class ConvertCommand implements Callable<Integer> {
     }
 
     private static void writeJson(PrintWriter out, String[] headers, int[] columnIndices, RowReader rowReader,
-            List<SchemaNode> fields) {
+                                  List<SchemaNode> fields) {
         out.print("[");
         boolean first = true;
         while (rowReader.hasNext()) {

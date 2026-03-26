@@ -11,7 +11,12 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.Iterator;
+import java.util.Spliterator;
+import java.util.Spliterators;
 import java.util.UUID;
+import java.util.stream.Stream;
+import java.util.stream.StreamSupport;
 
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
@@ -152,4 +157,25 @@ public interface RowReader extends StructAccessor, AutoCloseable {
 
     /// Check if a field is null by field index.
     boolean isNull(int fieldIndex);
+
+    /// Convenient method to convert this to a plain iterator simplifying stream integration.
+    default Iterator<RowReader> toIterator() {
+        return new Iterator<>() {
+            @Override
+            public boolean hasNext() {
+                return RowReader.this.hasNext();
+            }
+
+            @Override
+            public RowReader next() {
+                RowReader.this.next();
+                return RowReader.this;
+            }
+        };
+    }
+
+    /// Convenient method to convert this to a Stream.
+    default Stream<RowReader> toStream() {
+        return StreamSupport.stream(Spliterators.spliteratorUnknownSize(toIterator(), Spliterator.IMMUTABLE), false);
+    }
 }
