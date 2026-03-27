@@ -19,6 +19,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
@@ -49,6 +51,8 @@ class S3InputFileTest {
                 TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
         source.api().putObject("test-bucket", "plain_uncompressed_with_nulls.parquet", Files.readAllBytes(
                 TEST_RESOURCES.resolve("plain_uncompressed_with_nulls.parquet")));
+        source.api().putObject("test-bucket", "column_index_pushdown.parquet", Files.readAllBytes(
+                TEST_RESOURCES.resolve("column_index_pushdown.parquet")));
     }
 
     @AfterAll
@@ -125,6 +129,34 @@ class S3InputFileTest {
                 ParquetFileReader.open(
                         source.inputFile("test-bucket", "nonexistent.parquet")))
                 .isInstanceOf(IOException.class);
+    }
+
+    @Test
+    void columnIndexPageFiltering() throws Exception {
+        // column_index_pushdown.parquet: 10000 rows, sorted id [0,9999], ~10 pages of 1024 values
+        // Filter to id < 1000 should skip ~90% of pages via Column Index
+        FilterPredicate filter = FilterPredicate.lt("id", 1000L);
+
+        long unfilteredCount = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(
+                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
+             ColumnReader col = reader.createColumnReader("id")) {
+            while (col.nextBatch()) {
+                unfilteredCount += col.getRecordCount();
+            }
+        }
+
+        long filteredCount = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(
+                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
+             ColumnReader col = reader.createColumnReader("id", filter)) {
+            while (col.nextBatch()) {
+                filteredCount += col.getRecordCount();
+            }
+        }
+
+        assertThat(unfilteredCount).isEqualTo(10000);
+        assertThat(filteredCount).isLessThan(unfilteredCount);
     }
 
     @Test
