@@ -86,7 +86,8 @@ public class S3InputFile implements InputFile {
         // Enable path-style access when a custom endpoint is configured (e.g.
         // via AWS_ENDPOINT_URL) since S3-compatible services such as S3Mock
         // typically do not support virtual-hosted-style addressing.
-        boolean customEndpoint = System.getenv("AWS_ENDPOINT_URL") != null;
+        boolean customEndpoint = System.getenv("AWS_ENDPOINT_URL") != null
+                      || System.getProperty("aws.endpointUrl") != null;
         S3ClientBuilder builder = S3Client.builder();
         if (customEndpoint) {
             builder.forcePathStyle(true);
