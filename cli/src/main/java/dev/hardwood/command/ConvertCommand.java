@@ -48,9 +48,6 @@ public class ConvertCommand implements Callable<Integer> {
     @CommandLine.Option(names = "--columns", description = "Comma-separated list of columns to include.")
     String columns;
 
-    @CommandLine.Option(names = "-s", defaultValue = "false", description = "Render binaries as string.")
-    boolean bytesAsString;
-
     @Override
     public Integer call() {
         InputFile inputFile = fileMixin.toInputFile();
