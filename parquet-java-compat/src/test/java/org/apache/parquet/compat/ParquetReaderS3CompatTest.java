@@ -8,6 +8,8 @@
 package org.apache.parquet.compat;
 
 import java.net.URI;
+import java.net.http.HttpClient;
+import java.nio.file.Files;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -25,10 +27,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
+import dev.hardwood.s3.S3Credentials;
+import dev.hardwood.s3.internal.S3Api;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -43,23 +43,18 @@ class ParquetReaderS3CompatTest {
     static S3MockContainer s3Mock = new S3MockContainer("latest");
 
     @BeforeAll
-    static void setup() {
-        S3Client s3 = S3Client.builder()
-                .endpointOverride(URI.create(s3Mock.getHttpEndpoint()))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create("access", "secret")))
-                .region(Region.US_EAST_1)
-                .forcePathStyle(true)
-                .build();
+    static void setup() throws Exception {
+        S3Api api = new S3Api(
+                HttpClient.newHttpClient(),
+                () -> S3Credentials.of("access", "secret"),
+                "us-east-1",
+                URI.create(s3Mock.getHttpEndpoint()), true);
 
-        s3.createBucket(b -> b.bucket("test-bucket"));
-        s3.putObject(
-                b -> b.bucket("test-bucket").key("plain_uncompressed.parquet"),
-                TEST_RESOURCES.resolve("plain_uncompressed.parquet"));
-        s3.putObject(
-                b -> b.bucket("test-bucket").key("subdir/nested.parquet"),
-                TEST_RESOURCES.resolve("plain_uncompressed.parquet"));
-        s3.close();
+        api.createBucket("test-bucket");
+        api.putObject("test-bucket", "plain_uncompressed.parquet", Files.readAllBytes(
+                TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
+        api.putObject("test-bucket", "subdir/nested.parquet", Files.readAllBytes(
+                TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
     }
 
     private Configuration s3Config() {

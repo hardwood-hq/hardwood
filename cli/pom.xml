@@ -13,7 +13,6 @@
   <properties>
       <executable-suffix />
       <dist.qualifier>early-access</dist.qualifier>
-      <aws-sdk.version>2.42.17</aws-sdk.version>
       <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
       <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
       <quarkus.platform.version>3.27.2</quarkus.platform.version>
@@ -73,6 +72,10 @@
       <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-s3</artifactId>
     </dependency>
+    <dependency>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-aws-auth</artifactId>
+    </dependency>
 
     <dependency>
       <groupId>com.github.freva</groupId>
@@ -126,16 +129,6 @@
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-junit5</artifactId>
       <scope>test</scope>
-    </dependency>
-
-    <!-- The AWS SDK's ChecksumProvider has hard bytecode references to CRT checksum
-         classes (CRC64NVME, CRC32C, etc.) that GraalVM must resolve at build time.
-         At runtime the CRT native library is not loaded, so the SDK falls back to
-         pure-Java checksums. Only the class stubs are needed; the CRT itself is inert. -->
-    <dependency>
-      <groupId>software.amazon.awssdk.crt</groupId>
-      <artifactId>aws-crt</artifactId>
-      <version>0.43.5</version>
     </dependency>
 
     <!-- netty-buffer is an optional dependency of brotli4j (declared optional in its POM).

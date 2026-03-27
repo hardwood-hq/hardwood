@@ -479,7 +479,7 @@ try (Hardwood hardwood = Hardwood.create();
 
 ### Reading from S3
 
-The `hardwood-s3` module adds support for reading Parquet files directly from Amazon S3. Add it as a dependency alongside `hardwood-core`:
+The `hardwood-s3` module adds support for reading Parquet files from Amazon S3 and S3-compatible services (Cloudflare R2, GCP Cloud Storage via HMAC keys, MinIO).
 
 ```xml
 <dependency>
@@ -488,18 +488,21 @@ The `hardwood-s3` module adds support for reading Parquet files directly from Am
 </dependency>
 ```
 
-Read a single file from S3:
+Read a file with static credentials:
 
 ```java
-import dev.hardwood.s3.S3InputFile;
+import dev.hardwood.s3.S3Credentials;
+import dev.hardwood.s3.S3Source;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
-import software.amazon.awssdk.services.s3.S3Client;
 
-S3Client s3 = S3Client.create(); // uses default credential chain
+S3Source source = S3Source.builder()
+        .region("us-east-1")
+        .credentials(S3Credentials.of("AKIA...", "secret"))
+        .build();
 
 try (ParquetFileReader reader = ParquetFileReader.open(
-        S3InputFile.of(s3, "my-bucket", "data/trips.parquet"))) {
+        source.inputFile("s3://my-bucket/data/trips.parquet"))) {
     try (RowReader rows = reader.createRowReader()) {
         while (rows.hasNext()) {
             rows.next();
@@ -509,22 +512,44 @@ try (ParquetFileReader reader = ParquetFileReader.open(
 }
 ```
 
-Read multiple files with a shared `S3Client` and thread pool:
+For dynamic or refreshable credentials, implement the `S3CredentialsProvider` functional interface:
+
+```java
+S3Source source = S3Source.builder()
+        .region("us-east-1")
+        .credentials(() -> fetchCredentialsFromVault())
+        .build();
+```
+
+For the full AWS credential chain (env vars, `~/.aws/credentials`, EC2/ECS instance profile, SSO, web identity), add the optional `hardwood-aws-auth` module:
+
+```xml
+<dependency>
+    <groupId>dev.hardwood</groupId>
+    <artifactId>hardwood-aws-auth</artifactId>
+</dependency>
+```
+
+```java
+import dev.hardwood.aws.auth.SdkCredentialsProviders;
+
+S3Source source = S3Source.builder()
+        .region("us-east-1")
+        .credentials(SdkCredentialsProviders.defaultChain())
+        .build();
+```
+
+Read multiple files in the same bucket:
 
 ```java
 import dev.hardwood.Hardwood;
-import dev.hardwood.InputFile;
-import dev.hardwood.s3.S3InputFile;
-
-S3Client s3 = S3Client.create();
-List<InputFile> files = List.of(
-    S3InputFile.of(s3, "my-bucket", "data/part-001.parquet"),
-    S3InputFile.of(s3, "my-bucket", "data/part-002.parquet"),
-    S3InputFile.of(s3, "my-bucket", "data/part-003.parquet")
-);
 
 try (Hardwood hardwood = Hardwood.create();
-     MultiFileParquetReader parquet = hardwood.openAll(files);
+     MultiFileParquetReader parquet = hardwood.openAll(
+             source.inputFilesInBucket("my-bucket",
+                     "data/part-001.parquet",
+                     "data/part-002.parquet",
+                     "data/part-003.parquet"));
      MultiFileRowReader reader = parquet.createRowReader()) {
     while (reader.hasNext()) {
         reader.next();
@@ -532,6 +557,39 @@ try (Hardwood hardwood = Hardwood.create();
     }
 }
 ```
+
+Read multiple files across buckets:
+
+```java
+hardwood.openAll(source.inputFiles(
+        "s3://bucket-a/events.parquet",
+        "s3://bucket-b/events.parquet"));
+```
+
+In order to use S3-compatible services, set a custom endpoint:
+
+```java
+// Cloudflare R2
+S3Source source = S3Source.builder()
+        .endpoint("https://<account-id>.r2.cloudflarestorage.com")
+        .credentials(S3Credentials.of(accessKeyId, secretKey))
+        .build();
+
+// GCP Cloud Storage (HMAC keys)
+S3Source source = S3Source.builder()
+        .endpoint("https://storage.googleapis.com")
+        .credentials(S3Credentials.of(hmacAccessId, hmacSecret))
+        .build();
+
+// MinIO (path-style)
+S3Source source = S3Source.builder()
+        .endpoint("http://localhost:9000")
+        .pathStyle(true)
+        .credentials(S3Credentials.of(accessKeyId, secretKey))
+        .build();
+```
+
+When a custom endpoint is set, region can be omitted. Use `.pathStyle(true)` for services that require path-style access (e.g. MinIO, SeaweedFS).
 
 Column projection, row group filtering, and all other reader features work transparently with S3 files. Hardwood minimizes S3 requests by pre-fetching the file footer on open and coalescing column chunk reads within each row group.
 
@@ -906,10 +964,24 @@ hardwood head -n 20 -f data.parquet
 
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
-
-# Read from S3
-hardwood schema -f s3://my-bucket/data.parquet
 ```
+
+### Reading Files from S3
+
+All commands accept `s3://` URIs via the `-f` flag:
+
+```shell
+hardwood schema -f s3://my-bucket/data.parquet
+hardwood head -n 10 -f s3://my-bucket/data.parquet
+```
+
+The CLI resolves credentials via the standard AWS credential chain (environment variables, `~/.aws/credentials`, SSO, instance profiles, etc.).
+
+| Environment Variable | Description |
+|----------------------|-------------|
+| `AWS_REGION` | AWS region (also read from `~/.aws/config` if not set) |
+| `AWS_ENDPOINT_URL` | Custom endpoint for S3-compatible services (MinIO, LocalStack, R2, etc.) |
+| `AWS_PATH_STYLE` | Set to `true` to use path-style access (required by some S3-compatible services) |
 
 ### Shell Completion
 
@@ -935,7 +1007,8 @@ Hardwood is organized into public API packages and internal implementation packa
 | `dev.hardwood.schema` | **Public API** | Schema representation: file schema, column schemas, and column projection. |
 | `dev.hardwood.row` | **Public API** | Value types for nested data access: structs, lists, and maps. |
 | `dev.hardwood.avro` | **Public API** | Avro GenericRecord support: schema conversion and row materialization (`hardwood-avro` module). |
-| `dev.hardwood.s3` | **Public API** | S3 object storage InputFile implementation (`hardwood-s3` module). |
+| `dev.hardwood.s3` | **Public API** | S3 object storage support: `S3Source`, `S3InputFile`, `S3Credentials`, `S3CredentialsProvider` (`hardwood-s3` module, zero external dependencies). |
+| `dev.hardwood.aws.auth` | **Public API** | Bridges the AWS SDK credential chain to Hardwood's `S3CredentialsProvider` (`hardwood-aws-auth` module, optional). |
 | `dev.hardwood.jfr` | **Public API** | JFR event types emitted during file reading, decoding, and pipeline operations. |
 | `dev.hardwood.internal.*` | **Internal** | Implementation details — not part of the public API and may change without notice. |
 
@@ -1153,8 +1226,6 @@ The solution differs by codec:
 
 `netty-buffer` (an optional dependency of `brotli4j`) is declared explicitly at compile scope so that GraalVM can resolve the `ByteBufUtil` reference in `brotli4j`'s `DirectDecompress` class during image analysis.
 
-Container builds use Mandrel's `--link-at-build-time`, which applies stricter type resolution: all reachable bytecode must have its full type hierarchy resolvable at build time. Netty's `Log4JLoggerFactory` references `org.apache.log4j.Logger` (provided by the `log4j-1.2-api` bridge artifact), which in turn references `org.apache.logging.log4j.core.LogEvent` from `log4j-core`. Both are therefore declared at compile scope in `cli/pom.xml` so that GraalVM can resolve the full chain during container builds.
-
 #### Manual tests of the native CLI binary
 
 1. Start S3Mock and set environment
@@ -1166,6 +1237,7 @@ export AWS_ENDPOINT_URL=http://localhost:9090
 export AWS_ACCESS_KEY_ID=foo
 export AWS_SECRET_ACCESS_KEY=bar
 export AWS_REGION=us-east-1
+export AWS_PATH_STYLE=true
 ```
 
 2. Create bucket and upload with curl

@@ -8,9 +8,10 @@
 package dev.hardwood.s3;
 
 import java.io.IOException;
-import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
@@ -20,10 +21,6 @@ import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,38 +34,32 @@ class S3InputFileTest {
     @Container
     static S3MockContainer s3Mock = new S3MockContainer("latest");
 
-    static S3Client s3;
+    static S3Source source;
 
     @BeforeAll
-    static void setup() {
-        s3 = createS3Client();
-
-        s3.createBucket(b -> b.bucket("test-bucket"));
-
-        uploadTestFile("plain_uncompressed.parquet");
-        uploadTestFile("plain_uncompressed_with_nulls.parquet");
-    }
-
-    private static S3Client createS3Client() {
-        return S3Client.builder()
-                .endpointOverride(URI.create(s3Mock.getHttpEndpoint()))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create("access", "secret")))
-                .region(Region.US_EAST_1)
-                .forcePathStyle(true)
+    static void setup() throws Exception {
+        source = S3Source.builder()
+                .endpoint(s3Mock.getHttpEndpoint())
+                .pathStyle(true)
+                .credentials(S3Credentials.of("access", "secret"))
                 .build();
+
+        source.api().createBucket("test-bucket");
+        source.api().putObject("test-bucket", "plain_uncompressed.parquet", Files.readAllBytes(
+                TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
+        source.api().putObject("test-bucket", "plain_uncompressed_with_nulls.parquet", Files.readAllBytes(
+                TEST_RESOURCES.resolve("plain_uncompressed_with_nulls.parquet")));
     }
 
-    private static void uploadTestFile(String name) {
-        s3.putObject(
-                b -> b.bucket("test-bucket").key(name),
-                TEST_RESOURCES.resolve(name));
+    @AfterAll
+    static void tearDown() {
+        source.close();
     }
 
     @Test
     void readMetadata() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                S3InputFile.of(s3, "test-bucket", "plain_uncompressed.parquet"))) {
+                source.inputFile("test-bucket", "plain_uncompressed.parquet"))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(3);
         }
     }
@@ -76,7 +67,7 @@ class S3InputFileTest {
     @Test
     void readRows() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                S3InputFile.of(s3, "test-bucket", "plain_uncompressed.parquet"))) {
+                source.inputFile("test-bucket", "plain_uncompressed.parquet"))) {
             try (RowReader rows = reader.createRowReader()) {
                 int count = 0;
                 while (rows.hasNext()) {
@@ -91,7 +82,7 @@ class S3InputFileTest {
     @Test
     void readRowValues() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                S3InputFile.of(s3, "test-bucket", "plain_uncompressed.parquet"))) {
+                source.inputFile("test-bucket", "plain_uncompressed.parquet"))) {
             try (RowReader rows = reader.createRowReader()) {
                 assertThat(rows.hasNext()).isTrue();
                 rows.next();
@@ -116,7 +107,7 @@ class S3InputFileTest {
     @Test
     void readWithNulls() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                S3InputFile.of(s3, "test-bucket", "plain_uncompressed_with_nulls.parquet"))) {
+                source.inputFile("test-bucket", "plain_uncompressed_with_nulls.parquet"))) {
             try (RowReader rows = reader.createRowReader()) {
                 int count = 0;
                 while (rows.hasNext()) {
@@ -132,13 +123,19 @@ class S3InputFileTest {
     void fileNotFound() {
         assertThatThrownBy(() ->
                 ParquetFileReader.open(
-                        S3InputFile.of(s3, "test-bucket", "nonexistent.parquet")))
+                        source.inputFile("test-bucket", "nonexistent.parquet")))
                 .isInstanceOf(IOException.class);
     }
 
     @Test
     void name() {
-        S3InputFile file = S3InputFile.of(s3, "test-bucket", "data/file.parquet");
+        S3InputFile file = source.inputFile("test-bucket", "data/file.parquet");
+        assertThat(file.name()).isEqualTo("s3://test-bucket/data/file.parquet");
+    }
+
+    @Test
+    void uriFactory() {
+        S3InputFile file = source.inputFile("s3://test-bucket/data/file.parquet");
         assertThat(file.name()).isEqualTo("s3://test-bucket/data/file.parquet");
     }
 }

@@ -9,21 +9,15 @@ package dev.hardwood.s3;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
-import java.nio.channels.Channels;
-import java.nio.channels.ReadableByteChannel;
 
 import dev.hardwood.InputFile;
-import software.amazon.awssdk.core.ResponseBytes;
-import software.amazon.awssdk.core.sync.ResponseTransformer;
-import software.amazon.awssdk.services.s3.S3Client;
-import software.amazon.awssdk.services.s3.S3ClientBuilder;
-import software.amazon.awssdk.services.s3.model.GetObjectResponse;
-import software.amazon.awssdk.services.s3.model.S3Exception;
+import dev.hardwood.s3.internal.S3Api;
 
-/// [InputFile] backed by an object in Amazon S3.
+/// [InputFile] backed by an object in Amazon S3 (or an S3-compatible service).
 ///
-/// Each [#readRange] call issues an S3 `GetObject` request with a
+/// Each [#readRange] call issues a signed HTTP `GET` request with a
 /// byte-range header, so only the requested bytes are transferred.
 ///
 /// [#open()] uses a suffix-range GET instead of a HEAD request. This
@@ -31,9 +25,7 @@ import software.amazon.awssdk.services.s3.model.S3Exception;
 /// and pre-fetches the Parquet footer (which sits at the end of the file) in
 /// the same round-trip — eliminating a separate HEAD request per file.
 ///
-/// Thread-safe once [#open()] has been called: the underlying
-/// [S3Client] is thread-safe and the file length and tail cache are set
-/// exactly once.
+/// Thread-safe once [#open()] has been called.
 public class S3InputFile implements InputFile {
 
     /// Number of bytes to fetch from the tail of the file during [#open()].
@@ -41,72 +33,17 @@ public class S3InputFile implements InputFile {
     /// (footer + footer length + magic is typically a few KB).
     static final int TAIL_SIZE = 64 * 1024;
 
-    private final S3Client s3;
+    private final S3Api api;
     private final String bucket;
     private final String key;
-    private final boolean ownsClient;
     private long fileLength = -1;
     private ByteBuffer tailCache;
     private long tailCacheOffset;
 
-    private S3InputFile(S3Client s3, String bucket, String key, boolean ownsClient) {
-        this.s3 = s3;
+    S3InputFile(S3Source source, String bucket, String key) {
+        this.api = source.api();
         this.bucket = bucket;
         this.key = key;
-        this.ownsClient = ownsClient;
-    }
-
-    /// Creates an `S3InputFile` using a caller-provided [S3Client].
-    ///
-    /// The caller retains ownership of the client and is responsible for closing it.
-    /// This is the preferred factory when reading multiple files, as it allows
-    /// connection pooling and credential reuse.
-    ///
-    /// @param s3     the S3 client to use
-    /// @param bucket the S3 bucket name
-    /// @param key    the S3 object key
-    /// @return a new unopened S3InputFile
-    public static S3InputFile of(S3Client s3, String bucket, String key) {
-        return new S3InputFile(s3, bucket, key, false);
-    }
-
-    /// Creates an `S3InputFile` that owns a default [S3Client].
-    ///
-    /// The client is created using the default credential provider chain and
-    /// will be closed when this `InputFile` is closed.
-    ///
-    /// @param bucket the S3 bucket name
-    /// @param key    the S3 object key
-    /// @return a new unopened S3InputFile that owns its client
-    public static S3InputFile of(String bucket, String key) {
-        return new S3InputFile(createDefaultClient(), bucket, key, true);
-    }
-
-    private static S3Client createDefaultClient() {
-        // Enable path-style access when a custom endpoint is configured (e.g.
-        // via AWS_ENDPOINT_URL) since S3-compatible services such as S3Mock
-        // typically do not support virtual-hosted-style addressing.
-        boolean customEndpoint = System.getenv("AWS_ENDPOINT_URL") != null;
-        S3ClientBuilder builder = S3Client.builder();
-        if (customEndpoint) {
-            builder.forcePathStyle(true);
-        }
-        return builder.build();
-    }
-
-    /// Creates an `S3InputFile` with explicit client ownership control.
-    ///
-    /// Use this factory for custom endpoints such as S3Mock, where
-    /// the caller builds the [S3Client] with a custom endpoint override
-    /// but wants this `InputFile` to close it.
-    ///
-    /// @param s3         the S3 client to use
-    /// @param bucket     the S3 bucket name
-    /// @param key        the S3 object key
-    /// @param ownsClient if `true`, the client will be closed when this InputFile is closed
-    /// @return a new unopened S3InputFile
-    public static S3InputFile of(S3Client s3, String bucket, String key, boolean ownsClient) {
-        return new S3InputFile(s3, bucket, key, ownsClient);
     }
 
     @Override
@@ -114,25 +51,17 @@ public class S3InputFile implements InputFile {
         if (fileLength >= 0) {
             return;
         }
-        try {
-            // Suffix-range GET: fetches the last TAIL_SIZE bytes and discovers
-            // the file length from the Content-Range response header. This
-            // eliminates the separate HEAD request and pre-fetches the Parquet
-            // footer (which sits at the end of the file) in the same round-trip.
-            String suffixRange = "bytes=-" + TAIL_SIZE;
-            ResponseBytes<GetObjectResponse> resp = s3.getObjectAsBytes(
-                    b -> b.bucket(bucket).key(key).range(suffixRange));
-
-            GetObjectResponse response = resp.response();
-            fileLength = parseFileLength(response);
-
-            byte[] tail = resp.asByteArray();
-            tailCache = ByteBuffer.wrap(tail);
-            tailCacheOffset = fileLength - tail.length;
+        String suffixRange = "bytes=-" + TAIL_SIZE;
+        HttpResponse<byte[]> response = api.getBytes(bucket, key, suffixRange);
+        int status = response.statusCode();
+        if (status != 206 && status != 200) {
+            throw new IOException("Failed to open " + name()
+                    + ": HTTP " + status + " " + new String(response.body()));
         }
-        catch (S3Exception e) {
-            throw new IOException("Failed to open " + name() + ": " + e.getMessage(), e);
-        }
+        fileLength = parseFileLength(response);
+        byte[] tail = response.body();
+        tailCache = ByteBuffer.wrap(tail);
+        tailCacheOffset = fileLength - tail.length;
     }
 
     @Override
@@ -145,22 +74,27 @@ public class S3InputFile implements InputFile {
         }
 
         String range = "bytes=" + offset + "-" + (offset + length - 1);
-        try (InputStream stream = s3.getObject(
-                b -> b.bucket(bucket).key(key).range(range),
-                ResponseTransformer.toInputStream())) {
+        HttpResponse<InputStream> response = api.getStream(bucket, key, range);
+        int status = response.statusCode();
+        if (status != 206 && status != 200) {
+            try (InputStream body = response.body()) {
+                throw new IOException("Failed to read range [" + offset + ", " + (offset + length)
+                        + ") from " + name() + ": HTTP " + status + " " + new String(body.readAllBytes()));
+            }
+        }
+        try (InputStream stream = response.body()) {
             ByteBuffer buf = ByteBuffer.allocateDirect(length);
-            ReadableByteChannel channel = Channels.newChannel(stream);
+            byte[] tmp = new byte[Math.min(8192, length)];
             while (buf.hasRemaining()) {
-                if (channel.read(buf) < 0) {
+                int toRead = Math.min(tmp.length, buf.remaining());
+                int read = stream.read(tmp, 0, toRead);
+                if (read < 0) {
                     break;
                 }
+                buf.put(tmp, 0, read);
             }
             buf.flip();
             return buf;
-        }
-        catch (S3Exception e) {
-            throw new IOException("Failed to read range [" + offset + ", " + (offset + length)
-                    + ") from " + name() + ": " + e.getMessage(), e);
         }
     }
 
@@ -179,19 +113,17 @@ public class S3InputFile implements InputFile {
 
     @Override
     public void close() {
-        if (ownsClient) {
-            s3.close();
-        }
+        // S3Source owns the HttpClient — nothing to close here
     }
 
-    /// Extracts the total file length from the S3 response.
+    /// Extracts the total file length from the HTTP response.
     ///
     /// For suffix-range requests, S3 returns a `Content-Range` header like
     /// `bytes 1000-1999/2000` where the number after `/` is the total
     /// object size. If the header is absent (e.g. file smaller than TAIL_SIZE),
     /// falls back to `Content-Length`.
-    private static long parseFileLength(GetObjectResponse response) throws IOException {
-        String contentRange = response.contentRange();
+    private static long parseFileLength(HttpResponse<?> response) throws IOException {
+        String contentRange = response.headers().firstValue("Content-Range").orElse(null);
         if (contentRange != null) {
             int slashIdx = contentRange.lastIndexOf('/');
             if (slashIdx >= 0) {
@@ -203,6 +135,7 @@ public class S3InputFile implements InputFile {
                 }
             }
         }
-        return response.contentLength();
+        return response.headers().firstValueAsLong("Content-Length")
+                .orElseThrow(() -> new IOException("Response missing both Content-Range and Content-Length headers"));
     }
 }

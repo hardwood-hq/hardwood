@@ -7,10 +7,10 @@
  */
 package dev.hardwood.s3;
 
-import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.List;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Container;
@@ -19,13 +19,8 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 
 import dev.hardwood.Hardwood;
-import dev.hardwood.InputFile;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.MultiFileRowReader;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -38,33 +33,33 @@ class S3MultiFileTest {
     @Container
     static S3MockContainer s3Mock = new S3MockContainer("latest");
 
-    static S3Client s3;
+    static S3Source source;
 
     @BeforeAll
-    static void setup() {
-        s3 = S3Client.builder()
-                .endpointOverride(URI.create(s3Mock.getHttpEndpoint()))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create("access", "secret")))
-                .region(Region.US_EAST_1)
-                .forcePathStyle(true)
+    static void setup() throws Exception {
+        source = S3Source.builder()
+                .endpoint(s3Mock.getHttpEndpoint())
+                .pathStyle(true)
+                .credentials(S3Credentials.of("access", "secret"))
                 .build();
 
-        s3.createBucket(b -> b.bucket("test-bucket"));
+        source.api().createBucket("test-bucket");
+        source.api().putObject("test-bucket", "plain_uncompressed.parquet", Files.readAllBytes(
+                TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
+    }
 
-        s3.putObject(
-                b -> b.bucket("test-bucket").key("plain_uncompressed.parquet"),
-                TEST_RESOURCES.resolve("plain_uncompressed.parquet"));
+    @AfterAll
+    static void tearDown() {
+        source.close();
     }
 
     @Test
     void readMultipleFiles() throws Exception {
-        List<InputFile> files = List.of(
-                S3InputFile.of(s3, "test-bucket", "plain_uncompressed.parquet"),
-                S3InputFile.of(s3, "test-bucket", "plain_uncompressed.parquet"));
-
         try (Hardwood hardwood = Hardwood.create();
-                MultiFileParquetReader reader = hardwood.openAll(files)) {
+                MultiFileParquetReader reader = hardwood.openAll(
+                        source.inputFilesInBucket("test-bucket",
+                                "plain_uncompressed.parquet",
+                                "plain_uncompressed.parquet"))) {
             try (MultiFileRowReader rows = reader.createRowReader()) {
                 int count = 0;
                 while (rows.hasNext()) {

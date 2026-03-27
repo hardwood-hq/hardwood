@@ -17,10 +17,10 @@
     <version>1.0.0-SNAPSHOT</version>
   </parent>
 
-  <artifactId>hardwood-s3</artifactId>
+  <artifactId>hardwood-aws-auth</artifactId>
 
-  <name>Hardwood S3</name>
-  <description>S3 object storage support for Hardwood</description>
+  <name>Hardwood AWS Auth</name>
+  <description>Bridges the AWS SDK credential chain to Hardwood's credential types</description>
   <url>https://github.com/hardwood-hq/hardwood</url>
 
   <scm>
@@ -29,6 +29,10 @@
     <url>https://github.com/hardwood-hq/hardwood/</url>
     <tag>HEAD</tag>
   </scm>
+
+  <properties>
+    <aws-sdk.version>2.42.17</aws-sdk.version>
+  </properties>
 
   <dependencyManagement>
     <dependencies>
@@ -46,13 +50,38 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
+      <dependency>
+        <groupId>software.amazon.awssdk</groupId>
+        <artifactId>bom</artifactId>
+        <version>${aws-sdk.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 
   <dependencies>
     <dependency>
       <groupId>dev.hardwood</groupId>
-      <artifactId>hardwood-core</artifactId>
+      <artifactId>hardwood-s3</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>software.amazon.awssdk</groupId>
+      <artifactId>auth</artifactId>
+      <exclusions>
+        <!-- Exclude signing/HTTP/checksum modules — only credential resolution is needed -->
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>http-auth-aws</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>http-auth-aws-eventstream</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>http-auth</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>http-auth-spi</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>checksums</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>checksums-spi</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>metrics-spi</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>endpoints-spi</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>retries-spi</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.awssdk</groupId><artifactId>retries</artifactId></exclusion>
+        <exclusion><groupId>software.amazon.eventstream</groupId><artifactId>eventstream</artifactId></exclusion>
+      </exclusions>
     </dependency>
 
     <!-- Test dependencies -->
@@ -67,45 +96,9 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>com.adobe.testing</groupId>
-      <artifactId>s3mock-testcontainers</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.testcontainers</groupId>
-      <artifactId>junit-jupiter</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.logging.log4j</groupId>
-      <artifactId>log4j-api</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.logging.log4j</groupId>
-      <artifactId>log4j-core</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.apache.logging.log4j</groupId>
-      <artifactId>log4j-jpl</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
       <groupId>org.apache.logging.log4j</groupId>
       <artifactId>log4j-slf4j2-impl</artifactId>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>org.eclipse.jgit</groupId>
-      <artifactId>org.eclipse.jgit</artifactId>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.moditect.jfrunit</groupId>
-      <artifactId>jfrunit-core</artifactId>
-      <scope>test</scope>
-    </dependency>
   </dependencies>
-
 </project>

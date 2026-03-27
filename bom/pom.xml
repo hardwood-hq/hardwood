@@ -63,6 +63,11 @@
       </dependency>
       <dependency>
         <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-aws-auth</artifactId>
+        <version>${project.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
         <artifactId>hardwood-avro</artifactId>
         <version>${project.version}</version>
       </dependency>

@@ -15,6 +15,7 @@ Enable -Pperformance-test to run performance tests.
 Write plans which affect the system design, e.g. large new features or refactorings, as a Markdown file under _designs_ before implementing.
 Mark designs as completed once done.
 Update the status in the roadmap after implementing a feature.
+Design documents describe the intended end state. Do not include references to the development process, alternative approaches that were considered and rejected, or commentary on how the design evolved. Write as if the reader has no context on the conversation that produced the document.
 
 # Coding
 
@@ -27,6 +28,7 @@ Avoid fully-qualified class names within the code, always add imports.
 Avoid object access and boxing as much as possible. Always prefer primitive access also if it means several similar methods.
 Before writing new code, search for existing patterns in the same class/package that accomplish the same thing (e.g., the DRY principle). Extract repeated logic into helper methods within the same class rather than duplicating it. When a pattern appears multiple times, consider consolidating it into a single well-named method with overloads if needed.
 Be conservative with base class refactoring. Do not pull implementation details up into abstract base classes unless the logic is truly identical across all subclasses with no foreseeable divergence. Shared helpers are better than shared template methods when subclasses may need different control flow.
+Never use `var` syntax.
 
 # Documentation
 

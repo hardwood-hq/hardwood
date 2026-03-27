@@ -7,17 +7,21 @@
  */
 package dev.hardwood.command;
 
+import java.io.BufferedReader;
+import java.io.IOException;
+import java.nio.file.Files;
 import java.nio.file.Path;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.s3.S3InputFile;
+import dev.hardwood.aws.auth.SdkCredentialsProviders;
+import dev.hardwood.s3.S3Source;
 import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Spec;
 
 public class FileMixin {
 
-    private static final String[] REMOTE_PREFIXES = { "s3://", "s3a://", "s3n://" };
+    private static final String[] REMOTE_PREFIXES = { "s3://" };
     private static final String[] UNSUPPORTED_REMOTE_PREFIXES = { "gs://", "gcs://", "hdfs://" };
 
     @CommandLine.Option(names = { "-f", "--file" }, required = true, paramLabel = "FILE", description = "Path to the Parquet file.")
@@ -39,7 +43,7 @@ public class FileMixin {
     InputFile toInputFile() {
         for (String prefix : REMOTE_PREFIXES) {
             if (file.startsWith(prefix)) {
-                return parseS3Uri(prefix);
+                return createS3InputFile();
             }
         }
         for (String prefix : UNSUPPORTED_REMOTE_PREFIXES) {
@@ -51,16 +55,90 @@ public class FileMixin {
         return InputFile.of(Path.of(file));
     }
 
-    private InputFile parseS3Uri(String prefix) {
-        String withoutPrefix = file.substring(prefix.length());
-        int slash = withoutPrefix.indexOf('/');
-        if (slash < 0 || slash == withoutPrefix.length() - 1) {
-            spec.commandLine().getErr().println("Invalid S3 URI (missing key): " + file);
+    private InputFile createS3InputFile() {
+        String endpointUrl = System.getenv("AWS_ENDPOINT_URL");
+
+        S3Source.Builder builder = S3Source.builder()
+                .credentials(SdkCredentialsProviders.defaultChain());
+
+        if (endpointUrl != null) {
+            builder.endpoint(endpointUrl);
+        }
+
+        if ("true".equalsIgnoreCase(System.getenv("AWS_PATH_STYLE"))) {
+            builder.pathStyle(true);
+        }
+
+        // Resolve region from env vars and ~/.aws/config only (no IMDS — instant)
+        String region = resolveRegion();
+        if (region != null) {
+            builder.region(region);
+        }
+        else if (endpointUrl == null) {
+            throw new IllegalStateException(
+                    "Unable to determine AWS region. Set AWS_REGION or configure a default region in ~/.aws/config");
+        }
+
+        S3Source source = builder.build();
+        return source.inputFile(file);
+    }
+
+    /// Resolves the AWS region from system property, env vars, and `~/.aws/config` (no network I/O).
+    private static String resolveRegion() {
+        // 1. System property
+        String region = System.getProperty("aws.region");
+        if (region != null) {
+            return region;
+        }
+
+        // 2. Environment variables
+        region = System.getenv("AWS_REGION");
+        if (region != null) {
+            return region;
+        }
+        region = System.getenv("AWS_DEFAULT_REGION");
+        if (region != null) {
+            return region;
+        }
+
+        // 2. ~/.aws/config [default] profile
+        String profile = System.getenv("AWS_PROFILE");
+        if (profile == null) {
+            profile = "default";
+        }
+        return resolveRegionFromConfig(profile);
+    }
+
+    private static String resolveRegionFromConfig(String profile) {
+        Path configFile = Path.of(System.getProperty("user.home"), ".aws", "config");
+        if (!Files.exists(configFile)) {
             return null;
         }
-        String bucket = withoutPrefix.substring(0, slash);
-        String key = withoutPrefix.substring(slash + 1);
-        return S3InputFile.of(bucket, key);
+        // Profile header is [default] or [profile name]
+        String header = "default".equals(profile)
+                ? "[default]"
+                : "[profile " + profile + "]";
+        try (BufferedReader reader = Files.newBufferedReader(configFile)) {
+            boolean inProfile = false;
+            String line;
+            while ((line = reader.readLine()) != null) {
+                line = line.strip();
+                if (line.startsWith("[")) {
+                    inProfile = line.equals(header);
+                    continue;
+                }
+                if (inProfile && line.startsWith("region")) {
+                    int eq = line.indexOf('=');
+                    if (eq >= 0) {
+                        return line.substring(eq + 1).strip();
+                    }
+                }
+            }
+        }
+        catch (IOException e) {
+            // Can't read config — not fatal
+        }
+        return null;
     }
 
     Path toPath() {

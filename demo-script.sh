@@ -13,7 +13,7 @@
 #
 # Convert to gif via https://dstein64.github.io/gifcast/.
 
-HW=hardwood-cli-early-access-macos-aarch64/bin/hardwood
+HW=cli/target/hardwood-cli-early-access-macos-aarch64/bin/hardwood
 D=core/src/test/resources
 
 first_comment=true

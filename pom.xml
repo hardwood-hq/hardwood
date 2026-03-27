@@ -50,6 +50,7 @@
     <module>test-bom</module>
     <module>core</module>
     <module>s3</module>
+    <module>aws-auth</module>
     <module>avro</module>
     <module>cli</module>
   </modules>

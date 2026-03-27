@@ -7,11 +7,12 @@
  */
 package dev.hardwood.s3;
 
-import java.net.URI;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.stream.Collectors;
 
+import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.moditect.jfrunit.EnableEvent;
@@ -25,10 +26,6 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
-import software.amazon.awssdk.auth.credentials.AwsBasicCredentials;
-import software.amazon.awssdk.auth.credentials.StaticCredentialsProvider;
-import software.amazon.awssdk.regions.Region;
-import software.amazon.awssdk.services.s3.S3Client;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -59,30 +56,28 @@ public class S3SelectiveReadJfrTest {
     @Container
     static S3MockContainer s3Mock = new S3MockContainer("latest");
 
-    static S3Client s3;
+    static S3Source source;
 
     public JfrEvents jfrEvents = new JfrEvents();
 
     @BeforeAll
-    static void setup() {
-        s3 = S3Client.builder()
-                .endpointOverride(URI.create(s3Mock.getHttpEndpoint()))
-                .credentialsProvider(StaticCredentialsProvider.create(
-                        AwsBasicCredentials.create("access", "secret")))
-                .region(Region.US_EAST_1)
-                .forcePathStyle(true)
+    static void setup() throws Exception {
+        source = S3Source.builder()
+                .endpoint(s3Mock.getHttpEndpoint())
+                .pathStyle(true)
+                .credentials(S3Credentials.of("access", "secret"))
                 .build();
 
-        s3.createBucket(b -> b.bucket("test-bucket"));
-
-        uploadTestFile(PAGE_INDEX_FILE);
-        uploadTestFile(FILTER_PUSHDOWN_FILE);
+        source.api().createBucket("test-bucket");
+        source.api().putObject("test-bucket", PAGE_INDEX_FILE, Files.readAllBytes(
+                TEST_RESOURCES.resolve(PAGE_INDEX_FILE)));
+        source.api().putObject("test-bucket", FILTER_PUSHDOWN_FILE, Files.readAllBytes(
+                TEST_RESOURCES.resolve(FILTER_PUSHDOWN_FILE)));
     }
 
-    private static void uploadTestFile(String name) {
-        s3.putObject(
-                b -> b.bucket("test-bucket").key(name),
-                TEST_RESOURCES.resolve(name));
+    @AfterAll
+    static void tearDown() {
+        source.close();
     }
 
     // ==================== Column Projection ====================
@@ -91,7 +86,7 @@ public class S3SelectiveReadJfrTest {
     @EnableEvent("dev.hardwood.RowGroupScanned")
     void projectionScansOnlyRequestedColumns() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
-                S3InputFile.of(s3, "test-bucket", PAGE_INDEX_FILE))) {
+                source.inputFile("test-bucket", PAGE_INDEX_FILE))) {
 
             try (RowReader rows = reader.createRowReader(
                     ColumnProjection.columns("id", "value"))) {
@@ -140,7 +135,7 @@ public class S3SelectiveReadJfrTest {
         FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                S3InputFile.of(s3, "test-bucket", FILTER_PUSHDOWN_FILE))) {
+                source.inputFile("test-bucket", FILTER_PUSHDOWN_FILE))) {
             try (RowReader rows = reader.createRowReader(filter)) {
                 while (rows.hasNext()) {
                     rows.next();
@@ -175,7 +170,7 @@ public class S3SelectiveReadJfrTest {
         FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                S3InputFile.of(s3, "test-bucket", FILTER_PUSHDOWN_FILE))) {
+                source.inputFile("test-bucket", FILTER_PUSHDOWN_FILE))) {
             try (RowReader rows = reader.createRowReader(filter)) {
                 while (rows.hasNext()) {
                     rows.next();
@@ -203,7 +198,7 @@ public class S3SelectiveReadJfrTest {
         jfrEvents.reset();
 
         try (ParquetFileReader reader = ParquetFileReader.open(
-                S3InputFile.of(s3, "test-bucket", file))) {
+                source.inputFile("test-bucket", file))) {
             try (RowReader rows = filter != null
                     ? reader.createRowReader(projection, filter)
                     : reader.createRowReader(projection)) {
