@@ -63,7 +63,7 @@ public class PageScanner {
                        ByteBuffer chunkData, long chunkDataFileOffset, ColumnIndexBuffers indexBuffers,
                        int rowGroupIndex, String fileName) {
         this(columnSchema, columnChunk, context, chunkData, chunkDataFileOffset,
-                indexBuffers, rowGroupIndex, fileName, null);
+                indexBuffers, rowGroupIndex, fileName, RowRanges.ALL);
     }
 
     /// Creates a PageScanner with pre-fetched chunk data, index buffers, and optional row ranges
@@ -77,7 +77,7 @@ public class PageScanner {
     /// @param indexBuffers        pre-fetched index buffers for this column
     /// @param rowGroupIndex       the row group index for JFR event reporting
     /// @param fileName            the file name for error messages and JFR events
-    /// @param matchingRows        row ranges that might match the filter, or `null` for no filtering
+    /// @param matchingRows        row ranges that might match the filter, or `RowRanges.ALL` for no filtering
     public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
                        ByteBuffer chunkData, long chunkDataFileOffset, ColumnIndexBuffers indexBuffers,
                        int rowGroupIndex, String fileName, RowRanges matchingRows) {
@@ -241,7 +241,7 @@ public class PageScanner {
     /// Filters page locations to only those overlapping with matching row ranges.
     /// Returns all pages if no row ranges filter is active.
     private List<PageLocation> filterPageLocations(List<PageLocation> pages) {
-        if (matchingRows == null || matchingRows.isAll()) {
+        if (matchingRows.isAll()) {
             return pages;
         }
 

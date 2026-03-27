@@ -332,7 +332,7 @@ public class FileManager {
             }
 
             // Compute matching row ranges for page-level Column Index filtering
-            RowRanges matchingRows = null;
+            RowRanges matchingRows = RowRanges.ALL;
             if (filterPredicate != null) {
                 matchingRows = PageFilterEvaluator.computeMatchingRows(
                         filterPredicate, rowGroup, openedFile.schema, indexBuffers);

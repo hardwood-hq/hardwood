@@ -121,7 +121,7 @@ final class SingleFileRowReader extends AbstractRowReader {
             }
 
             // Compute matching row ranges for page-level Column Index filtering
-            RowRanges matchingRows = null;
+            RowRanges matchingRows = RowRanges.ALL;
             if (filterPredicate != null) {
                 matchingRows = PageFilterEvaluator.computeMatchingRows(
                         filterPredicate, rowGroup, schema, indexBuffers);

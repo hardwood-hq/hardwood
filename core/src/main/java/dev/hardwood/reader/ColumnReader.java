@@ -429,7 +429,7 @@ public class ColumnReader implements AutoCloseable {
             }
 
             // Compute matching row ranges for page-level Column Index filtering
-            RowRanges matchingRows = null;
+            RowRanges matchingRows = RowRanges.ALL;
             if (filter != null) {
                 matchingRows = PageFilterEvaluator.computeMatchingRows(
                         filter, rowGroup, schema, indexBuffers);

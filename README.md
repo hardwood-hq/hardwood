@@ -836,12 +836,13 @@ Or attach dynamically via `jcmd <pid> JFR.start`.
 | `dev.hardwood.RowGroupScanned` | Decode | Page boundaries scanned in a column chunk. Fields: file, rowGroupIndex, column, pageCount, scanStrategy (`sequential` or `offset-index`) |
 | `dev.hardwood.PageDecoded` | Decode | Single data page decoded. Fields: column, compressedSize, uncompressedSize |
 | `dev.hardwood.RowGroupFilter` | Filter | Row groups filtered by predicate pushdown. Fields: file, totalRowGroups, rowGroupsKept, rowGroupsSkipped |
+| `dev.hardwood.PageFilter` | Filter | Pages filtered by Column Index predicate pushdown. Fields: file, rowGroupIndex, column, totalPages, pagesKept, pagesSkipped |
 | `dev.hardwood.BatchWait` | Pipeline | Consumer blocked waiting for the assembly pipeline. Fields: column |
 | `dev.hardwood.PrefetchMiss` | Pipeline | Prefetch queue miss requiring synchronous decode. Fields: file, column, newDepth, queueEmpty |
 
 Events appear under the **Hardwood** category in JDK Mission Control (JMC) or any JFR analysis tool. Use them to identify:
 - **I/O bottlenecks** — large `FileMapping` durations or frequent `PrefetchMiss` events
-- **Filter effectiveness** — `RowGroupFilter` shows how many row groups were skipped
+- **Filter effectiveness** — `RowGroupFilter` shows how many row groups were skipped; `PageFilter` shows how many pages were skipped within surviving row groups
 - **Decode hotspots** — `PageDecoded` events with large uncompressed sizes or high frequency
 - **Pipeline stalls** — `BatchWait` events indicate the reader is waiting for decoded data
 
