@@ -28,6 +28,8 @@ import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 
+import static org.assertj.core.api.Assertions.assertThat;
+
 /// Benchmark for page-level Column Index filtering.
 ///
 /// Generates a synthetic file with sorted id column and small pages so that
