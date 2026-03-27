@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 
 import dev.hardwood.metadata.PageLocation;
@@ -48,7 +48,8 @@ public class RowRanges {
     /// @param keep bitmap indicating which pages to keep
     /// @param rowGroupRowCount total number of rows in the row group
     static RowRanges fromPages(List<PageLocation> pages, boolean[] keep, long rowGroupRowCount) {
-        List<long[]> intervals = new ArrayList<>();
+        long[] result = new long[pages.size() * 2];
+        int pos = 0;
 
         // Iterate through all the available pages
         for (int i = 0; i < pages.size(); i++) {
@@ -61,17 +62,16 @@ public class RowRanges {
             long rangeEnd = (i + 1 < pages.size()) ? pages.get(i + 1).firstRowIndex() : rowGroupRowCount;
 
             // Merge with previous interval if adjacent
-            if (!intervals.isEmpty()) {
-                long[] last = intervals.getLast();
-                if (last[1] >= rangeStart) {
-                    last[1] = Math.max(last[1], rangeEnd);
-                    continue;
-                }
+            if (pos > 0 && result[pos - 1] >= rangeStart) {
+                result[pos - 1] = Math.max(result[pos - 1], rangeEnd);
             }
-            intervals.add(new long[]{ rangeStart, rangeEnd });
+            else {
+                result[pos++] = rangeStart;
+                result[pos++] = rangeEnd;
+            }
         }
 
-        return new RowRanges(flatten(intervals), false);
+        return new RowRanges(pos == result.length ? result : Arrays.copyOf(result, pos), false);
     }
 
     /// Returns `true` if a page with the given row range overlaps any matching interval.
@@ -96,14 +96,17 @@ public class RowRanges {
             return this;
         }
 
-        List<long[]> result = new ArrayList<>();
+        int maxIntervals = Math.min(this.ranges.length, other.ranges.length);
+        long[] result = new long[maxIntervals];
+        int pos = 0;
         int i = 0;
         int j = 0;
         while (i < this.ranges.length && j < other.ranges.length) {
             long rangeStart = Math.max(this.ranges[i], other.ranges[j]);
             long rangeEnd = Math.min(this.ranges[i + 1], other.ranges[j + 1]);
             if (rangeStart < rangeEnd) {
-                result.add(new long[]{ rangeStart, rangeEnd });
+                result[pos++] = rangeStart;
+                result[pos++] = rangeEnd;
             }
 
             // Advance the interval that ends first
@@ -115,7 +118,7 @@ public class RowRanges {
             }
         }
 
-        return new RowRanges(flatten(result), false);
+        return new RowRanges(pos == result.length ? result : Arrays.copyOf(result, pos), false);
     }
 
     /// Returns the union of this RowRanges with `other` (to support OR predicates).
@@ -125,10 +128,12 @@ public class RowRanges {
             return this.all ? this : other;
         }
 
-        List<long[]> merged = new ArrayList<>();
+        long[] result = new long[this.ranges.length + other.ranges.length];
+        int pos = 0;
         int i = 0;
         int j = 0;
         while (i < this.ranges.length || j < other.ranges.length) {
+            // Pick the interval with the smaller start from either input
             long start;
             long end;
             if (j >= other.ranges.length || (i < this.ranges.length && this.ranges[i] <= other.ranges[j])) {
@@ -142,29 +147,21 @@ public class RowRanges {
                 j += 2;
             }
 
-            if (!merged.isEmpty() && merged.getLast()[1] >= start) {
-                merged.getLast()[1] = Math.max(merged.getLast()[1], end);
+            // Merge with previous interval if overlapping or adjacent
+            if (pos > 0 && result[pos - 1] >= start) {
+                result[pos - 1] = Math.max(result[pos - 1], end);
             }
             else {
-                merged.add(new long[]{ start, end });
+                result[pos++] = start;
+                result[pos++] = end;
             }
         }
 
-        return new RowRanges(flatten(merged), false);
+        return new RowRanges(pos == result.length ? result : Arrays.copyOf(result, pos), false);
     }
 
     /// Returns the number of intervals in this set.
     int intervalCount() {
         return ranges.length / 2;
-    }
-
-    /// Flattens a list of `[start, end)` pairs into a single interleaved array.
-    private static long[] flatten(List<long[]> intervals) {
-        long[] flat = new long[intervals.size() * 2];
-        for (int i = 0; i < intervals.size(); i++) {
-            flat[i * 2] = intervals.get(i)[0];
-            flat[i * 2 + 1] = intervals.get(i)[1];
-        }
-        return flat;
     }
 }
