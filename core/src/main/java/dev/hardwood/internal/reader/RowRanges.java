@@ -77,7 +77,10 @@ public class RowRanges {
     /// Returns `true` if a page with the given row range overlaps any matching interval.
     boolean overlapsPage(long pageFirstRow, long pageLastRow) {
         for (int i = 0; i < ranges.length; i += 2) {
-            if (pageFirstRow < ranges[i + 1] && pageLastRow > ranges[i]) {
+            if (pageLastRow <= ranges[i]) {
+                return false;
+            }
+            if (pageFirstRow < ranges[i + 1]) {
                 return true;
             }
         }
@@ -116,28 +119,34 @@ public class RowRanges {
     }
 
     /// Returns the union of this RowRanges with `other` (to support OR predicates).
+    /// Both inputs are already sorted and non-overlapping, so a single-pass merge suffices.
     RowRanges union(RowRanges other) {
         if (this.all || other.all) {
             return this.all ? this : other;
         }
 
-        // Merge both range arrays, then coalesce overlapping intervals
-        List<long[]> combined = new ArrayList<>();
-        for (int i = 0; i < this.ranges.length; i += 2) {
-            combined.add(new long[]{ this.ranges[i], this.ranges[i + 1] });
-        }
-        for (int i = 0; i < other.ranges.length; i += 2) {
-            combined.add(new long[]{ other.ranges[i], other.ranges[i + 1] });
-        }
-        combined.sort((a, b) -> Long.compare(a[0], b[0]));
-
         List<long[]> merged = new ArrayList<>();
-        for (long[] interval : combined) {
-            if (!merged.isEmpty() && merged.getLast()[1] >= interval[0]) {
-                merged.getLast()[1] = Math.max(merged.getLast()[1], interval[1]);
+        int i = 0;
+        int j = 0;
+        while (i < this.ranges.length || j < other.ranges.length) {
+            long start;
+            long end;
+            if (j >= other.ranges.length || (i < this.ranges.length && this.ranges[i] <= other.ranges[j])) {
+                start = this.ranges[i];
+                end = this.ranges[i + 1];
+                i += 2;
             }
             else {
-                merged.add(new long[]{ interval[0], interval[1] });
+                start = other.ranges[j];
+                end = other.ranges[j + 1];
+                j += 2;
+            }
+
+            if (!merged.isEmpty() && merged.getLast()[1] >= start) {
+                merged.getLast()[1] = Math.max(merged.getLast()[1], end);
+            }
+            else {
+                merged.add(new long[]{ start, end });
             }
         }
 

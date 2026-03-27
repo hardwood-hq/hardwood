@@ -259,6 +259,38 @@ class PageFilterEvaluatorTest {
         );
     }
 
+    // Boolean Filtering Tests
+
+    // 2 pages: [false,false], [false,true]
+    private static final ColumnIndex BOOLEAN_COLUMN_INDEX = booleanColumnIndex(
+            new boolean[]{ false, false },
+            new boolean[]{ false, true });
+
+    @ParameterizedTest(name = "{0} {1} → pages kept: [{2}, {3}]")
+    @MethodSource
+    void testBooleanPageFiltering(Operator op, boolean value, boolean page0Kept, boolean page1Kept) {
+        RowRanges ranges = PageFilterEvaluator.evaluatePages(BOOLEAN_COLUMN_INDEX, TWO_PAGE_OFFSET_INDEX, TWO_PAGE_ROW_COUNT,
+                (columnIndex, pageIndex) -> {
+                    int min = StatisticsDecoder.decodeBoolean(columnIndex.minValues().get(pageIndex)) ? 1 : 0;
+                    int max = StatisticsDecoder.decodeBoolean(columnIndex.maxValues().get(pageIndex)) ? 1 : 0;
+                    int val = value ? 1 : 0;
+                    return RowGroupFilterEvaluator.canDrop(op, val, min, max);
+                });
+
+        assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
+        assertEquals(page1Kept, ranges.overlapsPage(50, 100), "page 1 (rows 50-100)");
+    }
+
+    static Stream<Arguments> testBooleanPageFiltering() {
+        return Stream.of(
+                // Page 0: [false,false], Page 1: [false,true]
+                Arguments.of(Operator.EQ,     false, true,  true),   // false is in both ranges
+                Arguments.of(Operator.EQ,     true,  false, true),   // true only in page 1
+                Arguments.of(Operator.NOT_EQ, false, false, true),   // drop page 0 (min==max==false)
+                Arguments.of(Operator.NOT_EQ, true,  true,  true)    // neither page has min==max==true
+        );
+    }
+
     // Binary Filtering Tests
 
     // 2 pages: [apple,banana], [cherry,date]
@@ -467,6 +499,19 @@ class PageFilterEvaluatorTest {
         for (int i = 0; i < mins.length; i++) {
             minValues.add(doubleBytes(mins[i]));
             maxValues.add(doubleBytes(maxs[i]));
+            nullPages.add(false);
+        }
+        return new ColumnIndex(nullPages, minValues, maxValues,
+                ColumnIndex.BoundaryOrder.UNORDERED, null);
+    }
+
+    private static ColumnIndex booleanColumnIndex(boolean[] mins, boolean[] maxs) {
+        List<byte[]> minValues = new ArrayList<>();
+        List<byte[]> maxValues = new ArrayList<>();
+        List<Boolean> nullPages = new ArrayList<>();
+        for (int i = 0; i < mins.length; i++) {
+            minValues.add(new byte[]{ (byte) (mins[i] ? 1 : 0) });
+            maxValues.add(new byte[]{ (byte) (maxs[i] ? 1 : 0) });
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,

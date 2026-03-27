@@ -123,11 +123,8 @@ public class PageFilterEvaluator {
             FileSchema schema, RowGroupIndexBuffers indexBuffers, long rowCount,
             PageCanDropTest canDropTest) {
 
-        int columnIndex = RowGroupFilterEvaluator.findColumnIndex(columnName, schema);
+        int columnIndex = RowGroupFilterEvaluator.resolveColumnIndex(columnName, rowGroup, schema);
         if (columnIndex < 0) {
-            columnIndex = RowGroupFilterEvaluator.findColumnIndexByPath(columnName, rowGroup);
-        }
-        if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
             return RowRanges.all(rowCount);
         }
 

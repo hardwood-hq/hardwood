@@ -68,23 +68,30 @@ public class RowGroupFilterEvaluator {
     }
 
     private static Statistics findStatistics(String columnName, RowGroup rowGroup, FileSchema schema) {
-        // First try exact leaf-name lookup (works for flat columns)
-        int columnIndex = findColumnIndex(columnName, schema);
-
-        // Fall back to path-based lookup (for nested/repeated columns where the
-        // predicate uses the top-level field name, e.g. "scores" for a list<int32>)
+        int columnIndex = resolveColumnIndex(columnName, rowGroup, schema);
         if (columnIndex < 0) {
-            columnIndex = findColumnIndexByPath(columnName, rowGroup);
-        }
-
-        if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
             return null;
         }
         ColumnChunk chunk = rowGroup.columns().get(columnIndex);
         return chunk.metaData().statistics();
     }
 
-    static int findColumnIndex(String columnName, FileSchema schema) {
+    /// Resolves a column name to its index in the row group, trying exact leaf-name
+    /// lookup first, then falling back to path-based matching for nested/repeated columns.
+    ///
+    /// @return the column index, or -1 if not found
+    static int resolveColumnIndex(String columnName, RowGroup rowGroup, FileSchema schema) {
+        int columnIndex = findColumnIndex(columnName, schema);
+        if (columnIndex < 0) {
+            columnIndex = findColumnIndexByPath(columnName, rowGroup);
+        }
+        if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
+            return -1;
+        }
+        return columnIndex;
+    }
+
+    private static int findColumnIndex(String columnName, FileSchema schema) {
         try {
             return schema.getColumn(columnName).columnIndex();
         }
@@ -93,7 +100,7 @@ public class RowGroupFilterEvaluator {
         }
     }
 
-    static int findColumnIndexByPath(String columnName, RowGroup rowGroup) {
+    private static int findColumnIndexByPath(String columnName, RowGroup rowGroup) {
         List<ColumnChunk> columns = rowGroup.columns();
         for (int i = 0; i < columns.size(); i++) {
             var path = columns.get(i).metaData().pathInSchema();

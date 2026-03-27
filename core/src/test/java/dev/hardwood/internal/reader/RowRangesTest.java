@@ -265,4 +265,35 @@ class RowRangesTest {
         assertEquals(1, result.intervalCount());
         assertTrue(result.overlapsPage(0, 100));
     }
+
+    @Test
+    void testIntersectWithEmpty() {
+        List<PageLocation> pages = List.of(
+                new PageLocation(0, 100, 0),
+                new PageLocation(100, 100, 50));
+        RowRanges a = RowRanges.fromPages(pages, new boolean[]{ true, true }, 100);
+        RowRanges empty = RowRanges.fromPages(pages, new boolean[]{ false, false }, 100);
+
+        assertEquals(0, a.intersect(empty).intervalCount());
+        assertEquals(0, empty.intersect(a).intervalCount());
+    }
+
+    @Test
+    void testUnionWithEmpty() {
+        List<PageLocation> pages = List.of(
+                new PageLocation(0, 100, 0),
+                new PageLocation(100, 100, 50));
+        RowRanges a = RowRanges.fromPages(pages, new boolean[]{ true, false }, 100);
+        RowRanges empty = RowRanges.fromPages(pages, new boolean[]{ false, false }, 100);
+
+        RowRanges result = a.union(empty);
+        assertEquals(1, result.intervalCount());
+        assertTrue(result.overlapsPage(0, 50));
+        assertFalse(result.overlapsPage(50, 100));
+
+        // Symmetry
+        result = empty.union(a);
+        assertEquals(1, result.intervalCount());
+        assertTrue(result.overlapsPage(0, 50));
+    }
 }
