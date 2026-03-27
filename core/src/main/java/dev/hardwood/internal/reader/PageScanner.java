@@ -44,6 +44,7 @@ public class PageScanner {
     private final HardwoodContextImpl context;
     private final ByteBuffer chunkData;
     private final long chunkDataFileOffset;
+    private final PageRangeData pageRangeData;
     private final ColumnIndexBuffers indexBuffers;
     private final int rowGroupIndex;
     private final String fileName;
@@ -86,6 +87,34 @@ public class PageScanner {
         this.context = context;
         this.chunkData = chunkData;
         this.chunkDataFileOffset = chunkDataFileOffset;
+        this.pageRangeData = null;
+        this.indexBuffers = indexBuffers;
+        this.rowGroupIndex = rowGroupIndex;
+        this.fileName = fileName;
+        this.matchingRows = matchingRows;
+    }
+
+    /// Creates a PageScanner with page-range buffers for selective I/O.
+    /// Only the matching pages (and dictionary prefix) are fetched, reducing
+    /// network I/O on remote backends.
+    ///
+    /// @param columnSchema   the column schema
+    /// @param columnChunk    the column chunk metadata
+    /// @param context        the Hardwood context
+    /// @param pageRangeData  pre-fetched page-range buffers
+    /// @param indexBuffers   pre-fetched index buffers for this column
+    /// @param rowGroupIndex  the row group index for JFR event reporting
+    /// @param fileName       the file name for error messages and JFR events
+    /// @param matchingRows   row ranges that might match the filter
+    public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
+                       PageRangeData pageRangeData, ColumnIndexBuffers indexBuffers,
+                       int rowGroupIndex, String fileName, RowRanges matchingRows) {
+        this.columnSchema = columnSchema;
+        this.columnChunk = columnChunk;
+        this.context = context;
+        this.chunkData = null;
+        this.chunkDataFileOffset = 0;
+        this.pageRangeData = pageRangeData;
         this.indexBuffers = indexBuffers;
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
@@ -203,7 +232,7 @@ public class PageScanner {
         // Parse dictionary from the chunk data prefix (if present)
         long firstDataPageOffset = offsetIndex.pageLocations().get(0).offset();
         Long dictOffset = metaData.dictionaryPageOffset();
-        long chunkStart = chunkDataFileOffset;
+        long chunkStart = (pageRangeData != null) ? 0 : chunkDataFileOffset;
 
         // Detect implicit dictionary (writers that omit dictionary_page_offset)
         if ((dictOffset == null || dictOffset <= 0) && firstDataPageOffset > metaData.dataPageOffset()) {
@@ -212,19 +241,33 @@ public class PageScanner {
 
         Dictionary dictionary = null;
         if (chunkStart < firstDataPageOffset) {
-            dictionary = parseDictionaryFromBuffer(chunkData, chunkDataFileOffset,
-                    chunkStart, firstDataPageOffset, metaData);
+            if (pageRangeData != null) {
+                // Page-range mode: dictionary is in the first fetched range (via extendStart)
+                int dictRegionSize = Math.toIntExact(firstDataPageOffset - chunkStart);
+                ByteBuffer dictSlice = pageRangeData.sliceRegion(chunkStart, dictRegionSize);
+                dictionary = parseDictionaryFromSlice(dictSlice, metaData);
+            }
+            else {
+                dictionary = parseDictionaryFromBuffer(chunkData, chunkDataFileOffset,
+                        chunkStart, firstDataPageOffset, metaData);
+            }
         }
 
         // Filter page locations by matching row ranges (Column Index pushdown)
         List<PageLocation> allPages = offsetIndex.pageLocations();
         List<PageLocation> filteredPages = filterPageLocations(allPages);
 
-        // Slice each data page directly from the pre-fetched chunk data
+        // Slice each data page from the appropriate data source
         List<PageInfo> pageInfos = new ArrayList<>(filteredPages.size());
         for (PageLocation loc : filteredPages) {
-            int relOffset = Math.toIntExact(loc.offset() - chunkDataFileOffset);
-            ByteBuffer pageSlice = chunkData.slice(relOffset, loc.compressedPageSize());
+            ByteBuffer pageSlice;
+            if (pageRangeData != null) {
+                pageSlice = pageRangeData.slicePage(loc);
+            }
+            else {
+                int relOffset = Math.toIntExact(loc.offset() - chunkDataFileOffset);
+                pageSlice = chunkData.slice(relOffset, loc.compressedPageSize());
+            }
             pageInfos.add(new PageInfo(pageSlice, columnSchema, metaData, dictionary));
         }
 
@@ -272,6 +315,28 @@ public class PageScanner {
         }
 
         return filtered;
+    }
+
+    /// Parses a dictionary page from a pre-sliced buffer (page-range mode).
+    private Dictionary parseDictionaryFromSlice(ByteBuffer dictSlice, ColumnMetaData metaData) throws IOException {
+        ThriftCompactReader probeReader = new ThriftCompactReader(dictSlice, 0);
+        PageHeader header = PageHeaderReader.read(probeReader);
+
+        if (header.type() != PageHeader.PageType.DICTIONARY_PAGE) {
+            return null;
+        }
+
+        int headerSize = probeReader.getBytesRead();
+        int compressedSize = header.compressedPageSize();
+        ByteBuffer compressedData = dictSlice.slice(headerSize, compressedSize);
+        if (header.crc() != null) {
+            CrcValidator.assertCorrectCrc(header.crc(), compressedData, columnSchema.name());
+        }
+
+        return parseDictionary(compressedData,
+                header.dictionaryPageHeader().numValues(),
+                header.uncompressedPageSize(),
+                columnSchema, metaData.codec());
     }
 
     /// Parses a dictionary page from a buffer. The dictionary region sits
