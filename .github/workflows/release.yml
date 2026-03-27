@@ -72,14 +72,14 @@ jobs:
 
       - name: 'API change report'
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6 — https://github.com/actions/upload-artifact/releases/tag/v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: japicmp-report
           path: core/target/japicmp/
 
       - name: 'JReleaser output'
         if: always()
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6 — https://github.com/actions/upload-artifact/releases/tag/v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: jreleaser-release
           path: |
@@ -119,14 +119,14 @@ jobs:
 
       - name: 'Upload build artifact (tar.gz)'
         if: ${{ runner.os != 'Windows' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4 — https://github.com/actions/upload-artifact/releases/tag/v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: artifacts-${{ runner.os }}-${{ runner.arch }}
           path: cli/target/*.tar.gz
 
       - name: 'Upload build artifact (zip)'
         if: ${{ runner.os == 'Windows' }}
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4 — https://github.com/actions/upload-artifact/releases/tag/v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: artifacts-${{ runner.os }}-${{ runner.arch }}
           path: cli/target/*.zip
@@ -139,7 +139,7 @@ jobs:
       contents: write
     steps:
       - name: 'Download all build artifacts'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
           path: artifacts
           pattern: artifacts-*

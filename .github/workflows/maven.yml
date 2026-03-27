@@ -50,7 +50,7 @@ jobs:
         run: ./mvnw -B clean install
 
       - name: 'Upload built artifacts'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02  # v4 — https://github.com/actions/upload-artifact/releases/tag/v4
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
@@ -74,7 +74,7 @@ jobs:
           cache: 'maven'
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
@@ -106,7 +106,7 @@ jobs:
 
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — https://github.com/actions/checkout/releases/tag/v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
 
@@ -122,7 +122,7 @@ jobs:
         run: sudo apt-get update && sudo apt-get install -y libdeflate-dev
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
@@ -158,7 +158,7 @@ jobs:
           cache: 'maven'
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
@@ -170,7 +170,7 @@ jobs:
           ./mvnw -ntp -B package japicmp:cmp -pl :hardwood-core -DskipTests -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
 
       - name: 'Upload API change report'
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f  # v6 — https://github.com/actions/upload-artifact/releases/tag/v6
+        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: japicmp-report
           path: core/target/japicmp/
@@ -181,7 +181,7 @@ jobs:
 
     steps:
       - name: 'Check out repository'
-        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5  # v4 — https://github.com/actions/checkout/releases/tag/v4
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
 
@@ -193,13 +193,13 @@ jobs:
           cache: 'maven'
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Cache taxi data'
-        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830  # v4 — https://github.com/actions/cache/releases/tag/v4
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: performance-testing/test-data-setup/target/tlc-trip-record-data/
           key: taxi-data-2023-01-to-2025-12
@@ -230,7 +230,7 @@ jobs:
           cache: maven
 
       - name: 'Download built artifacts'
-        uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093  # v4 — https://github.com/actions/download-artifact/releases/tag/v4
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
           name: maven-repo
           path: ~/.m2/repository/dev/hardwood/
