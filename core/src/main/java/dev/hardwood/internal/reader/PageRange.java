@@ -38,7 +38,7 @@ public record PageRange(long offset, int length, List<PageLocation> pages) {
     /// @param matchingRows   row ranges that might match the filter
     /// @param columnChunk    the column chunk metadata (for dictionary detection)
     /// @param rowGroupRowCount total rows in the row group
-    /// @param maxGapBytes    maximum gap to bridge when coalescing (same as [ChunkRange.MAX_GAP_BYTES])
+    /// @param maxGapBytes    maximum gap to bridge when coalescing (same as `ChunkRange.MAX_GAP_BYTES`)
     /// @return coalesced page ranges to fetch, or empty list if all pages match
     public static List<PageRange> forColumn(OffsetIndex offsetIndex, RowRanges matchingRows,
             ColumnChunk columnChunk, long rowGroupRowCount, int maxGapBytes) {
