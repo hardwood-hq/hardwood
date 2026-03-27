@@ -232,11 +232,18 @@ public class PageScanner {
         // Parse dictionary from the chunk data prefix (if present)
         long firstDataPageOffset = offsetIndex.pageLocations().get(0).offset();
         Long dictOffset = metaData.dictionaryPageOffset();
-        long chunkStart = (pageRangeData != null) ? metaData.dataPageOffset() : chunkDataFileOffset;
+        long chunkStart;
 
-        // Detect implicit dictionary (writers that omit dictionary_page_offset)
-        if ((dictOffset == null || dictOffset <= 0) && firstDataPageOffset > metaData.dataPageOffset()) {
+        if (dictOffset != null && dictOffset > 0) {
+            // Explicit dictionary offset
+            chunkStart = dictOffset;
+        }
+        else if (firstDataPageOffset > metaData.dataPageOffset()) {
+            // Implicit dictionary (writers that omit dictionary_page_offset)
             chunkStart = metaData.dataPageOffset();
+        }
+        else {
+            chunkStart = (pageRangeData != null) ? firstDataPageOffset : chunkDataFileOffset;
         }
 
         Dictionary dictionary = null;

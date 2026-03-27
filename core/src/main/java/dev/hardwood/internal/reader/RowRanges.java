@@ -37,7 +37,7 @@ public class RowRanges {
     }
 
     /// Returns `true` if this instance represents all rows (no filtering).
-    boolean isAll() {
+    public boolean isAll() {
         return all;
     }
 

@@ -25,7 +25,7 @@ import dev.hardwood.metadata.PageLocation;
 /// @param offset absolute file offset of the first byte in this range
 /// @param length total number of bytes in this range
 /// @param pages  the page locations covered by this range, in file order
-record PageRange(long offset, int length, List<PageLocation> pages) {
+public record PageRange(long offset, int length, List<PageLocation> pages) {
 
     /// Computes the page ranges to fetch for a single column, given the matching row ranges
     /// from Column Index filtering. Returns an empty list if no pages are skipped (signaling
@@ -40,7 +40,7 @@ record PageRange(long offset, int length, List<PageLocation> pages) {
     /// @param rowGroupRowCount total rows in the row group
     /// @param maxGapBytes    maximum gap to bridge when coalescing (same as [ChunkRange.MAX_GAP_BYTES])
     /// @return coalesced page ranges to fetch, or empty list if all pages match
-    static List<PageRange> forColumn(OffsetIndex offsetIndex, RowRanges matchingRows,
+    public static List<PageRange> forColumn(OffsetIndex offsetIndex, RowRanges matchingRows,
             ColumnChunk columnChunk, long rowGroupRowCount, int maxGapBytes) {
 
         List<PageLocation> allPages = offsetIndex.pageLocations();

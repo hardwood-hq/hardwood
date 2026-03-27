@@ -19,6 +19,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.ChunkRange;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
+import dev.hardwood.internal.reader.ColumnIndexBuffers;
 import dev.hardwood.internal.reader.ColumnValueIterator;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.IndexedNestedColumnData;
@@ -28,11 +29,16 @@ import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageCursor;
 import dev.hardwood.internal.reader.PageFilterEvaluator;
 import dev.hardwood.internal.reader.PageInfo;
+import dev.hardwood.internal.reader.PageRange;
+import dev.hardwood.internal.reader.PageRangeData;
 import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.internal.reader.TypedColumnData;
+import dev.hardwood.internal.thrift.OffsetIndexReader;
+import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -127,38 +133,78 @@ final class SingleFileRowReader extends AbstractRowReader {
                         filterPredicate, rowGroup, schema, indexBuffers);
             }
 
-            // Coalesce projected column chunks and pre-fetch data
-            List<ChunkRange> chunkRanges = ChunkRange.coalesce(
-                    rowGroup.columns(), projectedOriginalIndices, ChunkRange.MAX_GAP_BYTES);
-            ByteBuffer[] rangeBuffers = new ByteBuffer[chunkRanges.size()];
-            try {
-                for (int r = 0; r < chunkRanges.size(); r++) {
-                    ChunkRange range = chunkRanges.get(r);
-                    rangeBuffers[r] = inputFile.readRange(range.offset(), range.length());
+            // Try page-range I/O for each column when filtering is active
+            final RowRanges rowRanges = matchingRows;
+            PageRangeData[] pageRangeDataPerColumn = new PageRangeData[projectedColumnCount];
+
+            if (!matchingRows.isAll()) {
+                for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
+                    int originalIndex = projectedOriginalIndices[projectedIndex];
+                    ColumnIndexBuffers colBuffers = indexBuffers.forColumn(originalIndex);
+                    if (colBuffers != null && colBuffers.offsetIndex() != null) {
+                        try {
+                            OffsetIndex offsetIndex = OffsetIndexReader.read(
+                                    new ThriftCompactReader(colBuffers.offsetIndex()));
+                            ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
+                            List<PageRange> pageRanges = PageRange.forColumn(
+                                    offsetIndex, matchingRows, columnChunk, rowGroup.numRows(), ChunkRange.MAX_GAP_BYTES);
+                            if (!pageRanges.isEmpty()) {
+                                pageRangeDataPerColumn[projectedIndex] = PageRangeData.fetch(inputFile, pageRanges);
+                            }
+                        }
+                        catch (IOException e) {
+                            throw new UncheckedIOException("Failed to fetch page ranges for row group " + rgIdx, e);
+                        }
+                    }
                 }
             }
-            catch (IOException e) {
-                throw new UncheckedIOException("Failed to fetch column chunk data for row group " + rgIdx, e);
+
+            // Fetch full chunks for columns not using page-range I/O
+            List<ChunkRange> chunkRanges = null;
+            ByteBuffer[] rangeBuffers = null;
+            for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
+                if (pageRangeDataPerColumn[projectedIndex] == null) {
+                    chunkRanges = ChunkRange.coalesce(
+                            rowGroup.columns(), projectedOriginalIndices, ChunkRange.MAX_GAP_BYTES);
+                    rangeBuffers = new ByteBuffer[chunkRanges.size()];
+                    try {
+                        for (int r = 0; r < chunkRanges.size(); r++) {
+                            ChunkRange range = chunkRanges.get(r);
+                            rangeBuffers[r] = inputFile.readRange(range.offset(), range.length());
+                        }
+                    }
+                    catch (IOException e) {
+                        throw new UncheckedIOException("Failed to fetch column chunk data for row group " + rgIdx, e);
+                    }
+                    break;
+                }
             }
 
-            // Scan each projected column in parallel using pre-fetched data
-            final RowRanges rowRanges = matchingRows;
+            // Scan each projected column in parallel
             for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
                 final int projIdx = projectedIndex;
                 final int originalIndex = projectedOriginalIndices[projIdx];
                 final ColumnSchema columnSchema = schema.getColumn(originalIndex);
                 final ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
+                final PageRangeData colPageRangeData = pageRangeDataPerColumn[projIdx];
 
-                // Find which ChunkRange contains this column's data
-                final ByteBuffer colChunkData = sliceColumnChunk(chunkRanges, rangeBuffers, columnChunk);
-                final long colChunkOffset = chunkStartOffset(columnChunk);
+                final PageScanner scanner;
+                if (colPageRangeData != null) {
+                    scanner = new PageScanner(columnSchema, columnChunk, context,
+                            colPageRangeData, indexBuffers.forColumn(originalIndex),
+                            rgIdx, fileName, rowRanges);
+                }
+                else {
+                    final ByteBuffer colChunkData = sliceColumnChunk(chunkRanges, rangeBuffers, columnChunk);
+                    final long colChunkOffset = chunkStartOffset(columnChunk);
+                    scanner = new PageScanner(columnSchema, columnChunk, context,
+                            colChunkData, colChunkOffset, indexBuffers.forColumn(originalIndex),
+                            rgIdx, fileName, rowRanges);
+                }
 
                 final CompletableFuture<List<PageInfo>> previousFuture = scanFutures[projIdx];
                 scanFutures[projIdx] = previousFuture.thenCombineAsync(
                         CompletableFuture.supplyAsync(() -> {
-                            PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                                    colChunkData, colChunkOffset, indexBuffers.forColumn(originalIndex),
-                                    rgIdx, fileName, rowRanges);
                             try {
                                 return scanner.scanPages();
                             }

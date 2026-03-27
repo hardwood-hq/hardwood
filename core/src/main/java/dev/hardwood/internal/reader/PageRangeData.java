@@ -20,7 +20,7 @@ import dev.hardwood.metadata.PageLocation;
 /// Each [FetchedRange] corresponds to one coalesced [PageRange] and contains
 /// the bytes fetched via a single `readRange()` call. Pages are sliced from
 /// the appropriate range buffer based on their absolute file offset.
-record PageRangeData(List<FetchedRange> ranges) {
+public record PageRangeData(List<FetchedRange> ranges) {
 
     /// A single fetched byte range and its absolute file offset.
     record FetchedRange(long fileOffset, ByteBuffer data) {
@@ -60,7 +60,7 @@ record PageRangeData(List<FetchedRange> ranges) {
     }
 
     /// Fetches page ranges from an [InputFile], issuing one `readRange()` per [PageRange].
-    static PageRangeData fetch(InputFile inputFile, List<PageRange> pageRanges) throws IOException {
+    public static PageRangeData fetch(InputFile inputFile, List<PageRange> pageRanges) throws IOException {
         List<FetchedRange> fetched = new ArrayList<>(pageRanges.size());
         for (PageRange range : pageRanges) {
             ByteBuffer data = inputFile.readRange(range.offset(), range.length());

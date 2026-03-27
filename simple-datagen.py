@@ -1558,3 +1558,32 @@ print("\nGenerated column_index_pushdown.parquet:")
 print("  - 1 row group, 10000 rows, sorted id [0,9999] and value [1000,10999]")
 print("  - Parquet v2 with Column Index and Offset Index")
 print("  - ~10 pages of 1024 values each")
+
+# 28. Same as above but with dictionary encoding, to test page-range I/O with dictionary pages
+column_index_dict_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('category', pa.string(), False),
+])
+
+column_index_dict_table = pa.table({
+    'id': list(range(0, 10000)),
+    'category': [f'cat_{i % 10}' for i in range(10000)],
+}, schema=column_index_dict_schema)
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/column_index_pushdown_dict.parquet',
+    schema=column_index_dict_schema,
+    use_dictionary=True,
+    compression='NONE',
+    data_page_version='2.0',
+    data_page_size=128,
+    write_statistics=True,
+    write_page_index=True,
+)
+writer.write_table(column_index_dict_table)
+writer.close()
+
+print("\nGenerated column_index_pushdown_dict.parquet:")
+print("  - 1 row group, 10000 rows, sorted id [0,9999], category with 10 distinct values")
+print("  - Dictionary encoding enabled for both columns")
+print("  - Parquet v2 with Column Index and Offset Index")
