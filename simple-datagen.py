@@ -1522,3 +1522,39 @@ print("\nGenerated column_kv_metadata_test.parquet:")
 print("  - Column-level kv metadata on ColumnMetaData (Thrift field 8)")
 print("  - id column: col.origin=primary-key")
 print("  - name column: col.encoding=utf-8, col.source=user-input")
+
+# ============================================================================
+# Page-Level Column Index Push-Down Test File (Parquet v2)
+# ============================================================================
+
+# 27. Parquet v2 file with Column Index for page-level predicate pushdown testing
+# Single row group, 10000 rows sorted by id, tiny pages to create ~10 pages with
+# non-overlapping min/max ranges. Uses data_page_version='2.0' so PyArrow writes
+# Column Index and Offset Index.
+column_index_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('value', pa.int64(), False),
+])
+
+column_index_table = pa.table({
+    'id': list(range(0, 10000)),
+    'value': list(range(1000, 11000)),
+}, schema=column_index_schema)
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/column_index_pushdown.parquet',
+    schema=column_index_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='2.0',
+    data_page_size=128,
+    write_statistics=True,
+    write_page_index=True,
+)
+writer.write_table(column_index_table)
+writer.close()
+
+print("\nGenerated column_index_pushdown.parquet:")
+print("  - 1 row group, 10000 rows, sorted id [0,9999] and value [1000,10999]")
+print("  - Parquet v2 with Column Index and Offset Index")
+print("  - ~10 pages of 1024 values each")

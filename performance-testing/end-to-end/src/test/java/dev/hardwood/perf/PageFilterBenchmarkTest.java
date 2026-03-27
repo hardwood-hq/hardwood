@@ -113,6 +113,14 @@ class PageFilterBenchmarkTest {
         System.out.printf("  Rows: %,d → %,d (%.1f%% filtered out)%n",
                 unfilteredRows[0], filteredRows[0],
                 100.0 * (1.0 - (double) filteredRows[0] / unfilteredRows[0]));
+
+        // Verify that filtering actually reduced the number of rows read
+        assertThat(filteredRows[0])
+                .as("Filtered run should read fewer rows than unfiltered")
+                .isLessThan(unfilteredRows[0]);
+        assertThat(unfilteredRows[0])
+                .as("Unfiltered run should read all rows")
+                .isEqualTo(TOTAL_ROWS);
     }
 
     /// Reads all rows, summing the value column.

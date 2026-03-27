@@ -7,9 +7,11 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.stream.Stream;
@@ -19,10 +21,15 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.metadata.ColumnIndex;
+import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
+import dev.hardwood.schema.FileSchema;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
@@ -293,6 +300,110 @@ class PageFilterEvaluatorTest {
                 Arguments.of(Operator.GT_EQ,  "apple",   true,  true)
         );
     }
+
+    // Compound Predicate Tests
+    //
+    // Uses column_index_pushdown.parquet: 1 row group, 10000 rows,
+    // sorted id [0,9999] and value [1000,10999], Parquet v2 with Column Index,
+    // ~10 pages of 1024 values each.
+
+    private static final Path COLUMN_INDEX_FILE = Path.of("src/test/resources/column_index_pushdown.parquet");
+
+    @Test
+    void testAndNarrowsMatchingRows() throws IOException {
+        // AND(id >= 2000, id < 4000) → only pages covering rows 2000-3999 should match,
+        // which is fewer pages than either predicate alone
+        RowRanges gtEq2000 = computeMatchingRows(FilterPredicate.gtEq("id", 2000L));
+        RowRanges lt4000 = computeMatchingRows(FilterPredicate.lt("id", 4000L));
+        RowRanges andResult = computeMatchingRows(FilterPredicate.and(
+                FilterPredicate.gtEq("id", 2000L),
+                FilterPredicate.lt("id", 4000L)));
+
+        assertFalse(andResult.isAll());
+        assertTrue(andResult.intervalCount() <= gtEq2000.intervalCount());
+        assertTrue(andResult.intervalCount() <= lt4000.intervalCount());
+    }
+
+    @Test
+    void testOrWidensMatchingRows() throws IOException {
+        // OR(id < 1000, id >= 9000) → union should cover both ends
+        RowRanges lt1000 = computeMatchingRows(FilterPredicate.lt("id", 1000L));
+        RowRanges gtEq9000 = computeMatchingRows(FilterPredicate.gtEq("id", 9000L));
+        RowRanges orResult = computeMatchingRows(FilterPredicate.or(
+                FilterPredicate.lt("id", 1000L),
+                FilterPredicate.gtEq("id", 9000L)));
+
+        assertFalse(orResult.isAll());
+        assertTrue(orResult.intervalCount() >= lt1000.intervalCount());
+        assertTrue(orResult.intervalCount() >= gtEq9000.intervalCount());
+        // Start and end of the row group should overlap
+        assertTrue(orResult.overlapsPage(0, 1));
+        assertTrue(orResult.overlapsPage(9999, 10000));
+    }
+
+    @Test
+    void testNotReturnsAllRows() throws IOException {
+        // NOT(id < 5000) → conservative, returns all rows
+        FilterPredicate filter = FilterPredicate.not(FilterPredicate.lt("id", 5000L));
+
+        RowRanges ranges = computeMatchingRows(filter);
+
+        assertTrue(ranges.isAll());
+    }
+
+    @Test
+    void testAndWithDisjointPredicatesNarrows() throws IOException {
+        // AND(id < 1000, id >= 9000) → with 10 pages of 1024 rows each,
+        // id < 1000 keeps only page 0, id >= 9000 keeps only the last page.
+        // Their row ranges don't overlap, so intersection is empty.
+        RowRanges andResult = computeMatchingRows(FilterPredicate.and(
+                FilterPredicate.lt("id", 1000L),
+                FilterPredicate.gtEq("id", 9000L)));
+
+        assertEquals(0, andResult.intervalCount());
+    }
+
+    @Test
+    void testOrMatchingAllPages() throws IOException {
+        // OR(id >= 0, id < 10000) → both sides match everything
+        FilterPredicate filter = FilterPredicate.or(
+                FilterPredicate.gtEq("id", 0L),
+                FilterPredicate.lt("id", 10000L));
+
+        RowRanges ranges = computeMatchingRows(filter);
+
+        assertTrue(ranges.overlapsPage(0, 10000));
+    }
+
+    @Test
+    void testAndWithUnknownColumnIsConservative() throws IOException {
+        // AND(id < 5000, nonexistent > 0) → unknown column returns all,
+        // so result should equal just the id < 5000 result
+        RowRanges idOnly = computeMatchingRows(FilterPredicate.lt("id", 5000L));
+        RowRanges withUnknown = computeMatchingRows(FilterPredicate.and(
+                FilterPredicate.lt("id", 5000L),
+                FilterPredicate.gt("nonexistent", 0L)));
+
+        assertFalse(withUnknown.isAll());
+        assertEquals(idOnly.intervalCount(), withUnknown.intervalCount());
+    }
+
+    private RowRanges computeMatchingRows(FilterPredicate filter) throws IOException {
+        InputFile inputFile = InputFile.of(COLUMN_INDEX_FILE);
+        inputFile.open();
+        try {
+            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile);
+            FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
+            RowGroup rowGroup = metaData.rowGroups().get(0);
+            RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
+            return PageFilterEvaluator.computeMatchingRows(filter, rowGroup, schema, indexBuffers);
+        }
+        finally {
+            inputFile.close();
+        }
+    }
+
+    // Helpers
 
     private static byte[] intBytes(int value) {
         return ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(value).array();
