@@ -8,8 +8,14 @@
 package dev.hardwood.s3;
 
 import java.io.IOException;
+<<<<<<< HEAD
 import java.nio.file.Files;
+=======
+import java.net.URI;
+import java.nio.ByteBuffer;
+>>>>>>> df90b7e (#118 Updated S3 reader to use selective chunking when filters are present)
 import java.nio.file.Path;
+import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -19,6 +25,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 
 import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 
+import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
@@ -132,23 +139,38 @@ class S3InputFileTest {
     }
 
     @Test
-    void columnIndexPageFiltering() throws Exception {
+    void columnIndexPageFilteringReducesNetworkIo() throws Exception {
         // column_index_pushdown.parquet: 10000 rows, sorted id [0,9999], ~10 pages of 1024 values
-        // Filter to id < 1000 should skip ~90% of pages via Column Index
+        // Filter to id < 1000 should skip ~90% of pages via Column Index,
+        // and page-range I/O should fetch only matching pages from S3
         FilterPredicate filter = FilterPredicate.lt("id", 1000L);
 
+<<<<<<< HEAD
         long unfilteredCount = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", "column_index_pushdown.parquet"));
+=======
+        ByteCountingInputFile unfilteredFile = new ByteCountingInputFile(
+                S3InputFile.of(s3, "test-bucket", "column_index_pushdown.parquet"));
+        long unfilteredCount = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(unfilteredFile);
+>>>>>>> df90b7e (#118 Updated S3 reader to use selective chunking when filters are present)
              ColumnReader col = reader.createColumnReader("id")) {
             while (col.nextBatch()) {
                 unfilteredCount += col.getRecordCount();
             }
         }
 
+<<<<<<< HEAD
         long filteredCount = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", "column_index_pushdown.parquet"));
+=======
+        ByteCountingInputFile filteredFile = new ByteCountingInputFile(
+                S3InputFile.of(s3, "test-bucket", "column_index_pushdown.parquet"));
+        long filteredCount = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(filteredFile);
+>>>>>>> df90b7e (#118 Updated S3 reader to use selective chunking when filters are present)
              ColumnReader col = reader.createColumnReader("id", filter)) {
             while (col.nextBatch()) {
                 filteredCount += col.getRecordCount();
@@ -157,6 +179,50 @@ class S3InputFileTest {
 
         assertThat(unfilteredCount).isEqualTo(10000);
         assertThat(filteredCount).isLessThan(unfilteredCount);
+        assertThat(filteredFile.bytesRead())
+                .as("Filtered S3 read should transfer fewer bytes than unfiltered")
+                .isLessThan(unfilteredFile.bytesRead());
+    }
+
+    /// InputFile wrapper that tracks total bytes fetched via readRange.
+    private static class ByteCountingInputFile implements InputFile {
+
+        private final InputFile delegate;
+        private final AtomicLong totalBytesRead = new AtomicLong();
+
+        ByteCountingInputFile(InputFile delegate) {
+            this.delegate = delegate;
+        }
+
+        long bytesRead() {
+            return totalBytesRead.get();
+        }
+
+        @Override
+        public void open() throws IOException {
+            delegate.open();
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            totalBytesRead.addAndGet(length);
+            return delegate.readRange(offset, length);
+        }
+
+        @Override
+        public long length() throws IOException {
+            return delegate.length();
+        }
+
+        @Override
+        public String name() {
+            return delegate.name();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
     }
 
     @Test
