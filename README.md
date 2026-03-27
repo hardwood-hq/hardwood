@@ -362,7 +362,7 @@ while (rowReader.hasNext()) {
 
 ### Predicate Pushdown (Filter)
 
-Filter predicates allow Hardwood to skip entire row groups whose statistics prove that no rows can match the predicate, avoiding unnecessary I/O and decoding.
+Filter predicates enable two levels of predicate pushdown. At the row-group level, entire row groups whose statistics prove no rows can match are skipped. Within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, reducing network I/O.
 
 ```java
 import dev.hardwood.reader.FilterPredicate;

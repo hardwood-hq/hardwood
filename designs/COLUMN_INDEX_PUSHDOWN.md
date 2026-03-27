@@ -180,13 +180,68 @@ End-to-end benchmark that lazily generates a 50M-row synthetic Parquet file (via
 | New | test: `PageFilterEvaluatorTest.java` | 67 parameterized unit tests |
 | New | test: `PageFilterBenchmarkTest.java` | Performance benchmark with synthetic data |
 
+## Step 7: Page-Range I/O for Remote Backends
+
+When page-level filtering skips pages, fetch only matching pages instead of entire column chunks. This reduces network I/O on S3 and other remote backends.
+
+### New file: `internal/reader/PageRangeData.java`
+
+Record holding fetched page-range buffers with `slicePage()` and `sliceRegion()` for page and dictionary lookup. Static `fetch()` method issues one `readRange()` per coalesced `PageRange`.
+
+### Modify: `internal/reader/PageRange.java`
+
+Added `forColumn()` factory that filters pages by `RowRanges`, coalesces matching pages, and extends the first range for dictionary prefix.
+
+### Modify: `internal/reader/PageScanner.java`
+
+New constructor accepting `PageRangeData` instead of full chunk buffer. Bifurcated page slicing and dictionary parsing in `scanPagesFromIndex()`.
+
+### Modify: `reader/ColumnReader.java`, `reader/SingleFileRowReader.java`, `internal/reader/FileManager.java`
+
+Each call site attempts page-range I/O per column when filtering is active. Falls back to full chunk fetch for columns that don't benefit or lack an Offset Index.
+
+**Files:**
+- `core/src/main/java/dev/hardwood/internal/reader/PageRangeData.java` (new)
+- `core/src/main/java/dev/hardwood/internal/reader/PageRange.java` (modify)
+- `core/src/main/java/dev/hardwood/internal/reader/PageScanner.java` (modify)
+- `core/src/main/java/dev/hardwood/reader/ColumnReader.java` (modify)
+- `core/src/main/java/dev/hardwood/reader/SingleFileRowReader.java` (modify)
+- `core/src/main/java/dev/hardwood/internal/reader/FileManager.java` (modify)
+- `core/src/test/java/dev/hardwood/internal/reader/PageRangeIoTest.java` (new)
+- `core/src/test/java/dev/hardwood/internal/reader/PageRangeDataTest.java` (new)
+- `s3/src/test/java/dev/hardwood/s3/S3InputFileTest.java` (modify)
+
+---
+
+## Updated summary of changes
+
+| Type | File | Change |
+|------|------|--------|
+| New | `internal/reader/RowRanges.java` | Row range interval set with intersection/union |
+| New | `internal/reader/PageFilterEvaluator.java` | Per-page predicate evaluation → RowRanges |
+| New | `internal/reader/PageRangeData.java` | Fetched page-range buffers with page/dictionary slicing |
+| New | `jfr/PageFilterEvent.java` | JFR event for page-level filtering |
+| Modify | `internal/reader/PageRange.java` | Added `forColumn()` factory for page-range computation |
+| Modify | `internal/reader/RowGroupFilterEvaluator.java` | Widened shared comparison and column resolution helpers |
+| Modify | `internal/reader/PageScanner.java` | Accept RowRanges and PageRangeData, bifurcated page slicing |
+| Modify | `reader/ParquetFileReader.java` | Pass filter to ColumnReader/RowReader |
+| Modify | `reader/SingleFileRowReader.java` | Accept filter, page-range I/O path |
+| Modify | `reader/ColumnReader.java` | Accept filter, page-range I/O path |
+| Modify | `internal/reader/FileManager.java` | Page-range I/O path |
+| New | test: `RowRangesTest.java` | 16 unit tests |
+| New | test: `PageFilterEvaluatorTest.java` | 77 parameterized unit tests |
+| New | test: `PageRangeDataTest.java` | 5 unit tests |
+| New | test: `PageRangeIoTest.java` | 4 integration tests (byte counting) |
+| New | test: `PageFilterBenchmarkTest.java` | Performance benchmark with synthetic data |
+| Modify | test: `S3InputFileTest.java` | S3 byte counting assertion |
+
 ## Future optimizations (out of scope)
 
 - **Boundary order binary search**: when `boundaryOrder` is `ASCENDING` or `DESCENDING`, binary search for the first/last matching page instead of linear scan.
-- **Page-range I/O for remote backends**: use `PageRange.coalesce()` on matching pages to issue targeted range reads instead of fetching entire column chunks. Relevant for S3 where skipped pages avoid actual network I/O.
 
 ## Verification
 
-1. `./mvnw verify -pl core` (with 180s timeout) — all tests pass including 81 new tests
-2. `./mvnw test -Pperformance-test -pl performance-testing/end-to-end -Dtest="PageFilterBenchmarkTest" -Dperf.runs=5` — benchmark validates page skipping under load
-3. Existing predicate push-down tests still pass (no regressions)
+1. `./mvnw verify -pl core` — all tests pass
+2. `./mvnw test -pl s3 -Dtest=S3InputFileTest` — S3 byte counting assertion confirms 88% I/O reduction
+3. `./mvnw test -Pperformance-test -pl performance-testing/end-to-end -Dtest="PageFilterBenchmarkTest" -Dperf.runs=5` — benchmark validates page skipping under load
+4. Existing predicate push-down tests still pass (no regressions)
