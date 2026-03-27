@@ -23,160 +23,106 @@ class PrintCommandTest {
 
     @Test
     void printsAsciiTableDefault(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        String output = result.getOutput().replace(System.lineSeparator(), "\n");
-
-        // For default small file, we know exact ASCII output
-        assertThat(output).isEqualTo("""
+        assertOutput(launcher.launch("print", "-f", TEST_FILE), """
                 +----+-------+
                 | id | value |
                 +----+-------+
                 | 1  | 100   |
-                +----+-------+
                 | 2  | 200   |
-                +----+-------+
                 | 3  | 300   |
                 +----+-------+""");
     }
 
     @Test
-    void noLineSeparatorBetweenRows(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", TEST_FILE, "--no-row-delimiter");
-
-        assertThat(result.exitCode()).isZero();
-        String output = result.getOutput().replace(System.lineSeparator(), "\n");
-
-        // For default small file, we know exact ASCII output
-        assertThat(output).isEqualTo("""
+    void lineSeparatorBetweenRows(QuarkusMainLauncher launcher) {
+        assertOutput(launcher.launch("print", "-f", TEST_FILE, "--row-delimiter"), """
                 +----+-------+
                 | id | value |
                 +----+-------+
                 | 1  | 100   |
+                +----+-------+
                 | 2  | 200   |
+                +----+-------+
                 | 3  | 300   |
                 +----+-------+""");
     }
 
     @Test
     void tail(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", TEST_FILE, "-n", "-2");
-
-        assertThat(result.exitCode()).isZero();
-        String output = result.getOutput().replace(System.lineSeparator(), "\n");
-
-        // For default small file, we know exact ASCII output
-        assertThat(output).isEqualTo("""
+        assertOutput(launcher.launch("print", "-f", TEST_FILE, "-n", "-2"), """
                 +----+-------+
                 | id | value |
                 +----+-------+
                 | 2  | 200   |
-                +----+-------+
                 | 3  | 300   |
                 +----+-------+""");
     }
 
     @Test
     void head(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", TEST_FILE, "-n", "2");
-
-        assertThat(result.exitCode()).isZero();
-        String output = result.getOutput().replace(System.lineSeparator(), "\n");
-
-        // For default small file, we know exact ASCII output
-        assertThat(output).isEqualTo("""
+        assertOutput(launcher.launch("print", "-f", TEST_FILE, "-n", "2"), """
                 +----+-------+
                 | id | value |
                 +----+-------+
                 | 1  | 100   |
-                +----+-------+
                 | 2  | 200   |
                 +----+-------+""");
     }
 
     @Test
     void byteArrayAsString(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", BYTE_ARRAY_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
-                .isEqualTo("""
-                        +----+----------------+-----------------+
-                        | id | prefix_strings | varying_strings |
-                        +----+----------------+-----------------+
-                        | 1  | apple          | hello           |
-                        +----+----------------+-----------------+
-                        | 2  | application    | world           |
-                        +----+----------------+-----------------+
-                        | 3  | apply          | wonderful       |
-                        +----+----------------+-----------------+
-                        | 4  | banana         | wonder          |
-                        +----+----------------+-----------------+
-                        | 5  | bandana        | wander          |
-                        +----+----------------+-----------------+
-                        | 6  | band           | wandering       |
-                        +----+----------------+-----------------+
-                        | 7  | bandwidth      | test            |
-                        +----+----------------+-----------------+
-                        | 8  | ban            | testing         |
-                        +----+----------------+-----------------+""");
+        assertOutput(launcher.launch("print", "-f", BYTE_ARRAY_FILE), """
+                +----+----------------+-----------------+
+                | id | prefix_strings | varying_strings |
+                +----+----------------+-----------------+
+                | 1  | apple          | hello           |
+                | 2  | application    | world           |
+                | 3  | apply          | wonderful       |
+                | 4  | banana         | wonder          |
+                | 5  | bandana        | wander          |
+                | 6  | band           | wandering       |
+                | 7  | bandwidth      | test            |
+                | 8  | ban            | testing         |
+                +----+----------------+-----------------+""");
     }
 
     @Test
     void showsRowIndexWhenEnabled(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", TEST_FILE, "-ri");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
-                .isEqualTo("""
-                        +----------+----+-------+
-                        | rowIndex | id | value |
-                        +----------+----+-------+
-                        | 0        | 1  | 100   |
-                        +----------+----+-------+
-                        | 1        | 2  | 200   |
-                        +----------+----+-------+
-                        | 2        | 3  | 300   |
-                        +----------+----+-------+""");
+        assertOutput(launcher.launch("print", "-f", TEST_FILE, "-ri"), """
+                +----------+----+-------+
+                | rowIndex | id | value |
+                +----------+----+-------+
+                | 0        | 1  | 100   |
+                | 1        | 2  | 200   |
+                | 2        | 3  | 300   |
+                +----------+----+-------+""");
     }
 
     @Test
     void truncatesWhenEnabled(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", BYTE_ARRAY_FILE, "--no-truncate", "-mw", "5");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput().replace(System.lineSeparator(), "\n"))
-                .isEqualTo("""
-                        +----+-------+-------+
-                        | id | prefi | varyi |
-                        |    | x_str | ng_st |
-                        |    | ings  | rings |
-                        +----+-------+-------+
-                        | 1  | apple | hello |
-                        +----+-------+-------+
-                        | 2  | appli | world |
-                        |    | catio |       |
-                        |    | n     |       |
-                        +----+-------+-------+
-                        | 3  | apply | wonde |
-                        |    |       | rful  |
-                        +----+-------+-------+
-                        | 4  | banan | wonde |
-                        |    | a     | r     |
-                        +----+-------+-------+
-                        | 5  | banda | wande |
-                        |    | na    | r     |
-                        +----+-------+-------+
-                        | 6  | band  | wande |
-                        |    |       | ring  |
-                        +----+-------+-------+
-                        | 7  | bandw | test  |
-                        |    | idth  |       |
-                        +----+-------+-------+
-                        | 8  | ban   | testi |
-                        |    |       | ng    |
-                        +----+-------+-------+""");
+        assertOutput(launcher.launch("print", "-f", BYTE_ARRAY_FILE, "--no-truncate", "-mw", "5"), """
+                +----+-------+-------+
+                | id | prefi | varyi |
+                |    | x_str | ng_st |
+                |    | ings  | rings |
+                +----+-------+-------+
+                | 1  | apple | hello |
+                | 2  | appli | world |
+                |    | catio |       |
+                |    | n     |       |
+                | 3  | apply | wonde |
+                |    |       | rful  |
+                | 4  | banan | wonde |
+                |    | a     | r     |
+                | 5  | banda | wande |
+                |    | na    | r     |
+                | 6  | band  | wande |
+                |    |       | ring  |
+                | 7  | bandw | test  |
+                |    | idth  |       |
+                | 8  | ban   | testi |
+                |    |       | ng    |
+                +----+-------+-------+""");
     }
 
     @Test
@@ -194,5 +140,11 @@ class PrintCommandTest {
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput().replace(System.lineSeparator(), "\n"))
                 .isEqualTo("Remote URIs are not implemented yet.");
+    }
+
+    private void assertOutput(LaunchResult result, String expected) {
+        assertThat(result.exitCode()).isZero();
+        String output = result.getOutput().replace(System.lineSeparator(), "\n");
+        assertThat(output).isEqualTo(expected);
     }
 }
