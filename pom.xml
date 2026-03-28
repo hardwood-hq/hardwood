@@ -275,6 +275,9 @@
             <configuration>
               <strictCheck>true</strictCheck>
               <aggregate>true</aggregate>
+              <mapping>
+                <txt>SCRIPT_STYLE</txt>
+              </mapping>
               <licenseSets>
                 <licenseSet>
                   <header>${maven.multiModuleProjectDirectory}/etc/license.txt</header>
@@ -283,6 +286,7 @@
                     <exclude>.docker-venv/**</exclude>
                     <exclude>.release-env</exclude>
                     <exclude>LICENSE.txt</exclude>
+                    <exclude>etc/license-cc-by-sa.txt</exclude>
                     <exclude>requirements.txt</exclude>
                     <exclude>**/.jfr</exclude>
                     <exclude>**/.dontdelete</exclude>
@@ -290,7 +294,14 @@
                     <exclude>**/*.parquet</exclude>
                     <exclude>**/license-merges.txt</exclude>
                     <exclude>**/*.ftl</exclude>
+                    <exclude>docs/content/**</exclude>
                   </excludes>
+                </licenseSet>
+                <licenseSet>
+                  <header>${maven.multiModuleProjectDirectory}/etc/license-cc-by-sa.txt</header>
+                  <includes>
+                    <include>docs/content/**</include>
+                  </includes>
                 </licenseSet>
               </licenseSets>
             </configuration>

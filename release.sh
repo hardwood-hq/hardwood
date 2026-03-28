@@ -90,13 +90,16 @@ JAPICMP_OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
 
 # -- Update README versions and date -----------------------------------------
 
-echo "Updating README.md versions and date..."
+echo "Updating README.md and docs versions..."
 RELEASE_DATE="$(date +%Y-%m-%d)"
 OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
 sed "s/${OLD_VERSION}/${RELEASE_VERSION}/g" README.md > README.md.tmp && mv README.md.tmp README.md
 sed "s/^Latest version: .*/Latest version: ${RELEASE_VERSION}, ${RELEASE_DATE}/" README.md > README.md.tmp && mv README.md.tmp README.md
-git add README.md
-git commit -m "[release] Update README for version ${RELEASE_VERSION}"
+sed "s/${OLD_VERSION}/${RELEASE_VERSION}/g" docs/content/getting-started.md > docs/content/getting-started.md.tmp && mv docs/content/getting-started.md.tmp docs/content/getting-started.md
+sed "s/${OLD_VERSION}/${RELEASE_VERSION}/g" docs/content/index.md > docs/content/index.md.tmp && mv docs/content/index.md.tmp docs/content/index.md
+sed -i "s/^Latest version: .*/Latest version: ${RELEASE_VERSION}, ${RELEASE_DATE}/" docs/content/index.md
+git add README.md docs/content/getting-started.md docs/content/index.md
+git commit -m "[release] Update versions for ${RELEASE_VERSION}"
 
 # -- Prepare and perform release ---------------------------------------------
 

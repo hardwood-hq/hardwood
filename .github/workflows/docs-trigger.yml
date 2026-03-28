@@ -1,0 +1,25 @@
+name: Trigger documentation publish
+
+on:
+  push:
+    tags: ['v*']
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Fire repository_dispatch to site repo
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_DISPATCH_TOKEN }}
+          VERSION: ${{ github.ref_name }}
+        run: |
+          gh api repos/hardwood-hq/hardwood-hq.github.io/dispatches \
+            --field event_type=publish-docs \
+            --field client_payload="$(cat <<EOF
+          {
+            "source_ref": "${{ github.sha }}",
+            "version": "${VERSION#v}"
+          }
+          EOF
+          )"
