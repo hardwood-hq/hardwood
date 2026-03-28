@@ -21,6 +21,7 @@ nav:
   - Configuration: configuration.md
   - Usage: usage.md
   - Parquet-Java Compatibility: compat.md
+  - API Reference: /api/latest/
   - Release Notes: release-notes.md
 
 theme:
