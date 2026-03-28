@@ -20,6 +20,9 @@ import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.BinaryInPredicate;
+import dev.hardwood.reader.FilterPredicate.IntInPredicate;
+import dev.hardwood.reader.FilterPredicate.LongInPredicate;
 import dev.hardwood.reader.FilterPredicate.Not;
 import dev.hardwood.reader.FilterPredicate.Or;
 import dev.hardwood.schema.FileSchema;
@@ -46,6 +49,9 @@ public class RowGroupFilterEvaluator {
             case DoubleColumnPredicate p -> evaluateDouble(p, rowGroup, schema);
             case BooleanColumnPredicate p -> evaluateBoolean(p, rowGroup, schema);
             case BinaryColumnPredicate p -> evaluateBinary(p, rowGroup, schema);
+            case IntInPredicate p -> evaluateIntIn(p, rowGroup, schema);
+            case LongInPredicate p -> evaluateLongIn(p, rowGroup, schema);
+            case BinaryInPredicate p -> evaluateBinaryIn(p, rowGroup, schema);
             case And a -> {
                 for (FilterPredicate f : a.filters()) {
                     if (canDropRowGroup(f, rowGroup, schema)) {
@@ -193,6 +199,52 @@ public class RowGroupFilterEvaluator {
         int cmpMax = StatisticsDecoder.compareBinary(value, max);
         return canDropCompared(p.op(), cmpMin, cmpMax,
                 StatisticsDecoder.compareBinary(min, max));
+    }
+
+    private static boolean evaluateIntIn(IntInPredicate p, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
+            return false;
+        }
+        int min = StatisticsDecoder.decodeInt(stats.minValue());
+        int max = StatisticsDecoder.decodeInt(stats.maxValue());
+        for (int value : p.values()) {
+            if (value >= min && value <= max) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean evaluateLongIn(LongInPredicate p, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
+            return false;
+        }
+        long min = StatisticsDecoder.decodeLong(stats.minValue());
+        long max = StatisticsDecoder.decodeLong(stats.maxValue());
+        for (long value : p.values()) {
+            if (value >= min && value <= max) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    private static boolean evaluateBinaryIn(BinaryInPredicate p, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
+            return false;
+        }
+        byte[] min = stats.minValue();
+        byte[] max = stats.maxValue();
+        for (byte[] value : p.values()) {
+            if (StatisticsDecoder.compareBinary(value, min) >= 0
+                    && StatisticsDecoder.compareBinary(value, max) <= 0) {
+                return false;
+            }
+        }
+        return true;
     }
 
     // ==================== Generic comparison logic ====================
