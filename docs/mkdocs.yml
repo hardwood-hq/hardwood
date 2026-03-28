@@ -1,0 +1,75 @@
+#
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Copyright The original authors
+#
+#  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+#
+
+site_name: Hardwood
+site_description: A zero-dependency Java Parquet file reader
+site_url: https://hardwood-hq.github.io/
+repo_url: https://github.com/hardwood-hq/hardwood
+repo_name: hardwood-hq/hardwood
+edit_uri: edit/main/docs/content/
+
+docs_dir: content
+
+nav:
+  - Home: index.md
+  - Getting Started: getting-started.md
+  - Configuration: configuration.md
+  - Usage: usage.md
+  - Parquet-Java Compatibility: compat.md
+  - Release Notes: release-notes.md
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - navigation.top
+    - search.highlight
+    - content.code.copy
+    - content.action.edit
+
+plugins:
+  - search
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - toc:
+      permalink: true
+
+copyright: >-
+  Licensed under
+  <a href="https://creativecommons.org/licenses/by-sa/4.0/" target="_blank" rel="noopener">Creative Commons BY-SA 4.0</a>
+
+extra:
+  version:
+    provider: mike
+    alias: true
+    default: latest
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/hardwood-hq/hardwood
