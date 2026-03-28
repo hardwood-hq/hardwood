@@ -1413,7 +1413,7 @@ def _write_zigzag(val):
     return _write_varint((val << 1) ^ (val >> 63))
 
 _STOP = b'\x00'
-_T_I32, _T_I64, _T_BIN, _T_LIST, _T_STRUCT = 0x05, 0x06, 0x08, 0x09, 0x0C
+_T_I32, _T_I64, _T_BIN, _T_LIST, _T_STRUCT, _T_DOUBLE = 0x05, 0x06, 0x08, 0x09, 0x0C, 0x07
 
 class _ThriftWriter:
     def __init__(self):
@@ -1426,6 +1426,9 @@ class _ThriftWriter:
         return self
     def i32(self, v):  self.buf += _write_zigzag(v); return self
     def i64(self, v):  self.buf += _write_zigzag(v); return self
+    def double(self, v):
+        self.buf += struct.pack('<d', v)
+        return self
     def s(self, v):    b = v.encode(); self.buf += _write_varint(len(b)) + b; return self
     def lst(self, t, n):
         self.buf += bytes([(n << 4) | t]) if n < 15 else (bytes([0xF0 | t]) + _write_varint(n))
@@ -1587,3 +1590,88 @@ print("\nGenerated column_index_pushdown_dict.parquet:")
 print("  - 1 row group, 10000 rows, sorted id [0,9999], category with 10 distinct values")
 print("  - Dictionary encoding enabled for both columns")
 print("  - Parquet v2 with Column Index and Offset Index")
+
+# test data for geospatial metadata reading
+geospatial_schema = pa.schema([pa.field('city_name', pa.string(), False), pa.field('city_geom', pa.binary(), True)])
+geospatial_table = pa.table({'city_name': ['London', 'Paris', 'Tokyo'], 'city_geom': [b'\x01', b'\x02', b'\x03']}, schema=geospatial_schema)
+geospatial_base_path = '/tmp/_geospatial_base.parquet'
+pq.write_table(geospatial_table, geospatial_base_path, use_dictionary=False, compression=None, data_page_version='1.0')
+
+with open(geospatial_base_path, 'rb') as f:
+    base_data = f.read()
+base_footer_len = struct.unpack('<I', base_data[-8:-4])[0]
+pre_footer = base_data[:len(base_data) - 8 - base_footer_len]
+base_pf = pq.ParquetFile(geospatial_base_path)
+base_rg = base_pf.metadata.row_group(0)
+
+# Build FileMetaData with column-level kv metadata
+fm = _ThriftWriter()
+fm.f(1, _T_I32).i32(2)
+fm.f(2, _T_LIST).lst(_T_STRUCT, 3)
+fm.raw(_schema_elem("schema", num_children=2))
+fm.raw(_schema_elem("city_name", type_val=6, rep=0))
+fm.raw(_schema_elem("city_geom", type_val=6, rep=1))
+fm.f(3, _T_I64).i64(3)
+fm.f(4, _T_LIST).lst(_T_STRUCT, 1)
+
+rw = _ThriftWriter()
+rw.f(1, _T_LIST).lst(_T_STRUCT, 2)
+
+for ci in range(2):
+    col = base_rg.column(ci)
+    pt = 6
+    encs = [enc_map.get(str(e), 0) for e in col.encodings]
+
+    # column chunk
+    cc = _ThriftWriter()
+    cc.f(2, _T_I64).i64(col.file_offset)
+    cc.f(3, _T_STRUCT)
+
+    md = _ThriftWriter()
+    md.f(1, _T_I32).i32(pt)
+    md.f(2, _T_LIST).lst(_T_I32, len(encs))
+    for e in encs: md.i32(e)
+    md.f(3, _T_LIST).lst(_T_BIN, 1).s(col.path_in_schema)
+    md.f(4, _T_I32).i32(0)
+    md.f(5, _T_I64).i64(col.num_values)
+    md.f(6, _T_I64).i64(col.total_uncompressed_size)
+    md.f(7, _T_I64).i64(col.total_compressed_size)
+    md.f(9, _T_I64).i64(col.data_page_offset)
+    if ci == 1:
+        bbox = _ThriftWriter()
+        bbox.f(1, _T_DOUBLE).double(-4.0)  # xmin
+        bbox.f(2, _T_DOUBLE).double(7.5)   # xmax
+        bbox.f(3, _T_DOUBLE).double(20.96)  # ymin
+        bbox.f(4, _T_DOUBLE).double(77.08)  # ymax
+        bbox.f(5, _T_DOUBLE).double(10.5)   # zmin
+        bbox.f(6, _T_DOUBLE).double(90.0) # zmax
+        bbox.end()
+
+        geospatial = _ThriftWriter()
+        geospatial.f(1, _T_STRUCT).raw(bbox.out())
+        geospatial.f(2, _T_LIST).lst(_T_I32, 2).i32(1).i32(6)
+        geospatial.end()
+
+        md.f(17, _T_STRUCT).raw(geospatial.out())
+    md.end()
+
+    cc.raw(md.out()).end()
+    rw.raw(cc.out())
+
+rw.f(2, _T_I64).i64(base_rg.total_byte_size)
+rw.f(3, _T_I64).i64(base_rg.num_rows)
+rw.end()
+fm.raw(rw.out())
+fm.f(6, _T_BIN).s("hardwood-test-datagen")
+fm.end()
+
+footer_bytes = fm.out()
+output = pre_footer + footer_bytes + struct.pack('<I', len(footer_bytes)) + b'PAR1'
+with open('core/src/test/resources/geospatial_stats_test.parquet', 'wb') as f:
+    f.write(output)
+
+print("\nGenerated geospatial_stats_test.parquet:")
+print("  - city_geom column has GeospatialStatistics at field 17")
+print("  - BoundingBox: xmin=-4.0, xmax=7.5, ymin=20.96, ymax=77.08, zmin=10.5, zmax=90.0")
+print("  - geospatial_types: [1, 6]")
+
