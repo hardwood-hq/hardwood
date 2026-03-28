@@ -8,12 +8,8 @@
 package dev.hardwood.s3;
 
 import java.io.IOException;
-<<<<<<< HEAD
-import java.nio.file.Files;
-=======
-import java.net.URI;
 import java.nio.ByteBuffer;
->>>>>>> df90b7e (#118 Updated S3 reader to use selective chunking when filters are present)
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicLong;
 
@@ -145,32 +141,20 @@ class S3InputFileTest {
         // and page-range I/O should fetch only matching pages from S3
         FilterPredicate filter = FilterPredicate.lt("id", 1000L);
 
-<<<<<<< HEAD
-        long unfilteredCount = 0;
-        try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
-=======
         ByteCountingInputFile unfilteredFile = new ByteCountingInputFile(
-                S3InputFile.of(s3, "test-bucket", "column_index_pushdown.parquet"));
+                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
         long unfilteredCount = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(unfilteredFile);
->>>>>>> df90b7e (#118 Updated S3 reader to use selective chunking when filters are present)
              ColumnReader col = reader.createColumnReader("id")) {
             while (col.nextBatch()) {
                 unfilteredCount += col.getRecordCount();
             }
         }
 
-<<<<<<< HEAD
-        long filteredCount = 0;
-        try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
-=======
         ByteCountingInputFile filteredFile = new ByteCountingInputFile(
-                S3InputFile.of(s3, "test-bucket", "column_index_pushdown.parquet"));
+                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
         long filteredCount = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(filteredFile);
->>>>>>> df90b7e (#118 Updated S3 reader to use selective chunking when filters are present)
              ColumnReader col = reader.createColumnReader("id", filter)) {
             while (col.nextBatch()) {
                 filteredCount += col.getRecordCount();
