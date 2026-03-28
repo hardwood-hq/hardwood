@@ -159,6 +159,8 @@
           <version>3.12.0</version>
           <configuration>
             <doclint>all,-missing</doclint>
+            <excludePackageNames>*.internal:*.internal.*</excludePackageNames>
+            <bottom>Licensed under the &lt;a href="https://www.apache.org/licenses/LICENSE-2.0"&gt;Apache License 2.0&lt;/a&gt;. Copyright &amp;copy; {currentYear}. All rights reserved.</bottom>
           </configuration>
         </plugin>
         <plugin>
@@ -259,6 +261,7 @@
                     <exclude>**/.dontdelete</exclude>
                     <exclude>*.html</exclude>
                     <exclude>**/*.parquet</exclude>
+                    <exclude>docs/requirements.txt</exclude>
                   </excludes>
                 </licenseSet>
               </licenseSets>
