@@ -29,9 +29,7 @@ import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 import picocli.CommandLine.Model.CommandSpec;
 
-class RowTable {
-
-    static final int MAX_CELL_WIDTH = 40;
+final class RowTable {
 
     private RowTable() {
     }
@@ -43,20 +41,6 @@ class RowTable {
             names[i] = children.get(i).name();
         }
         return names;
-    }
-
-    static void rowToTableRow(int fieldCount, List<String[]> rows, RowReader rowReader, int count, FileSchema schema) {
-        List<SchemaNode> fields = schema.getRootNode().children();
-        int read = 0;
-        while (rowReader.hasNext() && read < count) {
-            rowReader.next();
-            String[] row = new String[fieldCount];
-            for (int i = 0; i < fieldCount; i++) {
-                row[i] = RowTable.formatCell(renderField(rowReader, i, fields.get(i)));
-            }
-            rows.add(row);
-            read++;
-        }
     }
 
     static String renderField(RowReader rowReader, int fieldIndex, SchemaNode fieldSchema) {
@@ -80,13 +64,6 @@ class RowTable {
         // BYTE_ARRAY with no logical type is treated as a string, consistent with
         // ValueConverter.convertValue() fallback behavior.
         return lt == null && pn.type() == PhysicalType.BYTE_ARRAY;
-    }
-
-    static String formatCell(String s) {
-        if (s.length() <= MAX_CELL_WIDTH) {
-            return s;
-        }
-        return s.substring(0, MAX_CELL_WIDTH - 1) + "…";
     }
 
     static String renderValue(Object value, SchemaNode schema) {
