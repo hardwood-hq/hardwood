@@ -1,5 +1,7 @@
 # InputFile abstraction for file access
 
+**Status: Implemented**
+
 ## Context
 
 The entire read pipeline is typed to `MappedByteBuffer`, coupling it to memory-mapped local files. This blocks object store support (#31) and in-memory reading. The goals are to:

@@ -1,5 +1,7 @@
 # Design: Multi-File ColumnReader
 
+**Status: Implemented**
+
 ## Context
 
 The single-file `ColumnReader` scans pages across all row groups within one file but cannot span multiple files. The row-based path already has `MultiFileRowReader` which uses `FileManager` + `PageCursor` cross-file prefetching to stream across files. The multi-file column reader provides the equivalent for the columnar API.

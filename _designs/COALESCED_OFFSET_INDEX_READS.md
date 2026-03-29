@@ -1,5 +1,7 @@
 # Plan: Coalesced Reads for Remote Backends
 
+**Status: Implemented**
+
 ## Context
 
 On local files, `InputFile.readRange()` returns a zero-copy mmap slice — each call

@@ -1,5 +1,7 @@
 # Java Vector API (SIMD) Optimization Plan for Hardwood Parquet Parser
 
+**Status: Implemented**
+
 ## Overview
 
 Add Java Vector API optimizations to accelerate Parquet decoding operations. The implementation uses a multi-release JAR approach (similar to existing FFM/libdeflate integration) with runtime capability detection and scalar fallbacks.

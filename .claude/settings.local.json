@@ -105,7 +105,8 @@
       "Bash(/workspace/.docker-venv/bin/asciinema rec:*)",
       "WebFetch(domain:morling.dev)",
       "Bash(./mvnw verify:*)",
-      "Bash(gh release:*)"
+      "Bash(gh release:*)",
+      "Bash(head -5 /workspace/_designs/*.md)"
     ]
   }
 }

@@ -1,5 +1,7 @@
 # Design: ColumnReader Batch API with Multi-Level Offsets
 
+**Status: Implemented**
+
 ## Context
 
 Benchmarking showed that per-row `hasNext()/next()/getDouble()` access is the primary consumer bottleneck — 2.5x slower than direct array iteration. Replacing per-row access with vectorized `for (int i = 0; i < count; i++)` loops over batch arrays gives a **2x speedup** (330M → 600M rec/s) with the same pipeline.

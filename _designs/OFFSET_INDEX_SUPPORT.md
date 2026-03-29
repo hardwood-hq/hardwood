@@ -1,5 +1,7 @@
 # Offset Index Support for Page Location Lookup
 
+**Status: Implemented**
+
 ## Context
 
 `PageScanner.scanPages()` currently discovers page boundaries by **sequentially reading every Thrift-encoded page header** through the entire column chunk. The Parquet format defines an **Offset Index** structure (per column chunk, stored near the file footer) that provides `(offset, size, firstRowIndex)` for each data page. When present, this eliminates the sequential scan — pages can be located by direct lookup.

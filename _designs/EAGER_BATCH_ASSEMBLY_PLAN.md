@@ -1,5 +1,7 @@
 # Eager Batch Assembly Design
 
+**Status: Implemented**
+
 ## Problem Statement
 
 Batch assembly in row readers was limited by the number of projected columns:
