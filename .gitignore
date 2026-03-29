@@ -42,6 +42,7 @@ nb-configuration.xml
 .venv
 .docker-venv
 .release-env
+docs/hooks/__pycache__/
 
 #JReleaser
 out/

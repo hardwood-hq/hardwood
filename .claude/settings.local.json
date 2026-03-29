@@ -104,7 +104,8 @@
       "Bash(/workspace/.docker-venv/bin/asciinema cat:*)",
       "Bash(/workspace/.docker-venv/bin/asciinema rec:*)",
       "WebFetch(domain:morling.dev)",
-      "Bash(./mvnw verify:*)"
+      "Bash(./mvnw verify:*)",
+      "Bash(gh release:*)"
     ]
   }
 }
