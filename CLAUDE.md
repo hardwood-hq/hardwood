@@ -17,13 +17,16 @@ Mark designs as completed once done.
 Update the status in the roadmap after implementing a feature.
 Design documents describe the intended end state. Do not include references to the development process, alternative approaches that were considered and rejected, or commentary on how the design evolved. Write as if the reader has no context on the conversation that produced the document.
 
+# Public API
+
+Every new or modified public API (factory method, record, enum, configuration option, etc.) must have a corresponding update to the usage documentation under `docs/content/` before the change is considered complete.
+Minimize the surface of the public API, only make user-facing what needs to be user-facing. Keep anything else in an `internal` package.
+Similarly, only expose configuration options truly needed in the CLI.
+
 # Coding
 
 Correctness is a top priority. Adhere to the "fail early" principle: validate inputs, check types, and throw on misuse rather than silently producing wrong results. Silent failures are never an option.
 When fixing issues which are bug reports, start with a test case which is failing. Then fix the bug and assert the test passes.
-When adding or changing public APIs, update the usage documentation under docs/ accordingly.
-Minimize the surface of the public API, only make user-facing what needs to be user-facing. Keep anything else in an `internal` package.
-Similarly, only expose configuration options truly needed in the CLI.
 Never do unsafe downcasts with potential value loss. E.g. prefer Math::toIntExact() where applicable.
 Keep cyclomatic complexity low.
 Avoid fully-qualified class names within the code, always add imports.

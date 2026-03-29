@@ -57,7 +57,8 @@ public class MultiFileRowReader extends AbstractRowReader {
     /// @param context the Hardwood context
     /// @param fileManager the shared file manager
     /// @param initResult the initialization result from the first file
-    /// @param filterPredicate predicate for record-level filtering, or `null` for no filtering
+    /// @param filterPredicate a resolved physical predicate (via [FilterPredicateResolver#resolve]),
+    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
     MultiFileRowReader(HardwoodContextImpl context,
                        FileManager fileManager, FileManager.InitResult initResult,
                        FilterPredicate filterPredicate) {

@@ -18,14 +18,19 @@ import dev.hardwood.reader.FilterPredicate.And;
 import dev.hardwood.reader.FilterPredicate.BinaryColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.BinaryInPredicate;
 import dev.hardwood.reader.FilterPredicate.BooleanColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.DateColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.DecimalColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.InstantColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntInPredicate;
 import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.LongInPredicate;
 import dev.hardwood.reader.FilterPredicate.Not;
 import dev.hardwood.reader.FilterPredicate.Or;
+import dev.hardwood.reader.FilterPredicate.SignedBinaryColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.TimeColumnPredicate;
 import dev.hardwood.schema.FileSchema;
 
 /// Evaluates filter predicates against row group statistics to determine
@@ -49,10 +54,19 @@ public class RowGroupFilterEvaluator {
             case FloatColumnPredicate p -> evaluateFloat(p, rowGroup, schema);
             case DoubleColumnPredicate p -> evaluateDouble(p, rowGroup, schema);
             case BooleanColumnPredicate p -> evaluateBoolean(p, rowGroup, schema);
-            case BinaryColumnPredicate p -> evaluateBinary(p, rowGroup, schema);
+            case BinaryColumnPredicate p -> evaluateBinaryComparison(
+                    p.column(), p.op(), p.value(), PhysicalType.BYTE_ARRAY,
+                    StatisticsDecoder::compareBinary, rowGroup, schema);
+            case SignedBinaryColumnPredicate p -> evaluateBinaryComparison(
+                    p.column(), p.op(), p.value(), PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                    StatisticsDecoder::compareSignedBinary, rowGroup, schema);
             case IntInPredicate p -> evaluateIntIn(p, rowGroup, schema);
             case LongInPredicate p -> evaluateLongIn(p, rowGroup, schema);
             case BinaryInPredicate p -> evaluateBinaryIn(p, rowGroup, schema);
+            case DateColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
+            case InstantColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
+            case TimeColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
+            case DecimalColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
             case And a -> {
                 for (FilterPredicate f : a.filters()) {
                     if (canDropRowGroup(f, rowGroup, schema)) {
@@ -82,7 +96,7 @@ public class RowGroupFilterEvaluator {
         }
         ColumnChunk chunk = rowGroup.columns().get(columnIndex);
         PhysicalType actualType = chunk.metaData().type();
-        if (actualType != expectedType) {
+        if (actualType != expectedType && !isBinaryCompatible(actualType, expectedType)) {
             throw new IllegalArgumentException(
                     "Column '" + columnName + "' has physical type " + actualType
                             + "; given filter predicate type " + expectedType + " is incompatible");
@@ -202,18 +216,22 @@ public class RowGroupFilterEvaluator {
 
     // ==================== BINARY (byte[]) ====================
 
-    private static boolean evaluateBinary(BinaryColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), PhysicalType.BYTE_ARRAY, rowGroup, schema);
+    private static boolean evaluateBinaryComparison(String column, FilterPredicate.Operator op, byte[] value,
+            PhysicalType expectedType, BinaryComparator comparator, RowGroup rowGroup, FileSchema schema) {
+        Statistics stats = findStatistics(column, expectedType, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
         byte[] min = stats.minValue();
         byte[] max = stats.maxValue();
-        byte[] value = p.value();
-        int cmpMin = StatisticsDecoder.compareBinary(value, min);
-        int cmpMax = StatisticsDecoder.compareBinary(value, max);
-        return canDropCompared(p.op(), cmpMin, cmpMax,
-                StatisticsDecoder.compareBinary(min, max));
+        int cmpMin = comparator.compare(value, min);
+        int cmpMax = comparator.compare(value, max);
+        return canDropCompared(op, cmpMin, cmpMax, comparator.compare(min, max));
+    }
+
+    @FunctionalInterface
+    interface BinaryComparator {
+        int compare(byte[] a, byte[] b);
     }
 
     private static boolean evaluateIntIn(IntInPredicate p, RowGroup rowGroup, FileSchema schema) {
@@ -272,6 +290,11 @@ public class RowGroupFilterEvaluator {
             }
         }
         return true;
+    }
+
+    static boolean isBinaryCompatible(PhysicalType actual, PhysicalType expected) {
+        return (actual == PhysicalType.BYTE_ARRAY || actual == PhysicalType.FIXED_LEN_BYTE_ARRAY)
+                && (expected == PhysicalType.BYTE_ARRAY || expected == PhysicalType.FIXED_LEN_BYTE_ARRAY);
     }
 
     // ==================== Generic comparison logic ====================

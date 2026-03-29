@@ -66,6 +66,8 @@ final class SingleFileRowReader extends AbstractRowReader {
         this(schema, projectedSchema, inputFile, rowGroups, context, null);
     }
 
+    /// @param filterPredicate a resolved physical predicate (via [FilterPredicateResolver#resolve]),
+    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
     SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, InputFile inputFile,
                         List<RowGroup> rowGroups, HardwoodContextImpl context, FilterPredicate filterPredicate) {
         this.schema = schema;

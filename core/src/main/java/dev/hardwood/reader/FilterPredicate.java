@@ -7,9 +7,15 @@
  */
 package dev.hardwood.reader;
 
+import java.math.BigDecimal;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 
 /// A predicate for filtering row groups based on column statistics.
 ///
@@ -40,9 +46,14 @@ public sealed interface FilterPredicate
                 FilterPredicate.DoubleColumnPredicate,
                 FilterPredicate.BooleanColumnPredicate,
                 FilterPredicate.BinaryColumnPredicate,
+                FilterPredicate.SignedBinaryColumnPredicate,
                 FilterPredicate.IntInPredicate,
                 FilterPredicate.LongInPredicate,
                 FilterPredicate.BinaryInPredicate,
+                FilterPredicate.DateColumnPredicate,
+                FilterPredicate.InstantColumnPredicate,
+                FilterPredicate.TimeColumnPredicate,
+                FilterPredicate.DecimalColumnPredicate,
                 FilterPredicate.And,
                 FilterPredicate.Or,
                 FilterPredicate.Not {
@@ -218,6 +229,180 @@ public sealed interface FilterPredicate
         return new BinaryInPredicate(column, encoded);
     }
 
+    // ==================== LocalDate (DATE) Predicates ====================
+
+    /// Creates an equals predicate for a [LocalDate] column (Parquet DATE logical type).
+    /// The date is converted to days since the Unix epoch at evaluation time.
+    static FilterPredicate eq(String column, LocalDate value) {
+        return new DateColumnPredicate(column, Operator.EQ, value);
+    }
+
+    /// Creates a not-equals predicate for a [LocalDate] column.
+    static FilterPredicate notEq(String column, LocalDate value) {
+        return new DateColumnPredicate(column, Operator.NOT_EQ, value);
+    }
+
+    /// Creates a less-than predicate for a [LocalDate] column.
+    static FilterPredicate lt(String column, LocalDate value) {
+        return new DateColumnPredicate(column, Operator.LT, value);
+    }
+
+    /// Creates a less-than-or-equal predicate for a [LocalDate] column.
+    static FilterPredicate ltEq(String column, LocalDate value) {
+        return new DateColumnPredicate(column, Operator.LT_EQ, value);
+    }
+
+    /// Creates a greater-than predicate for a [LocalDate] column.
+    static FilterPredicate gt(String column, LocalDate value) {
+        return new DateColumnPredicate(column, Operator.GT, value);
+    }
+
+    /// Creates a greater-than-or-equal predicate for a [LocalDate] column.
+    static FilterPredicate gtEq(String column, LocalDate value) {
+        return new DateColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    // ==================== Instant (TIMESTAMP) Predicates ====================
+
+    /// Creates an equals predicate for an [Instant] column (Parquet TIMESTAMP logical type).
+    /// The column's time unit is determined from the schema at evaluation time.
+    static FilterPredicate eq(String column, Instant value) {
+        return new InstantColumnPredicate(column, Operator.EQ, value);
+    }
+
+    /// Creates a not-equals predicate for an [Instant] column.
+    static FilterPredicate notEq(String column, Instant value) {
+        return new InstantColumnPredicate(column, Operator.NOT_EQ, value);
+    }
+
+    /// Creates a less-than predicate for an [Instant] column.
+    static FilterPredicate lt(String column, Instant value) {
+        return new InstantColumnPredicate(column, Operator.LT, value);
+    }
+
+    /// Creates a less-than-or-equal predicate for an [Instant] column.
+    static FilterPredicate ltEq(String column, Instant value) {
+        return new InstantColumnPredicate(column, Operator.LT_EQ, value);
+    }
+
+    /// Creates a greater-than predicate for an [Instant] column.
+    static FilterPredicate gt(String column, Instant value) {
+        return new InstantColumnPredicate(column, Operator.GT, value);
+    }
+
+    /// Creates a greater-than-or-equal predicate for an [Instant] column.
+    static FilterPredicate gtEq(String column, Instant value) {
+        return new InstantColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    // ==================== LocalTime (TIME) Predicates ====================
+
+    /// Creates an equals predicate for a [LocalTime] column (Parquet TIME logical type).
+    /// The column's time unit is determined from the schema at evaluation time.
+    static FilterPredicate eq(String column, LocalTime value) {
+        return new TimeColumnPredicate(column, Operator.EQ, value);
+    }
+
+    /// Creates a not-equals predicate for a [LocalTime] column.
+    static FilterPredicate notEq(String column, LocalTime value) {
+        return new TimeColumnPredicate(column, Operator.NOT_EQ, value);
+    }
+
+    /// Creates a less-than predicate for a [LocalTime] column.
+    static FilterPredicate lt(String column, LocalTime value) {
+        return new TimeColumnPredicate(column, Operator.LT, value);
+    }
+
+    /// Creates a less-than-or-equal predicate for a [LocalTime] column.
+    static FilterPredicate ltEq(String column, LocalTime value) {
+        return new TimeColumnPredicate(column, Operator.LT_EQ, value);
+    }
+
+    /// Creates a greater-than predicate for a [LocalTime] column.
+    static FilterPredicate gt(String column, LocalTime value) {
+        return new TimeColumnPredicate(column, Operator.GT, value);
+    }
+
+    /// Creates a greater-than-or-equal predicate for a [LocalTime] column.
+    static FilterPredicate gtEq(String column, LocalTime value) {
+        return new TimeColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    // ==================== BigDecimal (DECIMAL) Predicates ====================
+
+    /// Creates an equals predicate for a [BigDecimal] column (Parquet DECIMAL logical type).
+    /// The column's scale, precision, and physical type are determined from the schema at evaluation time.
+    static FilterPredicate eq(String column, BigDecimal value) {
+        return new DecimalColumnPredicate(column, Operator.EQ, value);
+    }
+
+    /// Creates a not-equals predicate for a [BigDecimal] column.
+    static FilterPredicate notEq(String column, BigDecimal value) {
+        return new DecimalColumnPredicate(column, Operator.NOT_EQ, value);
+    }
+
+    /// Creates a less-than predicate for a [BigDecimal] column.
+    static FilterPredicate lt(String column, BigDecimal value) {
+        return new DecimalColumnPredicate(column, Operator.LT, value);
+    }
+
+    /// Creates a less-than-or-equal predicate for a [BigDecimal] column.
+    static FilterPredicate ltEq(String column, BigDecimal value) {
+        return new DecimalColumnPredicate(column, Operator.LT_EQ, value);
+    }
+
+    /// Creates a greater-than predicate for a [BigDecimal] column.
+    static FilterPredicate gt(String column, BigDecimal value) {
+        return new DecimalColumnPredicate(column, Operator.GT, value);
+    }
+
+    /// Creates a greater-than-or-equal predicate for a [BigDecimal] column.
+    static FilterPredicate gtEq(String column, BigDecimal value) {
+        return new DecimalColumnPredicate(column, Operator.GT_EQ, value);
+    }
+
+    // ==================== UUID Predicates ====================
+
+    /// Creates an equals predicate for a [UUID] column (Parquet UUID logical type).
+    /// The UUID is encoded as a 16-byte big-endian `FIXED_LEN_BYTE_ARRAY`.
+    static FilterPredicate eq(String column, UUID value) {
+        return new BinaryColumnPredicate(column, Operator.EQ, uuidToBytes(value));
+    }
+
+    /// Creates a not-equals predicate for a [UUID] column.
+    static FilterPredicate notEq(String column, UUID value) {
+        return new BinaryColumnPredicate(column, Operator.NOT_EQ, uuidToBytes(value));
+    }
+
+    /// Creates a less-than predicate for a [UUID] column.
+    static FilterPredicate lt(String column, UUID value) {
+        return new BinaryColumnPredicate(column, Operator.LT, uuidToBytes(value));
+    }
+
+    /// Creates a less-than-or-equal predicate for a [UUID] column.
+    static FilterPredicate ltEq(String column, UUID value) {
+        return new BinaryColumnPredicate(column, Operator.LT_EQ, uuidToBytes(value));
+    }
+
+    /// Creates a greater-than predicate for a [UUID] column.
+    static FilterPredicate gt(String column, UUID value) {
+        return new BinaryColumnPredicate(column, Operator.GT, uuidToBytes(value));
+    }
+
+    /// Creates a greater-than-or-equal predicate for a [UUID] column.
+    static FilterPredicate gtEq(String column, UUID value) {
+        return new BinaryColumnPredicate(column, Operator.GT_EQ, uuidToBytes(value));
+    }
+
+    // ==================== Conversion Helpers ====================
+
+    private static byte[] uuidToBytes(UUID value) {
+        ByteBuffer buffer = ByteBuffer.allocate(16);
+        buffer.putLong(value.getMostSignificantBits());
+        buffer.putLong(value.getLeastSignificantBits());
+        return buffer.array();
+    }
+
     // ==================== Logical Combinators ====================
 
     static FilterPredicate and(FilterPredicate left, FilterPredicate right) {
@@ -263,6 +448,26 @@ public sealed interface FilterPredicate
         public boolean equals(Object o) {
             if (this == o) return true;
             if (!(o instanceof BinaryColumnPredicate that)) return false;
+            return column.equals(that.column) && op == that.op && Arrays.equals(value, that.value);
+        }
+
+        @Override
+        public int hashCode() {
+            int result = column.hashCode();
+            result = 31 * result + op.hashCode();
+            result = 31 * result + Arrays.hashCode(value);
+            return result;
+        }
+    }
+
+    /// Predicate for `FIXED_LEN_BYTE_ARRAY` columns that require signed (two's complement)
+    /// comparison, such as decimals. The value must be padded to the column's fixed length.
+    record SignedBinaryColumnPredicate(String column, Operator op, byte[] value) implements FilterPredicate {
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof SignedBinaryColumnPredicate that)) return false;
             return column.equals(that.column) && op == that.op && Arrays.equals(value, that.value);
         }
 
@@ -333,6 +538,27 @@ public sealed interface FilterPredicate
         public int hashCode() {
             return 31 * column.hashCode() + Arrays.deepHashCode(values);
         }
+    }
+
+    // ==================== Logical-Type Predicate Records ====================
+
+    /// Predicate for DATE columns. The [LocalDate] value is converted to epoch days at evaluation time.
+    record DateColumnPredicate(String column, Operator op, LocalDate value) implements FilterPredicate {
+    }
+
+    /// Predicate for TIMESTAMP columns. The [Instant] value is converted to the column's time unit
+    /// (MILLIS, MICROS, or NANOS) at evaluation time using the schema's `TimestampType`.
+    record InstantColumnPredicate(String column, Operator op, Instant value) implements FilterPredicate {
+    }
+
+    /// Predicate for TIME columns. The [LocalTime] value is converted to the column's time unit
+    /// at evaluation time using the schema's `TimeType`.
+    record TimeColumnPredicate(String column, Operator op, LocalTime value) implements FilterPredicate {
+    }
+
+    /// Predicate for DECIMAL columns. The [BigDecimal] value is converted to the column's physical
+    /// representation at evaluation time using the schema's `DecimalType`.
+    record DecimalColumnPredicate(String column, Operator op, BigDecimal value) implements FilterPredicate {
     }
 
     // ==================== Logical Combinator Records ====================

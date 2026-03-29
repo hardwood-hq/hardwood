@@ -208,7 +208,37 @@ Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings
 Supported types: `int`, `long`, `float`, `double`, `boolean`, `String` (comparison operators); `int`, `long`, `String` (`in`/`inStrings`).
 Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions.
 
-Filtering operates on the physical column type. Logical types like DATE (stored as INT32) and TIMESTAMP (stored as INT64) are filtered using their underlying physical type; for example, filter a DATE column with `FilterPredicate.gt("date_col", 19000)` (days since epoch).
+### Logical Type Support
+
+Factory methods are provided for common Parquet logical types, handling the physical
+encoding automatically:
+
+```java
+import java.math.BigDecimal;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.UUID;
+
+// DATE columns
+FilterPredicate filter = FilterPredicate.gt("birth_date", LocalDate.of(2000, 1, 1));
+
+// TIMESTAMP columns — time unit is resolved from the column schema
+FilterPredicate filter = FilterPredicate.gtEq("created_at",
+    Instant.parse("2025-01-01T00:00:00Z"));
+
+// TIME columns
+FilterPredicate filter = FilterPredicate.lt("start_time", LocalTime.of(9, 0));
+
+// DECIMAL columns — scale and physical type are resolved from the column schema
+FilterPredicate filter = FilterPredicate.gtEq("amount", new BigDecimal("99.99"));
+
+// UUID columns
+FilterPredicate filter = FilterPredicate.eq("request_id",
+    UUID.fromString("550e8400-e29b-41d4-a716-446655440000"));
+```
+
+Raw physical-type predicates (`int`, `long`, etc.) remain available for columns without logical types or for filtering on the underlying physical value directly.
 
 Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file readers.
 
