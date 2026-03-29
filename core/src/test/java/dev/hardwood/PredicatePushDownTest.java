@@ -7,8 +7,13 @@
  */
 package dev.hardwood;
 
+import java.math.BigDecimal;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -489,6 +494,82 @@ class PredicatePushDownTest {
 
             assertThat(rows.hasNext()).isFalse();
         }
+    }
+
+    // ==================== Logical vs physical predicate equivalence ====================
+
+    private static final Path LOGICAL_TYPES_FILE = Paths.get("src/test/resources/logical_types_test.parquet");
+
+    @Test
+    void datePredicateReturnsSameRowsAsPhysicalInt() throws Exception {
+        // birth_date: [1990-01-15, 1985-06-30, 2000-12-25]
+        // Filter: birth_date > 1990-01-15 → should return only 2000-12-25
+        LocalDate cutoff = LocalDate.of(1990, 1, 15);
+        FilterPredicate logical = FilterPredicate.gt("birth_date", cutoff);
+        FilterPredicate physical = FilterPredicate.gt("birth_date", (int) cutoff.toEpochDay());
+
+        List<LocalDate> expected = List.of(LocalDate.of(2000, 12, 25));
+        assertThat(readFiltered(logical, r -> r.getDate("birth_date"))).isEqualTo(expected);
+        assertThat(readFiltered(physical, r -> r.getDate("birth_date"))).isEqualTo(expected);
+    }
+
+    @Test
+    void timestampPredicateReturnsSameRowsAsPhysicalLong() throws Exception {
+        // created_at_micros: [2025-01-01T10:30:00.123456Z, 2025-01-02T14:45:30.654321Z, 2025-01-03T09:15:45.111222Z]
+        // Filter: created_at_micros >= 2025-01-02T00:00:00Z → should return last 2 rows
+        Instant cutoff = Instant.parse("2025-01-02T00:00:00Z");
+        long cutoffMicros = Math.addExact(
+                Math.multiplyExact(cutoff.getEpochSecond(), 1_000_000L),
+                cutoff.getNano() / 1_000L);
+        FilterPredicate logical = FilterPredicate.gtEq("created_at_micros", cutoff);
+        FilterPredicate physical = FilterPredicate.gtEq("created_at_micros", cutoffMicros);
+
+        List<Instant> expected = List.of(
+                Instant.parse("2025-01-02T14:45:30.654321Z"),
+                Instant.parse("2025-01-03T09:15:45.111222Z"));
+        assertThat(readFiltered(logical, r -> r.getTimestamp("created_at_micros"))).isEqualTo(expected);
+        assertThat(readFiltered(physical, r -> r.getTimestamp("created_at_micros"))).isEqualTo(expected);
+    }
+
+    @Test
+    void timePredicateReturnsSameRowsAsPhysicalInt() throws Exception {
+        // wake_time_millis: [07:30, 08:00, 06:45]
+        // Filter: wake_time_millis < 07:30 → should return only 06:45
+        LocalTime cutoff = LocalTime.of(7, 30);
+        int cutoffMillis = Math.toIntExact(cutoff.toNanoOfDay() / 1_000_000L);
+        FilterPredicate logical = FilterPredicate.lt("wake_time_millis", cutoff);
+        FilterPredicate physical = FilterPredicate.lt("wake_time_millis", cutoffMillis);
+
+        List<LocalTime> expected = List.of(LocalTime.of(6, 45));
+        assertThat(readFiltered(logical, r -> r.getTime("wake_time_millis"))).isEqualTo(expected);
+        assertThat(readFiltered(physical, r -> r.getTime("wake_time_millis"))).isEqualTo(expected);
+    }
+
+    @Test
+    void decimalPredicateReturnsCorrectRows() throws Exception {
+        // balance: [1234.56, 9876.54, 5555.55] (DECIMAL(10,2) stored as FIXED_LEN_BYTE_ARRAY)
+        // Filter: balance > 5555.55 → should return only 9876.54
+        FilterPredicate filter = FilterPredicate.gt("balance", new BigDecimal("5555.55"));
+
+        List<BigDecimal> expected = List.of(new BigDecimal("9876.54"));
+        assertThat(readFiltered(filter, r -> r.getDecimal("balance"))).isEqualTo(expected);
+    }
+
+    private <T> List<T> readFiltered(FilterPredicate filter, RowValueExtractor<T> extractor) throws Exception {
+        List<T> values = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LOGICAL_TYPES_FILE));
+                RowReader rows = reader.createRowReader(filter)) {
+            while (rows.hasNext()) {
+                rows.next();
+                values.add(extractor.extract(rows));
+            }
+        }
+        return values;
+    }
+
+    @FunctionalInterface
+    private interface RowValueExtractor<T> {
+        T extract(RowReader row);
     }
 
     // ==================== Type mismatch ====================

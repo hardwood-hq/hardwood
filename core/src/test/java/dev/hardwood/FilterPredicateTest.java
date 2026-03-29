@@ -7,10 +7,15 @@
  */
 package dev.hardwood;
 
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
@@ -440,6 +445,134 @@ class FilterPredicateTest {
 
         assertThat(RowGroupFilterEvaluator.canDropRowGroup(
                 FilterPredicate.in("col", 1, 2, 3), rg, schema)).isFalse();
+    }
+
+    // ==================== LocalDate Factory Tests ====================
+
+    @Test
+    void testLocalDatePredicateCreation() {
+        LocalDate date = LocalDate.of(2024, 6, 15);
+        FilterPredicate p = FilterPredicate.eq("dt", date);
+        assertThat(p).isInstanceOf(FilterPredicate.DateColumnPredicate.class);
+        FilterPredicate.DateColumnPredicate dp = (FilterPredicate.DateColumnPredicate) p;
+        assertThat(dp.column()).isEqualTo("dt");
+        assertThat(dp.op()).isEqualTo(FilterPredicate.Operator.EQ);
+        assertThat(dp.value()).isEqualTo(date);
+    }
+
+    @Test
+    void testLocalDateAllOperators() {
+        LocalDate date = LocalDate.of(2024, 1, 1);
+        assertThat(((FilterPredicate.DateColumnPredicate) FilterPredicate.notEq("d", date)).op()).isEqualTo(FilterPredicate.Operator.NOT_EQ);
+        assertThat(((FilterPredicate.DateColumnPredicate) FilterPredicate.lt("d", date)).op()).isEqualTo(FilterPredicate.Operator.LT);
+        assertThat(((FilterPredicate.DateColumnPredicate) FilterPredicate.ltEq("d", date)).op()).isEqualTo(FilterPredicate.Operator.LT_EQ);
+        assertThat(((FilterPredicate.DateColumnPredicate) FilterPredicate.gt("d", date)).op()).isEqualTo(FilterPredicate.Operator.GT);
+        assertThat(((FilterPredicate.DateColumnPredicate) FilterPredicate.gtEq("d", date)).op()).isEqualTo(FilterPredicate.Operator.GT_EQ);
+    }
+
+    // ==================== Instant Factory Tests ====================
+
+    @Test
+    void testInstantPredicateCreation() {
+        Instant instant = Instant.parse("2024-06-15T12:30:00Z");
+        FilterPredicate p = FilterPredicate.eq("ts", instant);
+        assertThat(p).isInstanceOf(FilterPredicate.InstantColumnPredicate.class);
+        FilterPredicate.InstantColumnPredicate ip = (FilterPredicate.InstantColumnPredicate) p;
+        assertThat(ip.column()).isEqualTo("ts");
+        assertThat(ip.op()).isEqualTo(FilterPredicate.Operator.EQ);
+        assertThat(ip.value()).isEqualTo(instant);
+    }
+
+    @Test
+    void testInstantAllOperators() {
+        Instant instant = Instant.parse("2024-01-01T00:00:00Z");
+        assertThat(((FilterPredicate.InstantColumnPredicate) FilterPredicate.notEq("ts", instant)).op()).isEqualTo(FilterPredicate.Operator.NOT_EQ);
+        assertThat(((FilterPredicate.InstantColumnPredicate) FilterPredicate.lt("ts", instant)).op()).isEqualTo(FilterPredicate.Operator.LT);
+        assertThat(((FilterPredicate.InstantColumnPredicate) FilterPredicate.ltEq("ts", instant)).op()).isEqualTo(FilterPredicate.Operator.LT_EQ);
+        assertThat(((FilterPredicate.InstantColumnPredicate) FilterPredicate.gt("ts", instant)).op()).isEqualTo(FilterPredicate.Operator.GT);
+        assertThat(((FilterPredicate.InstantColumnPredicate) FilterPredicate.gtEq("ts", instant)).op()).isEqualTo(FilterPredicate.Operator.GT_EQ);
+    }
+
+    // ==================== LocalTime Factory Tests ====================
+
+    @Test
+    void testLocalTimePredicateCreation() {
+        LocalTime time = LocalTime.of(12, 30, 45);
+        FilterPredicate p = FilterPredicate.eq("t", time);
+        assertThat(p).isInstanceOf(FilterPredicate.TimeColumnPredicate.class);
+        FilterPredicate.TimeColumnPredicate tp = (FilterPredicate.TimeColumnPredicate) p;
+        assertThat(tp.column()).isEqualTo("t");
+        assertThat(tp.op()).isEqualTo(FilterPredicate.Operator.EQ);
+        assertThat(tp.value()).isEqualTo(time);
+    }
+
+    @Test
+    void testLocalTimeAllOperators() {
+        LocalTime time = LocalTime.of(10, 0);
+        assertThat(((FilterPredicate.TimeColumnPredicate) FilterPredicate.notEq("t", time)).op()).isEqualTo(FilterPredicate.Operator.NOT_EQ);
+        assertThat(((FilterPredicate.TimeColumnPredicate) FilterPredicate.lt("t", time)).op()).isEqualTo(FilterPredicate.Operator.LT);
+        assertThat(((FilterPredicate.TimeColumnPredicate) FilterPredicate.ltEq("t", time)).op()).isEqualTo(FilterPredicate.Operator.LT_EQ);
+        assertThat(((FilterPredicate.TimeColumnPredicate) FilterPredicate.gt("t", time)).op()).isEqualTo(FilterPredicate.Operator.GT);
+        assertThat(((FilterPredicate.TimeColumnPredicate) FilterPredicate.gtEq("t", time)).op()).isEqualTo(FilterPredicate.Operator.GT_EQ);
+    }
+
+    // ==================== BigDecimal Factory Tests ====================
+
+    @Test
+    void testDecimalPredicateCreation() {
+        BigDecimal value = new BigDecimal("99.99");
+        FilterPredicate p = FilterPredicate.eq("amount", value);
+        assertThat(p).isInstanceOf(FilterPredicate.DecimalColumnPredicate.class);
+        FilterPredicate.DecimalColumnPredicate dp = (FilterPredicate.DecimalColumnPredicate) p;
+        assertThat(dp.column()).isEqualTo("amount");
+        assertThat(dp.op()).isEqualTo(FilterPredicate.Operator.EQ);
+        assertThat(dp.value()).isEqualTo(value);
+    }
+
+    @Test
+    void testDecimalAllOperators() {
+        BigDecimal value = new BigDecimal("100.00");
+        assertThat(((FilterPredicate.DecimalColumnPredicate) FilterPredicate.notEq("a", value)).op()).isEqualTo(FilterPredicate.Operator.NOT_EQ);
+        assertThat(((FilterPredicate.DecimalColumnPredicate) FilterPredicate.lt("a", value)).op()).isEqualTo(FilterPredicate.Operator.LT);
+        assertThat(((FilterPredicate.DecimalColumnPredicate) FilterPredicate.ltEq("a", value)).op()).isEqualTo(FilterPredicate.Operator.LT_EQ);
+        assertThat(((FilterPredicate.DecimalColumnPredicate) FilterPredicate.gt("a", value)).op()).isEqualTo(FilterPredicate.Operator.GT);
+        assertThat(((FilterPredicate.DecimalColumnPredicate) FilterPredicate.gtEq("a", value)).op()).isEqualTo(FilterPredicate.Operator.GT_EQ);
+    }
+
+    // ==================== UUID Factory Tests ====================
+
+    @Test
+    void testUuidPredicateCreation() {
+        UUID uuid = UUID.fromString("550e8400-e29b-41d4-a716-446655440000");
+        FilterPredicate p = FilterPredicate.eq("request_id", uuid);
+        assertThat(p).isInstanceOf(FilterPredicate.BinaryColumnPredicate.class);
+        FilterPredicate.BinaryColumnPredicate bp = (FilterPredicate.BinaryColumnPredicate) p;
+        assertThat(bp.column()).isEqualTo("request_id");
+        assertThat(bp.op()).isEqualTo(FilterPredicate.Operator.EQ);
+
+        ByteBuffer expected = ByteBuffer.allocate(16);
+        expected.putLong(uuid.getMostSignificantBits());
+        expected.putLong(uuid.getLeastSignificantBits());
+        assertThat(bp.value()).isEqualTo(expected.array());
+    }
+
+    @Test
+    void testUuidAllOperators() {
+        UUID uuid = UUID.fromString("00000000-0000-0000-0000-000000000001");
+        assertThat(((FilterPredicate.BinaryColumnPredicate) FilterPredicate.eq("u", uuid)).op()).isEqualTo(FilterPredicate.Operator.EQ);
+        assertThat(((FilterPredicate.BinaryColumnPredicate) FilterPredicate.notEq("u", uuid)).op()).isEqualTo(FilterPredicate.Operator.NOT_EQ);
+        assertThat(((FilterPredicate.BinaryColumnPredicate) FilterPredicate.lt("u", uuid)).op()).isEqualTo(FilterPredicate.Operator.LT);
+        assertThat(((FilterPredicate.BinaryColumnPredicate) FilterPredicate.ltEq("u", uuid)).op()).isEqualTo(FilterPredicate.Operator.LT_EQ);
+        assertThat(((FilterPredicate.BinaryColumnPredicate) FilterPredicate.gt("u", uuid)).op()).isEqualTo(FilterPredicate.Operator.GT);
+        assertThat(((FilterPredicate.BinaryColumnPredicate) FilterPredicate.gtEq("u", uuid)).op()).isEqualTo(FilterPredicate.Operator.GT_EQ);
+    }
+
+    @Test
+    void testUuidNilValue() {
+        UUID nil = new UUID(0L, 0L);
+        FilterPredicate.BinaryColumnPredicate bp =
+                (FilterPredicate.BinaryColumnPredicate) FilterPredicate.eq("u", nil);
+        assertThat(bp.value()).isEqualTo(new byte[16]);
     }
 
     // ==================== Type Mismatch Tests ====================

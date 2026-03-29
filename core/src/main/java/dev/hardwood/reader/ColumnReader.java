@@ -373,6 +373,9 @@ public class ColumnReader implements AutoCloseable {
     }
 
     /// Create a ColumnReader for a named column with page-level filtering.
+    ///
+    /// @param filter a resolved physical predicate (via [FilterPredicateResolver#resolve]),
+    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
     static ColumnReader create(String columnName, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context, FilterPredicate filter) {
@@ -389,6 +392,9 @@ public class ColumnReader implements AutoCloseable {
     }
 
     /// Create a ColumnReader for a column by index with page-level filtering.
+    ///
+    /// @param filter a resolved physical predicate (via [FilterPredicateResolver#resolve]),
+    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
     static ColumnReader create(int columnIndex, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context, FilterPredicate filter) {
@@ -397,6 +403,9 @@ public class ColumnReader implements AutoCloseable {
     }
 
     /// Create a ColumnReader for a given ColumnSchema, scanning pages across all row groups.
+    ///
+    /// @param filter a resolved physical predicate (via [FilterPredicateResolver#resolve]),
+    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
     @SuppressWarnings("unchecked")
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        InputFile inputFile, List<RowGroup> rowGroups,

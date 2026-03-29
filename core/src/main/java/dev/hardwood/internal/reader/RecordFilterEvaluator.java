@@ -68,7 +68,8 @@ public class RecordFilterEvaluator {
             case FloatColumnPredicate p -> matchesFloat(p, rowIndex, valueArrays, nulls, nameCache);
             case DoubleColumnPredicate p -> matchesDouble(p, rowIndex, valueArrays, nulls, nameCache);
             case BooleanColumnPredicate p -> matchesBoolean(p, rowIndex, valueArrays, nulls, nameCache);
-            case BinaryColumnPredicate p -> matchesBinary(p, rowIndex, valueArrays, nulls, nameCache);
+            case BinaryColumnPredicate p -> matchesBinary(p.column(), p.op(), p.value(), false, rowIndex, valueArrays, nulls, nameCache);
+            case FilterPredicate.SignedBinaryColumnPredicate p -> matchesBinary(p.column(), p.op(), p.value(), true, rowIndex, valueArrays, nulls, nameCache);
             case IntInPredicate p -> matchesIntIn(p, rowIndex, valueArrays, nulls, nameCache);
             case LongInPredicate p -> matchesLongIn(p, rowIndex, valueArrays, nulls, nameCache);
             case BinaryInPredicate p -> matchesBinaryIn(p, rowIndex, valueArrays, nulls, nameCache);
@@ -89,6 +90,10 @@ public class RecordFilterEvaluator {
                 yield false;
             }
             case Not n -> !matches(n.delegate(), rowIndex, valueArrays, nulls, nameCache);
+            case FilterPredicate.DateColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
+            case FilterPredicate.InstantColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
+            case FilterPredicate.TimeColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
+            case FilterPredicate.DecimalColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
         };
     }
 
@@ -161,9 +166,9 @@ public class RecordFilterEvaluator {
         };
     }
 
-    private static boolean matchesBinary(BinaryColumnPredicate p, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(p.column());
+    private static boolean matchesBinary(String column, FilterPredicate.Operator op, byte[] value,
+            boolean signed, int rowIndex, Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
+        int cachedIndex = nameCache.get(column);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof byte[][])) {
             return true;
         }
@@ -171,8 +176,10 @@ public class RecordFilterEvaluator {
             return false;
         }
         byte[] recordValue = ((byte[][]) valueArrays[cachedIndex])[rowIndex];
-        int cmp = StatisticsDecoder.compareBinary(recordValue, p.value());
-        return switch (p.op()) {
+        int cmp = signed
+                ? StatisticsDecoder.compareSignedBinary(recordValue, value)
+                : StatisticsDecoder.compareBinary(recordValue, value);
+        return switch (op) {
             case EQ -> cmp == 0;
             case NOT_EQ -> cmp != 0;
             case LT -> cmp < 0;

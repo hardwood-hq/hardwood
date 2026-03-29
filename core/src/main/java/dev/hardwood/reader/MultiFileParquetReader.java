@@ -12,6 +12,7 @@ import java.util.List;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.FileManager;
+import dev.hardwood.internal.reader.FilterPredicateResolver;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
@@ -91,8 +92,9 @@ public class MultiFileParquetReader implements AutoCloseable {
     /// @param projection specifies which columns to read
     /// @param filter predicate for row group and record-level filtering
     public MultiFileRowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
-        FileManager.InitResult initResult = fileManager.initialize(projection, filter);
-        return new MultiFileRowReader(context, fileManager, initResult, filter);
+        FilterPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        FileManager.InitResult initResult = fileManager.initialize(projection, resolved);
+        return new MultiFileRowReader(context, fileManager, initResult, resolved);
     }
 
     /// Create column readers for batch-oriented access to the requested columns.
@@ -109,7 +111,8 @@ public class MultiFileParquetReader implements AutoCloseable {
     /// @param projection specifies which columns to read
     /// @param filter predicate for row group filtering based on statistics
     public MultiFileColumnReaders createColumnReaders(ColumnProjection projection, FilterPredicate filter) {
-        FileManager.InitResult initResult = fileManager.initialize(projection, filter);
+        FilterPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        FileManager.InitResult initResult = fileManager.initialize(projection, resolved);
         return new MultiFileColumnReaders(context, fileManager, initResult);
     }
 

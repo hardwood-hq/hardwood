@@ -84,7 +84,8 @@ public class FileManager {
     /// and triggers prefetching. Must be called after [#openFirst()].
     ///
     /// @param projection column projection (use [ColumnProjection#all()] for all columns)
-    /// @param filter predicate for row group filtering based on statistics, or `null` for no filtering
+    /// @param filter a resolved physical predicate (via [FilterPredicateResolver#resolve]),
+    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
     /// @return result containing the file state, file schema, and projected schema
     public InitResult initialize(ColumnProjection projection, FilterPredicate filter) {
         this.filterPredicate = filter;
