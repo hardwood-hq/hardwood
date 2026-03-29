@@ -44,6 +44,9 @@ nb-configuration.xml
 .release-env
 docs/hooks/__pycache__/
 
-#JReleaser
+# JReleaser
 out/
 release-output.log
+
+# Claude
+.claude/worktrees/

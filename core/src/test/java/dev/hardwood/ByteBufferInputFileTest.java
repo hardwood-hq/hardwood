@@ -19,6 +19,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Tests for [InputFile#of(ByteBuffer)] and [InputFile#ofBuffers(List)].
 class ByteBufferInputFileTest {
@@ -80,5 +81,48 @@ class ByteBufferInputFileTest {
             assertThat(file.name()).isEqualTo("<memory>");
             assertThat(file.length()).isEqualTo(bytes.length);
         }
+    }
+
+    @Test
+    void testOfBuffersVarargs() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        byte[] bytes = Files.readAllBytes(parquetFile);
+
+        List<InputFile> files = InputFile.ofBuffers(
+                ByteBuffer.wrap(bytes),
+                ByteBuffer.wrap(bytes),
+                ByteBuffer.wrap(bytes));
+
+        assertThat(files).hasSize(3);
+        for (InputFile file : files) {
+            assertThat(file.name()).isEqualTo("<memory>");
+            assertThat(file.length()).isEqualTo(bytes.length);
+        }
+    }
+
+    @Test
+    void testOfBuffersVarargsRejectsNullFirst() {
+        assertThatThrownBy(() -> InputFile.ofBuffers((ByteBuffer) null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("first buffer must not be null");
+    }
+
+    @Test
+    void testOfBuffersVarargsRejectsNullElement() {
+        assertThatThrownBy(() -> InputFile.ofBuffers(ByteBuffer.wrap(new byte[]{1}), (ByteBuffer) null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("buffer must not be null");
+    }
+
+    @Test
+    void testOfBuffersVarargsSingleBuffer() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        byte[] bytes = Files.readAllBytes(parquetFile);
+
+        List<InputFile> files = InputFile.ofBuffers(ByteBuffer.wrap(bytes));
+
+        assertThat(files).hasSize(1);
+        assertThat(files.get(0).name()).isEqualTo("<memory>");
+        assertThat(files.get(0).length()).isEqualTo(bytes.length);
     }
 }

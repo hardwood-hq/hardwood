@@ -282,11 +282,11 @@ import dev.hardwood.InputFile;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.MultiFileRowReader;
 
-List<InputFile> files = InputFile.ofPaths(List.of(
+List<InputFile> files = InputFile.ofPaths(
     Path.of("data_2024_01.parquet"),
     Path.of("data_2024_02.parquet"),
     Path.of("data_2024_03.parquet")
-));
+);
 
 try (Hardwood hardwood = Hardwood.create();
      MultiFileParquetReader parquet = hardwood.openAll(files);

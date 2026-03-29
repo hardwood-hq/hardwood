@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import dev.hardwood.internal.reader.ByteBufferInputFile;
 import dev.hardwood.internal.reader.MappedInputFile;
@@ -95,6 +96,22 @@ public interface InputFile extends Closeable {
         return files;
     }
 
+    /// Creates unopened [InputFile] instances for the given local file paths.
+    ///
+    /// @param first the first file to read
+    /// @param more additional files to read
+    /// @return a list of new unopened InputFile instances
+    static List<InputFile> ofPaths(Path first, Path... more) {
+        Objects.requireNonNull(first, "first path must not be null");
+        List<InputFile> files = new ArrayList<>(1 + more.length);
+        files.add(of(first));
+        for (Path p : more) {
+            Objects.requireNonNull(p, "path must not be null");
+            files.add(of(p));
+        }
+        return files;
+    }
+
     /// Creates [InputFile] instances for a list of in-memory [ByteBuffer]s.
     ///
     /// Since the data is already in memory, no resource acquisition is needed
@@ -105,6 +122,25 @@ public interface InputFile extends Closeable {
     static List<InputFile> ofBuffers(List<ByteBuffer> buffers) {
         List<InputFile> files = new ArrayList<>(buffers.size());
         for (ByteBuffer b : buffers) {
+            files.add(of(b));
+        }
+        return files;
+    }
+
+    /// Creates [InputFile] instances for the given in-memory [ByteBuffer]s.
+    ///
+    /// Since the data is already in memory, no resource acquisition is needed
+    /// and [#open()] is a no-op for each instance.
+    ///
+    /// @param first the first buffer containing Parquet file data
+    /// @param more additional buffers containing Parquet file data
+    /// @return a list of new InputFile instances backed by the buffers
+    static List<InputFile> ofBuffers(ByteBuffer first, ByteBuffer... more) {
+        Objects.requireNonNull(first, "first buffer must not be null");
+        List<InputFile> files = new ArrayList<>(1 + more.length);
+        files.add(of(first));
+        for (ByteBuffer b : more) {
+            Objects.requireNonNull(b, "buffer must not be null");
             files.add(of(b));
         }
         return files;

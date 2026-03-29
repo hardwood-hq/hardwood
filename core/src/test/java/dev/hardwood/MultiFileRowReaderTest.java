@@ -439,4 +439,57 @@ class MultiFileRowReaderTest {
 
         assertThat(multiFileCount).isEqualTo(singleFileCount);
     }
+
+    @Test
+    void testOfPathsVarargs() throws Exception {
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(filePath, filePath));
+             MultiFileRowReader reader = parquet.createRowReader()) {
+
+            List<Long> ids = new ArrayList<>();
+
+            while (reader.hasNext()) {
+                reader.next();
+                ids.add(reader.getLong("id"));
+            }
+
+            assertThat(ids).containsExactly(1L, 2L, 3L, 1L, 2L, 3L);
+        }
+    }
+
+    @Test
+    void testOfPathsVarargsRejectsNullFirst() {
+        assertThatThrownBy(() -> InputFile.ofPaths((Path) null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("first path must not be null");
+    }
+
+    @Test
+    void testOfPathsVarargsRejectsNullElement() {
+        assertThatThrownBy(() -> InputFile.ofPaths(
+                Paths.get("src/test/resources/plain_uncompressed.parquet"), (Path) null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessageContaining("path must not be null");
+    }
+
+    @Test
+    void testOfPathsVarargsSinglePath() throws Exception {
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(filePath));
+             MultiFileRowReader reader = parquet.createRowReader()) {
+
+            List<Long> ids = new ArrayList<>();
+
+            while (reader.hasNext()) {
+                reader.next();
+                ids.add(reader.getLong("id"));
+            }
+
+            assertThat(ids).containsExactly(1L, 2L, 3L);
+        }
+    }
 }

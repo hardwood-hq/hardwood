@@ -12,6 +12,7 @@ import java.net.URI;
 import java.net.http.HttpClient;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.s3.internal.S3Api;
@@ -37,19 +38,24 @@ public final class S3Source implements Closeable {
 
     /// Creates an [S3InputFile] for the given bucket and key.
     public S3InputFile inputFile(String bucket, String key) {
+        Objects.requireNonNull(bucket, "bucket must not be null");
+        Objects.requireNonNull(key, "key must not be null");
         return new S3InputFile(this, bucket, key);
     }
 
     /// Creates an [S3InputFile] from an `s3://bucket/key` URI.
     public S3InputFile inputFile(String uri) {
+        Objects.requireNonNull(uri, "uri must not be null");
         String[] parsed = parseS3Uri(uri);
         return inputFile(parsed[0], parsed[1]);
     }
 
     /// Creates [InputFile] instances for multiple keys in the same bucket.
     public List<InputFile> inputFilesInBucket(String bucket, String... keys) {
+        Objects.requireNonNull(bucket, "bucket must not be null");
         List<InputFile> files = new ArrayList<>(keys.length);
         for (String key : keys) {
+            Objects.requireNonNull(key, "key must not be null");
             files.add(inputFile(bucket, key));
         }
         return files;
@@ -59,6 +65,7 @@ public final class S3Source implements Closeable {
     public List<InputFile> inputFiles(String... uris) {
         List<InputFile> files = new ArrayList<>(uris.length);
         for (String uri : uris) {
+            Objects.requireNonNull(uri, "uri must not be null");
             files.add(inputFile(uri));
         }
         return files;
