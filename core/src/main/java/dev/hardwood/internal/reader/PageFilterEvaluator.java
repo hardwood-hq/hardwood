@@ -21,18 +21,9 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.And;
-import dev.hardwood.reader.FilterPredicate.BinaryColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.BinaryInPredicate;
-import dev.hardwood.reader.FilterPredicate.BooleanColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.DateColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.DecimalColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.InstantColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.IntInPredicate;
-import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.LongInPredicate;
 import dev.hardwood.reader.FilterPredicate.Not;
 import dev.hardwood.reader.FilterPredicate.Or;
 import dev.hardwood.reader.FilterPredicate.TimeColumnPredicate;
@@ -44,6 +35,9 @@ import dev.hardwood.schema.FileSchema;
 /// This is the page-level equivalent of [RowGroupFilterEvaluator]. While that class
 /// decides whether an entire row group can be skipped, this class determines which
 /// pages within a surviving row group can be skipped.
+///
+/// Leaf predicate evaluation is delegated to [StatisticsFilterSupport#canDropLeaf],
+/// which handles all physical predicate types against a [MinMaxStats] abstraction.
 public class PageFilterEvaluator {
 
     /// Computes the row ranges within a row group that might match the given predicate,
@@ -66,61 +60,6 @@ public class PageFilterEvaluator {
     private static RowRanges evaluate(FilterPredicate predicate, RowGroup rowGroup,
             FileSchema schema, RowGroupIndexBuffers indexBuffers, long rowCount) {
         return switch (predicate) {
-            case IntColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.INT32, rowGroup, schema, indexBuffers, rowCount,
-                    (ci, i) -> {
-                        int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
-                        int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
-                        return RowGroupFilterEvaluator.canDrop(p.op(), p.value(), min, max);
-                    });
-            case LongColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.INT64, rowGroup, schema, indexBuffers, rowCount,
-                    (ci, i) -> {
-                        long min = StatisticsDecoder.decodeLong(ci.minValues().get(i));
-                        long max = StatisticsDecoder.decodeLong(ci.maxValues().get(i));
-                        return RowGroupFilterEvaluator.canDrop(p.op(), p.value(), min, max);
-                    });
-            case FloatColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.FLOAT, rowGroup, schema, indexBuffers, rowCount,
-                    (ci, i) -> {
-                        float min = StatisticsDecoder.decodeFloat(ci.minValues().get(i));
-                        float max = StatisticsDecoder.decodeFloat(ci.maxValues().get(i));
-                        return RowGroupFilterEvaluator.canDropFloat(p.op(), p.value(), min, max);
-                    });
-            case DoubleColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.DOUBLE, rowGroup, schema, indexBuffers, rowCount,
-                    (ci, i) -> {
-                        double min = StatisticsDecoder.decodeDouble(ci.minValues().get(i));
-                        double max = StatisticsDecoder.decodeDouble(ci.maxValues().get(i));
-                        return RowGroupFilterEvaluator.canDropDouble(p.op(), p.value(), min, max);
-                    });
-            case BooleanColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.BOOLEAN, rowGroup, schema, indexBuffers, rowCount,
-                    (ci, i) -> {
-                        int min = StatisticsDecoder.decodeBoolean(ci.minValues().get(i)) ? 1 : 0;
-                        int max = StatisticsDecoder.decodeBoolean(ci.maxValues().get(i)) ? 1 : 0;
-                        int value = p.value() ? 1 : 0;
-                        return RowGroupFilterEvaluator.canDrop(p.op(), value, min, max);
-                    });
-            case BinaryColumnPredicate p -> evaluateBinaryLeaf(p.column(), p.op(), p.value(),
-                    PhysicalType.BYTE_ARRAY, StatisticsDecoder::compareBinary,
-                    rowGroup, schema, indexBuffers, rowCount);
-            case FilterPredicate.SignedBinaryColumnPredicate p -> evaluateBinaryLeaf(p.column(), p.op(), p.value(),
-                    PhysicalType.FIXED_LEN_BYTE_ARRAY, StatisticsDecoder::compareSignedBinary,
-                    rowGroup, schema, indexBuffers, rowCount);
-            case IntInPredicate p -> evaluateLeaf(p.column(), PhysicalType.INT32, rowGroup, schema, indexBuffers, rowCount,
-                    (ci, i) -> {
-                        int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
-                        int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
-                        return RowGroupFilterEvaluator.canDropIntIn(p.values(), min, max);
-                    });
-            case LongInPredicate p -> evaluateLeaf(p.column(), PhysicalType.INT64, rowGroup, schema, indexBuffers, rowCount,
-                    (ci, i) -> {
-                        long min = StatisticsDecoder.decodeLong(ci.minValues().get(i));
-                        long max = StatisticsDecoder.decodeLong(ci.maxValues().get(i));
-                        return RowGroupFilterEvaluator.canDropLongIn(p.values(), min, max);
-                    });
-            case BinaryInPredicate p -> evaluateLeaf(p.column(), PhysicalType.BYTE_ARRAY, rowGroup, schema, indexBuffers, rowCount,
-                    (ci, i) -> {
-                        byte[] min = ci.minValues().get(i);
-                        byte[] max = ci.maxValues().get(i);
-                        return RowGroupFilterEvaluator.canDropBinaryIn(p.values(), min, max);
-                    });
             case DateColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
             case InstantColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
             case TimeColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
@@ -141,35 +80,24 @@ public class PageFilterEvaluator {
                 yield (result != null) ? result : RowRanges.all(rowCount);
             }
             case Not ignored -> RowRanges.all(rowCount);
+            default -> evaluateLeafPages(predicate, rowGroup, schema, indexBuffers, rowCount);
         };
     }
 
-    /// Evaluates a leaf predicate against the Column Index for a single column,
-    /// producing RowRanges for pages that cannot be dropped.
-    private static RowRanges evaluateBinaryLeaf(String column, FilterPredicate.Operator op, byte[] value,
-            PhysicalType expectedType, RowGroupFilterEvaluator.BinaryComparator comparator,
-            RowGroup rowGroup, FileSchema schema, RowGroupIndexBuffers indexBuffers, long rowCount) {
-        return evaluateLeaf(column, expectedType, rowGroup, schema, indexBuffers, rowCount,
-                (ci, i) -> {
-                    byte[] min = ci.minValues().get(i);
-                    byte[] max = ci.maxValues().get(i);
-                    int cmpMin = comparator.compare(value, min);
-                    int cmpMax = comparator.compare(value, max);
-                    return RowGroupFilterEvaluator.canDropCompared(op, cmpMin, cmpMax,
-                            comparator.compare(min, max));
-                });
-    }
+    /// Evaluates a leaf predicate against per-page Column Index statistics,
+    /// using [StatisticsFilterSupport#canDropLeaf] for the actual comparison.
+    private static RowRanges evaluateLeafPages(FilterPredicate predicate, RowGroup rowGroup,
+            FileSchema schema, RowGroupIndexBuffers indexBuffers, long rowCount) {
 
-    private static RowRanges evaluateLeaf(String columnName, PhysicalType expectedType,
-            RowGroup rowGroup, FileSchema schema, RowGroupIndexBuffers indexBuffers,
-            long rowCount, PageCanDropTest canDropTest) {
+        String columnName = StatisticsFilterSupport.columnOf(predicate);
+        PhysicalType expectedType = StatisticsFilterSupport.expectedPhysicalType(predicate);
 
         int columnIndex = RowGroupFilterEvaluator.resolveColumnIndex(columnName, rowGroup, schema);
         if (columnIndex < 0) {
             return RowRanges.all(rowCount);
         }
         PhysicalType actualType = rowGroup.columns().get(columnIndex).metaData().type();
-        if (actualType != expectedType && !RowGroupFilterEvaluator.isBinaryCompatible(actualType, expectedType)) {
+        if (actualType != expectedType && !StatisticsFilterSupport.isBinaryCompatible(actualType, expectedType)) {
             throw new IllegalArgumentException(
                     "Column '" + columnName + "' has physical type " + actualType
                             + "; given filter predicate type " + expectedType + " is incompatible");
@@ -190,10 +118,22 @@ public class PageFilterEvaluator {
             throw new UncheckedIOException("Failed to parse Column/Offset Index for column '" + columnName + "'", e);
         }
 
-        return evaluatePages(columnIdx, offsetIdx, rowCount, canDropTest);
+        List<PageLocation> pages = offsetIdx.pageLocations();
+        int pageCount = pages.size();
+        boolean[] keep = new boolean[pageCount];
+
+        for (int i = 0; i < pageCount; i++) {
+            if (columnIdx.nullPages().get(i)) {
+                continue;
+            }
+            keep[i] = !StatisticsFilterSupport.canDropLeaf(predicate, MinMaxStats.ofPage(columnIdx, i));
+        }
+
+        return RowRanges.fromPages(pages, keep, rowCount);
     }
 
     /// Evaluates a keep bitmap for pages using pre-parsed Column Index and Offset Index.
+    /// Used by [#evaluateLeafPages] and directly by tests.
     static RowRanges evaluatePages(ColumnIndex columnIdx, OffsetIndex offsetIdx,
             long rowCount, PageCanDropTest canDropTest) {
         List<PageLocation> pages = offsetIdx.pageLocations();
@@ -201,11 +141,9 @@ public class PageFilterEvaluator {
         boolean[] keep = new boolean[pageCount];
 
         for (int i = 0; i < pageCount; i++) {
-            // Null-only pages cannot match any value predicate
             if (columnIdx.nullPages().get(i)) {
                 continue;
             }
-            // Keep the page if it cannot be dropped
             keep[i] = !canDropTest.canDrop(columnIdx, i);
         }
 

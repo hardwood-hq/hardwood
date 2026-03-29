@@ -15,21 +15,11 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.And;
-import dev.hardwood.reader.FilterPredicate.BinaryColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.BinaryInPredicate;
-import dev.hardwood.reader.FilterPredicate.BooleanColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.DateColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.DecimalColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.InstantColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.IntInPredicate;
-import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.LongInPredicate;
 import dev.hardwood.reader.FilterPredicate.Not;
 import dev.hardwood.reader.FilterPredicate.Or;
-import dev.hardwood.reader.FilterPredicate.SignedBinaryColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.TimeColumnPredicate;
 import dev.hardwood.schema.FileSchema;
 
@@ -49,20 +39,6 @@ public class RowGroupFilterEvaluator {
     ///         `false` if it may contain matching rows
     public static boolean canDropRowGroup(FilterPredicate predicate, RowGroup rowGroup, FileSchema schema) {
         return switch (predicate) {
-            case IntColumnPredicate p -> evaluateInt(p, rowGroup, schema);
-            case LongColumnPredicate p -> evaluateLong(p, rowGroup, schema);
-            case FloatColumnPredicate p -> evaluateFloat(p, rowGroup, schema);
-            case DoubleColumnPredicate p -> evaluateDouble(p, rowGroup, schema);
-            case BooleanColumnPredicate p -> evaluateBoolean(p, rowGroup, schema);
-            case BinaryColumnPredicate p -> evaluateBinaryComparison(
-                    p.column(), p.op(), p.value(), PhysicalType.BYTE_ARRAY,
-                    StatisticsDecoder::compareBinary, rowGroup, schema);
-            case SignedBinaryColumnPredicate p -> evaluateBinaryComparison(
-                    p.column(), p.op(), p.value(), PhysicalType.FIXED_LEN_BYTE_ARRAY,
-                    StatisticsDecoder::compareSignedBinary, rowGroup, schema);
-            case IntInPredicate p -> evaluateIntIn(p, rowGroup, schema);
-            case LongInPredicate p -> evaluateLongIn(p, rowGroup, schema);
-            case BinaryInPredicate p -> evaluateBinaryIn(p, rowGroup, schema);
             case DateColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
             case InstantColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
             case TimeColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
@@ -83,8 +59,13 @@ public class RowGroupFilterEvaluator {
                 }
                 yield true;
             }
-            // NOT cannot safely determine drops from statistics alone; be conservative.
             case Not ignored -> false;
+            default -> {
+                String columnName = StatisticsFilterSupport.columnOf(predicate);
+                Statistics stats = findStatistics(columnName,
+                        StatisticsFilterSupport.expectedPhysicalType(predicate), rowGroup, schema);
+                yield stats != null && StatisticsFilterSupport.canDropLeaf(predicate, MinMaxStats.of(stats));
+            }
         };
     }
 
@@ -96,7 +77,8 @@ public class RowGroupFilterEvaluator {
         }
         ColumnChunk chunk = rowGroup.columns().get(columnIndex);
         PhysicalType actualType = chunk.metaData().type();
-        if (actualType != expectedType && !isBinaryCompatible(actualType, expectedType)) {
+        if (actualType != expectedType
+                && !StatisticsFilterSupport.isBinaryCompatible(actualType, expectedType)) {
             throw new IllegalArgumentException(
                     "Column '" + columnName + "' has physical type " + actualType
                             + "; given filter predicate type " + expectedType + " is incompatible");
@@ -146,208 +128,4 @@ public class RowGroupFilterEvaluator {
         return -1;
     }
 
-    // ==================== INT32 ====================
-
-    private static boolean evaluateInt(IntColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), PhysicalType.INT32, rowGroup, schema);
-        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        int min = StatisticsDecoder.decodeInt(stats.minValue());
-        int max = StatisticsDecoder.decodeInt(stats.maxValue());
-        int value = p.value();
-        return canDrop(p.op(), value, min, max);
-    }
-
-    // ==================== INT64 ====================
-
-    private static boolean evaluateLong(LongColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), PhysicalType.INT64, rowGroup, schema);
-        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        long min = StatisticsDecoder.decodeLong(stats.minValue());
-        long max = StatisticsDecoder.decodeLong(stats.maxValue());
-        long value = p.value();
-        return canDrop(p.op(), value, min, max);
-    }
-
-    // ==================== FLOAT ====================
-
-    private static boolean evaluateFloat(FloatColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), PhysicalType.FLOAT, rowGroup, schema);
-        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        float min = StatisticsDecoder.decodeFloat(stats.minValue());
-        float max = StatisticsDecoder.decodeFloat(stats.maxValue());
-        float value = p.value();
-        return canDropFloat(p.op(), value, min, max);
-    }
-
-    // ==================== DOUBLE ====================
-
-    private static boolean evaluateDouble(DoubleColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), PhysicalType.DOUBLE, rowGroup, schema);
-        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        double min = StatisticsDecoder.decodeDouble(stats.minValue());
-        double max = StatisticsDecoder.decodeDouble(stats.maxValue());
-        double value = p.value();
-        return canDropDouble(p.op(), value, min, max);
-    }
-
-    // ==================== BOOLEAN ====================
-
-    private static boolean evaluateBoolean(BooleanColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), PhysicalType.BOOLEAN, rowGroup, schema);
-        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        boolean min = StatisticsDecoder.decodeBoolean(stats.minValue());
-        boolean max = StatisticsDecoder.decodeBoolean(stats.maxValue());
-        boolean value = p.value();
-        int minInt = min ? 1 : 0;
-        int maxInt = max ? 1 : 0;
-        int valueInt = value ? 1 : 0;
-        return canDrop(p.op(), valueInt, minInt, maxInt);
-    }
-
-    // ==================== BINARY (byte[]) ====================
-
-    private static boolean evaluateBinaryComparison(String column, FilterPredicate.Operator op, byte[] value,
-            PhysicalType expectedType, BinaryComparator comparator, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(column, expectedType, rowGroup, schema);
-        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        byte[] min = stats.minValue();
-        byte[] max = stats.maxValue();
-        int cmpMin = comparator.compare(value, min);
-        int cmpMax = comparator.compare(value, max);
-        return canDropCompared(op, cmpMin, cmpMax, comparator.compare(min, max));
-    }
-
-    @FunctionalInterface
-    interface BinaryComparator {
-        int compare(byte[] a, byte[] b);
-    }
-
-    private static boolean evaluateIntIn(IntInPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), PhysicalType.INT32, rowGroup, schema);
-        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        int min = StatisticsDecoder.decodeInt(stats.minValue());
-        int max = StatisticsDecoder.decodeInt(stats.maxValue());
-        return canDropIntIn(p.values(), min, max);
-    }
-
-    private static boolean evaluateLongIn(LongInPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), PhysicalType.INT64, rowGroup, schema);
-        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        long min = StatisticsDecoder.decodeLong(stats.minValue());
-        long max = StatisticsDecoder.decodeLong(stats.maxValue());
-        return canDropLongIn(p.values(), min, max);
-    }
-
-    private static boolean evaluateBinaryIn(BinaryInPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), PhysicalType.BYTE_ARRAY, rowGroup, schema);
-        if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
-            return false;
-        }
-        byte[] min = stats.minValue();
-        byte[] max = stats.maxValue();
-        return canDropBinaryIn(p.values(), min, max);
-    }
-
-    static boolean canDropIntIn(int[] values, int min, int max) {
-        for (int value : values) {
-            if (value >= min && value <= max) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    static boolean canDropLongIn(long[] values, long min, long max) {
-        for (long value : values) {
-            if (value >= min && value <= max) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max) {
-        for (byte[] value : values) {
-            if (StatisticsDecoder.compareBinary(value, min) >= 0
-                    && StatisticsDecoder.compareBinary(value, max) <= 0) {
-                return false;
-            }
-        }
-        return true;
-    }
-
-    static boolean isBinaryCompatible(PhysicalType actual, PhysicalType expected) {
-        return (actual == PhysicalType.BYTE_ARRAY || actual == PhysicalType.FIXED_LEN_BYTE_ARRAY)
-                && (expected == PhysicalType.BYTE_ARRAY || expected == PhysicalType.FIXED_LEN_BYTE_ARRAY);
-    }
-
-    // ==================== Generic comparison logic ====================
-
-    /// Determines if a range can be dropped given integer-comparable min/max statistics.
-    /// Works for int, long, boolean (mapped to 0/1).
-    /// Shared with [PageFilterEvaluator] for page-level filtering.
-    static boolean canDrop(FilterPredicate.Operator op, long value, long min, long max) {
-        return switch (op) {
-            case EQ -> value < min || value > max;
-            case NOT_EQ -> min == max && value == min;
-            case LT -> min >= value;
-            case LT_EQ -> min > value;
-            case GT -> max <= value;
-            case GT_EQ -> max < value;
-        };
-    }
-
-    static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max) {
-        return switch (op) {
-            case EQ -> Float.compare(value, min) < 0 || Float.compare(value, max) > 0;
-            case NOT_EQ -> Float.compare(min, max) == 0 && Float.compare(value, min) == 0;
-            case LT -> Float.compare(min, value) >= 0;
-            case LT_EQ -> Float.compare(min, value) > 0;
-            case GT -> Float.compare(max, value) <= 0;
-            case GT_EQ -> Float.compare(max, value) < 0;
-        };
-    }
-
-    static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max) {
-        return switch (op) {
-            case EQ -> Double.compare(value, min) < 0 || Double.compare(value, max) > 0;
-            case NOT_EQ -> Double.compare(min, max) == 0 && Double.compare(value, min) == 0;
-            case LT -> Double.compare(min, value) >= 0;
-            case LT_EQ -> Double.compare(min, value) > 0;
-            case GT -> Double.compare(max, value) <= 0;
-            case GT_EQ -> Double.compare(max, value) < 0;
-        };
-    }
-
-    /// Determines if a range can be dropped given pre-computed comparison results for binary values.
-    ///
-    /// @param cmpMin comparison of value vs min (negative if value < min)
-    /// @param cmpMax comparison of value vs max (positive if value > max)
-    /// @param minEqMax comparison of min vs max (0 if min == max)
-    static boolean canDropCompared(FilterPredicate.Operator op, int cmpMin, int cmpMax, int minEqMax) {
-        return switch (op) {
-            case EQ -> cmpMin < 0 || cmpMax > 0;
-            case NOT_EQ -> minEqMax == 0 && cmpMin == 0;
-            case LT -> cmpMin <= 0;
-            case LT_EQ -> cmpMin < 0;
-            case GT -> cmpMax >= 0;
-            case GT_EQ -> cmpMax > 0;
-        };
-    }
 }

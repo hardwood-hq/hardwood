@@ -53,7 +53,7 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     int min = StatisticsDecoder.decodeInt(columnIndex.minValues().get(pageIndex));
                     int max = StatisticsDecoder.decodeInt(columnIndex.maxValues().get(pageIndex));
-                    return RowGroupFilterEvaluator.canDrop(op, value, min, max);
+                    return StatisticsFilterSupport.canDrop(op, value, min, max);
                 });
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 30),  "page 0 (rows 0-30)");
@@ -102,7 +102,7 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     int min = StatisticsDecoder.decodeInt(columnIndex.minValues().get(pageIndex));
                     int max = StatisticsDecoder.decodeInt(columnIndex.maxValues().get(pageIndex));
-                    return RowGroupFilterEvaluator.canDrop(Operator.GT, 0, min, max);
+                    return StatisticsFilterSupport.canDrop(Operator.GT, 0, min, max);
                 });
 
         assertEquals(1, ranges.intervalCount());
@@ -115,7 +115,7 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     int min = StatisticsDecoder.decodeInt(columnIndex.minValues().get(pageIndex));
                     int max = StatisticsDecoder.decodeInt(columnIndex.maxValues().get(pageIndex));
-                    return RowGroupFilterEvaluator.canDrop(Operator.GT, 100, min, max);
+                    return StatisticsFilterSupport.canDrop(Operator.GT, 100, min, max);
                 });
 
         assertEquals(0, ranges.intervalCount());
@@ -135,7 +135,7 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     int min = StatisticsDecoder.decodeInt(columnIndex.minValues().get(pageIndex));
                     int max = StatisticsDecoder.decodeInt(columnIndex.maxValues().get(pageIndex));
-                    return RowGroupFilterEvaluator.canDrop(Operator.GT, 0, min, max);
+                    return StatisticsFilterSupport.canDrop(Operator.GT, 0, min, max);
                 });
 
         assertTrue(ranges.overlapsPage(0, 30));
@@ -159,7 +159,7 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     long min = StatisticsDecoder.decodeLong(columnIndex.minValues().get(pageIndex));
                     long max = StatisticsDecoder.decodeLong(columnIndex.maxValues().get(pageIndex));
-                    return RowGroupFilterEvaluator.canDrop(op, value, min, max);
+                    return StatisticsFilterSupport.canDrop(op, value, min, max);
                 });
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
@@ -197,7 +197,7 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     float min = StatisticsDecoder.decodeFloat(columnIndex.minValues().get(pageIndex));
                     float max = StatisticsDecoder.decodeFloat(columnIndex.maxValues().get(pageIndex));
-                    return RowGroupFilterEvaluator.canDropFloat(op, value, min, max);
+                    return StatisticsFilterSupport.canDropFloat(op, value, min, max);
                 });
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
@@ -235,7 +235,7 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     double min = StatisticsDecoder.decodeDouble(columnIndex.minValues().get(pageIndex));
                     double max = StatisticsDecoder.decodeDouble(columnIndex.maxValues().get(pageIndex));
-                    return RowGroupFilterEvaluator.canDropDouble(op, value, min, max);
+                    return StatisticsFilterSupport.canDropDouble(op, value, min, max);
                 });
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
@@ -274,7 +274,7 @@ class PageFilterEvaluatorTest {
                     int min = StatisticsDecoder.decodeBoolean(columnIndex.minValues().get(pageIndex)) ? 1 : 0;
                     int max = StatisticsDecoder.decodeBoolean(columnIndex.maxValues().get(pageIndex)) ? 1 : 0;
                     int val = value ? 1 : 0;
-                    return RowGroupFilterEvaluator.canDrop(op, val, min, max);
+                    return StatisticsFilterSupport.canDrop(op, val, min, max);
                 });
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
@@ -308,7 +308,7 @@ class PageFilterEvaluatorTest {
                     byte[] max = columnIndex.maxValues().get(pageIndex);
                     int cmpMin = StatisticsDecoder.compareBinary(searchValue, min);
                     int cmpMax = StatisticsDecoder.compareBinary(searchValue, max);
-                    return RowGroupFilterEvaluator.canDropCompared(op,
+                    return StatisticsFilterSupport.canDropCompared(op,
                             cmpMin, cmpMax, StatisticsDecoder.compareBinary(min, max));
                 });
 
@@ -485,7 +485,7 @@ class PageFilterEvaluatorTest {
                 (ci, i) -> {
                     int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
                     int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
-                    return RowGroupFilterEvaluator.canDropIntIn(new int[]{ 5, 15 }, min, max);
+                    return StatisticsFilterSupport.canDropIntIn(new int[]{ 5, 15 }, min, max);
                 });
         assertTrue(ranges.overlapsPage(0, 30));
         assertTrue(ranges.overlapsPage(30, 60));
@@ -498,7 +498,7 @@ class PageFilterEvaluatorTest {
                 (ci, i) -> {
                     int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
                     int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
-                    return RowGroupFilterEvaluator.canDropIntIn(new int[]{ 50, 60 }, min, max);
+                    return StatisticsFilterSupport.canDropIntIn(new int[]{ 50, 60 }, min, max);
                 });
         assertFalse(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
@@ -514,7 +514,7 @@ class PageFilterEvaluatorTest {
                 (ci, i) -> {
                     long min = StatisticsDecoder.decodeLong(ci.minValues().get(i));
                     long max = StatisticsDecoder.decodeLong(ci.maxValues().get(i));
-                    return RowGroupFilterEvaluator.canDropLongIn(new long[]{ 150, 350 }, min, max);
+                    return StatisticsFilterSupport.canDropLongIn(new long[]{ 150, 350 }, min, max);
                 });
         assertTrue(ranges.overlapsPage(0, 30));
         assertFalse(ranges.overlapsPage(30, 60));
@@ -532,7 +532,7 @@ class PageFilterEvaluatorTest {
                 (ci, i) -> {
                     byte[] min = ci.minValues().get(i);
                     byte[] max = ci.maxValues().get(i);
-                    return RowGroupFilterEvaluator.canDropBinaryIn(
+                    return StatisticsFilterSupport.canDropBinaryIn(
                             new byte[][]{ "banana".getBytes(StandardCharsets.UTF_8), "zebra".getBytes(StandardCharsets.UTF_8) },
                             min, max);
                 });
