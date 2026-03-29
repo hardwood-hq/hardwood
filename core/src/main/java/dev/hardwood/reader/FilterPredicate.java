@@ -40,6 +40,9 @@ public sealed interface FilterPredicate
                 FilterPredicate.DoubleColumnPredicate,
                 FilterPredicate.BooleanColumnPredicate,
                 FilterPredicate.BinaryColumnPredicate,
+                FilterPredicate.IntInPredicate,
+                FilterPredicate.LongInPredicate,
+                FilterPredicate.BinaryInPredicate,
                 FilterPredicate.And,
                 FilterPredicate.Or,
                 FilterPredicate.Not {
@@ -190,6 +193,22 @@ public sealed interface FilterPredicate
         return new BinaryColumnPredicate(column, Operator.GT_EQ, value.getBytes(StandardCharsets.UTF_8));
     }
 
+    static FilterPredicate in(String column, int... values) {
+        return new IntInPredicate(column, values);
+    }
+
+    static FilterPredicate in(String column, long... values) {
+        return new LongInPredicate(column, values);
+    }
+
+    static FilterPredicate inStrings(String column, String... values) {
+        byte[][] encoded = new byte[values.length][];
+        for (int i = 0; i < values.length; i++) {
+            encoded[i] = values[i].getBytes(StandardCharsets.UTF_8);
+        }
+        return new BinaryInPredicate(column, encoded);
+    }
+
     // ==================== Logical Combinators ====================
 
     static FilterPredicate and(FilterPredicate left, FilterPredicate right) {
@@ -244,6 +263,51 @@ public sealed interface FilterPredicate
             result = 31 * result + op.hashCode();
             result = 31 * result + Arrays.hashCode(value);
             return result;
+        }
+    }
+
+    record IntInPredicate(String column, int[] values) implements FilterPredicate {
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof IntInPredicate that)) return false;
+            return column.equals(that.column) && Arrays.equals(values, that.values);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * column.hashCode() + Arrays.hashCode(values);
+        }
+    }
+
+    record LongInPredicate(String column, long[] values) implements FilterPredicate {
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof LongInPredicate that)) return false;
+            return column.equals(that.column) && Arrays.equals(values, that.values);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * column.hashCode() + Arrays.hashCode(values);
+        }
+    }
+
+    record BinaryInPredicate(String column, byte[][] values) implements FilterPredicate {
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof BinaryInPredicate that)) return false;
+            return column.equals(that.column) && Arrays.deepEquals(values, that.values);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * column.hashCode() + Arrays.deepHashCode(values);
         }
     }
 

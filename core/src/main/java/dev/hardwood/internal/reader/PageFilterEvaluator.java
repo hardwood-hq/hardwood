@@ -21,11 +21,14 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.And;
 import dev.hardwood.reader.FilterPredicate.BinaryColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.BinaryInPredicate;
 import dev.hardwood.reader.FilterPredicate.BooleanColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.IntInPredicate;
 import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.LongInPredicate;
 import dev.hardwood.reader.FilterPredicate.Not;
 import dev.hardwood.reader.FilterPredicate.Or;
 import dev.hardwood.schema.FileSchema;
@@ -97,6 +100,24 @@ public class PageFilterEvaluator {
                         int cmpMax = StatisticsDecoder.compareBinary(p.value(), max);
                         return RowGroupFilterEvaluator.canDropCompared(p.op(), cmpMin, cmpMax,
                                 StatisticsDecoder.compareBinary(min, max));
+                    });
+            case IntInPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+                    (ci, i) -> {
+                        int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
+                        int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
+                        return RowGroupFilterEvaluator.canDropIntIn(p.values(), min, max);
+                    });
+            case LongInPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+                    (ci, i) -> {
+                        long min = StatisticsDecoder.decodeLong(ci.minValues().get(i));
+                        long max = StatisticsDecoder.decodeLong(ci.maxValues().get(i));
+                        return RowGroupFilterEvaluator.canDropLongIn(p.values(), min, max);
+                    });
+            case BinaryInPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+                    (ci, i) -> {
+                        byte[] min = ci.minValues().get(i);
+                        byte[] max = ci.maxValues().get(i);
+                        return RowGroupFilterEvaluator.canDropBinaryIn(p.values(), min, max);
                     });
             case And a -> {
                 RowRanges result = RowRanges.all(rowCount);

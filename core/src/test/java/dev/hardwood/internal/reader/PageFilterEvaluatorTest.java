@@ -479,6 +479,67 @@ class PageFilterEvaluatorTest {
                 ColumnIndex.BoundaryOrder.UNORDERED, null);
     }
 
+    @Test
+    void testIntInPageFiltering() {
+        RowRanges ranges = PageFilterEvaluator.evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
+                (ci, i) -> {
+                    int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
+                    int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
+                    return RowGroupFilterEvaluator.canDropIntIn(new int[]{ 5, 15 }, min, max);
+                });
+        assertTrue(ranges.overlapsPage(0, 30));
+        assertTrue(ranges.overlapsPage(30, 60));
+        assertFalse(ranges.overlapsPage(60, 90));
+    }
+
+    @Test
+    void testIntInPageFilteringAllOutside() {
+        RowRanges ranges = PageFilterEvaluator.evaluatePages(INT_COLUMN_INDEX, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
+                (ci, i) -> {
+                    int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
+                    int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
+                    return RowGroupFilterEvaluator.canDropIntIn(new int[]{ 50, 60 }, min, max);
+                });
+        assertFalse(ranges.overlapsPage(0, 30));
+        assertFalse(ranges.overlapsPage(30, 60));
+        assertFalse(ranges.overlapsPage(60, 90));
+    }
+
+    @Test
+    void testLongInPageFiltering() {
+        ColumnIndex longIdx = longColumnIndex(new long[]{ 100, 200, 300 }, new long[]{ 199, 299, 399 });
+        OffsetIndex oi = offsetIndex(30, 30, 30);
+
+        RowRanges ranges = PageFilterEvaluator.evaluatePages(longIdx, oi, 90,
+                (ci, i) -> {
+                    long min = StatisticsDecoder.decodeLong(ci.minValues().get(i));
+                    long max = StatisticsDecoder.decodeLong(ci.maxValues().get(i));
+                    return RowGroupFilterEvaluator.canDropLongIn(new long[]{ 150, 350 }, min, max);
+                });
+        assertTrue(ranges.overlapsPage(0, 30));
+        assertFalse(ranges.overlapsPage(30, 60));
+        assertTrue(ranges.overlapsPage(60, 90));
+    }
+
+    @Test
+    void testBinaryInPageFiltering() {
+        ColumnIndex binIdx = binaryColumnIndex(
+                List.of("apple".getBytes(StandardCharsets.UTF_8), "date".getBytes(StandardCharsets.UTF_8)),
+                List.of("cherry".getBytes(StandardCharsets.UTF_8), "fig".getBytes(StandardCharsets.UTF_8)));
+        OffsetIndex oi = offsetIndex(30, 30);
+
+        RowRanges ranges = PageFilterEvaluator.evaluatePages(binIdx, oi, 60,
+                (ci, i) -> {
+                    byte[] min = ci.minValues().get(i);
+                    byte[] max = ci.maxValues().get(i);
+                    return RowGroupFilterEvaluator.canDropBinaryIn(
+                            new byte[][]{ "banana".getBytes(StandardCharsets.UTF_8), "zebra".getBytes(StandardCharsets.UTF_8) },
+                            min, max);
+                });
+        assertTrue(ranges.overlapsPage(0, 30));
+        assertFalse(ranges.overlapsPage(30, 60));
+    }
+
     private static ColumnIndex floatColumnIndex(float[] mins, float[] maxs) {
         List<byte[]> minValues = new ArrayList<>();
         List<byte[]> maxValues = new ArrayList<>();

@@ -370,6 +370,77 @@ class FilterPredicateTest {
                 FilterPredicate.eq("nonexistent", 42), rg, schema)).isFalse();
     }
 
+    @Test
+    void testIntInPredicateCreation() {
+        FilterPredicate p = FilterPredicate.in("id", 1, 5, 10);
+        assertThat(p).isInstanceOf(FilterPredicate.IntInPredicate.class);
+        FilterPredicate.IntInPredicate ip = (FilterPredicate.IntInPredicate) p;
+        assertThat(ip.column()).isEqualTo("id");
+        assertThat(ip.values()).containsExactly(1, 5, 10);
+    }
+
+    @Test
+    void testLongInPredicateCreation() {
+        FilterPredicate p = FilterPredicate.in("ts", 100L, 200L);
+        assertThat(p).isInstanceOf(FilterPredicate.LongInPredicate.class);
+    }
+
+    @Test
+    void testStringInPredicateCreation() {
+        FilterPredicate p = FilterPredicate.inStrings("city", "NYC", "LA");
+        assertThat(p).isInstanceOf(FilterPredicate.BinaryInPredicate.class);
+    }
+
+    @Test
+    void testCanDropWithIntIn() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.in("col", 1, 5, 8), rg, schema)).isTrue();
+
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.in("col", 25, 30), rg, schema)).isTrue();
+
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.in("col", 5, 15, 25), rg, schema)).isFalse();
+
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.in("col", 1, 10), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithLongIn() {
+        RowGroup rg = createLongRowGroup(100L, 200L);
+        FileSchema schema = createLongSchema();
+
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.in("col", 50L, 80L), rg, schema)).isTrue();
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.in("col", 50L, 150L), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithStringIn() {
+        RowGroup rg = createBinaryRowGroup("banana".getBytes(), "date".getBytes());
+        FileSchema schema = createBinarySchema();
+
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.inStrings("col", "apple", "elderberry"), rg, schema)).isTrue();
+
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.inStrings("col", "apple", "cherry"), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithInMissingStatistics() {
+        RowGroup rg = createRowGroupWithoutStatistics();
+        FileSchema schema = createIntSchema();
+
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.in("col", 1, 2, 3), rg, schema)).isFalse();
+    }
+
     // ==================== Helpers ====================
 
     private static RowGroup createIntRowGroup(int min, int max) {
