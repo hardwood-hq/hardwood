@@ -206,7 +206,7 @@ class PageRangeTest {
         ColumnMetaData meta = new ColumnMetaData(
                 PhysicalType.INT64, List.of(Encoding.PLAIN), FieldPath.of("col"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(),
-                dataPageOffset, null, null);
+                dataPageOffset, null, null, null);
         return new ColumnChunk(meta, null, null, null, null);
     }
 
@@ -214,7 +214,7 @@ class PageRangeTest {
         ColumnMetaData meta = new ColumnMetaData(
                 PhysicalType.INT64, List.of(Encoding.PLAIN), FieldPath.of("col"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(),
-                dataPageOffset, dictOffset, null);
+                dataPageOffset, dictOffset, null, null);
         return new ColumnChunk(meta, null, null, null, null);
     }
 
