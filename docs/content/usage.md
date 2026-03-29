@@ -659,10 +659,10 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Statistics;
+import dev.hardwood.metadata.BoundingBox;
+import dev.hardwood.metadata.GeospatialStatistics;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ColumnSchema;
-import dev.hardwood.metadata.GeospatialStatistics;
-import dev.hardwood.metadata.BoundingBox;
 
 try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     FileMetaData metadata = reader.getFileMetaData();
@@ -708,20 +708,20 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
             }
 
             // Column geospatial statistics (if available)
-            GeospatialStatistics geospatialStats =  col.geospatialStatistics();
+            GeospatialStatistics geospatialStats = col.geospatialStatistics();
             if (geospatialStats != null) {
                 BoundingBox bbox = geospatialStats.bbox();
-                if(bbox != null) {
-                    System.out.println("xmin:" + bbox.xmin());
-                    System.out.println("xmax:" + bbox.xmax());
-                    System.out.println("ymin:" + bbox.ymin());
-                    System.out.println("ymax:" + bbox.ymax());
-                    System.out.println("zmin:" + bbox.zmin());
-                    System.out.println("zmax:" + bbox.zmax());
-                    System.out.println("mmin:" + bbox.mmin());
-                    System.out.println("mmax:" + bbox.mmax());
-                }   
-                System.out.println("geospatial types:"+ geospatialStats.geospatialTypes());
+                if (bbox != null) {
+                    System.out.println("xmin: " + bbox.xmin());
+                    System.out.println("xmax: " + bbox.xmax());
+                    System.out.println("ymin: " + bbox.ymin());
+                    System.out.println("ymax: " + bbox.ymax());
+                    System.out.println("zmin: " + bbox.zmin());
+                    System.out.println("zmax: " + bbox.zmax());
+                    System.out.println("mmin: " + bbox.mmin());
+                    System.out.println("mmax: " + bbox.mmax());
+                }
+                System.out.println("geospatial types: " + geospatialStats.geospatialTypes());
             }
         }
     }

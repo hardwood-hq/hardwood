@@ -153,7 +153,7 @@ public class ColumnMetaDataReader {
                     }
                     break;
                 case 17: // geospatial statistics (optional)
-                    if(header.type() == 0x0C) {
+                    if (header.type() == 0x0C) {
                         geospatialStatistics = GeospatialStatisticsReader.read(reader);
                     }
                     else {
