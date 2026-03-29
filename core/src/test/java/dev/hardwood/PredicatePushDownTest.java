@@ -564,4 +564,97 @@ class PredicatePushDownTest {
             assertThat(totalRows).isEqualTo(200);
         }
     }
+
+    // ==================== Record-Level Filtering ====================
+
+    @Test
+    void testRecordLevelFilterReturnsOnlyMatchingRows() throws Exception {
+        // RG1 has id 101-200. EQ filter for id=150 should return exactly 1 row.
+        // Without record-level filtering, all 100 rows from RG1 would be returned.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.eq("id", 150L);
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                    assertThat(rows.getLong("id")).isEqualTo(150L);
+                }
+                assertThat(totalRows).isEqualTo(1);
+            }
+        }
+    }
+
+    @Test
+    void testRecordLevelFilterWithRangePredicate() throws Exception {
+        // RG0: id 1-100. Filter: id > 90 AND id <= 100 → exactly 10 rows
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.and(
+                    FilterPredicate.gt("id", 90L),
+                    FilterPredicate.ltEq("id", 100L));
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                    assertThat(rows.getLong("id")).isBetween(91L, 100L);
+                }
+                assertThat(totalRows).isEqualTo(10);
+            }
+        }
+    }
+
+    @Test
+    void testRecordLevelFilterWithProjection() throws Exception {
+        // EQ filter returns 1 row; verify projected columns are accessible
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.eq("id", 250L);
+            ColumnProjection projection = ColumnProjection.columns("id", "value", "label");
+
+            try (RowReader rows = reader.createRowReader(projection, filter)) {
+                assertThat(rows.hasNext()).isTrue();
+                rows.next();
+                assertThat(rows.getLong("id")).isEqualTo(250L);
+                assertThat(rows.getLong("value")).isEqualTo(250L);
+                assertThat(rows.getString("label")).isEqualTo("rg3_250");
+
+                assertThat(rows.hasNext()).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void testRecordLevelFilterMultiFile() throws Exception {
+        // Two copies of INT_FILE. EQ filter for id=50 → 1 matching row per file = 2 total
+        List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
+        FilterPredicate filter = FilterPredicate.eq("id", 50L);
+
+        try (Hardwood hardwood = Hardwood.create();
+             MultiFileParquetReader parquet = hardwood.openAll(files);
+             MultiFileRowReader rows = parquet.createRowReader(filter)) {
+
+            int totalRows = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                totalRows++;
+                assertThat(rows.getLong("id")).isEqualTo(50L);
+            }
+            assertThat(totalRows).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void testRecordLevelFilterNoMatch() throws Exception {
+        // RG1 has id 101-200. Row-group stats keep RG1 for id > 100,
+        // but no row has id == 999. Record-level filter should return zero rows.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.eq("id", 999L);
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                assertThat(rows.hasNext()).isFalse();
+            }
+        }
+    }
 }

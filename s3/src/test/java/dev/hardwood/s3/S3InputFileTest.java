@@ -210,6 +210,26 @@ class S3InputFileTest {
     }
 
     @Test
+    void recordLevelFilteringOverS3() throws Exception {
+        // column_index_pushdown.parquet: 10000 rows, sorted id [0,9999]
+        // EQ filter for id=500 should return exactly 1 row via record-level filtering
+        FilterPredicate filter = FilterPredicate.eq("id", 500L);
+
+        try (ParquetFileReader reader = ParquetFileReader.open(
+                source.inputFile("test-bucket", "column_index_pushdown.parquet"));
+             RowReader rows = reader.createRowReader(filter)) {
+
+            int totalRows = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                totalRows++;
+                assertThat(rows.getLong("id")).isEqualTo(500L);
+            }
+            assertThat(totalRows).isEqualTo(1);
+        }
+    }
+
+    @Test
     void name() {
         S3InputFile file = source.inputFile("test-bucket", "data/file.parquet");
         assertThat(file.name()).isEqualTo("s3://test-bucket/data/file.parquet");
