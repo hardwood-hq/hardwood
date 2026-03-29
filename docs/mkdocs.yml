@@ -8,7 +8,7 @@
 
 site_name: Hardwood
 site_description: A zero-dependency Java Parquet file reader
-site_url: https://hardwood-hq.github.io/
+site_url: https://hardwood.dev/
 repo_url: https://github.com/hardwood-hq/hardwood
 repo_name: hardwood-hq/hardwood
 edit_uri: edit/main/docs/content/

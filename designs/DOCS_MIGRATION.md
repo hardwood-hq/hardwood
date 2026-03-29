@@ -29,7 +29,7 @@ before the first deploy can run. Initialize it with a README so the default bran
 1. Create a new public repository named `hardwood-hq.github.io` under the `hardwood-hq` org,
    initialized with a README (the publish workflow checks out the default branch, so it must
    exist). GitHub treats any repo named `<org>.github.io` as the organisation's root Pages
-   site, so the published URL will be `https://hardwood-hq.github.io/` — no repo subdirectory
+   site, so the published URL will be `https://hardwood.dev/` — no repo subdirectory
    prefix.
 2. After the first successful deploy (which creates the `gh-pages` branch), go to
    **Settings → Pages** and set the source to **Deploy from a branch**, branch `gh-pages`,
@@ -113,7 +113,7 @@ Place this at `docs/mkdocs.yml`:
 ```yaml
 site_name: Hardwood
 site_description: A zero-dependency Java Parquet file reader
-site_url: https://hardwood-hq.github.io/
+site_url: https://hardwood.dev/
 repo_url: https://github.com/hardwood-hq/hardwood
 repo_name: hardwood-hq/hardwood
 edit_uri: edit/main/docs/content/
@@ -473,7 +473,7 @@ Add a `.github/PULL_REQUEST_TEMPLATE.md` entry to remind contributors to update 
 After two releases the published site will have the following structure:
 
 ```
-https://hardwood-hq.github.io/
+https://hardwood.dev/
   /                    → redirects to /latest/
   /latest/             → alias for the most recent release
   /0.1.0/              → frozen snapshot of the 0.1.0 release
@@ -483,8 +483,7 @@ https://hardwood-hq.github.io/
   /api/0.2.0/          → JavaDoc for 0.2.0
 ```
 
-If a custom domain is configured, replace `hardwood-hq.github.io` with that domain throughout,
-and update `site_url` in `mkdocs.yml` accordingly.
+The custom domain `hardwood.dev` is configured and used as the canonical site URL.
 
 ---
 

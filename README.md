@@ -1,7 +1,7 @@
 # Hardwood
 
 _A parser for the Apache Parquet file format, optimized for minimal dependencies and great performance.
-Available as a Java library and a [command-line tool](https://hardwood-hq.github.io/latest/cli/)._
+Available as a Java library and a [command-line tool](https://hardwood.dev/latest/cli/)._
 
 Goals of the project are:
 
@@ -14,7 +14,7 @@ Latest version: 1.0.0.Alpha1, 2026-02-26
 
 ## Documentation
 
-Full documentation is available at **[hardwood-hq.github.io](https://hardwood-hq.github.io/)**.
+Full documentation is available at **[hardwood.dev](https://hardwood.dev/)**.
 
 ## Quick Start
 
@@ -45,7 +45,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-See the [Getting Started](https://hardwood-hq.github.io/latest/getting-started/) guide for detailed setup instructions.
+See the [Getting Started](https://hardwood.dev/latest/getting-started/) guide for detailed setup instructions.
 
 ---
 

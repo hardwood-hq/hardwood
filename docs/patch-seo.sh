@@ -24,7 +24,7 @@ set -euo pipefail
 #
 # Usage: patch-seo.sh <site-url>
 #   Run from the root of a gh-pages checkout.
-#   Example: patch-seo.sh https://hardwood-hq.github.io
+#   Example: patch-seo.sh https://hardwood.dev
 
 SITE_URL="${1:?Usage: patch-seo.sh <site-url>}"
 SITE_URL="${SITE_URL%/}"  # strip trailing slash
