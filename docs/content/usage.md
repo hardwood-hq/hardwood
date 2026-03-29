@@ -13,6 +13,15 @@
 
 For detailed class-level documentation, see the [JavaDoc](/api/latest/).
 
+## Choosing a Reader
+
+Hardwood provides two reader APIs:
+
+- **`RowReader`** — row-oriented access with typed getters, including nested structs, lists, and maps. Best for general-purpose reading where you process one row at a time.
+- **`ColumnReader`** — batch-oriented columnar access with typed primitive arrays. Best for analytical workloads where you process columns independently (e.g. summing a column, computing statistics).
+
+Both support column projection and predicate pushdown. For reading multiple files as a single dataset, use `MultiFileRowReader` or `MultiFileColumnReaders` via the `Hardwood` class.
+
 ## Row-Oriented Reading
 
 The `RowReader` provides a convenient row-oriented interface for reading Parquet files with typed accessor methods for type-safe field access.
@@ -124,24 +133,26 @@ All accessor methods are available in two forms:
 - **Name-based** (e.g., `getInt("column_name")`) — convenient for ad-hoc access
 - **Index-based** (e.g., `getInt(columnIndex)`) — faster for performance-critical loops
 
-| Method | Physical/Logical Type | Java Type |
-|--------|----------------------|-----------|
-| `getBoolean(name)` / `getBoolean(index)` | BOOLEAN | `boolean` |
-| `getInt(name)` / `getInt(index)` | INT32 | `int` |
-| `getLong(name)` / `getLong(index)` | INT64 | `long` |
-| `getFloat(name)` / `getFloat(index)` | FLOAT | `float` |
-| `getDouble(name)` / `getDouble(index)` | DOUBLE | `double` |
-| `getBinary(name)` / `getBinary(index)` | BYTE_ARRAY | `byte[]` |
-| `getString(name)` / `getString(index)` | STRING logical type | `String` |
-| `getDate(name)` / `getDate(index)` | DATE logical type | `LocalDate` |
-| `getTime(name)` / `getTime(index)` | TIME logical type | `LocalTime` |
-| `getTimestamp(name)` / `getTimestamp(index)` | TIMESTAMP logical type | `Instant` |
-| `getDecimal(name)` / `getDecimal(index)` | DECIMAL logical type | `BigDecimal` |
-| `getUuid(name)` / `getUuid(index)` | UUID logical type | `UUID` |
-| `getStruct(name)` | Nested struct | `PqStruct` |
-| `getList(name)` | LIST logical type | `PqList` |
-| `getMap(name)` | MAP logical type | `PqMap` |
-| `isNull(name)` / `isNull(index)` | Any | `boolean` |
+| Method | Physical Type | Logical Type | Java Type |
+|--------|--------------|-------------|-----------|
+| `getBoolean` | BOOLEAN | | `boolean` |
+| `getInt` | INT32 | | `int` |
+| `getLong` | INT64 | | `long` |
+| `getFloat` | FLOAT | | `float` |
+| `getDouble` | DOUBLE | | `double` |
+| `getBinary` | BYTE_ARRAY | | `byte[]` |
+| `getString` | BYTE_ARRAY | STRING | `String` |
+| `getDate` | INT32 | DATE | `LocalDate` |
+| `getTime` | INT32 or INT64 | TIME | `LocalTime` |
+| `getTimestamp` | INT64 | TIMESTAMP | `Instant` |
+| `getDecimal` | INT32, INT64, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
+| `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
+| `getStruct` | | | `PqStruct` |
+| `getList` | | LIST | `PqList` |
+| `getMap` | | MAP | `PqMap` |
+| `isNull` | Any | Any | `boolean` |
+
+All methods are available as both `method(name)` and `method(index)`, except `getStruct`, `getList`, and `getMap` which are name-based only.
 
 **Index-based access example:**
 
@@ -158,6 +169,8 @@ while (rowReader.hasNext()) {
     }
 }
 ```
+
+**Null handling:** Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
 
 **Type validation:** The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
 
@@ -193,7 +206,9 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`.
 Supported types: `int`, `long`, `float`, `double`, `boolean`, `String` (comparison operators); `int`, `long`, `String` (`in`/`inStrings`).
-Logical combinators: `and`, `or`, `not`.
+Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions.
+
+Filtering operates on the physical column type. Logical types like DATE (stored as INT32) and TIMESTAMP (stored as INT64) are filtered using their underlying physical type — for example, filter a DATE column with `FilterPredicate.gt("date_col", 19000)` (days since epoch).
 
 Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file readers.
 
@@ -232,6 +247,27 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 - `ColumnProjection.columns("address")` — select an entire struct and all its children
 - `ColumnProjection.columns("address.city")` — select a specific nested field (dot notation)
 
+### Combining Projection and Filters
+
+Column projection and predicate pushdown can be used together:
+
+```java
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     RowReader rowReader = fileReader.createRowReader(
+         ColumnProjection.columns("id", "name", "salary"),
+         FilterPredicate.gtEq("salary", 50000L))) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+        long id = rowReader.getLong("id");
+        String name = rowReader.getString("name");
+        long salary = rowReader.getLong("salary");
+    }
+}
+```
+
+The filter column does not need to be in the projection — Hardwood reads the filter column's statistics for pushdown regardless.
+
 ## Reading Multiple Files
 
 When processing multiple Parquet files, use the `Hardwood` class to share a thread pool across readers.
@@ -266,6 +302,18 @@ try (Hardwood hardwood = Hardwood.create();
 ```
 
 The `MultiFileRowReader` provides cross-file prefetching: when pages from file N are running low, pages from file N+1 are already being prefetched. This eliminates I/O stalls at file boundaries.
+
+By default, `Hardwood.create()` sizes the thread pool to the number of available processors. For custom thread pool sizing, use `HardwoodContext` directly:
+
+```java
+import dev.hardwood.HardwoodContext;
+
+try (HardwoodContext context = HardwoodContext.create(4);  // 4 threads
+     ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path), context);
+     RowReader rowReader = reader.createRowReader()) {
+    // ...
+}
+```
 
 **With column projection:**
 
@@ -384,7 +432,13 @@ try (ColumnReader reader = fileReader.createColumnReader("tags")) {
 
 ## Accessing File Metadata
 
-File metadata can be inspected without reading any row data:
+Inspecting metadata before reading is useful for understanding file structure, choosing which columns to project, validating files in a pipeline, or building tooling. Hardwood exposes the full Parquet metadata hierarchy without reading any row data.
+
+A Parquet file is organized as follows:
+
+- **FileMetaData** — top-level: row count, schema, key-value metadata (e.g. Spark schema, pandas metadata), and the writer that produced the file (`createdBy`)
+- **RowGroup** — a horizontal partition of the data; each row group contains all columns for a subset of rows
+- **ColumnChunk** — one column within a row group; holds compression codec, byte sizes, and optional statistics (min/max values, null count) used for predicate pushdown
 
 ```java
 import dev.hardwood.metadata.FileMetaData;
@@ -441,4 +495,17 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     }
 }
 ```
+
+## Error Handling
+
+Hardwood throws specific exceptions for common error conditions:
+
+| Exception | When |
+|-----------|------|
+| `IOException` | File is not a valid Parquet file (invalid magic number, corrupt footer) |
+| `UnsupportedOperationException` | Compression codec library not on classpath — the message names the required dependency |
+| `IllegalArgumentException` | Accessing a column not in the projection, type mismatch on accessor, or invalid column name |
+| `NullPointerException` | Calling a primitive accessor (`getInt`, `getLong`, etc.) on a null field without checking `isNull()` first |
+| `NoSuchElementException` | Calling `next()` on a `RowReader` when `hasNext()` returns `false` |
+| `IllegalStateException` | Calling `ColumnReader` accessors before `nextBatch()`, or calling nested-column methods on a flat column |
 

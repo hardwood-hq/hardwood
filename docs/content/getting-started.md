@@ -137,3 +137,27 @@ implementation 'org.xerial.snappy:snappy-java'
     ```
 
 If you attempt to read a file using a compression codec whose library is not on the classpath, Hardwood will throw an exception with a message indicating which dependency to add.
+
+## First Read
+
+With the core dependency in place, read a Parquet file:
+
+```java
+import dev.hardwood.InputFile;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
+
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+    RowReader rowReader = fileReader.createRowReader()) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+
+        long id = rowReader.getLong("id");
+        String name = rowReader.getString("name");
+        System.out.println(id + ": " + name);
+    }
+}
+```
+
+See [Usage](usage.md) for the full API reference including column projection, predicate pushdown, column-oriented reading, and more.

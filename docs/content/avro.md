@@ -11,7 +11,7 @@
 -->
 # Avro Support
 
-The `hardwood-avro` module reads Parquet files into Avro `GenericRecord` instances, the most common record representation for Parquet data in the JVM ecosystem. Add it alongside `hardwood-core`:
+If your application already works with Avro records — for instance in a Kafka or Spark pipeline — you can read Parquet files directly into `GenericRecord` instances instead of using Hardwood's own row API. The `hardwood-avro` module handles the schema conversion and record materialization, matching the behavior of parquet-java's `AvroReadSupport`. Add it alongside `hardwood-core`:
 
 ```xml
 <dependency>
