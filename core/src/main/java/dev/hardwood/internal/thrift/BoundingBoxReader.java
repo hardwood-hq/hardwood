@@ -13,6 +13,7 @@ import dev.hardwood.metadata.BoundingBox;
 
 /// Reader for the Thrift BoundingBox struct from Parquet metadata.
 public class BoundingBoxReader {
+
     public static BoundingBox read(ThriftCompactReader reader) throws IOException {
         short saved = reader.pushFieldIdContext();
         try {
@@ -24,15 +25,16 @@ public class BoundingBoxReader {
     }
 
     private static BoundingBox readInternal(ThriftCompactReader reader) throws IOException {
-        double xmin = Double.NaN;
-        double xmax = Double.NaN;
-        double ymin = Double.NaN;
-        double ymax = Double.NaN;
+        double xmin = 0;
+        double xmax = 0;
+        double ymin = 0;
+        double ymax = 0;
         Double zmin = null;
         Double zmax = null;
         Double mmin = null;
         Double mmax = null;
-        while(true) {
+
+        while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
             if (header == null) {
                 break;
@@ -40,57 +42,75 @@ public class BoundingBoxReader {
 
             switch (header.fieldId()) {
                 case 1:
-                    xmin = readRequiredField(header, reader);
+                    if (header.type() == 0x07) {
+                        xmin = reader.readDouble();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 2:
-                    xmax = readRequiredField(header, reader);
+                    if (header.type() == 0x07) {
+                        xmax = reader.readDouble();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 3:
-                    ymin = readRequiredField(header, reader);
+                    if (header.type() == 0x07) {
+                        ymin = reader.readDouble();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 4:
-                    ymax = readRequiredField(header, reader);
+                    if (header.type() == 0x07) {
+                        ymax = reader.readDouble();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 5:
-                    zmin = readOptionalField(header, reader);
+                    if (header.type() == 0x07) {
+                        zmin = reader.readDouble();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 6:
-                    zmax = readOptionalField(header, reader);
+                    if (header.type() == 0x07) {
+                        zmax = reader.readDouble();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 7:
-                    mmin = readOptionalField(header, reader);
+                    if (header.type() == 0x07) {
+                        mmin = reader.readDouble();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 8:
-                    mmax = readOptionalField(header, reader);
+                    if (header.type() == 0x07) {
+                        mmax = reader.readDouble();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 default:
                     reader.skipField(header.type());
                     break;
             }
         }
-        if(Double.isNaN(xmin) || Double.isNaN(xmax) || Double.isNaN(ymin) || Double.isNaN((ymax)))
-            return null;
-        else
-            return new BoundingBox(xmin, xmax, ymin, ymax, zmin, zmax, mmin, mmax);
-    }
 
-    private static double readRequiredField(ThriftCompactReader.FieldHeader header, ThriftCompactReader reader) throws IOException {
-        if(header.type() == 0x07) {
-            return reader.readDouble();
-        }
-        else {
-            reader.skipField(header.type());
-            return Double.NaN;
-        }
-    }
-
-    private static Double readOptionalField(ThriftCompactReader.FieldHeader header, ThriftCompactReader reader) throws IOException {
-        if(header.type() == 0x07) {
-            return reader.readDouble();
-        }
-        else {
-            reader.skipField(header.type());
-            return null;
-        }
+        return new BoundingBox(xmin, xmax, ymin, ymax, zmin, zmax, mmin, mmax);
     }
 }

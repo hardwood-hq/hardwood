@@ -7,6 +7,7 @@
  */
 package dev.hardwood;
 
+import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -24,7 +25,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 public class GeospatialStatisticsTest {
 
     @Test
-    public void testGeospatialStatisticsAreReadCorrectly() throws Exception {
+    public void testGeospatialStatisticsAreReadCorrectly() throws IOException {
         Path parquetFile = Paths.get("src/test/resources/geospatial_stats_test.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
@@ -35,7 +36,7 @@ public class GeospatialStatisticsTest {
             assertThat(rg0.columns().get(0).metaData().geospatialStatistics()).isNull();
             ColumnChunk cc = rg0.columns().get(1);
             ColumnMetaData md = cc.metaData();
-            GeospatialStatistics geospatialStatistics =  md.geospatialStatistics();
+            GeospatialStatistics geospatialStatistics = md.geospatialStatistics();
             assertThat(geospatialStatistics).isNotNull();
             assertThat(geospatialStatistics.bbox().xmin()).isEqualTo(-4.0);
             assertThat(geospatialStatistics.bbox().xmax()).isEqualTo(7.5);
@@ -45,7 +46,7 @@ public class GeospatialStatisticsTest {
             assertThat(geospatialStatistics.bbox().zmax()).isEqualTo(90.0);
             assertThat(geospatialStatistics.bbox().mmin()).isNull();
             assertThat(geospatialStatistics.bbox().mmax()).isNull();
-            assertThat(geospatialStatistics.geospatialTypes().size()).isEqualTo(2);
+            assertThat(geospatialStatistics.geospatialTypes()).hasSize(2);
             assertThat(geospatialStatistics.geospatialTypes()).containsExactly(1, 6);
         }
     }
