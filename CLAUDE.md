@@ -19,6 +19,8 @@ Design documents describe the intended end state. Do not include references to t
 
 # Coding
 
+Correctness is a top priority. Adhere to the "fail early" principle: validate inputs, check types, and throw on misuse rather than silently producing wrong results. Silent failures are never an option.
+When fixing issues which are bug reports, start with a test case which is failing. Then fix the bug and assert the test passes.
 When adding or changing public APIs, update the usage documentation under docs/ accordingly.
 Minimize the surface of the public API, only make user-facing what needs to be user-facing. Keep anything else in an `internal` package.
 Similarly, only expose configuration options truly needed in the CLI.

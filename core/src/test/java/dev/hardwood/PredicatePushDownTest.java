@@ -23,6 +23,7 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class PredicatePushDownTest {
 
@@ -487,6 +488,41 @@ class PredicatePushDownTest {
              MultiFileRowReader rows = parquet.createRowReader(filter)) {
 
             assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
+    // ==================== Type mismatch ====================
+
+    @Test
+    void intPredicateOnStringColumnThrowsAtReaderCreation() throws Exception {
+        // "name" is a STRING (BYTE_ARRAY) column; applying an int predicate must fail immediately
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
+            assertThatThrownBy(() -> reader.createRowReader(FilterPredicate.eq("name", 42)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Column 'name' has physical type BYTE_ARRAY"
+                            + "; given filter predicate type INT32 is incompatible");
+        }
+    }
+
+    @Test
+    void stringPredicateOnIntColumnThrowsAtReaderCreation() throws Exception {
+        // "id" is an INT32 column; applying a string predicate must fail immediately
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
+            assertThatThrownBy(() -> reader.createRowReader(FilterPredicate.eq("id", "hello")))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Column 'id' has physical type INT32"
+                            + "; given filter predicate type BYTE_ARRAY is incompatible");
+        }
+    }
+
+    @Test
+    void longPredicateOnDoubleColumnThrowsAtReaderCreation() throws Exception {
+        // "price" is a DOUBLE column; applying a long predicate must fail immediately
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
+            assertThatThrownBy(() -> reader.createColumnReader("price", FilterPredicate.gt("price", 100L)))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessage("Column 'price' has physical type DOUBLE"
+                            + "; given filter predicate type INT64 is incompatible");
         }
     }
 

@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.List;
 
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate;
@@ -73,12 +74,19 @@ public class RowGroupFilterEvaluator {
         };
     }
 
-    private static Statistics findStatistics(String columnName, RowGroup rowGroup, FileSchema schema) {
+    private static Statistics findStatistics(String columnName, PhysicalType expectedType,
+            RowGroup rowGroup, FileSchema schema) {
         int columnIndex = resolveColumnIndex(columnName, rowGroup, schema);
         if (columnIndex < 0) {
             return null;
         }
         ColumnChunk chunk = rowGroup.columns().get(columnIndex);
+        PhysicalType actualType = chunk.metaData().type();
+        if (actualType != expectedType) {
+            throw new IllegalArgumentException(
+                    "Column '" + columnName + "' has physical type " + actualType
+                            + "; given filter predicate type " + expectedType + " is incompatible");
+        }
         return chunk.metaData().statistics();
     }
 
@@ -127,7 +135,7 @@ public class RowGroupFilterEvaluator {
     // ==================== INT32 ====================
 
     private static boolean evaluateInt(IntColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        Statistics stats = findStatistics(p.column(), PhysicalType.INT32, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
@@ -140,7 +148,7 @@ public class RowGroupFilterEvaluator {
     // ==================== INT64 ====================
 
     private static boolean evaluateLong(LongColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        Statistics stats = findStatistics(p.column(), PhysicalType.INT64, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
@@ -153,7 +161,7 @@ public class RowGroupFilterEvaluator {
     // ==================== FLOAT ====================
 
     private static boolean evaluateFloat(FloatColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        Statistics stats = findStatistics(p.column(), PhysicalType.FLOAT, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
@@ -166,7 +174,7 @@ public class RowGroupFilterEvaluator {
     // ==================== DOUBLE ====================
 
     private static boolean evaluateDouble(DoubleColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        Statistics stats = findStatistics(p.column(), PhysicalType.DOUBLE, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
@@ -179,7 +187,7 @@ public class RowGroupFilterEvaluator {
     // ==================== BOOLEAN ====================
 
     private static boolean evaluateBoolean(BooleanColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        Statistics stats = findStatistics(p.column(), PhysicalType.BOOLEAN, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
@@ -195,7 +203,7 @@ public class RowGroupFilterEvaluator {
     // ==================== BINARY (byte[]) ====================
 
     private static boolean evaluateBinary(BinaryColumnPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        Statistics stats = findStatistics(p.column(), PhysicalType.BYTE_ARRAY, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
@@ -209,7 +217,7 @@ public class RowGroupFilterEvaluator {
     }
 
     private static boolean evaluateIntIn(IntInPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        Statistics stats = findStatistics(p.column(), PhysicalType.INT32, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
@@ -219,7 +227,7 @@ public class RowGroupFilterEvaluator {
     }
 
     private static boolean evaluateLongIn(LongInPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        Statistics stats = findStatistics(p.column(), PhysicalType.INT64, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
@@ -229,7 +237,7 @@ public class RowGroupFilterEvaluator {
     }
 
     private static boolean evaluateBinaryIn(BinaryInPredicate p, RowGroup rowGroup, FileSchema schema) {
-        Statistics stats = findStatistics(p.column(), rowGroup, schema);
+        Statistics stats = findStatistics(p.column(), PhysicalType.BYTE_ARRAY, rowGroup, schema);
         if (stats == null || stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }

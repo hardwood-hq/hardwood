@@ -17,6 +17,7 @@ import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.And;
@@ -61,38 +62,38 @@ public class PageFilterEvaluator {
     private static RowRanges evaluate(FilterPredicate predicate, RowGroup rowGroup,
             FileSchema schema, RowGroupIndexBuffers indexBuffers, long rowCount) {
         return switch (predicate) {
-            case IntColumnPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+            case IntColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.INT32, rowGroup, schema, indexBuffers, rowCount,
                     (ci, i) -> {
                         int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
                         int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
                         return RowGroupFilterEvaluator.canDrop(p.op(), p.value(), min, max);
                     });
-            case LongColumnPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+            case LongColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.INT64, rowGroup, schema, indexBuffers, rowCount,
                     (ci, i) -> {
                         long min = StatisticsDecoder.decodeLong(ci.minValues().get(i));
                         long max = StatisticsDecoder.decodeLong(ci.maxValues().get(i));
                         return RowGroupFilterEvaluator.canDrop(p.op(), p.value(), min, max);
                     });
-            case FloatColumnPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+            case FloatColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.FLOAT, rowGroup, schema, indexBuffers, rowCount,
                     (ci, i) -> {
                         float min = StatisticsDecoder.decodeFloat(ci.minValues().get(i));
                         float max = StatisticsDecoder.decodeFloat(ci.maxValues().get(i));
                         return RowGroupFilterEvaluator.canDropFloat(p.op(), p.value(), min, max);
                     });
-            case DoubleColumnPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+            case DoubleColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.DOUBLE, rowGroup, schema, indexBuffers, rowCount,
                     (ci, i) -> {
                         double min = StatisticsDecoder.decodeDouble(ci.minValues().get(i));
                         double max = StatisticsDecoder.decodeDouble(ci.maxValues().get(i));
                         return RowGroupFilterEvaluator.canDropDouble(p.op(), p.value(), min, max);
                     });
-            case BooleanColumnPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+            case BooleanColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.BOOLEAN, rowGroup, schema, indexBuffers, rowCount,
                     (ci, i) -> {
                         int min = StatisticsDecoder.decodeBoolean(ci.minValues().get(i)) ? 1 : 0;
                         int max = StatisticsDecoder.decodeBoolean(ci.maxValues().get(i)) ? 1 : 0;
                         int value = p.value() ? 1 : 0;
                         return RowGroupFilterEvaluator.canDrop(p.op(), value, min, max);
                     });
-            case BinaryColumnPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+            case BinaryColumnPredicate p -> evaluateLeaf(p.column(), PhysicalType.BYTE_ARRAY, rowGroup, schema, indexBuffers, rowCount,
                     (ci, i) -> {
                         byte[] min = ci.minValues().get(i);
                         byte[] max = ci.maxValues().get(i);
@@ -101,19 +102,19 @@ public class PageFilterEvaluator {
                         return RowGroupFilterEvaluator.canDropCompared(p.op(), cmpMin, cmpMax,
                                 StatisticsDecoder.compareBinary(min, max));
                     });
-            case IntInPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+            case IntInPredicate p -> evaluateLeaf(p.column(), PhysicalType.INT32, rowGroup, schema, indexBuffers, rowCount,
                     (ci, i) -> {
                         int min = StatisticsDecoder.decodeInt(ci.minValues().get(i));
                         int max = StatisticsDecoder.decodeInt(ci.maxValues().get(i));
                         return RowGroupFilterEvaluator.canDropIntIn(p.values(), min, max);
                     });
-            case LongInPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+            case LongInPredicate p -> evaluateLeaf(p.column(), PhysicalType.INT64, rowGroup, schema, indexBuffers, rowCount,
                     (ci, i) -> {
                         long min = StatisticsDecoder.decodeLong(ci.minValues().get(i));
                         long max = StatisticsDecoder.decodeLong(ci.maxValues().get(i));
                         return RowGroupFilterEvaluator.canDropLongIn(p.values(), min, max);
                     });
-            case BinaryInPredicate p -> evaluateLeaf(p.column(), rowGroup, schema, indexBuffers, rowCount,
+            case BinaryInPredicate p -> evaluateLeaf(p.column(), PhysicalType.BYTE_ARRAY, rowGroup, schema, indexBuffers, rowCount,
                     (ci, i) -> {
                         byte[] min = ci.minValues().get(i);
                         byte[] max = ci.maxValues().get(i);
@@ -140,13 +141,19 @@ public class PageFilterEvaluator {
 
     /// Evaluates a leaf predicate against the Column Index for a single column,
     /// producing RowRanges for pages that cannot be dropped.
-    private static RowRanges evaluateLeaf(String columnName, RowGroup rowGroup,
-            FileSchema schema, RowGroupIndexBuffers indexBuffers, long rowCount,
-            PageCanDropTest canDropTest) {
+    private static RowRanges evaluateLeaf(String columnName, PhysicalType expectedType,
+            RowGroup rowGroup, FileSchema schema, RowGroupIndexBuffers indexBuffers,
+            long rowCount, PageCanDropTest canDropTest) {
 
         int columnIndex = RowGroupFilterEvaluator.resolveColumnIndex(columnName, rowGroup, schema);
         if (columnIndex < 0) {
             return RowRanges.all(rowCount);
+        }
+        PhysicalType actualType = rowGroup.columns().get(columnIndex).metaData().type();
+        if (actualType != expectedType) {
+            throw new IllegalArgumentException(
+                    "Column '" + columnName + "' has physical type " + actualType
+                            + "; given filter predicate type " + expectedType + " is incompatible");
         }
 
         ColumnIndexBuffers colBuffers = indexBuffers.forColumn(columnIndex);

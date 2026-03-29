@@ -29,6 +29,7 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class FilterPredicateTest {
 
@@ -439,6 +440,97 @@ class FilterPredicateTest {
 
         assertThat(RowGroupFilterEvaluator.canDropRowGroup(
                 FilterPredicate.in("col", 1, 2, 3), rg, schema)).isFalse();
+    }
+
+    // ==================== Type Mismatch Tests ====================
+
+    @Test
+    void intPredicateOnStringColumnThrows() {
+        RowGroup rg = createBinaryRowGroup(new byte[]{0x41}, new byte[]{0x5A});
+        FileSchema schema = createBinarySchema();
+        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.eq("col", 42), rg, schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' has physical type BYTE_ARRAY"
+                        + "; given filter predicate type INT32 is incompatible");
+    }
+
+    @Test
+    void longPredicateOnIntColumnThrows() {
+        RowGroup rg = createIntRowGroup(0, 100);
+        FileSchema schema = createIntSchema();
+        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.gt("col", 50L), rg, schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' has physical type INT32"
+                        + "; given filter predicate type INT64 is incompatible");
+    }
+
+    @Test
+    void floatPredicateOnDoubleColumnThrows() {
+        RowGroup rg = createDoubleRowGroup(0.0, 100.0);
+        FileSchema schema = createDoubleSchema();
+        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.gt("col", 50.0f), rg, schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' has physical type DOUBLE"
+                        + "; given filter predicate type FLOAT is incompatible");
+    }
+
+    @Test
+    void stringPredicateOnIntColumnThrows() {
+        RowGroup rg = createIntRowGroup(0, 100);
+        FileSchema schema = createIntSchema();
+        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.eq("col", "hello"), rg, schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' has physical type INT32"
+                        + "; given filter predicate type BYTE_ARRAY is incompatible");
+    }
+
+    @Test
+    void booleanPredicateOnLongColumnThrows() {
+        RowGroup rg = createLongRowGroup(0, 100);
+        FileSchema schema = createLongSchema();
+        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.eq("col", true), rg, schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' has physical type INT64"
+                        + "; given filter predicate type BOOLEAN is incompatible");
+    }
+
+    @Test
+    void intInPredicateOnStringColumnThrows() {
+        RowGroup rg = createBinaryRowGroup(new byte[]{0x41}, new byte[]{0x5A});
+        FileSchema schema = createBinarySchema();
+        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.in("col", 1, 2, 3), rg, schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' has physical type BYTE_ARRAY"
+                        + "; given filter predicate type INT32 is incompatible");
+    }
+
+    @Test
+    void typeMismatchInAndThrows() {
+        RowGroup rg = createBinaryRowGroup(new byte[]{0x41}, new byte[]{0x7A});
+        FileSchema schema = createBinarySchema();
+        // First predicate matches (cannot drop), so And evaluates the second — which has wrong type
+        FilterPredicate filter = FilterPredicate.and(
+                FilterPredicate.eq("col", "M"),
+                FilterPredicate.eq("col", 42));
+        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(filter, rg, schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Column 'col' has physical type BYTE_ARRAY"
+                        + "; given filter predicate type INT32 is incompatible");
+    }
+
+    @Test
+    void predicateOnUnknownColumnDoesNotThrow() {
+        RowGroup rg = createIntRowGroup(0, 100);
+        FileSchema schema = createIntSchema();
+        // Unknown column => cannot drop (conservative), no exception
+        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+                FilterPredicate.eq("nonexistent", 42), rg, schema)).isFalse();
     }
 
     // ==================== Helpers ====================
