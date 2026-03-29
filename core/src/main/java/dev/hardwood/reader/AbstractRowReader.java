@@ -16,6 +16,7 @@ import java.util.UUID;
 
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.FlatColumnData;
+import dev.hardwood.internal.reader.RecordFilterEvaluator;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
@@ -147,17 +148,20 @@ abstract class AbstractRowReader implements RowReader {
             if (!exhausted) {
                 cacheFlatBatch();
             }
-            // Re-check after initialization since it loads the first batch
-            return !exhausted && rowIndex + 1 < batchSize;
+            if (exhausted) {
+                return false;
+            }
+            // After initialization, find the first matching row
+            return hasNextMatch();
         }
         if (rowIndex + 1 < batchSize) {
-            return true;
+            return hasNextMatch();
         }
         boolean loaded = loadNextBatch();
         if (loaded) {
             cacheFlatBatch();
         }
-        return loaded;
+        return loaded && hasNextMatch();
     }
 
     @Override
@@ -166,8 +170,58 @@ abstract class AbstractRowReader implements RowReader {
             initialize();
             cacheFlatBatch();
         }
-        rowIndex++;
+        if (nextMatchIndex >= 0) {
+            // hasNext() already found the next matching row
+            rowIndex = nextMatchIndex;
+            nextMatchIndex = -1;
+        }
+        else if (isRecordFilterActive()) {
+            // next() called without hasNext() — scan for next match
+            hasNextMatch();
+            rowIndex = nextMatchIndex;
+            nextMatchIndex = -1;
+        }
+        else {
+            rowIndex++;
+        }
         dataView.setRowIndex(rowIndex);
+    }
+
+    /// Index of the next row that passes the record-level filter.
+    /// Set by `hasNextMatch()`, consumed by `next()`.
+    private int nextMatchIndex = -1;
+
+    /// Scans forward from `rowIndex + 1` to find the next row matching the filter.
+    /// Loads new batches as needed. Returns true if a match is found.
+    private boolean hasNextMatch() {
+        if (!isRecordFilterActive()) {
+            nextMatchIndex = rowIndex + 1;
+            return nextMatchIndex < batchSize;
+        }
+
+        int candidate = rowIndex + 1;
+        while (true) {
+            while (candidate < batchSize) {
+                if (RecordFilterEvaluator.matches(filterPredicate, candidate,
+                        flatValueArrays, flatNulls, nameCache)) {
+                    nextMatchIndex = candidate;
+                    return true;
+                }
+                candidate++;
+            }
+            // Current batch exhausted — load next
+            if (!loadNextBatch()) {
+                exhausted = true;
+                return false;
+            }
+            cacheFlatBatch();
+            candidate = 0;
+        }
+    }
+
+    /// Returns true if record-level filtering is active and usable.
+    private boolean isRecordFilterActive() {
+        return filterPredicate != null && flatFastPath && nameCache != null;
     }
 
     // ==================== Primitive Type Accessors ====================
