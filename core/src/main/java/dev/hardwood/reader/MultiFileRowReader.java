@@ -57,14 +57,17 @@ public class MultiFileRowReader extends AbstractRowReader {
     /// @param context the Hardwood context
     /// @param fileManager the shared file manager
     /// @param initResult the initialization result from the first file
+    /// @param filterPredicate predicate for record-level filtering, or `null` for no filtering
     MultiFileRowReader(HardwoodContextImpl context,
-                       FileManager fileManager, FileManager.InitResult initResult) {
+                       FileManager fileManager, FileManager.InitResult initResult,
+                       FilterPredicate filterPredicate) {
         this.context = context;
         this.fileManager = fileManager;
         this.initResult = initResult;
         this.schema = initResult.schema();
         this.projectedSchema = initResult.projectedSchema();
         this.adaptiveBatchSize = computeOptimalBatchSize(projectedSchema);
+        this.filterPredicate = filterPredicate;
 
         LOG.log(System.Logger.Level.DEBUG, "Created MultiFileRowReader starting with {0}, {1} projected columns",
                 fileManager.getFileName(0), projectedSchema.getProjectedColumnCount());

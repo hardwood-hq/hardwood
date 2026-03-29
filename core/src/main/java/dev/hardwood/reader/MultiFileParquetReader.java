@@ -83,16 +83,16 @@ public class MultiFileParquetReader implements AutoCloseable {
     /// @param projection specifies which columns to read
     public MultiFileRowReader createRowReader(ColumnProjection projection) {
         FileManager.InitResult initResult = fileManager.initialize(projection);
-        return new MultiFileRowReader(context, fileManager, initResult);
+        return new MultiFileRowReader(context, fileManager, initResult, null);
     }
 
     /// Create a row reader that iterates over selected columns in only matching row groups.
     ///
     /// @param projection specifies which columns to read
-    /// @param filter predicate for row group filtering based on statistics
+    /// @param filter predicate for row group and record-level filtering
     public MultiFileRowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
         FileManager.InitResult initResult = fileManager.initialize(projection, filter);
-        return new MultiFileRowReader(context, fileManager, initResult);
+        return new MultiFileRowReader(context, fileManager, initResult, filter);
     }
 
     /// Create column readers for batch-oriented access to the requested columns.

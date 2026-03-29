@@ -31,6 +31,7 @@ import dev.hardwood.schema.ProjectedSchema;
 abstract class AbstractRowReader implements RowReader {
 
     protected BatchDataView dataView;
+    protected FilterPredicate filterPredicate;
 
     // Iteration state shared by all row readers
     protected int rowIndex = -1;

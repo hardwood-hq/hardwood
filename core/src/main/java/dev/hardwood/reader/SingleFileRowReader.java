@@ -56,7 +56,6 @@ final class SingleFileRowReader extends AbstractRowReader {
     private final List<RowGroup> rowGroups;
     private final HardwoodContextImpl context;
     private final int adaptiveBatchSize;
-    private final FilterPredicate filterPredicate;
 
     private ColumnValueIterator[] iterators;
     private int[][] levelNullThresholds; // [projectedCol] -> thresholds for nested columns
