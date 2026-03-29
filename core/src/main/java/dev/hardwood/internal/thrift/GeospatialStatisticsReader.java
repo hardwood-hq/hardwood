@@ -31,7 +31,7 @@ public class GeospatialStatisticsReader {
         BoundingBox bbox = null;
         List<Integer> geospatialTypes = new ArrayList<>();
 
-        while(true) {
+        while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
             if (header == null) {
                 break;
@@ -39,7 +39,7 @@ public class GeospatialStatisticsReader {
 
             switch (header.fieldId()) {
                 case 1:
-                    if(header.type() == 0x0C) {
+                    if (header.type() == 0x0C) {
                         bbox = BoundingBoxReader.read(reader);
                     }
                     else {
@@ -47,7 +47,7 @@ public class GeospatialStatisticsReader {
                     }
                     break;
                 case 2:
-                    if(header.type() == 0x09) {
+                    if (header.type() == 0x09) {
                         ThriftCompactReader.CollectionHeader listHeader = reader.readListHeader();
                         for (int i = 0; i < listHeader.size(); i++) {
                             geospatialTypes.add(reader.readI32());
