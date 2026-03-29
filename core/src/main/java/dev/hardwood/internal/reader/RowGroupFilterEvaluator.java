@@ -215,12 +215,7 @@ public class RowGroupFilterEvaluator {
         }
         int min = StatisticsDecoder.decodeInt(stats.minValue());
         int max = StatisticsDecoder.decodeInt(stats.maxValue());
-        for (int value : p.values()) {
-            if (value >= min && value <= max) {
-                return false;
-            }
-        }
-        return true;
+        return canDropIntIn(p.values(), min, max);
     }
 
     private static boolean evaluateLongIn(LongInPredicate p, RowGroup rowGroup, FileSchema schema) {
@@ -230,12 +225,7 @@ public class RowGroupFilterEvaluator {
         }
         long min = StatisticsDecoder.decodeLong(stats.minValue());
         long max = StatisticsDecoder.decodeLong(stats.maxValue());
-        for (long value : p.values()) {
-            if (value >= min && value <= max) {
-                return false;
-            }
-        }
-        return true;
+        return canDropLongIn(p.values(), min, max);
     }
 
     private static boolean evaluateBinaryIn(BinaryInPredicate p, RowGroup rowGroup, FileSchema schema) {
@@ -245,13 +235,7 @@ public class RowGroupFilterEvaluator {
         }
         byte[] min = stats.minValue();
         byte[] max = stats.maxValue();
-        for (byte[] value : p.values()) {
-            if (StatisticsDecoder.compareBinary(value, min) >= 0
-                    && StatisticsDecoder.compareBinary(value, max) <= 0) {
-                return false;
-            }
-        }
-        return true;
+        return canDropBinaryIn(p.values(), min, max);
     }
 
     static boolean canDropIntIn(int[] values, int min, int max) {

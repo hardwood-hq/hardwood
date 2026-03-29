@@ -194,14 +194,23 @@ public sealed interface FilterPredicate
     }
 
     static FilterPredicate in(String column, int... values) {
+        if (values.length == 0) {
+            throw new IllegalArgumentException("IN predicate requires at least one value");
+        }
         return new IntInPredicate(column, values);
     }
 
     static FilterPredicate in(String column, long... values) {
+        if (values.length == 0) {
+            throw new IllegalArgumentException("IN predicate requires at least one value");
+        }
         return new LongInPredicate(column, values);
     }
 
     static FilterPredicate inStrings(String column, String... values) {
+        if (values.length == 0) {
+            throw new IllegalArgumentException("IN predicate requires at least one value");
+        }
         byte[][] encoded = new byte[values.length][];
         for (int i = 0; i < values.length; i++) {
             encoded[i] = values[i].getBytes(StandardCharsets.UTF_8);
@@ -268,6 +277,11 @@ public sealed interface FilterPredicate
 
     record IntInPredicate(String column, int[] values) implements FilterPredicate {
 
+        public IntInPredicate(String column, int[] values) {
+            this.column = column;
+            this.values = values.clone();
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -283,6 +297,11 @@ public sealed interface FilterPredicate
 
     record LongInPredicate(String column, long[] values) implements FilterPredicate {
 
+        public LongInPredicate(String column, long[] values) {
+            this.column = column;
+            this.values = values.clone();
+        }
+
         @Override
         public boolean equals(Object o) {
             if (this == o) return true;
@@ -297,6 +316,11 @@ public sealed interface FilterPredicate
     }
 
     record BinaryInPredicate(String column, byte[][] values) implements FilterPredicate {
+
+        public BinaryInPredicate(String column, byte[][] values) {
+            this.column = column;
+            this.values = values.clone();
+        }
 
         @Override
         public boolean equals(Object o) {

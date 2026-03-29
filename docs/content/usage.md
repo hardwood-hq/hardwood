@@ -177,6 +177,10 @@ FilterPredicate filter = FilterPredicate.and(
     FilterPredicate.lt("age", 65)
 );
 
+// IN filter
+FilterPredicate filter = FilterPredicate.in("department_id", 1, 3, 7);
+FilterPredicate filter = FilterPredicate.inStrings("city", "NYC", "LA", "Chicago");
+
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
      RowReader rowReader = fileReader.createRowReader(filter)) {
 
@@ -187,8 +191,8 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`.
-Supported types: `int`, `long`, `float`, `double`, `boolean`, `String`.
+Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`.
+Supported types: `int`, `long`, `float`, `double`, `boolean`, `String` (comparison operators); `int`, `long`, `String` (`in`/`inStrings`).
 Logical combinators: `and`, `or`, `not`.
 
 Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file readers.

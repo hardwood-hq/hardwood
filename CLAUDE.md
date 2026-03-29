@@ -19,7 +19,7 @@ Design documents describe the intended end state. Do not include references to t
 
 # Coding
 
-When adding or changing public APIs, update the usage documentation in the README.md accordingly.
+When adding or changing public APIs, update the usage documentation under docs/ accordingly.
 Minimize the surface of the public API, only make user-facing what needs to be user-facing. Keep anything else in an `internal` package.
 Similarly, only expose configuration options truly needed in the CLI.
 Never do unsafe downcasts with potential value loss. E.g. prefer Math::toIntExact() where applicable.
