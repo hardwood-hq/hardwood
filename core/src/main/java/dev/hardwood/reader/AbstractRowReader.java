@@ -18,6 +18,7 @@ import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.FlatColumnData;
 import dev.hardwood.internal.reader.RecordFilterEvaluator;
 import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.jfr.RecordFilterEvent;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqList;
@@ -191,6 +192,10 @@ abstract class AbstractRowReader implements RowReader {
     /// Set by `hasNextMatch()`, consumed by `next()`.
     private int nextMatchIndex = -1;
 
+    // Record-level filter counters for JFR reporting
+    private long totalRecords;
+    private long recordsKept;
+
     /// Scans forward from `rowIndex + 1` to find the next row matching the filter.
     /// Loads new batches as needed. Returns true if a match is found.
     private boolean hasNextMatch() {
@@ -202,8 +207,10 @@ abstract class AbstractRowReader implements RowReader {
         int candidate = rowIndex + 1;
         while (true) {
             while (candidate < batchSize) {
+                totalRecords++;
                 if (RecordFilterEvaluator.matches(filterPredicate, candidate,
                         flatValueArrays, flatNulls, nameCache)) {
+                    recordsKept++;
                     nextMatchIndex = candidate;
                     return true;
                 }
@@ -212,10 +219,22 @@ abstract class AbstractRowReader implements RowReader {
             // Current batch exhausted — load next
             if (!loadNextBatch()) {
                 exhausted = true;
+                emitRecordFilterEvent();
                 return false;
             }
             cacheFlatBatch();
             candidate = 0;
+        }
+    }
+
+    /// Emits a JFR event summarizing record-level filtering results.
+    private void emitRecordFilterEvent() {
+        if (totalRecords > 0) {
+            RecordFilterEvent event = new RecordFilterEvent();
+            event.totalRecords = totalRecords;
+            event.recordsKept = recordsKept;
+            event.recordsSkipped = totalRecords - recordsKept;
+            event.commit();
         }
     }
 

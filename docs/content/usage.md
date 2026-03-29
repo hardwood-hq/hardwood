@@ -176,7 +176,7 @@ while (rowReader.hasNext()) {
 
 ## Predicate Pushdown (Filter)
 
-Filter predicates enable two levels of predicate pushdown. At the row-group level, entire row groups whose statistics prove no rows can match are skipped. Within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, reducing network I/O.
+Filter predicates enable three levels of predicate pushdown. At the row-group level, entire row groups whose statistics prove no rows can match are skipped. Within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, reducing network I/O. Finally, record-level filtering evaluates the predicate against each decoded row, so `createRowReader(filter)` returns only rows that actually match.
 
 ```java
 import dev.hardwood.reader.FilterPredicate;
