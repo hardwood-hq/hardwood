@@ -7,70 +7,18 @@
  */
 package dev.hardwood.command;
 
-import org.junit.jupiter.api.Test;
-
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
 import io.quarkus.test.junit.main.QuarkusMainTest;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 @QuarkusMainTest
-class ConvertS3CommandTest extends AbstractS3CommandTest {
+class ConvertS3CommandTest extends AbstractS3CommandTest implements ConvertCommandContract {
 
-    @Test
-    void csvOutputContainsHeaders(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", S3_FILE, "--to", "csv");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).startsWith("id,value");
+    @Override
+    public String plainFile() {
+        return S3_FILE;
     }
 
-    @Test
-    void csvOutputContainsRows(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", S3_FILE, "--to", "csv");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("1,100")
-                .contains("2,200")
-                .contains("3,300");
-    }
-
-    @Test
-    void jsonOutputIsArray(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", S3_FILE, "--to", "json");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput().trim()).startsWith("[").endsWith("]");
-    }
-
-    @Test
-    void jsonOutputContainsFields(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", S3_FILE, "--to", "json");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("\"id\"")
-                .contains("\"value\"")
-                .contains("\"1\"")
-                .contains("\"100\"");
-    }
-
-    @Test
-    void columnsFilterOutput(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", S3_FILE, "--to", "csv", "--columns", "id");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .startsWith("id")
-                .doesNotContain("value");
-    }
-
-    @Test
-    void failsOnNonexistentS3File(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", S3_NONEXISTENT_FILE, "--to", "csv");
-
-        assertThat(result.exitCode()).isNotZero();
+    @Override
+    public String nonexistentFile() {
+        return S3_NONEXISTENT_FILE;
     }
 }

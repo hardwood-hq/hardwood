@@ -21,65 +21,25 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class ConvertCommandTest {
+class ConvertCommandTest implements ConvertCommandContract {
 
-    private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
     private final String LOGICAL_TYPES_FILE = this.getClass().getResource("/logical_types_test.parquet").getPath();
 
-    @Test
-    void csvOutputContainsHeaders(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", TEST_FILE, "--to", "csv");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).startsWith("id,value");
+    @Override
+    public String plainFile() {
+        return getClass().getResource("/plain_uncompressed.parquet").getPath();
     }
 
-    @Test
-    void csvOutputContainsRows(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", TEST_FILE, "--to", "csv");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("1,100")
-                .contains("2,200")
-                .contains("3,300");
-    }
-
-    @Test
-    void jsonOutputIsArray(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", TEST_FILE, "--to", "json");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput().trim()).startsWith("[").endsWith("]");
-    }
-
-    @Test
-    void jsonOutputContainsFields(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", TEST_FILE, "--to", "json");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("\"id\"")
-                .contains("\"value\"")
-                .contains("\"1\"")
-                .contains("\"100\"");
-    }
-
-    @Test
-    void columnsFilterOutput(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", TEST_FILE, "--to", "csv", "--columns", "id");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .startsWith("id")
-                .doesNotContain("value");
+    @Override
+    public String nonexistentFile() {
+        return "nonexistent.parquet";
     }
 
     @Test
     void outputToFile(@TempDir Path tempDir, QuarkusMainLauncher launcher) throws IOException {
         Path out = tempDir.resolve("output.csv");
 
-        LaunchResult result = launcher.launch("convert", "-f", TEST_FILE, "--to", "csv", "-o", out.toString());
+        LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--to", "csv", "-o", out.toString());
 
         assertThat(result.exitCode()).isZero();
         assertThat(Files.readString(out))
@@ -111,7 +71,7 @@ class ConvertCommandTest {
 
     @Test
     void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", TEST_FILE, "--to", "csv", "--columns", "unknown");
+        LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--to", "csv", "--columns", "unknown");
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("Unknown column");
@@ -126,15 +86,8 @@ class ConvertCommandTest {
     }
 
     @Test
-    void failsOnMissingFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", "nonexistent.parquet", "--to", "csv");
-
-        assertThat(result.exitCode()).isNotZero();
-    }
-
-    @Test
     void requiresFormatFlag(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", TEST_FILE);
+        LaunchResult result = launcher.launch("convert", "-f", plainFile());
 
         assertThat(result.exitCode()).isNotZero();
     }

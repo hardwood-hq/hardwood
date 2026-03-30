@@ -16,41 +16,16 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class InspectColumnSizeCommandTest {
+class InspectColumnSizeCommandTest implements InspectColumnSizeCommandContract {
 
-    private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
-
-    @Test
-    void displaysRankedColumns(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "column-size", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Rank")
-                .contains("Column")
-                .contains("Compressed")
-                .contains("Uncompressed")
-                .contains("Ratio");
+    @Override
+    public String plainFile() {
+        return getClass().getResource("/plain_uncompressed.parquet").getPath();
     }
 
-    @Test
-    void listsAllColumns(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "column-size", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("id")
-                .contains("value");
-    }
-
-    @Test
-    void rank1IsLargestCompressedColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "column-size", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        // Rank 1 should appear before rank 2 in output
-        String output = result.getOutput();
-        assertThat(output.indexOf("1 ")).isLessThan(output.indexOf("2 "));
+    @Override
+    public String nonexistentFile() {
+        return "nonexistent.parquet";
     }
 
     @Test
@@ -59,12 +34,5 @@ class InspectColumnSizeCommandTest {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("not implemented yet");
-    }
-
-    @Test
-    void failsOnMissingFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "column-size", "-f", "nonexistent.parquet");
-
-        assertThat(result.exitCode()).isNotZero();
     }
 }

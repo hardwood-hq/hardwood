@@ -16,60 +16,22 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class HeadCommandTest {
+class HeadCommandTest implements HeadCommandContract {
 
-    private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
-    private final String LOGICAL_TYPES_FILE = this.getClass().getResource("/logical_types_test.parquet").getPath();
-
-    @Test
-    void printsAsciiTableWithHeaders(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("id")
-                .contains("value")
-                .contains("+")
-                .contains("|");
+    @Override
+    public String plainFile() {
+        return getClass().getResource("/plain_uncompressed.parquet").getPath();
     }
 
-    @Test
-    void printsFirstRowValues(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("1")
-                .contains("100");
-    }
-
-    @Test
-    void respectsRowLimit(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", TEST_FILE, "-n", "1");
-
-        assertThat(result.exitCode()).isZero();
-        // With 1 row the table has: separator, header, separator, 1 data row, separator = 5 lines
-        long dataLines = result.getOutput().lines()
-                .filter(l -> l.startsWith("|") && !l.contains("id"))
-                .count();
-        assertThat(dataLines).isEqualTo(1);
-    }
-
-    @Test
-    void defaultsToTenRows(QuarkusMainLauncher launcher) {
-        // plain_uncompressed.parquet has 3 rows, so all 3 are returned even with default of 10
-        LaunchResult result = launcher.launch("head", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        long dataLines = result.getOutput().lines()
-                .filter(l -> l.startsWith("|") && !l.contains("id"))
-                .count();
-        assertThat(dataLines).isEqualTo(3);
+    @Override
+    public String nonexistentFile() {
+        return "nonexistent.parquet";
     }
 
     @Test
     void displaysStringColumnsAsText(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", LOGICAL_TYPES_FILE);
+        String logicalTypesFile = getClass().getResource("/logical_types_test.parquet").getPath();
+        LaunchResult result = launcher.launch("head", "-f", logicalTypesFile);
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput())
@@ -80,11 +42,10 @@ class HeadCommandTest {
 
     @Test
     void displaysNestedStructStringFieldsAsText(QuarkusMainLauncher launcher) {
-        String deepNestedFile = this.getClass().getResource("/deep_nested_struct_test.parquet").getPath();
+        String deepNestedFile = getClass().getResource("/deep_nested_struct_test.parquet").getPath();
         LaunchResult result = launcher.launch("head", "-f", deepNestedFile);
 
         assertThat(result.exitCode()).isZero();
-        // Nested string fields are decoded; cell is truncated at 40 chars so we check a short prefix
         assertThat(result.getOutput())
                 .contains("ACC-001")
                 .contains("ACC-002")
@@ -94,13 +55,6 @@ class HeadCommandTest {
     @Test
     void rejectsRemoteUri(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("head", "-f", "gs://bucket/data.parquet");
-
-        assertThat(result.exitCode()).isNotZero();
-    }
-
-    @Test
-    void failsOnMissingFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", "nonexistent.parquet");
 
         assertThat(result.exitCode()).isNotZero();
     }

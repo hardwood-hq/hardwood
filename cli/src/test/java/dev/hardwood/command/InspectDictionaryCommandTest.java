@@ -16,42 +16,28 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class InspectDictionaryCommandTest {
+class InspectDictionaryCommandTest implements InspectDictionaryCommandContract {
 
-    private final String PLAIN_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
-    private final String DICT_FILE = this.getClass().getResource("/dictionary_uncompressed.parquet").getPath();
-
-    @Test
-    void printsDictionaryEntriesForDictColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", DICT_FILE, "--column", "category");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Dictionary size")
-                .contains("Row Group 0");
+    @Override
+    public String plainFile() {
+        return getClass().getResource("/plain_uncompressed.parquet").getPath();
     }
 
-    @Test
-    void printsNoDictionaryMessageForPlainColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", PLAIN_FILE, "--column", "id");
+    @Override
+    public String dictFile() {
+        return getClass().getResource("/dictionary_uncompressed.parquet").getPath();
+    }
 
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("No dictionary");
+    @Override
+    public String nonexistentFile() {
+        return "nonexistent.parquet";
     }
 
     @Test
     void requiresColumnOption(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", DICT_FILE);
+        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", dictFile());
 
         assertThat(result.exitCode()).isNotZero();
-    }
-
-    @Test
-    void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", DICT_FILE, "--column", "nonexistent");
-
-        assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).contains("Unknown column");
     }
 
     @Test
@@ -61,13 +47,5 @@ class InspectDictionaryCommandTest {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("not implemented yet");
-    }
-
-    @Test
-    void failsOnMissingFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", "nonexistent.parquet",
-                "--column", "id");
-
-        assertThat(result.exitCode()).isNotZero();
     }
 }

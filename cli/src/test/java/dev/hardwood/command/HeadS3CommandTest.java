@@ -7,65 +7,18 @@
  */
 package dev.hardwood.command;
 
-import org.junit.jupiter.api.Test;
-
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
 import io.quarkus.test.junit.main.QuarkusMainTest;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 @QuarkusMainTest
-class HeadS3CommandTest extends AbstractS3CommandTest {
+class HeadS3CommandTest extends AbstractS3CommandTest implements HeadCommandContract {
 
-    @Test
-    void printsAsciiTableWithHeaders(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", S3_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("id")
-                .contains("value")
-                .contains("+")
-                .contains("|");
+    @Override
+    public String plainFile() {
+        return S3_FILE;
     }
 
-    @Test
-    void printsFirstRowValues(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", S3_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("1")
-                .contains("100");
-    }
-
-    @Test
-    void respectsRowLimit(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", S3_FILE, "-n", "1");
-
-        assertThat(result.exitCode()).isZero();
-        long dataLines = result.getOutput().lines()
-                .filter(l -> l.startsWith("|") && !l.contains("id"))
-                .count();
-        assertThat(dataLines).isEqualTo(1);
-    }
-
-    @Test
-    void defaultsToTenRowsOrLess(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", S3_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        long dataLines = result.getOutput().lines()
-                .filter(l -> l.startsWith("|") && !l.contains("id"))
-                .count();
-        assertThat(dataLines).isLessThanOrEqualTo(3);
-    }
-
-    @Test
-    void failsOnNonexistentS3File(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("head", "-f", S3_NONEXISTENT_FILE);
-
-        assertThat(result.exitCode()).isNotZero();
+    @Override
+    public String nonexistentFile() {
+        return S3_NONEXISTENT_FILE;
     }
 }

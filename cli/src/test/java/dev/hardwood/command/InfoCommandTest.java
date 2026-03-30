@@ -16,30 +16,16 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class InfoCommandTest {
+class InfoCommandTest implements InfoCommandContract {
 
-    private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
-
-    @Test
-    void displaysFileInfo(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("info", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Format Version:")
-                .contains("Created By:")
-                .contains("Row Groups:")
-                .contains("Total Rows:")
-                .contains("Uncompressed Size:")
-                .contains("Compressed Size:");
+    @Override
+    public String plainFile() {
+        return getClass().getResource("/plain_uncompressed.parquet").getPath();
     }
 
-    @Test
-    void displaysCorrectRowCount(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("info", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("Total Rows:        3");
+    @Override
+    public String nonexistentFile() {
+        return "nonexistent.parquet";
     }
 
     @Test
@@ -48,12 +34,5 @@ class InfoCommandTest {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("not implemented yet");
-    }
-
-    @Test
-    void failsOnMissingFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("info", "-f", "nonexistent.parquet");
-
-        assertThat(result.exitCode()).isNotZero();
     }
 }

@@ -56,10 +56,7 @@ public class FileMixin {
     }
 
     private InputFile createS3InputFile() {
-        String endpointUrl = System.getenv("AWS_ENDPOINT_URL");
-        if (endpointUrl == null) {
-            endpointUrl = System.getProperty("aws.endpointUrl");
-        }
+        String endpointUrl = resolveEndpoint();
 
         S3Source.Builder builder = S3Source.builder()
                 .credentials(SdkCredentialsProviders.defaultChain());
@@ -68,8 +65,7 @@ public class FileMixin {
             builder.endpoint(endpointUrl);
         }
 
-        if ("true".equalsIgnoreCase(System.getenv("AWS_PATH_STYLE"))
-                || "true".equalsIgnoreCase(System.getProperty("aws.pathStyle"))) {
+        if (resolvePathStyle()) {
             builder.pathStyle(true);
         }
 
@@ -85,6 +81,24 @@ public class FileMixin {
 
         S3Source source = builder.build();
         return source.inputFile(file);
+    }
+
+    /// Resolves the S3 endpoint URL from system property or env var.
+    private static String resolveEndpoint() {
+        String endpoint = System.getProperty("aws.endpointUrl");
+        if (endpoint != null) {
+            return endpoint;
+        }
+        return System.getenv("AWS_ENDPOINT_URL");
+    }
+
+    /// Resolves whether path-style access is enabled from system property or env var.
+    private static boolean resolvePathStyle() {
+        String pathStyle = System.getProperty("aws.pathStyle");
+        if (pathStyle != null) {
+            return "true".equalsIgnoreCase(pathStyle);
+        }
+        return "true".equalsIgnoreCase(System.getenv("AWS_PATH_STYLE"));
     }
 
     /// Resolves the AWS region from system property, env vars, and `~/.aws/config` (no network I/O).

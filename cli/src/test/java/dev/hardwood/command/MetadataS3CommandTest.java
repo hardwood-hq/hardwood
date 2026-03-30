@@ -7,47 +7,18 @@
  */
 package dev.hardwood.command;
 
-import org.junit.jupiter.api.Test;
-
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
 import io.quarkus.test.junit.main.QuarkusMainTest;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 @QuarkusMainTest
-class MetadataS3CommandTest extends AbstractS3CommandTest {
+class MetadataS3CommandTest extends AbstractS3CommandTest implements MetadataCommandContract {
 
-    @Test
-    void displaysMetadata(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", S3_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Format Version:")
-                .contains("Row Groups:")
-                .contains("Total Rows:")
-                .contains("Row Group 0");
+    @Override
+    public String plainFile() {
+        return S3_FILE;
     }
 
-    @Test
-    void displaysColumnChunkDetails(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", S3_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("id")
-                .contains("value")
-                .contains("Type")
-                .contains("Codec")
-                .contains("Compressed")
-                .contains("Uncompressed");
-    }
-
-    @Test
-    void failsOnNonexistentS3File(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", S3_NONEXISTENT_FILE);
-
-        assertThat(result.exitCode()).isNotZero();
+    @Override
+    public String nonexistentFile() {
+        return S3_NONEXISTENT_FILE;
     }
 }

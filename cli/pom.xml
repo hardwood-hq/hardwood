@@ -59,13 +59,6 @@
         <type>pom</type>
         <scope>import</scope>
       </dependency>
-      <dependency>
-        <groupId>software.amazon.awssdk</groupId>
-        <artifactId>bom</artifactId>
-        <version>2.42.17</version>
-        <type>pom</type>
-        <scope>import</scope>
-      </dependency>
     </dependencies>
   </dependencyManagement>
 
@@ -147,12 +140,6 @@
       <artifactId>quarkus-junit5</artifactId>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>software.amazon.awssdk</groupId>
-      <artifactId>s3</artifactId>
-      <scope>test</scope>
-    </dependency>
-
     <!-- netty-buffer is an optional dependency of brotli4j (declared optional in its POM).
          It must be explicitly provided so GraalVM native-image can resolve the
          ByteBufUtil reference in DirectDecompress at build time. -->

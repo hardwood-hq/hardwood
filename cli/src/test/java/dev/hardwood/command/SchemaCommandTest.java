@@ -16,44 +16,18 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class SchemaCommandTest {
+class SchemaCommandTest implements SchemaCommandContract {
 
-    private final String FLAT_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
     private final String NESTED_FILE = this.getClass().getResource("/nested_struct_test.parquet").getPath();
 
-    @Test
-    void displaysNativeSchemaByDefault(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", FLAT_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("message")
-                .contains("id")
-                .contains("value");
+    @Override
+    public String plainFile() {
+        return getClass().getResource("/plain_uncompressed.parquet").getPath();
     }
 
-    @Test
-    void displaysAvroSchema(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", FLAT_FILE, "--format", "AVRO");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("\"type\": \"record\"")
-                .contains("\"fields\"")
-                .contains("\"name\": \"id\"")
-                .contains("\"name\": \"value\"");
-    }
-
-    @Test
-    void displaysProtoSchema(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", FLAT_FILE, "--format", "PROTO");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("syntax = \"proto3\"")
-                .contains("message")
-                .contains("id")
-                .contains("value");
+    @Override
+    public String nonexistentFile() {
+        return "nonexistent.parquet";
     }
 
     @Test

@@ -7,47 +7,23 @@
  */
 package dev.hardwood.command;
 
-import org.junit.jupiter.api.Test;
-
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
 import io.quarkus.test.junit.main.QuarkusMainTest;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 @QuarkusMainTest
-class InspectDictionaryS3CommandTest extends AbstractS3CommandTest {
+class InspectDictionaryS3CommandTest extends AbstractS3CommandTest implements InspectDictionaryCommandContract {
 
-    @Test
-    void printsDictionaryEntriesForDictColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", S3_DICT_FILE, "--column", "category");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Dictionary size")
-                .contains("Row Group 0");
+    @Override
+    public String plainFile() {
+        return S3_FILE;
     }
 
-    @Test
-    void printsNoDictionaryMessageForPlainColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", S3_FILE, "--column", "id");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("No dictionary");
+    @Override
+    public String dictFile() {
+        return S3_DICT_FILE;
     }
 
-    @Test
-    void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", S3_DICT_FILE, "--column", "nonexistent");
-
-        assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).contains("Unknown column");
-    }
-
-    @Test
-    void failsOnNonexistentS3File(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", S3_NONEXISTENT_FILE, "--column", "id");
-
-        assertThat(result.exitCode()).isNotZero();
+    @Override
+    public String nonexistentFile() {
+        return S3_NONEXISTENT_FILE;
     }
 }

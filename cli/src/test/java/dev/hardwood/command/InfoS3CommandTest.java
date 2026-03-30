@@ -7,43 +7,18 @@
  */
 package dev.hardwood.command;
 
-import org.junit.jupiter.api.Test;
-
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
 import io.quarkus.test.junit.main.QuarkusMainTest;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 @QuarkusMainTest
-class InfoS3CommandTest extends AbstractS3CommandTest {
+class InfoS3CommandTest extends AbstractS3CommandTest implements InfoCommandContract {
 
-    @Test
-    void displaysFileInfo(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("info", "-f", S3_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Format Version:")
-                .contains("Created By:")
-                .contains("Row Groups:")
-                .contains("Total Rows:")
-                .contains("Uncompressed Size:")
-                .contains("Compressed Size:");
+    @Override
+    public String plainFile() {
+        return S3_FILE;
     }
 
-    @Test
-    void displaysCorrectRowCount(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("info", "-f", S3_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("Total Rows:        3");
-    }
-
-    @Test
-    void failsOnNonexistentS3File(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("info", "-f", S3_NONEXISTENT_FILE);
-
-        assertThat(result.exitCode()).isNotZero();
+    @Override
+    public String nonexistentFile() {
+        return S3_NONEXISTENT_FILE;
     }
 }

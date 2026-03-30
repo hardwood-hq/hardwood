@@ -16,34 +16,16 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class MetadataCommandTest {
+class MetadataCommandTest implements MetadataCommandContract {
 
-    private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
-
-    @Test
-    void displaysMetadata(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Format Version:")
-                .contains("Row Groups:")
-                .contains("Total Rows:")
-                .contains("Row Group 0");
+    @Override
+    public String plainFile() {
+        return getClass().getResource("/plain_uncompressed.parquet").getPath();
     }
 
-    @Test
-    void displaysColumnChunkDetails(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", TEST_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("id")
-                .contains("value")
-                .contains("Type")
-                .contains("Codec")
-                .contains("Compressed")
-                .contains("Uncompressed");
+    @Override
+    public String nonexistentFile() {
+        return "nonexistent.parquet";
     }
 
     @Test
@@ -52,12 +34,5 @@ class MetadataCommandTest {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("not implemented yet");
-    }
-
-    @Test
-    void failsOnMissingFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", "nonexistent.parquet");
-
-        assertThat(result.exitCode()).isNotZero();
     }
 }

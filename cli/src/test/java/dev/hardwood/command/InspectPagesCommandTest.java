@@ -16,55 +16,21 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class InspectPagesCommandTest {
+class InspectPagesCommandTest implements InspectPagesCommandContract {
 
-    private final String PLAIN_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
-    private final String DICT_FILE = this.getClass().getResource("/dictionary_uncompressed.parquet").getPath();
-
-    @Test
-    void printsPageTypeAndEncoding(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", PLAIN_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("DATA_PAGE")
-                .contains("Encoding")
-                .contains("PLAIN");
+    @Override
+    public String plainFile() {
+        return getClass().getResource("/plain_uncompressed.parquet").getPath();
     }
 
-    @Test
-    void printsRowGroupAndColumnHeader(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", PLAIN_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Row Group 0")
-                .contains("id");
+    @Override
+    public String dictFile() {
+        return getClass().getResource("/dictionary_uncompressed.parquet").getPath();
     }
 
-    @Test
-    void printsDictionaryPageForDictFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", DICT_FILE);
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("DICTIONARY_PAGE");
-    }
-
-    @Test
-    void columnFilterRestrictsOutput(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", PLAIN_FILE, "--column", "id");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("/ id");
-        assertThat(result.getOutput()).doesNotContain("/ value");
-    }
-
-    @Test
-    void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", PLAIN_FILE, "--column", "nonexistent");
-
-        assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).contains("Unknown column");
+    @Override
+    public String nonexistentFile() {
+        return "nonexistent.parquet";
     }
 
     @Test
@@ -73,12 +39,5 @@ class InspectPagesCommandTest {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("not implemented yet");
-    }
-
-    @Test
-    void failsOnMissingFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", "nonexistent.parquet");
-
-        assertThat(result.exitCode()).isNotZero();
     }
 }
