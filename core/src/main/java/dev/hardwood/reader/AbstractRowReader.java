@@ -171,16 +171,16 @@ abstract class AbstractRowReader implements RowReader {
             initialize();
             cacheFlatBatch();
         }
-        if (nextMatchIndex >= 0) {
+        if (pendingMatchRow >= 0) {
             // hasNext() already found the next matching row
-            rowIndex = nextMatchIndex;
-            nextMatchIndex = -1;
+            rowIndex = pendingMatchRow;
+            pendingMatchRow = -1;
         }
         else if (isRecordFilterActive()) {
             // next() called without hasNext() — scan for next match
             hasNextMatch();
-            rowIndex = nextMatchIndex;
-            nextMatchIndex = -1;
+            rowIndex = pendingMatchRow;
+            pendingMatchRow = -1;
         }
         else {
             rowIndex++;
@@ -188,9 +188,14 @@ abstract class AbstractRowReader implements RowReader {
         dataView.setRowIndex(rowIndex);
     }
 
-    /// Index of the next row that passes the record-level filter.
-    /// Set by `hasNextMatch()`, consumed by `next()`.
-    private int nextMatchIndex = -1;
+    /// Row index of the next matching row, found by `hasNextMatch()` and consumed by `next()`.
+    /// A value of -1 means no pending match (next() must scan or advance normally).
+    private int pendingMatchRow = -1;
+
+    /// Pre-computed set of matching rows for the current batch. Computed once per batch
+    /// by `RecordFilterEvaluator.matchBatch()` and queried via `nextSetBit()` for each
+    /// `hasNextMatch()` call. Reset to null on batch transitions.
+    private BitSet matchingRowsInBatch;
 
     // Record-level filter counters for JFR reporting
     private long totalRecords;
@@ -200,30 +205,35 @@ abstract class AbstractRowReader implements RowReader {
     /// Loads new batches as needed. Returns true if a match is found.
     private boolean hasNextMatch() {
         if (!isRecordFilterActive()) {
-            nextMatchIndex = rowIndex + 1;
-            return nextMatchIndex < batchSize;
+            pendingMatchRow = rowIndex + 1;
+            return pendingMatchRow < batchSize;
         }
 
-        int candidate = rowIndex + 1;
         while (true) {
-            while (candidate < batchSize) {
-                totalRecords++;
-                if (RecordFilterEvaluator.matches(filterPredicate, candidate,
-                        flatValueArrays, flatNulls, nameCache)) {
-                    recordsKept++;
-                    nextMatchIndex = candidate;
-                    return true;
-                }
-                candidate++;
+            // Compute match mask for current batch if not yet done
+            if (matchingRowsInBatch == null) {
+                matchingRowsInBatch = RecordFilterEvaluator.matchBatch(filterPredicate, batchSize,
+                        flatValueArrays, flatNulls, nameCache);
+                totalRecords += batchSize;
+                recordsKept += matchingRowsInBatch.cardinality();
             }
+
+            // Find the next matching row after current position
+            int nextMatchingRow = matchingRowsInBatch.nextSetBit(rowIndex + 1);
+            if (nextMatchingRow >= 0 && nextMatchingRow < batchSize) {
+                pendingMatchRow = nextMatchingRow;
+                return true;
+            }
+
             // Current batch exhausted — load next
+            matchingRowsInBatch = null;
             if (!loadNextBatch()) {
                 exhausted = true;
                 emitRecordFilterEvent();
                 return false;
             }
             cacheFlatBatch();
-            candidate = 0;
+            rowIndex = -1;
         }
     }
 

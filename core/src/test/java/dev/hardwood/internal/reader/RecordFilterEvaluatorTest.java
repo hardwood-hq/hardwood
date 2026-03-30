@@ -20,6 +20,7 @@ import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.FilterPredicate.Operator;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -315,6 +316,121 @@ class RecordFilterEvaluatorTest {
         assertTrue(matches(not, 0, values, nulls, names));
         assertFalse(matches(not, 1, values, nulls, names));
         assertTrue(matches(not, 2, values, nulls, names));
+    }
+
+    @ParameterizedTest(name = "matchBatch {0} {1} → cardinality={2}")
+    @MethodSource
+    void testMatchBatchOperators(Operator op, int predicateValue, int expectedCardinality) {
+        Object[] values = { new int[]{ 10, 20, 30 } };
+        BitSet[] nulls = { null };
+        StringToIntMap names = nameCache("col");
+
+        FilterPredicate predicate = switch (op) {
+            case EQ -> FilterPredicate.eq("col", predicateValue);
+            case NOT_EQ -> FilterPredicate.notEq("col", predicateValue);
+            case LT -> FilterPredicate.lt("col", predicateValue);
+            case LT_EQ -> FilterPredicate.ltEq("col", predicateValue);
+            case GT -> FilterPredicate.gt("col", predicateValue);
+            case GT_EQ -> FilterPredicate.gtEq("col", predicateValue);
+        };
+
+        BitSet result = RecordFilterEvaluator.matchBatch(predicate, 3, values, nulls, names);
+        assertThat(result.cardinality()).isEqualTo(expectedCardinality);
+    }
+
+    static Stream<Arguments> testMatchBatchOperators() {
+        return Stream.of(
+                Arguments.of(Operator.EQ,     20, 1),
+                Arguments.of(Operator.NOT_EQ, 20, 2),
+                Arguments.of(Operator.LT,     20, 1),
+                Arguments.of(Operator.LT_EQ,  20, 2),
+                Arguments.of(Operator.GT,     20, 1),
+                Arguments.of(Operator.GT_EQ,  20, 2),
+                // Edge cases
+                Arguments.of(Operator.EQ,    999, 0),  // no matches
+                Arguments.of(Operator.GT,      0, 3)   // all match
+        );
+    }
+
+    @Test
+    void testMatchBatchAnd() {
+        // col_a=[10, 20, 30], col_b=[100, 200, 300]
+        Object[] values = { new int[]{ 10, 20, 30 }, new int[]{ 100, 200, 300 } };
+        BitSet[] nulls = { null, null };
+        StringToIntMap names = nameCache("col_a", "col_b");
+
+        // AND(col_a > 15, col_b < 250) → only row 1 matches
+        FilterPredicate predicate = FilterPredicate.and(
+                FilterPredicate.gt("col_a", 15),
+                FilterPredicate.lt("col_b", 250));
+        BitSet result = RecordFilterEvaluator.matchBatch(predicate, 3, values, nulls, names);
+
+        assertFalse(result.get(0));
+        assertTrue(result.get(1));
+        assertFalse(result.get(2));
+    }
+
+    @Test
+    void testMatchBatchOr() {
+        Object[] values = { new int[]{ 10, 20, 30 } };
+        BitSet[] nulls = { null };
+        StringToIntMap names = nameCache("col");
+
+        // OR(col == 10, col == 30) → rows 0, 2
+        FilterPredicate predicate = FilterPredicate.or(
+                FilterPredicate.eq("col", 10),
+                FilterPredicate.eq("col", 30));
+        BitSet result = RecordFilterEvaluator.matchBatch(predicate, 3, values, nulls, names);
+
+        assertTrue(result.get(0));
+        assertFalse(result.get(1));
+        assertTrue(result.get(2));
+    }
+
+    @Test
+    void testMatchBatchNot() {
+        Object[] values = { new int[]{ 10, 20, 30 } };
+        BitSet[] nulls = { null };
+        StringToIntMap names = nameCache("col");
+
+        // NOT(col == 20) → rows 0, 2
+        FilterPredicate predicate = FilterPredicate.not(FilterPredicate.eq("col", 20));
+        BitSet result = RecordFilterEvaluator.matchBatch(predicate, 3, values, nulls, names);
+
+        assertTrue(result.get(0));
+        assertFalse(result.get(1));
+        assertTrue(result.get(2));
+    }
+
+    @Test
+    void testMatchBatchWithNulls() {
+        Object[] values = { new int[]{ 10, 0, 30, 40 } };
+        BitSet nullBits = new BitSet();
+        nullBits.set(1); // row 1 is null
+        BitSet[] nulls = { nullBits };
+        StringToIntMap names = nameCache("col");
+
+        FilterPredicate predicate = FilterPredicate.gt("col", 0);
+        BitSet result = RecordFilterEvaluator.matchBatch(predicate, 4, values, nulls, names);
+
+        assertTrue(result.get(0));
+        assertFalse(result.get(1)); // null row excluded
+        assertTrue(result.get(2));
+        assertTrue(result.get(3));
+        assertThat(result.cardinality()).isEqualTo(3);
+    }
+
+    @Test
+    void testMatchBatchWithUnknownColumn() {
+        Object[] values = { new int[]{ 10, 20, 30 } };
+        BitSet[] nulls = { null };
+        StringToIntMap names = nameCache("other_col");
+
+        // Filter on "col" but only "other_col" in projection → all match (conservative)
+        FilterPredicate predicate = FilterPredicate.eq("col", 20);
+        BitSet result = RecordFilterEvaluator.matchBatch(predicate, 3, values, nulls, names);
+
+        assertThat(result.cardinality()).isEqualTo(3);
     }
 
     private static boolean matches(FilterPredicate predicate, int rowIndex,

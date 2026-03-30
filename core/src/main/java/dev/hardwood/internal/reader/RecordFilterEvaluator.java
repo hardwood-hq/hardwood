@@ -32,13 +32,34 @@ import dev.hardwood.reader.FilterPredicate.Or;
 /// matching the predicate are returned to the caller.
 public class RecordFilterEvaluator {
 
+    /// Evaluates the predicate against all rows in a batch, returning a BitSet
+    /// where set bits indicate matching rows. This enables batch-level iteration
+    /// in `AbstractRowReader` instead of per-row `matches()` calls.
+    ///
+    /// @param predicate   the filter predicate to evaluate
+    /// @param batchSize   number of rows in the batch
+    /// @param valueArrays cached primitive arrays per projected column (e.g., `int[]`, `long[]`, `double[]`).
+    /// @param nulls       null bitmaps per projected column
+    /// @param nameCache   column name to projected index mapping
+    /// @return BitSet with bits set for matching rows
+    public static BitSet matchBatch(FilterPredicate predicate, int batchSize,
+            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
+        BitSet result = new BitSet(batchSize);
+        for (int i = 0; i < batchSize; i++) {
+            if (matches(predicate, i, valueArrays, nulls, nameCache)) {
+                result.set(i);
+            }
+        }
+        return result;
+    }
+
     /// Returns `true` if the row at `rowIndex` matches the predicate.
     ///
     /// @param predicate   the filter predicate to evaluate
     /// @param rowIndex    the row position within the current batch
     /// @param valueArrays cached primitive arrays per projected column
     /// @param nulls       null bitmaps per projected column (may contain null entries for required columns)
-    /// @param nameCache   column name → projected index mapping
+    /// @param nameCache   column name to projected index mapping
     public static boolean matches(FilterPredicate predicate, int rowIndex,
             Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
         return switch (predicate) {
