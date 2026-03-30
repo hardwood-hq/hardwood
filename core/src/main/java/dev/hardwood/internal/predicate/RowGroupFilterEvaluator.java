@@ -94,7 +94,7 @@ public class RowGroupFilterEvaluator {
                 }
                 // Push NOT through leaf predicates by inverting the operator
                 ResolvedPredicate inverted = invertLeaf(n.delegate());
-                yield inverted != null ? canDropRowGroup(inverted, rowGroup) : false;
+                yield   inverted != null ? canDropRowGroup(inverted, rowGroup) : false;
             }
         };
     }

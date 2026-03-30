@@ -36,7 +36,20 @@ public sealed interface ResolvedPredicate {
     record IsNullPredicate(int columnIndex) implements ResolvedPredicate {}
     record IsNotNullPredicate(int columnIndex) implements ResolvedPredicate {}
 
-    record And(List<ResolvedPredicate> children) implements ResolvedPredicate {}
-    record Or(List<ResolvedPredicate> children) implements ResolvedPredicate {}
+    record And(List<ResolvedPredicate> children) implements ResolvedPredicate {
+        public And {
+            if (children.isEmpty()) {
+                throw new IllegalArgumentException("AND requires at least one child predicate");
+            }
+        }
+    }
+
+    record Or(List<ResolvedPredicate> children) implements ResolvedPredicate {
+        public Or {
+            if (children.isEmpty()) {
+                throw new IllegalArgumentException("OR requires at least one child predicate");
+            }
+        }
+    }
     record Not(ResolvedPredicate delegate) implements ResolvedPredicate {}
 }
