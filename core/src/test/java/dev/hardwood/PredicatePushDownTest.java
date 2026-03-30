@@ -416,6 +416,50 @@ class PredicatePushDownTest {
         }
     }
 
+    // ==================== Nested struct with logical type ====================
+
+    private static final Path NESTED_TS_FILE = Paths.get("src/test/resources/filter_pushdown_nested_ts.parquet");
+
+    @Test
+    void testFilterOnNestedTimestampColumn() throws Exception {
+        // event.ts: RG0 Jan 2024, RG1 Jun 2024, RG2 Dec 2024
+        // Filter: event.ts >= 2024-06-01 → skip RG0, keep RG1 and RG2
+        Instant cutoff = Instant.parse("2024-06-01T00:00:00Z");
+
+        FilterPredicate filter = FilterPredicate.gtEq("event.ts", cutoff);
+        List<Instant> timestamps = readFiltered(NESTED_TS_FILE, filter,
+                r -> r.getStruct("event").getTimestamp("ts"));
+            assertThat(timestamps).hasSize(6);
+        for (Instant ts : timestamps) {
+            assertThat(ts).isAfterOrEqualTo(cutoff);
+        }
+    }
+
+    @Test
+    void testFilterOnNestedTimestampSkipsAllRowGroups() throws Exception {
+        // Filter: event.ts > 2025-01-01 → no row group matches
+        Instant cutoff = Instant.parse("2025-01-01T00:00:00Z");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_TS_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("event.ts", cutoff);
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                assertThat(rows.hasNext()).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void testFilterOnNestedTimestampKeepsOnlyLastRowGroup() throws Exception {
+        // Filter: event.ts >= 2024-12-01 → skip RG0 and RG1, keep only RG2
+        Instant cutoff = Instant.parse("2024-12-01T00:00:00Z");
+
+        FilterPredicate filter = FilterPredicate.gtEq("event.ts", cutoff);
+        List<String> labels = readFiltered(NESTED_TS_FILE, filter,
+                r -> r.getStruct("event").getString("label"));
+        assertThat(labels).containsExactly("g", "h", "i");
+    }
+
     // ==================== Filter on non-filtered column ====================
 
     @Test
@@ -556,8 +600,12 @@ class PredicatePushDownTest {
     }
 
     private <T> List<T> readFiltered(FilterPredicate filter, RowValueExtractor<T> extractor) throws Exception {
+        return readFiltered(LOGICAL_TYPES_FILE, filter, extractor);
+    }
+
+    private <T> List<T> readFiltered(Path file, FilterPredicate filter, RowValueExtractor<T> extractor) throws Exception {
         List<T> values = new ArrayList<>();
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LOGICAL_TYPES_FILE));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
                 RowReader rows = reader.createRowReader(filter)) {
             while (rows.hasNext()) {
                 rows.next();

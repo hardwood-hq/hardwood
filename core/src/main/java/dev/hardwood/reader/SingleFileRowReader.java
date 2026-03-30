@@ -16,6 +16,8 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.predicate.PageFilterEvaluator;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.ChunkRange;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
@@ -27,7 +29,6 @@ import dev.hardwood.internal.reader.NestedBatchDataView;
 import dev.hardwood.internal.reader.NestedColumnData;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageCursor;
-import dev.hardwood.internal.reader.PageFilterEvaluator;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageRange;
 import dev.hardwood.internal.reader.PageRangeData;
@@ -66,10 +67,9 @@ final class SingleFileRowReader extends AbstractRowReader {
         this(schema, projectedSchema, inputFile, rowGroups, context, null);
     }
 
-    /// @param filterPredicate a resolved physical predicate (via [FilterPredicateResolver#resolve]),
-    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
+    /// @param filterPredicate resolved predicate, or `null` for no filtering.
     SingleFileRowReader(FileSchema schema, ProjectedSchema projectedSchema, InputFile inputFile,
-                        List<RowGroup> rowGroups, HardwoodContextImpl context, FilterPredicate filterPredicate) {
+                        List<RowGroup> rowGroups, HardwoodContextImpl context, ResolvedPredicate filterPredicate) {
         this.schema = schema;
         this.projectedSchema = projectedSchema;
         this.inputFile = inputFile;
@@ -77,6 +77,7 @@ final class SingleFileRowReader extends AbstractRowReader {
         this.context = context;
         this.adaptiveBatchSize = computeOptimalBatchSize(projectedSchema);
         this.filterPredicate = filterPredicate;
+        this.projectedSchemaRef = projectedSchema;
     }
 
     @Override
@@ -131,7 +132,7 @@ final class SingleFileRowReader extends AbstractRowReader {
             RowRanges matchingRows = RowRanges.ALL;
             if (filterPredicate != null) {
                 matchingRows = PageFilterEvaluator.computeMatchingRows(
-                        filterPredicate, rowGroup, schema, indexBuffers);
+                        filterPredicate, rowGroup, indexBuffers);
             }
 
             // Try page-range I/O for each column when filtering is active

@@ -14,9 +14,10 @@ import java.time.LocalTime;
 import java.util.BitSet;
 import java.util.UUID;
 
+import dev.hardwood.internal.predicate.RecordFilterEvaluator;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.FlatColumnData;
-import dev.hardwood.internal.reader.RecordFilterEvaluator;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.jfr.RecordFilterEvent;
 import dev.hardwood.row.PqDoubleList;
@@ -33,7 +34,8 @@ import dev.hardwood.schema.ProjectedSchema;
 abstract class AbstractRowReader implements RowReader {
 
     protected BatchDataView dataView;
-    protected FilterPredicate filterPredicate;
+    protected ResolvedPredicate filterPredicate;
+    protected ProjectedSchema projectedSchemaRef;
 
     // Iteration state shared by all row readers
     protected int rowIndex = -1;
@@ -48,6 +50,8 @@ abstract class AbstractRowReader implements RowReader {
     private boolean flatFastPath;
     // Cached name-to-projected-index mapping for named fast path (built once)
     private StringToIntMap nameCache;
+    // Maps schema column index to projected array index for record-level filtering (built once)
+    private int[] columnMapping;
 
     /// Computes a batch size that keeps all column arrays for one batch within the L2 cache.
     ///
@@ -123,6 +127,10 @@ abstract class AbstractRowReader implements RowReader {
             for (int i = 0; i < fieldCount; i++) {
                 nameCache.put(dataView.getFieldName(i), i);
             }
+        }
+        // Build column mapping once for record-level filtering
+        if (columnMapping == null && filterPredicate != null) {
+            columnMapping = buildColumnMapping();
         }
     }
 
@@ -213,7 +221,7 @@ abstract class AbstractRowReader implements RowReader {
             // Compute match mask for current batch if not yet done
             if (matchingRowsInBatch == null) {
                 matchingRowsInBatch = RecordFilterEvaluator.matchBatch(filterPredicate, batchSize,
-                        flatValueArrays, flatNulls, nameCache);
+                        flatValueArrays, flatNulls, columnMapping);
                 totalRecords += batchSize;
                 recordsKept += matchingRowsInBatch.cardinality();
             }
@@ -250,7 +258,29 @@ abstract class AbstractRowReader implements RowReader {
 
     /// Returns true if record-level filtering is active and usable.
     private boolean isRecordFilterActive() {
-        return filterPredicate != null && flatFastPath && nameCache != null;
+        return filterPredicate != null && flatFastPath && columnMapping != null;
+    }
+
+    /// Builds a mapping from schema column index to projected array index.
+    /// Uses [ProjectedSchema] to invert the projected -> original mapping.
+    /// Entries for non-projected columns are set to -1.
+    private int[] buildColumnMapping() {
+        if (projectedSchemaRef == null) {
+            return new int[0];
+        }
+        int projectedCount = projectedSchemaRef.getProjectedColumnCount();
+        // Find the max original index to size the array
+        int maxOriginalIndex = 0;
+        for (int i = 0; i < projectedCount; i++) {
+            maxOriginalIndex = Math.max(maxOriginalIndex, projectedSchemaRef.toOriginalIndex(i));
+        }
+        int[] mapping = new int[maxOriginalIndex + 1];
+        java.util.Arrays.fill(mapping, -1);
+        for (int projectedIndex = 0; projectedIndex < projectedCount; projectedIndex++) {
+            int originalIndex = projectedSchemaRef.toOriginalIndex(projectedIndex);
+            mapping[originalIndex] = projectedIndex;
+        }
+        return mapping;
     }
 
     // ==================== Primitive Type Accessors ====================

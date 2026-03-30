@@ -14,7 +14,8 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.StatisticsDecoder;
+import dev.hardwood.internal.predicate.BinaryComparator;
+import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.Statistics;
@@ -156,10 +157,10 @@ class StatisticsTest {
         byte[] c = {0x01, 0x02, 0x03};
         byte[] shorter = {0x01, 0x02};
 
-        assertThat(StatisticsDecoder.compareBinary(a, b)).isNegative();
-        assertThat(StatisticsDecoder.compareBinary(b, a)).isPositive();
-        assertThat(StatisticsDecoder.compareBinary(a, c)).isZero();
-        assertThat(StatisticsDecoder.compareBinary(shorter, a)).isNegative();
-        assertThat(StatisticsDecoder.compareBinary(a, shorter)).isPositive();
+        assertThat(BinaryComparator.compareUnsigned(a, b)).isNegative();
+        assertThat(BinaryComparator.compareUnsigned(b, a)).isPositive();
+        assertThat(BinaryComparator.compareUnsigned(a, c)).isZero();
+        assertThat(BinaryComparator.compareUnsigned(shorter, a)).isNegative();
+        assertThat(BinaryComparator.compareUnsigned(a, shorter)).isPositive();
     }
 }

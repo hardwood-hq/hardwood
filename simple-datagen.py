@@ -8,7 +8,7 @@
 
 import pyarrow as pa
 import pyarrow.parquet as pq
-from datetime import datetime, date, time
+from datetime import datetime, date, time, timezone
 from decimal import Decimal
 import uuid
 
@@ -1587,3 +1587,59 @@ print("\nGenerated column_index_pushdown_dict.parquet:")
 print("  - 1 row group, 10000 rows, sorted id [0,9999], category with 10 distinct values")
 print("  - Dictionary encoding enabled for both columns")
 print("  - Parquet v2 with Column Index and Offset Index")
+
+# Multi-row-group file with nested struct containing timestamp for predicate push-down testing
+filter_nested_ts_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('event', pa.struct([
+        ('ts', pa.timestamp('us', tz='UTC')),
+        ('label', pa.string()),
+    ])),
+])
+
+nested_ts_rg1 = pa.table({
+    'id': [1, 2, 3],
+    'event': [
+        {'ts': datetime(2024, 1, 10, tzinfo=timezone.utc), 'label': 'a'},
+        {'ts': datetime(2024, 1, 15, tzinfo=timezone.utc), 'label': 'b'},
+        {'ts': datetime(2024, 1, 20, tzinfo=timezone.utc), 'label': 'c'},
+    ],
+}, schema=filter_nested_ts_schema)
+# ts: 2024-01-10 .. 2024-01-20
+
+nested_ts_rg2 = pa.table({
+    'id': [4, 5, 6],
+    'event': [
+        {'ts': datetime(2024, 6, 1, tzinfo=timezone.utc), 'label': 'd'},
+        {'ts': datetime(2024, 6, 15, tzinfo=timezone.utc), 'label': 'e'},
+        {'ts': datetime(2024, 6, 30, tzinfo=timezone.utc), 'label': 'f'},
+    ],
+}, schema=filter_nested_ts_schema)
+# ts: 2024-06-01 .. 2024-06-30
+
+nested_ts_rg3 = pa.table({
+    'id': [7, 8, 9],
+    'event': [
+        {'ts': datetime(2024, 12, 1, tzinfo=timezone.utc), 'label': 'g'},
+        {'ts': datetime(2024, 12, 15, tzinfo=timezone.utc), 'label': 'h'},
+        {'ts': datetime(2024, 12, 25, tzinfo=timezone.utc), 'label': 'i'},
+    ],
+}, schema=filter_nested_ts_schema)
+# ts: 2024-12-01 .. 2024-12-25
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/filter_pushdown_nested_ts.parquet',
+    schema=filter_nested_ts_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    write_statistics=True,
+)
+writer.write_table(nested_ts_rg1)
+writer.write_table(nested_ts_rg2)
+writer.write_table(nested_ts_rg3)
+writer.close()
+
+print("\nGenerated filter_pushdown_nested_ts.parquet:")
+print("  - 3 row groups with struct column (event: {ts: timestamp[us, UTC], label: string})")
+print("  - RG0: Jan 2024, RG1: Jun 2024, RG2: Dec 2024")

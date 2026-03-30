@@ -32,7 +32,7 @@ public class RowRanges {
 
     /// Creates a RowRanges that matches all rows in a row group.
     /// Used as a conservative fallback when Column Index is absent.
-    static RowRanges all(long rowGroupRowCount) {
+    public static RowRanges all(long rowGroupRowCount) {
         return new RowRanges(new long[]{ 0, rowGroupRowCount }, true);
     }
 
@@ -50,7 +50,7 @@ public class RowRanges {
     /// @param pages page locations from the Offset Index
     /// @param keep bitmap indicating which pages to keep
     /// @param rowGroupRowCount total number of rows in the row group
-    static RowRanges fromPages(List<PageLocation> pages, boolean[] keep, long rowGroupRowCount) {
+    public static RowRanges fromPages(List<PageLocation> pages, boolean[] keep, long rowGroupRowCount) {
         long[] result = new long[pages.size() * 2];
         int pos = 0;
 
@@ -78,7 +78,7 @@ public class RowRanges {
     }
 
     /// Returns `true` if a page with the given row range overlaps any matching interval.
-    boolean overlapsPage(long pageFirstRow, long pageLastRow) {
+    public boolean overlapsPage(long pageFirstRow, long pageLastRow) {
         for (int i = 0; i < ranges.length; i += 2) {
             if (pageLastRow <= ranges[i]) {
                 return false;
@@ -91,7 +91,7 @@ public class RowRanges {
     }
 
     /// Returns this RowRanges intersected with `other` (to support AND predicates).
-    RowRanges intersect(RowRanges other) {
+    public RowRanges intersect(RowRanges other) {
         if (this.all) {
             return other;
         }
@@ -126,7 +126,7 @@ public class RowRanges {
 
     /// Returns the union of this RowRanges with `other` (to support OR predicates).
     /// Both inputs are already sorted and non-overlapping, so a single-pass merge suffices.
-    RowRanges union(RowRanges other) {
+    public RowRanges union(RowRanges other) {
         if (this.all || other.all) {
             return this.all ? this : other;
         }
@@ -164,7 +164,7 @@ public class RowRanges {
     }
 
     /// Returns the number of intervals in this set.
-    int intervalCount() {
+    public int intervalCount() {
         return ranges.length / 2;
     }
 }

@@ -16,6 +16,9 @@ import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.predicate.PageFilterEvaluator;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.FileOpenedEvent;
@@ -25,7 +28,6 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -51,7 +53,7 @@ public class FileManager {
     // Set after first file is opened
     private volatile ProjectedSchema projectedSchema;
     private volatile FileSchema referenceSchema;
-    private volatile FilterPredicate filterPredicate;
+    private volatile ResolvedPredicate filterPredicate;
     private OpenedFile firstOpenedFile;
 
     /// Creates a FileManager for the given input files.
@@ -84,10 +86,9 @@ public class FileManager {
     /// and triggers prefetching. Must be called after [#openFirst()].
     ///
     /// @param projection column projection (use [ColumnProjection#all()] for all columns)
-    /// @param filter a resolved physical predicate (via [FilterPredicateResolver#resolve]),
-    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
+    /// @param filterPredicate resolved predicate, or `null` for no filtering.
     /// @return result containing the file state, file schema, and projected schema
-    public InitResult initialize(ColumnProjection projection, FilterPredicate filter) {
+    public InitResult initialize(ColumnProjection projection, ResolvedPredicate filter) {
         this.filterPredicate = filter;
         return initialize(projection);
     }
@@ -300,8 +301,7 @@ public class FileManager {
     /// @return list of page info lists, one per projected column
     private List<List<PageInfo>> scanAllProjectedColumns(InputFile inputFile, OpenedFile openedFile) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
-        List<RowGroup> rowGroups = filterRowGroups(openedFile.metaData.rowGroups(), openedFile.schema,
-                inputFile.name());
+        List<RowGroup> rowGroups = filterRowGroups(openedFile.metaData.rowGroups(), inputFile.name());
 
         // Build column index mapping using field paths for unambiguous cross-file lookup
         int[] columnIndices = new int[projectedColumnCount];
@@ -339,7 +339,7 @@ public class FileManager {
             RowRanges matchingRows = RowRanges.ALL;
             if (filterPredicate != null) {
                 matchingRows = PageFilterEvaluator.computeMatchingRows(
-                        filterPredicate, rowGroup, openedFile.schema, indexBuffers);
+                        filterPredicate, rowGroup, indexBuffers);
             }
 
             // Try page-range I/O for each column when filtering is active.
@@ -442,12 +442,12 @@ public class FileManager {
 
     /// Filters row groups using the active filter predicate.
     /// If no filter is set, returns the original list unmodified.
-    private List<RowGroup> filterRowGroups(List<RowGroup> rowGroups, FileSchema schema, String fileName) {
+    private List<RowGroup> filterRowGroups(List<RowGroup> rowGroups, String fileName) {
         if (filterPredicate == null) {
             return rowGroups;
         }
         List<RowGroup> filtered = rowGroups.stream()
-                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filterPredicate, rg, schema))
+                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filterPredicate, rg))
                 .toList();
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();

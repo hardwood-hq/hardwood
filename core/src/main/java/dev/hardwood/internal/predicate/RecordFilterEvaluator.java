@@ -5,27 +5,14 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.internal.reader;
+package dev.hardwood.internal.predicate;
 
 import java.util.Arrays;
 import java.util.BitSet;
 
-import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.reader.FilterPredicate;
-import dev.hardwood.reader.FilterPredicate.And;
-import dev.hardwood.reader.FilterPredicate.BinaryColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.BinaryInPredicate;
-import dev.hardwood.reader.FilterPredicate.BooleanColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.IntInPredicate;
-import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.LongInPredicate;
-import dev.hardwood.reader.FilterPredicate.Not;
-import dev.hardwood.reader.FilterPredicate.Or;
 
-/// Evaluates a [FilterPredicate] against a single row's values from the flat
+/// Evaluates a [ResolvedPredicate] against a single row's values from the flat
 /// cached arrays in [dev.hardwood.reader.AbstractRowReader].
 ///
 /// Used for record-level filtering after page decoding, so that only rows
@@ -36,17 +23,17 @@ public class RecordFilterEvaluator {
     /// where set bits indicate matching rows. This enables batch-level iteration
     /// in `AbstractRowReader` instead of per-row `matches()` calls.
     ///
-    /// @param predicate   the filter predicate to evaluate
-    /// @param batchSize   number of rows in the batch
-    /// @param valueArrays cached primitive arrays per projected column (e.g., `int[]`, `long[]`, `double[]`).
-    /// @param nulls       null bitmaps per projected column
-    /// @param nameCache   column name to projected index mapping
+    /// @param predicate     the resolved predicate to evaluate
+    /// @param batchSize     number of rows in the batch
+    /// @param valueArrays   cached primitive arrays per projected column (e.g., `int[]`, `long[]`, `double[]`).
+    /// @param nulls         null bitmaps per projected column
+    /// @param columnMapping maps schema column index to projected array index; -1 if not projected
     /// @return BitSet with bits set for matching rows
-    public static BitSet matchBatch(FilterPredicate predicate, int batchSize,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
+    public static BitSet matchBatch(ResolvedPredicate predicate, int batchSize,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
         BitSet result = new BitSet(batchSize);
         for (int i = 0; i < batchSize; i++) {
-            if (matches(predicate, i, valueArrays, nulls, nameCache)) {
+            if (matches(predicate, i, valueArrays, nulls, columnMapping)) {
                 result.set(i);
             }
         }
@@ -55,51 +42,55 @@ public class RecordFilterEvaluator {
 
     /// Returns `true` if the row at `rowIndex` matches the predicate.
     ///
-    /// @param predicate   the filter predicate to evaluate
-    /// @param rowIndex    the row position within the current batch
-    /// @param valueArrays cached primitive arrays per projected column
-    /// @param nulls       null bitmaps per projected column (may contain null entries for required columns)
-    /// @param nameCache   column name to projected index mapping
-    public static boolean matches(FilterPredicate predicate, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
+    /// @param predicate     the resolved predicate to evaluate
+    /// @param rowIndex      the row position within the current batch
+    /// @param valueArrays   cached primitive arrays per projected column
+    /// @param nulls         null bitmaps per projected column (may contain null entries for required columns)
+    /// @param columnMapping maps schema column index to projected array index; -1 if not projected
+    public static boolean matches(ResolvedPredicate predicate, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
         return switch (predicate) {
-            case IntColumnPredicate p -> matchesInt(p, rowIndex, valueArrays, nulls, nameCache);
-            case LongColumnPredicate p -> matchesLong(p, rowIndex, valueArrays, nulls, nameCache);
-            case FloatColumnPredicate p -> matchesFloat(p, rowIndex, valueArrays, nulls, nameCache);
-            case DoubleColumnPredicate p -> matchesDouble(p, rowIndex, valueArrays, nulls, nameCache);
-            case BooleanColumnPredicate p -> matchesBoolean(p, rowIndex, valueArrays, nulls, nameCache);
-            case BinaryColumnPredicate p -> matchesBinary(p.column(), p.op(), p.value(), false, rowIndex, valueArrays, nulls, nameCache);
-            case FilterPredicate.SignedBinaryColumnPredicate p -> matchesBinary(p.column(), p.op(), p.value(), true, rowIndex, valueArrays, nulls, nameCache);
-            case IntInPredicate p -> matchesIntIn(p, rowIndex, valueArrays, nulls, nameCache);
-            case LongInPredicate p -> matchesLongIn(p, rowIndex, valueArrays, nulls, nameCache);
-            case BinaryInPredicate p -> matchesBinaryIn(p, rowIndex, valueArrays, nulls, nameCache);
-            case And and -> {
-                for (FilterPredicate filter : and.filters()) {
-                    if (!matches(filter, rowIndex, valueArrays, nulls, nameCache)) {
+            case ResolvedPredicate.IntPredicate p -> matchesInt(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.LongPredicate p -> matchesLong(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.FloatPredicate p -> matchesFloat(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.DoublePredicate p -> matchesDouble(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.BooleanPredicate p -> matchesBoolean(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.BinaryPredicate p -> matchesBinary(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.IntInPredicate p -> matchesIntIn(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.LongInPredicate p -> matchesLongIn(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.BinaryInPredicate p -> matchesBinaryIn(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.And and -> {
+                for (ResolvedPredicate child : and.children()) {
+                    if (!matches(child, rowIndex, valueArrays, nulls, columnMapping)) {
                         yield false;
                     }
                 }
                 yield true;
             }
-            case Or or -> {
-                for (FilterPredicate filter : or.filters()) {
-                    if (matches(filter, rowIndex, valueArrays, nulls, nameCache)) {
+            case ResolvedPredicate.Or or -> {
+                for (ResolvedPredicate child : or.children()) {
+                    if (matches(child, rowIndex, valueArrays, nulls, columnMapping)) {
                         yield true;
                     }
                 }
                 yield false;
             }
-            case Not n -> !matches(n.delegate(), rowIndex, valueArrays, nulls, nameCache);
-            case FilterPredicate.DateColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
-            case FilterPredicate.InstantColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
-            case FilterPredicate.TimeColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
-            case FilterPredicate.DecimalColumnPredicate p -> throw FilterPredicateResolver.unresolvedPredicate(p);
+            case ResolvedPredicate.Not n -> !matches(n.delegate(), rowIndex, valueArrays, nulls, columnMapping);
         };
     }
 
-    private static boolean matchesInt(IntColumnPredicate p, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(p.column());
+    /// Maps a schema column index to the projected array index using the column mapping.
+    /// Returns -1 if the column is not in the projection.
+    private static int projectedIndex(int schemaColumnIndex, int[] columnMapping) {
+        if (schemaColumnIndex < 0 || schemaColumnIndex >= columnMapping.length) {
+            return -1;
+        }
+        return columnMapping[schemaColumnIndex];
+    }
+
+    private static boolean matchesInt(ResolvedPredicate.IntPredicate p, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
+        int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof int[])) {
             return true; // column not in projection — conservative
         }
@@ -110,9 +101,9 @@ public class RecordFilterEvaluator {
         return compareInt(p.op(), recordValue, p.value());
     }
 
-    private static boolean matchesLong(LongColumnPredicate p, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(p.column());
+    private static boolean matchesLong(ResolvedPredicate.LongPredicate p, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
+        int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof long[])) {
             return true;
         }
@@ -123,9 +114,9 @@ public class RecordFilterEvaluator {
         return compareLong(p.op(), recordValue, p.value());
     }
 
-    private static boolean matchesFloat(FloatColumnPredicate p, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(p.column());
+    private static boolean matchesFloat(ResolvedPredicate.FloatPredicate p, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
+        int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof float[])) {
             return true;
         }
@@ -136,9 +127,9 @@ public class RecordFilterEvaluator {
         return compareFloat(p.op(), recordValue, p.value());
     }
 
-    private static boolean matchesDouble(DoubleColumnPredicate p, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(p.column());
+    private static boolean matchesDouble(ResolvedPredicate.DoublePredicate p, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
+        int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof double[])) {
             return true;
         }
@@ -149,9 +140,9 @@ public class RecordFilterEvaluator {
         return compareDouble(p.op(), recordValue, p.value());
     }
 
-    private static boolean matchesBoolean(BooleanColumnPredicate p, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(p.column());
+    private static boolean matchesBoolean(ResolvedPredicate.BooleanPredicate p, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
+        int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof boolean[])) {
             return true;
         }
@@ -166,9 +157,9 @@ public class RecordFilterEvaluator {
         };
     }
 
-    private static boolean matchesBinary(String column, FilterPredicate.Operator op, byte[] value,
-            boolean signed, int rowIndex, Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(column);
+    private static boolean matchesBinary(ResolvedPredicate.BinaryPredicate p, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
+        int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof byte[][])) {
             return true;
         }
@@ -176,10 +167,10 @@ public class RecordFilterEvaluator {
             return false;
         }
         byte[] recordValue = ((byte[][]) valueArrays[cachedIndex])[rowIndex];
-        int cmp = signed
-                ? StatisticsDecoder.compareSignedBinary(recordValue, value)
-                : StatisticsDecoder.compareBinary(recordValue, value);
-        return switch (op) {
+        int cmp = p.signed()
+                ? BinaryComparator.compareSigned(recordValue, p.value())
+                : BinaryComparator.compareUnsigned(recordValue, p.value());
+        return switch (p.op()) {
             case EQ -> cmp == 0;
             case NOT_EQ -> cmp != 0;
             case LT -> cmp < 0;
@@ -191,9 +182,9 @@ public class RecordFilterEvaluator {
 
     // ==================== IN predicate evaluation ====================
 
-    private static boolean matchesIntIn(IntInPredicate p, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(p.column());
+    private static boolean matchesIntIn(ResolvedPredicate.IntInPredicate p, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
+        int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof int[])) {
             return true;
         }
@@ -209,9 +200,9 @@ public class RecordFilterEvaluator {
         return false;
     }
 
-    private static boolean matchesLongIn(LongInPredicate p, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(p.column());
+    private static boolean matchesLongIn(ResolvedPredicate.LongInPredicate p, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
+        int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof long[])) {
             return true;
         }
@@ -227,9 +218,9 @@ public class RecordFilterEvaluator {
         return false;
     }
 
-    private static boolean matchesBinaryIn(BinaryInPredicate p, int rowIndex,
-            Object[] valueArrays, BitSet[] nulls, StringToIntMap nameCache) {
-        int cachedIndex = nameCache.get(p.column());
+    private static boolean matchesBinaryIn(ResolvedPredicate.BinaryInPredicate p, int rowIndex,
+            Object[] valueArrays, BitSet[] nulls, int[] columnMapping) {
+        int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
         if (cachedIndex < 0 || !(valueArrays[cachedIndex] instanceof byte[][])) {
             return true;
         }

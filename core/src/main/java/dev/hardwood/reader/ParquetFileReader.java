@@ -13,10 +13,11 @@ import java.util.List;
 import dev.hardwood.Hardwood;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.FilterPredicateResolver;
+import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
-import dev.hardwood.internal.reader.RowGroupFilterEvaluator;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.FileMetaData;
@@ -136,8 +137,8 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param filter predicate for row group filtering based on statistics
     public ColumnReader createColumnReader(String columnName, FilterPredicate filter) {
         FileSchema schema = getFileSchema();
-        FilterPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return ColumnReader.create(columnName, schema, inputFile, filterRowGroups(schema, resolved), context, resolved);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        return ColumnReader.create(columnName, schema, inputFile, filterRowGroups(resolved), context, resolved);
     }
 
     /// Create a ColumnReader for a column by index, spanning all row groups.
@@ -152,8 +153,8 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param filter predicate for row group filtering based on statistics
     public ColumnReader createColumnReader(int columnIndex, FilterPredicate filter) {
         FileSchema schema = getFileSchema();
-        FilterPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return ColumnReader.create(columnIndex, schema, inputFile, filterRowGroups(schema, resolved), context, resolved);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        return ColumnReader.create(columnIndex, schema, inputFile, filterRowGroups(resolved), context, resolved);
     }
 
     /// Create a RowReader that iterates over all rows in all row groups.
@@ -184,15 +185,15 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param filter predicate for row group filtering based on statistics
     public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
         FileSchema schema = getFileSchema();
-        FilterPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        return new SingleFileRowReader(schema, projectedSchema, inputFile, filterRowGroups(schema, resolved), context, resolved);
+        return new SingleFileRowReader(schema, projectedSchema, inputFile, filterRowGroups(resolved), context, resolved);
     }
 
-    private List<RowGroup> filterRowGroups(FileSchema schema, FilterPredicate filter) {
+    private List<RowGroup> filterRowGroups(ResolvedPredicate filter) {
         List<RowGroup> allRowGroups = fileMetaData.rowGroups();
         List<RowGroup> filtered = allRowGroups.stream()
-                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filter, rg, schema))
+                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filter, rg))
                 .toList();
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();

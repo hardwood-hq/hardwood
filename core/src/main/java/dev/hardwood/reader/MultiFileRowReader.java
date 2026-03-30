@@ -10,6 +10,7 @@ package dev.hardwood.reader;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ForkJoinPool;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchDataView;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnValueIterator;
@@ -57,11 +58,10 @@ public class MultiFileRowReader extends AbstractRowReader {
     /// @param context the Hardwood context
     /// @param fileManager the shared file manager
     /// @param initResult the initialization result from the first file
-    /// @param filterPredicate a resolved physical predicate (via [FilterPredicateResolver#resolve]),
-    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
+    /// @param filterPredicate resolved predicate, or `null` for no filtering.
     MultiFileRowReader(HardwoodContextImpl context,
                        FileManager fileManager, FileManager.InitResult initResult,
-                       FilterPredicate filterPredicate) {
+                       ResolvedPredicate filterPredicate) {
         this.context = context;
         this.fileManager = fileManager;
         this.initResult = initResult;
@@ -69,6 +69,7 @@ public class MultiFileRowReader extends AbstractRowReader {
         this.projectedSchema = initResult.projectedSchema();
         this.adaptiveBatchSize = computeOptimalBatchSize(projectedSchema);
         this.filterPredicate = filterPredicate;
+        this.projectedSchemaRef = projectedSchema;
 
         LOG.log(System.Logger.Level.DEBUG, "Created MultiFileRowReader starting with {0}, {1} projected columns",
                 fileManager.getFileName(0), projectedSchema.getProjectedColumnCount());

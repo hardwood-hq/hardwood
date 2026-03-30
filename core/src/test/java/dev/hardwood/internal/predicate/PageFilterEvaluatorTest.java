@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.internal.reader;
+package dev.hardwood.internal.predicate;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
@@ -22,6 +22,9 @@ import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.RowGroupIndexBuffers;
+import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
@@ -306,10 +309,10 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     byte[] min = columnIndex.minValues().get(pageIndex);
                     byte[] max = columnIndex.maxValues().get(pageIndex);
-                    int cmpMin = StatisticsDecoder.compareBinary(searchValue, min);
-                    int cmpMax = StatisticsDecoder.compareBinary(searchValue, max);
+                    int cmpMin = BinaryComparator.compareUnsigned(searchValue, min);
+                    int cmpMax = BinaryComparator.compareUnsigned(searchValue, max);
                     return StatisticsFilterSupport.canDropCompared(op,
-                            cmpMin, cmpMax, StatisticsDecoder.compareBinary(min, max));
+                            cmpMin, cmpMax, BinaryComparator.compareUnsigned(min, max));
                 });
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
@@ -408,16 +411,24 @@ class PageFilterEvaluatorTest {
     }
 
     @Test
-    void testAndWithUnknownColumnIsConservative() throws IOException {
-        // AND(id < 5000, nonexistent > 0) → unknown column returns all,
-        // so result should equal just the id < 5000 result
-        RowRanges idOnly = computeMatchingRows(FilterPredicate.lt("id", 5000L));
-        RowRanges withUnknown = computeMatchingRows(FilterPredicate.and(
-                FilterPredicate.lt("id", 5000L),
-                FilterPredicate.gt("nonexistent", 0L)));
-
-        assertFalse(withUnknown.isAll());
-        assertEquals(idOnly.intervalCount(), withUnknown.intervalCount());
+    void testAndWithUnknownColumnThrowsAtResolve() throws IOException {
+        // AND(id < 5000, nonexistent > 0) → unknown column now throws at resolve time
+        InputFile inputFile = InputFile.of(COLUMN_INDEX_FILE);
+        inputFile.open();
+        try {
+            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile);
+            FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
+            FilterPredicate filter = FilterPredicate.and(
+                    FilterPredicate.lt("id", 5000L),
+                    FilterPredicate.gt("nonexistent", 0L));
+            org.assertj.core.api.Assertions.assertThatThrownBy(
+                    () -> FilterPredicateResolver.resolve(filter, schema))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("not found");
+        }
+        finally {
+            inputFile.close();
+        }
     }
 
     private RowRanges computeMatchingRows(FilterPredicate filter) throws IOException {
@@ -426,9 +437,10 @@ class PageFilterEvaluatorTest {
         try {
             FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile);
             FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
+            ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
             RowGroup rowGroup = metaData.rowGroups().get(0);
             RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
-            return PageFilterEvaluator.computeMatchingRows(filter, rowGroup, schema, indexBuffers);
+            return PageFilterEvaluator.computeMatchingRows(resolved, rowGroup, indexBuffers);
         }
         finally {
             inputFile.close();

@@ -19,7 +19,9 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.RowGroupFilterEvaluator;
+import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
@@ -115,23 +117,23 @@ class FilterPredicateTest {
         FileSchema schema = createIntSchema();
 
         // EQ 15 (in range) -> cannot drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", 15), rg, schema)).isFalse();
 
         // EQ 5 (below min) -> can drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", 5), rg, schema)).isTrue();
 
         // EQ 25 (above max) -> can drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", 25), rg, schema)).isTrue();
 
         // EQ 10 (equals min) -> cannot drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", 10), rg, schema)).isFalse();
 
         // EQ 20 (equals max) -> cannot drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", 20), rg, schema)).isFalse();
     }
 
@@ -142,16 +144,16 @@ class FilterPredicateTest {
         FileSchema schema = createIntSchema();
 
         // NOT_EQ 42 when min==max==42 -> can drop (all values are 42)
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.notEq("col", 42), rg, schema)).isTrue();
 
         // NOT_EQ 10 when min==max==42 -> cannot drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.notEq("col", 10), rg, schema)).isFalse();
 
         // NOT_EQ with range min=10, max=20 -> cannot drop
         RowGroup range = createIntRowGroup(10, 20);
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.notEq("col", 15), range, schema)).isFalse();
     }
 
@@ -161,19 +163,19 @@ class FilterPredicateTest {
         FileSchema schema = createIntSchema();
 
         // LT 5 -> all values >= 10 so none < 5 -> can drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.lt("col", 5), rg, schema)).isTrue();
 
         // LT 10 -> all values >= 10, none < 10 -> can drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.lt("col", 10), rg, schema)).isTrue();
 
         // LT 15 -> some values < 15 -> cannot drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.lt("col", 15), rg, schema)).isFalse();
 
         // LT 25 -> all values < 25 possible -> cannot drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.lt("col", 25), rg, schema)).isFalse();
     }
 
@@ -183,11 +185,11 @@ class FilterPredicateTest {
         FileSchema schema = createIntSchema();
 
         // LT_EQ 9 -> all values >= 10 -> can drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.ltEq("col", 9), rg, schema)).isTrue();
 
         // LT_EQ 10 -> min == 10 -> cannot drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.ltEq("col", 10), rg, schema)).isFalse();
     }
 
@@ -197,15 +199,15 @@ class FilterPredicateTest {
         FileSchema schema = createIntSchema();
 
         // GT 25 -> max is 20 -> can drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.gt("col", 25), rg, schema)).isTrue();
 
         // GT 20 -> max is 20, none > 20 -> can drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.gt("col", 20), rg, schema)).isTrue();
 
         // GT 15 -> some values > 15 -> cannot drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.gt("col", 15), rg, schema)).isFalse();
     }
 
@@ -215,11 +217,11 @@ class FilterPredicateTest {
         FileSchema schema = createIntSchema();
 
         // GT_EQ 21 -> max is 20 -> can drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.gtEq("col", 21), rg, schema)).isTrue();
 
         // GT_EQ 20 -> max is 20 -> cannot drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.gtEq("col", 20), rg, schema)).isFalse();
     }
 
@@ -228,11 +230,11 @@ class FilterPredicateTest {
         RowGroup rg = createLongRowGroup(100L, 200L);
         FileSchema schema = createLongSchema();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.gt("col", 200L), rg, schema)).isTrue();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.lt("col", 100L), rg, schema)).isTrue();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", 150L), rg, schema)).isFalse();
     }
 
@@ -241,11 +243,11 @@ class FilterPredicateTest {
         RowGroup rg = createDoubleRowGroup(1.0, 10.0);
         FileSchema schema = createDoubleSchema();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.gt("col", 10.0), rg, schema)).isTrue();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.lt("col", 1.0), rg, schema)).isTrue();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", 5.0), rg, schema)).isFalse();
     }
 
@@ -254,11 +256,11 @@ class FilterPredicateTest {
         RowGroup rg = createFloatRowGroup(1.0f, 10.0f);
         FileSchema schema = createFloatSchema();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.gt("col", 10.0f), rg, schema)).isTrue();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.ltEq("col", 0.5f), rg, schema)).isTrue();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", 5.0f), rg, schema)).isFalse();
     }
 
@@ -268,16 +270,16 @@ class FilterPredicateTest {
         RowGroup allTrue = createBooleanRowGroup(true, true);
         FileSchema schema = createBooleanSchema();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", false), allTrue, schema)).isTrue();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", true), allTrue, schema)).isFalse();
 
         // Row group with mixed: min=false, max=true
         RowGroup mixed = createBooleanRowGroup(false, true);
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", false), mixed, schema)).isFalse();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", true), mixed, schema)).isFalse();
     }
 
@@ -288,15 +290,15 @@ class FilterPredicateTest {
         FileSchema schema = createBinarySchema();
 
         // "apple" < "banana" -> EQ cannot match
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", "apple"), rg, schema)).isTrue();
 
         // "elderberry" > "date" -> EQ cannot match
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", "elderberry"), rg, schema)).isTrue();
 
         // "cherry" in range -> EQ might match
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", "cherry"), rg, schema)).isFalse();
     }
 
@@ -310,21 +312,21 @@ class FilterPredicateTest {
                 FilterPredicate.gt("col", 25),  // can drop (max=20)
                 FilterPredicate.lt("col", 30)   // cannot drop
         );
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(andLeftDrop, rg, schema)).isTrue();
+        assertThat(canDropRowGroup(andLeftDrop, rg, schema)).isTrue();
 
         // AND where right can drop -> can drop
         FilterPredicate andRightDrop = FilterPredicate.and(
                 FilterPredicate.lt("col", 30),   // cannot drop
                 FilterPredicate.gt("col", 25)    // can drop
         );
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(andRightDrop, rg, schema)).isTrue();
+        assertThat(canDropRowGroup(andRightDrop, rg, schema)).isTrue();
 
         // AND where neither can drop -> cannot drop
         FilterPredicate andNeitherDrop = FilterPredicate.and(
                 FilterPredicate.gt("col", 5),
                 FilterPredicate.lt("col", 25)
         );
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(andNeitherDrop, rg, schema)).isFalse();
+        assertThat(canDropRowGroup(andNeitherDrop, rg, schema)).isFalse();
     }
 
     @Test
@@ -337,21 +339,21 @@ class FilterPredicateTest {
                 FilterPredicate.lt("col", 5),    // can drop
                 FilterPredicate.gt("col", 25)    // can drop
         );
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(orBothDrop, rg, schema)).isTrue();
+        assertThat(canDropRowGroup(orBothDrop, rg, schema)).isTrue();
 
         // OR where only left can drop -> cannot drop
         FilterPredicate orLeftOnly = FilterPredicate.or(
                 FilterPredicate.lt("col", 5),    // can drop
                 FilterPredicate.gt("col", 15)    // cannot drop
         );
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(orLeftOnly, rg, schema)).isFalse();
+        assertThat(canDropRowGroup(orLeftOnly, rg, schema)).isFalse();
 
         // OR where neither can drop -> cannot drop
         FilterPredicate orNeitherDrop = FilterPredicate.or(
                 FilterPredicate.gt("col", 5),
                 FilterPredicate.lt("col", 25)
         );
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(orNeitherDrop, rg, schema)).isFalse();
+        assertThat(canDropRowGroup(orNeitherDrop, rg, schema)).isFalse();
     }
 
     @Test
@@ -360,20 +362,21 @@ class FilterPredicateTest {
         RowGroup rg = createRowGroupWithoutStatistics();
         FileSchema schema = createIntSchema();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.eq("col", 42), rg, schema)).isFalse();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.gt("col", 100), rg, schema)).isFalse();
     }
 
     @Test
-    void testUnknownColumnNeverDrop() {
-        RowGroup rg = createIntRowGroup(10, 20);
+    void testUnknownColumnThrowsAtResolve() {
         FileSchema schema = createIntSchema();
 
-        // Filter on a column that doesn't exist -> conservative, don't drop
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
-                FilterPredicate.eq("nonexistent", 42), rg, schema)).isFalse();
+        // Filter on a column that doesn't exist -> throws at resolve time
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("nonexistent", 42), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not found");
     }
 
     @Test
@@ -402,16 +405,16 @@ class FilterPredicateTest {
         RowGroup rg = createIntRowGroup(10, 20);
         FileSchema schema = createIntSchema();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.in("col", 1, 5, 8), rg, schema)).isTrue();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.in("col", 25, 30), rg, schema)).isTrue();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.in("col", 5, 15, 25), rg, schema)).isFalse();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.in("col", 1, 10), rg, schema)).isFalse();
     }
 
@@ -420,9 +423,9 @@ class FilterPredicateTest {
         RowGroup rg = createLongRowGroup(100L, 200L);
         FileSchema schema = createLongSchema();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.in("col", 50L, 80L), rg, schema)).isTrue();
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.in("col", 50L, 150L), rg, schema)).isFalse();
     }
 
@@ -431,10 +434,10 @@ class FilterPredicateTest {
         RowGroup rg = createBinaryRowGroup("banana".getBytes(), "date".getBytes());
         FileSchema schema = createBinarySchema();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.inStrings("col", "apple", "elderberry"), rg, schema)).isTrue();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.inStrings("col", "apple", "cherry"), rg, schema)).isFalse();
     }
 
@@ -443,7 +446,7 @@ class FilterPredicateTest {
         RowGroup rg = createRowGroupWithoutStatistics();
         FileSchema schema = createIntSchema();
 
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
+        assertThat(canDropRowGroup(
                 FilterPredicate.in("col", 1, 2, 3), rg, schema)).isFalse();
     }
 
@@ -581,7 +584,7 @@ class FilterPredicateTest {
     void intPredicateOnStringColumnThrows() {
         RowGroup rg = createBinaryRowGroup(new byte[]{0x41}, new byte[]{0x5A});
         FileSchema schema = createBinarySchema();
-        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+        assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.eq("col", 42), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' has physical type BYTE_ARRAY"
@@ -592,7 +595,7 @@ class FilterPredicateTest {
     void longPredicateOnIntColumnThrows() {
         RowGroup rg = createIntRowGroup(0, 100);
         FileSchema schema = createIntSchema();
-        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+        assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.gt("col", 50L), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' has physical type INT32"
@@ -603,7 +606,7 @@ class FilterPredicateTest {
     void floatPredicateOnDoubleColumnThrows() {
         RowGroup rg = createDoubleRowGroup(0.0, 100.0);
         FileSchema schema = createDoubleSchema();
-        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+        assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.gt("col", 50.0f), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' has physical type DOUBLE"
@@ -614,7 +617,7 @@ class FilterPredicateTest {
     void stringPredicateOnIntColumnThrows() {
         RowGroup rg = createIntRowGroup(0, 100);
         FileSchema schema = createIntSchema();
-        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+        assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.eq("col", "hello"), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' has physical type INT32"
@@ -625,7 +628,7 @@ class FilterPredicateTest {
     void booleanPredicateOnLongColumnThrows() {
         RowGroup rg = createLongRowGroup(0, 100);
         FileSchema schema = createLongSchema();
-        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+        assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.eq("col", true), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' has physical type INT64"
@@ -636,7 +639,7 @@ class FilterPredicateTest {
     void intInPredicateOnStringColumnThrows() {
         RowGroup rg = createBinaryRowGroup(new byte[]{0x41}, new byte[]{0x5A});
         FileSchema schema = createBinarySchema();
-        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(
+        assertThatThrownBy(() -> canDropRowGroup(
                 FilterPredicate.in("col", 1, 2, 3), rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' has physical type BYTE_ARRAY"
@@ -651,19 +654,20 @@ class FilterPredicateTest {
         FilterPredicate filter = FilterPredicate.and(
                 FilterPredicate.eq("col", "M"),
                 FilterPredicate.eq("col", 42));
-        assertThatThrownBy(() -> RowGroupFilterEvaluator.canDropRowGroup(filter, rg, schema))
+        assertThatThrownBy(() -> canDropRowGroup(filter, rg, schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("Column 'col' has physical type BYTE_ARRAY"
                         + "; given filter predicate type INT32 is incompatible");
     }
 
     @Test
-    void predicateOnUnknownColumnDoesNotThrow() {
-        RowGroup rg = createIntRowGroup(0, 100);
+    void predicateOnUnknownColumnThrowsAtResolve() {
         FileSchema schema = createIntSchema();
-        // Unknown column => cannot drop (conservative), no exception
-        assertThat(RowGroupFilterEvaluator.canDropRowGroup(
-                FilterPredicate.eq("nonexistent", 42), rg, schema)).isFalse();
+        // Unknown column => throws at resolve time
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("nonexistent", 42), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not found");
     }
 
     // ==================== Helpers ====================
@@ -748,5 +752,12 @@ class FilterPredicateTest {
         SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
         SchemaElement col = new SchemaElement("col", type, null, RepetitionType.REQUIRED, null, null, null, null, null, null);
         return FileSchema.fromSchemaElements(List.of(root, col));
+    }
+
+    /// Helper that resolves a FilterPredicate and evaluates it against a row group.
+    /// This mirrors the production code path: resolve first, then evaluate.
+    private static boolean canDropRowGroup(FilterPredicate filter, RowGroup rg, FileSchema schema) {
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        return RowGroupFilterEvaluator.canDropRowGroup(resolved, rg);
     }
 }

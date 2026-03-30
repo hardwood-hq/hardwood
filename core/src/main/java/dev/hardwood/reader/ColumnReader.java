@@ -17,6 +17,8 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.predicate.PageFilterEvaluator;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.ChunkRange;
 import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
 import dev.hardwood.internal.reader.ColumnIndexBuffers;
@@ -27,7 +29,6 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedColumnData;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageCursor;
-import dev.hardwood.internal.reader.PageFilterEvaluator;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageRange;
 import dev.hardwood.internal.reader.PageRangeData;
@@ -374,11 +375,10 @@ public class ColumnReader implements AutoCloseable {
 
     /// Create a ColumnReader for a named column with page-level filtering.
     ///
-    /// @param filter a resolved physical predicate (via [FilterPredicateResolver#resolve]),
-    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
+    /// @param filterPredicate resolved predicate, or `null` for no filtering.
     static ColumnReader create(String columnName, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context, FilterPredicate filter) {
+                               HardwoodContextImpl context, ResolvedPredicate filter) {
         ColumnSchema columnSchema = schema.getColumn(columnName);
         return create(columnSchema, schema, inputFile, rowGroups, context, filter);
     }
@@ -393,23 +393,21 @@ public class ColumnReader implements AutoCloseable {
 
     /// Create a ColumnReader for a column by index with page-level filtering.
     ///
-    /// @param filter a resolved physical predicate (via [FilterPredicateResolver#resolve]),
-    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
+    /// @param filterPredicate resolved predicate, or `null` for no filtering.
     static ColumnReader create(int columnIndex, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context, FilterPredicate filter) {
+                               HardwoodContextImpl context, ResolvedPredicate filter) {
         ColumnSchema columnSchema = schema.getColumn(columnIndex);
         return create(columnSchema, schema, inputFile, rowGroups, context, filter);
     }
 
     /// Create a ColumnReader for a given ColumnSchema, scanning pages across all row groups.
     ///
-    /// @param filter a resolved physical predicate (via [FilterPredicateResolver#resolve]),
-    ///     or `null` for no filtering. Logical-type predicates must not be passed directly.
+    /// @param filterPredicate resolved predicate, or `null` for no filtering.
     @SuppressWarnings("unchecked")
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        InputFile inputFile, List<RowGroup> rowGroups,
-                                       HardwoodContextImpl context, FilterPredicate filter) {
+                                       HardwoodContextImpl context, ResolvedPredicate filter) {
         int originalIndex = columnSchema.columnIndex();
         int[] projectedColumns = new int[]{ originalIndex };
         String fileName = inputFile.name();
@@ -434,7 +432,7 @@ public class ColumnReader implements AutoCloseable {
             RowRanges matchingRows = RowRanges.ALL;
             if (filter != null) {
                 matchingRows = PageFilterEvaluator.computeMatchingRows(
-                        filter, rowGroup, schema, indexBuffers);
+                        filter, rowGroup, indexBuffers);
             }
 
             ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);

@@ -5,20 +5,9 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.internal.reader;
+package dev.hardwood.internal.predicate;
 
-import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.FilterPredicate;
-import dev.hardwood.reader.FilterPredicate.BinaryColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.BinaryInPredicate;
-import dev.hardwood.reader.FilterPredicate.BooleanColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.IntInPredicate;
-import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
-import dev.hardwood.reader.FilterPredicate.LongInPredicate;
-import dev.hardwood.reader.FilterPredicate.SignedBinaryColumnPredicate;
 
 /// Shared utilities for evaluating filter predicates against min/max statistics.
 ///
@@ -32,96 +21,55 @@ final class StatisticsFilterSupport {
 
     // ==================== Leaf predicate evaluation ====================
 
-    /// Evaluates a resolved physical leaf predicate against [MinMaxStats].
+    /// Evaluates a resolved leaf predicate against [MinMaxStats].
     ///
     /// @return `true` if the predicate proves no rows can match (safe to drop)
-    static boolean canDropLeaf(FilterPredicate leaf, MinMaxStats stats) {
+    static boolean canDropLeaf(ResolvedPredicate leaf, MinMaxStats stats) {
         if (stats.minValue() == null || stats.maxValue() == null) {
             return false;
         }
         return switch (leaf) {
-            case IntColumnPredicate p -> canDrop(p.op(), p.value(),
+            case ResolvedPredicate.IntPredicate p -> canDrop(p.op(), p.value(),
                     StatisticsDecoder.decodeInt(stats.minValue()),
                     StatisticsDecoder.decodeInt(stats.maxValue()));
-            case LongColumnPredicate p -> canDrop(p.op(), p.value(),
+            case ResolvedPredicate.LongPredicate p -> canDrop(p.op(), p.value(),
                     StatisticsDecoder.decodeLong(stats.minValue()),
                     StatisticsDecoder.decodeLong(stats.maxValue()));
-            case FloatColumnPredicate p -> canDropFloat(p.op(), p.value(),
+            case ResolvedPredicate.FloatPredicate p -> canDropFloat(p.op(), p.value(),
                     StatisticsDecoder.decodeFloat(stats.minValue()),
                     StatisticsDecoder.decodeFloat(stats.maxValue()));
-            case DoubleColumnPredicate p -> canDropDouble(p.op(), p.value(),
+            case ResolvedPredicate.DoublePredicate p -> canDropDouble(p.op(), p.value(),
                     StatisticsDecoder.decodeDouble(stats.minValue()),
                     StatisticsDecoder.decodeDouble(stats.maxValue()));
-            case BooleanColumnPredicate p -> canDrop(p.op(), p.value() ? 1 : 0,
+            case ResolvedPredicate.BooleanPredicate p -> canDrop(p.op(), p.value() ? 1 : 0,
                     StatisticsDecoder.decodeBoolean(stats.minValue()) ? 1 : 0,
                     StatisticsDecoder.decodeBoolean(stats.maxValue()) ? 1 : 0);
-            case BinaryColumnPredicate p -> {
-                int cmpMin = StatisticsDecoder.compareBinary(p.value(), stats.minValue());
-                int cmpMax = StatisticsDecoder.compareBinary(p.value(), stats.maxValue());
-                yield canDropCompared(p.op(), cmpMin, cmpMax,
-                        StatisticsDecoder.compareBinary(stats.minValue(), stats.maxValue()));
+            case ResolvedPredicate.BinaryPredicate p -> {
+                if (p.signed()) {
+                    int cmpMin = BinaryComparator.compareSigned(p.value(), stats.minValue());
+                    int cmpMax = BinaryComparator.compareSigned(p.value(), stats.maxValue());
+                    yield canDropCompared(p.op(), cmpMin, cmpMax,
+                            BinaryComparator.compareSigned(stats.minValue(), stats.maxValue()));
+                }
+                else {
+                    int cmpMin = BinaryComparator.compareUnsigned(p.value(), stats.minValue());
+                    int cmpMax = BinaryComparator.compareUnsigned(p.value(), stats.maxValue());
+                    yield canDropCompared(p.op(), cmpMin, cmpMax,
+                            BinaryComparator.compareUnsigned(stats.minValue(), stats.maxValue()));
+                }
             }
-            case SignedBinaryColumnPredicate p -> {
-                int cmpMin = StatisticsDecoder.compareSignedBinary(p.value(), stats.minValue());
-                int cmpMax = StatisticsDecoder.compareSignedBinary(p.value(), stats.maxValue());
-                yield canDropCompared(p.op(), cmpMin, cmpMax,
-                        StatisticsDecoder.compareSignedBinary(stats.minValue(), stats.maxValue()));
-            }
-            case IntInPredicate p -> canDropIntIn(p.values(),
+            case ResolvedPredicate.IntInPredicate p -> canDropIntIn(p.values(),
                     StatisticsDecoder.decodeInt(stats.minValue()),
                     StatisticsDecoder.decodeInt(stats.maxValue()));
-            case LongInPredicate p -> canDropLongIn(p.values(),
+            case ResolvedPredicate.LongInPredicate p -> canDropLongIn(p.values(),
                     StatisticsDecoder.decodeLong(stats.minValue()),
                     StatisticsDecoder.decodeLong(stats.maxValue()));
-            case BinaryInPredicate p -> canDropBinaryIn(p.values(),
+            case ResolvedPredicate.BinaryInPredicate p -> canDropBinaryIn(p.values(),
                     stats.minValue(), stats.maxValue());
-            default -> false;
+            case ResolvedPredicate.And ignored -> false;
+            case ResolvedPredicate.Or ignored -> false;
+            case ResolvedPredicate.Not ignored -> false;
         };
-    }
-
-    // ==================== Predicate introspection ====================
-
-    /// Extracts the column name from a leaf predicate.
-    static String columnOf(FilterPredicate predicate) {
-        return switch (predicate) {
-            case IntColumnPredicate p -> p.column();
-            case LongColumnPredicate p -> p.column();
-            case FloatColumnPredicate p -> p.column();
-            case DoubleColumnPredicate p -> p.column();
-            case BooleanColumnPredicate p -> p.column();
-            case BinaryColumnPredicate p -> p.column();
-            case SignedBinaryColumnPredicate p -> p.column();
-            case IntInPredicate p -> p.column();
-            case LongInPredicate p -> p.column();
-            case BinaryInPredicate p -> p.column();
-            default -> throw new IllegalArgumentException(
-                    "Not a leaf predicate: " + predicate.getClass().getSimpleName());
-        };
-    }
-
-    /// Returns the expected physical type for a leaf predicate.
-    static PhysicalType expectedPhysicalType(FilterPredicate predicate) {
-        return switch (predicate) {
-            case IntColumnPredicate ignored -> PhysicalType.INT32;
-            case LongColumnPredicate ignored -> PhysicalType.INT64;
-            case FloatColumnPredicate ignored -> PhysicalType.FLOAT;
-            case DoubleColumnPredicate ignored -> PhysicalType.DOUBLE;
-            case BooleanColumnPredicate ignored -> PhysicalType.BOOLEAN;
-            case BinaryColumnPredicate ignored -> PhysicalType.BYTE_ARRAY;
-            case SignedBinaryColumnPredicate ignored -> PhysicalType.FIXED_LEN_BYTE_ARRAY;
-            case IntInPredicate ignored -> PhysicalType.INT32;
-            case LongInPredicate ignored -> PhysicalType.INT64;
-            case BinaryInPredicate ignored -> PhysicalType.BYTE_ARRAY;
-            default -> throw new IllegalArgumentException(
-                    "Not a leaf predicate: " + predicate.getClass().getSimpleName());
-        };
-    }
-
-    // ==================== Type compatibility ====================
-
-    static boolean isBinaryCompatible(PhysicalType actual, PhysicalType expected) {
-        return (actual == PhysicalType.BYTE_ARRAY || actual == PhysicalType.FIXED_LEN_BYTE_ARRAY)
-                && (expected == PhysicalType.BYTE_ARRAY || expected == PhysicalType.FIXED_LEN_BYTE_ARRAY);
     }
 
     // ==================== Range comparison logic ====================
@@ -199,8 +147,8 @@ final class StatisticsFilterSupport {
 
     static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max) {
         for (byte[] value : values) {
-            if (StatisticsDecoder.compareBinary(value, min) >= 0
-                    && StatisticsDecoder.compareBinary(value, max) <= 0) {
+            if (BinaryComparator.compareUnsigned(value, min) >= 0
+                    && BinaryComparator.compareUnsigned(value, max) <= 0) {
                 return false;
             }
         }
