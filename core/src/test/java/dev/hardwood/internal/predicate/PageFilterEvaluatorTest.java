@@ -377,13 +377,14 @@ class PageFilterEvaluatorTest {
     }
 
     @Test
-    void testNotReturnsAllRows() throws IOException {
-        // NOT(id < 5000) → conservative, returns all rows
-        FilterPredicate filter = FilterPredicate.not(FilterPredicate.lt("id", 5000L));
+    void testNotInvertsLeafPredicate() throws IOException {
+        // NOT(id < 5000) → inverted to id >= 5000, should skip early pages
+        RowRanges gtEq5000 = computeMatchingRows(FilterPredicate.gtEq("id", 5000L));
+        RowRanges notLt5000 = computeMatchingRows(FilterPredicate.not(FilterPredicate.lt("id", 5000L)));
 
-        RowRanges ranges = computeMatchingRows(filter);
-
-        assertTrue(ranges.isAll());
+        // NOT(LT) should produce the same result as GT_EQ with the same value
+        assertFalse(notLt5000.isAll());
+        assertEquals(gtEq5000.intervalCount(), notLt5000.intervalCount());
     }
 
     @Test

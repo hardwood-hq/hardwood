@@ -16,8 +16,13 @@ import java.time.LocalTime;
 import java.util.List;
 import java.util.Map;
 import java.util.UUID;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -845,6 +850,123 @@ class FilterPredicateTest {
                 FilterPredicate.eq("nonexistent", 42), schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("not found");
+    }
+
+    // ==================== Operator.invert() ====================
+
+    @ParameterizedTest(name = "{0}.invert() = {1}")
+    @MethodSource
+    void testOperatorInvert(FilterPredicate.Operator op, FilterPredicate.Operator expected) {
+        assertThat(op.invert()).isEqualTo(expected);
+    }
+
+    static Stream<Arguments> testOperatorInvert() {
+        return Stream.of(
+                Arguments.of(FilterPredicate.Operator.EQ,     FilterPredicate.Operator.NOT_EQ),
+                Arguments.of(FilterPredicate.Operator.NOT_EQ, FilterPredicate.Operator.EQ),
+                Arguments.of(FilterPredicate.Operator.LT,     FilterPredicate.Operator.GT_EQ),
+                Arguments.of(FilterPredicate.Operator.LT_EQ,  FilterPredicate.Operator.GT),
+                Arguments.of(FilterPredicate.Operator.GT,     FilterPredicate.Operator.LT_EQ),
+                Arguments.of(FilterPredicate.Operator.GT_EQ,  FilterPredicate.Operator.LT)
+        );
+    }
+
+    @ParameterizedTest(name = "{0}.invert().invert() = {0}")
+    @EnumSource(FilterPredicate.Operator.class)
+    void testOperatorDoubleInvertIsIdentity(FilterPredicate.Operator op) {
+        assertThat(op.invert().invert()).isEqualTo(op);
+    }
+
+    // ==================== NOT pushdown via inversion ====================
+
+    @ParameterizedTest(name = "NOT({0} col {1}) on int [{2},{3}] → canDrop={4}")
+    @MethodSource
+    void testNotInversionOnIntRowGroup(FilterPredicate.Operator op, int value, int min, int max, boolean canDrop) {
+        RowGroup rg = createIntRowGroup(min, max);
+        FileSchema schema = createIntSchema();
+
+        FilterPredicate inner = switch (op) {
+            case EQ -> FilterPredicate.eq("col", value);
+            case NOT_EQ -> FilterPredicate.notEq("col", value);
+            case LT -> FilterPredicate.lt("col", value);
+            case LT_EQ -> FilterPredicate.ltEq("col", value);
+            case GT -> FilterPredicate.gt("col", value);
+            case GT_EQ -> FilterPredicate.gtEq("col", value);
+        };
+
+        FilterPredicate notPredicate = FilterPredicate.not(inner);
+        assertThat(canDropRowGroup(notPredicate, rg, schema)).isEqualTo(canDrop);
+    }
+
+    static Stream<Arguments> testNotInversionOnIntRowGroup() {
+        // Row group: min=10, max=20
+        return Stream.of(
+                // NOT(GT(25)) → LT_EQ(25): min(10) > 25? no → can't drop
+                Arguments.of(FilterPredicate.Operator.GT, 25, 10, 20, false),
+                // NOT(GT(5)) → LT_EQ(5): min(10) > 5? yes → can drop
+                Arguments.of(FilterPredicate.Operator.GT, 5, 10, 20, true),
+                // NOT(LT(5)) → GT_EQ(5): max(20) < 5? no → can't drop
+                Arguments.of(FilterPredicate.Operator.LT, 5, 10, 20, false),
+                // NOT(LT(25)) → GT_EQ(25): max(20) < 25? yes → can drop
+                Arguments.of(FilterPredicate.Operator.LT, 25, 10, 20, true),
+                // NOT(EQ(15)) → NOT_EQ(15): min==max==15? no (10≠20) → can't drop
+                Arguments.of(FilterPredicate.Operator.EQ, 15, 10, 20, false),
+                // NOT(EQ(15)) on single-value range → NOT_EQ(15): min==max==15? yes → can drop
+                Arguments.of(FilterPredicate.Operator.EQ, 15, 15, 15, true),
+                // NOT(NOT_EQ(15)) → EQ(15): 15 < 10? no, 15 > 20? no → can't drop
+                Arguments.of(FilterPredicate.Operator.NOT_EQ, 15, 10, 20, false),
+                // NOT(NOT_EQ(5)) → EQ(5): 5 < 10? yes → can drop
+                Arguments.of(FilterPredicate.Operator.NOT_EQ, 5, 10, 20, true),
+                // NOT(GT_EQ(25)) → LT(25): min(10) >= 25? no → can't drop
+                Arguments.of(FilterPredicate.Operator.GT_EQ, 25, 10, 20, false),
+                // NOT(GT_EQ(5)) → LT(5): min(10) >= 5? yes → can drop
+                Arguments.of(FilterPredicate.Operator.GT_EQ, 5, 10, 20, true),
+                // NOT(LT_EQ(5)) → GT(5): max(20) <= 5? no → can't drop
+                Arguments.of(FilterPredicate.Operator.LT_EQ, 5, 10, 20, false),
+                // NOT(LT_EQ(25)) → GT(25): max(20) <= 25? yes → can drop
+                Arguments.of(FilterPredicate.Operator.LT_EQ, 25, 10, 20, true)
+        );
+    }
+
+    @Test
+    void testNotOnCompoundPredicateIsConservative() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+
+        // NOT(AND(...)) cannot be inverted — should not drop (conservative)
+        FilterPredicate notAnd = FilterPredicate.not(FilterPredicate.and(
+                FilterPredicate.gt("col", 5),
+                FilterPredicate.lt("col", 25)));
+        assertThat(canDropRowGroup(notAnd, rg, schema)).isFalse();
+
+        // NOT(OR(...)) cannot be inverted — should not drop (conservative)
+        FilterPredicate notOr = FilterPredicate.not(FilterPredicate.or(
+                FilterPredicate.lt("col", 5),
+                FilterPredicate.gt("col", 25)));
+        assertThat(canDropRowGroup(notOr, rg, schema)).isFalse();
+    }
+
+    @Test
+    void testNotOnInPredicateIsConservative() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+
+        // NOT(IN(...)) cannot be inverted — should not drop
+        FilterPredicate notIn = FilterPredicate.not(FilterPredicate.in("col", 1, 2, 3));
+        assertThat(canDropRowGroup(notIn, rg, schema)).isFalse();
+    }
+
+    @Test
+    void testDoubleNotIsEquivalentToOriginal() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+
+        // NOT(NOT(GT(25))) should behave like GT(25)
+        FilterPredicate gt25 = FilterPredicate.gt("col", 25);
+        FilterPredicate doubleNot = FilterPredicate.not(FilterPredicate.not(gt25));
+
+        assertThat(canDropRowGroup(gt25, rg, schema))
+                .isEqualTo(canDropRowGroup(doubleNot, rg, schema));
     }
 
     // ==================== Helpers ====================
