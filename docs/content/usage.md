@@ -211,7 +211,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`, `isNull`, `isNotNull`.
 Supported physical types: `int`, `long`, `float`, `double`, `boolean`, `String` (comparison operators); `int`, `long`, `String` (`in`/`inStrings`); any type (`isNull`/`isNotNull`).
 Supported logical types: `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` (comparison operators).
-Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions.
+Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions. When `not` wraps a leaf predicate, the operator is automatically inverted for statistics-based pushdown (e.g., `not(gt("x", 5))` is evaluated as `ltEq("x", 5)`). Double negation (`not(not(...))`) is unwrapped transparently.
 
 ### Logical Type Support
 
@@ -249,12 +249,6 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
 
 ### Limitations
 
-- **`not` defeats statistics-based pushdown
-  ([#195](https://github.com/hardwood-hq/hardwood/issues/195)).** Row group and page-level
-  filtering cannot safely invert predicates wrapped in `not`. A filter like
-  `FilterPredicate.not(FilterPredicate.eq("x", 5))` will still apply at the record level
-  but will not skip any row groups or pages. For best pushdown, express the predicate
-  directly (e.g. `notEq("x", 5)` instead of `not(eq("x", 5))`).
 - **Bloom filter pushdown is not supported
   ([#180](https://github.com/hardwood-hq/hardwood/issues/180)).** Parquet files may contain
   Bloom filters for high-cardinality columns, but Hardwood does not currently use them for
