@@ -957,6 +957,36 @@ class FilterPredicateTest {
     }
 
     @Test
+    void testNotOnIsNullInvertsToIsNotNull() {
+        FileSchema schema = createIntSchema();
+
+        // All rows are null → NOT(isNull) → isNotNull → can drop (all are null)
+        RowGroup rgAllNulls = createRowGroupWithNullCount(PhysicalType.INT32, 100L, 100);
+        assertThat(canDropRowGroup(
+                FilterPredicate.not(FilterPredicate.isNull("col")), rgAllNulls, schema)).isTrue();
+
+        // No nulls → NOT(isNull) → isNotNull → cannot drop (all are non-null)
+        RowGroup rgNoNulls = createRowGroupWithNullCount(PhysicalType.INT32, 0L, 100);
+        assertThat(canDropRowGroup(
+                FilterPredicate.not(FilterPredicate.isNull("col")), rgNoNulls, schema)).isFalse();
+    }
+
+    @Test
+    void testNotOnIsNotNullInvertsToIsNull() {
+        FileSchema schema = createIntSchema();
+
+        // No nulls → NOT(isNotNull) → isNull → can drop (no nulls exist)
+        RowGroup rgNoNulls = createRowGroupWithNullCount(PhysicalType.INT32, 0L, 100);
+        assertThat(canDropRowGroup(
+                FilterPredicate.not(FilterPredicate.isNotNull("col")), rgNoNulls, schema)).isTrue();
+
+        // All nulls → NOT(isNotNull) → isNull → cannot drop (all are null)
+        RowGroup rgAllNulls = createRowGroupWithNullCount(PhysicalType.INT32, 100L, 100);
+        assertThat(canDropRowGroup(
+                FilterPredicate.not(FilterPredicate.isNotNull("col")), rgAllNulls, schema)).isFalse();
+    }
+
+    @Test
     void testDoubleNotIsEquivalentToOriginal() {
         RowGroup rg = createIntRowGroup(10, 20);
         FileSchema schema = createIntSchema();

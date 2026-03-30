@@ -100,7 +100,7 @@ public class RowGroupFilterEvaluator {
     }
 
     /// Inverts a leaf predicate's operator to push NOT through statistics-based filtering.
-    /// Returns null for compound predicates or IN/NULL predicates where inversion is not applicable.
+    /// Returns null for compound predicates or IN predicates where inversion is not applicable.
     static ResolvedPredicate invertLeaf(ResolvedPredicate delegate) {
         return switch (delegate) {
             case ResolvedPredicate.IntPredicate p -> new ResolvedPredicate.IntPredicate(p.columnIndex(), p.op().invert(), p.value());
@@ -109,6 +109,8 @@ public class RowGroupFilterEvaluator {
             case ResolvedPredicate.DoublePredicate p -> new ResolvedPredicate.DoublePredicate(p.columnIndex(), p.op().invert(), p.value());
             case ResolvedPredicate.BooleanPredicate p -> new ResolvedPredicate.BooleanPredicate(p.columnIndex(), p.op().invert(), p.value());
             case ResolvedPredicate.BinaryPredicate p -> new ResolvedPredicate.BinaryPredicate(p.columnIndex(), p.op().invert(), p.value(), p.signed());
+            case ResolvedPredicate.IsNullPredicate p -> new ResolvedPredicate.IsNotNullPredicate(p.columnIndex());
+            case ResolvedPredicate.IsNotNullPredicate p -> new ResolvedPredicate.IsNullPredicate(p.columnIndex());
             default -> null;
         };
     }
