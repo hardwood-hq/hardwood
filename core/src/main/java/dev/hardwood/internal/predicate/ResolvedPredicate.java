@@ -52,4 +52,37 @@ public sealed interface ResolvedPredicate {
         }
     }
     record Not(ResolvedPredicate delegate) implements ResolvedPredicate {}
+
+    /// Negates a predicate for statistics-based pushdown. For leaf predicates, the operator
+    /// is inverted (e.g. GT → LT_EQ). For compound predicates, De Morgan's laws are applied:
+    /// `NOT(AND(a, b))` → `OR(NOT(a), NOT(b))` and `NOT(OR(a, b))` → `AND(NOT(a), NOT(b))`.
+    /// Returns `null` only for IN predicates where inversion is not applicable.
+    static ResolvedPredicate negate(ResolvedPredicate predicate) {
+        return switch (predicate) {
+            case IntPredicate p -> new IntPredicate(p.columnIndex(), p.op().invert(), p.value());
+            case LongPredicate p -> new LongPredicate(p.columnIndex(), p.op().invert(), p.value());
+            case FloatPredicate p -> new FloatPredicate(p.columnIndex(), p.op().invert(), p.value());
+            case DoublePredicate p -> new DoublePredicate(p.columnIndex(), p.op().invert(), p.value());
+            case BooleanPredicate p -> new BooleanPredicate(p.columnIndex(), p.op().invert(), p.value());
+            case BinaryPredicate p -> new BinaryPredicate(p.columnIndex(), p.op().invert(), p.value(), p.signed());
+            case IsNullPredicate p -> new IsNotNullPredicate(p.columnIndex());
+            case IsNotNullPredicate p -> new IsNullPredicate(p.columnIndex());
+            case Not n -> n.delegate(); // NOT(NOT(x)) → x
+            case And a -> {
+                // De Morgan: NOT(AND(a, b)) → OR(NOT(a), NOT(b))
+                List<ResolvedPredicate> negatedChildren = a.children().stream()
+                        .map(ResolvedPredicate::negate)
+                        .toList();
+                yield negatedChildren.contains(null) ? null : new Or(negatedChildren);
+            }
+            case Or o -> {
+                // De Morgan: NOT(OR(a, b)) → AND(NOT(a), NOT(b))
+                List<ResolvedPredicate> negatedChildren = o.children().stream()
+                        .map(ResolvedPredicate::negate)
+                        .toList();
+                yield negatedChildren.contains(null) ? null : new And(negatedChildren);
+            }
+            default -> null; // IN predicates
+        };
+    }
 }

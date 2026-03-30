@@ -9,8 +9,9 @@ package dev.hardwood.internal.predicate;
 
 import java.util.List;
 
-import dev.hardwood.reader.FilterPredicate;
 import org.junit.jupiter.api.Test;
+
+import dev.hardwood.reader.FilterPredicate;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -33,15 +34,15 @@ class ResolvedPredicateTest {
 
     @Test
     void testAndWithSingleChildSucceeds() {
-        var child = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.EQ, 42);
-        var and = new ResolvedPredicate.And(List.of(child));
+        ResolvedPredicate child = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.EQ, 42);
+        ResolvedPredicate.And and = new ResolvedPredicate.And(List.of(child));
         assertThat(and.children()).hasSize(1);
     }
 
     @Test
     void testOrWithSingleChildSucceeds() {
-        var child = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.EQ, 42);
-        var or = new ResolvedPredicate.Or(List.of(child));
+        ResolvedPredicate child = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.EQ, 42);
+        ResolvedPredicate.Or or = new ResolvedPredicate.Or(List.of(child));
         assertThat(or.children()).hasSize(1);
     }
 }

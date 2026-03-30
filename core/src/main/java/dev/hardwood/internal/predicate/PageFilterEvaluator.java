@@ -68,14 +68,9 @@ public class PageFilterEvaluator {
                 yield (result != null) ? result : RowRanges.all(rowCount);
             }
             case ResolvedPredicate.Not n -> {
-                // NOT(NOT(x)) → evaluate x directly
-                if (n.delegate() instanceof ResolvedPredicate.Not inner) {
-                    yield evaluate(inner.delegate(), rowGroup, indexBuffers, rowCount);
-                }
-                // Push NOT through leaf predicates by inverting the operator
-                ResolvedPredicate inverted = RowGroupFilterEvaluator.invertLeaf(n.delegate());
-                yield inverted != null
-                        ? evaluate(inverted, rowGroup, indexBuffers, rowCount)
+                ResolvedPredicate negated = ResolvedPredicate.negate(n.delegate());
+                yield negated != null
+                        ? evaluate(negated, rowGroup, indexBuffers, rowCount)
                         : RowRanges.all(rowCount);
             }
             case ResolvedPredicate.IsNullPredicate p -> evaluateNullPages(p.columnIndex(), true, rowGroup, indexBuffers, rowCount);

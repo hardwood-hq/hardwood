@@ -88,30 +88,9 @@ public class RowGroupFilterEvaluator {
                 yield true;
             }
             case ResolvedPredicate.Not n -> {
-                // NOT(NOT(x)) → evaluate x directly
-                if (n.delegate() instanceof ResolvedPredicate.Not inner) {
-                    yield canDropRowGroup(inner.delegate(), rowGroup);
-                }
-                // Push NOT through leaf predicates by inverting the operator
-                ResolvedPredicate inverted = invertLeaf(n.delegate());
-                yield   inverted != null ? canDropRowGroup(inverted, rowGroup) : false;
+                ResolvedPredicate negated = ResolvedPredicate.negate(n.delegate());
+                yield negated != null ? canDropRowGroup(negated, rowGroup) : false;
             }
-        };
-    }
-
-    /// Inverts a leaf predicate's operator to push NOT through statistics-based filtering.
-    /// Returns null for compound predicates or IN predicates where inversion is not applicable.
-    static ResolvedPredicate invertLeaf(ResolvedPredicate delegate) {
-        return switch (delegate) {
-            case ResolvedPredicate.IntPredicate p -> new ResolvedPredicate.IntPredicate(p.columnIndex(), p.op().invert(), p.value());
-            case ResolvedPredicate.LongPredicate p -> new ResolvedPredicate.LongPredicate(p.columnIndex(), p.op().invert(), p.value());
-            case ResolvedPredicate.FloatPredicate p -> new ResolvedPredicate.FloatPredicate(p.columnIndex(), p.op().invert(), p.value());
-            case ResolvedPredicate.DoublePredicate p -> new ResolvedPredicate.DoublePredicate(p.columnIndex(), p.op().invert(), p.value());
-            case ResolvedPredicate.BooleanPredicate p -> new ResolvedPredicate.BooleanPredicate(p.columnIndex(), p.op().invert(), p.value());
-            case ResolvedPredicate.BinaryPredicate p -> new ResolvedPredicate.BinaryPredicate(p.columnIndex(), p.op().invert(), p.value(), p.signed());
-            case ResolvedPredicate.IsNullPredicate p -> new ResolvedPredicate.IsNotNullPredicate(p.columnIndex());
-            case ResolvedPredicate.IsNotNullPredicate p -> new ResolvedPredicate.IsNullPredicate(p.columnIndex());
-            default -> null;
         };
     }
 
