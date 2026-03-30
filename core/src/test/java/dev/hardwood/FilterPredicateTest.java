@@ -933,17 +933,29 @@ class FilterPredicateTest {
         RowGroup rg = createIntRowGroup(10, 20);
         FileSchema schema = createIntSchema();
 
-        // NOT(AND(...)) cannot be inverted — should not drop (conservative)
+        // NOT(AND(GT(5), LT(25))) → OR(LT_EQ(5), GT_EQ(25)) via De Morgan
+        // LT_EQ(5): min(10) > 5 → can drop; GT_EQ(25): max(20) < 25 → can drop
+        // OR: both drop → can drop
         FilterPredicate notAnd = FilterPredicate.not(FilterPredicate.and(
                 FilterPredicate.gt("col", 5),
                 FilterPredicate.lt("col", 25)));
-        assertThat(canDropRowGroup(notAnd, rg, schema)).isFalse();
+        assertThat(canDropRowGroup(notAnd, rg, schema)).isTrue();
 
-        // NOT(OR(...)) cannot be inverted — should not drop (conservative)
+        // NOT(OR(LT(5), GT(25))) → AND(GT_EQ(5), LT_EQ(25)) via De Morgan
+        // GT_EQ(5): max(20) < 5? no; LT_EQ(25): min(10) > 25? no
+        // AND: neither drops → can't drop
         FilterPredicate notOr = FilterPredicate.not(FilterPredicate.or(
                 FilterPredicate.lt("col", 5),
                 FilterPredicate.gt("col", 25)));
         assertThat(canDropRowGroup(notOr, rg, schema)).isFalse();
+
+        // NOT(OR(LT(5), GT(15))) → AND(GT_EQ(5), LT_EQ(15))
+        // GT_EQ(5): max(20) < 5? no; LT_EQ(15): min(10) > 15? no
+        // AND: neither drops → can't drop (correct: range [10,20] has values both ≥5 and ≤15)
+        FilterPredicate notOr2 = FilterPredicate.not(FilterPredicate.or(
+                FilterPredicate.lt("col", 5),
+                FilterPredicate.gt("col", 15)));
+        assertThat(canDropRowGroup(notOr2, rg, schema)).isFalse();
     }
 
     @Test
@@ -997,6 +1009,55 @@ class FilterPredicateTest {
 
         assertThat(canDropRowGroup(gt25, rg, schema))
                 .isEqualTo(canDropRowGroup(doubleNot, rg, schema));
+    }
+
+    @Test
+    void testDeeplyNestedNotWithDeMorgan() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+
+        // NOT(AND(OR(GT(5), LT(2)), NOT(EQ(3))))
+        // De Morgan on AND → OR(NOT(OR(GT(5), LT(2))), NOT(NOT(EQ(3))))
+        //   NOT(OR(GT(5), LT(2))) → AND(LT_EQ(5), GT_EQ(2))
+        //     LT_EQ(5): min(10) > 5 → can drop. AND short-circuits.
+        //   NOT(NOT(EQ(3))) → EQ(3): 3 < 10 → can drop.
+        // OR: both drop → can drop
+        FilterPredicate filter = FilterPredicate.not(FilterPredicate.and(
+                FilterPredicate.or(
+                        FilterPredicate.gt("col", 5),
+                        FilterPredicate.lt("col", 2)),
+                FilterPredicate.not(FilterPredicate.eq("col", 3))));
+        assertThat(canDropRowGroup(filter, rg, schema)).isTrue();
+    }
+
+    @Test
+    void testNotAndWithInChildFallsBackToConservative() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+
+        // NOT(AND(GT(25), IN(1,2,3))) → OR(LT_EQ(25), NOT(IN(1,2,3)))
+        // NOT(IN) returns null → entire OR returns null → conservative (false)
+        FilterPredicate filter = FilterPredicate.not(FilterPredicate.and(
+                FilterPredicate.gt("col", 25),
+                FilterPredicate.in("col", 1, 2, 3)));
+        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
+    }
+
+    @Test
+    void testNotOrEquivalenceWithDeMorgan() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+
+        // NOT(OR(GT(25), LT(5))) should behave the same as AND(LT_EQ(25), GT_EQ(5))
+        FilterPredicate notOr = FilterPredicate.not(FilterPredicate.or(
+                FilterPredicate.gt("col", 25),
+                FilterPredicate.lt("col", 5)));
+        FilterPredicate deMorganEquivalent = FilterPredicate.and(
+                FilterPredicate.ltEq("col", 25),
+                FilterPredicate.gtEq("col", 5));
+
+        assertThat(canDropRowGroup(notOr, rg, schema))
+                .isEqualTo(canDropRowGroup(deMorganEquivalent, rg, schema));
     }
 
     // ==================== Helpers ====================
