@@ -63,7 +63,23 @@ public sealed interface FilterPredicate
     // ==================== Operators ====================
 
     enum Operator {
-        EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ
+        EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ;
+
+        /// Returns the logical inverse of this operator, used to push NOT through leaf predicates.
+        /// For example, `NOT(GT(x, 5))` becomes `LT_EQ(x, 5)`.
+        ///
+        /// `NOT_EQ.invert()` returns `EQ`, which enables full pushdown (unlike the conservative
+        /// fallback for arbitrary NOT predicates).
+        public Operator invert() {
+            return switch (this) {
+                case EQ -> NOT_EQ;
+                case NOT_EQ -> EQ;
+                case LT -> GT_EQ;
+                case LT_EQ -> GT;
+                case GT -> LT_EQ;
+                case GT_EQ -> LT;
+            };
+        }
     }
 
     // ==================== INT32 Predicates ====================
