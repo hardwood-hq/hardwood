@@ -460,6 +460,43 @@ class PredicatePushDownTest {
         assertThat(labels).containsExactly("g", "h", "i");
     }
 
+    // ==================== IN predicate end-to-end ====================
+
+    @Test
+    void testIntInPredicateEndToEnd() throws Exception {
+        // INT_FILE: RG0 id 1-100, RG1 id 101-200, RG2 id 201-300
+        // IN(id, 50, 250) → record-level filtering returns exactly 2 rows
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.in("id", 50L, 250L);
+
+            List<Long> ids = new ArrayList<>();
+            try (RowReader rows = reader.createRowReader(filter)) {
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                }
+            }
+            assertThat(ids).containsExactly(50L, 250L);
+        }
+    }
+
+    @Test
+    void testStringInPredicateEndToEnd() throws Exception {
+        // INT_FILE: RG0 labels rg1_*, RG1 labels rg2_*, RG2 labels rg3_*
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.inStrings("label", "rg1_1", "rg3_300");
+
+            List<String> labels = new ArrayList<>();
+            try (RowReader rows = reader.createRowReader(filter)) {
+                while (rows.hasNext()) {
+                    rows.next();
+                    labels.add(rows.getString("label"));
+                }
+            }
+            assertThat(labels).containsExactly("rg1_1", "rg3_300");
+        }
+    }
+
     // ==================== Filter on non-filtered column ====================
 
     @Test
@@ -819,6 +856,88 @@ class PredicatePushDownTest {
 
             try (RowReader rows = reader.createRowReader(filter)) {
                 assertThat(rows.hasNext()).isFalse();
+            }
+        }
+    }
+
+    // ==================== IS NULL / IS NOT NULL end-to-end ====================
+
+    private static final Path NULLS_FILE = Paths.get("src/test/resources/plain_uncompressed_with_nulls.parquet");
+
+    @Test
+    void testIsNullFilterReturnsOnlyNullRows() throws Exception {
+        // File: id=[1,2,3], name=["alice", null, "charlie"]
+        // IS NULL on "name" should return only row 1 (id=2)
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NULLS_FILE))) {
+            FilterPredicate filter = FilterPredicate.isNull("name");
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                    assertThat(rows.getLong("id")).isEqualTo(2L);
+                    assertThat(rows.isNull("name")).isTrue();
+                }
+                assertThat(totalRows).isEqualTo(1);
+            }
+        }
+    }
+
+    @Test
+    void testIsNotNullFilterReturnsOnlyNonNullRows() throws Exception {
+        // File: id=[1,2,3], name=["alice", null, "charlie"]
+        // IS NOT NULL on "name" should return rows 0 and 2 (id=1 and id=3)
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NULLS_FILE))) {
+            FilterPredicate filter = FilterPredicate.isNotNull("name");
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                List<Long> ids = new ArrayList<>();
+                List<String> names = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                    names.add(rows.getString("name"));
+                }
+                assertThat(ids).containsExactly(1L, 3L);
+                assertThat(names).containsExactly("alice", "charlie");
+            }
+        }
+    }
+
+    @Test
+    void testIsNotNullOnRequiredColumnReturnsAllRows() throws Exception {
+        // IS NOT NULL on "id" (REQUIRED) -> all 3 rows
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NULLS_FILE))) {
+            FilterPredicate filter = FilterPredicate.isNotNull("id");
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                }
+                assertThat(totalRows).isEqualTo(3);
+            }
+        }
+    }
+
+    @Test
+    void testIsNullCombinedWithAnd() throws Exception {
+        // IS NULL on "name" AND id > 1 -> only id=2 matches (the null row)
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NULLS_FILE))) {
+            FilterPredicate filter = FilterPredicate.and(
+                    FilterPredicate.isNull("name"),
+                    FilterPredicate.gt("id", 1L));
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                    assertThat(rows.getLong("id")).isEqualTo(2L);
+                }
+                assertThat(totalRows).isEqualTo(1);
             }
         }
     }

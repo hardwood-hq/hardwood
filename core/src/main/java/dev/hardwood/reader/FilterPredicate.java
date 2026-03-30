@@ -54,6 +54,8 @@ public sealed interface FilterPredicate
                 FilterPredicate.InstantColumnPredicate,
                 FilterPredicate.TimeColumnPredicate,
                 FilterPredicate.DecimalColumnPredicate,
+                FilterPredicate.IsNullPredicate,
+                FilterPredicate.IsNotNullPredicate,
                 FilterPredicate.And,
                 FilterPredicate.Or,
                 FilterPredicate.Not {
@@ -403,6 +405,18 @@ public sealed interface FilterPredicate
         return buffer.array();
     }
 
+    // ==================== NULL Predicates ====================
+
+    /// Creates a predicate that matches rows where the given column is null.
+    static FilterPredicate isNull(String column) {
+        return new IsNullPredicate(column);
+    }
+
+    /// Creates a predicate that matches rows where the given column is not null.
+    static FilterPredicate isNotNull(String column) {
+        return new IsNotNullPredicate(column);
+    }
+
     // ==================== Logical Combinators ====================
 
     static FilterPredicate and(FilterPredicate left, FilterPredicate right) {
@@ -559,6 +573,16 @@ public sealed interface FilterPredicate
     /// Predicate for DECIMAL columns. The [BigDecimal] value is converted to the column's physical
     /// representation at evaluation time using the schema's `DecimalType`.
     record DecimalColumnPredicate(String column, Operator op, BigDecimal value) implements FilterPredicate {
+    }
+
+    // ==================== NULL Predicate Records ====================
+
+    /// Predicate that matches rows where the column value is null.
+    record IsNullPredicate(String column) implements FilterPredicate {
+    }
+
+    /// Predicate that matches rows where the column value is not null.
+    record IsNotNullPredicate(String column) implements FilterPredicate {
     }
 
     // ==================== Logical Combinator Records ====================

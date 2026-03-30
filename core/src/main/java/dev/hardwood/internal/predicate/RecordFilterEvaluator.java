@@ -59,6 +59,22 @@ public class RecordFilterEvaluator {
             case ResolvedPredicate.IntInPredicate p -> matchesIntIn(p, rowIndex, valueArrays, nulls, columnMapping);
             case ResolvedPredicate.LongInPredicate p -> matchesLongIn(p, rowIndex, valueArrays, nulls, columnMapping);
             case ResolvedPredicate.BinaryInPredicate p -> matchesBinaryIn(p, rowIndex, valueArrays, nulls, columnMapping);
+            case ResolvedPredicate.IsNullPredicate p -> {
+                int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
+                if (cachedIndex < 0) {
+                    yield true; // column not in projection — conservative
+                }
+                BitSet columnNulls = nulls[cachedIndex];
+                yield columnNulls != null && columnNulls.get(rowIndex);
+            }
+            case ResolvedPredicate.IsNotNullPredicate p -> {
+                int cachedIndex = projectedIndex(p.columnIndex(), columnMapping);
+                if (cachedIndex < 0) {
+                    yield true; // column not in projection — conservative
+                }
+                BitSet columnNulls = nulls[cachedIndex];
+                yield columnNulls == null || !columnNulls.get(rowIndex);
+            }
             case ResolvedPredicate.And and -> {
                 for (ResolvedPredicate child : and.children()) {
                     if (!matches(child, rowIndex, valueArrays, nulls, columnMapping)) {

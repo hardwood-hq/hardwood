@@ -68,6 +68,8 @@ public class PageFilterEvaluator {
                 yield (result != null) ? result : RowRanges.all(rowCount);
             }
             case ResolvedPredicate.Not ignored -> RowRanges.all(rowCount);
+            case ResolvedPredicate.IsNullPredicate p -> evaluateNullPages(p.columnIndex(), true, rowGroup, indexBuffers, rowCount);
+            case ResolvedPredicate.IsNotNullPredicate p -> evaluateNullPages(p.columnIndex(), false, rowGroup, indexBuffers, rowCount);
             default -> evaluateLeafPages(predicate, rowGroup, indexBuffers, rowCount);
         };
     }
@@ -111,6 +113,64 @@ public class PageFilterEvaluator {
         return RowRanges.fromPages(pages, keep, rowCount);
     }
 
+    /// Evaluates IS NULL / IS NOT NULL predicates against per-page null information
+    /// from the Column Index to produce [RowRanges] representing rows that might match.
+    ///
+    /// @param columnIndex  the column to check
+    /// @param seekingNulls `true` for IS NULL (keep pages that might contain nulls),
+    ///                     `false` for IS NOT NULL (keep pages that might contain non-nulls)
+    /// @param rowGroup     the row group being evaluated
+    /// @param indexBuffers pre-fetched index buffers
+    /// @param rowCount     total rows in the row group
+    /// @return row ranges that might contain matching rows
+    private static RowRanges evaluateNullPages(int columnIndex, boolean seekingNulls,
+            RowGroup rowGroup, RowGroupIndexBuffers indexBuffers, long rowCount) {
+
+        if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
+            return RowRanges.all(rowCount);
+        }
+
+        ColumnIndexBuffers colBuffers = indexBuffers.forColumn(columnIndex);
+        if (colBuffers == null || colBuffers.columnIndex() == null || colBuffers.offsetIndex() == null) {
+            return RowRanges.all(rowCount);
+        }
+
+        ColumnIndex columnIdx;
+        OffsetIndex offsetIdx;
+        try {
+            columnIdx = ColumnIndexReader.read(new ThriftCompactReader(colBuffers.columnIndex()));
+            offsetIdx = OffsetIndexReader.read(new ThriftCompactReader(colBuffers.offsetIndex()));
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException("Failed to parse Column/Offset Index for column index " + columnIndex, e);
+        }
+
+        List<PageLocation> pages = offsetIdx.pageLocations();
+        int pageCount = pages.size();
+        boolean[] keep = new boolean[pageCount];
+        List<Long> nullCounts = columnIdx.nullCounts();
+
+        for (int i = 0; i < pageCount; i++) {
+            if (seekingNulls) {
+                // IS NULL: keep page if it might contain nulls
+                // Drop page only if we KNOW it has no nulls (nullCounts[i] == 0)
+                if (nullCounts != null && nullCounts.get(i) != null && nullCounts.get(i) == 0) {
+                    keep[i] = false;
+                }
+                else {
+                    keep[i] = true;
+                }
+            }
+            else {
+                // IS NOT NULL: keep page if it might contain non-nulls
+                // Drop page if nullPages[i] == true (entire page is null)
+                keep[i] = !columnIdx.nullPages().get(i);
+            }
+        }
+
+        return RowRanges.fromPages(pages, keep, rowCount);
+    }
+
     /// Extracts the column index from a leaf predicate.
     private static int leafColumnIndex(ResolvedPredicate predicate) {
         return switch (predicate) {
@@ -123,6 +183,8 @@ public class PageFilterEvaluator {
             case ResolvedPredicate.IntInPredicate p -> p.columnIndex();
             case ResolvedPredicate.LongInPredicate p -> p.columnIndex();
             case ResolvedPredicate.BinaryInPredicate p -> p.columnIndex();
+            case ResolvedPredicate.IsNullPredicate p -> p.columnIndex();
+            case ResolvedPredicate.IsNotNullPredicate p -> p.columnIndex();
             case ResolvedPredicate.And ignored -> -1;
             case ResolvedPredicate.Or ignored -> -1;
             case ResolvedPredicate.Not ignored -> -1;

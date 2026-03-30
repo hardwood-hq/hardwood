@@ -33,6 +33,9 @@ public sealed interface ResolvedPredicate {
     record LongInPredicate(int columnIndex, long[] values) implements ResolvedPredicate {}
     record BinaryInPredicate(int columnIndex, byte[][] values) implements ResolvedPredicate {}
 
+    record IsNullPredicate(int columnIndex) implements ResolvedPredicate {}
+    record IsNotNullPredicate(int columnIndex) implements ResolvedPredicate {}
+
     record And(List<ResolvedPredicate> children) implements ResolvedPredicate {}
     record Or(List<ResolvedPredicate> children) implements ResolvedPredicate {}
     record Not(ResolvedPredicate delegate) implements ResolvedPredicate {}

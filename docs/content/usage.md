@@ -194,6 +194,10 @@ FilterPredicate filter = FilterPredicate.and(
 FilterPredicate filter = FilterPredicate.in("department_id", 1, 3, 7);
 FilterPredicate filter = FilterPredicate.inStrings("city", "NYC", "LA", "Chicago");
 
+// NULL checks
+FilterPredicate filter = FilterPredicate.isNull("middle_name");
+FilterPredicate filter = FilterPredicate.isNotNull("email");
+
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
      RowReader rowReader = fileReader.createRowReader(filter)) {
 
@@ -204,8 +208,9 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`.
-Supported types: `int`, `long`, `float`, `double`, `boolean`, `String` (comparison operators); `int`, `long`, `String` (`in`/`inStrings`).
+Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`, `isNull`, `isNotNull`.
+Supported physical types: `int`, `long`, `float`, `double`, `boolean`, `String` (comparison operators); `int`, `long`, `String` (`in`/`inStrings`); any type (`isNull`/`isNotNull`).
+Supported logical types: `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` (comparison operators).
 Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions.
 
 ### Logical Type Support
@@ -241,6 +246,22 @@ FilterPredicate filter = FilterPredicate.eq("request_id",
 Raw physical-type predicates (`int`, `long`, etc.) remain available for columns without logical types or for filtering on the underlying physical value directly.
 
 Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`, and across multi-file readers.
+
+### Limitations
+
+- **`not` defeats statistics-based pushdown
+  ([#195](https://github.com/hardwood-hq/hardwood/issues/195)).** Row group and page-level
+  filtering cannot safely invert predicates wrapped in `not`. A filter like
+  `FilterPredicate.not(FilterPredicate.eq("x", 5))` will still apply at the record level
+  but will not skip any row groups or pages. For best pushdown, express the predicate
+  directly (e.g. `notEq("x", 5)` instead of `not(eq("x", 5))`).
+- **Bloom filter pushdown is not supported
+  ([#180](https://github.com/hardwood-hq/hardwood/issues/180)).** Parquet files may contain
+  Bloom filters for high-cardinality columns, but Hardwood does not currently use them for
+  filter evaluation.
+- **Dictionary-based filtering is not supported
+  ([#196](https://github.com/hardwood-hq/hardwood/issues/196)).** Dictionary-encoded columns
+  are not checked for predicate matches before decoding.
 
 ## Column Projection
 

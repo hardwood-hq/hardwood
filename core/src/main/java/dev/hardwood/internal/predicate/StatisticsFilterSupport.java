@@ -66,6 +66,8 @@ final class StatisticsFilterSupport {
                     StatisticsDecoder.decodeLong(stats.maxValue()));
             case ResolvedPredicate.BinaryInPredicate p -> canDropBinaryIn(p.values(),
                     stats.minValue(), stats.maxValue());
+            case ResolvedPredicate.IsNullPredicate ignored -> false;
+            case ResolvedPredicate.IsNotNullPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;
             case ResolvedPredicate.Or ignored -> false;
             case ResolvedPredicate.Not ignored -> false;

@@ -61,6 +61,16 @@ public class RowGroupFilterEvaluator {
                 Statistics stats = getStatistics(p.columnIndex(), rowGroup);
                 yield stats != null && StatisticsFilterSupport.canDropLeaf(p, MinMaxStats.of(stats));
             }
+            case ResolvedPredicate.IsNullPredicate p -> {
+                Statistics stats = getStatistics(p.columnIndex(), rowGroup);
+                // Can drop IS NULL if nullCount is known to be 0 (no nulls exist)
+                yield stats != null && stats.nullCount() != null && stats.nullCount() == 0;
+            }
+            case ResolvedPredicate.IsNotNullPredicate p -> {
+                Statistics stats = getStatistics(p.columnIndex(), rowGroup);
+                // Can drop IS NOT NULL if all values are null (nullCount == numRows)
+                yield stats != null && stats.nullCount() != null && stats.nullCount() == rowGroup.numRows();
+            }
             case ResolvedPredicate.And a -> {
                 for (ResolvedPredicate child : a.children()) {
                     if (canDropRowGroup(child, rowGroup)) {

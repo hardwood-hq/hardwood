@@ -132,6 +132,75 @@ class RecordFilterEvaluatorTest {
         );
     }
 
+    // ==================== Float/Double NaN and -0.0 ====================
+
+    @Test
+    void testFloatNaN() {
+        // NaN is ordered after all other values by Float.compare
+        Object[] values = { new float[]{ 1.0f, Float.NaN, -0.0f } };
+        BitSet[] nulls = { null };
+        int[] mapping = identityMapping(1);
+
+        // EQ NaN: only NaN matches
+        ResolvedPredicate eqNaN = new ResolvedPredicate.FloatPredicate(COL_0, Operator.EQ, Float.NaN);
+        assertFalse(matches(eqNaN, 0, values, nulls, mapping));
+        assertTrue(matches(eqNaN, 1, values, nulls, mapping));
+        assertFalse(matches(eqNaN, 2, values, nulls, mapping));
+
+        // GT 1.0f: NaN > 1.0f via Float.compare
+        ResolvedPredicate gt1 = new ResolvedPredicate.FloatPredicate(COL_0, Operator.GT, 1.0f);
+        assertFalse(matches(gt1, 0, values, nulls, mapping));
+        assertTrue(matches(gt1, 1, values, nulls, mapping));
+        assertFalse(matches(gt1, 2, values, nulls, mapping));
+    }
+
+    @Test
+    void testFloatNegativeZero() {
+        // -0.0f < +0.0f via Float.compare
+        Object[] values = { new float[]{ -0.0f, 0.0f } };
+        BitSet[] nulls = { null };
+        int[] mapping = identityMapping(1);
+
+        ResolvedPredicate lt0 = new ResolvedPredicate.FloatPredicate(COL_0, Operator.LT, 0.0f);
+        assertTrue(matches(lt0, 0, values, nulls, mapping));
+        assertFalse(matches(lt0, 1, values, nulls, mapping));
+
+        ResolvedPredicate eq0 = new ResolvedPredicate.FloatPredicate(COL_0, Operator.EQ, -0.0f);
+        assertTrue(matches(eq0, 0, values, nulls, mapping));
+        assertFalse(matches(eq0, 1, values, nulls, mapping));
+    }
+
+    @Test
+    void testDoubleNaN() {
+        Object[] values = { new double[]{ 1.0, Double.NaN, Double.NEGATIVE_INFINITY } };
+        BitSet[] nulls = { null };
+        int[] mapping = identityMapping(1);
+
+        ResolvedPredicate eqNaN = new ResolvedPredicate.DoublePredicate(COL_0, Operator.EQ, Double.NaN);
+        assertFalse(matches(eqNaN, 0, values, nulls, mapping));
+        assertTrue(matches(eqNaN, 1, values, nulls, mapping));
+        assertFalse(matches(eqNaN, 2, values, nulls, mapping));
+
+        // NaN > everything via Double.compare
+        ResolvedPredicate gtNaN = new ResolvedPredicate.DoublePredicate(COL_0, Operator.GT, Double.NaN);
+        assertFalse(matches(gtNaN, 0, values, nulls, mapping));
+        assertFalse(matches(gtNaN, 1, values, nulls, mapping));
+        assertFalse(matches(gtNaN, 2, values, nulls, mapping));
+    }
+
+    @Test
+    void testDoubleNegativeZero() {
+        Object[] values = { new double[]{ -0.0, 0.0 } };
+        BitSet[] nulls = { null };
+        int[] mapping = identityMapping(1);
+
+        ResolvedPredicate lt0 = new ResolvedPredicate.DoublePredicate(COL_0, Operator.LT, 0.0);
+        assertTrue(matches(lt0, 0, values, nulls, mapping));
+        assertFalse(matches(lt0, 1, values, nulls, mapping));
+    }
+
+    // ==================== Boolean ====================
+
     @Test
     void testBooleanEq() {
         Object[] values = { new boolean[]{ true, false } };
@@ -406,6 +475,92 @@ class RecordFilterEvaluatorTest {
         BitSet result = RecordFilterEvaluator.matchBatch(predicate, 3, values, nulls, mapping);
 
         assertThat(result.cardinality()).isEqualTo(3);
+    }
+
+    @Test
+    void testIsNullMatchesNullRows() {
+        Object[] values = { new int[]{ 10, 0, 30 } };
+        BitSet nullBits = new BitSet();
+        nullBits.set(1); // row 1 is null
+        BitSet[] nulls = { nullBits };
+        int[] mapping = identityMapping(1);
+
+        ResolvedPredicate isNull = new ResolvedPredicate.IsNullPredicate(COL_0);
+        assertFalse(matches(isNull, 0, values, nulls, mapping));
+        assertTrue(matches(isNull, 1, values, nulls, mapping));
+        assertFalse(matches(isNull, 2, values, nulls, mapping));
+    }
+
+    @Test
+    void testIsNotNullMatchesNonNullRows() {
+        Object[] values = { new int[]{ 10, 0, 30 } };
+        BitSet nullBits = new BitSet();
+        nullBits.set(1); // row 1 is null
+        BitSet[] nulls = { nullBits };
+        int[] mapping = identityMapping(1);
+
+        ResolvedPredicate isNotNull = new ResolvedPredicate.IsNotNullPredicate(COL_0);
+        assertTrue(matches(isNotNull, 0, values, nulls, mapping));
+        assertFalse(matches(isNotNull, 1, values, nulls, mapping));
+        assertTrue(matches(isNotNull, 2, values, nulls, mapping));
+    }
+
+    @Test
+    void testIsNullOnRequiredColumnNeverMatches() {
+        // Required column has null BitSet == null (no nulls possible)
+        Object[] values = { new int[]{ 10, 20, 30 } };
+        BitSet[] nulls = { null };
+        int[] mapping = identityMapping(1);
+
+        ResolvedPredicate isNull = new ResolvedPredicate.IsNullPredicate(COL_0);
+        assertFalse(matches(isNull, 0, values, nulls, mapping));
+        assertFalse(matches(isNull, 1, values, nulls, mapping));
+        assertFalse(matches(isNull, 2, values, nulls, mapping));
+    }
+
+    @Test
+    void testIsNotNullOnRequiredColumnAlwaysMatches() {
+        // Required column has null BitSet == null (no nulls possible)
+        Object[] values = { new int[]{ 10, 20, 30 } };
+        BitSet[] nulls = { null };
+        int[] mapping = identityMapping(1);
+
+        ResolvedPredicate isNotNull = new ResolvedPredicate.IsNotNullPredicate(COL_0);
+        assertTrue(matches(isNotNull, 0, values, nulls, mapping));
+        assertTrue(matches(isNotNull, 1, values, nulls, mapping));
+        assertTrue(matches(isNotNull, 2, values, nulls, mapping));
+    }
+
+    @Test
+    void testIsNullOnUnknownColumnIsConservative() {
+        Object[] values = { new int[]{ 10 } };
+        BitSet[] nulls = { null };
+        int[] mapping = identityMapping(1);
+
+        // Column index 99 is not in mapping
+        ResolvedPredicate isNull = new ResolvedPredicate.IsNullPredicate(99);
+        assertTrue(matches(isNull, 0, values, nulls, mapping));
+
+        ResolvedPredicate isNotNull = new ResolvedPredicate.IsNotNullPredicate(99);
+        assertTrue(matches(isNotNull, 0, values, nulls, mapping));
+    }
+
+    @Test
+    void testMatchBatchIsNull() {
+        Object[] values = { new int[]{ 10, 0, 30, 0 } };
+        BitSet nullBits = new BitSet();
+        nullBits.set(1);
+        nullBits.set(3);
+        BitSet[] nulls = { nullBits };
+        int[] mapping = identityMapping(1);
+
+        ResolvedPredicate isNull = new ResolvedPredicate.IsNullPredicate(COL_0);
+        BitSet result = RecordFilterEvaluator.matchBatch(isNull, 4, values, nulls, mapping);
+        assertThat(result.cardinality()).isEqualTo(2);
+        assertFalse(result.get(0));
+        assertTrue(result.get(1));
+        assertFalse(result.get(2));
+        assertTrue(result.get(3));
     }
 
     private static boolean matches(ResolvedPredicate predicate, int rowIndex,

@@ -185,6 +185,34 @@ class FilterPredicateResolverTest {
                 .hasMessageContaining("DECIMAL");
     }
 
+    @Test
+    void resolveNegativeDecimalInt32() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.INT32,
+                new LogicalType.DecimalType(2, 9));
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.gt("amount", new BigDecimal("-99.99")), schema);
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.IntPredicate.class);
+        // -99.99 with scale 2 → unscaled -9999
+        assertThat(((ResolvedPredicate.IntPredicate) resolved).value()).isEqualTo(-9999);
+    }
+
+    @Test
+    void resolveNegativeDecimalFixedLenByteArray() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 8,
+                new LogicalType.DecimalType(2, 18));
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.eq("amount", new BigDecimal("-1.50")), schema);
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
+        ResolvedPredicate.BinaryPredicate bp = (ResolvedPredicate.BinaryPredicate) resolved;
+        assertThat(bp.signed()).isTrue();
+        // -1.50 with scale 2 → unscaled -150 → sign-extended to 8 bytes
+        byte[] expected = FilterPredicateResolver.toFixedLenDecimalBytes(
+                new BigDecimal("-1.50").setScale(2).unscaledValue(), 8);
+        assertThat(bp.value()).isEqualTo(expected);
+        // First byte should be 0xFF (negative sign extension)
+        assertThat(bp.value()[0]).isEqualTo((byte) 0xFF);
+    }
+
     // ==================== Combinators ====================
 
     @Test
@@ -241,6 +269,54 @@ class FilterPredicateResolverTest {
                 FilterPredicate.eq("col", 42), schema))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("incompatible");
+    }
+
+    // ==================== IS NULL / IS NOT NULL ====================
+
+    @Test
+    void resolveIsNullToColumnIndex() {
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, null);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.isNull("col"), schema);
+
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.IsNullPredicate.class);
+        assertThat(((ResolvedPredicate.IsNullPredicate) resolved).columnIndex()).isEqualTo(0);
+    }
+
+    @Test
+    void resolveIsNotNullToColumnIndex() {
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT64, null);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.isNotNull("col"), schema);
+
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.IsNotNullPredicate.class);
+        assertThat(((ResolvedPredicate.IsNotNullPredicate) resolved).columnIndex()).isEqualTo(0);
+    }
+
+    @Test
+    void resolveIsNullWorksOnAnyPhysicalType() {
+        // IS NULL / IS NOT NULL should resolve without type validation errors on any column type
+        for (PhysicalType type : new PhysicalType[] {
+                PhysicalType.INT32, PhysicalType.INT64, PhysicalType.FLOAT,
+                PhysicalType.DOUBLE, PhysicalType.BOOLEAN, PhysicalType.BYTE_ARRAY }) {
+            FileSchema schema = schemaWithLogicalType("col", type, null);
+            ResolvedPredicate isNull = FilterPredicateResolver.resolve(
+                    FilterPredicate.isNull("col"), schema);
+            ResolvedPredicate isNotNull = FilterPredicateResolver.resolve(
+                    FilterPredicate.isNotNull("col"), schema);
+
+            assertThat(isNull).isInstanceOf(ResolvedPredicate.IsNullPredicate.class);
+            assertThat(isNotNull).isInstanceOf(ResolvedPredicate.IsNotNullPredicate.class);
+        }
+    }
+
+    @Test
+    void resolveIsNullOnUnknownColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.INT32, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.isNull("nonexistent"), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("not found");
     }
 
     // ==================== Helpers ====================

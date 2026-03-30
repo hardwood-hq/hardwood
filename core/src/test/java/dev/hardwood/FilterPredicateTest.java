@@ -450,6 +450,83 @@ class FilterPredicateTest {
                 FilterPredicate.in("col", 1, 2, 3), rg, schema)).isFalse();
     }
 
+    // ==================== IS NULL / IS NOT NULL Factory Tests ====================
+
+    @Test
+    void testIsNullPredicateCreation() {
+        FilterPredicate p = FilterPredicate.isNull("name");
+        assertThat(p).isInstanceOf(FilterPredicate.IsNullPredicate.class);
+        FilterPredicate.IsNullPredicate np = (FilterPredicate.IsNullPredicate) p;
+        assertThat(np.column()).isEqualTo("name");
+    }
+
+    @Test
+    void testIsNotNullPredicateCreation() {
+        FilterPredicate p = FilterPredicate.isNotNull("name");
+        assertThat(p).isInstanceOf(FilterPredicate.IsNotNullPredicate.class);
+        FilterPredicate.IsNotNullPredicate np = (FilterPredicate.IsNotNullPredicate) p;
+        assertThat(np.column()).isEqualTo("name");
+    }
+
+    // ==================== IS NULL / IS NOT NULL Row Group Evaluation Tests ====================
+
+    @Test
+    void testCanDropWithIsNull() {
+        FileSchema schema = createIntSchema();
+
+        // nullCount=0 -> can drop IS NULL (no nulls in this row group)
+        RowGroup rgNoNulls = createRowGroupWithNullCount(PhysicalType.INT32, 0L, 100);
+        assertThat(canDropRowGroup(FilterPredicate.isNull("col"), rgNoNulls, schema)).isTrue();
+
+        // nullCount=50 -> cannot drop IS NULL (some nulls exist)
+        RowGroup rgSomeNulls = createRowGroupWithNullCount(PhysicalType.INT32, 50L, 100);
+        assertThat(canDropRowGroup(FilterPredicate.isNull("col"), rgSomeNulls, schema)).isFalse();
+
+        // nullCount=100 (all null) -> cannot drop IS NULL
+        RowGroup rgAllNulls = createRowGroupWithNullCount(PhysicalType.INT32, 100L, 100);
+        assertThat(canDropRowGroup(FilterPredicate.isNull("col"), rgAllNulls, schema)).isFalse();
+
+        // nullCount unknown -> cannot drop (conservative)
+        RowGroup rgUnknown = createRowGroupWithNullCount(PhysicalType.INT32, null, 100);
+        assertThat(canDropRowGroup(FilterPredicate.isNull("col"), rgUnknown, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithIsNotNull() {
+        FileSchema schema = createIntSchema();
+
+        // nullCount=0 -> cannot drop IS NOT NULL (all values are non-null)
+        RowGroup rgNoNulls = createRowGroupWithNullCount(PhysicalType.INT32, 0L, 100);
+        assertThat(canDropRowGroup(FilterPredicate.isNotNull("col"), rgNoNulls, schema)).isFalse();
+
+        // nullCount=50 -> cannot drop IS NOT NULL (some non-nulls exist)
+        RowGroup rgSomeNulls = createRowGroupWithNullCount(PhysicalType.INT32, 50L, 100);
+        assertThat(canDropRowGroup(FilterPredicate.isNotNull("col"), rgSomeNulls, schema)).isFalse();
+
+        // nullCount=100 (all null) -> can drop IS NOT NULL
+        RowGroup rgAllNulls = createRowGroupWithNullCount(PhysicalType.INT32, 100L, 100);
+        assertThat(canDropRowGroup(FilterPredicate.isNotNull("col"), rgAllNulls, schema)).isTrue();
+
+        // nullCount unknown -> cannot drop (conservative)
+        RowGroup rgUnknown = createRowGroupWithNullCount(PhysicalType.INT32, null, 100);
+        assertThat(canDropRowGroup(FilterPredicate.isNotNull("col"), rgUnknown, schema)).isFalse();
+    }
+
+    @Test
+    void testIsNullWorksOnAnyColumnType() {
+        // IS NULL / IS NOT NULL should work on any physical type without type validation errors
+        for (PhysicalType type : new PhysicalType[] {
+                PhysicalType.INT32, PhysicalType.INT64, PhysicalType.FLOAT,
+                PhysicalType.DOUBLE, PhysicalType.BOOLEAN, PhysicalType.BYTE_ARRAY }) {
+            FileSchema schema = createSchemaForType(type);
+            RowGroup rg = createRowGroupWithNullCount(type, 0L, 100);
+
+            // Should not throw
+            canDropRowGroup(FilterPredicate.isNull("col"), rg, schema);
+            canDropRowGroup(FilterPredicate.isNotNull("col"), rg, schema);
+        }
+    }
+
     // ==================== LocalDate Factory Tests ====================
 
     @Test
@@ -576,6 +653,106 @@ class FilterPredicateTest {
         FilterPredicate.BinaryColumnPredicate bp =
                 (FilterPredicate.BinaryColumnPredicate) FilterPredicate.eq("u", nil);
         assertThat(bp.value()).isEqualTo(new byte[16]);
+    }
+
+    // ==================== Float/Double Edge Cases ====================
+
+    @Test
+    void testCanDropWithDoubleNaN() {
+        // NaN is ordered after +Infinity by Double.compare
+        RowGroup rg = createDoubleRowGroup(1.0, 10.0);
+        FileSchema schema = createDoubleSchema();
+        // EQ NaN: NaN > max(10.0), so can drop
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", Double.NaN), rg, schema)).isTrue();
+        // GT NaN: max(10.0) < NaN, so can drop
+        assertThat(canDropRowGroup(FilterPredicate.gt("col", Double.NaN), rg, schema)).isTrue();
+        // LT NaN: min(1.0) < NaN, so cannot drop (some values < NaN)
+        assertThat(canDropRowGroup(FilterPredicate.lt("col", Double.NaN), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithDoubleNaNInStatistics() {
+        // Row group where max is NaN (can happen with some writers)
+        RowGroup rg = createDoubleRowGroup(1.0, Double.NaN);
+        FileSchema schema = createDoubleSchema();
+        // EQ 5.0: 5.0 < NaN (max), so cannot drop
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", 5.0), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithDoubleNegativeZero() {
+        // -0.0 compares less than +0.0 via Double.compare
+        RowGroup rg = createDoubleRowGroup(-0.0, 0.0);
+        FileSchema schema = createDoubleSchema();
+        // EQ -0.0: in range, cannot drop
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", -0.0), rg, schema)).isFalse();
+        // EQ +0.0: in range, cannot drop
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", 0.0), rg, schema)).isFalse();
+        // LT -0.0: min is -0.0, min >= value, can drop
+        assertThat(canDropRowGroup(FilterPredicate.lt("col", -0.0), rg, schema)).isTrue();
+    }
+
+    @Test
+    void testCanDropWithDoubleInfinity() {
+        RowGroup rg = createDoubleRowGroup(Double.NEGATIVE_INFINITY, Double.POSITIVE_INFINITY);
+        FileSchema schema = createDoubleSchema();
+        // Any finite value is in range
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", 0.0), rg, schema)).isFalse();
+        // GT +Infinity: max is +Inf, +Inf <= +Inf, can drop
+        assertThat(canDropRowGroup(FilterPredicate.gt("col", Double.POSITIVE_INFINITY), rg, schema)).isTrue();
+        // LT -Infinity: min is -Inf, -Inf >= -Inf, can drop
+        assertThat(canDropRowGroup(FilterPredicate.lt("col", Double.NEGATIVE_INFINITY), rg, schema)).isTrue();
+    }
+
+    @Test
+    void testCanDropWithFloatNaN() {
+        RowGroup rg = createFloatRowGroup(1.0f, 10.0f);
+        FileSchema schema = createFloatSchema();
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", Float.NaN), rg, schema)).isTrue();
+        assertThat(canDropRowGroup(FilterPredicate.gt("col", Float.NaN), rg, schema)).isTrue();
+        assertThat(canDropRowGroup(FilterPredicate.lt("col", Float.NaN), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithFloatNegativeZero() {
+        RowGroup rg = createFloatRowGroup(-0.0f, 0.0f);
+        FileSchema schema = createFloatSchema();
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", -0.0f), rg, schema)).isFalse();
+        assertThat(canDropRowGroup(FilterPredicate.eq("col", 0.0f), rg, schema)).isFalse();
+        assertThat(canDropRowGroup(FilterPredicate.lt("col", -0.0f), rg, schema)).isTrue();
+    }
+
+    // ==================== Compound NOT Tests ====================
+
+    @Test
+    void testNotWrappingAndIsConservative() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+        // NOT(AND(GT 25, LT 5)) — both children would drop, but NOT is conservative
+        FilterPredicate filter = FilterPredicate.not(FilterPredicate.and(
+                FilterPredicate.gt("col", 25),
+                FilterPredicate.lt("col", 5)));
+        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
+    }
+
+    @Test
+    void testNotWrappingOrIsConservative() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+        // NOT(OR(EQ 5, EQ 25)) — both children would drop, OR drops, but NOT is conservative
+        FilterPredicate filter = FilterPredicate.not(FilterPredicate.or(
+                FilterPredicate.eq("col", 5),
+                FilterPredicate.eq("col", 25)));
+        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
+    }
+
+    @Test
+    void testNotWrappingLeafIsConservative() {
+        RowGroup rg = createIntRowGroup(10, 20);
+        FileSchema schema = createIntSchema();
+        // NOT(GT 25) should ideally push down as LT_EQ 25, but currently conservative
+        FilterPredicate filter = FilterPredicate.not(FilterPredicate.gt("col", 25));
+        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
     }
 
     // ==================== Type Mismatch Tests ====================
@@ -713,6 +890,15 @@ class FilterPredicateTest {
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, stats);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, 100);
+    }
+
+    private static RowGroup createRowGroupWithNullCount(PhysicalType type, Long nullCount, long numRows) {
+        Statistics stats = new Statistics(null, null, nullCount, null, false);
+        ColumnMetaData cmd = new ColumnMetaData(
+                type, List.of(Encoding.PLAIN), FieldPath.of("col"),
+                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, stats);
+        ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
+        return new RowGroup(List.of(chunk), 1000, numRows);
     }
 
     private static RowGroup createRowGroupWithoutStatistics() {

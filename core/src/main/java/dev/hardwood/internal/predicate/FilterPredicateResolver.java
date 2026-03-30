@@ -80,6 +80,8 @@ public class FilterPredicateResolver {
             case DecimalColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 LogicalType.DecimalType dt = getDecimalType(p.column(), cs);
+                // setScale without RoundingMode throws ArithmeticException if rounding is needed,
+                // which is the correct behavior: the predicate value must match the column's scale exactly
                 BigDecimal scaled = p.value().setScale(dt.scale());
                 PhysicalType physicalType = cs.type();
                 if (physicalType == PhysicalType.INT32) {
@@ -123,12 +125,12 @@ public class FilterPredicateResolver {
             }
             case BinaryColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
-                validateBinaryType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), false);
             }
             case FilterPredicate.SignedBinaryColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
-                validateBinaryType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
+                validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), true);
             }
             case IntInPredicate p -> {
@@ -143,8 +145,16 @@ public class FilterPredicateResolver {
             }
             case BinaryInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
-                validateBinaryType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values());
+            }
+            case FilterPredicate.IsNullPredicate p -> {
+                ColumnSchema cs = resolveColumn(p.column(), schema);
+                yield new ResolvedPredicate.IsNullPredicate(cs.columnIndex());
+            }
+            case FilterPredicate.IsNotNullPredicate p -> {
+                ColumnSchema cs = resolveColumn(p.column(), schema);
+                yield new ResolvedPredicate.IsNotNullPredicate(cs.columnIndex());
             }
             case And a -> new ResolvedPredicate.And(a.filters().stream()
                     .map(f -> resolve(f, schema))
@@ -185,16 +195,6 @@ public class FilterPredicateResolver {
     // ==================== Type validation ====================
 
     private static void validateType(String columnName, PhysicalType expectedType,
-            ColumnSchema columnSchema) {
-        PhysicalType actualType = columnSchema.type();
-        if (actualType != expectedType && !isBinaryCompatible(actualType, expectedType)) {
-            throw new IllegalArgumentException(
-                    "Column '" + columnName + "' has physical type " + actualType
-                            + "; given filter predicate type " + expectedType + " is incompatible");
-        }
-    }
-
-    private static void validateBinaryType(String columnName, PhysicalType expectedType,
             ColumnSchema columnSchema) {
         PhysicalType actualType = columnSchema.type();
         if (actualType != expectedType && !isBinaryCompatible(actualType, expectedType)) {
