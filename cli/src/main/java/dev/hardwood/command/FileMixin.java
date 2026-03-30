@@ -57,6 +57,9 @@ public class FileMixin {
 
     private InputFile createS3InputFile() {
         String endpointUrl = System.getenv("AWS_ENDPOINT_URL");
+        if (endpointUrl == null) {
+            endpointUrl = System.getProperty("aws.endpointUrl");
+        }
 
         S3Source.Builder builder = S3Source.builder()
                 .credentials(SdkCredentialsProviders.defaultChain());
@@ -65,7 +68,8 @@ public class FileMixin {
             builder.endpoint(endpointUrl);
         }
 
-        if ("true".equalsIgnoreCase(System.getenv("AWS_PATH_STYLE"))) {
+        if ("true".equalsIgnoreCase(System.getenv("AWS_PATH_STYLE"))
+                || "true".equalsIgnoreCase(System.getProperty("aws.pathStyle"))) {
             builder.pathStyle(true);
         }
 
