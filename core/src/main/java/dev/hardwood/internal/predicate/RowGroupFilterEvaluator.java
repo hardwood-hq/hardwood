@@ -87,10 +87,6 @@ public class RowGroupFilterEvaluator {
                 }
                 yield true;
             }
-            case ResolvedPredicate.Not n -> {
-                ResolvedPredicate negated = ResolvedPredicate.negate(n.delegate());
-                yield negated != null ? canDropRowGroup(negated, rowGroup) : false;
-            }
         };
     }
 

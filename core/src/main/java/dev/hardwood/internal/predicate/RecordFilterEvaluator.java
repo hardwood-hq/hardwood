@@ -91,7 +91,6 @@ public class RecordFilterEvaluator {
                 }
                 yield false;
             }
-            case ResolvedPredicate.Not n -> !matches(n.delegate(), rowIndex, valueArrays, nulls, columnMapping);
         };
     }
 

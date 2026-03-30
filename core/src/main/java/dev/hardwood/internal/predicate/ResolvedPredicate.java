@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.reader.FilterPredicate;
@@ -51,12 +52,11 @@ public sealed interface ResolvedPredicate {
             }
         }
     }
-    record Not(ResolvedPredicate delegate) implements ResolvedPredicate {}
 
-    /// Negates a predicate for statistics-based pushdown. For leaf predicates, the operator
-    /// is inverted (e.g. GT → LT_EQ). For compound predicates, De Morgan's laws are applied:
+    /// Negates a predicate. For leaf predicates, the operator is inverted (e.g. GT → LT_EQ).
+    /// For compound predicates, De Morgan's laws are applied:
     /// `NOT(AND(a, b))` → `OR(NOT(a), NOT(b))` and `NOT(OR(a, b))` → `AND(NOT(a), NOT(b))`.
-    /// Returns `null` only for IN predicates where inversion is not applicable.
+    /// For IN predicates, expanded to `AND(NOT_EQ(v1), NOT_EQ(v2), ...)`.
     static ResolvedPredicate negate(ResolvedPredicate predicate) {
         return switch (predicate) {
             case IntPredicate p -> new IntPredicate(p.columnIndex(), p.op().invert(), p.value());
@@ -67,22 +67,31 @@ public sealed interface ResolvedPredicate {
             case BinaryPredicate p -> new BinaryPredicate(p.columnIndex(), p.op().invert(), p.value(), p.signed());
             case IsNullPredicate p -> new IsNotNullPredicate(p.columnIndex());
             case IsNotNullPredicate p -> new IsNullPredicate(p.columnIndex());
-            case Not n -> n.delegate(); // NOT(NOT(x)) → x
-            case And a -> {
-                // De Morgan: NOT(AND(a, b)) → OR(NOT(a), NOT(b))
-                List<ResolvedPredicate> negatedChildren = a.children().stream()
-                        .map(ResolvedPredicate::negate)
-                        .toList();
-                yield negatedChildren.contains(null) ? null : new Or(negatedChildren);
+            case And a -> new Or(a.children().stream()
+                    .map(ResolvedPredicate::negate).toList());
+            case Or o -> new And(o.children().stream()
+                    .map(ResolvedPredicate::negate).toList());
+            case IntInPredicate p -> {
+                List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
+                for (int value : p.values()) {
+                    notEqs.add(new IntPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value));
+                }
+                yield new And(notEqs);
             }
-            case Or o -> {
-                // De Morgan: NOT(OR(a, b)) → AND(NOT(a), NOT(b))
-                List<ResolvedPredicate> negatedChildren = o.children().stream()
-                        .map(ResolvedPredicate::negate)
-                        .toList();
-                yield negatedChildren.contains(null) ? null : new And(negatedChildren);
+            case LongInPredicate p -> {
+                List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
+                for (long value : p.values()) {
+                    notEqs.add(new LongPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value));
+                }
+                yield new And(notEqs);
             }
-            default -> null; // IN predicates
+            case BinaryInPredicate p -> {
+                List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
+                for (byte[] value : p.values()) {
+                    notEqs.add(new BinaryPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value, false));
+                }
+                yield new And(notEqs);
+            }
         };
     }
 }

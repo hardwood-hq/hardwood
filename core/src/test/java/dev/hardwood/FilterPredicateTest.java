@@ -959,14 +959,23 @@ class FilterPredicateTest {
     }
 
     @Test
-    void testNotOnInPredicateIsConservative() {
-        RowGroup rg = createIntRowGroup(10, 20);
+    void testNotOnInPredicateExpandsToAndNotEq() {
         FileSchema schema = createIntSchema();
 
-        // NOT(IN(...)) cannot be inverted — should not drop
+        // NOT(IN(1, 2, 3)) → AND(NOT_EQ(1), NOT_EQ(2), NOT_EQ(3))
+        // Row group [10, 20]: none of 1, 2, 3 have min==max==value, so can't drop
+        RowGroup rg = createIntRowGroup(10, 20);
         FilterPredicate notIn = FilterPredicate.not(FilterPredicate.in("col", 1, 2, 3));
         assertThat(canDropRowGroup(notIn, rg, schema)).isFalse();
+
+        // Row group [5, 5] (single value): NOT_EQ(5) drops when min==max==5
+        // NOT(IN(5, 10)) → AND(NOT_EQ(5), NOT_EQ(10))
+        // NOT_EQ(5): min==max==5 → can drop. AND short-circuits.
+        RowGroup rgSingle = createIntRowGroup(5, 5);
+        FilterPredicate notInSingle = FilterPredicate.not(FilterPredicate.in("col", 5, 10));
+        assertThat(canDropRowGroup(notInSingle, rgSingle, schema)).isTrue();
     }
+
 
     @Test
     void testNotOnIsNullInvertsToIsNotNull() {

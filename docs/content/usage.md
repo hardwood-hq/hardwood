@@ -211,7 +211,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`, `isNull`, `isNotNull`.
 Supported physical types: `int`, `long`, `float`, `double`, `boolean`, `String` (comparison operators); `int`, `long`, `String` (`in`/`inStrings`); any type (`isNull`/`isNotNull`).
 Supported logical types: `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` (comparison operators).
-Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions. `not` is fully pushed down to the statistics level: leaf predicates are inverted (e.g., `not(gt("x", 5))` → `ltEq("x", 5)`), compound predicates are transformed via De Morgan's laws (`not(and(a, b))` → `or(not(a), not(b))`), and double negation is unwrapped. The only case where `not` falls back to record-level-only filtering is `not(in(...))`.
+Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions. All predicates, including those wrapped in `not`, are pushed down to the statistics level for row group and page skipping.
 
 ### Logical Type Support
 

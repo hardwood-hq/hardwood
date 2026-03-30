@@ -162,7 +162,10 @@ public class FilterPredicateResolver {
             case Or o -> new ResolvedPredicate.Or(o.filters().stream()
                     .map(f -> resolve(f, schema))
                     .toList());
-            case Not n -> new ResolvedPredicate.Not(resolve(n.delegate(), schema));
+            case Not n -> {
+                ResolvedPredicate resolvedDelegate = resolve(n.delegate(), schema);
+                yield ResolvedPredicate.negate(resolvedDelegate);
+            }
         };
     }
 

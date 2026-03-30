@@ -497,6 +497,27 @@ class PredicatePushDownTest {
         }
     }
 
+    // ==================== NOT(IN) end-to-end ====================
+
+    @Test
+    void testNotInPredicateEndToEnd() throws Exception {
+        // INT_FILE: id values 1-300 across 3 row groups
+        // NOT(IN(50, 150, 250)) → AND(NOT_EQ(50), NOT_EQ(150), NOT_EQ(250)) → all rows except those three
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.not(FilterPredicate.in("id", 50L, 150L, 250L));
+
+            List<Long> ids = new ArrayList<>();
+            try (RowReader rows = reader.createRowReader(filter)) {
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                }
+            }
+            assertThat(ids).hasSize(297); // 300 - 3
+            assertThat(ids).doesNotContain(50L, 150L, 250L);
+        }
+    }
+
     // ==================== Filter on non-filtered column ====================
 
     @Test

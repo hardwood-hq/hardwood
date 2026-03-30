@@ -359,13 +359,12 @@ class RecordFilterEvaluatorTest {
         BitSet[] nulls = { null };
         int[] mapping = identityMapping(1);
 
-        // NOT(col == 20) → row 0 and 2 match
-        ResolvedPredicate not = new ResolvedPredicate.Not(
-                new ResolvedPredicate.IntPredicate(COL_0, Operator.EQ, 20));
+        // NOT_EQ(col, 20) → row 0 and 2 match (NOT is resolved away during predicate resolution)
+        ResolvedPredicate notEq = new ResolvedPredicate.IntPredicate(COL_0, Operator.NOT_EQ, 20);
 
-        assertTrue(matches(not, 0, values, nulls, mapping));
-        assertFalse(matches(not, 1, values, nulls, mapping));
-        assertTrue(matches(not, 2, values, nulls, mapping));
+        assertTrue(matches(notEq, 0, values, nulls, mapping));
+        assertFalse(matches(notEq, 1, values, nulls, mapping));
+        assertTrue(matches(notEq, 2, values, nulls, mapping));
     }
 
     @ParameterizedTest(name = "matchBatch {0} {1} → cardinality={2}")
@@ -436,9 +435,8 @@ class RecordFilterEvaluatorTest {
         BitSet[] nulls = { null };
         int[] mapping = identityMapping(1);
 
-        // NOT(col == 20) → rows 0, 2
-        ResolvedPredicate predicate = new ResolvedPredicate.Not(
-                new ResolvedPredicate.IntPredicate(COL_0, Operator.EQ, 20));
+        // NOT_EQ(col, 20) → rows 0, 2 (NOT is resolved away during predicate resolution)
+        ResolvedPredicate predicate = new ResolvedPredicate.IntPredicate(COL_0, Operator.NOT_EQ, 20);
         BitSet result = RecordFilterEvaluator.matchBatch(predicate, 3, values, nulls, mapping);
 
         assertTrue(result.get(0));

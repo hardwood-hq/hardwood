@@ -67,12 +67,6 @@ public class PageFilterEvaluator {
                 }
                 yield (result != null) ? result : RowRanges.all(rowCount);
             }
-            case ResolvedPredicate.Not n -> {
-                ResolvedPredicate negated = ResolvedPredicate.negate(n.delegate());
-                yield negated != null
-                        ? evaluate(negated, rowGroup, indexBuffers, rowCount)
-                        : RowRanges.all(rowCount);
-            }
             case ResolvedPredicate.IsNullPredicate p -> evaluateNullPages(p.columnIndex(), true, rowGroup, indexBuffers, rowCount);
             case ResolvedPredicate.IsNotNullPredicate p -> evaluateNullPages(p.columnIndex(), false, rowGroup, indexBuffers, rowCount);
             default -> evaluateLeafPages(predicate, rowGroup, indexBuffers, rowCount);
@@ -192,7 +186,6 @@ public class PageFilterEvaluator {
             case ResolvedPredicate.IsNotNullPredicate p -> p.columnIndex();
             case ResolvedPredicate.And ignored -> -1;
             case ResolvedPredicate.Or ignored -> -1;
-            case ResolvedPredicate.Not ignored -> -1;
         };
     }
 
