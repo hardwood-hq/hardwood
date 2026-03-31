@@ -93,6 +93,10 @@ public class S3InputFile implements InputFile {
                 }
                 buf.put(tmp, 0, read);
             }
+            if (buf.position() != length) {
+                throw new IOException("Short read from " + name() + ": expected " + length
+                        + " bytes but received " + buf.position());
+            }
             buf.flip();
             return buf;
         }

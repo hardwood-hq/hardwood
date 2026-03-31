@@ -10,6 +10,7 @@ package org.apache.parquet.compat;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.nio.file.Files;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -48,7 +49,10 @@ class ParquetReaderS3CompatTest {
                 HttpClient.newHttpClient(),
                 () -> S3Credentials.of("access", "secret"),
                 "us-east-1",
-                URI.create(s3Mock.getHttpEndpoint()), true);
+                URI.create(s3Mock.getHttpEndpoint()),
+                true,
+                Duration.ofSeconds(5),
+                5);
 
         api.createBucket("test-bucket");
         api.putObject("test-bucket", "plain_uncompressed.parquet", Files.readAllBytes(

@@ -10,6 +10,7 @@ package dev.hardwood.s3;
 import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
@@ -30,10 +31,12 @@ public final class S3Source implements Closeable {
 
     private final S3Api api;
     private final HttpClient httpClient;
+    private final boolean externalHttpClient;
 
-    private S3Source(S3Api api, HttpClient httpClient) {
+    private S3Source(S3Api api, HttpClient httpClient, boolean externalHttpClient) {
         this.api = api;
         this.httpClient = httpClient;
+        this.externalHttpClient = externalHttpClient;
     }
 
     /// Creates an [S3InputFile] for the given bucket and key.
@@ -77,7 +80,9 @@ public final class S3Source implements Closeable {
 
     @Override
     public void close() {
-        httpClient.close();
+        if (!externalHttpClient) {
+            httpClient.close();
+        }
     }
 
     /// Creates a new [Builder].
@@ -104,10 +109,18 @@ public final class S3Source implements Closeable {
     /// Builder for [S3Source].
     public static final class Builder {
 
+        private static final Duration DEFAULT_CONNECT_TIMEOUT = Duration.ofSeconds(10);
+        private static final Duration DEFAULT_REQUEST_TIMEOUT = Duration.ofSeconds(30);
+        private static final int DEFAULT_MAX_RETRIES = 3;
+
         private String region;
         private String endpoint;
         private boolean pathStyle;
         private S3CredentialsProvider credentialsProvider;
+        private Duration connectTimeout = DEFAULT_CONNECT_TIMEOUT;
+        private Duration requestTimeout = DEFAULT_REQUEST_TIMEOUT;
+        private int maxRetries = DEFAULT_MAX_RETRIES;
+        private HttpClient httpClient;
 
         private Builder() {
         }
@@ -143,6 +156,37 @@ public final class S3Source implements Closeable {
             return this;
         }
 
+        /// Sets the connect timeout for the HTTP client (default 10 seconds).
+        public Builder connectTimeout(Duration connectTimeout) {
+            this.connectTimeout = Objects.requireNonNull(connectTimeout, "connectTimeout must not be null");
+            return this;
+        }
+
+        /// Sets the per-request timeout for individual HTTP requests (default 30 seconds).
+        public Builder requestTimeout(Duration requestTimeout) {
+            this.requestTimeout = Objects.requireNonNull(requestTimeout, "requestTimeout must not be null");
+            return this;
+        }
+
+        /// Sets the maximum number of retries for GET requests on transient failures
+        /// (HTTP 500/503 and network errors). Default is 3.
+        public Builder maxRetries(int maxRetries) {
+            if (maxRetries < 0) {
+                throw new IllegalArgumentException("maxRetries must not be negative: " + maxRetries);
+            }
+            this.maxRetries = maxRetries;
+            return this;
+        }
+
+        /// Sets a custom [HttpClient] for full control over connection pooling
+        /// and transport settings. When provided, the caller is responsible for
+        /// closing the client — [S3Source#close()] will not close it.
+        /// Connect timeout is ignored when a custom client is supplied.
+        public Builder httpClient(HttpClient httpClient) {
+            this.httpClient = Objects.requireNonNull(httpClient, "httpClient must not be null");
+            return this;
+        }
+
         /// Builds the [S3Source].
         ///
         /// Region is required when targeting AWS S3 (no custom endpoint).
@@ -160,9 +204,13 @@ public final class S3Source implements Closeable {
                 }
                 effectiveRegion = "auto";
             }
-            HttpClient httpClient = HttpClient.newHttpClient();
-            S3Api api = new S3Api(httpClient, credentialsProvider, effectiveRegion, endpointUri, pathStyle);
-            return new S3Source(api, httpClient);
+            boolean externalClient = httpClient != null;
+            HttpClient client = externalClient
+                    ? httpClient
+                    : HttpClient.newBuilder().connectTimeout(connectTimeout).build();
+            S3Api api = new S3Api(client, credentialsProvider, effectiveRegion, endpointUri, pathStyle,
+                    requestTimeout, maxRetries);
+            return new S3Source(api, client, externalClient);
         }
     }
 }
