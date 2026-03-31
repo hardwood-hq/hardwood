@@ -379,6 +379,29 @@ public class ColumnProjectionTest {
         }
     }
 
+    @Test
+    void testDeepNestedStructSubFieldProjection() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/deep_nested_struct_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.createRowReader(ColumnProjection.columns("account.id"))) {
+
+            assertThat(rows.getFieldCount()).isEqualTo(1);
+
+            // Row 0: Alice — account.id = "ACC-001"
+            rows.next();
+            PqStruct account0 = rows.getStruct("account");
+            assertThat(account0).isNotNull();
+            assertThat(account0.getString("id")).isEqualTo("ACC-001");
+
+            // Row 3: Diana — account = null
+            rows.next();
+            rows.next();
+            rows.next();
+            assertThat(rows.isNull("account")).isTrue();
+        }
+    }
+
     // ==================== Index-Based Access Tests ====================
 
     @Test

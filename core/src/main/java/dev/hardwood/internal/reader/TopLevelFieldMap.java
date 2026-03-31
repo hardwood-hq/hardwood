@@ -217,6 +217,9 @@ final class TopLevelFieldMap {
                 yield new FieldDesc.Primitive(projCol, prim);
             }
             case SchemaNode.GroupNode group -> {
+                if (!isChildProjected(group, projectedSchema)) {
+                    yield null;
+                }
                 if (group.isList()) {
                     yield buildListDesc(group, schema, projectedSchema);
                 }
