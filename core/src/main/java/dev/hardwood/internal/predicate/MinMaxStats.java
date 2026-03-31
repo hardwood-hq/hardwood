@@ -21,16 +21,23 @@ interface MinMaxStats {
     byte[] maxValue();
 
     /// Wraps a [Statistics] record.
+    ///
+    /// When `stats.isMinMaxDeprecated()` is `true`, the min/max values were read from
+    /// deprecated Thrift fields that use unsigned byte comparison, which produces incorrect
+    /// sort order for signed types. In that case, both `minValue()` and `maxValue()` return
+    /// `null` so that callers conservatively keep the row group rather than incorrectly
+    /// dropping it.
     static MinMaxStats of(Statistics stats) {
+        boolean deprecated = stats.isMinMaxDeprecated();
         return new MinMaxStats() {
             @Override
             public byte[] minValue() {
-                return stats.minValue();
+                return deprecated ? null : stats.minValue();
             }
 
             @Override
             public byte[] maxValue() {
-                return stats.maxValue();
+                return deprecated ? null : stats.maxValue();
             }
         };
     }
