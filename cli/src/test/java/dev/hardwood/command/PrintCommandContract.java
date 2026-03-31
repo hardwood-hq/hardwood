@@ -23,6 +23,8 @@ interface PrintCommandContract {
 
     String deepNestedFile();
 
+    String listFile();
+
     String nonexistentFile();
 
     @Test
@@ -98,6 +100,76 @@ interface PrintCommandContract {
                 | 1        | 2  | 200   |
                 | 2        | 3  | 300   |
                 +----------+----+-------+""");
+    }
+
+    @Test
+    default void columnsFilterOutput(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", plainFile(), "--columns", "value");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                +-------+
+                | value |
+                +-------+
+                | 100   |
+                | 200   |
+                | 300   |
+                +-------+""");
+    }
+
+    @Test
+    default void columnsFilterWithNestedStruct(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "--columns", "name,account", "-mw", "120");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                +---------+------------------------------------------------------------------------------------------------------------+
+                | name    | account                                                                                                    |
+                +---------+------------------------------------------------------------------------------------------------------------+
+                | Alice   | {id: ACC-001, organization: {name: Acme Corp, address: {street: 123 Main St, city: New York, zip: 10001}}} |
+                | Bob     | {id: ACC-002, organization: {name: TechStart, address: null}}                                              |
+                | Charlie | {id: ACC-003, organization: null}                                                                          |
+                | Diana   | null                                                                                                       |
+                +---------+------------------------------------------------------------------------------------------------------------+""");
+    }
+
+    @Test
+    default void columnsFilterExcludesNestedColumn(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "--columns", "customer_id,name");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                +-------------+---------+
+                | customer_id | name    |
+                +-------------+---------+
+                | 1           | Alice   |
+                | 2           | Bob     |
+                | 3           | Charlie |
+                | 4           | Diana   |
+                +-------------+---------+""");
+    }
+
+    @Test
+    default void columnsFilterWithNestedSubField(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "--columns", "name,account.id");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                +---------+---------------+
+                | name    | account       |
+                +---------+---------------+
+                | Alice   | {id: ACC-001} |
+                | Bob     | {id: ACC-002} |
+                | Charlie | {id: ACC-003} |
+                | Diana   | null          |
+                +---------+---------------+""");
+    }
+
+    @Test
+    default void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", plainFile(), "--columns", "unknown");
+
+        assertThat(result.exitCode()).isNotZero();
     }
 
     @Test
@@ -208,6 +280,22 @@ interface PrintCommandContract {
                 | 8  | ban   | testi |
                 |    |       | ng    |
                 +----+-------+-------+""");
+    }
+
+    @Test
+    default void displaysListColumns(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", listFile());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                +----+-----------+--------------+
+                | id | tags      | scores       |
+                +----+-----------+--------------+
+                | 1  | [a, b, c] | [10, 20, 30] |
+                | 2  | []        | [100]        |
+                | 3  | null      | [1, 2]       |
+                | 4  | [single]  | null         |
+                +----+-----------+--------------+""");
     }
 
     @Test

@@ -10,6 +10,7 @@ package dev.hardwood.command;
 import java.io.IOException;
 import java.util.ArrayDeque;
 import java.util.Iterator;
+import java.util.List;
 import java.util.Spliterator;
 import java.util.Spliterators;
 import java.util.concurrent.Callable;
@@ -25,7 +26,9 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.StreamedTable;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Spec;
@@ -65,6 +68,9 @@ public class PrintCommand implements Callable<Integer> {
     @CommandLine.Option(names = {"-n", "--rows"}, defaultValue = ALL, description = "Number of rows to display. Positive values show the first N rows (head), negative values show the last N rows (tail), 'ALL' shows every row.")
     String n;
 
+    @CommandLine.Option(names = {"-c", "--columns"}, description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
+    String columns;
+
     @Override
     public Integer call() {
         InputFile inputFile = fileMixin.toInputFile();
@@ -73,38 +79,19 @@ public class PrintCommand implements Callable<Integer> {
         }
 
         int rowLimit = parseRowLimit();
+        ColumnProjection projection = parseColumnProjection();
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema fileSchema = reader.getFileSchema();
-            String[] headers = RowTable.topLevelFieldNames(fileSchema);
-            AtomicLong rowIndex = addRowIndex ? new AtomicLong() : null;
-            try (RowReader rowReader = reader.createRowReader()) {
+            try (RowReader rowReader = reader.createRowReader(projection)) {
+                String[] headers = RowTable.topLevelFieldNames(fileSchema, projection);
+                List<SchemaNode> fields = projectedFields(fileSchema, projection);
+                AtomicLong rowIndex = addRowIndex ? new AtomicLong() : null;
                 Stream<Object[]> stream = prepareSampling(rowReader, headers, rowLimit);
                 if (transpose) {
-                    stream.forEach(r -> {
-                        Stream<Object[]> data = IntStream.range(0, headers.length)
-                                .mapToObj(it -> new Object[]{headers[it], RowTable.renderValue(r[it], fileSchema.getRootNode().children().get(it))});
-                        spec.commandLine().getOut().println(
-                                AsciiTable.builder()
-                                        .data((rowIndex != null ?
-                                                Stream.concat(
-                                                        Stream.of(new Object[][]{new Object[]{"rowIndex", Long.toString(rowIndex.getAndIncrement())}}), data) : data)
-                                                .toArray(Object[][]::new))
-                                        .asString());
-                    });
+                    printTransposed(stream, headers, fields, rowIndex);
                 } else {
-                    new StreamedTable().print(
-                            spec.commandLine().getOut(),
-                            addRowIndex ? Stream.concat(Stream.of("rowIndex"), Stream.of(headers)).toArray(String[]::new) : headers,
-                            stream
-                                    .map(r -> rowIndex == null ?
-                                            (IntFunction<String>) i -> RowTable.renderValue(r[i], fileSchema.getRootNode().children().get(i)) :
-                                            ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : RowTable.renderValue(r[i - 1], fileSchema.getRootNode().children().get(i - 1))))
-                                    .iterator(),
-                            sampleSize,
-                            maxWidth,
-                            truncate,
-                            rowDelimiter);
+                    printTable(stream, headers, fields, rowIndex);
                 }
             }
         }
@@ -114,6 +101,35 @@ public class PrintCommand implements Callable<Integer> {
         }
 
         return CommandLine.ExitCode.OK;
+    }
+
+    private void printTransposed(Stream<Object[]> stream, String[] headers, List<SchemaNode> fields, AtomicLong rowIndex) {
+        stream.forEach(r -> {
+            Stream<Object[]> data = IntStream.range(0, headers.length)
+                    .mapToObj(i -> new Object[]{headers[i], RowTable.renderValue(r[i], fields.get(i))});
+            spec.commandLine().getOut().println(
+                    AsciiTable.builder()
+                            .data((rowIndex != null ?
+                                    Stream.concat(
+                                            Stream.of(new Object[][]{new Object[]{"rowIndex", Long.toString(rowIndex.getAndIncrement())}}), data) : data)
+                                    .toArray(Object[][]::new))
+                            .asString());
+        });
+    }
+
+    private void printTable(Stream<Object[]> stream, String[] headers, List<SchemaNode> fields, AtomicLong rowIndex) {
+        new StreamedTable().print(
+                spec.commandLine().getOut(),
+                addRowIndex ? Stream.concat(Stream.of("rowIndex"), Stream.of(headers)).toArray(String[]::new) : headers,
+                stream
+                        .map(r -> rowIndex == null ?
+                                (IntFunction<String>) i -> RowTable.renderValue(r[i], fields.get(i)) :
+                                ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : RowTable.renderValue(r[i - 1], fields.get(i - 1))))
+                        .iterator(),
+                sampleSize,
+                maxWidth,
+                truncate,
+                rowDelimiter);
     }
 
     private int parseRowLimit() {
@@ -129,9 +145,34 @@ public class PrintCommand implements Callable<Integer> {
         }
     }
 
+    private ColumnProjection parseColumnProjection() {
+        if (columns == null) {
+            return ColumnProjection.all();
+        }
+        String[] names = columns.split(",");
+        for (int i = 0; i < names.length; i++) {
+            names[i] = names[i].trim();
+        }
+        return ColumnProjection.columns(names);
+    }
+
+    private static List<SchemaNode> projectedFields(FileSchema schema, ColumnProjection projection) {
+        List<SchemaNode> allChildren = schema.getRootNode().children();
+        if (projection.projectsAll()) {
+            return allChildren;
+        }
+        // ColumnProjection.columns("a.b") projects "a" at top level — so we filter root children
+        // by checking which top-level fields have any projected column underneath them.
+        // For simplicity, we match top-level names against the projection prefixes.
+        return allChildren.stream()
+                .filter(child -> projection.getProjectedColumnNames().stream()
+                        .anyMatch(name -> name.equals(child.name()) || name.startsWith(child.name() + ".")))
+                .toList();
+    }
+
     private Stream<Object[]> prepareSampling(RowReader rowReader, String[] headers, int rowLimit) {
         if (rowLimit > 0) {
-            return stream(rowReader).limit(rowLimit).map(r -> toData(r, headers));
+            return stream(rowReader).limit(rowLimit).map(r -> toData(r, headers.length));
         }
         if (rowLimit < 0) {
             int tailSize = -rowLimit;
@@ -140,15 +181,15 @@ public class PrintCommand implements Callable<Integer> {
                 if (buffer.size() == tailSize) {
                     buffer.removeFirst();
                 }
-                buffer.addLast(toData(r, headers));
+                buffer.addLast(toData(r, headers.length));
             });
             return buffer.stream();
         }
-        return stream(rowReader).map(r -> toData(r, headers));
+        return stream(rowReader).map(r -> toData(r, headers.length));
     }
 
-    private Object[] toData(RowReader rowReader, String[] headers) {
-        return IntStream.range(0, headers.length)
+    private Object[] toData(RowReader rowReader, int fieldCount) {
+        return IntStream.range(0, fieldCount)
                 .mapToObj(rowReader::getValue)
                 .toArray(Object[]::new);
     }
