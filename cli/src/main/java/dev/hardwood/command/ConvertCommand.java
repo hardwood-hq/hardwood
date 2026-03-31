@@ -10,12 +10,15 @@ package dev.hardwood.command;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqStruct;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 import picocli.CommandLine;
@@ -45,7 +48,7 @@ public class ConvertCommand implements Callable<Integer> {
     @CommandLine.Option(names = "-o", description = "Output file path (default: stdout).")
     String outputFile;
 
-    @CommandLine.Option(names = "--columns", description = "Comma-separated list of columns to include.")
+    @CommandLine.Option(names = "--columns", description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
     String columns;
 
     @Override
@@ -55,18 +58,17 @@ public class ConvertCommand implements Callable<Integer> {
             return CommandLine.ExitCode.SOFTWARE;
         }
 
+        ColumnProjection projection = parseColumnProjection();
+
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema fileSchema = reader.getFileSchema();
-            String[] allHeaders = RowTable.topLevelFieldNames(fileSchema);
-            int[] columnIndices = resolveColumnIndices(allHeaders);
-            String[] headers = projectHeaders(allHeaders, columnIndices);
+            List<SchemaNode> fields = projectedFields(fileSchema, projection);
 
             PrintWriter out = openOutput();
-            List<SchemaNode> fields = fileSchema.getRootNode().children();
-            try (RowReader rowReader = reader.createRowReader()) {
+            try (RowReader rowReader = reader.createRowReader(projection)) {
                 switch (format) {
-                    case CSV -> writeCsv(out, headers, columnIndices, rowReader, fields);
-                    case JSON -> writeJson(out, headers, columnIndices, rowReader, fields);
+                    case CSV -> writeCsv(out, fields, rowReader);
+                    case JSON -> writeJson(out, fields, rowReader);
                 }
             }
             if (outputFile != null) {
@@ -88,6 +90,28 @@ public class ConvertCommand implements Callable<Integer> {
         return CommandLine.ExitCode.OK;
     }
 
+    private ColumnProjection parseColumnProjection() {
+        if (columns == null) {
+            return ColumnProjection.all();
+        }
+        String[] names = columns.split(",");
+        for (int i = 0; i < names.length; i++) {
+            names[i] = names[i].trim();
+        }
+        return ColumnProjection.columns(names);
+    }
+
+    private static List<SchemaNode> projectedFields(FileSchema schema, ColumnProjection projection) {
+        List<SchemaNode> allChildren = schema.getRootNode().children();
+        if (projection.projectsAll()) {
+            return allChildren;
+        }
+        return allChildren.stream()
+                .filter(child -> projection.getProjectedColumnNames().stream()
+                        .anyMatch(name -> name.equals(child.name()) || name.startsWith(child.name() + ".")))
+                .toList();
+    }
+
     private PrintWriter openOutput() throws IOException {
         if (outputFile != null) {
             return new PrintWriter(new FileWriter(outputFile));
@@ -95,58 +119,77 @@ public class ConvertCommand implements Callable<Integer> {
         return spec.commandLine().getOut();
     }
 
-    private int[] resolveColumnIndices(String[] allHeaders) {
-        if (columns == null) {
-            int[] indices = new int[allHeaders.length];
-            for (int i = 0; i < allHeaders.length; i++) {
-                indices[i] = i;
-            }
-            return indices;
-        }
-        String[] requested = columns.split(",");
-        int[] indices = new int[requested.length];
-        for (int i = 0; i < requested.length; i++) {
-            String col = requested[i].trim();
-            indices[i] = indexOfHeader(allHeaders, col);
-            if (indices[i] < 0) {
-                throw new IllegalArgumentException("Unknown column: " + col);
-            }
-        }
-        return indices;
-    }
+    // ==================== CSV ====================
 
-    private static int indexOfHeader(String[] headers, String name) {
-        for (int i = 0; i < headers.length; i++) {
-            if (headers[i].equals(name))
-                return i;
+    private static void writeCsv(PrintWriter out, List<SchemaNode> fields, RowReader rowReader) {
+        List<String> flatHeaders = new ArrayList<>();
+        for (SchemaNode field : fields) {
+            flattenHeaders(field, field.name(), flatHeaders);
         }
-        return -1;
-    }
+        out.println(csvRow(flatHeaders.toArray(new String[0])));
 
-    private static String[] projectHeaders(String[] all, int[] indices) {
-        String[] result = new String[indices.length];
-        for (int i = 0; i < indices.length; i++) {
-            result[i] = all[indices[i]];
-        }
-        return result;
-    }
-
-    private static void writeCsv(PrintWriter out, String[] headers, int[] columnIndices, RowReader rowReader,
-            List<SchemaNode> fields) {
-        out.println(csvRow(headers));
         while (rowReader.hasNext()) {
             rowReader.next();
-            String[] values = new String[columnIndices.length];
-            for (int i = 0; i < columnIndices.length; i++) {
-                int col = columnIndices[i];
-                values[i] = RowTable.renderField(rowReader, col, fields.get(col));
+            List<String> flatValues = new ArrayList<>();
+            for (int i = 0; i < fields.size(); i++) {
+                flattenValues(rowReader.getValue(i), fields.get(i), flatValues);
             }
-            out.println(csvRow(values));
+            out.println(csvRow(flatValues.toArray(new String[0])));
         }
     }
 
-    private static void writeJson(PrintWriter out, String[] headers, int[] columnIndices, RowReader rowReader,
-            List<SchemaNode> fields) {
+    private static void flattenHeaders(SchemaNode node, String prefix, List<String> headers) {
+        if (node instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap()) {
+            for (SchemaNode child : group.children()) {
+                flattenHeaders(child, prefix + "." + child.name(), headers);
+            }
+        } else {
+            headers.add(prefix);
+        }
+    }
+
+    private static void flattenValues(Object value, SchemaNode schema, List<String> values) {
+        if (schema instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap()) {
+            if (value == null) {
+                // null struct — emit null for each leaf
+                for (SchemaNode child : group.children()) {
+                    flattenNulls(child, values);
+                }
+            } else if (value instanceof PqStruct struct) {
+                for (int i = 0; i < struct.getFieldCount(); i++) {
+                    String name = struct.getFieldName(i);
+                    SchemaNode childSchema = findChildSchema(group, name);
+                    flattenValues(struct.getValue(name), childSchema, values);
+                }
+            }
+        } else {
+            values.add(RowTable.renderValue(value, schema));
+        }
+    }
+
+    private static void flattenNulls(SchemaNode schema, List<String> values) {
+        if (schema instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap()) {
+            for (SchemaNode child : group.children()) {
+                flattenNulls(child, values);
+            }
+        } else {
+            values.add("null");
+        }
+    }
+
+    private static SchemaNode findChildSchema(SchemaNode.GroupNode groupNode, String name) {
+        for (SchemaNode child : groupNode.children()) {
+            if (child.name().equals(name)) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    // ==================== JSON ====================
+
+    private static void writeJson(PrintWriter out, List<SchemaNode> fields, RowReader rowReader) {
+        String[] headers = fields.stream().map(SchemaNode::name).toArray(String[]::new);
         out.print("[");
         boolean first = true;
         while (rowReader.hasNext()) {
@@ -156,17 +199,18 @@ public class ConvertCommand implements Callable<Integer> {
             }
             first = false;
             out.print("\n  {");
-            for (int i = 0; i < columnIndices.length; i++) {
+            for (int i = 0; i < headers.length; i++) {
                 if (i > 0)
                     out.print(",");
-                int col = columnIndices[i];
-                String val = RowTable.renderField(rowReader, col, fields.get(col));
+                String val = RowTable.renderField(rowReader, i, fields.get(i));
                 out.print("\"" + jsonEscape(headers[i]) + "\":\"" + jsonEscape(val) + "\"");
             }
             out.print("}");
         }
         out.println("\n]");
     }
+
+    // ==================== Formatting Helpers ====================
 
     private static String csvRow(String[] values) {
         StringBuilder sb = new StringBuilder();

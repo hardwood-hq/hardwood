@@ -18,6 +18,16 @@ class ConvertS3CommandTest extends AbstractS3CommandTest implements ConvertComma
     }
 
     @Override
+    public String deepNestedFile() {
+        return S3_DEEP_NESTED_FILE;
+    }
+
+    @Override
+    public String listFile() {
+        return S3_LIST_FILE;
+    }
+
+    @Override
     public String nonexistentFile() {
         return S3_NONEXISTENT_FILE;
     }

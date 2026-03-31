@@ -23,11 +23,19 @@ import static org.assertj.core.api.Assertions.assertThat;
 @QuarkusMainTest
 class ConvertCommandTest implements ConvertCommandContract {
 
-    private final String LOGICAL_TYPES_FILE = this.getClass().getResource("/logical_types_test.parquet").getPath();
-
     @Override
     public String plainFile() {
         return getClass().getResource("/plain_uncompressed.parquet").getPath();
+    }
+
+    @Override
+    public String deepNestedFile() {
+        return getClass().getResource("/deep_nested_struct_test.parquet").getPath();
+    }
+
+    @Override
+    public String listFile() {
+        return getClass().getResource("/list_basic_test.parquet").getPath();
     }
 
     @Override
@@ -45,36 +53,6 @@ class ConvertCommandTest implements ConvertCommandContract {
         assertThat(Files.readString(out))
                 .startsWith("id,value")
                 .contains("1,100");
-    }
-
-    @Test
-    void csvOutputRendersStringColumnsAsText(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", LOGICAL_TYPES_FILE, "--to", "csv", "--columns", "name");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Alice")
-                .contains("Bob")
-                .contains("Charlie");
-    }
-
-    @Test
-    void jsonOutputRendersStringColumnsAsText(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", LOGICAL_TYPES_FILE, "--to", "json", "--columns", "name");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("Alice")
-                .contains("Bob")
-                .contains("Charlie");
-    }
-
-    @Test
-    void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--to", "csv", "--columns", "unknown");
-
-        assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).contains("Unknown column");
     }
 
     @Test

@@ -19,55 +19,93 @@ interface ConvertCommandContract {
 
     String plainFile();
 
+    String deepNestedFile();
+
+    String listFile();
+
     String nonexistentFile();
 
     @Test
-    default void csvOutputContainsHeaders(QuarkusMainLauncher launcher) {
+    default void csvOutput(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--to", "csv");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).startsWith("id,value");
+        assertThat(result.getOutput()).isEqualTo("""
+                id,value
+                1,100
+                2,200
+                3,300""");
     }
 
     @Test
-    default void csvOutputContainsRows(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--to", "csv");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("1,100")
-                .contains("2,200")
-                .contains("3,300");
-    }
-
-    @Test
-    default void jsonOutputIsArray(QuarkusMainLauncher launcher) {
+    default void jsonOutput(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--to", "json");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput().trim()).startsWith("[").endsWith("]");
+        assertThat(result.getOutput()).isEqualTo("""
+                [
+                  {"id":"1","value":"100"},
+                  {"id":"2","value":"200"},
+                  {"id":"3","value":"300"}
+                ]""");
     }
 
     @Test
-    default void jsonOutputContainsFields(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--to", "json");
-
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .contains("\"id\"")
-                .contains("\"value\"")
-                .contains("\"1\"")
-                .contains("\"100\"");
-    }
-
-    @Test
-    default void columnsFilterOutput(QuarkusMainLauncher launcher) {
+    default void csvColumnsFilter(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--to", "csv", "--columns", "id");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
-                .startsWith("id")
-                .doesNotContain("value");
+        assertThat(result.getOutput()).isEqualTo("""
+                id
+                1
+                2
+                3""");
+    }
+
+    @Test
+    default void csvWithNestedStructColumns(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("convert", "-f", deepNestedFile(), "--to", "csv", "--columns", "customer_id,name");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                customer_id,name
+                1,Alice
+                2,Bob
+                3,Charlie
+                4,Diana""");
+    }
+
+    @Test
+    default void csvFlattensNestedStructs(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("convert", "-f", deepNestedFile(), "--to", "csv", "--columns", "name,account");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                name,account.id,account.organization.name,account.organization.address.street,account.organization.address.city,account.organization.address.zip
+                Alice,ACC-001,Acme Corp,123 Main St,New York,10001
+                Bob,ACC-002,TechStart,null,null,null
+                Charlie,ACC-003,null,null,null,null
+                Diana,null,null,null,null,null""");
+    }
+
+    @Test
+    default void csvWithListColumns(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("convert", "-f", listFile(), "--to", "csv");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                id,tags,scores
+                1,"[a, b, c]","[10, 20, 30]"
+                2,[],[100]
+                3,null,"[1, 2]"
+                4,[single],null""");
+    }
+
+    @Test
+    default void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--to", "csv", "--columns", "unknown");
+
+        assertThat(result.exitCode()).isNotZero();
     }
 
     @Test
