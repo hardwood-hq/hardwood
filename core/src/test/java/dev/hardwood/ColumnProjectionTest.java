@@ -392,11 +392,24 @@ public class ColumnProjectionTest {
             rows.next();
             PqStruct account0 = rows.getStruct("account");
             assertThat(account0).isNotNull();
+            assertThat(account0.getFieldCount()).isEqualTo(1);
+            assertThat(account0.getFieldName(0)).isEqualTo("id");
             assertThat(account0.getString("id")).isEqualTo("ACC-001");
 
+            // Row 1: Bob — account.id = "ACC-002"
+            rows.next();
+            PqStruct account1 = rows.getStruct("account");
+            assertThat(account1).isNotNull();
+            assertThat(account1.getFieldCount()).isEqualTo(1);
+            assertThat(account1.getString("id")).isEqualTo("ACC-002");
+
+            // Row 2: Charlie — account.id = "ACC-003", organization = null
+            rows.next();
+            PqStruct account2 = rows.getStruct("account");
+            assertThat(account2).isNotNull();
+            assertThat(account2.getString("id")).isEqualTo("ACC-003");
+
             // Row 3: Diana — account = null
-            rows.next();
-            rows.next();
             rows.next();
             assertThat(rows.isNull("account")).isTrue();
         }

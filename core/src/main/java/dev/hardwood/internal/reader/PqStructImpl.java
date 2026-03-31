@@ -245,12 +245,12 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public int getFieldCount() {
-        return desc.schema().children().size();
+        return desc.children().length;
     }
 
     @Override
     public String getFieldName(int index) {
-        return desc.schema().children().get(index).name();
+        return desc.children()[index].name();
     }
 
     // ==================== Internal Helpers ====================

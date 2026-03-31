@@ -19,6 +19,15 @@ final class TopLevelFieldMap {
 
     sealed interface FieldDesc {
 
+        default String name() {
+            return switch (this) {
+                case Primitive p -> p.schema().name();
+                case Struct s -> s.schema().name();
+                case ListOf l -> l.schema().name();
+                case MapOf m -> m.schema().name();
+            };
+        }
+
         record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {}
 
         /// @param nameToIndex     name → child ordinal (boundary lookup)
