@@ -12,6 +12,7 @@ import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -25,8 +26,10 @@ import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
@@ -267,6 +270,7 @@ public class FileManager {
     }
 
     /// Validates that the file schema is compatible with the reference schema.
+    /// Checks physical type, logical type, and repetition type for each projected column.
     private void validateSchemaCompatibility(InputFile inputFile, FileSchema fileSchema) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         for (int projectedIndex = 0; projectedIndex < projectedColumnCount; projectedIndex++) {
@@ -283,14 +287,43 @@ public class FileManager {
                         "Column '" + refColumn.fieldPath() + "' not found in file: " + inputFile.name());
             }
 
-            // Validate physical type matches
-            PhysicalType refType = refColumn.type();
-            PhysicalType fileType = fileColumn.type();
-            if (refType != fileType) {
-                throw new SchemaIncompatibleException(
-                        "Column '" + refColumn.fieldPath() + "' has incompatible type in file " + inputFile.name() +
-                                ": expected " + refType + " but found " + fileType);
-            }
+            validatePhysicalType(refColumn, fileColumn, inputFile);
+            validateLogicalType(refColumn, fileColumn, inputFile);
+            validateRepetitionType(refColumn, fileColumn, inputFile);
+        }
+    }
+
+    /// Validates that physical types match between reference and file columns.
+    private static void validatePhysicalType(ColumnSchema refColumn, ColumnSchema fileColumn, InputFile inputFile) {
+        PhysicalType refType = refColumn.type();
+        PhysicalType fileType = fileColumn.type();
+        if (refType != fileType) {
+            throw new SchemaIncompatibleException(
+                    "Column '" + refColumn.fieldPath() + "' has incompatible type in file " + inputFile.name() +
+                            ": expected " + refType + " but found " + fileType);
+        }
+    }
+
+    /// Validates that logical types match between reference and file columns.
+    /// Both columns having `null` logical type is considered compatible.
+    private static void validateLogicalType(ColumnSchema refColumn, ColumnSchema fileColumn, InputFile inputFile) {
+        LogicalType refLogical = refColumn.logicalType();
+        LogicalType fileLogical = fileColumn.logicalType();
+        if (!Objects.equals(refLogical, fileLogical)) {
+            throw new SchemaIncompatibleException(
+                    "Column '" + refColumn.fieldPath() + "' has incompatible logical type in file " + inputFile.name() +
+                            ": expected " + refLogical + " but found " + fileLogical);
+        }
+    }
+
+    /// Validates that repetition types match between reference and file columns.
+    private static void validateRepetitionType(ColumnSchema refColumn, ColumnSchema fileColumn, InputFile inputFile) {
+        RepetitionType refRep = refColumn.repetitionType();
+        RepetitionType fileRep = fileColumn.repetitionType();
+        if (refRep != fileRep) {
+            throw new SchemaIncompatibleException(
+                    "Column '" + refColumn.fieldPath() + "' has incompatible repetition type in file " + inputFile.name() +
+                            ": expected " + refRep + " but found " + fileRep);
         }
     }
 

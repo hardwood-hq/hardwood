@@ -1643,3 +1643,106 @@ writer.close()
 print("\nGenerated filter_pushdown_nested_ts.parquet:")
 print("  - 3 row groups with struct column (event: {ts: timestamp[us, UTC], label: string})")
 print("  - RG0: Jan 2024, RG1: Jun 2024, RG2: Dec 2024")
+
+# =====================================================================
+# Schema compatibility test files for issue #202
+# These files share column names and physical types but differ in
+# logical types, repetition types, or decimal parameters.
+# =====================================================================
+
+# --- Timestamp with MICROS ---
+ts_micros_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('ts', pa.timestamp('us', tz='UTC'), False),
+])
+ts_micros_table = pa.table({
+    'id': [1, 2],
+    'ts': pa.array([
+        datetime(2024, 1, 1, tzinfo=timezone.utc),
+        datetime(2024, 6, 1, tzinfo=timezone.utc),
+    ], type=pa.timestamp('us', tz='UTC')),
+}, schema=ts_micros_schema)
+pq.write_table(ts_micros_table, 'core/src/test/resources/compat_ts_micros.parquet',
+               use_dictionary=False, compression=None, data_page_version='1.0')
+print("\nGenerated compat_ts_micros.parquet (timestamp micros UTC)")
+
+# --- Timestamp with MILLIS ---
+ts_millis_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('ts', pa.timestamp('ms', tz='UTC'), False),
+])
+ts_millis_table = pa.table({
+    'id': [3, 4],
+    'ts': pa.array([
+        datetime(2024, 7, 1, tzinfo=timezone.utc),
+        datetime(2024, 12, 1, tzinfo=timezone.utc),
+    ], type=pa.timestamp('ms', tz='UTC')),
+}, schema=ts_millis_schema)
+pq.write_table(ts_millis_table, 'core/src/test/resources/compat_ts_millis.parquet',
+               use_dictionary=False, compression=None, data_page_version='1.0')
+print("Generated compat_ts_millis.parquet (timestamp millis UTC)")
+
+# --- Decimal(10, 2) stored as FIXED_LEN_BYTE_ARRAY ---
+dec_10_2_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('amount', pa.decimal128(10, 2), False),
+])
+dec_10_2_table = pa.table({
+    'id': [1, 2],
+    'amount': pa.array([Decimal('123.45'), Decimal('678.90')], type=pa.decimal128(10, 2)),
+}, schema=dec_10_2_schema)
+pq.write_table(dec_10_2_table, 'core/src/test/resources/compat_decimal_10_2.parquet',
+               use_dictionary=False, compression=None, data_page_version='1.0')
+print("Generated compat_decimal_10_2.parquet (decimal(10,2))")
+
+# --- Decimal(10, 4) stored as FIXED_LEN_BYTE_ARRAY (same precision, different scale) ---
+dec_10_4_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('amount', pa.decimal128(10, 4), False),
+])
+dec_10_4_table = pa.table({
+    'id': [3, 4],
+    'amount': pa.array([Decimal('123.4500'), Decimal('678.9000')], type=pa.decimal128(10, 4)),
+}, schema=dec_10_4_schema)
+pq.write_table(dec_10_4_table, 'core/src/test/resources/compat_decimal_10_4.parquet',
+               use_dictionary=False, compression=None, data_page_version='1.0')
+print("Generated compat_decimal_10_4.parquet (decimal(10,4))")
+
+# --- REQUIRED id + REQUIRED value ---
+required_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('value', pa.int64(), False),
+])
+required_table = pa.table({
+    'id': [1, 2],
+    'value': [100, 200],
+}, schema=required_schema)
+pq.write_table(required_table, 'core/src/test/resources/compat_required.parquet',
+               use_dictionary=False, compression=None, data_page_version='1.0')
+print("Generated compat_required.parquet (all REQUIRED)")
+
+# --- REQUIRED id + OPTIONAL value ---
+optional_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('value', pa.int64(), True),
+])
+optional_table = pa.table({
+    'id': [3, 4],
+    'value': [300, None],
+}, schema=optional_schema)
+pq.write_table(optional_table, 'core/src/test/resources/compat_optional_value.parquet',
+               use_dictionary=False, compression=None, data_page_version='1.0')
+print("Generated compat_optional_value.parquet (value is OPTIONAL)")
+
+# --- INT64 with no logical type (plain int) ---
+plain_int_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('ts', pa.int64(), False),
+])
+plain_int_table = pa.table({
+    'id': [1, 2],
+    'ts': [1000, 2000],
+}, schema=plain_int_schema)
+pq.write_table(plain_int_table, 'core/src/test/resources/compat_plain_int64.parquet',
+               use_dictionary=False, compression=None, data_page_version='1.0')
+print("Generated compat_plain_int64.parquet (ts is plain INT64, no logical type)")
