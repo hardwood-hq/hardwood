@@ -1335,4 +1335,78 @@ public class PqRowApiTest {
             assertThat(doubleList.get(0)).isEqualTo(1.1);
         }
     }
+
+    // ==================== Null Primitive Fast Path Tests ====================
+
+    @Test
+    void testPrimitiveAccessorsThrowOnNullByName() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/nullable_primitives_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0: all non-null
+            rowReader.next();
+            assertThat(rowReader.getInt("nullable_int")).isEqualTo(10);
+            assertThat(rowReader.getLong("nullable_long")).isEqualTo(100L);
+            assertThat(rowReader.getFloat("nullable_float")).isEqualTo(1.5f);
+            assertThat(rowReader.getDouble("nullable_double")).isEqualTo(10.5);
+            assertThat(rowReader.getBoolean("nullable_bool")).isTrue();
+
+            // Row 1: all nullable columns are null — each accessor must throw NPE
+            rowReader.next();
+            assertThat(rowReader.isNull("nullable_int")).isTrue();
+            assertThatThrownBy(() -> rowReader.getInt("nullable_int"))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_int' is null at row 1");
+            assertThatThrownBy(() -> rowReader.getLong("nullable_long"))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_long' is null at row 1");
+            assertThatThrownBy(() -> rowReader.getFloat("nullable_float"))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_float' is null at row 1");
+            assertThatThrownBy(() -> rowReader.getDouble("nullable_double"))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_double' is null at row 1");
+            assertThatThrownBy(() -> rowReader.getBoolean("nullable_bool"))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_bool' is null at row 1");
+        }
+    }
+
+    @Test
+    void testPrimitiveAccessorsThrowOnNullByIndex() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/nullable_primitives_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0: all non-null
+            rowReader.next();
+            assertThat(rowReader.getInt(1)).isEqualTo(10);
+            assertThat(rowReader.getLong(2)).isEqualTo(100L);
+            assertThat(rowReader.getFloat(3)).isEqualTo(1.5f);
+            assertThat(rowReader.getDouble(4)).isEqualTo(10.5);
+            assertThat(rowReader.getBoolean(5)).isTrue();
+
+            // Row 1: all nullable columns are null — each accessor must throw NPE
+            rowReader.next();
+            assertThat(rowReader.isNull(1)).isTrue();
+            assertThatThrownBy(() -> rowReader.getInt(1))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_int' is null at row 1");
+            assertThatThrownBy(() -> rowReader.getLong(2))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_long' is null at row 1");
+            assertThatThrownBy(() -> rowReader.getFloat(3))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_float' is null at row 1");
+            assertThatThrownBy(() -> rowReader.getDouble(4))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_double' is null at row 1");
+            assertThatThrownBy(() -> rowReader.getBoolean(5))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessage("Column 'nullable_bool' is null at row 1");
+        }
+    }
 }

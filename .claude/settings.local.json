@@ -107,7 +107,8 @@
       "Bash(./mvnw verify:*)",
       "Bash(gh release:*)",
       "Bash(head -5 /workspace/_designs/*.md)",
-      "Bash(gh search:*)"
+      "Bash(gh search:*)",
+      "Bash(git bisect:*)"
     ]
   }
 }

@@ -1746,3 +1746,28 @@ plain_int_table = pa.table({
 pq.write_table(plain_int_table, 'core/src/test/resources/compat_plain_int64.parquet',
                use_dictionary=False, compression=None, data_page_version='1.0')
 print("Generated compat_plain_int64.parquet (ts is plain INT64, no logical type)")
+
+# Nullable primitives test: all primitive types with null values
+nullable_primitives_schema = pa.schema([
+    ('id', pa.int32(), False),           # REQUIRED - row identifier
+    ('nullable_int', pa.int32(), True),   # OPTIONAL
+    ('nullable_long', pa.int64(), True),  # OPTIONAL
+    ('nullable_float', pa.float32(), True),  # OPTIONAL
+    ('nullable_double', pa.float64(), True), # OPTIONAL
+    ('nullable_bool', pa.bool_(), True),     # OPTIONAL
+])
+
+nullable_primitives_table = pa.table({
+    'id': [1, 2, 3, 4],
+    'nullable_int': [10, None, 30, None],
+    'nullable_long': [100, None, 300, None],
+    'nullable_float': [1.5, None, 3.5, None],
+    'nullable_double': [10.5, None, 30.5, None],
+    'nullable_bool': [True, None, False, None],
+}, schema=nullable_primitives_schema)
+
+pq.write_table(nullable_primitives_table, 'core/src/test/resources/nullable_primitives_test.parquet',
+               use_dictionary=False, compression=None, data_page_version='1.0')
+print("\nGenerated nullable_primitives_test.parquet:")
+print("  - Data: 4 rows, rows 2 and 4 have all nullable columns as null")
+print("  - Types: int32, int64, float32, float64, bool")
