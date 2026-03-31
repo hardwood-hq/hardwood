@@ -1,6 +1,7 @@
 # General
 
 Avoid "not my department" thinking; if, for instance, there are build failures you consider unrelated to our current changes, still make an effort to fix them.
+Never add a Co-Authored-By trailer to commit messages.
 
 # Maven
 

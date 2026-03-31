@@ -188,7 +188,7 @@
                     <argument>--force</argument>
                     <argument>-o</argument>
                     <argument>${project.build.directory}/hardwood_completion</argument>
-                    <argument>dev.hardwood.command.HardwoodCommand</argument>
+                    <argument>dev.hardwood.cli.command.HardwoodCommand</argument>
                   </arguments>
                 </configuration>
               </execution>
