@@ -43,7 +43,6 @@ class PrintCommandTest implements PrintCommandContract {
         LaunchResult result = launcher.launch("print", "-f", "gs://bucket/data.parquet");
 
         assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput().replace(System.lineSeparator(), "\n"))
-                .isEqualTo("Remote URIs are not implemented yet.");
+        assertThat(result.getErrorOutput()).isEqualTo("Remote URIs are not implemented yet.");
     }
 }

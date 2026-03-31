@@ -101,6 +101,50 @@ interface PrintCommandContract {
     }
 
     @Test
+    default void explicitAllShowsEveryRow(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", plainFile(), "-n", "ALL");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                +----+-------+
+                | id | value |
+                +----+-------+
+                | 1  | 100   |
+                | 2  | 200   |
+                | 3  | 300   |
+                +----+-------+""");
+    }
+
+    @Test
+    default void transposesRows(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", byteArrayFile(), "-tp", "-n", "3");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                +-----------------+-------+
+                |              id |     1 |
+                +-----------------+-------+
+                |  prefix_strings | apple |
+                +-----------------+-------+
+                | varying_strings | hello |
+                +-----------------+-------+
+                +-----------------+-------------+
+                |              id |           2 |
+                +-----------------+-------------+
+                |  prefix_strings | application |
+                +-----------------+-------------+
+                | varying_strings |       world |
+                +-----------------+-------------+
+                +-----------------+-----------+
+                |              id |         3 |
+                +-----------------+-----------+
+                |  prefix_strings |     apply |
+                +-----------------+-----------+
+                | varying_strings | wonderful |
+                +-----------------+-----------+""");
+    }
+
+    @Test
     default void byteArrayAsString(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("print", "-f", byteArrayFile());
 

@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.table;
+package dev.hardwood.cli.internal;
 
 import java.io.PrintWriter;
 import java.util.ArrayList;
@@ -16,16 +16,17 @@ import java.util.stream.IntStream;
 
 // note: align text left since it is how people do read in english
 public class StreamedTable {
+
     public void print(PrintWriter out, String[] headers,
-                      Iterator<IntFunction<String>> iterator,
-                      int sampleSize, int maxWidth, boolean truncate, boolean rowDelimiter) {
+               Iterator<IntFunction<String>> iterator,
+               int sampleSize, int maxWidth, boolean truncate, boolean rowDelimiter) {
         int n = headers.length;
 
         // sample a bit the rows so we can better adjust the widths
         List<String[]> sampleRows = new ArrayList<>();
         int count = 0;
         while (count++ < sampleSize && iterator.hasNext()) {
-            var next = iterator.next();
+            IntFunction<String> next = iterator.next();
             sampleRows.add(IntStream.range(0, headers.length)
                     .mapToObj(next)
                     .toArray(String[]::new));
@@ -97,7 +98,7 @@ public class StreamedTable {
                     cell = "";
                 }
                 if (cell.length() > widths[i]) {
-                    cell = cell.substring(0, widths[i] - 1) + "…";
+                    cell = cell.substring(0, widths[i] - 1) + "\u2026";
                 }
                 out.printf(" %-" + widths[i] + "s |", cell);
             }

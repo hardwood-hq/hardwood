@@ -27,7 +27,6 @@ import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
-import picocli.CommandLine.Model.CommandSpec;
 
 final class RowTable {
 
@@ -181,9 +180,5 @@ final class RowTable {
     static String renderTable(String[] headers, List<String[]> rows) {
         Object[][] data = rows.toArray(new String[0][]);
         return AsciiTable.getTable(AsciiTable.BASIC_ASCII_NO_DATA_SEPARATORS, headers, null, data);
-    }
-
-    static void print(CommandSpec spec, String[] headers, List<String[]> rows) {
-        spec.commandLine().getOut().println(renderTable(headers, rows));
     }
 }

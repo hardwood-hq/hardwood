@@ -28,8 +28,7 @@ Pre-built native binaries for Linux, macOS, and Windows are available from the [
 |---------|-------------|
 | `hardwood info` | Display high-level file information |
 | `hardwood schema` | Print the file schema |
-| `hardwood head` | Print the first N rows as an ASCII table |
-| `hardwood tail` | Print the last N rows as an ASCII table |
+| `hardwood print` | Print rows as an ASCII table (head, tail, or all) |
 | `hardwood convert` | Convert a Parquet file to CSV or JSON |
 | `hardwood metadata` | Display full file metadata including row groups and column chunks |
 | `hardwood footer` | Print decoded footer length, offset, and file structure |
@@ -49,7 +48,13 @@ hardwood info -f data.parquet
 hardwood schema -f data.parquet
 
 # Show first 20 rows
-hardwood head -n 20 -f data.parquet
+hardwood print -n 20 -f data.parquet
+
+# Show last 5 rows
+hardwood print -n -5 -f data.parquet
+
+# Show all rows
+hardwood print -f data.parquet
 
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
@@ -61,7 +66,7 @@ All commands accept `s3://` URIs via the `-f` flag:
 
 ```shell
 hardwood schema -f s3://my-bucket/data.parquet
-hardwood head -n 10 -f s3://my-bucket/data.parquet
+hardwood print -n 10 -f s3://my-bucket/data.parquet
 ```
 
 The CLI resolves credentials via the standard AWS credential chain (environment variables, `~/.aws/credentials`, SSO, instance profiles, etc.).
