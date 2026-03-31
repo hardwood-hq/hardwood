@@ -134,16 +134,16 @@ final class RowTable {
     }
 
     private static String renderStruct(PqStruct struct, SchemaNode.GroupNode schemaNode) {
-        StringBuilder sb = new StringBuilder("{");
+        StringBuilder sb = new StringBuilder("{ ");
         int fieldCount = struct.getFieldCount();
         for (int i = 0; i < fieldCount; i++) {
             if (i > 0)
                 sb.append(", ");
             String name = struct.getFieldName(i);
             SchemaNode childSchema = findChildSchema(schemaNode, name);
-            sb.append(name).append(": ").append(renderValue(struct.getValue(name), childSchema));
+            sb.append(name).append(" : ").append(renderValue(struct.getValue(name), childSchema));
         }
-        return sb.append("}").toString();
+        return sb.append(" }").toString();
     }
 
     private static String renderList(PqList list, SchemaNode.GroupNode schemaNode) {
@@ -168,15 +168,15 @@ final class RowTable {
                 valueSchema = keyValueGroup.children().get(1);
             }
         }
-        StringBuilder sb = new StringBuilder("{");
+        StringBuilder sb = new StringBuilder("{ ");
         boolean first = true;
         for (PqMap.Entry entry : map.getEntries()) {
             if (!first)
                 sb.append(", ");
             first = false;
-            sb.append(renderValue(entry.getKey(), keySchema)).append(": ").append(renderValue(entry.getValue(), valueSchema));
+            sb.append(renderValue(entry.getKey(), keySchema)).append(" : ").append(renderValue(entry.getValue(), valueSchema));
         }
-        return sb.append("}").toString();
+        return sb.append(" }").toString();
     }
 
     private static SchemaNode findChildSchema(SchemaNode.GroupNode groupNode, String name) {

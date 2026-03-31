@@ -119,18 +119,18 @@ interface PrintCommandContract {
 
     @Test
     default void columnsFilterWithNestedStruct(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "--columns", "name,account", "-mw", "120");
+        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "--columns", "name,account", "-mw", "150");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput()).isEqualTo("""
-                +---------+------------------------------------------------------------------------------------------------------------+
-                | name    | account                                                                                                    |
-                +---------+------------------------------------------------------------------------------------------------------------+
-                | Alice   | {id: ACC-001, organization: {name: Acme Corp, address: {street: 123 Main St, city: New York, zip: 10001}}} |
-                | Bob     | {id: ACC-002, organization: {name: TechStart, address: null}}                                              |
-                | Charlie | {id: ACC-003, organization: null}                                                                          |
-                | Diana   | null                                                                                                       |
-                +---------+------------------------------------------------------------------------------------------------------------+""");
+                +---------+-------------------------------------------------------------------------------------------------------------------------+
+                | name    | account                                                                                                                 |
+                +---------+-------------------------------------------------------------------------------------------------------------------------+
+                | Alice   | { id : ACC-001, organization : { name : Acme Corp, address : { street : 123 Main St, city : New York, zip : 10001 } } } |
+                | Bob     | { id : ACC-002, organization : { name : TechStart, address : null } }                                                   |
+                | Charlie | { id : ACC-003, organization : null }                                                                                   |
+                | Diana   | null                                                                                                                    |
+                +---------+-------------------------------------------------------------------------------------------------------------------------+""");
     }
 
     @Test
@@ -155,14 +155,14 @@ interface PrintCommandContract {
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput()).isEqualTo("""
-                +---------+---------------+
-                | name    | account       |
-                +---------+---------------+
-                | Alice   | {id: ACC-001} |
-                | Bob     | {id: ACC-002} |
-                | Charlie | {id: ACC-003} |
-                | Diana   | null          |
-                +---------+---------------+""");
+                +---------+------------------+
+                | name    | account          |
+                +---------+------------------+
+                | Alice   | { id : ACC-001 } |
+                | Bob     | { id : ACC-002 } |
+                | Charlie | { id : ACC-003 } |
+                | Diana   | null             |
+                +---------+------------------+""");
     }
 
     @Test
@@ -238,18 +238,18 @@ interface PrintCommandContract {
 
     @Test
     default void displaysNestedStructFields(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "-mw", "120");
+        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "-mw", "150");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput()).isEqualTo("""
-                +-------------+---------+------------------------------------------------------------------------------------------------------------+
-                | customer_id | name    | account                                                                                                    |
-                +-------------+---------+------------------------------------------------------------------------------------------------------------+
-                | 1           | Alice   | {id: ACC-001, organization: {name: Acme Corp, address: {street: 123 Main St, city: New York, zip: 10001}}} |
-                | 2           | Bob     | {id: ACC-002, organization: {name: TechStart, address: null}}                                              |
-                | 3           | Charlie | {id: ACC-003, organization: null}                                                                          |
-                | 4           | Diana   | null                                                                                                       |
-                +-------------+---------+------------------------------------------------------------------------------------------------------------+""");
+                +-------------+---------+-------------------------------------------------------------------------------------------------------------------------+
+                | customer_id | name    | account                                                                                                                 |
+                +-------------+---------+-------------------------------------------------------------------------------------------------------------------------+
+                | 1           | Alice   | { id : ACC-001, organization : { name : Acme Corp, address : { street : 123 Main St, city : New York, zip : 10001 } } } |
+                | 2           | Bob     | { id : ACC-002, organization : { name : TechStart, address : null } }                                                   |
+                | 3           | Charlie | { id : ACC-003, organization : null }                                                                                   |
+                | 4           | Diana   | null                                                                                                                    |
+                +-------------+---------+-------------------------------------------------------------------------------------------------------------------------+""");
     }
 
     @Test
