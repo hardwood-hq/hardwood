@@ -15,6 +15,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
+import java.util.Set;
 import java.util.UUID;
 
 import com.github.freva.asciitable.AsciiTable;
@@ -25,6 +26,7 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -34,12 +36,24 @@ final class RowTable {
     }
 
     static String[] topLevelFieldNames(FileSchema schema) {
+        return topLevelFieldNames(schema, ColumnProjection.all());
+    }
+
+    static String[] topLevelFieldNames(FileSchema schema, ColumnProjection projection) {
         List<SchemaNode> children = schema.getRootNode().children();
-        String[] names = new String[children.size()];
-        for (int i = 0; i < children.size(); i++) {
-            names[i] = children.get(i).name();
+        if (projection.projectsAll()) {
+            String[] names = new String[children.size()];
+            for (int i = 0; i < children.size(); i++) {
+                names[i] = children.get(i).name();
+            }
+            return names;
         }
-        return names;
+        Set<String> projectedNames = projection.getProjectedColumnNames();
+        return children.stream()
+                .map(SchemaNode::name)
+                .filter(name -> projectedNames.stream()
+                        .anyMatch(p -> p.equals(name) || p.startsWith(name + ".")))
+                .toArray(String[]::new);
     }
 
     static String renderField(RowReader rowReader, int fieldIndex, SchemaNode fieldSchema) {

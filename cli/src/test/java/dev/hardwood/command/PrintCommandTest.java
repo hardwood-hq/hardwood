@@ -34,6 +34,11 @@ class PrintCommandTest implements PrintCommandContract {
     }
 
     @Override
+    public String listFile() {
+        return getClass().getResource("/list_basic_test.parquet").getPath();
+    }
+
+    @Override
     public String nonexistentFile() {
         return "nonexistent.parquet";
     }

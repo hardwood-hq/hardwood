@@ -28,6 +28,11 @@ class PrintS3CommandTest extends AbstractS3CommandTest implements PrintCommandCo
     }
 
     @Override
+    public String listFile() {
+        return S3_LIST_FILE;
+    }
+
+    @Override
     public String nonexistentFile() {
         return S3_NONEXISTENT_FILE;
     }
