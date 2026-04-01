@@ -26,6 +26,7 @@ import dev.hardwood.internal.reader.Page;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageReader;
 import dev.hardwood.internal.reader.PageScanner;
+import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
@@ -146,7 +147,7 @@ public class PageDecodeAllocationProfileTest {
                     ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
 
                     PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                            chunkData, chunkStart, null, rgIdx, inputFile.name());
+                            chunkData, chunkStart, null, rgIdx, inputFile.name(), RowRanges.ALL, 0);
                     List<PageInfo> pages = scanner.scanPages();
 
                     for (PageInfo pageInfo : pages) {

@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Deque;
@@ -48,6 +50,11 @@ public class PageCursor {
     private PageReader pageReader;
     private int nextPageIndex = 0;
 
+    // Row-group support (single-file lazy row-group fetching)
+    private final RowGroupPageSource rowGroupSource;
+    private int currentRowGroupIndex = 0;
+    private final int totalRowGroups;
+
     // Multi-file support
     private final FileManager fileManager;
     private int currentFileIndex = 0;
@@ -61,11 +68,38 @@ public class PageCursor {
     // Eager assembly support (optional)
     private final ColumnAssemblyBuffer assemblyBuffer;
 
+    // Active page scanner for the current row group (yields pages incrementally)
+    private PageScanner activeScanner;
+
     /// Creates a PageCursor for single-file reading with optional eager assembly.
     /// Starts the assembly thread before returning if an assembly buffer is provided.
     public static PageCursor create(List<PageInfo> pageInfos, HardwoodContextImpl context,
                                     String fileName, ColumnAssemblyBuffer assemblyBuffer) {
-        PageCursor cursor = new PageCursor(pageInfos, context, null, -1, fileName, assemblyBuffer);
+        PageCursor cursor = new PageCursor(null, pageInfos, context, null, -1, fileName, assemblyBuffer,
+                null, 0, 1);
+        cursor.startAssemblyThread();
+        return cursor;
+    }
+
+    /// Creates a PageCursor for single-file reading with lazy row-group and page fetching.
+    /// The initial scanner yields pages incrementally from the first row group.
+    /// Subsequent row groups are fetched on demand via the `rowGroupSource`.
+    ///
+    /// @param initialScanner scanner for the first row group
+    /// @param context hardwood context with executor
+    /// @param projectedColumnIndex the projected column index for row-group page requests
+    /// @param fileName the file name for logging
+    /// @param assemblyBuffer optional buffer for eager batch assembly
+    /// @param rowGroupSource callback for fetching scanners for subsequent row groups
+    /// @param firstRowGroupIndex the index of the first row group (after statistics-based filtering)
+    /// @param totalRowGroups total number of row groups available
+    public static PageCursor create(PageScanner initialScanner, HardwoodContextImpl context,
+                                    int projectedColumnIndex, String fileName,
+                                    ColumnAssemblyBuffer assemblyBuffer,
+                                    RowGroupPageSource rowGroupSource,
+                                    int firstRowGroupIndex, int totalRowGroups) {
+        PageCursor cursor = new PageCursor(initialScanner, List.of(), context, null, projectedColumnIndex,
+                fileName, assemblyBuffer, rowGroupSource, firstRowGroupIndex, totalRowGroups);
         cursor.startAssemblyThread();
         return cursor;
     }
@@ -75,21 +109,24 @@ public class PageCursor {
     public static PageCursor create(List<PageInfo> pageInfos, HardwoodContextImpl context,
                                     FileManager fileManager, int projectedColumnIndex, String initialFileName,
                                     ColumnAssemblyBuffer assemblyBuffer) {
-        PageCursor cursor = new PageCursor(pageInfos, context, fileManager, projectedColumnIndex,
-                initialFileName, assemblyBuffer);
+        PageCursor cursor = new PageCursor(null, pageInfos, context, fileManager, projectedColumnIndex,
+                initialFileName, assemblyBuffer, null, 0, 1);
         cursor.startAssemblyThread();
         return cursor;
     }
 
     /// Creates a PageCursor for single-file reading without eager assembly.
     public PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context) {
-        this(pageInfos, context, null, -1, null, null);
+        this(null, pageInfos, context, null, -1, null, null, null, 0, 1);
     }
 
-    private PageCursor(List<PageInfo> pageInfos, HardwoodContextImpl context,
+    private PageCursor(PageScanner initialScanner, List<PageInfo> pageInfos,
+               HardwoodContextImpl context,
                FileManager fileManager, int projectedColumnIndex, String initialFileName,
-               ColumnAssemblyBuffer assemblyBuffer) {
+               ColumnAssemblyBuffer assemblyBuffer,
+               RowGroupPageSource rowGroupSource, int firstRowGroupIndex, int totalRowGroups) {
         this.pageInfos = new ArrayList<>(pageInfos);
+        this.activeScanner = initialScanner;
         this.context = context;
         this.executor = context.executor();
         this.fileManager = fileManager;
@@ -97,18 +134,29 @@ public class PageCursor {
         this.initialFileName = initialFileName;
         this.currentFileEndIndex = pageInfos.size();
         this.assemblyBuffer = assemblyBuffer;
+        this.rowGroupSource = rowGroupSource;
+        this.currentRowGroupIndex = firstRowGroupIndex;
+        this.totalRowGroups = totalRowGroups;
 
-        if (pageInfos.isEmpty()) {
-            this.columnName = "unknown";
-            this.pageReader = null;
+        // Initialize PageReader and column name from the scanner or first page
+        if (initialScanner != null) {
+            this.columnName = initialScanner.columnSchema().name();
+            this.pageReader = new PageReader(
+                    initialScanner.columnMetaData(),
+                    initialScanner.columnSchema(),
+                    context.decompressorFactory());
         }
-        else {
+        else if (!pageInfos.isEmpty()) {
             PageInfo first = pageInfos.get(0);
             this.columnName = first.columnSchema().name();
             this.pageReader = new PageReader(
                     first.columnMetaData(),
                     first.columnSchema(),
                     context.decompressorFactory());
+        }
+        else {
+            this.columnName = "unknown";
+            this.pageReader = null;
         }
 
         // Start prefetching immediately
@@ -154,7 +202,22 @@ public class PageCursor {
         if (!prefetchQueue.isEmpty() || nextPageIndex < pageInfos.size()) {
             return true;
         }
-        // Queue empty and current pages exhausted - check if there are more files
+        // Check if the active scanner has more pages
+        if (activeScanner != null) {
+            try {
+                if (activeScanner.hasNextPage()) {
+                    return true;
+                }
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+            activeScanner = null;
+        }
+        // Queue empty and current pages exhausted - check for more row groups or files
+        if (hasMoreRowGroups()) {
+            return true;
+        }
         return fileManager != null && fileManager.hasFile(currentFileIndex + 1);
     }
 
@@ -164,8 +227,8 @@ public class PageCursor {
     public Page nextPage() {
         if (prefetchQueue.isEmpty()) {
             if (nextPageIndex >= pageInfos.size()) {
-                // Current file exhausted - try to load next file (blocking if needed)
-                if (!tryLoadNextFileBlocking()) {
+                // Current data exhausted - try next row group, then next file
+                if (!tryLoadNextRowGroupBlocking() && !tryLoadNextFileBlocking()) {
                     signalExhausted();
                     return null; // Truly exhausted
                 }
@@ -229,6 +292,12 @@ public class PageCursor {
     /// loaded. This prevents one column from blocking while waiting for file loading,
     /// which would drain its prefetch queue and cause misses.
     private void fillPrefetchQueue() {
+        // Row groups are NOT proactively fetched here — unlike pages, row groups involve
+        // full I/O (readRange on remote backends). They are fetched on demand via
+        // tryLoadNextRowGroupBlocking() when the current row group is exhausted.
+        // The ColumnAssemblyBuffer's back-pressure (blocking queue capacity 2) naturally
+        // gates how fast row groups are consumed.
+
         // Proactively fetch next file if current file is running low
         // Only fetch if we haven't already fetched it (nextFileReader == null)
         int pagesRemainingInCurrentFile = currentFileEndIndex - nextPageIndex;
@@ -269,8 +338,32 @@ public class PageCursor {
             // If file not ready, we'll try again next time fillPrefetchQueue is called
         }
 
-        // Fill prefetch queue from available pages
-        while (prefetchQueue.size() < targetPrefetchDepth && nextPageIndex < pageInfos.size()) {
+        // Fill prefetch queue from available pages (pulling from active scanner on demand)
+        while (prefetchQueue.size() < targetPrefetchDepth) {
+            // Pull next page from the active scanner if the pre-populated list is exhausted
+            if (nextPageIndex >= pageInfos.size() && activeScanner != null) {
+                try {
+                    if (activeScanner.hasNextPage()) {
+                        PageInfo page = activeScanner.nextPage();
+                        if (page != null) {
+                            pageInfos.add(page);
+                        }
+                        else {
+                            activeScanner = null;
+                        }
+                    }
+                    else {
+                        activeScanner = null; // scanner exhausted
+                    }
+                }
+                catch (IOException e) {
+                    throw new UncheckedIOException(e);
+                }
+            }
+            if (nextPageIndex >= pageInfos.size()) {
+                break;
+            }
+
             // Check if we're crossing into the next file
             if (nextPageIndex >= currentFileEndIndex && nextFileReader != null) {
                 // Switch to next file's reader
@@ -278,6 +371,8 @@ public class PageCursor {
                 nextFileReader = null;
                 currentFileIndex++;
                 currentFileEndIndex = pageInfos.size(); // Update boundary for potential next file
+                // Reset row-group tracking for the new file
+                currentRowGroupIndex = 0;
                 LOG.log(System.Logger.Level.DEBUG,
                         "[{0}] Switched to new file reader for column ''{1}''",
                         fileManager.getFileName(currentFileIndex), columnName);
@@ -301,6 +396,57 @@ public class PageCursor {
     /// Returns the assembly buffer if eager assembly is enabled.
     public ColumnAssemblyBuffer getAssemblyBuffer() {
         return assemblyBuffer;
+    }
+
+    /// Tries to load pages from the next row group, blocking if necessary.
+    /// Called when we've exhausted the current row group's pages and need more.
+    ///
+    /// @return true if pages were added from the next row group, false if no more row groups
+    private boolean tryLoadNextRowGroupBlocking() {
+        if (!hasMoreRowGroups()) {
+            return false;
+        }
+
+        int nextRgIndex = currentRowGroupIndex + 1;
+        LOG.log(System.Logger.Level.DEBUG,
+                "[{0}] Blocking on row group {1} for column ''{2}''",
+                getCurrentFileName(), nextRgIndex, columnName);
+
+        PageScanner scanner = fetchRowGroupScanner(nextRgIndex);
+        if (scanner == null) {
+            return false;
+        }
+
+        activeScanner = scanner;
+        currentRowGroupIndex = nextRgIndex;
+
+        LOG.log(System.Logger.Level.DEBUG,
+                "[{0}] Obtained scanner for column ''{1}'' from row group {2}",
+                getCurrentFileName(), columnName, nextRgIndex);
+
+        return true;
+    }
+
+    /// Checks whether more row groups are available in the current file.
+    private boolean hasMoreRowGroups() {
+        if (rowGroupSource != null && currentRowGroupIndex + 1 < totalRowGroups) {
+            return true;
+        }
+        if (fileManager != null && currentRowGroupIndex + 1 < fileManager.getRowGroupCount(currentFileIndex)) {
+            return true;
+        }
+        return false;
+    }
+
+    /// Obtains a PageScanner for the given row group from the appropriate source.
+    private PageScanner fetchRowGroupScanner(int rowGroupIndex) {
+        if (rowGroupSource != null) {
+            return rowGroupSource.getScanner(rowGroupIndex, projectedColumnIndex);
+        }
+        if (fileManager != null) {
+            return fileManager.getRowGroupScanner(currentFileIndex, rowGroupIndex, projectedColumnIndex);
+        }
+        return null;
     }
 
     /// Tries to load pages from the next file, blocking if necessary.

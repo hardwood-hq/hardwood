@@ -32,6 +32,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
+import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -116,7 +117,7 @@ public class PageScanBenchmark {
             PageScanner scanner = new PageScanner(
                     target.columnSchema, target.columnChunk, context,
                     target.chunkData, target.chunkDataFileOffset, null,
-                    target.rowGroupIndex, inputFile.name());
+                    target.rowGroupIndex, inputFile.name(), RowRanges.ALL, 0);
             List<PageInfo> pages = scanner.scanPages();
             blackhole.consume(pages);
         }

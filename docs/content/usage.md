@@ -262,6 +262,42 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
   ([#196](https://github.com/hardwood-hq/hardwood/issues/196)).** Dictionary-encoded columns
   are not checked for predicate matches before decoding.
 
+## Row Limit
+
+A row limit instructs the reader to stop after the specified number of rows, avoiding unnecessary I/O and decoding. On remote backends like S3, this can reduce network transfers significantly — only the row groups and pages needed to satisfy the limit are fetched.
+
+```java
+// Read at most 100 rows
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     RowReader rowReader = fileReader.createRowReader(100)) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+        // At most 100 rows will be returned
+    }
+}
+```
+
+The row limit can be combined with column projection and filters:
+
+```java
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     RowReader rowReader = fileReader.createRowReader(
+         ColumnProjection.columns("id", "name"),
+         FilterPredicate.gt("age", 21),
+         100)) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+        // At most 100 matching rows with only id and name columns
+    }
+}
+```
+
+When combined with a filter, the limit applies to the number of **matching** rows, not the total number of scanned rows.
+
+To read without a row limit, use the `createRowReader` overloads without `maxRows`.
+
 ## Column Projection
 
 Column projection allows reading only a subset of columns from a Parquet file, improving performance by skipping I/O, decoding, and memory allocation for unneeded columns.

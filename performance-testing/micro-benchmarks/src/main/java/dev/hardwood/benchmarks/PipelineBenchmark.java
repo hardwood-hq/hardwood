@@ -32,6 +32,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
+import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.internal.reader.TypedColumnData;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -113,7 +114,7 @@ public class PipelineBenchmark {
                     ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
 
                     PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                            chunkData, chunkStart, null, rgIdx, inputFile.name());
+                            chunkData, chunkStart, null, rgIdx, inputFile.name(), RowRanges.ALL, 0);
                     List<PageInfo> pages = scanner.scanPages();
                     totalPages += pages.size();
                     pagesByColumn.get(colIdx).addAll(pages);

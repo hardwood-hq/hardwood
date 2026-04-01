@@ -28,8 +28,12 @@ import dev.hardwood.schema.ColumnSchema;
 
 /// Scans page boundaries in a single column chunk and creates PageInfo objects.
 ///
-/// Reads page headers and parses dictionary pages upfront, then creates
-/// PageInfo records that can be used for on-demand page decoding.
+/// Supports two usage modes:
+///
+/// - **Batch mode**: [#scanPages()] returns all pages as a list (used when data is
+///   already pre-fetched, e.g. local files or filtered page ranges).
+/// - **Iterator mode**: [#hasNextPage()] / [#nextPage()] yield pages one at a time,
+///   backed by a [WindowedChunkReader] that fetches data from remote backends on demand.
 ///
 /// When an Offset Index is available in the file metadata, pages are located
 /// by direct lookup instead of sequentially scanning all page headers.
@@ -44,81 +48,87 @@ public class PageScanner {
     private final HardwoodContextImpl context;
     private final ByteBuffer chunkData;
     private final long chunkDataFileOffset;
+    private WindowedChunkReader windowedReader;
     private final PageRangeData pageRangeData;
     private final ColumnIndexBuffers indexBuffers;
     private final int rowGroupIndex;
     private final String fileName;
     private final RowRanges matchingRows;
 
-    /// Creates a PageScanner with pre-fetched chunk data and index buffers.
-    ///
-    /// @param columnSchema        the column schema
-    /// @param columnChunk         the column chunk metadata
-    /// @param context             the Hardwood context
-    /// @param chunkData           pre-fetched bytes for this column chunk
-    /// @param chunkDataFileOffset absolute file offset where `chunkData` starts
-    /// @param indexBuffers        pre-fetched index buffers for this column
-    /// @param rowGroupIndex       the row group index for JFR event reporting
-    /// @param fileName            the file name for error messages and JFR events
-    public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
-                       ByteBuffer chunkData, long chunkDataFileOffset, ColumnIndexBuffers indexBuffers,
-                       int rowGroupIndex, String fileName) {
-        this(columnSchema, columnChunk, context, chunkData, chunkDataFileOffset,
-                indexBuffers, rowGroupIndex, fileName, RowRanges.ALL);
-    }
+    // Row limit: stop yielding pages once enough rows are covered (0 = unlimited)
+    private final long maxRows;
 
-    /// Creates a PageScanner with pre-fetched chunk data, index buffers, and optional row ranges
-    /// for page-level filtering via Column Index.
+    // Iterator state for sequential scanning
+    private int position;
+    private long valuesRead;
+    private Dictionary dictionary;
+    private boolean iteratorInitialized;
+    private boolean iteratorExhausted;
+    private int iteratorPageCount;
+    private List<PageInfo> preScannedPages; // OffsetIndex path: pre-scanned list
+    private int preScannedIndex;
+
+    /// Creates a PageScanner with pre-fetched chunk data.
     ///
-    /// @param columnSchema        the column schema
-    /// @param columnChunk         the column chunk metadata
-    /// @param context             the Hardwood context
-    /// @param chunkData           pre-fetched bytes for this column chunk
-    /// @param chunkDataFileOffset absolute file offset where `chunkData` starts
-    /// @param indexBuffers        pre-fetched index buffers for this column
-    /// @param rowGroupIndex       the row group index for JFR event reporting
-    /// @param fileName            the file name for error messages and JFR events
-    /// @param matchingRows        row ranges that might match the filter, or `RowRanges.ALL` for no filtering
+    /// @param matchingRows row ranges that might match the filter, or `RowRanges.ALL` for no filtering
+    /// @param maxRows maximum rows to yield (0 = unlimited)
     public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
                        ByteBuffer chunkData, long chunkDataFileOffset, ColumnIndexBuffers indexBuffers,
-                       int rowGroupIndex, String fileName, RowRanges matchingRows) {
+                       int rowGroupIndex, String fileName, RowRanges matchingRows, long maxRows) {
         this.columnSchema = columnSchema;
         this.columnChunk = columnChunk;
         this.context = context;
         this.chunkData = chunkData;
         this.chunkDataFileOffset = chunkDataFileOffset;
+        this.windowedReader = null;
         this.pageRangeData = null;
         this.indexBuffers = indexBuffers;
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
         this.matchingRows = matchingRows;
+        this.maxRows = maxRows;
     }
 
     /// Creates a PageScanner with page-range buffers for selective I/O.
-    /// Only the matching pages (and dictionary prefix) are fetched, reducing
-    /// network I/O on remote backends.
     ///
-    /// @param columnSchema   the column schema
-    /// @param columnChunk    the column chunk metadata
-    /// @param context        the Hardwood context
-    /// @param pageRangeData  pre-fetched page-range buffers
-    /// @param indexBuffers   pre-fetched index buffers for this column
-    /// @param rowGroupIndex  the row group index for JFR event reporting
-    /// @param fileName       the file name for error messages and JFR events
-    /// @param matchingRows   row ranges that might match the filter
+    /// @param matchingRows row ranges that might match the filter
+    /// @param maxRows maximum rows to yield (0 = unlimited)
     public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
                        PageRangeData pageRangeData, ColumnIndexBuffers indexBuffers,
-                       int rowGroupIndex, String fileName, RowRanges matchingRows) {
+                       int rowGroupIndex, String fileName, RowRanges matchingRows, long maxRows) {
         this.columnSchema = columnSchema;
         this.columnChunk = columnChunk;
         this.context = context;
         this.chunkData = null;
         this.chunkDataFileOffset = 0;
+        this.windowedReader = null;
         this.pageRangeData = pageRangeData;
         this.indexBuffers = indexBuffers;
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
         this.matchingRows = matchingRows;
+        this.maxRows = maxRows;
+    }
+
+    /// Creates a PageScanner with a [WindowedChunkReader] for lazy, incremental page fetching.
+    ///
+    /// @param matchingRows row ranges that might match the filter, or `RowRanges.ALL` for no filtering
+    /// @param maxRows maximum rows to yield (0 = unlimited)
+    public PageScanner(ColumnSchema columnSchema, ColumnChunk columnChunk, HardwoodContextImpl context,
+                       WindowedChunkReader windowedReader, ColumnIndexBuffers indexBuffers,
+                       int rowGroupIndex, String fileName, RowRanges matchingRows, long maxRows) {
+        this.columnSchema = columnSchema;
+        this.columnChunk = columnChunk;
+        this.context = context;
+        this.chunkData = null;
+        this.chunkDataFileOffset = 0;
+        this.windowedReader = windowedReader;
+        this.pageRangeData = null;
+        this.indexBuffers = indexBuffers;
+        this.rowGroupIndex = rowGroupIndex;
+        this.fileName = fileName;
+        this.matchingRows = matchingRows;
+        this.maxRows = maxRows;
     }
 
     /// Scan pages in this column chunk and return PageInfo objects.
@@ -131,30 +141,224 @@ public class PageScanner {
         if (columnChunk.offsetIndexOffset() != null) {
             return scanPagesFromIndex();
         }
-        return scanPagesSequential();
+        // Drain the iterator (JFR event emitted by hasNextPage() when exhausted)
+        List<PageInfo> pages = new ArrayList<>();
+        while (hasNextPage()) {
+            pages.add(nextPage());
+        }
+        return pages;
     }
 
-    /// Scan pages by sequentially reading all page headers through the column chunk.
-    ///
-    /// @return list of PageInfo objects for data pages in this chunk
-    List<PageInfo> scanPagesSequential() throws IOException {
-        RowGroupScannedEvent event = new RowGroupScannedEvent();
-        event.begin();
+    // ==================== Iterator API ====================
 
+    /// Returns the column schema for this scanner.
+    public ColumnSchema columnSchema() {
+        return columnSchema;
+    }
+
+    /// Returns the column metadata for this scanner.
+    public ColumnMetaData columnMetaData() {
+        return columnChunk.metaData();
+    }
+
+    /// Check if there are more data pages to scan.
+    /// On the first call, initializes the iterator by parsing any dictionary page
+    /// (sequential path) or pre-scanning all pages via OffsetIndex (index path).
+    ///
+    /// @return true if [#nextPage()] will return a page
+    public boolean hasNextPage() throws IOException {
+        if (iteratorExhausted) {
+            return false;
+        }
+        // Stop early if we've yielded enough rows for the consumer's limit
+        if (maxRows > 0 && valuesRead >= maxRows) {
+            iteratorExhausted = true;
+            emitRowGroupScannedEvent(iteratorPageCount);
+            return false;
+        }
+        if (!iteratorInitialized) {
+            initializeIterator();
+        }
+        // OffsetIndex path: iterate over pre-scanned list
+        if (preScannedPages != null) {
+            boolean hasMore = preScannedIndex < preScannedPages.size();
+            if (!hasMore) {
+                iteratorExhausted = true;
+            }
+            return hasMore;
+        }
+        // Sequential path: check value count and buffer position
+        ColumnMetaData metaData = columnChunk.metaData();
+        WindowedChunkReader reader = effectiveReader();
+        boolean hasMore = valuesRead < metaData.numValues() && position < reader.totalLength();
+        if (!hasMore) {
+            iteratorExhausted = true;
+            emitRowGroupScannedEvent(iteratorPageCount);
+            // Validate value count when all pages have been read
+            if (valuesRead != metaData.numValues()) {
+                throw new IOException("Value count mismatch for column '" + columnSchema.name()
+                        + "': metadata declares " + metaData.numValues()
+                        + " values but pages contain " + valuesRead);
+            }
+        }
+        return hasMore;
+    }
+
+    /// Returns the next data page. Must only be called when [#hasNextPage()] returns true.
+    ///
+    /// @return the next PageInfo
+    public PageInfo nextPage() throws IOException {
+        if (!hasNextPage()) {
+            return null;
+        }
+
+        // OffsetIndex path: return from pre-scanned list
+        if (preScannedPages != null) {
+            return preScannedPages.get(preScannedIndex++);
+        }
+
+        WindowedChunkReader reader = effectiveReader();
         ColumnMetaData metaData = columnChunk.metaData();
 
-        List<PageInfo> pageInfos = new ArrayList<>();
-        long valuesRead = 0;
-        int position = 0;
-
-        Dictionary dictionary = null;
-
-        while (valuesRead < metaData.numValues() && position < chunkData.limit()) {
-            ThriftCompactReader headerReader = new ThriftCompactReader(chunkData, position);
+        while (valuesRead < metaData.numValues() && position < reader.totalLength()) {
+            // Read page header — need enough bytes for the Thrift header (typically 20-50 bytes)
+            // Fetch a small peek first, then the full page
+            int peekSize = Math.min(256, reader.totalLength() - position);
+            ByteBuffer headerBuf = reader.slice(position, peekSize);
+            ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
             PageHeader header = PageHeaderReader.read(headerReader);
             int headerSize = headerReader.getBytesRead();
 
-            int pageDataOffset = position + headerSize;
+            int compressedSize = header.compressedPageSize();
+            int totalPageSize = headerSize + compressedSize;
+
+            if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
+                // Dictionary pages should have been handled in initializeIterator()
+                // but handle gracefully if encountered mid-stream
+                position += totalPageSize;
+                continue;
+            }
+
+            if (header.type() == PageHeader.PageType.DATA_PAGE ||
+                    header.type() == PageHeader.PageType.DATA_PAGE_V2) {
+                ByteBuffer pageSlice = reader.slice(position, totalPageSize);
+                PageInfo pageInfo = new PageInfo(pageSlice, columnSchema, metaData, dictionary);
+                valuesRead += getValueCount(header);
+                position += totalPageSize;
+                iteratorPageCount++;
+                return pageInfo;
+            }
+
+            // Skip unknown page types
+            position += totalPageSize;
+        }
+
+        iteratorExhausted = true;
+        return null;
+    }
+
+    /// Initializes the iterator. For the OffsetIndex path, pre-scans all pages via
+    /// `scanPagesFromIndex()`. For the sequential path, scans past any dictionary page.
+    private void initializeIterator() throws IOException {
+        iteratorInitialized = true;
+
+        // OffsetIndex path: pre-scan all pages (data is already selectively fetched)
+        if (columnChunk.offsetIndexOffset() != null && (pageRangeData != null || chunkData != null)) {
+            preScannedPages = scanPagesFromIndex();
+            preScannedIndex = 0;
+            return;
+        }
+
+        position = 0;
+        valuesRead = 0;
+        dictionary = null;
+
+        WindowedChunkReader reader = effectiveReader();
+        ColumnMetaData metaData = columnChunk.metaData();
+
+        // Scan forward past dictionary page (if present)
+        if (position < reader.totalLength()) {
+            int peekSize = Math.min(256, reader.totalLength() - position);
+            ByteBuffer headerBuf = reader.slice(position, peekSize);
+            ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
+            PageHeader header = PageHeaderReader.read(headerReader);
+            int headerSize = headerReader.getBytesRead();
+
+            if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
+                int pageDataOffset = position + headerSize;
+                int compressedSize = header.compressedPageSize();
+                int numValues = header.dictionaryPageHeader().numValues();
+                if (numValues < 0) {
+                    throw new IOException("Invalid dictionary page for column '" + columnSchema.name()
+                            + "': negative numValues (" + numValues + ")");
+                }
+
+                ByteBuffer compressedData = reader.slice(pageDataOffset, compressedSize);
+                if (header.crc() != null) {
+                    CrcValidator.assertCorrectCrc(header.crc(), compressedData, columnSchema.name());
+                }
+                int uncompressedSize = header.uncompressedPageSize();
+
+                dictionary = parseDictionary(compressedData, numValues, uncompressedSize,
+                        columnSchema, metaData.codec());
+
+                position += headerSize + compressedSize;
+            }
+        }
+    }
+
+    /// Returns the windowed reader. When constructed with pre-fetched `chunkData`
+    /// (no `WindowedChunkReader`), creates a wrapper that delegates to `chunkData` slices.
+    private WindowedChunkReader effectiveReader() {
+        if (windowedReader != null) {
+            return windowedReader;
+        }
+        if (chunkData != null) {
+            // Lazily wrap chunkData. No I/O — slice() is a zero-copy ByteBuffer operation.
+            windowedReader = new WindowedChunkReader(null, 0, chunkData.limit()) {
+                @Override
+                public ByteBuffer slice(int relativeOffset, int length) {
+                    return chunkData.slice(relativeOffset, length);
+                }
+            };
+            return windowedReader;
+        }
+        throw new IllegalStateException(
+                "No data source available — PageScanner requires either chunkData or a WindowedChunkReader");
+    }
+
+    /// Emits a JFR event summarizing the sequential scan.
+    private void emitRowGroupScannedEvent(int pageCount) {
+        RowGroupScannedEvent event = new RowGroupScannedEvent();
+        event.file = fileName;
+        event.rowGroupIndex = rowGroupIndex;
+        event.column = columnSchema.name();
+        event.pageCount = pageCount;
+        event.scanStrategy = RowGroupScannedEvent.STRATEGY_SEQUENTIAL;
+        event.commit();
+    }
+
+    /// Scan pages by sequentially reading all page headers through the column chunk.
+    /// This always uses the sequential path regardless of OffsetIndex availability,
+    /// making it suitable for testing both paths independently.
+    ///
+    /// @return list of PageInfo objects for data pages in this chunk
+    List<PageInfo> scanPagesSequential() throws IOException {
+        WindowedChunkReader reader = effectiveReader();
+        ColumnMetaData metaData = columnChunk.metaData();
+        long seqValuesRead = 0;
+        int seqPosition = 0;
+        Dictionary seqDictionary = null;
+
+        List<PageInfo> pages = new ArrayList<>();
+
+        while (seqValuesRead < metaData.numValues() && seqPosition < reader.totalLength()) {
+            int peekSize = Math.min(256, reader.totalLength() - seqPosition);
+            ByteBuffer headerBuf = reader.slice(seqPosition, peekSize);
+            ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
+            PageHeader header = PageHeaderReader.read(headerReader);
+            int headerSize = headerReader.getBytesRead();
+
             int compressedSize = header.compressedPageSize();
             int totalPageSize = headerSize + compressedSize;
 
@@ -164,48 +368,32 @@ public class PageScanner {
                     throw new IOException("Invalid dictionary page for column '" + columnSchema.name()
                             + "': negative numValues (" + numValues + ")");
                 }
-
-                ByteBuffer compressedData = chunkData.slice(pageDataOffset, compressedSize);
+                int pageDataOffset = seqPosition + headerSize;
+                ByteBuffer compressedData = reader.slice(pageDataOffset, compressedSize);
                 if (header.crc() != null) {
                     CrcValidator.assertCorrectCrc(header.crc(), compressedData, columnSchema.name());
                 }
-                int uncompressedSize = header.uncompressedPageSize();
-
-                dictionary = parseDictionary(compressedData, numValues, uncompressedSize,
-                    columnSchema, metaData.codec());
+                seqDictionary = parseDictionary(compressedData, numValues,
+                        header.uncompressedPageSize(), columnSchema, metaData.codec());
             }
             else if (header.type() == PageHeader.PageType.DATA_PAGE ||
                      header.type() == PageHeader.PageType.DATA_PAGE_V2) {
-                ByteBuffer pageSlice = chunkData.slice(position, totalPageSize);
-
-                PageInfo pageInfo = new PageInfo(
-                    pageSlice,
-                    columnSchema,
-                    metaData,
-                    dictionary
-                );
-                pageInfos.add(pageInfo);
-
-                valuesRead += getValueCount(header);
+                ByteBuffer pageSlice = reader.slice(seqPosition, totalPageSize);
+                pages.add(new PageInfo(pageSlice, columnSchema, metaData, seqDictionary));
+                seqValuesRead += getValueCount(header);
             }
 
-            position += totalPageSize;
+            seqPosition += totalPageSize;
         }
 
-        if (valuesRead != metaData.numValues()) {
+        if (seqValuesRead != metaData.numValues()) {
             throw new IOException("Value count mismatch for column '" + columnSchema.name()
                     + "': metadata declares " + metaData.numValues()
-                    + " values but pages contain " + valuesRead);
+                    + " values but pages contain " + seqValuesRead);
         }
 
-        event.file = fileName;
-        event.rowGroupIndex = rowGroupIndex;
-        event.column = columnSchema.name();
-        event.pageCount = pageInfos.size();
-        event.scanStrategy = RowGroupScannedEvent.STRATEGY_SEQUENTIAL;
-        event.commit();
-
-        return pageInfos;
+        emitRowGroupScannedEvent(pages.size());
+        return pages;
     }
 
     /// Scan pages using the Offset Index for direct page location lookup.

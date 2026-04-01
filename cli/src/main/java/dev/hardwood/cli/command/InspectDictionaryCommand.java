@@ -20,6 +20,7 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageScanner;
 import dev.hardwood.internal.reader.RowGroupIndexBuffers;
+import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -109,7 +110,7 @@ public class InspectDictionaryCommand implements Callable<Integer> {
 
             PageScanner scanner = new PageScanner(columnSchema, chunk, context,
                     chunkData, chunkStart, indexBuffers.forColumn(columnSchema.columnIndex()),
-                    rgIdx, fileMixin.file);
+                    rgIdx, fileMixin.file, RowRanges.ALL, 0);
             List<PageInfo> pages = scanner.scanPages();
 
             Dictionary dictionary = pages.isEmpty() ? null : pages.get(0).dictionary();

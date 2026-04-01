@@ -190,6 +190,49 @@ public class ParquetFileReader implements AutoCloseable {
         return new SingleFileRowReader(schema, projectedSchema, inputFile, filterRowGroups(resolved), context, resolved);
     }
 
+    /// Create a RowReader that returns at most `maxRows` rows.
+    ///
+    /// @param maxRows maximum number of rows to return (must be &gt; 0)
+    public RowReader createRowReader(long maxRows) {
+        return createRowReader(ColumnProjection.all(), maxRows);
+    }
+
+    /// Create a RowReader with column projection that returns at most `maxRows` rows.
+    ///
+    /// @param projection specifies which columns to read
+    /// @param maxRows maximum number of rows to return (must be &gt; 0)
+    public RowReader createRowReader(ColumnProjection projection, long maxRows) {
+        if (maxRows <= 0) {
+            throw new IllegalArgumentException("maxRows must be > 0, got " + maxRows);
+        }
+        FileSchema schema = getFileSchema();
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        return new SingleFileRowReader(schema, projectedSchema, inputFile, fileMetaData.rowGroups(), context, null, maxRows);
+    }
+
+    /// Create a RowReader with a filter that returns at most `maxRows` rows.
+    ///
+    /// @param filter predicate for row group filtering based on statistics
+    /// @param maxRows maximum number of rows to return (must be &gt; 0)
+    public RowReader createRowReader(FilterPredicate filter, long maxRows) {
+        return createRowReader(ColumnProjection.all(), filter, maxRows);
+    }
+
+    /// Create a RowReader with column projection and filter that returns at most `maxRows` rows.
+    ///
+    /// @param projection specifies which columns to read
+    /// @param filter predicate for row group filtering based on statistics
+    /// @param maxRows maximum number of rows to return (must be &gt; 0)
+    public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter, long maxRows) {
+        if (maxRows <= 0) {
+            throw new IllegalArgumentException("maxRows must be > 0, got " + maxRows);
+        }
+        FileSchema schema = getFileSchema();
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        return new SingleFileRowReader(schema, projectedSchema, inputFile, filterRowGroups(resolved), context, resolved, maxRows);
+    }
+
     private List<RowGroup> filterRowGroups(ResolvedPredicate filter) {
         List<RowGroup> allRowGroups = fileMetaData.rowGroups();
         List<RowGroup> filtered = allRowGroups.stream()

@@ -36,6 +36,7 @@ import dev.hardwood.internal.reader.Page;
 import dev.hardwood.internal.reader.PageInfo;
 import dev.hardwood.internal.reader.PageReader;
 import dev.hardwood.internal.reader.PageScanner;
+import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
@@ -94,7 +95,7 @@ public class PageHandlingBenchmark {
                     ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
 
                     PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                            chunkData, chunkStart, null, rgIdx, inputFile.name());
+                            chunkData, chunkStart, null, rgIdx, inputFile.name(), RowRanges.ALL, 0);
                     allPages.addAll(scanner.scanPages());
                 }
             }

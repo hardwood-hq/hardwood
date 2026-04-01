@@ -108,7 +108,8 @@
       "Bash(gh release:*)",
       "Bash(head -5 /workspace/_designs/*.md)",
       "Bash(gh search:*)",
-      "Bash(git bisect:*)"
+      "Bash(git bisect:*)",
+      "Bash(gh repo:*)"
     ]
   }
 }

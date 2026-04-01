@@ -46,6 +46,10 @@ abstract class AbstractRowReader implements RowReader {
     protected volatile boolean closed = false;
     protected boolean initialized = false;
 
+    // Row limit: 0 = unlimited
+    protected long maxRows;
+    private long emittedRows;
+
     // Cached flat arrays for direct access (bypasses dataView virtual dispatch)
     private Object[] flatValueArrays;
     private BitSet[] flatNulls;
@@ -168,6 +172,10 @@ abstract class AbstractRowReader implements RowReader {
         if (closed || exhausted) {
             return false;
         }
+        if (maxRows > 0 && emittedRows >= maxRows) {
+            exhausted = true;
+            return false;
+        }
         if (!initialized) {
             initialize();
             if (!exhausted) {
@@ -209,6 +217,7 @@ abstract class AbstractRowReader implements RowReader {
             rowIndex++;
         }
         dataView.setRowIndex(rowIndex);
+        emittedRows++;
     }
 
     /// Row index of the next matching row, found by `hasNextMatch()` and consumed by `next()`.

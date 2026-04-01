@@ -172,7 +172,7 @@ public class PageScannerTest {
         int chunkLen = Math.toIntExact(meta.totalCompressedSize());
         ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
         return new PageScanner(columnSchema, columnChunk, context,
-                chunkData, chunkStart, indexBuffers, rowGroupIndex, inputFile.name());
+                chunkData, chunkStart, indexBuffers, rowGroupIndex, inputFile.name(), RowRanges.ALL, 0);
     }
 
     private void assertPageValuesEqual(Page expected, Page actual, int pageIndex, String columnName) {
