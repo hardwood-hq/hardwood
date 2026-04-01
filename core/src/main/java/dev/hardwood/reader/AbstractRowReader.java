@@ -50,8 +50,12 @@ abstract class AbstractRowReader implements RowReader {
     private boolean flatFastPath;
     // Cached name-to-projected-index mapping for named fast path (built once)
     private StringToIntMap nameCache;
+
     // Maps schema column index to projected array index for record-level filtering (built once)
     private int[] columnMapping;
+
+    // Whether record-level filtering is active (computed once per batch in cacheFlatBatch)
+    private boolean recordFilterActive;
 
     /// Computes a batch size that keeps all column arrays for one batch within the L2 cache.
     ///
@@ -64,7 +68,7 @@ abstract class AbstractRowReader implements RowReader {
     /// `6 MB / 24 = 262 144` rows per batch.
     static int computeOptimalBatchSize(ProjectedSchema projectedSchema) {
         // Initally target 6 MB (fits comfortably in L2 cache)
-        long targetBytes = 6L * 1024 * 1024; 
+        long targetBytes = 6L * 1024 * 1024;
         int minBatch = 16384;
         int maxBatch = 524288;
 
@@ -128,10 +132,13 @@ abstract class AbstractRowReader implements RowReader {
                 nameCache.put(dataView.getFieldName(i), i);
             }
         }
+
         // Build column mapping once for record-level filtering
         if (columnMapping == null && filterPredicate != null) {
             columnMapping = buildColumnMapping();
         }
+
+        recordFilterActive = filterPredicate != null && flatFastPath && nameCache != null;
     }
 
     private static Object extractValueArray(FlatColumnData flatColumnData) {
@@ -160,17 +167,16 @@ abstract class AbstractRowReader implements RowReader {
             if (exhausted) {
                 return false;
             }
-            // After initialization, find the first matching row
-            return hasNextMatch();
+            return recordFilterActive ? hasNextMatch() : rowIndex + 1 < batchSize;
         }
         if (rowIndex + 1 < batchSize) {
-            return hasNextMatch();
+            return recordFilterActive ? hasNextMatch() : true;
         }
         boolean loaded = loadNextBatch();
         if (loaded) {
             cacheFlatBatch();
         }
-        return loaded && hasNextMatch();
+        return loaded && (recordFilterActive ? hasNextMatch() : true);
     }
 
     @Override
@@ -184,7 +190,7 @@ abstract class AbstractRowReader implements RowReader {
             rowIndex = pendingMatchRow;
             pendingMatchRow = -1;
         }
-        else if (isRecordFilterActive()) {
+        else if (recordFilterActive) {
             // next() called without hasNext() — scan for next match
             hasNextMatch();
             rowIndex = pendingMatchRow;
@@ -211,12 +217,8 @@ abstract class AbstractRowReader implements RowReader {
 
     /// Scans forward from `rowIndex + 1` to find the next row matching the filter.
     /// Loads new batches as needed. Returns true if a match is found.
+    /// Must only be called when `recordFilterActive` is true.
     private boolean hasNextMatch() {
-        if (!isRecordFilterActive()) {
-            pendingMatchRow = rowIndex + 1;
-            return pendingMatchRow < batchSize;
-        }
-
         while (true) {
             // Compute match mask for current batch if not yet done
             if (matchingRowsInBatch == null) {
@@ -254,11 +256,6 @@ abstract class AbstractRowReader implements RowReader {
             event.recordsSkipped = totalRecords - recordsKept;
             event.commit();
         }
-    }
-
-    /// Returns true if record-level filtering is active and usable.
-    private boolean isRecordFilterActive() {
-        return filterPredicate != null && flatFastPath && columnMapping != null;
     }
 
     /// Builds a mapping from schema column index to projected array index.
