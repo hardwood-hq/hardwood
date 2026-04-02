@@ -39,7 +39,7 @@ RELEASE_VERSION="$1"
 DEVELOPMENT_VERSION="$2"
 STAGE="$3"
 
-if [[ "$STAGE" != "UPLOAD" && "$STAGE" != "PUBLISH" ]]; then
+if [[ "$STAGE" != "UPLOAD" && "$STAGE" != "FULL" ]]; then
   echo "Error: STAGE must be UPLOAD or FULL (got '$STAGE')"
   exit 1
 fi
