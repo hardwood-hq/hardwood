@@ -15,6 +15,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for the 
 
 ## 1.0.0.Beta1
 
+[Announcement blog post](https://www.morling.dev/blog/hardwood-reaches-beta-s3-predicate-push-down-cli/)
+
 - S3 and remote object store support with coalesced reads ([#31](https://github.com/hardwood-hq/hardwood/issues/31))
 - CLI tool for inspecting and querying Parquet files ([#38](https://github.com/hardwood-hq/hardwood/issues/38))
 - Avro `GenericRecord` support via the `hardwood-avro` module ([#131](https://github.com/hardwood-hq/hardwood/issues/131))
@@ -28,6 +30,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for the 
 - Project documentation site ([#109](https://github.com/hardwood-hq/hardwood/issues/109))
 
 ## 1.0.0.Alpha1
+
+[Announcement blog post](https://www.morling.dev/blog/hardwood-new-parser-for-apache-parquet/)
 
 - Zero-dependency Parquet file reader for Java
 - Row-oriented and columnar read APIs

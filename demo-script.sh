@@ -13,7 +13,7 @@
 #
 # Convert to gif via https://dstein64.github.io/gifcast/.
 
-HW=cli/target/hardwood-cli-early-access-macos-aarch64/bin/hardwood
+HW=hardwood-cli-1.0.0.Beta1-macos-aarch64/bin/hardwood
 D=core/src/test/resources
 
 first_comment=true
@@ -78,13 +78,13 @@ type_cmd_with_paste "hardwood info -f " "$F1"
 type_comment "# Schema with nested structs"
 type_cmd_with_paste "hardwood schema -f " "$F2"
 
-type_comment "# First 5 rows of file"
-type_cmd_with_paste "hardwood head -f " "$F1" " -n 5"
+type_comment "# Print first 5 rows of file"
+type_cmd_with_paste "hardwood print -f " "$F1" " -n 5"
 
 type_comment "# Page structure: dictionary + data pages"
 type_cmd_with_paste "hardwood inspect pages -f " "$F3"
 
 type_comment "# Export as JSON with column selection"
-type_cmd_with_paste "hardwood convert -f " "$F1" " --to json --columns id,name,active"
+type_cmd_with_paste "hardwood convert -f " "$F1" " --format json --columns id,name,active"
 
 sleep 0.5
