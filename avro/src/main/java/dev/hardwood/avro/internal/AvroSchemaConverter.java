@@ -145,6 +145,8 @@ public final class AvroSchemaConverter {
             case LogicalType.MapType m -> convertPhysicalType(physicalType, prim);
             case LogicalType.VariantType v -> throw new IllegalStateException(
                     "VariantType is a group-level annotation; encountered on primitive column " + prim.name());
+            case LogicalType.GeometryType g -> Schema.create(Schema.Type.BYTES);
+            case LogicalType.GeographyType g -> Schema.create(Schema.Type.BYTES);
         };
     }
 

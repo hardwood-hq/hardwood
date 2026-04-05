@@ -654,15 +654,23 @@ A Parquet file is organized as follows:
 - **ColumnChunk** — one column within a row group; holds compression codec, byte sizes, and optional statistics (min/max values, null count) used for predicate pushdown
 
 ```java
-import dev.hardwood.metadata.FileMetaData;
-import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.BoundingBox;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
-import dev.hardwood.metadata.Statistics;
-import dev.hardwood.metadata.BoundingBox;
+import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.GeospatialStatistics;
-import dev.hardwood.schema.FileSchema;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.Statistics;
+import dev.hardwood.reader.FilterPredicate;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.FileSchema;
+import org.locationtech.jts.geom.Geometry;
+import org.locationtech.jts.io.WKBReader;
+
+import java.util.Map;
 
 try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     FileMetaData metadata = reader.getFileMetaData();
@@ -685,6 +693,15 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
             + " (" + column.type() + ", " + column.repetitionType()
             + (column.logicalType() != null ? ", " + column.logicalType() : "")
             + ")");
+
+        // checking for geospatial logical type
+        if (column.logicalType() instanceof LogicalType.GeometryType geomType) {
+            System.out.println(column.name() + " is a GEOMETRY column, CRS: " + geomType.crs());
+        } 
+        else if (column.logicalType() instanceof LogicalType.GeographyType geoType) {
+            System.out.println(column.name() + " is a GEOGRAPHY column, CRS: " + geoType.crs()
+                + ", edge interpolation: " + geoType.edgeInterpolation());
+        }
     }
 
     // Row group and column chunk details
@@ -723,6 +740,18 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
                 }
                 System.out.println("geospatial types: " + geospatialStats.geospatialTypes());
             }
+        }
+    }
+
+    // filter pushdown using geospatial metadata
+    FilterPredicate filter = FilterPredicate.intersects("location", -25.0, 35.0, 45.0, 72.0);
+    try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+        RowReader rowReader = fileReader.createRowReader(filter)) {
+        while (rowReader.hasNext()) {
+            rowReader.next();
+            byte[] wkb = rowReader.getBinary("location");
+            // decode wkb with a geometry library, like JTS
+            Geometry geom = wkbReader.read(wkb);
         }
     }
 }
