@@ -32,7 +32,7 @@ public class GeospatialStatisticsTest {
             FileMetaData metadata = reader.getFileMetaData();
             assertThat(metadata.rowGroups()).hasSize(1);
 
-            RowGroup rg0 = metadata.rowGroups().get(0);
+            RowGroup rg0 = metadata.rowGroups().getFirst();
             assertThat(rg0.columns().get(0).metaData().geospatialStatistics()).isNull();
             ColumnChunk cc = rg0.columns().get(1);
             ColumnMetaData md = cc.metaData();

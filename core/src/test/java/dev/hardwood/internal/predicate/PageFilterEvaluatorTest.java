@@ -132,7 +132,7 @@ class PageFilterEvaluatorTest {
                 List.of(intBytes(1), intBytes(0), intBytes(21)),
                 List.of(intBytes(10), intBytes(0), intBytes(30)),
                 ColumnIndex.BoundaryOrder.UNORDERED,
-                null);
+                null, null);
 
         RowRanges ranges = PageFilterEvaluator.evaluatePages(nullPageColumnIndex, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
                 (columnIndex, pageIndex) -> {
@@ -476,7 +476,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     private static ColumnIndex longColumnIndex(long[] mins, long[] maxs) {
@@ -489,7 +489,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     @Test
@@ -563,7 +563,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     private static ColumnIndex doubleColumnIndex(double[] mins, double[] maxs) {
@@ -576,7 +576,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     private static ColumnIndex booleanColumnIndex(boolean[] mins, boolean[] maxs) {
@@ -589,7 +589,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     private static ColumnIndex binaryColumnIndex(List<byte[]> mins, List<byte[]> maxs) {
@@ -598,7 +598,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, mins, maxs,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     /// Creates an OffsetIndex with the given number of rows per page.
