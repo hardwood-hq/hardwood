@@ -17,7 +17,10 @@ import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.internal.util.Geospatial;
+import dev.hardwood.metadata.BoundingBox;
 import dev.hardwood.metadata.ColumnIndex;
+import dev.hardwood.metadata.GeospatialStatistics;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.RowGroup;
@@ -69,6 +72,7 @@ public class PageFilterEvaluator {
             }
             case ResolvedPredicate.IsNullPredicate p -> evaluateNullPages(p.columnIndex(), true, rowGroup, indexBuffers, rowCount);
             case ResolvedPredicate.IsNotNullPredicate p -> evaluateNullPages(p.columnIndex(), false, rowGroup, indexBuffers, rowCount);
+            case ResolvedPredicate.GeospatialPredicate p -> evaluateSpatialIntersectionPages(p, rowGroup, indexBuffers, rowCount);
             default -> evaluateLeafPages(predicate, rowGroup, indexBuffers, rowCount);
         };
     }
@@ -88,15 +92,15 @@ public class PageFilterEvaluator {
             return RowRanges.all(rowCount);
         }
 
-        ColumnIndex columnIdx;
-        OffsetIndex offsetIdx;
+        IndexPair indexPair = null;
         try {
-            columnIdx = ColumnIndexReader.read(new ThriftCompactReader(colBuffers.columnIndex()));
-            offsetIdx = OffsetIndexReader.read(new ThriftCompactReader(colBuffers.offsetIndex()));
+            indexPair = readIndexPair(colBuffers);
         }
         catch (IOException e) {
             throw new UncheckedIOException("Failed to parse Column/Offset Index for column index " + columnIndex, e);
         }
+        ColumnIndex columnIdx = indexPair.columnIndex;
+        OffsetIndex offsetIdx = indexPair.offsetIndex;
 
         List<PageLocation> pages = offsetIdx.pageLocations();
         int pageCount = pages.size();
@@ -134,15 +138,15 @@ public class PageFilterEvaluator {
             return RowRanges.all(rowCount);
         }
 
-        ColumnIndex columnIdx;
-        OffsetIndex offsetIdx;
+        IndexPair indexPair = null;
         try {
-            columnIdx = ColumnIndexReader.read(new ThriftCompactReader(colBuffers.columnIndex()));
-            offsetIdx = OffsetIndexReader.read(new ThriftCompactReader(colBuffers.offsetIndex()));
+            indexPair = readIndexPair(colBuffers);
         }
         catch (IOException e) {
             throw new UncheckedIOException("Failed to parse Column/Offset Index for column index " + columnIndex, e);
         }
+        ColumnIndex columnIdx = indexPair.columnIndex;
+        OffsetIndex offsetIdx = indexPair.offsetIndex;
 
         List<PageLocation> pages = offsetIdx.pageLocations();
         int pageCount = pages.size();
@@ -184,6 +188,7 @@ public class PageFilterEvaluator {
             case ResolvedPredicate.BinaryInPredicate p -> p.columnIndex();
             case ResolvedPredicate.IsNullPredicate p -> p.columnIndex();
             case ResolvedPredicate.IsNotNullPredicate p -> p.columnIndex();
+            case ResolvedPredicate.GeospatialPredicate p -> p.columnIndex();
             case ResolvedPredicate.And ignored -> -1;
             case ResolvedPredicate.Or ignored -> -1;
         };
@@ -207,10 +212,69 @@ public class PageFilterEvaluator {
         return RowRanges.fromPages(pages, keep, rowCount);
     }
 
+    /// Evaluates GeospatialPredicate to filter the records based on geospatial intersection
+    ///
+    /// @param predicate  predicate to evaluate
+    /// @param rowGroup     the row group being evaluated
+    /// @param indexBuffers pre-fetched index buffers
+    /// @param rowCount     total rows in the row group
+    /// @return row ranges that might contain matching rows
+    private static RowRanges evaluateSpatialIntersectionPages(ResolvedPredicate.GeospatialPredicate predicate, RowGroup rowGroup,
+                                                     RowGroupIndexBuffers indexBuffers, long rowCount) {
+        int columnIndex = predicate.columnIndex();
+        if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
+            return RowRanges.all(rowCount);
+        }
+
+        ColumnIndexBuffers colBuffers = indexBuffers.forColumn(columnIndex);
+        if (colBuffers == null || colBuffers.columnIndex() == null || colBuffers.offsetIndex() == null) {
+            return RowRanges.all(rowCount);
+        }
+
+        IndexPair indexPair = null;
+        try {
+            indexPair = readIndexPair(colBuffers);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException("Failed to parse Column/Offset Index for column index " + columnIndex, e);
+        }
+        ColumnIndex columnIdx = indexPair.columnIndex;
+        OffsetIndex offsetIdx = indexPair.offsetIndex;
+
+        List<PageLocation> pages = offsetIdx.pageLocations();
+        int pageCount = pages.size();
+        boolean[] keep = new boolean[pageCount];
+        List<GeospatialStatistics> geospatialStatistics = columnIdx.geospatialStatistics();
+        for (int i = 0; i < pageCount; i++) {
+            if (geospatialStatistics == null || geospatialStatistics.get(i) == null || geospatialStatistics.get(i).bbox() == null) {
+                keep[i] = true; // if no geospatial stats available, keep page
+                continue;
+            }
+            BoundingBox bbox = geospatialStatistics.get(i).bbox();
+            boolean intersects = Geospatial.checkForXaxisOverlap(bbox.xmin(), bbox.xmax(), predicate.xmin(), predicate.xmax())
+                    && bbox.ymax() >= predicate.ymin()
+                    && bbox.ymin() <= predicate.ymax();
+            keep[i] = intersects;
+        }
+
+        return RowRanges.fromPages(pages, keep, rowCount);
+    }
+
     /// Functional interface for testing whether a page can be dropped based on its
     /// Column Index min/max values.
     @FunctionalInterface
     interface PageCanDropTest {
         boolean canDrop(ColumnIndex columnIndex, int pageIndex);
     }
+
+    private static IndexPair readIndexPair(ColumnIndexBuffers colBuffers) throws IOException {
+        ColumnIndex columnIdx;
+        OffsetIndex offsetIdx;
+        columnIdx = ColumnIndexReader.read(new ThriftCompactReader(colBuffers.columnIndex()));
+        offsetIdx = OffsetIndexReader.read(new ThriftCompactReader(colBuffers.offsetIndex()));
+
+        return new IndexPair(columnIdx, offsetIdx);
+    }
+
+    private record IndexPair(ColumnIndex columnIndex, OffsetIndex offsetIndex) {}
 }

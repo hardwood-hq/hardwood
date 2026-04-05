@@ -58,7 +58,8 @@ public sealed interface FilterPredicate
                 FilterPredicate.IsNotNullPredicate,
                 FilterPredicate.And,
                 FilterPredicate.Or,
-                FilterPredicate.Not {
+                FilterPredicate.Not,
+                FilterPredicate.IntersectsPredicate {
 
     // ==================== Operators ====================
 
@@ -433,6 +434,14 @@ public sealed interface FilterPredicate
         return new IsNotNullPredicate(column);
     }
 
+    // ==================== GEOSPATIAL Predicates ====================
+
+    ///  Creates a predicate that matches column chunks whose bounding box intersects the given bounding box.
+    static FilterPredicate intersects(String column, double xmin, double ymin,
+                                      double xmax, double ymax) {
+        return new IntersectsPredicate(column, xmin, ymin, xmax, ymax);
+    }
+
     // ==================== Logical Combinators ====================
 
     static FilterPredicate and(FilterPredicate left, FilterPredicate right) {
@@ -610,5 +619,12 @@ public sealed interface FilterPredicate
     }
 
     record Not(FilterPredicate delegate) implements FilterPredicate {
+    }
+
+    // ==================== Geospatial Predicate Records ====================
+
+    ///  Predicate for spatial bounding box.
+    record IntersectsPredicate(String column, double xmin, double ymin,
+                               double xmax, double ymax) implements FilterPredicate {
     }
 }

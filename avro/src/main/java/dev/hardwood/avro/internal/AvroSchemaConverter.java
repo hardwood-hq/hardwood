@@ -127,6 +127,8 @@ public final class AvroSchemaConverter {
                     Schema.createFixed("interval", null, null, 12);
             case LogicalType.ListType l -> convertPhysicalType(physicalType, prim);
             case LogicalType.MapType m -> convertPhysicalType(physicalType, prim);
+            case LogicalType.GeometryType g -> Schema.create(Schema.Type.BYTES);
+            case LogicalType.GeographyType g -> Schema.create(Schema.Type.BYTES);
         };
     }
 

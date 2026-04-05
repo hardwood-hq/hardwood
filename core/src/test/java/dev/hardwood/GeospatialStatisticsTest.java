@@ -7,18 +7,17 @@
  */
 package dev.hardwood;
 
-import java.io.IOException;
-import java.nio.file.Path;
-import java.nio.file.Paths;
-
-import org.junit.jupiter.api.Test;
-
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.GeospatialStatistics;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
+import org.junit.jupiter.api.Test;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.nio.file.Paths;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -32,7 +31,7 @@ public class GeospatialStatisticsTest {
             FileMetaData metadata = reader.getFileMetaData();
             assertThat(metadata.rowGroups()).hasSize(1);
 
-            RowGroup rg0 = metadata.rowGroups().get(0);
+            RowGroup rg0 = metadata.rowGroups().getFirst();
             assertThat(rg0.columns().get(0).metaData().geospatialStatistics()).isNull();
             ColumnChunk cc = rg0.columns().get(1);
             ColumnMetaData md = cc.metaData();
