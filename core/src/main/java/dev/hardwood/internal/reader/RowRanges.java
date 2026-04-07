@@ -99,8 +99,7 @@ public class RowRanges {
             return this;
         }
 
-        int maxIntervals = Math.min(this.ranges.length, other.ranges.length);
-        long[] result = new long[maxIntervals];
+        long[] result = new long[this.ranges.length + other.ranges.length];
         int pos = 0;
         int i = 0;
         int j = 0;
