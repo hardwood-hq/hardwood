@@ -54,6 +54,8 @@ abstract class AbstractRowReader implements RowReader {
     private Object[] flatValueArrays;
     private BitSet[] flatNulls;
     private boolean flatFastPath;
+    // Empty BitSet sentinel for required (non-nullable) columns, avoids null checks in accessors
+    private static final BitSet NO_NULLS = new BitSet(0);
     // Cached name-to-projected-index mapping for named fast path (built once)
     private StringToIntMap nameCache;
 
@@ -128,7 +130,8 @@ abstract class AbstractRowReader implements RowReader {
             flatNulls = new BitSet[columns];
         }
         for (int i = 0; i < columns; i++) {
-            flatNulls[i] = flatColumnData[i].nulls();
+            BitSet nulls = flatColumnData[i].nulls();
+            flatNulls[i] = nulls != null ? nulls : NO_NULLS;
             flatValueArrays[i] = extractValueArray(flatColumnData[i]);
         }
         // Build name cache once for named fast path
@@ -298,6 +301,14 @@ abstract class AbstractRowReader implements RowReader {
         return mapping;
     }
 
+    private void throwNullColumn(String name) {
+        throw new NullPointerException("Column '" + name + "' is null at row " + rowIndex);
+    }
+
+    private void throwNullColumn(int columnIndex) {
+        throw new NullPointerException("Column '" + dataView.getFieldName(columnIndex) + "' is null at row " + rowIndex);
+    }
+
     // ==================== Primitive Type Accessors ====================
 
     @Override
@@ -305,9 +316,8 @@ abstract class AbstractRowReader implements RowReader {
         if (flatFastPath) {
             int idx = nameCache.get(name);
             if (idx >= 0 && flatValueArrays[idx] instanceof int[]) {
-                BitSet n = flatNulls[idx];
-                if (n != null && n.get(rowIndex)) {
-                    throw new NullPointerException("Column '" + name + "' is null at row " + rowIndex);
+                if (flatNulls[idx].get(rowIndex)) {
+                    throwNullColumn(name);
                 }
                 return ((int[]) flatValueArrays[idx])[rowIndex];
             }
@@ -318,9 +328,8 @@ abstract class AbstractRowReader implements RowReader {
     @Override
     public int getInt(int columnIndex) {
         if (flatFastPath) {
-            BitSet n = flatNulls[columnIndex];
-            if (n != null && n.get(rowIndex)) {
-                throw new NullPointerException("Column '" + dataView.getFieldName(columnIndex) + "' is null at row " + rowIndex);
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNullColumn(columnIndex);
             }
             return ((int[]) flatValueArrays[columnIndex])[rowIndex];
         }
@@ -332,9 +341,8 @@ abstract class AbstractRowReader implements RowReader {
         if (flatFastPath) {
             int idx = nameCache.get(name);
             if (idx >= 0 && flatValueArrays[idx] instanceof long[]) {
-                BitSet n = flatNulls[idx];
-                if (n != null && n.get(rowIndex)) {
-                    throw new NullPointerException("Column '" + name + "' is null at row " + rowIndex);
+                if (flatNulls[idx].get(rowIndex)) {
+                    throwNullColumn(name);
                 }
                 return ((long[]) flatValueArrays[idx])[rowIndex];
             }
@@ -345,9 +353,8 @@ abstract class AbstractRowReader implements RowReader {
     @Override
     public long getLong(int columnIndex) {
         if (flatFastPath) {
-            BitSet n = flatNulls[columnIndex];
-            if (n != null && n.get(rowIndex)) {
-                throw new NullPointerException("Column '" + dataView.getFieldName(columnIndex) + "' is null at row " + rowIndex);
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNullColumn(columnIndex);
             }
             return ((long[]) flatValueArrays[columnIndex])[rowIndex];
         }
@@ -359,9 +366,8 @@ abstract class AbstractRowReader implements RowReader {
         if (flatFastPath) {
             int idx = nameCache.get(name);
             if (idx >= 0 && flatValueArrays[idx] instanceof float[]) {
-                BitSet n = flatNulls[idx];
-                if (n != null && n.get(rowIndex)) {
-                    throw new NullPointerException("Column '" + name + "' is null at row " + rowIndex);
+                if (flatNulls[idx].get(rowIndex)) {
+                    throwNullColumn(name);
                 }
                 return ((float[]) flatValueArrays[idx])[rowIndex];
             }
@@ -372,9 +378,8 @@ abstract class AbstractRowReader implements RowReader {
     @Override
     public float getFloat(int columnIndex) {
         if (flatFastPath) {
-            BitSet n = flatNulls[columnIndex];
-            if (n != null && n.get(rowIndex)) {
-                throw new NullPointerException("Column '" + dataView.getFieldName(columnIndex) + "' is null at row " + rowIndex);
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNullColumn(columnIndex);
             }
             return ((float[]) flatValueArrays[columnIndex])[rowIndex];
         }
@@ -386,9 +391,8 @@ abstract class AbstractRowReader implements RowReader {
         if (flatFastPath) {
             int idx = nameCache.get(name);
             if (idx >= 0 && flatValueArrays[idx] instanceof double[]) {
-                BitSet n = flatNulls[idx];
-                if (n != null && n.get(rowIndex)) {
-                    throw new NullPointerException("Column '" + name + "' is null at row " + rowIndex);
+                if (flatNulls[idx].get(rowIndex)) {
+                    throwNullColumn(name);
                 }
                 return ((double[]) flatValueArrays[idx])[rowIndex];
             }
@@ -399,9 +403,8 @@ abstract class AbstractRowReader implements RowReader {
     @Override
     public double getDouble(int columnIndex) {
         if (flatFastPath) {
-            BitSet n = flatNulls[columnIndex];
-            if (n != null && n.get(rowIndex)) {
-                throw new NullPointerException("Column '" + dataView.getFieldName(columnIndex) + "' is null at row " + rowIndex);
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNullColumn(columnIndex);
             }
             return ((double[]) flatValueArrays[columnIndex])[rowIndex];
         }
@@ -413,9 +416,8 @@ abstract class AbstractRowReader implements RowReader {
         if (flatFastPath) {
             int idx = nameCache.get(name);
             if (idx >= 0 && flatValueArrays[idx] instanceof boolean[]) {
-                BitSet n = flatNulls[idx];
-                if (n != null && n.get(rowIndex)) {
-                    throw new NullPointerException("Column '" + name + "' is null at row " + rowIndex);
+                if (flatNulls[idx].get(rowIndex)) {
+                    throwNullColumn(name);
                 }
                 return ((boolean[]) flatValueArrays[idx])[rowIndex];
             }
@@ -426,9 +428,8 @@ abstract class AbstractRowReader implements RowReader {
     @Override
     public boolean getBoolean(int columnIndex) {
         if (flatFastPath) {
-            BitSet n = flatNulls[columnIndex];
-            if (n != null && n.get(rowIndex)) {
-                throw new NullPointerException("Column '" + dataView.getFieldName(columnIndex) + "' is null at row " + rowIndex);
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNullColumn(columnIndex);
             }
             return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
         }
@@ -590,8 +591,7 @@ abstract class AbstractRowReader implements RowReader {
         if (flatFastPath) {
             int idx = nameCache.get(name);
             if (idx >= 0) {
-                BitSet n = flatNulls[idx];
-                return n != null && n.get(rowIndex);
+                return flatNulls[idx].get(rowIndex);
             }
         }
         return dataView.isNull(name);
@@ -600,8 +600,7 @@ abstract class AbstractRowReader implements RowReader {
     @Override
     public boolean isNull(int columnIndex) {
         if (flatFastPath) {
-            BitSet n = flatNulls[columnIndex];
-            return n != null && n.get(rowIndex);
+            return flatNulls[columnIndex].get(rowIndex);
         }
         return dataView.isNull(columnIndex);
     }
