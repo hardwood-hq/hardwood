@@ -43,6 +43,11 @@ class PrintCommandTest implements PrintCommandContract {
         return "nonexistent.parquet";
     }
 
+    @Override
+    public String unsignedIntFile() {
+        return getClass().getResource("/unsigned_int_test.parquet").getPath();
+    }
+
     @Test
     void rejectsRemoteUri(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("print", "-f", "gs://bucket/data.parquet");

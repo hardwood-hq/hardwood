@@ -1771,3 +1771,28 @@ pq.write_table(nullable_primitives_table, 'core/src/test/resources/nullable_prim
 print("\nGenerated nullable_primitives_test.parquet:")
 print("  - Data: 4 rows, rows 2 and 4 have all nullable columns as null")
 print("  - Types: int32, int64, float32, float64, bool")
+
+# Unsigned int test file
+unsigned_int_schema = pa.schema([
+    ('id', pa.uint32(), False),
+    ('uint32_val', pa.uint32(), False),
+    ('uint64_val', pa.uint64(), False),
+])
+
+unsigned_int_data = {
+    'id': [1, 2, 3],
+    'uint32_val': [0, 2147483647, 4294967295],
+    'uint64_val': [0, 9223372036854775807, 18446744073709551615],
+}
+
+unsigned_int_table = pa.table(unsigned_int_data, schema=unsigned_int_schema)
+pq.write_table(
+    unsigned_int_table,
+    'core/src/test/resources/unsigned_int_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0'
+)
+
+print("\nGenerated unsigned_int_test.parquet:")
+print("  - Data: uint32_val=[0, 2147483647, 4294967295], uint64_val=[0, 9223372036854775807, 18446744073709551615]")

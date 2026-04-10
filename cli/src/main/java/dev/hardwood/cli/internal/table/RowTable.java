@@ -95,6 +95,17 @@ public final class RowTable {
         if (value instanceof PqMap map) {
             return renderMap(map, schema instanceof SchemaNode.GroupNode g ? g : null);
         }
+
+        if (schema instanceof SchemaNode.PrimitiveNode pn && pn.logicalType() instanceof LogicalType.IntType it
+                && !it.isSigned()) {
+            if (value instanceof Integer i) {
+                return Long.toString(Integer.toUnsignedLong(i));
+            }
+            if (value instanceof Long l) {
+                return Long.toUnsignedString(l);
+            }
+        }
+
         return String.valueOf(value);
     }
 
