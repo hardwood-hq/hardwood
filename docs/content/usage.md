@@ -144,7 +144,7 @@ All accessor methods are available in two forms:
 | `getString` | BYTE_ARRAY | STRING | `String` |
 | `getDate` | INT32 | DATE | `LocalDate` |
 | `getTime` | INT32 or INT64 | TIME | `LocalTime` |
-| `getTimestamp` | INT64 | TIMESTAMP | `Instant` |
+| `getTimestamp` | INT64 or INT96 | TIMESTAMP (not required for INT96) | `Instant` |
 | `getDecimal` | INT32, INT64, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
 | `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
 | `getStruct` | | | `PqStruct` |
