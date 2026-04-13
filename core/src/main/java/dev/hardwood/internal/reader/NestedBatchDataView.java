@@ -17,6 +17,7 @@ import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqList;
@@ -533,6 +534,9 @@ public final class NestedBatchDataView implements BatchDataView {
         Object rawValue = batchIndex.columns[projCol].getValue(valueIdx);
         if (resultClass.isInstance(rawValue)) {
             return resultClass.cast(rawValue);
+        }
+        if (resultClass == Instant.class && p.schema().type() == PhysicalType.INT96) {
+            return resultClass.cast(LogicalTypeConverter.int96ToInstant((byte[]) rawValue));
         }
         Object converted = LogicalTypeConverter.convert(rawValue, p.schema().type(), p.schema().logicalType());
         return resultClass.cast(converted);

@@ -10,6 +10,7 @@ package dev.hardwood.internal.conversion;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -73,6 +74,24 @@ public class LogicalTypeConverter {
             case MICROS -> Instant.ofEpochSecond(rawValue / 1_000_000, (rawValue % 1_000_000) * 1000);
             case NANOS -> Instant.ofEpochSecond(rawValue / 1_000_000_000, rawValue % 1_000_000_000);
         };
+    }
+
+    /// Julian day number of the Unix epoch (1970-01-01).
+    private static final long JULIAN_EPOCH_OFFSET_DAYS = 2440588L;
+
+    /// Convert a legacy INT96 timestamp (12 bytes, little-endian: 8 bytes nanos-of-day,
+    /// 4 bytes Julian day) to an [Instant]. Used by Apache Spark and Hive.
+    public static Instant int96ToInstant(byte[] bytes) {
+        if (bytes.length != 12) {
+            throw new IllegalArgumentException("INT96 requires exactly 12 bytes, got " + bytes.length);
+        }
+        ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        long nanosOfDay = bb.getLong(0);
+        int julianDay = bb.getInt(8);
+        long epochDay = julianDay - JULIAN_EPOCH_OFFSET_DAYS;
+        long epochSecond = epochDay * 86400L + nanosOfDay / 1_000_000_000L;
+        long nanoAdjustment = nanosOfDay % 1_000_000_000L;
+        return Instant.ofEpochSecond(epochSecond, nanoAdjustment);
     }
 
     public static LocalTime convertToTime(Object value, PhysicalType physicalType,

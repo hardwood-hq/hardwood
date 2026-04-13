@@ -10,9 +10,7 @@ package dev.hardwood.cli.internal.table;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
@@ -20,6 +18,7 @@ import java.util.UUID;
 
 import com.github.freva.asciitable.AsciiTable;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
@@ -120,17 +119,8 @@ public final class RowTable {
         };
     }
 
-    // INT96 = legacy Spark timestamp: bytes 0–7 LE nanoseconds-of-day, bytes 8–11 LE Julian day number
-    private static final long JULIAN_EPOCH_OFFSET_DAYS = 2440588L;
-
     private static String decodeInt96Timestamp(byte[] bytes) {
-        ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-        long nanosOfDay = bb.getLong(0);
-        int julianDay = bb.getInt(8);
-        long daysFromEpoch = julianDay - JULIAN_EPOCH_OFFSET_DAYS;
-        long secondsFromEpoch = daysFromEpoch * 86400L + nanosOfDay / 1_000_000_000L;
-        long nanoAdjust = nanosOfDay % 1_000_000_000L;
-        return Instant.ofEpochSecond(secondsFromEpoch, nanoAdjust).toString();
+        return LogicalTypeConverter.int96ToInstant(bytes).toString();
     }
 
     private static String renderStruct(PqStruct struct, SchemaNode.GroupNode schemaNode) {

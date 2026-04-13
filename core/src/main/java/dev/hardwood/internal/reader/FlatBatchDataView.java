@@ -266,6 +266,10 @@ public final class FlatBatchDataView implements BatchDataView {
         }
         int originalIndex = projectedSchema.toOriginalIndex(projectedIndex);
         ColumnSchema col = schema.getColumn(originalIndex);
+        if (col.type() == PhysicalType.INT96) {
+            byte[] rawValue = ((FlatColumnData.ByteArrayColumn) columnData[projectedIndex]).get(rowIndex);
+            return LogicalTypeConverter.int96ToInstant(rawValue);
+        }
         long rawValue = ((FlatColumnData.LongColumn) columnData[projectedIndex]).get(rowIndex);
         return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(),
                 (LogicalType.TimestampType) col.logicalType());
