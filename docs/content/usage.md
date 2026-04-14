@@ -144,7 +144,7 @@ All accessor methods are available in two forms:
 | `getString` | BYTE_ARRAY | STRING | `String` |
 | `getDate` | INT32 | DATE | `LocalDate` |
 | `getTime` | INT32 or INT64 | TIME | `LocalTime` |
-| `getTimestamp` | INT64 or INT96 | TIMESTAMP (not required for INT96) | `Instant` |
+| `getTimestamp` | INT64, or legacy INT96 | TIMESTAMP | `Instant` |
 | `getDecimal` | INT32, INT64, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
 | `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
 | `getStruct` | | | `PqStruct` |
@@ -153,6 +153,8 @@ All accessor methods are available in two forms:
 | `isNull` | Any | Any | `boolean` |
 
 All methods are available as both `method(name)` and `method(index)`, except `getStruct`, `getList`, and `getMap` which are name-based only.
+
+**Legacy INT96 timestamps:** Parquet files written by older versions of Apache Spark and Hive store timestamps in the deprecated INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` detects INT96 automatically and decodes it to an `Instant`; no caller-side handling is required.
 
 **Index-based access example:**
 
