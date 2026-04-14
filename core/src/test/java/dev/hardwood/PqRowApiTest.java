@@ -1358,19 +1358,24 @@ public class PqRowApiTest {
             assertThat(rowReader.isNull("nullable_int")).isTrue();
             assertThatThrownBy(() -> rowReader.getInt("nullable_int"))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_int' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_int' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
             assertThatThrownBy(() -> rowReader.getLong("nullable_long"))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_long' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_long' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
             assertThatThrownBy(() -> rowReader.getFloat("nullable_float"))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_float' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_float' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
             assertThatThrownBy(() -> rowReader.getDouble("nullable_double"))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_double' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_double' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
             assertThatThrownBy(() -> rowReader.getBoolean("nullable_bool"))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_bool' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_bool' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
         }
     }
 
@@ -1394,19 +1399,24 @@ public class PqRowApiTest {
             assertThat(rowReader.isNull(1)).isTrue();
             assertThatThrownBy(() -> rowReader.getInt(1))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_int' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_int' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
             assertThatThrownBy(() -> rowReader.getLong(2))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_long' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_long' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
             assertThatThrownBy(() -> rowReader.getFloat(3))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_float' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_float' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
             assertThatThrownBy(() -> rowReader.getDouble(4))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_double' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_double' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
             assertThatThrownBy(() -> rowReader.getBoolean(5))
                     .isInstanceOf(NullPointerException.class)
-                    .hasMessage("Column 'nullable_bool' is null at row 1");
+                    .hasMessageContaining("Column 'nullable_bool' is null at row 1")
+                    .hasMessageContaining("nullable_primitives_test.parquet");
         }
     }
 }

@@ -31,13 +31,18 @@ public class ColumnAssemblyBuffer {
     /// producer can have one in the queue and be filling another.
     private static final int QUEUE_CAPACITY = 2;
 
+    /// A batch together with the source file name. Published atomically to a
+    /// single queue so that the consumer always sees the file name alongside
+    /// the data — no race between separate queues.
+    record BatchWithFile(TypedColumnData data, String fileName) {}
+
     private final ColumnSchema column;
     private final PhysicalType physicalType;
     private final int batchCapacity;
     private final int maxDefinitionLevel;
 
     // Blocking queue of ready batches (produced by assembly thread, consumed by reader)
-    private final BlockingQueue<TypedColumnData> readyBatches;
+    private final BlockingQueue<BatchWithFile> readyBatches;
 
     // Pool of reusable arrays (producer takes, consumer returns via separate queue)
     private final BlockingQueue<Object> arrayPool;
@@ -46,6 +51,7 @@ public class ColumnAssemblyBuffer {
     private Object currentValues;
     private BitSet currentNulls;  // Built incrementally during copyPageData
     private int rowsInCurrentBatch = 0;
+    private String currentBatchFileName; // source file for the batch being assembled
 
     // Signals that no more data will be produced
     private volatile boolean finished = false;
@@ -63,7 +69,7 @@ public class ColumnAssemblyBuffer {
         this.batchCapacity = batchCapacity;
         this.maxDefinitionLevel = column.maxDefinitionLevel();
 
-        // Blocking queue for published batches
+        // Blocking queue for published batches (data + file name together)
         this.readyBatches = new ArrayBlockingQueue<>(QUEUE_CAPACITY);
 
         // Pool of reusable arrays: need QUEUE_CAPACITY + 1 (one being filled)
@@ -95,11 +101,26 @@ public class ColumnAssemblyBuffer {
     /// Called by the assembly thread after getting a decoded page.
     ///
     /// @param page the decoded page
-    public void appendPage(Page page) {
+    /// @param fileName the source file name (captured at append time so the
+    ///                  batch is tagged with the file it started from, even if
+    ///                  the cursor advances to a later file during assembly)
+    public void appendPage(Page page, String fileName) {
         int pageSize = page.size();
         int pagePosition = 0;
 
         while (pagePosition < pageSize) {
+            // Flush current batch if we're crossing a file boundary — ensures
+            // each batch is attributed to exactly one source file.
+            if (rowsInCurrentBatch > 0 && fileName != null
+                    && !fileName.equals(currentBatchFileName)) {
+                publishCurrentBatch();
+            }
+
+            // Tag the batch with the file of its first page
+            if (rowsInCurrentBatch == 0) {
+                currentBatchFileName = fileName;
+            }
+
             int spaceInBatch = batchCapacity - rowsInCurrentBatch;
             int toCopy = Math.min(spaceInBatch, pageSize - pagePosition);
 
@@ -191,8 +212,8 @@ public class ColumnAssemblyBuffer {
         TypedColumnData data = createTypedColumnDataDirect(currentValues, recordCount, nulls);
 
         try {
-            // Publish batch (blocks if queue is full)
-            readyBatches.put(data);
+            // Publish batch and its source file name atomically in a single record
+            readyBatches.put(new BatchWithFile(data, currentBatchFileName));
 
             // Get next array from pool (blocks if pool is empty, waiting for consumer to return one)
             currentValues = arrayPool.take();
@@ -232,6 +253,9 @@ public class ColumnAssemblyBuffer {
     // Track previous batch to return its array to pool
     private TypedColumnData previousBatch = null;
 
+    // File name from the most recently consumed batch
+    private String lastBatchFileName;
+
     /// Waits for and returns the next ready TypedColumnData.
     /// Blocks until data is available or the producer signals completion.
     ///
@@ -249,18 +273,22 @@ public class ColumnAssemblyBuffer {
         }
 
         // Try to get next batch from queue first (drain before checking error)
-        TypedColumnData data = readyBatches.poll();
-        if (data == null) {
+        BatchWithFile entry = readyBatches.poll();
+        if (entry == null) {
             // Queue is empty - check for error before returning null
             checkError();
 
             if (finished) {
                 // Drain any batch that was put before the flag was set
-                data = readyBatches.poll();
-                if (data != null) {
-                    previousBatch = data;
-                    return data;
+                entry = readyBatches.poll();
+                if (entry != null) {
+                    lastBatchFileName = entry.fileName();
+                    previousBatch = entry.data();
+                    return entry.data();
                 }
+                // Re-check: producer may have set error between our first checkError()
+                // and observing finished=true
+                checkError();
                 return null;  // No more batches
             }
 
@@ -273,16 +301,16 @@ public class ColumnAssemblyBuffer {
             // Block waiting for batch
             try {
                 while (!finished) {
-                    data = readyBatches.poll(10, java.util.concurrent.TimeUnit.MILLISECONDS);
-                    if (data != null) {
+                    entry = readyBatches.poll(10, java.util.concurrent.TimeUnit.MILLISECONDS);
+                    if (entry != null) {
                         break;
                     }
                 }
-                if (data == null) {
+                if (entry == null) {
                     // finished became true — drain any batch that was put before the flag was set
-                    data = readyBatches.poll();
+                    entry = readyBatches.poll();
                 }
-                if (data == null) {
+                if (entry == null) {
                     checkError();
                     return null;  // Finished while waiting
                 }
@@ -301,8 +329,15 @@ public class ColumnAssemblyBuffer {
             }
         }
 
-        previousBatch = data;
-        return data;
+        lastBatchFileName = entry.fileName();
+        previousBatch = entry.data();
+        return entry.data();
+    }
+
+    /// Returns the source file name of the most recently consumed batch.
+    /// For multi-file readers this tracks which file each batch originated from.
+    public String getLastBatchFileName() {
+        return lastBatchFileName;
     }
 
     /// Checks if the producer encountered an error and throws it.

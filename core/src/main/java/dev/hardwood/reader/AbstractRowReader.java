@@ -14,6 +14,7 @@ import java.time.LocalTime;
 import java.util.BitSet;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.RecordFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchDataView;
@@ -49,6 +50,9 @@ abstract class AbstractRowReader implements RowReader {
     // Row limit: 0 = unlimited
     protected long maxRows;
     private long emittedRows;
+
+    /// File name for exception context. Set by subclass constructors.
+    protected String fileName;
 
     // Cached flat arrays for direct access (bypasses dataView virtual dispatch)
     private Object[] flatValueArrays;
@@ -172,6 +176,15 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public boolean hasNext() {
+        try {
+            return hasNextInternal();
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
+    }
+
+    private boolean hasNextInternal() {
         if (closed || exhausted) {
             return false;
         }
@@ -201,6 +214,15 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public void next() {
+        try {
+            nextInternal();
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
+    }
+
+    private void nextInternal() {
         if (!initialized) {
             initialize();
             cacheFlatBatch();
@@ -301,6 +323,23 @@ abstract class AbstractRowReader implements RowReader {
         return mapping;
     }
 
+    /// Returns the current file name for exception context. Subclasses may override
+    /// to provide a dynamic file name (e.g. for multi-file readers).
+    protected String getCurrentFileName() {
+        return fileName;
+    }
+
+    /// Enriches a runtime exception with the current file name. Delegates to
+    /// [ExceptionContext.addFileContext] which preserves the original exception
+    /// type and cause chain.
+    ///
+    /// Every public method in this class wraps its body in a try-catch that calls
+    /// this method. The pattern has zero cost on the happy path — the JIT compiles
+    /// the try block normally and generates the catch as a cold side-exit.
+    private RuntimeException wrapWithFileContext(RuntimeException e) {
+        return ExceptionContext.addFileContext(getCurrentFileName(), e);
+    }
+
     private void throwNullColumn(String name) {
         throw new NullPointerException("Column '" + name + "' is null at row " + rowIndex);
     }
@@ -313,307 +352,517 @@ abstract class AbstractRowReader implements RowReader {
 
     @Override
     public int getInt(String name) {
-        if (flatFastPath) {
-            int idx = nameCache.get(name);
-            if (idx >= 0 && flatValueArrays[idx] instanceof int[]) {
-                if (flatNulls[idx].get(rowIndex)) {
-                    throwNullColumn(name);
+        try {
+            if (flatFastPath) {
+                int idx = nameCache.get(name);
+                if (idx >= 0 && flatValueArrays[idx] instanceof int[]) {
+                    if (flatNulls[idx].get(rowIndex)) {
+                        throwNullColumn(name);
+                    }
+                    return ((int[]) flatValueArrays[idx])[rowIndex];
                 }
-                return ((int[]) flatValueArrays[idx])[rowIndex];
             }
+            return dataView.getInt(name);
         }
-        return dataView.getInt(name);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public int getInt(int columnIndex) {
-        if (flatFastPath) {
-            if (flatNulls[columnIndex].get(rowIndex)) {
-                throwNullColumn(columnIndex);
+        try {
+            if (flatFastPath) {
+                if (flatNulls[columnIndex].get(rowIndex)) {
+                    throwNullColumn(columnIndex);
+                }
+                return ((int[]) flatValueArrays[columnIndex])[rowIndex];
             }
-            return ((int[]) flatValueArrays[columnIndex])[rowIndex];
+            return dataView.getInt(columnIndex);
         }
-        return dataView.getInt(columnIndex);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public long getLong(String name) {
-        if (flatFastPath) {
-            int idx = nameCache.get(name);
-            if (idx >= 0 && flatValueArrays[idx] instanceof long[]) {
-                if (flatNulls[idx].get(rowIndex)) {
-                    throwNullColumn(name);
+        try {
+            if (flatFastPath) {
+                int idx = nameCache.get(name);
+                if (idx >= 0 && flatValueArrays[idx] instanceof long[]) {
+                    if (flatNulls[idx].get(rowIndex)) {
+                        throwNullColumn(name);
+                    }
+                    return ((long[]) flatValueArrays[idx])[rowIndex];
                 }
-                return ((long[]) flatValueArrays[idx])[rowIndex];
             }
+            return dataView.getLong(name);
         }
-        return dataView.getLong(name);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public long getLong(int columnIndex) {
-        if (flatFastPath) {
-            if (flatNulls[columnIndex].get(rowIndex)) {
-                throwNullColumn(columnIndex);
+        try {
+            if (flatFastPath) {
+                if (flatNulls[columnIndex].get(rowIndex)) {
+                    throwNullColumn(columnIndex);
+                }
+                return ((long[]) flatValueArrays[columnIndex])[rowIndex];
             }
-            return ((long[]) flatValueArrays[columnIndex])[rowIndex];
+            return dataView.getLong(columnIndex);
         }
-        return dataView.getLong(columnIndex);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public float getFloat(String name) {
-        if (flatFastPath) {
-            int idx = nameCache.get(name);
-            if (idx >= 0 && flatValueArrays[idx] instanceof float[]) {
-                if (flatNulls[idx].get(rowIndex)) {
-                    throwNullColumn(name);
+        try {
+            if (flatFastPath) {
+                int idx = nameCache.get(name);
+                if (idx >= 0 && flatValueArrays[idx] instanceof float[]) {
+                    if (flatNulls[idx].get(rowIndex)) {
+                        throwNullColumn(name);
+                    }
+                    return ((float[]) flatValueArrays[idx])[rowIndex];
                 }
-                return ((float[]) flatValueArrays[idx])[rowIndex];
             }
+            return dataView.getFloat(name);
         }
-        return dataView.getFloat(name);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public float getFloat(int columnIndex) {
-        if (flatFastPath) {
-            if (flatNulls[columnIndex].get(rowIndex)) {
-                throwNullColumn(columnIndex);
+        try {
+            if (flatFastPath) {
+                if (flatNulls[columnIndex].get(rowIndex)) {
+                    throwNullColumn(columnIndex);
+                }
+                return ((float[]) flatValueArrays[columnIndex])[rowIndex];
             }
-            return ((float[]) flatValueArrays[columnIndex])[rowIndex];
+            return dataView.getFloat(columnIndex);
         }
-        return dataView.getFloat(columnIndex);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public double getDouble(String name) {
-        if (flatFastPath) {
-            int idx = nameCache.get(name);
-            if (idx >= 0 && flatValueArrays[idx] instanceof double[]) {
-                if (flatNulls[idx].get(rowIndex)) {
-                    throwNullColumn(name);
+        try {
+            if (flatFastPath) {
+                int idx = nameCache.get(name);
+                if (idx >= 0 && flatValueArrays[idx] instanceof double[]) {
+                    if (flatNulls[idx].get(rowIndex)) {
+                        throwNullColumn(name);
+                    }
+                    return ((double[]) flatValueArrays[idx])[rowIndex];
                 }
-                return ((double[]) flatValueArrays[idx])[rowIndex];
             }
+            return dataView.getDouble(name);
         }
-        return dataView.getDouble(name);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public double getDouble(int columnIndex) {
-        if (flatFastPath) {
-            if (flatNulls[columnIndex].get(rowIndex)) {
-                throwNullColumn(columnIndex);
+        try {
+            if (flatFastPath) {
+                if (flatNulls[columnIndex].get(rowIndex)) {
+                    throwNullColumn(columnIndex);
+                }
+                return ((double[]) flatValueArrays[columnIndex])[rowIndex];
             }
-            return ((double[]) flatValueArrays[columnIndex])[rowIndex];
+            return dataView.getDouble(columnIndex);
         }
-        return dataView.getDouble(columnIndex);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public boolean getBoolean(String name) {
-        if (flatFastPath) {
-            int idx = nameCache.get(name);
-            if (idx >= 0 && flatValueArrays[idx] instanceof boolean[]) {
-                if (flatNulls[idx].get(rowIndex)) {
-                    throwNullColumn(name);
+        try {
+            if (flatFastPath) {
+                int idx = nameCache.get(name);
+                if (idx >= 0 && flatValueArrays[idx] instanceof boolean[]) {
+                    if (flatNulls[idx].get(rowIndex)) {
+                        throwNullColumn(name);
+                    }
+                    return ((boolean[]) flatValueArrays[idx])[rowIndex];
                 }
-                return ((boolean[]) flatValueArrays[idx])[rowIndex];
             }
+            return dataView.getBoolean(name);
         }
-        return dataView.getBoolean(name);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public boolean getBoolean(int columnIndex) {
-        if (flatFastPath) {
-            if (flatNulls[columnIndex].get(rowIndex)) {
-                throwNullColumn(columnIndex);
+        try {
+            if (flatFastPath) {
+                if (flatNulls[columnIndex].get(rowIndex)) {
+                    throwNullColumn(columnIndex);
+                }
+                return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
             }
-            return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
+            return dataView.getBoolean(columnIndex);
         }
-        return dataView.getBoolean(columnIndex);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Object Type Accessors ====================
 
     @Override
     public String getString(String name) {
-        return dataView.getString(name);
+        try {
+            return dataView.getString(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public String getString(int columnIndex) {
-        return dataView.getString(columnIndex);
+        try {
+            return dataView.getString(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public byte[] getBinary(String name) {
-        return dataView.getBinary(name);
+        try {
+            return dataView.getBinary(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public byte[] getBinary(int columnIndex) {
-        return dataView.getBinary(columnIndex);
+        try {
+            return dataView.getBinary(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public LocalDate getDate(String name) {
-        return dataView.getDate(name);
+        try {
+            return dataView.getDate(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public LocalDate getDate(int columnIndex) {
-        return dataView.getDate(columnIndex);
+        try {
+            return dataView.getDate(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public LocalTime getTime(String name) {
-        return dataView.getTime(name);
+        try {
+            return dataView.getTime(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public LocalTime getTime(int columnIndex) {
-        return dataView.getTime(columnIndex);
+        try {
+            return dataView.getTime(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public Instant getTimestamp(String name) {
-        return dataView.getTimestamp(name);
+        try {
+            return dataView.getTimestamp(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public Instant getTimestamp(int columnIndex) {
-        return dataView.getTimestamp(columnIndex);
+        try {
+            return dataView.getTimestamp(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public BigDecimal getDecimal(String name) {
-        return dataView.getDecimal(name);
+        try {
+            return dataView.getDecimal(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public BigDecimal getDecimal(int columnIndex) {
-        return dataView.getDecimal(columnIndex);
+        try {
+            return dataView.getDecimal(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public UUID getUuid(String name) {
-        return dataView.getUuid(name);
+        try {
+            return dataView.getUuid(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public UUID getUuid(int columnIndex) {
-        return dataView.getUuid(columnIndex);
+        try {
+            return dataView.getUuid(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Nested Type Accessors (by name) ====================
 
     @Override
     public PqStruct getStruct(String name) {
-        return dataView.getStruct(name);
+        try {
+            return dataView.getStruct(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqIntList getListOfInts(String name) {
-        return dataView.getListOfInts(name);
+        try {
+            return dataView.getListOfInts(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqLongList getListOfLongs(String name) {
-        return dataView.getListOfLongs(name);
+        try {
+            return dataView.getListOfLongs(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqDoubleList getListOfDoubles(String name) {
-        return dataView.getListOfDoubles(name);
+        try {
+            return dataView.getListOfDoubles(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqList getList(String name) {
-        return dataView.getList(name);
+        try {
+            return dataView.getList(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqMap getMap(String name) {
-        return dataView.getMap(name);
+        try {
+            return dataView.getMap(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Nested Type Accessors (by index) ====================
 
     @Override
     public PqStruct getStruct(int columnIndex) {
-        return dataView.getStruct(columnIndex);
+        try {
+            return dataView.getStruct(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqIntList getListOfInts(int columnIndex) {
-        return dataView.getListOfInts(columnIndex);
+        try {
+            return dataView.getListOfInts(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqLongList getListOfLongs(int columnIndex) {
-        return dataView.getListOfLongs(columnIndex);
+        try {
+            return dataView.getListOfLongs(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqDoubleList getListOfDoubles(int columnIndex) {
-        return dataView.getListOfDoubles(columnIndex);
+        try {
+            return dataView.getListOfDoubles(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqList getList(int columnIndex) {
-        return dataView.getList(columnIndex);
+        try {
+            return dataView.getList(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public PqMap getMap(int columnIndex) {
-        return dataView.getMap(columnIndex);
+        try {
+            return dataView.getMap(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Generic Fallback ====================
 
     @Override
     public Object getValue(String name) {
-        return dataView.getValue(name);
+        try {
+            return dataView.getValue(name);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public Object getValue(int columnIndex) {
-        return dataView.getValue(columnIndex);
+        try {
+            return dataView.getValue(columnIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Metadata ====================
 
     @Override
     public boolean isNull(String name) {
-        if (flatFastPath) {
-            int idx = nameCache.get(name);
-            if (idx >= 0) {
-                return flatNulls[idx].get(rowIndex);
+        try {
+            if (flatFastPath) {
+                int idx = nameCache.get(name);
+                if (idx >= 0) {
+                    return flatNulls[idx].get(rowIndex);
+                }
             }
+            return dataView.isNull(name);
         }
-        return dataView.isNull(name);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public boolean isNull(int columnIndex) {
-        if (flatFastPath) {
-            return flatNulls[columnIndex].get(rowIndex);
+        try {
+            if (flatFastPath) {
+                return flatNulls[columnIndex].get(rowIndex);
+            }
+            return dataView.isNull(columnIndex);
         }
-        return dataView.isNull(columnIndex);
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public int getFieldCount() {
-        initialize();
-        return dataView.getFieldCount();
+        try {
+            initialize();
+            return dataView.getFieldCount();
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     @Override
     public String getFieldName(int index) {
-        initialize();
-        return dataView.getFieldName(index);
+        try {
+            initialize();
+            return dataView.getFieldName(index);
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 }

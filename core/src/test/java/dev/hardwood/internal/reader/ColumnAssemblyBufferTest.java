@@ -87,7 +87,7 @@ public class ColumnAssemblyBufferTest {
     private static void producePages(ColumnAssemblyBuffer buffer, List<Page> pages) {
         Thread.startVirtualThread(() -> {
             for (Page page : pages) {
-                buffer.appendPage(page);
+                buffer.appendPage(page, "test.parquet");
             }
             buffer.finish();
         });
@@ -100,7 +100,7 @@ public class ColumnAssemblyBufferTest {
                     buffer.signalError(new RuntimeException("Simulated error on page " + (i + 1)));
                     return;
                 }
-                buffer.appendPage(pages.get(i));
+                buffer.appendPage(pages.get(i), "test.parquet");
             }
             buffer.finish();
         });

@@ -36,6 +36,21 @@ public class ColumnValueIterator {
         this.flatSchema = flatSchema;
     }
 
+    /// Returns the name of the file for the current batch. For flat schemas using
+    /// eager assembly, this is the file name captured at assembly time (not the
+    /// cursor's current position, which may have advanced due to prefetching).
+    /// For nested schemas, delegates to the [PageCursor] directly.
+    public String getCurrentFileName() {
+        ColumnAssemblyBuffer assemblyBuffer = pageCursor.getAssemblyBuffer();
+        if (assemblyBuffer != null) {
+            String batchFileName = assemblyBuffer.getLastBatchFileName();
+            if (batchFileName != null) {
+                return batchFileName;
+            }
+        }
+        return pageCursor.getCurrentFileName();
+    }
+
     // ==================== Batch Reading ====================
 
     /// Read values for up to `maxRecords` records into typed arrays.

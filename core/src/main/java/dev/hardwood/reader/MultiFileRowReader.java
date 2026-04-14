@@ -53,6 +53,13 @@ public class MultiFileRowReader extends AbstractRowReader {
     // Iterators for each projected column
     private ColumnValueIterator[] iterators;
 
+    /// Snapshot of the file name for the current batch. Captured in
+    /// `loadNextBatch()` after the parallel column read completes, so
+    /// `getCurrentFileName()` reflects the batch that was actually dequeued
+    /// from the assembly buffer rather than wherever the cursor has
+    /// prefetched to.
+    private String currentBatchFileName;
+
     /// Creates a MultiFileRowReader from a pre-initialized FileManager.
     ///
     /// @param context the Hardwood context
@@ -70,9 +77,16 @@ public class MultiFileRowReader extends AbstractRowReader {
         this.adaptiveBatchSize = computeOptimalBatchSize(projectedSchema);
         this.filterPredicate = filterPredicate;
         this.projectedSchemaRef = projectedSchema;
+        this.fileName = fileManager.getFileName(0);
+        this.currentBatchFileName = this.fileName;
 
         LOG.log(System.Logger.Level.DEBUG, "Created MultiFileRowReader starting with {0}, {1} projected columns",
                 fileManager.getFileName(0), projectedSchema.getProjectedColumnCount());
+    }
+
+    @Override
+    protected String getCurrentFileName() {
+        return currentBatchFileName;
     }
 
     @Override
@@ -123,6 +137,14 @@ public class MultiFileRowReader extends AbstractRowReader {
         }
 
         CompletableFuture.allOf(futures).join();
+
+        // Snapshot the file name after the parallel read — readBatch() has
+        // dequeued the batch from the assembly buffer and updated
+        // lastBatchFileName, so getCurrentFileName() now reflects this batch's
+        // actual source file rather than wherever the cursor has prefetched to.
+        if (iterators.length > 0) {
+            currentBatchFileName = iterators[0].getCurrentFileName();
+        }
 
         TypedColumnData[] newColumnData = new TypedColumnData[iterators.length];
         for (int i = 0; i < iterators.length; i++) {
