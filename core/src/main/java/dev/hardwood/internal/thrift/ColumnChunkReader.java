@@ -10,6 +10,7 @@ package dev.hardwood.internal.thrift;
 import java.io.IOException;
 
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnCryptoMetaData;
 import dev.hardwood.metadata.ColumnMetaData;
 
 /// Reader for ColumnChunk from Thrift Compact Protocol.
@@ -31,6 +32,7 @@ public class ColumnChunkReader {
         Integer offsetIndexLength = null;
         Long columnIndexOffset = null;
         Integer columnIndexLength = null;
+        ColumnCryptoMetaData columnCryptoMetaData = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -85,12 +87,20 @@ public class ColumnChunkReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 8: // column_crypto_metadata (optional struct)
+                    if (header.type() == 0x0C) {
+                        columnCryptoMetaData = ColumnCryptoMetaDataReader.read(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 default:
                     reader.skipField(header.type());
                     break;
             }
         }
 
-        return new ColumnChunk(metaData, offsetIndexOffset, offsetIndexLength, columnIndexOffset, columnIndexLength);
+        return new ColumnChunk(metaData, offsetIndexOffset, offsetIndexLength, columnIndexOffset, columnIndexLength, columnCryptoMetaData);
     }
 }

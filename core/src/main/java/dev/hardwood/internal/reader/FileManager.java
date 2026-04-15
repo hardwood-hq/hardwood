@@ -252,7 +252,7 @@ public class FileManager {
         fileOpenedEvent.begin();
 
         try {
-            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile);
+            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile, null, null);
             FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
 
             fileOpenedEvent.file = inputFile.name();

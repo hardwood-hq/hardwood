@@ -105,7 +105,7 @@ public class ParquetFileReader implements AutoCloseable {
         FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
         fileOpenedEvent.begin();
 
-        FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(inputFile);
+        FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(inputFile, null, null);
         FileSchema fileSchema = FileSchema.fromSchemaElements(fileMetaData.schema());
 
         fileOpenedEvent.file = inputFile.name();

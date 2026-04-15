@@ -7,17 +7,21 @@
  */
 package dev.hardwood;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.CompressionCodec;
+import dev.hardwood.metadata.EncryptionWithColumnKey;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -27,6 +31,43 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ParquetReaderTest {
+
+    @Test
+    void testEncryptionWithColumnKey() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/encryption_with_columnkey.parquet");
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            // Verify file metadata
+            FileMetaData metadata = reader.getFileMetaData();
+            assertThat(metadata).isNotNull();
+            assertThat(metadata.rowGroups().get(0).columns().get(3).cryptoMetadata().footerKey()).isNull();
+            EncryptionWithColumnKey columnKey = metadata.rowGroups().get(0).columns().get(3).cryptoMetadata().columnKey();
+            assertThat(columnKey).isNotNull();
+            assertThat(columnKey.pathInSchema()).isNotNull();
+            assertThat(columnKey.pathInSchema().elements().size()).isEqualTo(1);
+            assertThat(columnKey.pathInSchema().elements().get(0)).isEqualTo("salary");
+
+            byte[] keyMetadata = columnKey.keyMetadata();
+            String json = new String(keyMetadata, StandardCharsets.UTF_8);
+            String masterKeyId = extractField(json, "masterKeyID");
+            String wrappedDEK = extractField(json, "wrappedDEK");
+
+            assertThat(masterKeyId).isEqualTo("footerKey");
+            assertThat(wrappedDEK).isNotNull();
+            assertThat(wrappedDEK.isEmpty()).isFalse();
+        }
+    }
+
+    private static String extractField(String json, String field) {
+        String pattern = "\"" + field + "\":\"";
+        int start = json.indexOf(pattern);
+        if (start == -1) return null;
+
+        start += pattern.length();
+        int end = json.indexOf("\"", start);
+        if (end == -1) return null;
+
+        return json.substring(start, end);
+    }
 
     @Test
     void testReadPlainParquet() throws Exception {
@@ -39,6 +80,11 @@ class ParquetReaderTest {
             assertThat(metadata.version()).isEqualTo(2);
             assertThat(metadata.numRows()).isEqualTo(3);
             assertThat(metadata.rowGroups()).hasSize(1);
+            for (RowGroup rg : metadata.rowGroups()) {
+                for (ColumnChunk cc : rg.columns()) {
+                    assertThat(cc.cryptoMetadata()).isNull();
+                }
+            }
 
             // Verify schema
             FileSchema schema = reader.getFileSchema();

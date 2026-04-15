@@ -417,7 +417,7 @@ class PageFilterEvaluatorTest {
         InputFile inputFile = InputFile.of(COLUMN_INDEX_FILE);
         inputFile.open();
         try {
-            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile);
+            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile, null, null);
             FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
             FilterPredicate filter = FilterPredicate.and(
                     FilterPredicate.lt("id", 5000L),
@@ -436,7 +436,7 @@ class PageFilterEvaluatorTest {
         InputFile inputFile = InputFile.of(COLUMN_INDEX_FILE);
         inputFile.open();
         try {
-            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile);
+            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile, null, null);
             FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
             ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
             RowGroup rowGroup = metaData.rowGroups().get(0);
