@@ -54,6 +54,11 @@ Key rules for `///` Markdown JavaDoc:
 To generate test Parquet files, extend simple-datagen.py and run: `source .docker-venv/bin/activate && python simple-datagen.py`
 When running Python, use _.docker-venv_ as the venv directory.
 
+# Contributions
+
+Before starting new work, check whether a corresponding GitHub issue exists. If not, create one first so that all commits and pull requests can reference it.
+Commit messages must begin with the GitHub issue key (e.g. `#90 Include file name in all exceptions raised during reading`). This applies to every commit, including fixups and amendments.
+
 # Code Reviews
 
 When reviewing a pull request, make sure the principles described here are applied.
