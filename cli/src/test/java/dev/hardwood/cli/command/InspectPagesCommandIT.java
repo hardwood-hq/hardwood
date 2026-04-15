@@ -9,14 +9,16 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
+import io.quarkus.test.common.WithTestResource;
 import io.quarkus.test.junit.main.LaunchResult;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
-class InspectPagesCommandTest implements InspectPagesCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(QuietLoggingTestResource.class)
+class InspectPagesCommandIT implements InspectPagesCommandContract {
 
     @Override
     public String plainFile() {

@@ -9,18 +9,25 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
+import io.quarkus.test.common.WithTestResource;
 import io.quarkus.test.junit.main.LaunchResult;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
-class MetadataCommandTest implements MetadataCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(QuietLoggingTestResource.class)
+class InspectDictionaryCommandIT implements InspectDictionaryCommandContract {
 
     @Override
     public String plainFile() {
         return getClass().getResource("/plain_uncompressed.parquet").getPath();
+    }
+
+    @Override
+    public String dictFile() {
+        return getClass().getResource("/dictionary_uncompressed.parquet").getPath();
     }
 
     @Override
@@ -29,8 +36,16 @@ class MetadataCommandTest implements MetadataCommandContract {
     }
 
     @Test
+    void requiresColumnOption(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", dictFile());
+
+        assertThat(result.exitCode()).isNotZero();
+    }
+
+    @Test
     void rejectsRemoteUri(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", "hdfs://namenode/data.parquet");
+        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", "gs://bucket/data.parquet",
+                "--column", "id");
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("not implemented yet");

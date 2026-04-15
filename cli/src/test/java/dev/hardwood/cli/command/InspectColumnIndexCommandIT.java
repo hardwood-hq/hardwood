@@ -9,16 +9,18 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
+import io.quarkus.test.common.WithTestResource;
 import io.quarkus.test.junit.main.LaunchResult;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
-class InspectColumnIndexCommandTest {
+@QuarkusMainIntegrationTest
+@WithTestResource(QuietLoggingTestResource.class)
+class InspectColumnIndexCommandIT {
 
-    private final String TEST_FILE = this.getClass().getResource("/plain_uncompressed.parquet").getPath();
+    private final String TEST_FILE = getClass().getResource("/plain_uncompressed.parquet").getPath();
 
     @Test
     void printsNotAvailableMessage(QuarkusMainLauncher launcher) {

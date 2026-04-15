@@ -14,14 +14,16 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import io.quarkus.test.common.WithTestResource;
 import io.quarkus.test.junit.main.LaunchResult;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
-class ConvertCommandTest implements ConvertCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(QuietLoggingTestResource.class)
+class ConvertCommandIT implements ConvertCommandContract {
 
     @Override
     public String plainFile() {

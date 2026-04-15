@@ -7,10 +7,12 @@
  */
 package dev.hardwood.cli.command;
 
-import io.quarkus.test.junit.main.QuarkusMainTest;
+import io.quarkus.test.common.WithTestResource;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 
-@QuarkusMainTest
-class InspectColumnSizeS3CommandTest extends AbstractS3CommandTest implements InspectColumnSizeCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(S3MockTestResource.class)
+class InspectColumnSizeS3CommandIT extends AbstractS3CommandIT implements InspectColumnSizeCommandContract {
 
     @Override
     public String plainFile() {

@@ -7,10 +7,12 @@
  */
 package dev.hardwood.cli.command;
 
-import io.quarkus.test.junit.main.QuarkusMainTest;
+import io.quarkus.test.common.WithTestResource;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 
-@QuarkusMainTest
-class FooterS3CommandTest extends AbstractS3CommandTest implements FooterCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(S3MockTestResource.class)
+class SchemaS3CommandIT extends AbstractS3CommandIT implements SchemaCommandContract {
 
     @Override
     public String plainFile() {

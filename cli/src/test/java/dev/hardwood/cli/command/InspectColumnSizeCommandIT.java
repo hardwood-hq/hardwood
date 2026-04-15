@@ -9,33 +9,20 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
+import io.quarkus.test.common.WithTestResource;
 import io.quarkus.test.junit.main.LaunchResult;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
-class PrintCommandTest implements PrintCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(QuietLoggingTestResource.class)
+class InspectColumnSizeCommandIT implements InspectColumnSizeCommandContract {
 
     @Override
     public String plainFile() {
         return getClass().getResource("/plain_uncompressed.parquet").getPath();
-    }
-
-    @Override
-    public String byteArrayFile() {
-        return getClass().getResource("/delta_byte_array_test.parquet").getPath();
-    }
-
-    @Override
-    public String deepNestedFile() {
-        return getClass().getResource("/deep_nested_struct_test.parquet").getPath();
-    }
-
-    @Override
-    public String listFile() {
-        return getClass().getResource("/list_basic_test.parquet").getPath();
     }
 
     @Override
@@ -45,9 +32,9 @@ class PrintCommandTest implements PrintCommandContract {
 
     @Test
     void rejectsRemoteUri(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", "gs://bucket/data.parquet");
+        LaunchResult result = launcher.launch("inspect", "column-size", "-f", "gs://bucket/data.parquet");
 
         assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).isEqualTo("Remote URIs are not implemented yet.");
+        assertThat(result.getErrorOutput()).contains("not implemented yet");
     }
 }

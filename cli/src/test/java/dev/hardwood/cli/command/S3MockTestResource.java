@@ -5,7 +5,6 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
@@ -15,40 +14,29 @@ import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.file.Files;
+import java.util.HashMap;
+import java.util.Map;
 
 import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 
-/// Singleton S3Mock container shared across all S3 command tests.
-/// The container starts once when this class is loaded and is stopped
-/// automatically by Testcontainers' shutdown hook when the JVM exits.
-abstract class AbstractS3CommandTest {
-    protected static final String S3_FILE = "s3://test-bucket/plain_uncompressed.parquet";
-    protected static final String S3_DICT_FILE = "s3://test-bucket/dictionary_uncompressed.parquet";
-    protected static final String S3_BYTE_ARRAY_FILE = "s3://test-bucket/delta_byte_array_test.parquet";
-    protected static final String S3_DEEP_NESTED_FILE = "s3://test-bucket/deep_nested_struct_test.parquet";
-    protected static final String S3_LIST_FILE = "s3://test-bucket/list_basic_test.parquet";
-    protected static final String S3_NONEXISTENT_FILE = "s3://test-bucket/nonexistent.parquet";
+import io.quarkus.test.common.QuarkusTestResourceLifecycleManager;
 
-    static final S3MockContainer s3Mock = new S3MockContainer("latest");
+/// Starts a singleton S3Mock container for native integration tests and exposes
+/// the AWS connection properties to the Quarkus test infrastructure, which passes
+/// them as `-D` system-property flags to the launched native binary.
+public class S3MockTestResource implements QuarkusTestResourceLifecycleManager {
 
-    static {
+    private S3MockContainer s3Mock;
+
+    @Override
+    public Map<String, String> start() {
+        s3Mock = new S3MockContainer("latest");
         s3Mock.start();
 
         try {
-            // Redirect AWS profile files to an empty temp file so the SDK does not parse
-            // the developer's ~/.aws/config (which may contain non-standard profiles that
-            // trigger parse warnings and interfere with the test credential provider chain).
             String emptyFile = Files.createTempFile("hardwood-test-aws", "").toString();
-            System.setProperty("aws.configFile", emptyFile);
-            System.setProperty("aws.sharedCredentialsFile", emptyFile);
-
-            System.setProperty("aws.accessKeyId", "access");
-            System.setProperty("aws.secretAccessKey", "secret");
-            System.setProperty("aws.region", "us-east-1");
-            System.setProperty("aws.endpointUrl", s3Mock.getHttpEndpoint());
-            System.setProperty("aws.pathStyle", "true");
-
             String endpoint = s3Mock.getHttpEndpoint();
+
             try (HttpClient http = HttpClient.newHttpClient()) {
                 putS3(http, endpoint, "/test-bucket", new byte[0]);
                 putS3(http, endpoint, "/test-bucket/plain_uncompressed.parquet",
@@ -62,9 +50,27 @@ abstract class AbstractS3CommandTest {
                 putS3(http, endpoint, "/test-bucket/list_basic_test.parquet",
                         readClasspathResource("/list_basic_test.parquet"));
             }
+
+            Map<String, String> config = new HashMap<>();
+            config.put("aws.configFile", emptyFile);
+            config.put("aws.sharedCredentialsFile", emptyFile);
+            config.put("aws.accessKeyId", "access");
+            config.put("aws.secretAccessKey", "secret");
+            config.put("aws.region", "us-east-1");
+            config.put("aws.endpointUrl", endpoint);
+            config.put("aws.pathStyle", "true");
+            config.put("quarkus.log.console.enable", "false");
+            return config;
         }
         catch (Exception e) {
-            throw new ExceptionInInitializerError(e);
+            throw new RuntimeException("Failed to start S3Mock test resource", e);
+        }
+    }
+
+    @Override
+    public void stop() {
+        if (s3Mock != null) {
+            s3Mock.stop();
         }
     }
 
@@ -81,7 +87,7 @@ abstract class AbstractS3CommandTest {
     }
 
     private static byte[] readClasspathResource(String name) throws IOException {
-        try (InputStream in = AbstractS3CommandTest.class.getResourceAsStream(name)) {
+        try (InputStream in = S3MockTestResource.class.getResourceAsStream(name)) {
             return in.readAllBytes();
         }
     }

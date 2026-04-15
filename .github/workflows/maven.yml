@@ -48,6 +48,8 @@ jobs:
 
       - name: 'Build and install modules'
         run: ./mvnw -B clean install
+        env:
+          TESTCONTAINERS_RYUK_DISABLED: "true"
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -209,12 +211,16 @@ jobs:
         env:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
 
-  # Verify the native CLI build on PRs (Linux only, no release)
+  # Verify the native CLI build on PRs
   native-build-check:
     if: github.event_name == 'pull_request'
     needs: build
-    name: 'Verify native CLI build'
-    runs-on: ubuntu-latest
+    name: 'Verify native CLI build on ${{ matrix.os }}'
+    strategy:
+      fail-fast: true
+      matrix:
+        os: [ ubuntu-latest ]
+    runs-on: ${{ matrix.os }}
     steps:
       - name: 'Check out repository'
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
@@ -236,5 +242,4 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Build Native Image'
-        run: ./mvnw -ntp -B -Dnative package -pl cli -DskipTests
-
+        run: ./mvnw -ntp -B -Dnative verify -pl cli -Dsurefire.skip=true -Dquarkus.native.reuse-existing=true

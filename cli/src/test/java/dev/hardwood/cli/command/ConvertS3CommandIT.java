@@ -7,10 +7,12 @@
  */
 package dev.hardwood.cli.command;
 
-import io.quarkus.test.junit.main.QuarkusMainTest;
+import io.quarkus.test.common.WithTestResource;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 
-@QuarkusMainTest
-class InspectDictionaryS3CommandTest extends AbstractS3CommandTest implements InspectDictionaryCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(S3MockTestResource.class)
+class ConvertS3CommandIT extends AbstractS3CommandIT implements ConvertCommandContract {
 
     @Override
     public String plainFile() {
@@ -18,8 +20,13 @@ class InspectDictionaryS3CommandTest extends AbstractS3CommandTest implements In
     }
 
     @Override
-    public String dictFile() {
-        return S3_DICT_FILE;
+    public String deepNestedFile() {
+        return S3_DEEP_NESTED_FILE;
+    }
+
+    @Override
+    public String listFile() {
+        return S3_LIST_FILE;
     }
 
     @Override

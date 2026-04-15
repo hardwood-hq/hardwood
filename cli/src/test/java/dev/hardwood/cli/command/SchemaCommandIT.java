@@ -9,16 +9,18 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
+import io.quarkus.test.common.WithTestResource;
 import io.quarkus.test.junit.main.LaunchResult;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
-class SchemaCommandTest implements SchemaCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(QuietLoggingTestResource.class)
+class SchemaCommandIT implements SchemaCommandContract {
 
-    private final String NESTED_FILE = this.getClass().getResource("/nested_struct_test.parquet").getPath();
+    private final String NESTED_FILE = getClass().getResource("/nested_struct_test.parquet").getPath();
 
     @Override
     public String plainFile() {

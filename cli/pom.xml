@@ -16,6 +16,9 @@
       <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
       <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
       <quarkus.platform.version>3.27.2</quarkus.platform.version>
+      <!-- Integration tests require a native binary; skip by default.
+           The native profile overrides this to false. -->
+      <skipITs>true</skipITs>
   </properties>
   <parent>
     <groupId>dev.hardwood</groupId>
@@ -309,7 +312,7 @@
             <executions>
               <execution>
                 <id>dist</id>
-                <phase>package</phase>
+                <phase>pre-integration-test</phase>
                 <goals>
                   <goal>single</goal>
                 </goals>
@@ -319,6 +322,23 @@
                   <descriptors>
                     <descriptor>src/main/assembly/assembly.xml</descriptor>
                   </descriptors>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <!-- Pass the native binary location to the Quarkus integration-test
+               extension so DefaultNativeImageLauncher can find it. -->
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-failsafe-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>native-integration-test</id>
+                <configuration>
+                  <systemPropertyVariables>
+                    <native.image.path>${project.build.directory}/hardwood-cli${executable-suffix}</native.image.path>
+                    <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+                  </systemPropertyVariables>
                 </configuration>
               </execution>
             </executions>
@@ -459,6 +479,24 @@
         <configuration>
           <argLine>--add-modules jdk.incubator.vector --add-opens java.base/java.lang=ALL-UNNAMED</argLine>
         </configuration>
+      </plugin>
+
+      <!-- Run native integration tests during the integration-test phase.
+           Skipped by default; enabled when the native profile sets skipITs=false.
+           The native profile also supplies native.image.path so the Quarkus
+           integration-test extension can locate the compiled native binary. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>native-integration-test</id>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+          </execution>
+        </executions>
       </plugin>
 
       <plugin>

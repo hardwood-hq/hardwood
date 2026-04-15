@@ -7,24 +7,16 @@
  */
 package dev.hardwood.cli.command;
 
-import io.quarkus.test.junit.main.QuarkusMainTest;
+import io.quarkus.test.common.WithTestResource;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 
-@QuarkusMainTest
-class ConvertS3CommandTest extends AbstractS3CommandTest implements ConvertCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(S3MockTestResource.class)
+class FooterS3CommandIT extends AbstractS3CommandIT implements FooterCommandContract {
 
     @Override
     public String plainFile() {
         return S3_FILE;
-    }
-
-    @Override
-    public String deepNestedFile() {
-        return S3_DEEP_NESTED_FILE;
-    }
-
-    @Override
-    public String listFile() {
-        return S3_LIST_FILE;
     }
 
     @Override

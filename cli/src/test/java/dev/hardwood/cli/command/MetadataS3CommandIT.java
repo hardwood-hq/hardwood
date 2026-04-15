@@ -7,19 +7,16 @@
  */
 package dev.hardwood.cli.command;
 
-import io.quarkus.test.junit.main.QuarkusMainTest;
+import io.quarkus.test.common.WithTestResource;
+import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
 
-@QuarkusMainTest
-class InspectPagesS3CommandTest extends AbstractS3CommandTest implements InspectPagesCommandContract {
+@QuarkusMainIntegrationTest
+@WithTestResource(S3MockTestResource.class)
+class MetadataS3CommandIT extends AbstractS3CommandIT implements MetadataCommandContract {
 
     @Override
     public String plainFile() {
         return S3_FILE;
-    }
-
-    @Override
-    public String dictFile() {
-        return S3_DICT_FILE;
     }
 
     @Override
