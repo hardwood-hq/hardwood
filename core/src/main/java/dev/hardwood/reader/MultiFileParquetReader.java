@@ -13,10 +13,14 @@ import java.util.List;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.reader.FileManager;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.ProjectedSchema;
 
 /// Entry point for reading multiple Parquet files with cross-file prefetching.
 ///
@@ -43,8 +47,12 @@ import dev.hardwood.schema.FileSchema;
 public class MultiFileParquetReader implements AutoCloseable {
 
     private final HardwoodContextImpl context;
-    private final FileManager fileManager;
+    private final List<InputFile> inputFiles;
     private final FileSchema schema;
+    private final List<RowGroup> firstFileRowGroups;
+
+    // RowGroupIterators created for row readers (need to be closed)
+    private final java.util.List<RowGroupIterator> rowGroupIterators = new java.util.ArrayList<>();
 
     /// Creates a MultiFileParquetReader for the given [InputFile] instances.
     ///
@@ -59,8 +67,12 @@ public class MultiFileParquetReader implements AutoCloseable {
             throw new IllegalArgumentException("At least one file must be provided");
         }
         this.context = context;
-        this.fileManager = new FileManager(inputFiles, context);
-        this.schema = fileManager.openFirst();
+        this.inputFiles = new java.util.ArrayList<>(inputFiles);
+        InputFile first = inputFiles.get(0);
+        first.open();
+        FileMetaData metaData = ParquetMetadataReader.readMetadata(first);
+        this.schema = FileSchema.fromSchemaElements(metaData.schema());
+        this.firstFileRowGroups = metaData.rowGroups();
     }
 
     /// Get the file schema (common across all files).
@@ -69,41 +81,50 @@ public class MultiFileParquetReader implements AutoCloseable {
     }
 
     /// Create a row reader that iterates over all rows in all files.
-    public MultiFileRowReader createRowReader() {
+    public RowReader createRowReader() {
         return createRowReader(ColumnProjection.all());
     }
 
     /// Create a row reader with a filter, iterating over all columns but only matching row groups.
     ///
     /// @param filter predicate for row group filtering based on statistics
-    public MultiFileRowReader createRowReader(FilterPredicate filter) {
+    public RowReader createRowReader(FilterPredicate filter) {
         return createRowReader(ColumnProjection.all(), filter);
     }
 
     /// Create a row reader that iterates over selected columns in all files.
     ///
     /// @param projection specifies which columns to read
-    public MultiFileRowReader createRowReader(ColumnProjection projection) {
-        FileManager.InitResult initResult = fileManager.initialize(projection);
-        return new MultiFileRowReader(context, fileManager, initResult, null);
+    public RowReader createRowReader(ColumnProjection projection) {
+        return createRowReaderInternal(projection, null);
     }
 
     /// Create a row reader that iterates over selected columns in only matching row groups.
     ///
     /// @param projection specifies which columns to read
     /// @param filter predicate for row group and record-level filtering
-    public MultiFileRowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        FileManager.InitResult initResult = fileManager.initialize(projection, resolved);
-        return new MultiFileRowReader(context, fileManager, initResult, resolved);
+    public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
+        return createRowReaderInternal(projection, filter);
     }
+
+    private RowReader createRowReaderInternal(ColumnProjection projection, FilterPredicate filter) {
+        ResolvedPredicate resolved = filter != null
+                ? FilterPredicateResolver.resolve(filter, schema) : null;
+
+        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0);
+        iterator.setFirstFile(schema, firstFileRowGroups);
+        ProjectedSchema projected = iterator.initialize(projection, resolved);
+        rowGroupIterators.add(iterator);
+
+        return RowReader.create(iterator, schema, projected, context, resolved, 0);
+    }
+
 
     /// Create column readers for batch-oriented access to the requested columns.
     ///
     /// @param projection specifies which columns to read
     public MultiFileColumnReaders createColumnReaders(ColumnProjection projection) {
-        FileManager.InitResult initResult = fileManager.initialize(projection);
-        return new MultiFileColumnReaders(context, fileManager, initResult);
+        return createColumnReadersInternal(projection, null);
     }
 
     /// Create column readers for batch-oriented access to the requested columns,
@@ -113,12 +134,23 @@ public class MultiFileParquetReader implements AutoCloseable {
     /// @param filter predicate for row group filtering based on statistics
     public MultiFileColumnReaders createColumnReaders(ColumnProjection projection, FilterPredicate filter) {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        FileManager.InitResult initResult = fileManager.initialize(projection, resolved);
-        return new MultiFileColumnReaders(context, fileManager, initResult);
+        return createColumnReadersInternal(projection, resolved);
+    }
+
+    private MultiFileColumnReaders createColumnReadersInternal(ColumnProjection projection,
+                                                                ResolvedPredicate resolved) {
+        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0);
+        iterator.setFirstFile(schema, firstFileRowGroups);
+        ProjectedSchema projected = iterator.initialize(projection, resolved);
+        rowGroupIterators.add(iterator);
+        return new MultiFileColumnReaders(context, iterator, schema, projected);
     }
 
     @Override
     public void close() {
-        fileManager.close();
+        for (RowGroupIterator iterator : rowGroupIterators) {
+            iterator.close();
+        }
+        rowGroupIterators.clear();
     }
 }

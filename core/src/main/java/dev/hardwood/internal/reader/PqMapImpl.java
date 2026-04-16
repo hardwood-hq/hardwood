@@ -16,9 +16,6 @@ import java.util.AbstractList;
 import java.util.List;
 import java.util.UUID;
 
-import dev.hardwood.internal.reader.NestedColumnData.ByteArrayColumn;
-import dev.hardwood.internal.reader.NestedColumnData.IntColumn;
-import dev.hardwood.internal.reader.NestedColumnData.LongColumn;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.MapOf;
 import dev.hardwood.row.PqList;
@@ -55,7 +52,7 @@ final class PqMapImpl implements PqMap {
                         int rowIndex, int valueIndex) {
         int keyProjCol = mapDesc.keyProjCol();
         int mlLevel = mapDesc.schema().maxRepetitionLevel();
-        int leafMaxRep = batch.columns[keyProjCol].column().maxRepetitionLevel();
+        int leafMaxRep = batch.getMaxRepLevel(keyProjCol);
 
         int start, end;
         if (valueIndex >= 0 && mlLevel > 0) {
@@ -72,7 +69,7 @@ final class PqMapImpl implements PqMap {
             firstValue = batch.getLevelStart(keyProjCol, level, firstValue);
         }
 
-        int defLevel = batch.columns[keyProjCol].getDefLevel(firstValue);
+        int defLevel = batch.getDefLevel(keyProjCol, firstValue);
         if (defLevel < mapDesc.nullDefLevel()) {
             return null; // null map
         }
@@ -87,7 +84,7 @@ final class PqMapImpl implements PqMap {
                              int rowIndex, int valueIndex) {
         int keyProjCol = mapDesc.keyProjCol();
         int mlLevel = mapDesc.schema().maxRepetitionLevel();
-        int leafMaxRep = batch.columns[keyProjCol].column().maxRepetitionLevel();
+        int leafMaxRep = batch.getMaxRepLevel(keyProjCol);
 
         int start;
         if (valueIndex >= 0 && mlLevel > 0) {
@@ -101,7 +98,7 @@ final class PqMapImpl implements PqMap {
             firstValue = batch.getLevelStart(keyProjCol, level, firstValue);
         }
 
-        int defLevel = batch.columns[keyProjCol].getDefLevel(firstValue);
+        int defLevel = batch.getDefLevel(keyProjCol, firstValue);
         return defLevel < mapDesc.nullDefLevel();
     }
 
@@ -153,7 +150,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 throw new NullPointerException("Key is null");
             }
-            return ((NestedColumnData.IntColumn) batch.columns[keyProjCol]).get(valueIdx);
+            return ((int[]) batch.valueArrays[keyProjCol])[valueIdx];
         }
 
         @Override
@@ -162,7 +159,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 throw new NullPointerException("Key is null");
             }
-            return ((NestedColumnData.LongColumn) batch.columns[keyProjCol]).get(valueIdx);
+            return ((long[]) batch.valueArrays[keyProjCol])[valueIdx];
         }
 
         @Override
@@ -171,7 +168,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
-            byte[] raw = ((NestedColumnData.ByteArrayColumn) batch.columns[keyProjCol]).get(valueIdx);
+            byte[] raw = ((byte[][]) batch.valueArrays[keyProjCol])[valueIdx];
             return new String(raw, StandardCharsets.UTF_8);
         }
 
@@ -181,7 +178,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
-            return ((NestedColumnData.ByteArrayColumn) batch.columns[keyProjCol]).get(valueIdx);
+            return ((byte[][]) batch.valueArrays[keyProjCol])[valueIdx];
         }
 
         @Override
@@ -215,7 +212,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return ((NestedColumnData.IntColumn) batch.columns[valueProjCol]).get(valueIdx);
+            return ((int[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
 
         @Override
@@ -224,7 +221,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return ((NestedColumnData.LongColumn) batch.columns[valueProjCol]).get(valueIdx);
+            return ((long[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
 
         @Override
@@ -233,7 +230,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return ((NestedColumnData.FloatColumn) batch.columns[valueProjCol]).get(valueIdx);
+            return ((float[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
 
         @Override
@@ -242,7 +239,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return ((NestedColumnData.DoubleColumn) batch.columns[valueProjCol]).get(valueIdx);
+            return ((double[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
 
         @Override
@@ -251,7 +248,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
             }
-            return ((NestedColumnData.BooleanColumn) batch.columns[valueProjCol]).get(valueIdx);
+            return ((boolean[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
 
         @Override
@@ -260,7 +257,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 return null;
             }
-            byte[] raw = ((NestedColumnData.ByteArrayColumn) batch.columns[valueProjCol]).get(valueIdx);
+            byte[] raw = ((byte[][]) batch.valueArrays[valueProjCol])[valueIdx];
             return new String(raw, StandardCharsets.UTF_8);
         }
 
@@ -270,7 +267,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 return null;
             }
-            return ((NestedColumnData.ByteArrayColumn) batch.columns[valueProjCol]).get(valueIdx);
+            return ((byte[][]) batch.valueArrays[valueProjCol])[valueIdx];
         }
 
         @Override
@@ -312,7 +309,7 @@ final class PqMapImpl implements PqMap {
             // Check null via firstPrimitiveCol
             int projCol = structDesc.firstPrimitiveCol();
             if (projCol >= 0) {
-                int defLevel = batch.columns[projCol].getDefLevel(valueIdx);
+                int defLevel = batch.getDefLevel(projCol, valueIdx);
                 if (defLevel < structDesc.schema().maxDefinitionLevel()) {
                     return null;
                 }
@@ -356,7 +353,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
-            return batch.columns[keyProjCol].getValue(valueIdx);
+            return batch.getValue(keyProjCol, valueIdx);
         }
 
         private Object readValue() {
@@ -364,7 +361,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 return null;
             }
-            return batch.columns[valueProjCol].getValue(valueIdx);
+            return batch.getValue(valueProjCol, valueIdx);
         }
     }
 }

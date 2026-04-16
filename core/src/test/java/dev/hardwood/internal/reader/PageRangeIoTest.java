@@ -67,7 +67,7 @@ class PageRangeIoTest {
         return inputFile.bytesRead();
     }
 
-    // SingleFileRowReader path (single-file, multi-column)
+    // Single-file, multi-column path
 
     @Test
     void testRowReaderPageRangeIoReducesBytes() throws Exception {

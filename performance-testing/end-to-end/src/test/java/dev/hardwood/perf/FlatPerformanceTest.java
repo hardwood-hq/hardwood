@@ -35,7 +35,6 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.MultiFileColumnReaders;
 import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileRowReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -176,12 +175,17 @@ class FlatPerformanceTest {
                 .map(Contender::displayName)
                 .collect(Collectors.joining(", ")));
 
-        // Warmup run (not timed) - use first enabled contender, limited to 3 years of data
-        System.out.println("\nWarmup run...");
-        Contender warmupContender = enabledContenders.iterator().next();
-        int warmupFileLimit = Math.min(files.size(), 12); // 3 years max
-        List<Path> warmupFiles = files.subList(0, warmupFileLimit);
-        getRunner(warmupContender).apply(warmupFiles);
+        // Warmup: 3 full runs per contender to let the JIT stabilize
+        System.out.println("\nWarmup runs (3 full runs per contender):");
+        for (Contender contender : enabledContenders) {
+            for (int i = 0; i < 3; i++) {
+                long warmStart = System.currentTimeMillis();
+                getRunner(contender).apply(files);
+                long warmDuration = System.currentTimeMillis() - warmStart;
+                System.out.println("  Warmup " + contender.displayName()
+                        + " [" + (i + 1) + "/3]: " + warmDuration + " ms");
+            }
+        }
 
         // Timed runs
         System.out.println("\nTimed runs:");
@@ -250,10 +254,10 @@ class FlatPerformanceTest {
     }
 
     private Result timeRun(String name, Supplier<Result> runner) {
-        System.out.println("  Running " + name + "...");
         long start = System.currentTimeMillis();
         Result result = runner.get();
         long duration = System.currentTimeMillis() - start;
+        System.out.println("  " + name + ": " + duration + " ms");
         return new Result(result.passengerCount(), result.tripDistance(),
                 result.fareAmount(), duration, result.rowCount());
     }
@@ -425,7 +429,7 @@ class FlatPerformanceTest {
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
                 try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
-                     MultiFileRowReader rowReader = parquet.createRowReader(projection)) {
+                     RowReader rowReader = parquet.createRowReader(projection)) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
                     while (rowReader.hasNext()) {
@@ -458,7 +462,7 @@ class FlatPerformanceTest {
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    /// Run using MultiFileRowReader with named (string) field access.
+    /// Run using MultiFileParquetReader with named (string) field access.
     ///
     /// Same as [#runHardwoodMultiFile] but uses field names instead of projected indices.
     private Result runHardwoodMultiFileNamed(List<Path> files) {
@@ -475,7 +479,7 @@ class FlatPerformanceTest {
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
                 try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
-                     MultiFileRowReader rowReader = parquet.createRowReader(projection)) {
+                     RowReader rowReader = parquet.createRowReader(projection)) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
                     while (rowReader.hasNext()) {
@@ -539,9 +543,15 @@ class FlatPerformanceTest {
                                 BitSet n2 = col2.getElementNulls();
 
                                 for (int i = 0; i < count; i++) {
-                                    if (n0 == null || !n0.get(i)) passengerCount += v0[i];
-                                    if (n1 == null || !n1.get(i)) tripDistance += v1[i];
-                                    if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                                    if (n0 == null || !n0.get(i)) {
+										passengerCount += v0[i];
+									}
+                                    if (n1 == null || !n1.get(i)) {
+										tripDistance += v1[i];
+									}
+                                    if (n2 == null || !n2.get(i)) {
+										fareAmount += v2[i];
+									}
                                 }
                                 rowCount += count;
                             }
@@ -556,9 +566,15 @@ class FlatPerformanceTest {
                                 BitSet n2 = col2.getElementNulls();
 
                                 for (int i = 0; i < count; i++) {
-                                    if (n0 == null || !n0.get(i)) passengerCount += (long) v0[i];
-                                    if (n1 == null || !n1.get(i)) tripDistance += v1[i];
-                                    if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                                    if (n0 == null || !n0.get(i)) {
+										passengerCount += (long) v0[i];
+									}
+                                    if (n1 == null || !n1.get(i)) {
+										tripDistance += v1[i];
+									}
+                                    if (n2 == null || !n2.get(i)) {
+										fareAmount += v2[i];
+									}
                                 }
                                 rowCount += count;
                             }
@@ -602,9 +618,15 @@ class FlatPerformanceTest {
                             BitSet n2 = col2.getElementNulls();
 
                             for (int i = 0; i < count; i++) {
-                                if (n0 == null || !n0.get(i)) passengerCount += v0[i];
-                                if (n1 == null || !n1.get(i)) tripDistance += v1[i];
-                                if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                                if (n0 == null || !n0.get(i)) {
+									passengerCount += v0[i];
+								}
+                                if (n1 == null || !n1.get(i)) {
+									tripDistance += v1[i];
+								}
+                                if (n2 == null || !n2.get(i)) {
+									fareAmount += v2[i];
+								}
                             }
                             rowCount += count;
                         }
@@ -620,9 +642,15 @@ class FlatPerformanceTest {
                             BitSet n2 = col2.getElementNulls();
 
                             for (int i = 0; i < count; i++) {
-                                if (n0 == null || !n0.get(i)) passengerCount += (long) v0[i];
-                                if (n1 == null || !n1.get(i)) tripDistance += v1[i];
-                                if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                                if (n0 == null || !n0.get(i)) {
+									passengerCount += (long) v0[i];
+								}
+                                if (n1 == null || !n1.get(i)) {
+									tripDistance += v1[i];
+								}
+                                if (n2 == null || !n2.get(i)) {
+									fareAmount += v2[i];
+								}
                             }
                             rowCount += count;
                         }

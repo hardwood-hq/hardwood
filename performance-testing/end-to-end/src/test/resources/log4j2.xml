@@ -16,8 +16,7 @@
     </Appenders>
     <Loggers>
         <!-- Set DEBUG level for Hardwood reader classes -->
-        <Logger name="dev.hardwood.internal.reader.ColumnAssemblyBuffer" level="DEBUG"/>
-        <Logger name="dev.hardwood.reader.AbstractRowReader" level="DEBUG"/>
+        <Logger name="dev.hardwood.internal.reader.ColumnWorker" level="DEBUG"/>
         <Logger name="dev.hardwood.internal.compression.DecompressorFactory" level="DEBUG"/>
 
         <Root level="INFO">

@@ -87,7 +87,7 @@ public class PrintCommand implements Callable<Integer> {
             // Pass positive row limits to the reader so it can stop fetching early.
             // Negative limits (tail) and no limit require reading all rows.
             try (RowReader rowReader = rowLimit > 0
-                    ? reader.createRowReader(projection, rowLimit)
+                    ? reader.createRowReader(projection, null, rowLimit)
                     : reader.createRowReader(projection)) {
                 String[] headers = RowTable.topLevelFieldNames(fileSchema, projection);
                 List<SchemaNode> fields = projectedFields(fileSchema, projection);

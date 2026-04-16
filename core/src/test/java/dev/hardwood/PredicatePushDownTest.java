@@ -22,7 +22,6 @@ import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.MultiFileColumnReaders;
 import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileRowReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -298,39 +297,15 @@ class PredicatePushDownTest {
     // ==================== Repeated (list) columns ====================
 
     @Test
-    void testFilterOnRepeatedColumnViaRowReader() throws Exception {
-        // RG0: scores 5-30, RG1: scores 100-200, RG2: scores 300-500
-        // Filter: scores > 200 -> skip RG0 and RG1, keep only RG2
+    void testFilterOnRepeatedColumnIsRejected() throws Exception {
+        // Filter predicates on repeated columns are not supported — they should
+        // fail at resolution time, matching parquet-java's behavior.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LIST_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("scores", 200);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
-                int totalRows = 0;
-                while (rows.hasNext()) {
-                    rows.next();
-                    totalRows++;
-                    assertThat(rows.getInt("id")).isGreaterThanOrEqualTo(7);
-                }
-                // RG2 has 3 records (rows 7, 8, 9)
-                assertThat(totalRows).isEqualTo(3);
-            }
-        }
-    }
-
-    @Test
-    void testFilterOnRepeatedColumnKeepsMatchingRowGroups() throws Exception {
-        // Filter: scores < 50 -> matches RG0 (5-30), skip RG1 (100-200) and RG2 (300-500)
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LIST_FILE))) {
-            FilterPredicate filter = FilterPredicate.lt("scores", 50);
-
-            try (RowReader rows = reader.createRowReader(filter)) {
-                int totalRows = 0;
-                while (rows.hasNext()) {
-                    rows.next();
-                    totalRows++;
-                }
-                assertThat(totalRows).isEqualTo(3);
-            }
+            assertThatThrownBy(() -> reader.createRowReader(filter))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("repeated");
         }
     }
 
@@ -349,18 +324,6 @@ class PredicatePushDownTest {
                     assertThat(rows.getInt("id")).isGreaterThanOrEqualTo(7);
                 }
                 assertThat(totalRows).isEqualTo(3);
-            }
-        }
-    }
-
-    @Test
-    void testFilterOnRepeatedColumnMatchesNoRowGroups() throws Exception {
-        // Filter: scores > 500 -> no row group matches
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LIST_FILE))) {
-            FilterPredicate filter = FilterPredicate.gt("scores", 500);
-
-            try (RowReader rows = reader.createRowReader(filter)) {
-                assertThat(rows.hasNext()).isFalse();
             }
         }
     }
@@ -412,6 +375,49 @@ class PredicatePushDownTest {
 
             try (RowReader rows = reader.createRowReader(filter)) {
                 assertThat(rows.hasNext()).isFalse();
+            }
+        }
+    }
+
+    // ==================== Nested record-level filtering ====================
+
+    @Test
+    void testRecordLevelFilterOnNestedSchema() throws Exception {
+        // RG2 has id 4-6 (address.zip 80000-82000).
+        // Filter: id == 5 matches RG2 by statistics, but only 1 of 3 rows should be returned.
+        // Without record-level filtering, all 3 rows from RG2 would be returned.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
+            FilterPredicate filter = FilterPredicate.eq("id", 5);
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                    assertThat(rows.getInt("id")).isEqualTo(5);
+                }
+                assertThat(totalRows).isEqualTo(1);
+            }
+        }
+    }
+
+    @Test
+    void testRecordLevelFilterOnNestedLeafColumn() throws Exception {
+        // RG1 has address.zip 80000-82000 (id 4-6).
+        // Filter: address.zip == 81000 matches RG1 by statistics, but only 1 of 3 rows
+        // should be returned. Without record-level filtering on nested leaves, all 3 rows
+        // from RG1 would be returned.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
+            FilterPredicate filter = FilterPredicate.eq("address.zip", 81000);
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                    assertThat(rows.getInt("id")).isEqualTo(5);
+                }
+                assertThat(totalRows).isEqualTo(1);
             }
         }
     }
@@ -552,7 +558,7 @@ class PredicatePushDownTest {
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileParquetReader parquet = hardwood.openAll(files);
-             MultiFileRowReader rows = parquet.createRowReader(filter)) {
+             RowReader rows = parquet.createRowReader(filter)) {
 
             int totalRows = 0;
             while (rows.hasNext()) {
@@ -572,7 +578,7 @@ class PredicatePushDownTest {
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileParquetReader parquet = hardwood.openAll(files);
-             MultiFileRowReader rows = parquet.createRowReader(projection, filter)) {
+             RowReader rows = parquet.createRowReader(projection, filter)) {
 
             int totalRows = 0;
             while (rows.hasNext()) {
@@ -592,7 +598,7 @@ class PredicatePushDownTest {
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileParquetReader parquet = hardwood.openAll(files);
-             MultiFileRowReader rows = parquet.createRowReader(filter)) {
+             RowReader rows = parquet.createRowReader(filter)) {
 
             assertThat(rows.hasNext()).isFalse();
         }
@@ -856,7 +862,7 @@ class PredicatePushDownTest {
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileParquetReader parquet = hardwood.openAll(files);
-             MultiFileRowReader rows = parquet.createRowReader(filter)) {
+             RowReader rows = parquet.createRowReader(filter)) {
 
             int totalRows = 0;
             while (rows.hasNext()) {

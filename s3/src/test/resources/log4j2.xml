@@ -15,6 +15,7 @@
         </Console>
     </Appenders>
     <Loggers>
+        <Logger name="dev.hardwood.s3.S3InputFile" level="DEBUG"/>
         <Root level="INFO">
             <AppenderRef ref="Console"/>
         </Root>

@@ -13,9 +13,9 @@ import java.util.concurrent.CompletionException;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.FileManager;
+import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileRowReader;
+import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -32,13 +32,13 @@ class SchemaCompatibilityTest {
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> {
                 try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(micros, millis));
-                     MultiFileRowReader reader = parquet.createRowReader()) {
+                     RowReader reader = parquet.createRowReader()) {
                     while (reader.hasNext()) {
                         reader.next();
                     }
                 }
             }).isInstanceOf(CompletionException.class)
-                    .hasCauseInstanceOf(FileManager.SchemaIncompatibleException.class)
+                    .hasCauseInstanceOf(RowGroupIterator.SchemaIncompatibleException.class)
                     .cause()
                     .hasMessage("Column 'ts' has incompatible logical type in file compat_ts_millis.parquet:" +
                             " expected TimestampType[isAdjustedToUTC=true, unit=MICROS]" +
@@ -54,13 +54,13 @@ class SchemaCompatibilityTest {
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> {
                 try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(dec10_2, dec10_4));
-                     MultiFileRowReader reader = parquet.createRowReader()) {
+                     RowReader reader = parquet.createRowReader()) {
                     while (reader.hasNext()) {
                         reader.next();
                     }
                 }
             }).isInstanceOf(CompletionException.class)
-                    .hasCauseInstanceOf(FileManager.SchemaIncompatibleException.class)
+                    .hasCauseInstanceOf(RowGroupIterator.SchemaIncompatibleException.class)
                     .cause()
                     .hasMessage("Column 'amount' has incompatible logical type in file compat_decimal_10_4.parquet:" +
                             " expected DecimalType[scale=2, precision=10]" +
@@ -76,13 +76,13 @@ class SchemaCompatibilityTest {
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> {
                 try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(required, optional));
-                     MultiFileRowReader reader = parquet.createRowReader()) {
+                     RowReader reader = parquet.createRowReader()) {
                     while (reader.hasNext()) {
                         reader.next();
                     }
                 }
             }).isInstanceOf(CompletionException.class)
-                    .hasCauseInstanceOf(FileManager.SchemaIncompatibleException.class)
+                    .hasCauseInstanceOf(RowGroupIterator.SchemaIncompatibleException.class)
                     .cause()
                     .hasMessage("Column 'value' has incompatible repetition type in file compat_optional_value.parquet:" +
                             " expected REQUIRED but found OPTIONAL");
@@ -97,13 +97,13 @@ class SchemaCompatibilityTest {
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> {
                 try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(tsMicros, plainInt));
-                     MultiFileRowReader reader = parquet.createRowReader()) {
+                     RowReader reader = parquet.createRowReader()) {
                     while (reader.hasNext()) {
                         reader.next();
                     }
                 }
             }).isInstanceOf(CompletionException.class)
-                    .hasCauseInstanceOf(FileManager.SchemaIncompatibleException.class)
+                    .hasCauseInstanceOf(RowGroupIterator.SchemaIncompatibleException.class)
                     .cause()
                     .hasMessage("Column 'ts' has incompatible logical type in file compat_plain_int64.parquet:" +
                             " expected TimestampType[isAdjustedToUTC=true, unit=MICROS] but found null");
@@ -117,7 +117,7 @@ class SchemaCompatibilityTest {
 
         try (Hardwood hardwood = Hardwood.create();
              MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(micros, micros));
-             MultiFileRowReader reader = parquet.createRowReader()) {
+             RowReader reader = parquet.createRowReader()) {
 
             int count = 0;
             while (reader.hasNext()) {

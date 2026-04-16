@@ -271,7 +271,7 @@ A row limit instructs the reader to stop after the specified number of rows, avo
 ```java
 // Read at most 100 rows
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.createRowReader(100)) {
+     RowReader rowReader = fileReader.createRowReader(ColumnProjection.all(), null, 100)) {
 
     while (rowReader.hasNext()) {
         rowReader.next();

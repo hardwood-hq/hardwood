@@ -33,10 +33,9 @@ import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.Page;
+import dev.hardwood.internal.reader.PageDecoder;
 import dev.hardwood.internal.reader.PageInfo;
-import dev.hardwood.internal.reader.PageReader;
-import dev.hardwood.internal.reader.PageScanner;
-import dev.hardwood.internal.reader.RowRanges;
+import dev.hardwood.internal.reader.SequentialFetchPlan;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
@@ -94,9 +93,13 @@ public class PageHandlingBenchmark {
                     int chunkLen = Math.toIntExact(meta.totalCompressedSize());
                     ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
 
-                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                            chunkData, chunkStart, null, rgIdx, inputFile.name(), RowRanges.ALL, 0);
-                    allPages.addAll(scanner.scanPages());
+                    SequentialFetchPlan plan = SequentialFetchPlan.build(
+                            inputFile, columnSchema, columnChunk,
+                            context, rgIdx, inputFile.name(), 0);
+                    java.util.Iterator<PageInfo> iter = plan.pages();
+                    while (iter.hasNext()) {
+                        allPages.add(iter.next());
+                    }
                 }
             }
         }
@@ -140,8 +143,8 @@ public class PageHandlingBenchmark {
     @Benchmark
     public void b_decodePages(Blackhole blackhole) throws IOException {
         for (PageInfo pageInfo : allPages) {
-            PageReader pageReader = new PageReader(pageInfo.columnMetaData(), pageInfo.columnSchema(), context.decompressorFactory());
-            Page page = pageReader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
+            PageDecoder pageDecoder = new PageDecoder(pageInfo.columnMetaData(), pageInfo.columnSchema(), context.decompressorFactory());
+            Page page = pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
             blackhole.consume(page);
         }
     }
