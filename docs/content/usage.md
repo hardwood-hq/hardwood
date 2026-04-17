@@ -140,8 +140,8 @@ All accessor methods are available in two forms:
 | `getLong` | INT64 | | `long` |
 | `getFloat` | FLOAT | | `float` |
 | `getDouble` | DOUBLE | | `double` |
-| `getBinary` | BYTE_ARRAY | | `byte[]` |
-| `getString` | BYTE_ARRAY | STRING | `String` |
+| `getBinary` | BYTE_ARRAY | BSON (optional) | `byte[]` |
+| `getString` | BYTE_ARRAY | STRING or JSON | `String` |
 | `getDate` | INT32 | DATE | `LocalDate` |
 | `getTime` | INT32 or INT64 | TIME | `LocalTime` |
 | `getTimestamp` | INT64, or legacy INT96 | TIMESTAMP | `Instant` |

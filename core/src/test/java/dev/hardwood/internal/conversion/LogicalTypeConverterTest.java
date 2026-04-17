@@ -9,6 +9,7 @@ package dev.hardwood.internal.conversion;
 
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.util.HexFormat;
 import java.util.stream.Stream;
@@ -17,6 +18,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -57,6 +61,39 @@ class LogicalTypeConverterTest {
         assertThatThrownBy(() -> LogicalTypeConverter.int96ToInstant(new byte[11]))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("12 bytes");
+    }
+
+    static Stream<Arguments> bsonPayloads() {
+        return Stream.of(
+                // Minimal empty BSON document: 4-byte little-endian length + terminator.
+                Arguments.of("empty document", new byte[] {0x05, 0x00, 0x00, 0x00, 0x00}),
+                // Not valid UTF-8; a string decoder would replace these with U+FFFD.
+                Arguments.of("non-utf8 bytes", new byte[] {(byte) 0xC3, (byte) 0x28, (byte) 0xA0, (byte) 0xA1}));
+    }
+
+    @ParameterizedTest(name = "BSON {0} passes through as raw bytes")
+    @MethodSource("bsonPayloads")
+    void bsonReturnsRawBytes(String name, byte[] payload) {
+        Object result = LogicalTypeConverter.convert(payload, PhysicalType.BYTE_ARRAY, new LogicalType.BsonType());
+
+        assertThat(result).isInstanceOf(byte[].class).isEqualTo(payload);
+    }
+
+    @Test
+    void bsonRejectsNonByteArrayPhysicalType() {
+        assertThatThrownBy(() -> LogicalTypeConverter.convertToBson(new byte[0], PhysicalType.FIXED_LEN_BYTE_ARRAY))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("BSON")
+                .hasMessageContaining("BYTE_ARRAY");
+    }
+
+    @Test
+    void jsonDispatchesToString() {
+        byte[] jsonBytes = "{\"k\":1}".getBytes(StandardCharsets.UTF_8);
+
+        Object result = LogicalTypeConverter.convert(jsonBytes, PhysicalType.BYTE_ARRAY, new LogicalType.JsonType());
+
+        assertThat(result).isInstanceOf(String.class).isEqualTo("{\"k\":1}");
     }
 
     /// Build a 12-byte INT96 payload from nanos-of-day and Julian day, little-endian.

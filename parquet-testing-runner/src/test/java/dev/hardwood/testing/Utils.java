@@ -433,8 +433,7 @@ public class Utils {
             case BOOLEAN -> reader.getBooleans()[index];
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> {
                 if (colSchema.logicalType() instanceof LogicalType.StringType
-                        || colSchema.logicalType() instanceof LogicalType.JsonType
-                        || colSchema.logicalType() instanceof LogicalType.BsonType) {
+                        || colSchema.logicalType() instanceof LogicalType.JsonType) {
                     yield reader.getStrings()[index];
                 }
                 yield reader.getBinaries()[index];

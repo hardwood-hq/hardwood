@@ -39,7 +39,7 @@ public class LogicalTypeConverter {
             case LogicalType.IntType it -> convertToInt(physicalValue, physicalType, it);
             case LogicalType.UuidType t -> convertToUuid(physicalValue, physicalType);
             case LogicalType.JsonType t -> convertToString(physicalValue, physicalType);
-            case LogicalType.BsonType t -> convertToString(physicalValue, physicalType);
+            case LogicalType.BsonType t -> convertToBson(physicalValue, physicalType);
             // EnumType and IntervalType: pass through as-is (no conversion needed or not supported)
             // ListType and MapType are structural types handled by RecordAssembler, not primitive conversions
             default -> physicalValue;
@@ -51,6 +51,14 @@ public class LogicalTypeConverter {
             throw new IllegalArgumentException("STRING logical type requires BYTE_ARRAY physical type, got " + physicalType);
         }
         return new String((byte[]) value, StandardCharsets.UTF_8);
+    }
+
+    /// BSON is a binary format; expose the raw bytes rather than attempting a UTF-8 decode.
+    public static byte[] convertToBson(Object value, PhysicalType physicalType) {
+        if (physicalType != PhysicalType.BYTE_ARRAY) {
+            throw new IllegalArgumentException("BSON logical type requires BYTE_ARRAY physical type, got " + physicalType);
+        }
+        return (byte[]) value;
     }
 
     public static LocalDate convertToDate(Object value, PhysicalType physicalType) {

@@ -69,6 +69,9 @@ public class LogicalTypesMetadataTest {
             // profile_json has JSON logical type (BYTE_ARRAY physical type)
             assertThat(schema.getColumn("profile_json").logicalType()).isInstanceOf(
                     LogicalType.JsonType.class);
+            // bson_payload has BSON logical type (BYTE_ARRAY physical type)
+            assertThat(schema.getColumn("bson_payload").logicalType()).isInstanceOf(
+                    LogicalType.BsonType.class);
 
             // Verify TIMESTAMP units are correctly parsed
             var timestampMillis = (LogicalType.TimestampType) schema

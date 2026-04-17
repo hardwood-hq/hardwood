@@ -168,6 +168,9 @@ public final class ValueConverter {
         else if (logicalType instanceof LogicalType.StringType) {
             return convertToString(rawValue, schema);
         }
+        else if (logicalType instanceof LogicalType.BsonType) {
+            return convertToBinary(rawValue, schema);
+        }
 
         // Fall back to physical type
         return switch (primitive.type()) {
