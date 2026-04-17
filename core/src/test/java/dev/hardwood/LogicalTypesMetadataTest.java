@@ -66,6 +66,9 @@ public class LogicalTypesMetadataTest {
             // account_id has UUID logical type (PyArrow 21+ writes UUID annotation)
             assertThat(schema.getColumn("account_id").logicalType()).isInstanceOf(
                     LogicalType.UuidType.class);
+            // profile_json has JSON logical type (BYTE_ARRAY physical type)
+            assertThat(schema.getColumn("profile_json").logicalType()).isInstanceOf(
+                    LogicalType.JsonType.class);
 
             // Verify TIMESTAMP units are correctly parsed
             var timestampMillis = (LogicalType.TimestampType) schema

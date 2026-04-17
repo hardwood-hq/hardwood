@@ -106,6 +106,7 @@ logical_types_schema = pa.schema([
     ('medium_uint', pa.uint32(), False),  # UINT_32 logical type
     ('big_uint', pa.uint64(), False),  # UINT_64 logical type
     ('account_id', pa.uuid(), False),  # UUID logical type (supported in PyArrow 21+)
+    ('profile_json', pa.json_(), False),  # JSON logical type (BYTE_ARRAY backed)
 ])
 
 logical_types_data = {
@@ -168,7 +169,12 @@ logical_types_data = {
         uuid.UUID('12345678-1234-5678-1234-567812345678').bytes,
         uuid.UUID('87654321-4321-8765-4321-876543218765').bytes,
         uuid.UUID('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee').bytes
-    ]
+    ],
+    'profile_json': [
+        '{"role":"admin","tags":["x","y"]}',
+        '{"role":"user","active":true}',
+        '{"nested":{"k":1,"v":[1,2,3]}}'
+    ],
 }
 
 logical_types_table = pa.table(logical_types_data, schema=logical_types_schema)
@@ -184,7 +190,7 @@ pq.write_table(
 print("\nGenerated logical_types_test.parquet:")
 print("  - Encoding: PLAIN (use_dictionary=False)")
 print("  - Compression: UNCOMPRESSED (compression=None)")
-print("  - Data: 3 rows with various logical types (DATE, TIMESTAMP, TIME, DECIMAL, INT_8/16/32/64, UINT_8/16/32/64, UUID)")
+print("  - Data: 3 rows with various logical types (DATE, TIMESTAMP, TIME, DECIMAL, INT_8/16/32/64, UINT_8/16/32/64, UUID, JSON)")
 
 # ============================================================================
 # Nested Data Test Files
