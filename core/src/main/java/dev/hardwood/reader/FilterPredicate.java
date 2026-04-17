@@ -39,6 +39,25 @@ import java.util.UUID;
 ///     while (reader.nextBatch()) { ... }
 /// }
 /// ```
+///
+/// ## Null handling
+///
+/// All comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`,
+/// `inStrings`) follow SQL three-valued logic: comparing a null column value
+/// against any operand yields UNKNOWN, and rows whose predicate is UNKNOWN are
+/// not returned. In practice this means **rows with a null in the tested column
+/// are never returned by a comparison predicate**. Use `isNull` / `isNotNull`
+/// for explicit null checks, or `or(...)` to include null rows alongside a
+/// comparison — e.g. `or(gt("age", 30), isNull("age"))`.
+///
+/// `not(p)` preserves this behavior: rows where `p` is UNKNOWN stay UNKNOWN
+/// under negation and are dropped. The SQL identity `not(gt(x, v)) ≡ ltEq(x, v)`
+/// holds on all rows, including null ones.
+///
+/// This matches the SQL semantics of `WHERE` predicates and differs from
+/// parquet-java's `notEq`, which treats `null <> v` as true and therefore
+/// includes null rows. To reproduce parquet-java's behavior in Hardwood, write
+/// the null-inclusion explicitly: `or(notEq("x", v), isNull("x"))`.
 public sealed interface FilterPredicate
         permits FilterPredicate.IntColumnPredicate,
                 FilterPredicate.LongColumnPredicate,

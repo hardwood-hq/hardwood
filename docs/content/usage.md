@@ -215,6 +215,25 @@ Supported physical types: `int`, `long`, `float`, `double`, `boolean`, `String` 
 Supported logical types: `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` (comparison operators).
 Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions. All predicates, including those wrapped in `not`, are pushed down to the statistics level for row group and page skipping.
 
+### Null handling
+
+Comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`) follow SQL three-valued logic: any comparison against a null column value yields UNKNOWN, and rows whose predicate is UNKNOWN are not returned. Put differently, **rows where the tested column is null are never returned by a comparison predicate** — including `notEq`.
+
+`not(p)` preserves this behavior: rows where `p` is UNKNOWN stay UNKNOWN under negation and are dropped. The SQL identity `not(gt(x, v)) ≡ ltEq(x, v)` holds on all rows, including null ones.
+
+To include null rows explicitly, combine with `isNull`:
+
+```java
+// rows with age > 30, plus rows where age is null
+FilterPredicate filter = FilterPredicate.or(
+    FilterPredicate.gt("age", 30),
+    FilterPredicate.isNull("age")
+);
+```
+
+!!! note "Divergence from parquet-java"
+    parquet-java's `notEq` treats `null <> v` as true and therefore includes null rows, which breaks the SQL identity above. Hardwood applies uniform SQL three-valued-logic semantics across all comparison operators. To reproduce parquet-java's behavior, make the null-inclusion explicit: `or(notEq("x", v), isNull("x"))`.
+
 ### Logical Type Support
 
 Factory methods are provided for common Parquet logical types, handling the physical
