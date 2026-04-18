@@ -28,7 +28,7 @@ class RowGroupIndexBuffersTest {
         CountingInputFile countingFile = new CountingInputFile(InputFile.of(PAGE_INDEX_FILE));
         countingFile.open();
 
-        FileMetaData meta = ParquetMetadataReader.readMetadata(countingFile);
+        FileMetaData meta = ParquetMetadataReader.readMetadata(countingFile, null, null);
         RowGroup rowGroup = meta.rowGroups().get(0);
 
         int readsBefore = countingFile.readCount();
@@ -52,7 +52,7 @@ class RowGroupIndexBuffersTest {
         CountingInputFile countingFile = new CountingInputFile(InputFile.of(PLAIN_FILE));
         countingFile.open();
 
-        FileMetaData meta = ParquetMetadataReader.readMetadata(countingFile);
+        FileMetaData meta = ParquetMetadataReader.readMetadata(countingFile, null, null);
         RowGroup rowGroup = meta.rowGroups().get(0);
 
         int readsBefore = countingFile.readCount();

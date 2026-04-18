@@ -207,7 +207,7 @@ class PageRangeTest {
                 PhysicalType.INT64, List.of(Encoding.PLAIN), FieldPath.of("col"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(),
                 dataPageOffset, null, null);
-        return new ColumnChunk(meta, null, null, null, null);
+        return new ColumnChunk(meta, null, null, null, null, null);
     }
 
     private static ColumnChunk chunkWithDict(long dataPageOffset, long dictOffset) {
@@ -215,7 +215,7 @@ class PageRangeTest {
                 PhysicalType.INT64, List.of(Encoding.PLAIN), FieldPath.of("col"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(),
                 dataPageOffset, dictOffset, null);
-        return new ColumnChunk(meta, null, null, null, null);
+        return new ColumnChunk(meta, null, null, null, null, null);
     }
 
     @Test

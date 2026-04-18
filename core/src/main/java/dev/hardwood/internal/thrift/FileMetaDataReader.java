@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import dev.hardwood.metadata.EncryptionAlgorithm;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.SchemaElement;
@@ -29,6 +30,8 @@ public class FileMetaDataReader {
         List<RowGroup> rowGroups = new ArrayList<>();
         Map<String, String> keyValueMetadata = Collections.emptyMap();
         String createdBy = null;
+        EncryptionAlgorithm encryptionAlgorithm = null;
+        byte[] footerSigningKeyMetadata = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -91,12 +94,29 @@ public class FileMetaDataReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 8: // encryption_algorithm
+                    if (header.type() == 0x0C) {
+                        encryptionAlgorithm = EncryptionAlgorithmReader.read(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
+                case 9: // footer_signing_key_metadata
+                    if (header.type() == 0x08) {
+                        footerSigningKeyMetadata = reader.readBinary();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 default:
                     reader.skipField(header.type());
                     break;
             }
         }
 
-        return new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata, createdBy);
+        return new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata, createdBy,
+                                        encryptionAlgorithm, footerSigningKeyMetadata);
     }
 }

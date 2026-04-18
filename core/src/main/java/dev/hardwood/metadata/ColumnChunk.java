@@ -14,6 +14,7 @@ package dev.hardwood.metadata;
 /// @param offsetIndexLength length of the offset index in bytes, or `null` if absent
 /// @param columnIndexOffset file offset of the column index for this column chunk, or `null` if absent
 /// @param columnIndexLength length of the column index in bytes, or `null` if absent
+/// @param cryptoMetadata column crypto metadata, or 'null' if absent
 /// @see <a href="https://parquet.apache.org/docs/file-format/data-pages/columnchunks/">File Format – Column Chunks</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public record ColumnChunk(
@@ -21,5 +22,6 @@ public record ColumnChunk(
         Long offsetIndexOffset,
         Integer offsetIndexLength,
         Long columnIndexOffset,
-        Integer columnIndexLength) {
+        Integer columnIndexLength,
+        ColumnCryptoMetaData cryptoMetadata) {
 }
