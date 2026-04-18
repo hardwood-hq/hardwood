@@ -62,7 +62,11 @@ public class S3InputFile implements InputFile {
         }
         fileLength = parseFileLength(response);
         byte[] tail = response.body();
-        tailCache = ByteBuffer.wrap(tail);
+        // Use a direct buffer so slices are usable from FFM-based decompressors
+        // (e.g. libdeflate), which require native MemorySegments.
+        tailCache = ByteBuffer.allocateDirect(tail.length);
+        tailCache.put(tail);
+        tailCache.flip();
         tailCacheOffset = fileLength - tail.length;
         LOG.log(System.Logger.Level.DEBUG,
                 "[{0}] open: fetched {1} byte tail (offset={2}, fileLength={3})",

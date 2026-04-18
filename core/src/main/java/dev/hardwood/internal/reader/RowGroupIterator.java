@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
@@ -80,6 +81,14 @@ public class RowGroupIterator {
 
     // Per-row-group fetch plans cache (keyed by work item index).
     private final ConcurrentHashMap<Integer, FetchPlan[]> fetchPlanCache = new ConcurrentHashMap<>();
+
+    // Number of projected columns still referencing each work item. Initialized to
+    // projectedColumnCount in initialize(); each PageSource calls releaseWorkItem
+    // when it advances past a work item, and on zero we evict the metadata and
+    // fetch-plan caches for that index. Prevents unbounded retention of fetched
+    // chunk bytes for the lifetime of the iterator (matters most for remote I/O,
+    // where ChunkHandle.data is heap-allocated rather than an mmap slice).
+    private AtomicIntegerArray workItemRefCounts;
 
     /// A single unit of work: one row group in one file.
     public record WorkItem(
@@ -170,6 +179,12 @@ public class RowGroupIterator {
 
         buildWorkList();
 
+        int columnCount = projectedSchema.getProjectedColumnCount();
+        workItemRefCounts = new AtomicIntegerArray(workItems.size());
+        for (int i = 0; i < workItems.size(); i++) {
+            workItemRefCounts.set(i, columnCount);
+        }
+
         // Trigger prefetch of second file
         triggerPrefetch(1);
 
@@ -237,6 +252,28 @@ public class RowGroupIterator {
                     return computed;
                 });
         return plans[projectedColumnIndex];
+    }
+
+    /// Notifies the iterator that one projected column is done with the given
+    /// work item. Decrements the per-work-item reference counter; when it reaches
+    /// zero (i.e. all columns have advanced past this work item), the cached
+    /// metadata and fetch plans for that work item are evicted, releasing
+    /// references to any fetched chunk bytes they hold.
+    ///
+    /// In-flight `PageInfo` slices and decode tasks keep their byte data alive
+    /// via the slice's parent reference, so eviction here only drops the strong
+    /// cache reference; the underlying chunk memory is reclaimed by GC once
+    /// downstream consumers finish processing.
+    public void releaseWorkItem(WorkItem workItem) {
+        if (workItemRefCounts == null) {
+            return;
+        }
+        int idx = workItem.workItemIndex();
+        int remaining = workItemRefCounts.decrementAndGet(idx);
+        if (remaining == 0) {
+            metadataCache.remove(idx);
+            fetchPlanCache.remove(idx);
+        }
     }
 
     /// Triggers async pre-computation and pre-fetch for the next row group.

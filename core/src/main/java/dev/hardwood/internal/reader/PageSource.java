@@ -29,6 +29,11 @@ public class PageSource {
     // Current row group's page iterator
     private Iterator<PageInfo> currentPlan;
 
+    // Work item the current plan was built from. Tracked so that we can call
+    // RowGroupIterator#releaseWorkItem when this column advances past it,
+    // letting the iterator evict cached chunk bytes once all columns are done.
+    private RowGroupIterator.WorkItem currentWorkItem;
+
     /// Creates a PageSource for the given column.
     ///
     /// @param rowGroupIterator shared iterator providing work items and metadata
@@ -45,6 +50,14 @@ public class PageSource {
                 return currentPlan.next();
             }
 
+            // currentPlan is exhausted (or null) — this column is done with the
+            // previous work item. Release our reference so the iterator can
+            // evict its caches once every column has advanced past it.
+            if (currentWorkItem != null) {
+                rowGroupIterator.releaseWorkItem(currentWorkItem);
+                currentWorkItem = null;
+            }
+
             if (!workItemIterator.hasNext()) {
                 return null;
             }
@@ -52,6 +65,7 @@ public class PageSource {
             RowGroupIterator.WorkItem workItem = workItemIterator.next();
             FetchPlan plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
             currentPlan = plan.isEmpty() ? null : plan.pages();
+            currentWorkItem = workItem;
         }
     }
 }
