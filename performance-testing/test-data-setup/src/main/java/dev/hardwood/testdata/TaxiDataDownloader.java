@@ -24,7 +24,7 @@ public final class TaxiDataDownloader {
     private static final String BASE_URL = "https://d37ci6vzurychx.cloudfront.net/trip-data/";
 
     public static final YearMonth DEFAULT_START = YearMonth.of(2016, 1);
-    public static final YearMonth DEFAULT_END = YearMonth.of(2025, 11);
+    public static final YearMonth DEFAULT_END = YearMonth.of(2025, 12);
     public static final Path DATA_DIR = Path.of("target/tlc-trip-record-data");
 
     public static void main(String[] args) throws IOException {
@@ -95,6 +95,7 @@ public final class TaxiDataDownloader {
                     .build();
             HttpRequest request = HttpRequest.newBuilder()
                     .uri(URI.create(url))
+                    .header("User-Agent", "Wget")
                     .GET()
                     .build();
             HttpResponse<Path> response = client.send(request,

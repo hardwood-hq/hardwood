@@ -198,6 +198,34 @@ class RowRangesTest {
     }
 
     @Test
+    void testIntersectSingleRangeAgainstMultipleRanges() {
+        // a: [0, 60)
+        List<PageLocation> pagesA = List.of(
+                new PageLocation(0, 100, 0),
+                new PageLocation(100, 100, 60));
+        RowRanges a = RowRanges.fromPages(pagesA, new boolean[]{ true, false }, 60);
+
+        // b: [0, 10), [20, 30), [40, 50)
+        List<PageLocation> pagesB = List.of(
+                new PageLocation(0, 100, 0),
+                new PageLocation(100, 100, 10),
+                new PageLocation(200, 100, 20),
+                new PageLocation(300, 100, 30),
+                new PageLocation(400, 100, 40),
+                new PageLocation(500, 100, 50));
+        RowRanges b = RowRanges.fromPages(pagesB, new boolean[]{ true, false, true, false, true, false }, 60);
+
+        RowRanges result = a.intersect(b);
+        assertEquals(3, result.intervalCount());
+        assertTrue(result.overlapsPage(0, 10));
+        assertFalse(result.overlapsPage(10, 20));
+        assertTrue(result.overlapsPage(20, 30));
+        assertFalse(result.overlapsPage(30, 40));
+        assertTrue(result.overlapsPage(40, 50));
+        assertFalse(result.overlapsPage(50, 60));
+    }
+
+    @Test
     void testUnionWithAll() {
         List<PageLocation> pages = List.of(
                 new PageLocation(0, 100, 0),

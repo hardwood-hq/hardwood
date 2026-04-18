@@ -12,6 +12,8 @@ from datetime import datetime, date, time, timezone
 from decimal import Decimal
 import uuid
 
+from parquet_bson_annotation import annotate_column_as_bson
+
 # Plain encoding with no compression (for Milestone 1)
 # Create a simple table with NO nulls first, explicitly marking fields as non-nullable
 schema = pa.schema([
@@ -106,6 +108,8 @@ logical_types_schema = pa.schema([
     ('medium_uint', pa.uint32(), False),  # UINT_32 logical type
     ('big_uint', pa.uint64(), False),  # UINT_64 logical type
     ('account_id', pa.uuid(), False),  # UUID logical type (supported in PyArrow 21+)
+    ('profile_json', pa.json_(), False),  # JSON logical type (BYTE_ARRAY backed)
+    ('bson_payload', pa.binary(), False),
 ])
 
 logical_types_data = {
@@ -168,7 +172,20 @@ logical_types_data = {
         uuid.UUID('12345678-1234-5678-1234-567812345678').bytes,
         uuid.UUID('87654321-4321-8765-4321-876543218765').bytes,
         uuid.UUID('aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee').bytes
-    ]
+    ],
+    'profile_json': [
+        '{"role":"admin","tags":["x","y"]}',
+        '{"role":"user","active":true}',
+        '{"nested":{"k":1,"v":[1,2,3]}}'
+    ],
+    # Three hand-crafted BSON documents. The first is a minimal empty doc;
+    # the others embed non-UTF-8 bytes (0x80, 0xFF) that would be corrupted
+    # if BSON were incorrectly decoded as UTF-8.
+    'bson_payload': [
+        bytes.fromhex('0500000000'),
+        bytes.fromhex('12000000026b0006000000686921800000'),
+        bytes.fromhex('0f00000005780003000000ff00fe0000'),
+    ],
 }
 
 logical_types_table = pa.table(logical_types_data, schema=logical_types_schema)
@@ -180,11 +197,14 @@ pq.write_table(
     compression=None,
     data_page_version='1.0'
 )
+# PyArrow writes `bson_payload` as a plain BYTE_ARRAY column; tag it as BSON
+# in the footer so Hardwood's schema reader sees the right logical type.
+annotate_column_as_bson('core/src/test/resources/logical_types_test.parquet', 'bson_payload')
 
 print("\nGenerated logical_types_test.parquet:")
 print("  - Encoding: PLAIN (use_dictionary=False)")
 print("  - Compression: UNCOMPRESSED (compression=None)")
-print("  - Data: 3 rows with various logical types (DATE, TIMESTAMP, TIME, DECIMAL, INT_8/16/32/64, UINT_8/16/32/64, UUID)")
+print("  - Data: 3 rows with various logical types (DATE, TIMESTAMP, TIME, DECIMAL, INT_8/16/32/64, UINT_8/16/32/64, UUID, JSON, BSON)")
 
 # ============================================================================
 # Nested Data Test Files
@@ -1858,3 +1878,27 @@ print("\nGenerated geospatial_stats_test.parquet:")
 print("  - city_geom column has GeospatialStatistics at field 17")
 print("  - BoundingBox: xmin=-4.0, xmax=7.5, ymin=20.96, ymax=77.08, zmin=10.5, zmax=90.0")
 print("  - geospatial_types: [1, 6]")
+# Unsigned int test file
+unsigned_int_schema = pa.schema([
+    ('id', pa.uint32(), False),
+    ('uint32_val', pa.uint32(), False),
+    ('uint64_val', pa.uint64(), False),
+])
+
+unsigned_int_data = {
+    'id': [1, 2, 3],
+    'uint32_val': [0, 2147483647, 4294967295],
+    'uint64_val': [0, 9223372036854775807, 18446744073709551615],
+}
+
+unsigned_int_table = pa.table(unsigned_int_data, schema=unsigned_int_schema)
+pq.write_table(
+    unsigned_int_table,
+    'core/src/test/resources/unsigned_int_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0'
+)
+
+print("\nGenerated unsigned_int_test.parquet:")
+print("  - Data: uint32_val=[0, 2147483647, 4294967295], uint64_val=[0, 9223372036854775807, 18446744073709551615]")

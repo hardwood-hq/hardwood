@@ -27,6 +27,8 @@ interface PrintCommandContract {
 
     String nonexistentFile();
 
+    String unsignedIntFile();
+
     @Test
     default void printsAsciiTableDefault(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("print", "-f", plainFile());
@@ -303,5 +305,20 @@ interface PrintCommandContract {
         LaunchResult result = launcher.launch("print", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
+    }
+
+    @Test
+    default void displaysUnsignedIntegersAsPositiveNumbers(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("print", "-f", unsignedIntFile());
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+            +----+------------+----------------------+
+            | id | uint32_val | uint64_val           |
+            +----+------------+----------------------+
+            | 1  | 0          | 0                    |
+            | 2  | 2147483647 | 9223372036854775807  |
+            | 3  | 4294967295 | 18446744073709551615 |
+            +----+------------+----------------------+""");
     }
 }

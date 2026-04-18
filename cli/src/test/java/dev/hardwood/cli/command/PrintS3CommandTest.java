@@ -36,4 +36,9 @@ class PrintS3CommandTest extends AbstractS3CommandTest implements PrintCommandCo
     public String nonexistentFile() {
         return S3_NONEXISTENT_FILE;
     }
+
+    @Override
+    public String unsignedIntFile() {
+        return S3_UNSIGNED_INT_FILE;
+    }
 }

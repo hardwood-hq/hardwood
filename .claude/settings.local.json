@@ -109,7 +109,9 @@
       "Bash(head -5 /workspace/_designs/*.md)",
       "Bash(gh search:*)",
       "Bash(git bisect:*)",
-      "Bash(gh repo:*)"
+      "Bash(gh repo:*)",
+      "Bash(git commit:*)",
+      "Bash(git log:*)"
     ]
   }
 }

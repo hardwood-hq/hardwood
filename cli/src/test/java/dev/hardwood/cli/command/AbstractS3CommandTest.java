@@ -28,6 +28,7 @@ abstract class AbstractS3CommandTest {
     protected static final String S3_DEEP_NESTED_FILE = "s3://test-bucket/deep_nested_struct_test.parquet";
     protected static final String S3_LIST_FILE = "s3://test-bucket/list_basic_test.parquet";
     protected static final String S3_NONEXISTENT_FILE = "s3://test-bucket/nonexistent.parquet";
+    protected static final String S3_UNSIGNED_INT_FILE = "s3://test-bucket/unsigned_int_test.parquet";
 
     static final S3MockContainer s3Mock = new S3MockContainer("latest");
 
@@ -61,6 +62,8 @@ abstract class AbstractS3CommandTest {
                         readClasspathResource("/deep_nested_struct_test.parquet"));
                 putS3(http, endpoint, "/test-bucket/list_basic_test.parquet",
                         readClasspathResource("/list_basic_test.parquet"));
+                putS3(http, endpoint, "/test-bucket/unsigned_int_test.parquet",
+                        readClasspathResource("/unsigned_int_test.parquet"));
             }
         }
         catch (Exception e) {

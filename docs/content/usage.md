@@ -140,11 +140,11 @@ All accessor methods are available in two forms:
 | `getLong` | INT64 | | `long` |
 | `getFloat` | FLOAT | | `float` |
 | `getDouble` | DOUBLE | | `double` |
-| `getBinary` | BYTE_ARRAY | | `byte[]` |
-| `getString` | BYTE_ARRAY | STRING | `String` |
+| `getBinary` | BYTE_ARRAY | BSON (optional) | `byte[]` |
+| `getString` | BYTE_ARRAY | STRING or JSON | `String` |
 | `getDate` | INT32 | DATE | `LocalDate` |
 | `getTime` | INT32 or INT64 | TIME | `LocalTime` |
-| `getTimestamp` | INT64 | TIMESTAMP | `Instant` |
+| `getTimestamp` | INT64, or legacy INT96 | TIMESTAMP | `Instant` |
 | `getDecimal` | INT32, INT64, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
 | `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
 | `getStruct` | | | `PqStruct` |
@@ -153,6 +153,8 @@ All accessor methods are available in two forms:
 | `isNull` | Any | Any | `boolean` |
 
 All methods are available as both `method(name)` and `method(index)`, except `getStruct`, `getList`, and `getMap` which are name-based only.
+
+**Legacy INT96 timestamps:** Parquet files written by older versions of Apache Spark and Hive store timestamps in the deprecated INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` detects INT96 automatically and decodes it to an `Instant`; no caller-side handling is required.
 
 **Index-based access example:**
 
@@ -212,6 +214,25 @@ Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings
 Supported physical types: `int`, `long`, `float`, `double`, `boolean`, `String` (comparison operators); `int`, `long`, `String` (`in`/`inStrings`); any type (`isNull`/`isNotNull`).
 Supported logical types: `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` (comparison operators).
 Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions. All predicates, including those wrapped in `not`, are pushed down to the statistics level for row group and page skipping.
+
+### Null handling
+
+Comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`) follow SQL three-valued logic: any comparison against a null column value yields UNKNOWN, and rows whose predicate is UNKNOWN are not returned. Put differently, **rows where the tested column is null are never returned by a comparison predicate** — including `notEq`.
+
+`not(p)` preserves this behavior: rows where `p` is UNKNOWN stay UNKNOWN under negation and are dropped. The SQL identity `not(gt(x, v)) ≡ ltEq(x, v)` holds on all rows, including null ones.
+
+To include null rows explicitly, combine with `isNull`:
+
+```java
+// rows with age > 30, plus rows where age is null
+FilterPredicate filter = FilterPredicate.or(
+    FilterPredicate.gt("age", 30),
+    FilterPredicate.isNull("age")
+);
+```
+
+!!! note "Divergence from parquet-java"
+    parquet-java's `notEq` treats `null <> v` as true and therefore includes null rows, which breaks the SQL identity above. Hardwood applies uniform SQL three-valued-logic semantics across all comparison operators. To reproduce parquet-java's behavior, make the null-inclusion explicit: `or(notEq("x", v), isNull("x"))`.
 
 ### Logical Type Support
 

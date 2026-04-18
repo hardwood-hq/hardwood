@@ -108,6 +108,9 @@ public final class ValueConverter {
         if (rawValue == null) {
             return null;
         }
+        if (schema instanceof SchemaNode.PrimitiveNode primitive && primitive.type() == PhysicalType.INT96) {
+            return LogicalTypeConverter.int96ToInstant((byte[]) rawValue);
+        }
         validateLogicalType(schema, LogicalType.TimestampType.class);
         return convertLogicalType(rawValue, schema, Instant.class);
     }
@@ -165,6 +168,9 @@ public final class ValueConverter {
         else if (logicalType instanceof LogicalType.StringType) {
             return convertToString(rawValue, schema);
         }
+        else if (logicalType instanceof LogicalType.BsonType) {
+            return convertToBinary(rawValue, schema);
+        }
 
         // Fall back to physical type
         return switch (primitive.type()) {
@@ -175,7 +181,7 @@ public final class ValueConverter {
             case BOOLEAN -> convertToBoolean(rawValue, schema);
             case BYTE_ARRAY -> convertToString(rawValue, schema);
             case FIXED_LEN_BYTE_ARRAY -> convertToBinary(rawValue, schema);
-            case INT96 -> rawValue; // Legacy timestamp, return as-is
+            case INT96 -> convertToTimestamp(rawValue, schema);
         };
     }
 

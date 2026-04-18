@@ -247,9 +247,10 @@ public class ColumnReader implements AutoCloseable {
 
     // ==================== Logical Type Accessors ====================
 
-    /// String values for STRING/JSON/BSON logical type columns.
+    /// String values for STRING and JSON logical type columns.
     /// Converts the underlying byte arrays to UTF-8 strings.
     /// Null values are represented as null entries in the array.
+    /// BSON columns are not string-decoded; use [#getBinaries()] for those.
     ///
     /// @return String array with converted values
     /// @throws IllegalStateException if the column is not a BYTE_ARRAY type
