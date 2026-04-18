@@ -265,6 +265,12 @@ public final class ProjectedSchema {
         return projectedFieldIndices;
     }
 
+    /// Returns a copy of the projected-to-original index mapping.
+    /// Each element is the original column index for the corresponding projected index.
+    public int[] toOriginalIndices() {
+        return projectedToOriginal.clone();
+    }
+
     /// Returns true if all columns are projected.
     public boolean projectsAll() {
         return projectedToOriginal.length == originalSchema.getColumnCount();

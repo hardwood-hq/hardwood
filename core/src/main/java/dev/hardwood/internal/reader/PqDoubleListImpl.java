@@ -11,7 +11,6 @@ import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.DoubleConsumer;
 
-import dev.hardwood.internal.reader.NestedColumnData.DoubleColumn;
 import dev.hardwood.row.PqDoubleList;
 
 /// Flyweight [PqDoubleList] that reads double values directly from a column array.
@@ -46,7 +45,7 @@ final class PqDoubleListImpl implements PqDoubleList {
         if (batch.isElementNull(projectedCol, valueIdx)) {
             throw new NullPointerException("Element at index " + index + " is null");
         }
-        return ((NestedColumnData.DoubleColumn) batch.columns[projectedCol]).get(valueIdx);
+        return ((double[]) batch.valueArrays[projectedCol])[valueIdx];
     }
 
     @Override
@@ -73,19 +72,19 @@ final class PqDoubleListImpl implements PqDoubleList {
                 if (batch.isElementNull(projectedCol, pos)) {
                     throw new NullPointerException("Element is null");
                 }
-                return ((NestedColumnData.DoubleColumn) batch.columns[projectedCol]).get(pos++);
+                return ((double[]) batch.valueArrays[projectedCol])[pos++];
             }
         };
     }
 
     @Override
     public void forEach(DoubleConsumer action) {
-        NestedColumnData.DoubleColumn col = (NestedColumnData.DoubleColumn) batch.columns[projectedCol];
+        double[] values = (double[]) batch.valueArrays[projectedCol];
         for (int i = start; i < end; i++) {
             if (batch.isElementNull(projectedCol, i)) {
                 throw new NullPointerException("Element at index " + (i - start) + " is null");
             }
-            action.accept(col.get(i));
+            action.accept(values[i]);
         }
     }
 
@@ -93,12 +92,12 @@ final class PqDoubleListImpl implements PqDoubleList {
     public double[] toArray() {
         int size = size();
         double[] result = new double[size];
-        NestedColumnData.DoubleColumn col = (NestedColumnData.DoubleColumn) batch.columns[projectedCol];
+        double[] values = (double[]) batch.valueArrays[projectedCol];
         for (int i = 0; i < size; i++) {
             if (batch.isElementNull(projectedCol, start + i)) {
                 throw new NullPointerException("Element at index " + i + " is null");
             }
-            result[i] = col.get(start + i);
+            result[i] = values[start + i];
         }
         return result;
     }

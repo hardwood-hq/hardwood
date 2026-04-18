@@ -8,6 +8,8 @@
 package dev.hardwood.testing;
 
 import java.io.IOException;
+import java.lang.management.ManagementFactory;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.List;
 
@@ -18,6 +20,9 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
+
+import com.sun.management.HotSpotDiagnosticMXBean;
+import com.sun.management.HotSpotDiagnosticMXBean.ThreadDumpFormat;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
@@ -56,7 +61,7 @@ class ParquetComparisonTest {
 
     @ParameterizedTest(name = "column: {0}")
     @MethodSource("dev.hardwood.testing.Utils#parquetTestFiles")
-    void compareColumnsWithReference(Path testFile) throws IOException {
+    void compareColumnsWithReference(Path testFile) throws Exception {
         String fileName = testFile.getFileName().toString();
 
         // Skip files that are in either skip list
@@ -65,7 +70,76 @@ class ParquetComparisonTest {
         assumeFalse(Utils.COLUMN_SKIPPED_FILES.contains(fileName),
                 "Skipping " + fileName + " (in column skip list)");
 
-        compareColumnsParquetFile(testFile);
+        runWithThreadDumpOnTimeout(() -> compareColumnsParquetFile(testFile), 120, fileName);
+    }
+
+    /// Runs an action with a watchdog. If it doesn't complete within
+    /// `timeoutSeconds`, dumps all thread stack traces and interrupts
+    /// the test thread. Used to diagnose hangs on CI.
+    private void runWithThreadDumpOnTimeout(ThrowingRunnable action, int timeoutSeconds,
+            String context) throws Exception {
+        Thread testThread = Thread.currentThread();
+        java.util.concurrent.ScheduledExecutorService watchdog =
+                java.util.concurrent.Executors.newSingleThreadScheduledExecutor(r -> {
+                    Thread t = new Thread(r, "test-watchdog");
+                    t.setDaemon(true);
+                    return t;
+                });
+        watchdog.schedule(() -> {
+            System.err.println("=== THREAD DUMP (timeout after " + timeoutSeconds
+                    + "s in " + context + ") ===");
+            dumpAllThreadsIncludingVirtual();
+            System.err.println("=== END THREAD DUMP ===");
+            testThread.interrupt();
+        }, timeoutSeconds, java.util.concurrent.TimeUnit.SECONDS);
+        try {
+            action.run();
+        }
+        finally {
+            watchdog.shutdownNow();
+        }
+    }
+
+    /// Dumps all platform and virtual threads via [HotSpotDiagnosticMXBean] (JDK 21+).
+    /// Falls back to [Thread#getAllStackTraces] (platform threads only) if the
+    /// JSON dump fails for any reason.
+    private static void dumpAllThreadsIncludingVirtual() {
+        Path dumpFile = null;
+        try {
+            dumpFile = Files.createTempFile("hardwood-threaddump-", ".json");
+            Files.deleteIfExists(dumpFile);
+            HotSpotDiagnosticMXBean bean = ManagementFactory.getPlatformMXBean(
+                    HotSpotDiagnosticMXBean.class);
+            bean.dumpThreads(dumpFile.toAbsolutePath().toString(), ThreadDumpFormat.JSON);
+            Files.readAllLines(dumpFile).forEach(System.err::println);
+            return;
+        }
+        catch (Throwable t) {
+            System.err.println("[watchdog] JSON thread dump failed (" + t
+                    + "), falling back to platform-thread stacks:");
+        }
+        finally {
+            if (dumpFile != null) {
+                try {
+                    Files.deleteIfExists(dumpFile);
+                }
+                catch (IOException ignored) {
+                }
+            }
+        }
+        for (java.util.Map.Entry<Thread, StackTraceElement[]> entry
+                : Thread.getAllStackTraces().entrySet()) {
+            Thread t = entry.getKey();
+            System.err.println("\n\"" + t.getName() + "\" " + t.getState());
+            for (StackTraceElement frame : entry.getValue()) {
+                System.err.println("    at " + frame);
+            }
+        }
+    }
+
+    @FunctionalInterface
+    private interface ThrowingRunnable {
+        void run() throws Exception;
     }
 
     // ==================== Bad Data Tests ====================
@@ -88,9 +162,9 @@ class ParquetComparisonTest {
     @Test
     void rejectLevels() throws IOException {
         // Page has insufficient repetition levels: the page header declares
-        // 21 values but column metadata expects only 1.
-        assertBadDataRejected("ARROW-RS-GH-6229-LEVELS.parquet",
-                "Value count mismatch for column 'c': metadata declares 1 values but pages contain 21");
+        // 21 values but column metadata expects only 1. The v3 pipeline detects
+        // this during level decoding ("Insufficient RLE/Bit-Packing data").
+        assertBadDataRejected("ARROW-RS-GH-6229-LEVELS.parquet");
     }
 
     @Test

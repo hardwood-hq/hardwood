@@ -10,14 +10,13 @@ package dev.hardwood.reader;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
-import dev.hardwood.internal.reader.FileManager;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.NestedLevelComputer;
+import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/// Holds multiple [ColumnReader] instances backed by a shared [FileManager]
+/// Holds multiple [ColumnReader] instances backed by a shared [RowGroupIterator]
 /// for cross-file prefetching across multiple Parquet files.
 ///
 /// Usage:
@@ -43,12 +42,10 @@ public class MultiFileColumnReaders implements AutoCloseable {
     private final Map<String, ColumnReader> readersByName;
     private final ColumnReader[] readersByIndex;
 
-    MultiFileColumnReaders(HardwoodContextImpl context, FileManager fileManager,
-                           FileManager.InitResult initResult) {
-        FileSchema schema = initResult.schema();
-        ProjectedSchema projectedSchema = initResult.projectedSchema();
-        String firstFileName = initResult.firstFileState().inputFile().name();
-
+    MultiFileColumnReaders(HardwoodContextImpl context,
+                           RowGroupIterator rowGroupIterator,
+                           FileSchema schema,
+                           ProjectedSchema projectedSchema) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         this.readersByName = new LinkedHashMap<>(projectedColumnCount);
         this.readersByIndex = new ColumnReader[projectedColumnCount];
@@ -57,20 +54,8 @@ public class MultiFileColumnReaders implements AutoCloseable {
             int originalIndex = projectedSchema.toOriginalIndex(i);
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
 
-            int[] thresholds = null;
-            if (columnSchema.maxRepetitionLevel() > 0) {
-                thresholds = NestedLevelComputer.computeLevelNullThresholds(
-                        schema.getRootNode(), columnSchema.columnIndex());
-            }
-            ColumnReader reader = new ColumnReader(
-                    columnSchema,
-                    initResult.firstFileState().pageInfosByColumn().get(i),
-                    context,
-                    ColumnReader.DEFAULT_BATCH_SIZE,
-                    thresholds,
-                    fileManager,
-                    i,
-                    firstFileName);
+            ColumnReader reader = ColumnReader.createFromIterator(
+                    columnSchema, schema, rowGroupIterator, context, i, null);
 
             readersByName.put(columnSchema.fieldPath().toString(), reader);
             readersByIndex[i] = reader;

@@ -33,7 +33,7 @@ import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.MultiFileColumnReaders;
 import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileRowReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -92,7 +92,7 @@ class MultiFileParquetReaderComparisonTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
              MultiFileParquetReader mfReader = new MultiFileParquetReader(
                      List.of(InputFile.of(testFile)), context);
-             MultiFileRowReader rowReader = mfReader.createRowReader()) {
+             RowReader rowReader = mfReader.createRowReader()) {
 
             while (rowReader.hasNext()) {
                 rowReader.next();
@@ -122,7 +122,7 @@ class MultiFileParquetReaderComparisonTest {
         int rowIndex = 0;
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
              MultiFileParquetReader mfReader = new MultiFileParquetReader(inputs, context);
-             MultiFileRowReader rowReader = mfReader.createRowReader()) {
+             RowReader rowReader = mfReader.createRowReader()) {
 
             while (rowReader.hasNext()) {
                 rowReader.next();
@@ -152,7 +152,7 @@ class MultiFileParquetReaderComparisonTest {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
              MultiFileParquetReader mfReader = new MultiFileParquetReader(
                      List.of(InputFile.of(file)), context);
-             MultiFileRowReader rowReader = mfReader.createRowReader()) {
+             RowReader rowReader = mfReader.createRowReader()) {
 
             while (rowReader.hasNext()) {
                 rowReader.next();
@@ -224,7 +224,7 @@ class MultiFileParquetReaderComparisonTest {
             try (HardwoodContextImpl context = HardwoodContextImpl.create();
                  MultiFileParquetReader mfReader = new MultiFileParquetReader(
                          List.of(InputFile.of(good), InputFile.of(bad)), context);
-                 MultiFileRowReader rowReader = mfReader.createRowReader()) {
+                 RowReader rowReader = mfReader.createRowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
                 }

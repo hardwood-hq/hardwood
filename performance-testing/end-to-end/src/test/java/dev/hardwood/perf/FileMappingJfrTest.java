@@ -20,7 +20,7 @@ import org.moditect.jfrunit.JfrEvents;
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileRowReader;
+import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.withinPercentage;
@@ -61,7 +61,7 @@ public class FileMappingJfrTest {
         // Use MultiFileRowReader with all columns (no projection)
         try (Hardwood hardwood = Hardwood.create();
                 MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files2025));
-                MultiFileRowReader rowReader = parquet.createRowReader()) {
+                RowReader rowReader = parquet.createRowReader()) {
 
             while (rowReader.hasNext()) {
                 rowReader.next();

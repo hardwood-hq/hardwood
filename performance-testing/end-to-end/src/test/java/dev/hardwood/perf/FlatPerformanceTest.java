@@ -21,11 +21,22 @@ import java.util.function.Function;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
 
+import org.apache.avro.Schema;
+import org.apache.avro.SchemaBuilder;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.avro.AvroParquetReader;
+import org.apache.parquet.avro.AvroReadSupport;
+import org.apache.parquet.column.ColumnDescriptor;
+import org.apache.parquet.column.impl.ColumnReadStoreImpl;
+import org.apache.parquet.column.page.PageReadStore;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
+import org.apache.parquet.io.api.Converter;
+import org.apache.parquet.io.api.GroupConverter;
+import org.apache.parquet.io.api.PrimitiveConverter;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.PrimitiveType;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
@@ -35,7 +46,6 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.MultiFileColumnReaders;
 import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileRowReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -61,15 +71,12 @@ class FlatPerformanceTest {
     private static final String RUNS_PROPERTY = "perf.runs";
 
     enum Contender {
-        HARDWOOD_INDEXED("Hardwood (indexed)"),
-        HARDWOOD_NAMED("Hardwood (named)"),
-        HARDWOOD_PROJECTION("Hardwood (projection)"),
-        HARDWOOD_MULTIFILE_INDEXED("Hardwood (multifile indexed)"),
-        HARDWOOD_MULTIFILE_NAMED("Hardwood (multifile named)"),
+        HARDWOOD_ROW_READER_NAMED("Hardwood (row reader named)"),
+        HARDWOOD_ROW_READER_INDEXED("Hardwood (row reader indexed)"),
+        HARDWOOD_ROW_READER_INDEXED_FILE_BY_FILE("Hardwood (row reader indexed file-by-file)"),
         HARDWOOD_COLUMN_READER("Hardwood (column reader)"),
-        HARDWOOD_COLUMN_READER_MULTIFILE("Hardwood (column reader multifile)"),
-        PARQUET_JAVA_INDEXED("parquet-java (indexed)"),
-        PARQUET_JAVA_NAMED("parquet-java (named)");
+        PARQUET_JAVA_NAMED("parquet-java (named)"),
+        PARQUET_JAVA_COLUMN("parquet-java (column)");
 
         private final String displayName;
 
@@ -87,13 +94,6 @@ class FlatPerformanceTest {
                     return c;
                 }
             }
-            // Support legacy names for backwards compatibility
-            if (name.equalsIgnoreCase("hardwood")) {
-                return HARDWOOD_INDEXED;
-            }
-            if (name.equalsIgnoreCase("parquet-java") || name.equalsIgnoreCase("parquet_java")) {
-                return PARQUET_JAVA_NAMED;
-            }
             throw new IllegalArgumentException("Unknown contender: " + name +
                     ". Valid values: " + Arrays.toString(values()));
         }
@@ -108,7 +108,7 @@ class FlatPerformanceTest {
     private Set<Contender> getEnabledContenders() {
         String property = System.getProperty(CONTENDERS_PROPERTY);
         if (property == null || property.isBlank()) {
-            return EnumSet.of(Contender.HARDWOOD_MULTIFILE_INDEXED);
+            return EnumSet.of(Contender.HARDWOOD_ROW_READER_INDEXED);
         }
         if (property.equalsIgnoreCase("all")) {
             return EnumSet.allOf(Contender.class);
@@ -176,12 +176,17 @@ class FlatPerformanceTest {
                 .map(Contender::displayName)
                 .collect(Collectors.joining(", ")));
 
-        // Warmup run (not timed) - use first enabled contender, limited to 3 years of data
-        System.out.println("\nWarmup run...");
-        Contender warmupContender = enabledContenders.iterator().next();
-        int warmupFileLimit = Math.min(files.size(), 12); // 3 years max
-        List<Path> warmupFiles = files.subList(0, warmupFileLimit);
-        getRunner(warmupContender).apply(warmupFiles);
+        // Warmup: 3 full runs per contender to let the JIT stabilize
+        System.out.println("\nWarmup runs (3 full runs per contender):");
+        for (Contender contender : enabledContenders) {
+            for (int i = 0; i < 3; i++) {
+                long warmStart = System.currentTimeMillis();
+                getRunner(contender).apply(files);
+                long warmDuration = System.currentTimeMillis() - warmStart;
+                System.out.println(String.format("  Warmup %s [%d/3]: %.2f s",
+                        contender.displayName(), i + 1, warmDuration / 1000.0));
+            }
+        }
 
         // Timed runs
         System.out.println("\nTimed runs:");
@@ -237,179 +242,30 @@ class FlatPerformanceTest {
 
     private Function<List<Path>, Result> getRunner(Contender contender) {
         return switch (contender) {
-            case HARDWOOD_INDEXED -> this::runHardwoodIndexed;
-            case HARDWOOD_NAMED -> this::runHardwoodNamed;
-            case HARDWOOD_PROJECTION -> this::runHardwoodProjection;
-            case HARDWOOD_MULTIFILE_INDEXED -> this::runHardwoodMultiFile;
-            case HARDWOOD_MULTIFILE_NAMED -> this::runHardwoodMultiFileNamed;
+            case HARDWOOD_ROW_READER_NAMED -> this::runHardwoodRowReaderNamed;
+            case HARDWOOD_ROW_READER_INDEXED -> this::runHardwoodRowReaderIndexed;
+            case HARDWOOD_ROW_READER_INDEXED_FILE_BY_FILE -> this::runHardwoodRowReaderIndexedFileByFile;
             case HARDWOOD_COLUMN_READER -> this::runHardwoodColumnReader;
-            case HARDWOOD_COLUMN_READER_MULTIFILE -> this::runHardwoodColumnReaderMultiFile;
-            case PARQUET_JAVA_INDEXED -> this::runParquetJavaIndexed;
             case PARQUET_JAVA_NAMED -> this::runParquetJavaNamed;
+            case PARQUET_JAVA_COLUMN -> this::runParquetJavaColumn;
         };
     }
 
     private Result timeRun(String name, Supplier<Result> runner) {
-        System.out.println("  Running " + name + "...");
         long start = System.currentTimeMillis();
         Result result = runner.get();
         long duration = System.currentTimeMillis() - start;
+        System.out.println(String.format("  %s: %.2f s", name, duration / 1000.0));
         return new Result(result.passengerCount(), result.tripDistance(),
                 result.fareAmount(), duration, result.rowCount());
     }
 
-    private Result runHardwoodIndexed(List<Path> files) {
-        long passengerCount = 0;
-        double tripDistance = 0.0;
-        double fareAmount = 0.0;
-        long rowCount = 0;
-
-        try (Hardwood hardwood = Hardwood.create()) {
-            for (Path file : files) {
-                try (ParquetFileReader reader = hardwood.open(InputFile.of(file));
-                        RowReader rowReader = reader.createRowReader()) {
-
-                    // Check column type once per file
-                    SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
-
-                    boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
-                            && pn.type() == PhysicalType.INT64;
-
-                    int passengerCountIndex = reader.getFileSchema().getColumn("passenger_count").columnIndex();
-                    int tripDistanceIndex = reader.getFileSchema().getColumn("trip_distance").columnIndex();
-                    int fareAmountIndex = reader.getFileSchema().getColumn("fare_amount").columnIndex();
-
-                    while (rowReader.hasNext()) {
-                        rowReader.next();
-                        rowCount++;
-                        if (!rowReader.isNull(passengerCountIndex)) {
-                            if (pcIsLong) {
-                                passengerCount += rowReader.getLong(passengerCountIndex);
-                            }
-                            else {
-                                passengerCount += (long) rowReader.getDouble(passengerCountIndex);
-                            }
-                        }
-
-                        if (!rowReader.isNull(tripDistanceIndex)) {
-                            tripDistance += rowReader.getDouble(tripDistanceIndex);
-                        }
-
-                        if (!rowReader.isNull(fareAmountIndex)) {
-                            fareAmount += rowReader.getDouble(fareAmountIndex);
-                        }
-                    }
-                }
-                catch (IOException e) {
-                    throw new RuntimeException("Failed to read file: " + file, e);
-                }
-            }
-        }
-        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
-    }
-
-    private Result runHardwoodNamed(List<Path> files) {
-        long passengerCount = 0;
-        double tripDistance = 0.0;
-        double fareAmount = 0.0;
-        long rowCount = 0;
-
-        try (Hardwood hardwood = Hardwood.create()) {
-            for (Path file : files) {
-                try (ParquetFileReader reader = hardwood.open(InputFile.of(file));
-                        RowReader rowReader = reader.createRowReader()) {
-
-                    // Check column type once per file
-                    SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
-
-                    boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
-                            && pn.type() == PhysicalType.INT64;
-
-                    while (rowReader.hasNext()) {
-                        rowReader.next();
-                        rowCount++;
-                        if (!rowReader.isNull("passenger_count")) {
-                            if (pcIsLong) {
-                                passengerCount += rowReader.getLong("passenger_count");
-                            }
-                            else {
-                                passengerCount += (long) rowReader.getDouble("passenger_count");
-                            }
-                        }
-
-                        if (!rowReader.isNull("trip_distance")) {
-                            tripDistance += rowReader.getDouble("trip_distance");
-                        }
-
-                        if (!rowReader.isNull("fare_amount")) {
-                            fareAmount += rowReader.getDouble("fare_amount");
-                        }
-                    }
-                }
-                catch (IOException e) {
-                    throw new RuntimeException("Failed to read file: " + file, e);
-                }
-            }
-        }
-        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
-    }
-
-    private Result runHardwoodProjection(List<Path> files) {
-        long passengerCount = 0;
-        double tripDistance = 0.0;
-        double fareAmount = 0.0;
-        long rowCount = 0;
-
-        // Only read the 3 columns we need
-        ColumnProjection projection = ColumnProjection.columns(
-                "passenger_count", "trip_distance", "fare_amount");
-
-        try (Hardwood hardwood = Hardwood.create()) {
-            for (Path file : files) {
-                try (ParquetFileReader reader = hardwood.open(InputFile.of(file));
-                        RowReader rowReader = reader.createRowReader(projection)) {
-
-                    // Check column type once per file
-                    SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
-
-                    boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
-                            && pn.type() == PhysicalType.INT64;
-
-                    // Use projected indices (0, 1, 2) instead of original indices
-                    while (rowReader.hasNext()) {
-                        rowReader.next();
-                        rowCount++;
-                        if (!rowReader.isNull(0)) { // passenger_count
-                            if (pcIsLong) {
-                                passengerCount += rowReader.getLong(0);
-                            }
-                            else {
-                                passengerCount += (long) rowReader.getDouble(0);
-                            }
-                        }
-
-                        if (!rowReader.isNull(1)) { // trip_distance
-                            tripDistance += rowReader.getDouble(1);
-                        }
-
-                        if (!rowReader.isNull(2)) { // fare_amount
-                            fareAmount += rowReader.getDouble(2);
-                        }
-                    }
-                }
-                catch (IOException e) {
-                    throw new RuntimeException("Failed to read file: " + file, e);
-                }
-            }
-        }
-        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
-    }
-
-    /// Run using MultiFileRowReader with cross-file prefetching.
+    /// Row-oriented reader opened via [MultiFileParquetReader#openAll] with
+    /// projection and indexed field access.
     ///
     /// Groups files by schema compatibility (passenger_count type varies across files)
-    /// and uses MultiFileRowReader for each group.
-    private Result runHardwoodMultiFile(List<Path> files) {
+    /// and reads each group as a single multi-file read.
+    private Result runHardwoodRowReaderIndexed(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
         double fareAmount = 0.0;
@@ -419,13 +275,12 @@ class FlatPerformanceTest {
                 "passenger_count", "trip_distance", "fare_amount");
         // Projected indices: 0=passenger_count, 1=trip_distance, 2=fare_amount
 
-        // Group files by schema to handle passenger_count type differences
         List<SchemaGroup> groups = groupFilesBySchema(files);
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
                 try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
-                     MultiFileRowReader rowReader = parquet.createRowReader(projection)) {
+                     RowReader rowReader = parquet.createRowReader(projection)) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
                     while (rowReader.hasNext()) {
@@ -453,15 +308,13 @@ class FlatPerformanceTest {
             }
         }
         catch (IOException e) {
-            throw new RuntimeException("Failed to read files with MultiFileRowReader", e);
+            throw new RuntimeException("Failed to read files", e);
         }
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    /// Run using MultiFileRowReader with named (string) field access.
-    ///
-    /// Same as [#runHardwoodMultiFile] but uses field names instead of projected indices.
-    private Result runHardwoodMultiFileNamed(List<Path> files) {
+    /// Same as [#runHardwoodRowReaderIndexed] but uses field names instead of projected indices.
+    private Result runHardwoodRowReaderNamed(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
         double fareAmount = 0.0;
@@ -475,7 +328,7 @@ class FlatPerformanceTest {
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
                 try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
-                     MultiFileRowReader rowReader = parquet.createRowReader(projection)) {
+                     RowReader rowReader = parquet.createRowReader(projection)) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
                     while (rowReader.hasNext()) {
@@ -503,65 +356,50 @@ class FlatPerformanceTest {
             }
         }
         catch (IOException e) {
-            throw new RuntimeException("Failed to read files with MultiFileRowReader", e);
+            throw new RuntimeException("Failed to read files", e);
         }
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    /// Run using the batch ColumnReader API for maximum throughput.
-    /// Reads columns independently using typed arrays with zero boxing.
-    private Result runHardwoodColumnReader(List<Path> files) {
+    /// Row-oriented reader opened one file at a time via [ParquetFileReader],
+    /// with projection and indexed field access. Exists to quantify the
+    /// cross-file prefetching benefit of [MultiFileParquetReader#openAll].
+    private Result runHardwoodRowReaderIndexedFileByFile(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
         double fareAmount = 0.0;
         long rowCount = 0;
 
+        ColumnProjection projection = ColumnProjection.columns(
+                "passenger_count", "trip_distance", "fare_amount");
+
         try (Hardwood hardwood = Hardwood.create()) {
             for (Path file : files) {
-                try (ParquetFileReader reader = hardwood.open(InputFile.of(file))) {
-                    // Check column type once per file
+                try (ParquetFileReader reader = hardwood.open(InputFile.of(file));
+                        RowReader rowReader = reader.createRowReader(projection)) {
+
                     SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
                     boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
                             && pn.type() == PhysicalType.INT64;
 
-                    try (ColumnReader col0 = reader.createColumnReader("passenger_count");
-                         ColumnReader col1 = reader.createColumnReader("trip_distance");
-                         ColumnReader col2 = reader.createColumnReader("fare_amount")) {
-
-                        if (pcIsLong) {
-                            while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
-                                int count = col0.getRecordCount();
-                                long[] v0 = col0.getLongs();
-                                double[] v1 = col1.getDoubles();
-                                double[] v2 = col2.getDoubles();
-                                BitSet n0 = col0.getElementNulls();
-                                BitSet n1 = col1.getElementNulls();
-                                BitSet n2 = col2.getElementNulls();
-
-                                for (int i = 0; i < count; i++) {
-                                    if (n0 == null || !n0.get(i)) passengerCount += v0[i];
-                                    if (n1 == null || !n1.get(i)) tripDistance += v1[i];
-                                    if (n2 == null || !n2.get(i)) fareAmount += v2[i];
-                                }
-                                rowCount += count;
+                    while (rowReader.hasNext()) {
+                        rowReader.next();
+                        rowCount++;
+                        if (!rowReader.isNull(0)) { // passenger_count
+                            if (pcIsLong) {
+                                passengerCount += rowReader.getLong(0);
                             }
-                        } else {
-                            while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
-                                int count = col0.getRecordCount();
-                                double[] v0 = col0.getDoubles();
-                                double[] v1 = col1.getDoubles();
-                                double[] v2 = col2.getDoubles();
-                                BitSet n0 = col0.getElementNulls();
-                                BitSet n1 = col1.getElementNulls();
-                                BitSet n2 = col2.getElementNulls();
-
-                                for (int i = 0; i < count; i++) {
-                                    if (n0 == null || !n0.get(i)) passengerCount += (long) v0[i];
-                                    if (n1 == null || !n1.get(i)) tripDistance += v1[i];
-                                    if (n2 == null || !n2.get(i)) fareAmount += v2[i];
-                                }
-                                rowCount += count;
+                            else {
+                                passengerCount += (long) rowReader.getDouble(0);
                             }
+                        }
+
+                        if (!rowReader.isNull(1)) { // trip_distance
+                            tripDistance += rowReader.getDouble(1);
+                        }
+
+                        if (!rowReader.isNull(2)) { // fare_amount
+                            fareAmount += rowReader.getDouble(2);
                         }
                     }
                 }
@@ -575,7 +413,7 @@ class FlatPerformanceTest {
 
     /// Column-oriented reader with cross-file prefetching via shared FileManager.
     /// Uses MultiFileColumnReaders to share a single FileManager across columns.
-    private Result runHardwoodColumnReaderMultiFile(List<Path> files) {
+    private Result runHardwoodColumnReader(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
         double fareAmount = 0.0;
@@ -602,9 +440,15 @@ class FlatPerformanceTest {
                             BitSet n2 = col2.getElementNulls();
 
                             for (int i = 0; i < count; i++) {
-                                if (n0 == null || !n0.get(i)) passengerCount += v0[i];
-                                if (n1 == null || !n1.get(i)) tripDistance += v1[i];
-                                if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                                if (n0 == null || !n0.get(i)) {
+                                    passengerCount += v0[i];
+                                }
+                                if (n1 == null || !n1.get(i)) {
+                                    tripDistance += v1[i];
+                                }
+                                if (n2 == null || !n2.get(i)) {
+                                    fareAmount += v2[i];
+                                }
                             }
                             rowCount += count;
                         }
@@ -620,9 +464,15 @@ class FlatPerformanceTest {
                             BitSet n2 = col2.getElementNulls();
 
                             for (int i = 0; i < count; i++) {
-                                if (n0 == null || !n0.get(i)) passengerCount += (long) v0[i];
-                                if (n1 == null || !n1.get(i)) tripDistance += v1[i];
-                                if (n2 == null || !n2.get(i)) fareAmount += v2[i];
+                                if (n0 == null || !n0.get(i)) {
+                                    passengerCount += (long) v0[i];
+                                }
+                                if (n1 == null || !n1.get(i)) {
+                                    tripDistance += v1[i];
+                                }
+                                if (n2 == null || !n2.get(i)) {
+                                    fareAmount += v2[i];
+                                }
                             }
                             rowCount += count;
                         }
@@ -671,7 +521,78 @@ class FlatPerformanceTest {
         return groups;
     }
 
-    private Result runParquetJavaIndexed(List<Path> files) {
+    private Result runParquetJavaNamed(List<Path> files) {
+        long passengerCount = 0;
+        double tripDistance = 0.0;
+        double fareAmount = 0.0;
+        long rowCount = 0;
+
+        // Group by schema so we can build a matching projection per group
+        // (passenger_count is INT64 in some files and DOUBLE in others).
+        for (SchemaGroup group : groupFilesBySchema(files)) {
+            boolean pcIsLong = group.passengerCountIsLong();
+            Configuration conf = new Configuration();
+            AvroReadSupport.setRequestedProjection(conf, buildAvroProjection(pcIsLong));
+
+            for (Path file : group.files()) {
+                org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path(file.toUri());
+                try (ParquetReader<GenericRecord> reader = AvroParquetReader
+                        .<GenericRecord> builder(HadoopInputFile.fromPath(hadoopPath, conf))
+                        .withConf(conf)
+                        .build()) {
+                    GenericRecord record;
+                    while ((record = reader.read()) != null) {
+                        rowCount++;
+                        Object pc = record.get("passenger_count");
+                        if (pc != null) {
+                            if (pcIsLong) {
+                                passengerCount += (Long) pc;
+                            }
+                            else {
+                                passengerCount += ((Double) pc).longValue();
+                            }
+                        }
+
+                        Double td = (Double) record.get("trip_distance");
+                        if (td != null) {
+                            tripDistance += td;
+                        }
+
+                        Double fa = (Double) record.get("fare_amount");
+                        if (fa != null) {
+                            fareAmount += fa;
+                        }
+                    }
+                }
+                catch (IOException e) {
+                    throw new RuntimeException("Failed to read file: " + file, e);
+                }
+            }
+        }
+        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+    }
+
+    private static Schema buildAvroProjection(boolean passengerCountIsLong) {
+        SchemaBuilder.FieldAssembler<Schema> fields = SchemaBuilder.record("trip")
+                .namespace("dev.hardwood.perf")
+                .fields();
+        if (passengerCountIsLong) {
+            fields = fields.optionalLong("passenger_count");
+        }
+        else {
+            fields = fields.optionalDouble("passenger_count");
+        }
+        return fields
+                .optionalDouble("trip_distance")
+                .optionalDouble("fare_amount")
+                .endRecord();
+    }
+
+    /// Reads via parquet-java's low-level column API
+    /// ([org.apache.parquet.column.ColumnReader]). Avoids Avro/`GenericRecord`
+    /// materialization but is still value-at-a-time (not vectorized) and
+    /// single-threaded.
+    private Result runParquetJavaColumn(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
         double fareAmount = 0.0;
@@ -680,55 +601,70 @@ class FlatPerformanceTest {
 
         for (Path file : files) {
             org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path(file.toUri());
-            try (ParquetReader<GenericRecord> reader = AvroParquetReader
-                    .<GenericRecord> builder(HadoopInputFile.fromPath(hadoopPath, conf))
-                    .build()) {
-                GenericRecord record;
+            try (org.apache.parquet.hadoop.ParquetFileReader reader =
+                    org.apache.parquet.hadoop.ParquetFileReader.open(
+                            HadoopInputFile.fromPath(hadoopPath, conf))) {
+                MessageType fileSchema = reader.getFileMetaData().getSchema();
+                MessageType projection = new MessageType("trip",
+                        fileSchema.getType("passenger_count"),
+                        fileSchema.getType("trip_distance"),
+                        fileSchema.getType("fare_amount"));
+                reader.setRequestedSchema(projection);
 
-                // Resolve field indices once per file using the schema
-                int pcIndex = -1;
-                int tdIndex = -1;
-                int faIndex = -1;
+                ColumnDescriptor pcCol = projection.getColumnDescription(new String[] { "passenger_count" });
+                ColumnDescriptor tdCol = projection.getColumnDescription(new String[] { "trip_distance" });
+                ColumnDescriptor faCol = projection.getColumnDescription(new String[] { "fare_amount" });
 
-                record = reader.read();
-                if (record != null) {
-                    org.apache.avro.Schema schema = record.getSchema();
-                    pcIndex = schema.getField("passenger_count").pos();
-                    tdIndex = schema.getField("trip_distance").pos();
-                    faIndex = schema.getField("fare_amount").pos();
+                boolean pcIsLong = pcCol.getPrimitiveType().getPrimitiveTypeName()
+                        == PrimitiveType.PrimitiveTypeName.INT64;
+                int pcMaxDef = pcCol.getMaxDefinitionLevel();
+                int tdMaxDef = tdCol.getMaxDefinitionLevel();
+                int faMaxDef = faCol.getMaxDefinitionLevel();
+                String createdBy = reader.getFileMetaData().getCreatedBy();
 
-                    // Process first record
-                    rowCount++;
-                    Long pc = (Long) record.get(pcIndex);
-                    if (pc != null) {
-                        passengerCount += pc;
-                    }
-                    Double td = (Double) record.get(tdIndex);
-                    if (td != null) {
-                        tripDistance += td;
-                    }
-                    Double fa = (Double) record.get(faIndex);
-                    if (fa != null) {
-                        fareAmount += fa;
-                    }
-                }
+                PageReadStore pageStore;
+                while ((pageStore = reader.readNextRowGroup()) != null) {
+                    long rowsInGroup = pageStore.getRowCount();
+                    ColumnReadStoreImpl colStore = new ColumnReadStoreImpl(
+                            pageStore, new NoOpGroupConverter(), projection, createdBy);
 
-                while ((record = reader.read()) != null) {
-                    rowCount++;
-                    Long pc = (Long) record.get(pcIndex);
-                    if (pc != null) {
-                        passengerCount += pc;
-                    }
+                    org.apache.parquet.column.ColumnReader pcReader = colStore.getColumnReader(pcCol);
+                    org.apache.parquet.column.ColumnReader tdReader = colStore.getColumnReader(tdCol);
+                    org.apache.parquet.column.ColumnReader faReader = colStore.getColumnReader(faCol);
 
-                    Double td = (Double) record.get(tdIndex);
-                    if (td != null) {
-                        tripDistance += td;
+                    if (pcIsLong) {
+                        for (long i = 0; i < rowsInGroup; i++) {
+                            if (pcReader.getCurrentDefinitionLevel() == pcMaxDef) {
+                                passengerCount += pcReader.getLong();
+                            }
+                            pcReader.consume();
+                            if (tdReader.getCurrentDefinitionLevel() == tdMaxDef) {
+                                tripDistance += tdReader.getDouble();
+                            }
+                            tdReader.consume();
+                            if (faReader.getCurrentDefinitionLevel() == faMaxDef) {
+                                fareAmount += faReader.getDouble();
+                            }
+                            faReader.consume();
+                        }
                     }
-
-                    Double fa = (Double) record.get(faIndex);
-                    if (fa != null) {
-                        fareAmount += fa;
+                    else {
+                        for (long i = 0; i < rowsInGroup; i++) {
+                            if (pcReader.getCurrentDefinitionLevel() == pcMaxDef) {
+                                passengerCount += (long) pcReader.getDouble();
+                            }
+                            pcReader.consume();
+                            if (tdReader.getCurrentDefinitionLevel() == tdMaxDef) {
+                                tripDistance += tdReader.getDouble();
+                            }
+                            tdReader.consume();
+                            if (faReader.getCurrentDefinitionLevel() == faMaxDef) {
+                                fareAmount += faReader.getDouble();
+                            }
+                            faReader.consume();
+                        }
                     }
+                    rowCount += rowsInGroup;
                 }
             }
             catch (IOException e) {
@@ -738,42 +674,22 @@ class FlatPerformanceTest {
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    private Result runParquetJavaNamed(List<Path> files) {
-        long passengerCount = 0;
-        double tripDistance = 0.0;
-        double fareAmount = 0.0;
-        long rowCount = 0;
-        Configuration conf = new Configuration();
-
-        for (Path file : files) {
-            org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path(file.toUri());
-            try (ParquetReader<GenericRecord> reader = AvroParquetReader
-                    .<GenericRecord> builder(HadoopInputFile.fromPath(hadoopPath, conf))
-                    .build()) {
-                GenericRecord record;
-                while ((record = reader.read()) != null) {
-                    rowCount++;
-                    Long pc = (Long) record.get("passenger_count");
-                    if (pc != null) {
-                        passengerCount += pc;
-                    }
-
-                    Double td = (Double) record.get("trip_distance");
-                    if (td != null) {
-                        tripDistance += td;
-                    }
-
-                    Double fa = (Double) record.get("fare_amount");
-                    if (fa != null) {
-                        fareAmount += fa;
-                    }
-                }
-            }
-            catch (IOException e) {
-                throw new RuntimeException("Failed to read file: " + file, e);
-            }
+    /// No-op [GroupConverter] needed by [ColumnReadStoreImpl]. The column readers
+    /// only invoke the converter when assembling records, which we never do.
+    private static final class NoOpGroupConverter extends GroupConverter {
+        @Override
+        public Converter getConverter(int fieldIndex) {
+            return new PrimitiveConverter() {
+            };
         }
-        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+
+        @Override
+        public void start() {
+        }
+
+        @Override
+        public void end() {
+        }
     }
 
     private void printResults(int fileCount, int runCount, Set<Contender> enabledContenders,
@@ -854,10 +770,7 @@ class FlatPerformanceTest {
     }
 
     private boolean isHardwood(Contender c) {
-        return c == Contender.HARDWOOD_INDEXED || c == Contender.HARDWOOD_NAMED
-                || c == Contender.HARDWOOD_PROJECTION || c == Contender.HARDWOOD_MULTIFILE_INDEXED
-                || c == Contender.HARDWOOD_MULTIFILE_NAMED
-                || c == Contender.HARDWOOD_COLUMN_READER || c == Contender.HARDWOOD_COLUMN_READER_MULTIFILE;
+        return !c.name().startsWith("PARQUET_JAVA");
     }
 
     private void printResultRow(String name, Result result, int cpuCores, long totalBytes) {

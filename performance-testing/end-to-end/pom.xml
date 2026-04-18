@@ -28,6 +28,18 @@
       <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-core</artifactId>
     </dependency>
+    <dependency>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-s3</artifactId>
+      <scope>test</scope>
+    </dependency>
+
+    <!-- S3Proxy (via Testcontainers GenericContainer) for S3-based perf tests -->
+    <dependency>
+      <groupId>org.testcontainers</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
 
     <!-- Compression libraries needed for test files -->
     <dependency>

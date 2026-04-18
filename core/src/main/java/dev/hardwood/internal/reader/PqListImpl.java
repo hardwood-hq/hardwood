@@ -102,7 +102,7 @@ final class PqListImpl implements PqList {
                               int rowIndex, int valueIndex) {
         int projCol = listDesc.firstLeafProjCol();
         int valIdx = resolveFirstValueIndex(batch, listDesc, rowIndex, valueIndex);
-        int defLevel = batch.columns[projCol].getDefLevel(valIdx);
+        int defLevel = batch.getDefLevel(projCol, valIdx);
         return defLevel < listDesc.nullDefLevel();
     }
 
@@ -260,7 +260,7 @@ final class PqListImpl implements PqList {
                                           int rowIndex, int valueIndex) {
         int projCol = listDesc.firstLeafProjCol();
         int mlLevel = listDesc.schema().maxRepetitionLevel();
-        int leafMaxRep = batch.columns[projCol].column().maxRepetitionLevel();
+        int leafMaxRep = batch.getMaxRepLevel(projCol);
 
         int start, end;
         if (valueIndex >= 0 && mlLevel > 0) {
@@ -275,7 +275,7 @@ final class PqListImpl implements PqList {
 
         // Check null/empty using defLevel at the first value position
         int firstValueIdx = resolveFirstValue(batch, projCol, start, mlLevel, leafMaxRep);
-        int defLevel = batch.columns[projCol].getDefLevel(firstValueIdx);
+        int defLevel = batch.getDefLevel(projCol, firstValueIdx);
         if (defLevel < listDesc.nullDefLevel()) {
             return null; // null list
         }
@@ -295,7 +295,7 @@ final class PqListImpl implements PqList {
                                               int rowIndex, int valueIndex) {
         int projCol = listDesc.firstLeafProjCol();
         int mlLevel = listDesc.schema().maxRepetitionLevel();
-        int leafMaxRep = batch.columns[projCol].column().maxRepetitionLevel();
+        int leafMaxRep = batch.getMaxRepLevel(projCol);
 
         int start;
         if (valueIndex >= 0 && mlLevel > 0) {
@@ -324,7 +324,7 @@ final class PqListImpl implements PqList {
         if (batch.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        return ValueConverter.convertValue(batch.columns[projCol].getValue(valueIdx), elementSchema);
+        return ValueConverter.convertValue(batch.getValue(projCol, valueIdx), elementSchema);
     }
 
     private Object getNestedElement(int index) {
@@ -348,8 +348,8 @@ final class PqListImpl implements PqList {
         int projCol = listDesc.firstLeafProjCol();
         int itemIndex = start + index;
         int firstValue = resolveFirstValue(batch, projCol, itemIndex, subLevel - 1,
-                batch.columns[projCol].column().maxRepetitionLevel());
-        int defLevel = batch.columns[projCol].getDefLevel(firstValue);
+                batch.getMaxRepLevel(projCol));
+        int defLevel = batch.getDefLevel(projCol, firstValue);
 
         return defLevel < group.maxDefinitionLevel();
     }
@@ -383,11 +383,11 @@ final class PqListImpl implements PqList {
         int elemDef = innerRepeated.maxDefinitionLevel();
 
         // Check null/empty
-        int leafMaxRep = batch.columns[projCol].column().maxRepetitionLevel();
+        int leafMaxRep = batch.getMaxRepLevel(projCol);
         int innerSubLevel = (subLevel < leafMaxRep - 1) ? subLevel + 1 : -1;
         int firstValue = resolveFirstValue(batch, projCol, innerStart,
                 subLevel, leafMaxRep);
-        int defLevel = batch.columns[projCol].getDefLevel(firstValue);
+        int defLevel = batch.getDefLevel(projCol, firstValue);
         if (defLevel < nullDef) {
             return null;
         }
@@ -446,7 +446,7 @@ final class PqListImpl implements PqList {
         if (projCol < 0) {
             return false;
         }
-        int defLevel = batch.columns[projCol].getDefLevel(valueIdx);
+        int defLevel = batch.getDefLevel(projCol, valueIdx);
         return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 
@@ -483,7 +483,7 @@ final class PqListImpl implements PqList {
                 pos++;
                 return null;
             }
-            Object raw = batch.columns[projCol].getValue(pos++);
+            Object raw = batch.getValue(projCol, pos++);
             return converter.apply(raw);
         }
     }
