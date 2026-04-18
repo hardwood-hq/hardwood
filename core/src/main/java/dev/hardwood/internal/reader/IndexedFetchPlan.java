@@ -113,6 +113,11 @@ final class IndexedFetchPlan implements FetchPlan {
             }
 
             if (!dictionaryParsed) {
+                // Set the flag *before* parsing so a throw from parseDictionary
+                // doesn't cause a retry loop. This is safe because a throw
+                // propagates to ColumnWorker.runRetriever's catch block, which
+                // calls signalError → done=true → the pipeline stops; next() is
+                // never re-entered on the same iterator.
                 dictionaryParsed = true;
                 dictionary = parseDictionary();
             }

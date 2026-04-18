@@ -12,8 +12,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ForkJoinPool;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.metadata.PhysicalType;
@@ -160,31 +158,25 @@ public final class NestedRowReader implements RowReader {
 
     // ==================== Batch Loading ====================
 
-    @SuppressWarnings("unchecked")
     private boolean loadNextBatch() {
-        // Poll all columns in parallel with manual recycling and error checking.
-        CompletableFuture<NestedBatch>[] batchFutures = new CompletableFuture[columnCount];
-        for (int i = 0; i < columnCount; i++) {
-            int col = i;
-            NestedBatch prev = previousBatches[col];
-            batchFutures[i] = CompletableFuture.supplyAsync(() -> {
-                if (prev != null) {
-                    exchanges[col].freeQueue().offer(prev);
-                }
-                try {
-                    return exchanges[col].poll();
-                }
-                catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return null;
-                }
-            }, ForkJoinPool.commonPool());
-        }
-        CompletableFuture.allOf(batchFutures).join();
-
+        // Poll columns sequentially with manual recycling and error checking.
+        // Each poll is non-blocking when its exchange has a batch ready; the
+        // pipeline runs ahead of the consumer in steady state, so the per-call
+        // cost is dominated by the first non-blocking readyQueue.poll().
         NestedBatch[] batches = new NestedBatch[columnCount];
         for (int i = 0; i < columnCount; i++) {
-            NestedBatch batch = batchFutures[i].join();
+            if (previousBatches[i] != null) {
+                exchanges[i].freeQueue().offer(previousBatches[i]);
+                previousBatches[i] = null;
+            }
+            NestedBatch batch;
+            try {
+                batch = exchanges[i].poll();
+            }
+            catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
             if (batch == null || batch.recordCount == 0) {
                 for (int j = 0; j < columnCount; j++) {
                     exchanges[j].checkError();

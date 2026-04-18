@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
@@ -81,14 +82,29 @@ public class RowGroupIterator {
     // Per-row-group fetch plans cache (keyed by work item index).
     private final ConcurrentHashMap<Integer, FetchPlan[]> fetchPlanCache = new ConcurrentHashMap<>();
 
+    // Number of projected columns still referencing each work item. Initialized to
+    // projectedColumnCount in initialize(); each PageSource calls releaseWorkItem
+    // when it advances past a work item, and on zero we evict the metadata and
+    // fetch-plan caches for that index. Prevents unbounded retention of fetched
+    // chunk bytes for the lifetime of the iterator (matters most for remote I/O,
+    // where ChunkHandle.data is heap-allocated rather than an mmap slice).
+    private AtomicIntegerArray workItemRefCounts;
+
     /// A single unit of work: one row group in one file.
+    ///
+    /// `rowsConsumedBefore` is the cumulative row count of all work items
+    /// preceding this one in the work list — used to convert the iterator-wide
+    /// `maxRows` budget into a per-row-group remainder when computing fetch
+    /// plans. (Filter predicates invalidate this correlation, so callers must
+    /// ignore it when a filter is active.)
     public record WorkItem(
             InputFile inputFile,
             RowGroup rowGroup,
             FileSchema fileSchema,
             int fileIndex,
             int rowGroupIndex,
-            int workItemIndex
+            int workItemIndex,
+            long rowsConsumedBefore
     ) {}
 
     /// Cached shared metadata for one row group, reused across columns.
@@ -170,6 +186,12 @@ public class RowGroupIterator {
 
         buildWorkList();
 
+        int columnCount = projectedSchema.getProjectedColumnCount();
+        workItemRefCounts = new AtomicIntegerArray(workItems.size());
+        for (int i = 0; i < workItems.size(); i++) {
+            workItemRefCounts.set(i, columnCount);
+        }
+
         // Trigger prefetch of second file
         triggerPrefetch(1);
 
@@ -239,6 +261,28 @@ public class RowGroupIterator {
         return plans[projectedColumnIndex];
     }
 
+    /// Notifies the iterator that one projected column is done with the given
+    /// work item. Decrements the per-work-item reference counter; when it reaches
+    /// zero (i.e. all columns have advanced past this work item), the cached
+    /// metadata and fetch plans for that work item are evicted, releasing
+    /// references to any fetched chunk bytes they hold.
+    ///
+    /// In-flight `PageInfo` slices and decode tasks keep their byte data alive
+    /// via the slice's parent reference, so eviction here only drops the strong
+    /// cache reference; the underlying chunk memory is reclaimed by GC once
+    /// downstream consumers finish processing.
+    public void releaseWorkItem(WorkItem workItem) {
+        if (workItemRefCounts == null) {
+            return;
+        }
+        int idx = workItem.workItemIndex();
+        int remaining = workItemRefCounts.decrementAndGet(idx);
+        if (remaining == 0) {
+            metadataCache.remove(idx);
+            fetchPlanCache.remove(idx);
+        }
+    }
+
     /// Triggers async pre-computation and pre-fetch for the next row group.
     /// The plan computation is pure metadata work (no I/O). The pre-fetch
     /// kicks off the first chunk's `readRange()` asynchronously.
@@ -269,6 +313,14 @@ public class RowGroupIterator {
         InputFile inputFile = workItem.inputFile();
         int projectedCount = projectedSchema.getProjectedColumnCount();
 
+        // Convert the iterator-wide maxRows into a per-row-group remainder.
+        // `PageLocation.firstRowIndex` and `SequentialFetchPlan.valuesRead`
+        // are both row-group-local (reset to 0 each RG), so passing the global
+        // maxRows would fail to truncate anything in non-first row groups and
+        // over-fetch the last partially-needed RG. With a filter active the
+        // match count is unpredictable, so we fall back to the global value.
+        long perRgMaxRows = perRgMaxRows(workItem);
+
         FetchPlan[] plans = new FetchPlan[projectedCount];
 
         for (int projCol = 0; projCol < projectedCount; projCol++) {
@@ -282,7 +334,7 @@ public class RowGroupIterator {
                 plans[projCol] = SequentialFetchPlan.build(
                         inputFile, columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(),
-                        maxRows > 0 ? maxRows : 0);
+                        perRgMaxRows);
                 continue;
             }
 
@@ -300,8 +352,8 @@ public class RowGroupIterator {
                     continue;
                 }
 
-                if (maxRows > 0) {
-                    neededPages = truncateToMaxRows(neededPages, maxRows);
+                if (perRgMaxRows > 0) {
+                    neededPages = truncateToMaxRows(neededPages, perRgMaxRows);
                 }
 
                 // Coalesce needed pages within this column into page groups,
@@ -425,6 +477,24 @@ public class RowGroupIterator {
         return truncated;
     }
 
+    /// Per-row-group remainder of the iterator-wide `maxRows` budget.
+    ///
+    /// Returns `0` when `maxRows` is unset (no limit). When a filter predicate
+    /// is active the prior-row-count sum can't be correlated with matching
+    /// rows, so the global `maxRows` is returned as a conservative bound.
+    /// Otherwise returns `max(0, maxRows - workItem.rowsConsumedBefore())`,
+    /// which naturally trims the last partially-needed row group's fetch plan
+    /// while being a no-op (all pages kept) for fully-needed earlier ones.
+    private long perRgMaxRows(WorkItem workItem) {
+        if (maxRows <= 0) {
+            return 0;
+        }
+        if (filterPredicate != null) {
+            return maxRows;
+        }
+        return Math.max(0, maxRows - workItem.rowsConsumedBefore());
+    }
+
     /// Returns the context.
     public HardwoodContextImpl context() {
         return context;
@@ -458,6 +528,7 @@ public class RowGroupIterator {
     /// Builds the work list by iterating all files and row groups.
     private void buildWorkList() {
         long rowBudget = maxRows > 0 ? maxRows : Long.MAX_VALUE;
+        long rowsConsumed = 0;
         boolean hasFilter = filterPredicate != null;
 
         for (int fileIndex = 0; fileIndex < inputFiles.size() && rowBudget > 0; fileIndex++) {
@@ -472,7 +543,8 @@ public class RowGroupIterator {
                         prepared.schema,
                         fileIndex,
                         rgIndex,
-                        workItems.size()));
+                        workItems.size(),
+                        rowsConsumed));
 
                 // maxRows limiting: deduct row count from budget.
                 // With a filter active, actual match count is unpredictable,
@@ -480,6 +552,7 @@ public class RowGroupIterator {
                 if (!hasFilter) {
                     rowBudget -= rg.numRows();
                 }
+                rowsConsumed += rg.numRows();
             }
 
             // Trigger prefetch of next file

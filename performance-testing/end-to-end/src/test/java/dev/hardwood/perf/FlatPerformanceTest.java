@@ -74,6 +74,7 @@ class FlatPerformanceTest {
         HARDWOOD_ROW_READER_NAMED("Hardwood (row reader named)"),
         HARDWOOD_ROW_READER_INDEXED("Hardwood (row reader indexed)"),
         HARDWOOD_ROW_READER_INDEXED_FILE_BY_FILE("Hardwood (row reader indexed file-by-file)"),
+        HARDWOOD_ROW_READER_ALL_COLUMNS("Hardwood (row reader all columns)"),
         HARDWOOD_COLUMN_READER("Hardwood (column reader)"),
         PARQUET_JAVA_NAMED("parquet-java (named)"),
         PARQUET_JAVA_COLUMN("parquet-java (column)");
@@ -245,6 +246,7 @@ class FlatPerformanceTest {
             case HARDWOOD_ROW_READER_NAMED -> this::runHardwoodRowReaderNamed;
             case HARDWOOD_ROW_READER_INDEXED -> this::runHardwoodRowReaderIndexed;
             case HARDWOOD_ROW_READER_INDEXED_FILE_BY_FILE -> this::runHardwoodRowReaderIndexedFileByFile;
+            case HARDWOOD_ROW_READER_ALL_COLUMNS -> this::runHardwoodRowReaderAllColumns;
             case HARDWOOD_COLUMN_READER -> this::runHardwoodColumnReader;
             case PARQUET_JAVA_NAMED -> this::runParquetJavaNamed;
             case PARQUET_JAVA_COLUMN -> this::runParquetJavaColumn;
@@ -409,6 +411,102 @@ class FlatPerformanceTest {
             }
         }
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+    }
+
+    /// Row-oriented reader opened via [MultiFileParquetReader#openAll] that
+    /// projects **all** columns, with indexed field access for the three sum
+    /// columns. Indices are resolved once per schema group (all files in a
+    /// group share the same fingerprint, so leaf-column positions are stable).
+    ///
+    /// Useful for stressing the per-column pipeline with a wide projection —
+    /// e.g. measuring whether sequential vs parallel batch polling in
+    /// [dev.hardwood.internal.reader.FlatRowReader#loadNextBatch] becomes a
+    /// bottleneck as column count grows.
+    ///
+    /// Groups files by full schema fingerprint (every leaf column's type)
+    /// rather than just `passenger_count`, since other columns (e.g.
+    /// `airport_fee`) drift across files and would otherwise prevent a
+    /// multi-file open.
+    private Result runHardwoodRowReaderAllColumns(List<Path> files) {
+        long passengerCount = 0;
+        double tripDistance = 0.0;
+        double fareAmount = 0.0;
+        long rowCount = 0;
+
+        List<SchemaGroup> groups = groupFilesByFullSchema(files);
+
+        try (Hardwood hardwood = Hardwood.create()) {
+            for (SchemaGroup group : groups) {
+                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
+                     RowReader rowReader = parquet.createRowReader()) {
+                    boolean pcIsLong = group.passengerCountIsLong();
+
+                    int passengerCountIndex = parquet.getFileSchema().getColumn("passenger_count").columnIndex();
+                    int tripDistanceIndex = parquet.getFileSchema().getColumn("trip_distance").columnIndex();
+                    int fareAmountIndex = parquet.getFileSchema().getColumn("fare_amount").columnIndex();
+
+                    while (rowReader.hasNext()) {
+                        rowReader.next();
+                        rowCount++;
+
+                        if (!rowReader.isNull(passengerCountIndex)) {
+                            if (pcIsLong) {
+                                passengerCount += rowReader.getLong(passengerCountIndex);
+                            }
+                            else {
+                                passengerCount += (long) rowReader.getDouble(passengerCountIndex);
+                            }
+                        }
+
+                        if (!rowReader.isNull(tripDistanceIndex)) {
+                            tripDistance += rowReader.getDouble(tripDistanceIndex);
+                        }
+
+                        if (!rowReader.isNull(fareAmountIndex)) {
+                            fareAmount += rowReader.getDouble(fareAmountIndex);
+                        }
+                    }
+                }
+            }
+        }
+        catch (IOException e) {
+            throw new RuntimeException("Failed to read files", e);
+        }
+        return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
+    }
+
+    /// Like [#groupFilesBySchema] but keys on the full schema fingerprint
+    /// (every leaf column's name + physical type), so that drift in any column
+    /// — not just `passenger_count` — produces a separate group.
+    private List<SchemaGroup> groupFilesByFullSchema(List<Path> files) {
+        java.util.LinkedHashMap<String, List<Path>> bySchema = new java.util.LinkedHashMap<>();
+        java.util.Map<String, Boolean> pcIsLongBySchema = new java.util.HashMap<>();
+
+        for (Path file : files) {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+                StringBuilder fp = new StringBuilder();
+                for (dev.hardwood.schema.ColumnSchema col : reader.getFileSchema().getColumns()) {
+                    fp.append(col.name()).append(':').append(col.type()).append(';');
+                }
+                String fingerprint = fp.toString();
+
+                SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
+                boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
+                        && pn.type() == PhysicalType.INT64;
+
+                bySchema.computeIfAbsent(fingerprint, k -> new ArrayList<>()).add(file);
+                pcIsLongBySchema.putIfAbsent(fingerprint, pcIsLong);
+            }
+            catch (IOException e) {
+                throw new RuntimeException("Failed to read schema from: " + file, e);
+            }
+        }
+
+        List<SchemaGroup> groups = new ArrayList<>();
+        for (java.util.Map.Entry<String, List<Path>> e : bySchema.entrySet()) {
+            groups.add(new SchemaGroup(e.getValue(), pcIsLongBySchema.get(e.getKey())));
+        }
+        return groups;
     }
 
     /// Column-oriented reader with cross-file prefetching via shared FileManager.

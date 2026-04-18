@@ -85,7 +85,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     @Override
     void publishCurrentBatch() {
-        if (closed) {
+        if (done) {
             return;
         }
         currentBatch.recordCount = rowsInCurrentBatch;
@@ -96,11 +96,11 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         long t0 = System.nanoTime();
         try {
             if (!exchange.publish(currentBatch)) {
-                return; // closed during publish
+                return; // stopped during publish
             }
             currentBatch = exchange.takeBatch();
             if (currentBatch == null) {
-                return; // closed during take
+                return; // stopped during take
             }
         }
         catch (InterruptedException e) {

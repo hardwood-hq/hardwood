@@ -287,9 +287,11 @@ public final class SequentialFetchPlan implements FetchPlan {
         }
 
         /// Reads bytes that span multiple chunks by advancing through
-        /// handles and concatenating.
+        /// handles and concatenating. Uses a direct buffer so the result is
+        /// usable from FFM-based decompressors (e.g. libdeflate), which
+        /// require native MemorySegments.
         private ByteBuffer assembleFromChunks(int relPos, int length) {
-            ByteBuffer combined = ByteBuffer.allocate(length);
+            ByteBuffer combined = ByteBuffer.allocateDirect(length);
             int remaining = length;
             while (remaining > 0) {
                 if (relPos < handleStart || relPos >= handleEnd) {

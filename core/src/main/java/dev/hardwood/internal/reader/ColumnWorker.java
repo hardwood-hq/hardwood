@@ -59,8 +59,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     private volatile int consumePosition;
 
     // === Pipeline control ===
-    volatile boolean finished;
-    volatile boolean closed;
+    /// Set when the worker should stop, for any of three reasons: the consumer
+    /// called [#close()], the drain reached natural EOF or the configured
+    /// `maxRows` (via [#finishDrain()]), or an error was raised
+    /// (via [#signalError(Throwable)]). Both VThreads exit promptly when set.
+    volatile boolean done;
     private final AtomicReference<Throwable> error = new AtomicReference<>();
 
     // === Thread references (for unpark) ===
@@ -127,15 +130,16 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// their results are not drained.
     @Override
     public void close() {
-        closed = true;
+        done = true;
         exchange.finish();  // signals BatchExchange's timeout loops to exit
         LockSupport.unpark(retrieverThread);
         LockSupport.unpark(drainThread);
     }
 
-    /// Whether the pipeline has finished producing batches.
+    /// Whether the pipeline has stopped producing batches (for any reason —
+    /// natural EOF, `maxRows`, error, or [#close()]).
     public boolean isFinished() {
-        return finished;
+        return done;
     }
 
     // ==================== Retriever VThread ====================
@@ -156,7 +160,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
             long t0;
             PageInfo pageInfo;
-            while (!closed) {
+            while (!done) {
                 // Pull next page from source
                 t0 = System.nanoTime();
                 pageInfo = pageSource.next();
@@ -175,12 +179,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
                 // Throttle: park while too many pages are in flight
                 t0 = System.nanoTime();
-                while (!closed && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
+                while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
                     throttleParks++;
                     LockSupport.park();
                 }
                 throttleNanos += System.nanoTime() - t0;
-                if (closed) {
+                if (done) {
                     break;
                 }
 
@@ -193,14 +197,14 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 CompletableFuture.runAsync(() -> decode(slot, pi, rdr), decodeExecutor);
             }
 
-            if (!closed) {
+            if (!done) {
                 // The sentinel needs a free slot. If all MAX_INFLIGHT_PAGES slots
                 // are occupied (pages submitted but not yet drained), wait for
                 // the drain to advance before writing.
-                while (!closed && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
+                while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
                     LockSupport.park();
                 }
-                if (!closed) {
+                if (!done) {
                     int sentinelSlot = nextSeq % MAX_INFLIGHT_PAGES;
                     reorderBuffer.set(sentinelSlot, EMPTY_SENTINEL);
                     LockSupport.unpark(drainThread);
@@ -220,7 +224,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
     /// Decode task: decodes one page, stores result in reorder buffer, unparks drain.
     private void decode(int slot, PageInfo pageInfo, PageDecoder pageDecoder) {
-        if (closed || error.get() != null) {
+        if (done || error.get() != null) {
             return;
         }
         try {
@@ -245,21 +249,19 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             currentBatch = exchange.takeBatch();
             initDrainState();
 
-            while (!closed && !finished) {
+            while (!done) {
                 long t0 = System.nanoTime();
                 boolean drained = drainReadyPages();
                 assemblyNanos += System.nanoTime() - t0;
 
-                if (!finished && !closed) {
-                    if (!drained) {
-                        // No pages were ready — park until a decode task completes
-                        long parkStart = System.nanoTime();
-                        decodeWaitParks++;
-                        LockSupport.park();
-                        decodeWaitNanos += System.nanoTime() - parkStart;
-                    }
-                    // If we drained something, loop immediately to check for more
+                if (!done && !drained) {
+                    // No pages were ready — park until a decode task completes
+                    long parkStart = System.nanoTime();
+                    decodeWaitParks++;
+                    LockSupport.park();
+                    decodeWaitNanos += System.nanoTime() - parkStart;
                 }
+                // If we drained something, loop immediately to check for more
             }
 
             // assemblyNanos includes publishBlock; subtract to get pure assembly
@@ -282,7 +284,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// Returns true if at least one page was drained.
     private boolean drainReadyPages() {
         boolean drained = false;
-        while (!closed) {
+        while (!done) {
             int slot = consumePosition % MAX_INFLIGHT_PAGES;
             Page page = reorderBuffer.getAndSet(slot, null);
             if (page == null) {
@@ -305,15 +307,19 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         if (rowsInCurrentBatch > 0) {
             publishCurrentBatch();
         }
-        finished = true;
+        done = true;
         exchange.finish();
+        // Wake the retriever so it can observe `done` and exit; otherwise it
+        // could be parked on the throttle indefinitely (consumePosition never
+        // advances again once drain has finished).
+        unparkRetriever();
     }
 
     // ==================== Error Handling ====================
 
     void signalError(Throwable t) {
         error.compareAndSet(null, t);
-        finished = true;
+        done = true;
         exchange.signalError(t);
         LockSupport.unpark(retrieverThread);
         LockSupport.unpark(drainThread);

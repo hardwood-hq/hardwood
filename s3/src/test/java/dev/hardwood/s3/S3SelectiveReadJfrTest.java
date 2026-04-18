@@ -7,8 +7,6 @@
  */
 package dev.hardwood.s3;
 
-import static org.assertj.core.api.Assertions.assertThat;
-
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
@@ -29,6 +27,8 @@ import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
+
+import static org.assertj.core.api.Assertions.assertThat;
 
 /// Verifies that column projection and row group filtering reduce S3 I/O,
 /// using JFR events as the assertion mechanism:

@@ -25,6 +25,8 @@ import dev.hardwood.InputFile;
 /// zero-copy slice — the fetch is instant and pre-fetch is effectively a no-op.
 public class ChunkHandle {
 
+    private static final System.Logger LOG = System.getLogger(ChunkHandle.class.getName());
+
     private final InputFile inputFile;
     private final long fileOffset;
     private final int length;
@@ -78,7 +80,19 @@ public class ChunkHandle {
         // does not trigger further pre-fetches)
         ChunkHandle next = nextChunk;
         if (next != null) {
-            CompletableFuture.runAsync(next::fetchData);
+            CompletableFuture.runAsync(next::fetchData)
+                    .exceptionally(t -> {
+                        // The demand-path fetch will re-attempt and surface a
+                        // fresh exception if the error is sustained, so we log
+                        // at DEBUG rather than WARN to avoid flooding logs
+                        // during a real backend outage. Logged here so
+                        // transient failures (which the retry would hide) are
+                        // still diagnosable.
+                        LOG.log(System.Logger.Level.DEBUG,
+                                "Prefetch failed for chunk at offset {0} (length {1}) in {2}",
+                                next.fileOffset, next.length, next.inputFile.name(), t);
+                        return null;
+                    });
         }
         return data;
     }

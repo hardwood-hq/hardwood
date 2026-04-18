@@ -14,8 +14,6 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.BitSet;
 import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.concurrent.ForkJoinPool;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -426,29 +424,20 @@ public final class FlatRowReader implements RowReader {
 
     // ==================== Batch Loading ====================
 
-    @SuppressWarnings("unchecked")
     private boolean loadNextBatch() {
-        CompletableFuture<BatchExchange.Batch>[] futures = new CompletableFuture[columnCount];
         for (int i = 0; i < columnCount; i++) {
-            int col = i;
-            BatchExchange.Batch prev = previousBatches[col];
-            futures[i] = CompletableFuture.supplyAsync(() -> {
-                if (prev != null) {
-                    exchanges[col].freeQueue().offer(prev);
-                }
-                try {
-                    return exchanges[col].poll();
-                }
-                catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return null;
-                }
-            }, ForkJoinPool.commonPool());
-        }
-        CompletableFuture.allOf(futures).join();
-
-        for (int i = 0; i < columnCount; i++) {
-            BatchExchange.Batch batch = futures[i].join();
+            if (previousBatches[i] != null) {
+                exchanges[i].freeQueue().offer(previousBatches[i]);
+                previousBatches[i] = null;
+            }
+            BatchExchange.Batch batch;
+            try {
+                batch = exchanges[i].poll();
+            }
+            catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return false;
+            }
             if (batch == null || batch.recordCount == 0) {
                 // Check for pipeline errors before returning exhausted —
                 // the pipeline may have errored after publishing partial results.
