@@ -616,3 +616,7 @@ Hardwood throws specific exceptions for common error conditions:
 | `NoSuchElementException` | Calling `next()` on a `RowReader` when `hasNext()` returns `false` |
 | `IllegalStateException` | Calling `ColumnReader` accessors before `nextBatch()`, or calling nested-column methods on a flat column |
 
+All exceptions raised during reading include the originating file name as a
+`[filename.parquet] ` prefix in the message. This makes it straightforward to
+identify which file caused an error, especially in multi-file reading scenarios.
+

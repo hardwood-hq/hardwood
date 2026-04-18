@@ -15,6 +15,7 @@ import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.ChunkRange;
@@ -105,6 +106,9 @@ public class ColumnReader implements AutoCloseable {
     private BitSet elementNulls;
     private boolean nestedDataComputed;
 
+    // File name for exception context — dynamic for multi-file readers
+    private final java.util.function.Supplier<String> fileNameSupplier;
+
     /// Single-file constructor with lazy row-group and page fetching.
     ColumnReader(ColumnSchema column, PageScanner firstScanner, HardwoodContextImpl context,
                  int batchSize, int[] levelNullThresholds,
@@ -125,6 +129,7 @@ public class ColumnReader implements AutoCloseable {
         PageCursor pageCursor = PageCursor.create(firstScanner, context, 0,
                 fileName, assemblyBuffer, rowGroupSource, firstRowGroupIndex, totalRowGroups);
         this.iterator = new ColumnValueIterator(pageCursor, column, flat);
+        this.fileNameSupplier = iterator::getCurrentFileName;
     }
 
     /// Multi-file constructor. When `fileManager` is non-null, creates a [PageCursor]
@@ -147,6 +152,7 @@ public class ColumnReader implements AutoCloseable {
         PageCursor pageCursor = PageCursor.create(
                 pageInfos, context, fileManager, projectedColumnIndex, fileName, assemblyBuffer);
         this.iterator = new ColumnValueIterator(pageCursor, column, flat);
+        this.fileNameSupplier = iterator::getCurrentFileName;
     }
 
     // ==================== Batch Iteration ====================
@@ -155,6 +161,15 @@ public class ColumnReader implements AutoCloseable {
     ///
     /// @return true if a batch is available, false if exhausted
     public boolean nextBatch() {
+        try {
+            return nextBatchInternal();
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
+    }
+
+    private boolean nextBatchInternal() {
         if (exhausted) {
             return false;
         }
@@ -178,71 +193,109 @@ public class ColumnReader implements AutoCloseable {
 
     /// Number of top-level records in the current batch.
     public int getRecordCount() {
-        checkBatchAvailable();
-        return currentBatch.recordCount();
+        try {
+            checkBatchAvailable();
+            return currentBatch.recordCount();
+        } catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     /// Total number of leaf values in the current batch.
     /// For flat columns, this equals [#getRecordCount()].
     public int getValueCount() {
-        checkBatchAvailable();
-        return currentBatch.valueCount();
+        try {
+            checkBatchAvailable();
+            return currentBatch.valueCount();
+        } catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Typed Value Arrays ====================
 
     public int[] getInts() {
-        checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.IntColumn c -> c.values();
-            case NestedColumnData.IntColumn c -> c.values();
-            default -> throw typeMismatch("int");
-        };
+        try {
+            checkBatchAvailable();
+            return switch (currentBatch) {
+                case FlatColumnData.IntColumn c -> c.values();
+                case NestedColumnData.IntColumn c -> c.values();
+                default -> throw typeMismatch("int");
+            };
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     public long[] getLongs() {
-        checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.LongColumn c -> c.values();
-            case NestedColumnData.LongColumn c -> c.values();
-            default -> throw typeMismatch("long");
-        };
+        try {
+            checkBatchAvailable();
+            return switch (currentBatch) {
+                case FlatColumnData.LongColumn c -> c.values();
+                case NestedColumnData.LongColumn c -> c.values();
+                default -> throw typeMismatch("long");
+            };
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     public float[] getFloats() {
-        checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.FloatColumn c -> c.values();
-            case NestedColumnData.FloatColumn c -> c.values();
-            default -> throw typeMismatch("float");
-        };
+        try {
+            checkBatchAvailable();
+            return switch (currentBatch) {
+                case FlatColumnData.FloatColumn c -> c.values();
+                case NestedColumnData.FloatColumn c -> c.values();
+                default -> throw typeMismatch("float");
+            };
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     public double[] getDoubles() {
-        checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.DoubleColumn c -> c.values();
-            case NestedColumnData.DoubleColumn c -> c.values();
-            default -> throw typeMismatch("double");
-        };
+        try {
+            checkBatchAvailable();
+            return switch (currentBatch) {
+                case FlatColumnData.DoubleColumn c -> c.values();
+                case NestedColumnData.DoubleColumn c -> c.values();
+                default -> throw typeMismatch("double");
+            };
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     public boolean[] getBooleans() {
-        checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.BooleanColumn c -> c.values();
-            case NestedColumnData.BooleanColumn c -> c.values();
-            default -> throw typeMismatch("boolean");
-        };
+        try {
+            checkBatchAvailable();
+            return switch (currentBatch) {
+                case FlatColumnData.BooleanColumn c -> c.values();
+                case NestedColumnData.BooleanColumn c -> c.values();
+                default -> throw typeMismatch("boolean");
+            };
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     public byte[][] getBinaries() {
-        checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.ByteArrayColumn c -> c.values();
-            case NestedColumnData.ByteArrayColumn c -> c.values();
-            default -> throw typeMismatch("byte[]");
-        };
+        try {
+            checkBatchAvailable();
+            return switch (currentBatch) {
+                case FlatColumnData.ByteArrayColumn c -> c.values();
+                case NestedColumnData.ByteArrayColumn c -> c.values();
+                default -> throw typeMismatch("byte[]");
+            };
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Logical Type Accessors ====================
@@ -255,19 +308,24 @@ public class ColumnReader implements AutoCloseable {
     /// @return String array with converted values
     /// @throws IllegalStateException if the column is not a BYTE_ARRAY type
     public String[] getStrings() {
-        byte[][] raw = getBinaries();
-        int count = currentBatch.valueCount();
-        BitSet nulls = getElementNulls();
-        String[] result = new String[count];
-        for (int i = 0; i < count; i++) {
-            if (nulls != null && nulls.get(i)) {
-                result[i] = null;
+        try {
+            byte[][] raw = getBinaries();
+            int count = currentBatch.valueCount();
+            BitSet nulls = getElementNulls();
+            String[] result = new String[count];
+            for (int i = 0; i < count; i++) {
+                if (nulls != null && nulls.get(i)) {
+                    result[i] = null;
+                }
+                else {
+                    result[i] = new String(raw[i], StandardCharsets.UTF_8);
+                }
             }
-            else {
-                result[i] = new String(raw[i], StandardCharsets.UTF_8);
-            }
+            return result;
         }
-        return result;
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Null Handling ====================
@@ -276,12 +334,17 @@ public class ColumnReader implements AutoCloseable {
     ///
     /// @return BitSet where set bits indicate null values, or null if all elements are required
     public BitSet getElementNulls() {
-        checkBatchAvailable();
-        if (currentBatch instanceof FlatColumnData flat) {
-            return flat.nulls();
+        try {
+            checkBatchAvailable();
+            if (currentBatch instanceof FlatColumnData flat) {
+                return flat.nulls();
+            }
+            ensureNestedDataComputed();
+            return elementNulls;
         }
-        ensureNestedDataComputed();
-        return elementNulls;
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     /// Null bitmap at a given nesting level. Only valid for nested columns
@@ -290,10 +353,15 @@ public class ColumnReader implements AutoCloseable {
     /// @param level the nesting level (0 = outermost group)
     /// @return BitSet where set bits indicate null groups, or null if that level is required
     public BitSet getLevelNulls(int level) {
-        checkBatchAvailable();
-        checkNestedLevel(level);
-        ensureNestedDataComputed();
-        return levelNulls[level];
+        try {
+            checkBatchAvailable();
+            checkNestedLevel(level);
+            ensureNestedDataComputed();
+            return levelNulls[level];
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Offsets for Repeated Columns ====================
@@ -309,10 +377,15 @@ public class ColumnReader implements AutoCloseable {
     /// @param level the nesting level (0-indexed)
     /// @return offset array for the given level
     public int[] getOffsets(int level) {
-        checkBatchAvailable();
-        checkNestedLevel(level);
-        ensureNestedDataComputed();
-        return multiLevelOffsets[level];
+        try {
+            checkBatchAvailable();
+            checkNestedLevel(level);
+            ensureNestedDataComputed();
+            return multiLevelOffsets[level];
+        }
+        catch (RuntimeException e) {
+            throw wrapWithFileContext(e);
+        }
     }
 
     // ==================== Metadata ====================
@@ -327,6 +400,13 @@ public class ColumnReader implements AutoCloseable {
     }
 
     // ==================== Internal ====================
+
+    /// Enriches a runtime exception with the current file name. Delegates to
+    /// [ExceptionContext.addFileContext] which preserves the original exception
+    /// type and cause chain.
+    private RuntimeException wrapWithFileContext(RuntimeException e) {
+        return ExceptionContext.addFileContext(fileNameSupplier.get(), e);
+    }
 
     private void checkBatchAvailable() {
         if (currentBatch == null) {

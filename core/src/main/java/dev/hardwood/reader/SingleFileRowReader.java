@@ -98,6 +98,7 @@ final class SingleFileRowReader extends AbstractRowReader {
         this.maxRows = maxRows;
         this.filterPredicate = filterPredicate;
         this.projectedSchemaRef = projectedSchema;
+        this.fileName = inputFile.name();
     }
 
     @Override

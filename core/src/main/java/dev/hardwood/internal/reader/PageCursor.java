@@ -16,6 +16,7 @@ import java.util.List;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.Executor;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.jfr.PrefetchMissEvent;
 
 /// Cursor over a column's pages with async prefetching.
@@ -62,11 +63,19 @@ public class PageCursor {
     private PageReader nextFileReader; // Reader for prefetched next file (null if not yet fetched)
 
     // Adaptive prefetch queue
-    private final Deque<CompletableFuture<Page>> prefetchQueue = new ArrayDeque<>();
+    private record PrefetchedPage(CompletableFuture<Page> future, String fileName) {}
+    private final Deque<PrefetchedPage> prefetchQueue = new ArrayDeque<>();
     private int targetPrefetchDepth = INITIAL_PREFETCH_DEPTH;
 
     // Eager assembly support (optional)
     private final ColumnAssemblyBuffer assemblyBuffer;
+
+    // Tracks which file each page in pageInfos belongs to (parallel to pageInfos)
+    private final List<String> pageFileNames = new ArrayList<>();
+
+    // File name of the last page returned by nextPage() — set in every return path
+    // so the assembly thread can pass it to appendPage() without relying on currentFileIndex
+    private String lastPageFileName;
 
     // Active page scanner for the current row group (yields pages incrementally)
     private PageScanner activeScanner;
@@ -138,6 +147,11 @@ public class PageCursor {
         this.currentRowGroupIndex = firstRowGroupIndex;
         this.totalRowGroups = totalRowGroups;
 
+        // Initialize page-to-file mapping: all initial pages belong to the first file
+        for (int i = 0; i < pageInfos.size(); i++) {
+            pageFileNames.add(initialFileName);
+        }
+
         // Initialize PageReader and column name from the scanner or first page
         if (initialScanner != null) {
             this.columnName = initialScanner.columnSchema().name();
@@ -187,13 +201,24 @@ public class PageCursor {
             while (hasNext()) {
                 Page page = nextPage();
                 if (page != null) {
-                    assemblyBuffer.appendPage(page);
+                    // lastPageFileName was set by nextPage() to the file that produced
+                    // this page — it's determined at prefetch/decode time, not at
+                    // consumption time, so it's always accurate regardless of how far
+                    // ahead currentFileIndex has advanced during prefetching.
+                    assemblyBuffer.appendPage(page, getLastPageFileName());
                 }
             }
             assemblyBuffer.finish();
         }
         catch (Throwable t) {
-            assemblyBuffer.signalError(t);
+            // Tag the error with the file being processed so the consumer gets
+            // a meaningful message when the error surfaces via awaitNextBatch().
+            String fileName = getLastPageFileName();
+            if (fileName != null && t instanceof RuntimeException re) {
+                assemblyBuffer.signalError(ExceptionContext.addFileContext(fileName, re));
+            } else {
+                assemblyBuffer.signalError(t);
+            }
         }
     }
 
@@ -239,7 +264,10 @@ public class PageCursor {
                     if (nextPageIndex >= pageInfos.size()) {
                         return null;
                     }
-                    return decodePageAndRelease(nextPageIndex++);
+                    int pageIndex = nextPageIndex++;
+                    lastPageFileName = pageFileNames.get(pageIndex);
+                    pageFileNames.set(pageIndex, null);
+                    return decodePageAndRelease(pageIndex);
                 }
                 // Fall through to get from prefetch queue
             }
@@ -256,20 +284,24 @@ public class PageCursor {
                 missEvent.queueEmpty = true;
                 missEvent.commit();
 
-                return decodePageAndRelease(nextPageIndex++);
+                int pageIndex = nextPageIndex++;
+                lastPageFileName = pageFileNames.get(pageIndex);
+                pageFileNames.set(pageIndex, null);
+                return decodePageAndRelease(pageIndex);
             }
         }
 
-        CompletableFuture<Page> future = prefetchQueue.pollFirst();
+        PrefetchedPage entry = prefetchQueue.pollFirst();
+        lastPageFileName = entry.fileName();
 
         // Miss: had to wait - increase prefetch depth
-        if (!future.isDone() && targetPrefetchDepth < MAX_PREFETCH_DEPTH) {
+        if (!entry.future().isDone() && targetPrefetchDepth < MAX_PREFETCH_DEPTH) {
             targetPrefetchDepth++;
             LOG.log(System.Logger.Level.DEBUG, "[{0}] Prefetch miss for column ''{1}'', increasing depth to {2}",
-                    getCurrentFileName(), columnName, targetPrefetchDepth);
+                    lastPageFileName, columnName, targetPrefetchDepth);
 
             PrefetchMissEvent missEvent = new PrefetchMissEvent();
-            missEvent.file = getCurrentFileName();
+            missEvent.file = lastPageFileName;
             missEvent.column = columnName;
             missEvent.newDepth = targetPrefetchDepth;
             missEvent.queueEmpty = false;
@@ -279,7 +311,7 @@ public class PageCursor {
         // Refill queue after consuming
         fillPrefetchQueue();
 
-        return future.join();
+        return entry.future().join();
     }
 
     /// Fill the prefetch queue up to targetPrefetchDepth.
@@ -298,11 +330,14 @@ public class PageCursor {
         // The ColumnAssemblyBuffer's back-pressure (blocking queue capacity 2) naturally
         // gates how fast row groups are consumed.
 
-        // Proactively fetch next file if current file is running low
-        // Only fetch if we haven't already fetched it (nextFileReader == null)
+        // Proactively fetch the next file once the current file is truly winding down.
+        // We must not switch files while later row groups of the current file can still
+        // produce more pages, or those row groups may be skipped or misattributed.
         int pagesRemainingInCurrentFile = currentFileEndIndex - nextPageIndex;
         if (fileManager != null
                 && nextFileReader == null
+                && activeScanner == null
+                && !hasMoreRowGroups()
                 && pagesRemainingInCurrentFile < targetPrefetchDepth
                 && fileManager.hasFile(currentFileIndex + 1)) {
 
@@ -332,7 +367,11 @@ public class PageCursor {
                     }
 
                     // Add pages from next file (currentFileEndIndex stays the same - it marks the boundary)
+                    String nextFileName = fileManager.getFileName(currentFileIndex + 1);
                     pageInfos.addAll(nextFilePages);
+                    for (int i = 0; i < nextFilePages.size(); i++) {
+                        pageFileNames.add(nextFileName);
+                    }
                 }
             }
             // If file not ready, we'll try again next time fillPrefetchQueue is called
@@ -347,6 +386,7 @@ public class PageCursor {
                         PageInfo page = activeScanner.nextPage();
                         if (page != null) {
                             pageInfos.add(page);
+                            pageFileNames.add(getSourceFileName());
                         }
                         else {
                             activeScanner = null;
@@ -380,8 +420,10 @@ public class PageCursor {
 
             int pageIndex = nextPageIndex++;
             PageReader reader = this.pageReader;
-            prefetchQueue.addLast(CompletableFuture.supplyAsync(
-                    () -> decodePageAndRelease(pageIndex, reader), executor));
+            String fileNameForPage = pageFileNames.get(pageIndex);
+            pageFileNames.set(pageIndex, null);
+            prefetchQueue.addLast(new PrefetchedPage(CompletableFuture.supplyAsync(
+                    () -> decodePageAndRelease(pageIndex, reader), executor), fileNameForPage));
         }
     }
 
@@ -486,7 +528,11 @@ public class PageCursor {
         }
 
         // Add pages from next file
+        String nextFileName = fileManager.getFileName(currentFileIndex + 1);
         pageInfos.addAll(nextFilePages);
+        for (int i = 0; i < nextFilePages.size(); i++) {
+            pageFileNames.add(nextFileName);
+        }
 
         LOG.log(System.Logger.Level.DEBUG,
                 "[{0}] Loaded {1} pages for column ''{2}''",
@@ -495,15 +541,39 @@ public class PageCursor {
         return true;
     }
 
-    /// Gets the current file name for logging purposes.
-    private String getCurrentFileName() {
+    /// Gets the current file name for consumer-side queries.
+    ///
+    /// For **nested schemas** (no assembly buffer), the consumer thread calls `nextPage()`
+    /// directly, so `currentFileIndex` accurately reflects the consumer's position and
+    /// we delegate to `fileManager`.
+    ///
+    /// For **flat schemas** (with assembly buffer), `currentFileIndex` reflects the
+    /// assembly thread's prefetch position which may differ from the consumer's. In
+    /// that case we return `initialFileName` as a safe default — the assembly buffer's
+    /// `lastBatchFileName` is the primary source of truth (queried via
+    /// `ColumnValueIterator.getCurrentFileName()`).
+    String getCurrentFileName() {
+        if (fileManager != null && assemblyBuffer == null) {
+            return getSourceFileName();
+        }
+        return initialFileName;
+    }
+
+    /// Returns the file name of the last page returned by `nextPage()`. This is set
+    /// in every return path of `nextPage()` and is used exclusively by the assembly
+    /// thread to tag batches with the correct source file.
+    String getLastPageFileName() {
+        return lastPageFileName;
+    }
+
+    private String getSourceFileName() {
         if (fileManager != null) {
-            String fileName = fileManager.getFileName(currentFileIndex);
-            if (fileName != null) {
-                return fileName;
+            String name = fileManager.getFileName(currentFileIndex);
+            if (name != null) {
+                return name;
             }
         }
-        return initialFileName != null ? initialFileName : "unknown";
+        return initialFileName;
     }
 
     /// Decode the page at the given index, release its PageInfo reference, and return the decoded page.
