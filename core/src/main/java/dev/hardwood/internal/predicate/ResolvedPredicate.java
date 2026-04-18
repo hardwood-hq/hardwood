@@ -53,6 +53,9 @@ public sealed interface ResolvedPredicate {
         }
     }
 
+    record GeospatialPredicate(int columnIndex, double xmin, double ymin,
+                               double xmax, double ymax) implements ResolvedPredicate {}
+
     /// Negates a predicate. For leaf predicates, the operator is inverted (e.g. GT → LT_EQ).
     /// For compound predicates, De Morgan's laws are applied:
     /// `NOT(AND(a, b))` → `OR(NOT(a), NOT(b))` and `NOT(OR(a, b))` → `AND(NOT(a), NOT(b))`.
@@ -92,6 +95,8 @@ public sealed interface ResolvedPredicate {
                 }
                 yield new And(notEqs);
             }
+            case GeospatialPredicate p -> throw new UnsupportedOperationException(
+                    "Negation of spatial intersects predicate is not supported");
         };
     }
 }
