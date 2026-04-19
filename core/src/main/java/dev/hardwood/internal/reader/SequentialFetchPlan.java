@@ -25,9 +25,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// [FetchPlan] for columns without an OffsetIndex.
 ///
 /// Pages are discovered lazily by scanning headers from fixed-size
-/// [ChunkHandle]s. The column chunk is split into uniform chunks
-/// (default 128 MB, or 4 MB with `maxRows`). A single `ChunkHandle`
-/// serves both header scanning and page data resolution.
+/// [ChunkHandle]s. The column chunk is split into uniform chunks.
+/// A single `ChunkHandle` serves both header scanning and page data
+/// resolution.
 ///
 /// Each time a new chunk is entered, the next chunk's `ChunkHandle` is
 /// created and chained for one-ahead pre-fetch. When `ensureFetched()`
@@ -39,14 +39,23 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// - Without `maxRows`: `min(chunkLength, 128 MB)` — full column chunk
 ///   in one fetch for most columns.
-/// - With `maxRows`: `min(chunkLength, 4 MB)` — limits over-fetch for
-///   partial reads.
+/// - With `maxRows`: sized from the column's average compressed
+///   bytes-per-value (`totalCompressedSize / numValues`) multiplied by
+///   `maxRows` and a safety factor, floored at one page size and
+///   capped at the default ceiling.
 public final class SequentialFetchPlan implements FetchPlan {
 
-    /// Chunk size when maxRows is active (4 MB).
-    private static final int MAX_ROWS_CHUNK_SIZE = 4 * 1024 * 1024;
+    /// Minimum chunk size when `maxRows` is active (1 MB).
+    /// Sized to roughly one Parquet data page so header scanning does not
+    /// require sub-page round-trips.
+    private static final int MAX_ROWS_CHUNK_FLOOR = 1024 * 1024;
 
-    /// Chunk size when reading without a row limit (128 MB).
+    /// Safety factor applied to the `maxRows * avgBytesPerValue` estimate
+    /// to absorb per-value size skew within the column chunk.
+    private static final int MAX_ROWS_CHUNK_SAFETY_FACTOR = 2;
+
+    /// Chunk size when reading without a row limit (128 MB). Also used as
+    /// the ceiling for the `maxRows` dynamic estimate.
     /// Overridable via the `hardwood.internal.sequentialChunkSize` system property (bytes).
     private static final int DEFAULT_CHUNK_SIZE =
             Integer.getInteger("hardwood.internal.sequentialChunkSize", 128 * 1024 * 1024);
@@ -94,11 +103,44 @@ public final class SequentialFetchPlan implements FetchPlan {
                                       int rowGroupIndex, String fileName, long maxRows) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         int columnChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
-        int maxChunkSize = (maxRows > 0) ? MAX_ROWS_CHUNK_SIZE : DEFAULT_CHUNK_SIZE;
-        int chunkSize = Math.min(columnChunkLength, maxChunkSize);
+        int chunkSize = Math.min(columnChunkLength,
+                computeChunkSize(columnChunk.metaData(), maxRows));
 
         return new SequentialFetchPlan(inputFile, columnChunkOffset, columnChunkLength, chunkSize,
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName);
+    }
+
+    /// Computes the per-fetch chunk size.
+    ///
+    /// Without `maxRows`, returns the default ceiling so most column chunks
+    /// are fetched in a single request. With `maxRows`, estimates the bytes
+    /// required from the column's average compressed bytes-per-value:
+    ///
+    /// ```
+    /// chunkSize = maxRows * (totalCompressedSize / numValues) * safetyFactor
+    /// ```
+    ///
+    /// The estimate is floored at [MAX_ROWS_CHUNK_FLOOR] to avoid sub-page
+    /// round-trips during header scanning and capped at [DEFAULT_CHUNK_SIZE].
+    private static int computeChunkSize(ColumnMetaData metaData, long maxRows) {
+        if (maxRows <= 0) {
+            return DEFAULT_CHUNK_SIZE;
+        }
+        long numValues = metaData.numValues();
+        if (numValues <= 0) {
+            return MAX_ROWS_CHUNK_FLOOR;
+        }
+        long totalCompressedSize = metaData.totalCompressedSize();
+        // Cap the effective row count so that effectiveRows * totalCompressedSize
+        // cannot overflow (both factors bounded by the column chunk's own counts).
+        long effectiveRows = Math.min(maxRows, numValues);
+        long estimate = Math.ceilDiv(
+                effectiveRows * totalCompressedSize * MAX_ROWS_CHUNK_SAFETY_FACTOR, numValues);
+        // Cap the floor at the ceiling so an override of `DEFAULT_CHUNK_SIZE`
+        // below the floor does not produce an invalid clamp range.
+        long floor = Math.min(MAX_ROWS_CHUNK_FLOOR, DEFAULT_CHUNK_SIZE);
+        long bounded = Math.clamp(estimate, floor, DEFAULT_CHUNK_SIZE);
+        return Math.toIntExact(bounded);
     }
 
     /// Lazily discovers pages by scanning headers from [ChunkHandle]s.

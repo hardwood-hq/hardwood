@@ -138,6 +138,41 @@ public class PageScannerTest {
         }
     }
 
+    @Test
+    void sequentialScanWithMaxRowsStopsEarly() throws Exception {
+        Path file = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        FileMetaData fileMetaData;
+        FileSchema schema;
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            fileMetaData = reader.getFileMetaData();
+            schema = reader.getFileSchema();
+        }
+
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             InputFile inputFile = InputFile.of(file)) {
+            inputFile.open();
+
+            RowGroup rowGroup = fileMetaData.rowGroups().get(0);
+            ColumnChunk columnChunk = rowGroup.columns().get(0);
+            ColumnSchema columnSchema = schema.getColumn(0);
+
+            assertThat(columnChunk.offsetIndexOffset()).isNull();
+
+            List<PageInfo> fullPages = collectPages(SequentialFetchPlan.build(
+                    inputFile, columnSchema, columnChunk,
+                    context, 0, inputFile.name(), 0).pages());
+
+            // Requesting a single row must not scan past the first data page.
+            List<PageInfo> limitedPages = collectPages(SequentialFetchPlan.build(
+                    inputFile, columnSchema, columnChunk,
+                    context, 0, inputFile.name(), 1).pages());
+
+            assertThat(limitedPages).hasSize(1);
+            assertThat(limitedPages.size()).isLessThanOrEqualTo(fullPages.size());
+        }
+    }
+
     private static RowGroupIterator createIterator(InputFile inputFile, FileSchema schema,
                                                     FileMetaData metaData,
                                                     HardwoodContextImpl context) {
