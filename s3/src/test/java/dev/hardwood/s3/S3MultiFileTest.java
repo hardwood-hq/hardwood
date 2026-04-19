@@ -20,7 +20,7 @@ import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileRowReader;
+import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -60,7 +60,7 @@ class S3MultiFileTest {
                         source.inputFilesInBucket("test-bucket",
                                 "plain_uncompressed.parquet",
                                 "plain_uncompressed.parquet"))) {
-            try (MultiFileRowReader rows = reader.createRowReader()) {
+            try (RowReader rows = reader.createRowReader()) {
                 int count = 0;
                 while (rows.hasNext()) {
                     rows.next();

@@ -54,12 +54,14 @@ public class FilterPredicateResolver {
         return switch (predicate) {
             case DateColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT32, cs);
                 yield new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(),
                         Math.toIntExact(p.value().toEpochDay()));
             }
             case InstantColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 LogicalType.TimeUnit unit = getTimestampUnit(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT64, cs);
                 yield new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(),
@@ -67,6 +69,7 @@ public class FilterPredicateResolver {
             }
             case TimeColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 LogicalType.TimeUnit unit = getTimeUnit(p.column(), cs);
                 long value = localTimeToLong(p.value(), unit);
                 if (unit == LogicalType.TimeUnit.MILLIS) {
@@ -79,6 +82,7 @@ public class FilterPredicateResolver {
             }
             case DecimalColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 LogicalType.DecimalType dt = getDecimalType(p.column(), cs);
                 // setScale without RoundingMode throws ArithmeticException if rounding is needed,
                 // which is the correct behavior: the predicate value must match the column's scale exactly
@@ -100,60 +104,72 @@ public class FilterPredicateResolver {
             }
             case IntColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT32, cs);
                 yield new ResolvedPredicate.IntPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case LongColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT64, cs);
                 yield new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case FloatColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.FLOAT, cs);
                 yield new ResolvedPredicate.FloatPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case DoubleColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.DOUBLE, cs);
                 yield new ResolvedPredicate.DoublePredicate(cs.columnIndex(), p.op(), p.value());
             }
             case BooleanColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.BOOLEAN, cs);
                 yield new ResolvedPredicate.BooleanPredicate(cs.columnIndex(), p.op(), p.value());
             }
             case BinaryColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), false);
             }
             case FilterPredicate.SignedBinaryColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), true);
             }
             case IntInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT32, cs);
                 yield new ResolvedPredicate.IntInPredicate(cs.columnIndex(), p.values());
             }
             case LongInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.INT64, cs);
                 yield new ResolvedPredicate.LongInPredicate(cs.columnIndex(), p.values());
             }
             case BinaryInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values());
             }
             case FilterPredicate.IsNullPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 yield new ResolvedPredicate.IsNullPredicate(cs.columnIndex());
             }
             case FilterPredicate.IsNotNullPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
                 yield new ResolvedPredicate.IsNotNullPredicate(cs.columnIndex());
             }
             case And a -> new ResolvedPredicate.And(a.filters().stream()
@@ -196,6 +212,14 @@ public class FilterPredicateResolver {
     }
 
     // ==================== Type validation ====================
+
+    private static void rejectRepeated(String columnName, ColumnSchema columnSchema) {
+        if (columnSchema.maxRepetitionLevel() > 0) {
+            throw new IllegalArgumentException(
+                    "Filter predicates do not support repeated columns. "
+                    + "Column '" + columnName + "' is repeated.");
+        }
+    }
 
     private static void validateType(String columnName, PhysicalType expectedType,
             ColumnSchema columnSchema) {

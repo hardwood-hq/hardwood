@@ -22,4 +22,13 @@ public record ColumnChunk(
         Integer offsetIndexLength,
         Long columnIndexOffset,
         Integer columnIndexLength) {
+
+    /// Computes the absolute file offset where a column chunk's data starts.
+    public long chunkStartOffset() {
+        Long dictOffset = metaData().dictionaryPageOffset();
+        return (dictOffset != null && dictOffset > 0)
+                ? dictOffset
+                : metaData().dataPageOffset();
+    }
+
 }

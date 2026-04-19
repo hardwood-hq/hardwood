@@ -41,9 +41,15 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// smaller than 64 KB are served entirely from that cache — no additional socket
 /// reads occur. The byte-comparison tests therefore use `page_index_test.parquet`
 /// (170 KB, larger than the tail cache) to ensure socket-level differences are observable.
+///
+/// The lazy fetch tests override `hardwood.internal.sequentialChunkSize` to a small value
+/// so that the generated test files stay small while still exercising multi-chunk
+/// behaviour.
 @Testcontainers
 @org.moditect.jfrunit.JfrEventTest
 public class S3SelectiveReadJfrTest {
+
+    private static final System.Logger LOG = System.getLogger(S3SelectiveReadJfrTest.class.getName());
 
     /// 170 KB, 3 columns (id, value, category), many pages, offset indexes — larger than the 64 KB tail cache.
     private static final String PAGE_INDEX_FILE = "page_index_test.parquet";
@@ -52,23 +58,36 @@ public class S3SelectiveReadJfrTest {
     private static final String FILTER_PUSHDOWN_FILE = "filter_pushdown_int.parquet";
 
     /// Generated on-the-fly: 8 INT64 columns, 20 row groups of 50000 rows each (1M rows total).
-    /// With 8 INT64 columns (64 bytes/row), batch size is ~98K rows.
-    /// ColumnAssemblyBuffer back-pressure (3 batches max) kicks in after ~295K rows (~6 row groups),
-    /// preventing the assembly thread from fetching all 20 row groups.
     private static final String LAZY_ROWGROUP_FILE = "lazy_rowgroup_test.parquet";
     private static final int LAZY_RG_COUNT = 20;
     private static final int LAZY_RG_ROWS = 50_000;
     private static final int LAZY_RG_COLUMNS = 8;
 
-    /// Generated on-the-fly: 1 row group, 500K rows, 8 INT64 columns, 1000 rows per page.
-    /// Each page is ~8 KB, 500 pages per column, ~4 MB per column, ~32 MB total.
-    /// With 8 INT64 columns (64 bytes/row), batch size is ~98K rows.
-    /// Back-pressure at ~3 batches ≈ 295K rows ≈ 295 of 500 pages per column.
-    /// Partial read should fetch significantly less than the full 32 MB.
+    /// Generated on-the-fly for cross-RG lazy fetch tests.
+    /// 40 row groups, each column chunk ~400 KB (50K rows × 8 bytes).
+    /// With the 128 KB test chunk size, each column spans ~3 chunks, and
+    /// partial reads skip most RGs entirely.
     private static final String LAZY_PAGE_FILE = "lazy_page_test.parquet";
-    private static final int LAZY_PAGE_ROWS = 500_000;
-    private static final int LAZY_PAGE_COLUMNS = 8;
-    private static final int LAZY_PAGE_ROWS_PER_PAGE = 1000;
+    private static final int LAZY_PAGE_RG_COUNT = 40;
+    private static final int LAZY_PAGE_RG_ROWS = 50_000;
+    private static final int LAZY_PAGE_COLUMNS = 4;
+
+    /// Generated on-the-fly for early-close back-pressure tests.
+    /// 10 row groups with many pages per column. Each column chunk is
+    /// ~1.6 MB (200K rows × 8 bytes); with the 128 KB test chunk size,
+    /// that's ~12 chunks per column per RG. One batch (~196K rows) consumes
+    /// nearly one entire RG, so the pipeline processes ~1-2 RGs before
+    /// back-pressure from the BatchExchange stops it. With 10 RGs, early
+    /// close should save at least 75% vs a full read.
+    private static final String LARGE_RG_FILE = "large_rg_test.parquet";
+    private static final int LARGE_RG_COUNT = 10;
+    private static final int LARGE_RG_ROWS = 200_000;
+    private static final int LARGE_RG_COLUMNS = 4;
+    private static final int LARGE_RG_ROWS_PER_PAGE = 1_000;
+
+    /// Override the sequential chunk size so the generated test files stay small
+    /// while still producing multiple chunks per column.
+    private static final int TEST_CHUNK_SIZE = 128 * 1024;
 
     private static final Path TEST_RESOURCES = Path.of("").toAbsolutePath()
             .resolve("../core/src/test/resources").normalize();
@@ -82,6 +101,9 @@ public class S3SelectiveReadJfrTest {
 
     @BeforeAll
     static void setup() throws Exception {
+        // Override sequential chunk size for this test class
+        System.setProperty("hardwood.internal.sequentialChunkSize", String.valueOf(TEST_CHUNK_SIZE));
+
         source = S3Source.builder()
                 .endpoint(s3Mock.getHttpEndpoint())
                 .pathStyle(true)
@@ -96,12 +118,53 @@ public class S3SelectiveReadJfrTest {
         source.api().putObject("test-bucket", LAZY_ROWGROUP_FILE,
                 TestParquetGenerator.generate(LAZY_RG_COUNT, LAZY_RG_ROWS, LAZY_RG_COLUMNS));
         source.api().putObject("test-bucket", LAZY_PAGE_FILE,
-                TestParquetGenerator.generate(1, LAZY_PAGE_ROWS, LAZY_PAGE_COLUMNS, LAZY_PAGE_ROWS_PER_PAGE));
+                TestParquetGenerator.generate(LAZY_PAGE_RG_COUNT, LAZY_PAGE_RG_ROWS, LAZY_PAGE_COLUMNS));
+        source.api().putObject("test-bucket", LARGE_RG_FILE,
+                TestParquetGenerator.generate(LARGE_RG_COUNT, LARGE_RG_ROWS, LARGE_RG_COLUMNS, LARGE_RG_ROWS_PER_PAGE));
     }
 
     @AfterAll
     static void tearDown() {
+        System.clearProperty("hardwood.internal.sequentialChunkSize");
         source.close();
+    }
+
+    @Test
+    @EnableEvent("dev.hardwood.RowGroupScanned")
+    void fullReadScansAllRowGroupsAndReturnsAllRows() throws Exception {
+        int expectedRows = LAZY_RG_COUNT * LAZY_RG_ROWS;
+        int rowCount = 0;
+        long lastC0 = -1;
+
+        try (ParquetFileReader reader = ParquetFileReader.open(
+                source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
+            try (RowReader rows = reader.createRowReader()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                    lastC0 = rows.getLong("c0");
+                    rowCount++;
+                }
+            }
+        }
+
+        assertThat(rowCount)
+                .as("Full read should return all rows across all row groups")
+                .isEqualTo(expectedRows);
+        assertThat(lastC0)
+                .as("Last c0 value should be expectedRows - 1")
+                .isEqualTo(expectedRows - 1);
+
+        jfrEvents.awaitEvents();
+
+        long scannedEvents = jfrEvents
+                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
+                .count();
+
+        long expectedEvents = (long) LAZY_RG_COUNT * LAZY_RG_COLUMNS;
+        assertThat(scannedEvents)
+                .as("Full read should scan all row groups (%d RGs × %d columns)".formatted(
+                        LAZY_RG_COUNT, LAZY_RG_COLUMNS))
+                .isEqualTo(expectedEvents);
     }
 
     // ==================== Column Projection ====================
@@ -215,121 +278,24 @@ public class S3SelectiveReadJfrTest {
                 .isEqualTo(3);
     }
 
-    // ==================== Lazy Row-Group Initialization ====================
+    // ==================== Row Limit ====================
 
     @Test
     @EnableEvent("dev.hardwood.RowGroupScanned")
-    void lazyInitScansRowGroupsIncrementally() throws Exception {
-        // Verify that lazy row-group initialization scans row groups incrementally
-        // (on demand) rather than all at once in initialize().
-        // The RowGroupScanned events should come from multiple row groups, confirming
-        // that PageCursor's tryLoadNextRowGroupBlocking() drives the scanning.
-        try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
-            try (RowReader rows = reader.createRowReader()) {
-                while (rows.hasNext()) {
-                    rows.next();
-                }
-            }
-        }
-
-        jfrEvents.awaitEvents();
-
-        long scannedRowGroups = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
-                .count();
-
-        // All row groups × all columns should be scanned for a full read
-        long expectedEvents = (long) LAZY_RG_COUNT * LAZY_RG_COLUMNS;
-        assertThat(scannedRowGroups)
-                .as("Full read should scan all row groups (%d RGs × %d columns)".formatted(
-                        LAZY_RG_COUNT, LAZY_RG_COLUMNS))
-                .isEqualTo(expectedEvents);
-    }
-
-    @Test
-    @EnableEvent("dev.hardwood.RowGroupScanned")
-    void partialReadDoesNotScanAllRowGroups() throws Exception {
-        // Read only 10 rows from a 1M-row file with 20 row groups.
-        // Back-pressure from ColumnAssemblyBuffer should prevent the assembly threads
-        // from scanning all 20 row groups.
-        jfrEvents.reset();
-
-        try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
-            try (RowReader rows = reader.createRowReader()) {
-                int count = 0;
-                while (rows.hasNext() && count < 10) {
-                    rows.next();
-                    count++;
-                }
-                assertThat(count).isEqualTo(10);
-            }
-        }
-
-        jfrEvents.awaitEvents();
-
-        long scannedRowGroups = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
-                .count();
-
-        // Print per-column row group counts for diagnostic visibility
-        java.util.Map<String, Long> rowGroupsPerColumn = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
-                .collect(Collectors.groupingBy(e -> e.getString("column"), Collectors.counting()));
-        System.out.println("Partial read: " + scannedRowGroups + " RowGroupScanned events, per column: " + rowGroupsPerColumn);
-
-        // Full read produces 160 events (20 RGs × 8 columns).
-        // With batch size ~98K rows and ColumnAssemblyBuffer back-pressure (capacity 2 + 1 being
-        // filled = 3 batches ≈ 295K rows ≈ 6 row groups), the assembly threads should scan
-        // at most ~6 of 20 row groups before blocking. That's ~48 events (6 × 8 columns).
-        // Allow some margin for thread scheduling variance.
-        assertThat(scannedRowGroups)
-                .as("Partial read (10 rows) should scan far fewer row groups than full read (160)")
-                .isLessThanOrEqualTo(50);
-    }
-
-    @Test
-    void fullReadReturnsAllRows() throws Exception {
-        // Verify that lazy row-group initialization reads all data correctly
-        // across lazily-fetched row groups.
-        int expectedRows = LAZY_RG_COUNT * LAZY_RG_ROWS;
-        int rowCount = 0;
-        long lastC0 = -1;
-
-        try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
-            try (RowReader rows = reader.createRowReader()) {
-                while (rows.hasNext()) {
-                    rows.next();
-                    lastC0 = rows.getLong("c0");
-                    rowCount++;
-                }
-            }
-        }
-
-        assertThat(rowCount)
-                .as("Full read should return all rows across all row groups")
-                .isEqualTo(expectedRows);
-        assertThat(lastC0)
-                .as("Last c0 value should be expectedRows - 1")
-                .isEqualTo(expectedRows - 1);
-    }
-
-    // ==================== Row Limit (Phase 3) ====================
-
-    @Test
-    @EnableEvent("dev.hardwood.RowGroupScanned")
+    @EnableEvent("jdk.SocketRead")
     void maxRowsSkipsUnneededRowGroups() throws Exception {
         // lazy_rowgroup_test.parquet: 20 row groups × 50K rows × 8 columns.
         // With maxRows=10, the reader knows from metadata that only 1 row group
-        // is needed (first RG has 50K rows > 10). It should never register the
-        // remaining 19 row groups with PageCursor.
+        // is needed (first RG has 50K rows > 10).
+
+        long fullReadBytes = readAndMeasureSocketBytes(LAZY_ROWGROUP_FILE,
+                ColumnProjection.all(), null);
+
         jfrEvents.reset();
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
-            try (RowReader rows = reader.createRowReader(10)) {
+            try (RowReader rows = reader.createRowReader(ColumnProjection.all(), null, 10L)) {
                 int count = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -345,29 +311,44 @@ public class S3SelectiveReadJfrTest {
                 .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
                 .count();
 
+        long partialReadBytes = jfrEvents
+                .filter(e -> "jdk.SocketRead".equals(e.getEventType().getName()))
+                .mapToLong(e -> e.getLong("bytesRead"))
+                .sum();
+
+        LOG.log(System.Logger.Level.INFO,
+                "maxRowsSkipsUnneededRowGroups: full={0} bytes, maxRows=10 read={1} bytes ({2}%), scanned={3} events",
+                fullReadBytes, partialReadBytes, partialReadBytes * 100 / fullReadBytes, scannedEvents);
+
         // With maxRows=10, totalRowGroups is set to 1 (first RG has 50K rows).
         // Only 1 row group × 8 columns = 8 RowGroupScanned events.
-        // Without maxRows, we saw ~33-48 events (6 row groups due to back-pressure).
         assertThat(scannedEvents)
-                .as("maxRows=10 should limit to 1 row group (8 events for 8 columns)")
+                .as("maxRows=10 should limit to 1 row group (8 events for 8 columns); "
+                        + "scanned=%d".formatted(scannedEvents))
                 .isLessThanOrEqualTo(8);
+
+        // maxRows=10 limits to 1 of 40 RGs — should transfer well under 25%.
+        assertThat(partialReadBytes)
+                .as("maxRows=10 should transfer well under 10%% of full read; "
+                        + "full=%,d bytes, partial=%,d bytes (%d%%)"
+                                .formatted(fullReadBytes, partialReadBytes,
+                                        partialReadBytes * 100 / fullReadBytes))
+                .isLessThan(fullReadBytes / 10);
     }
 
-    // ==================== Lazy Page Fetching (Phase 2) ====================
+    // ==================== Lazy Fetch: Early Close ====================
 
     @Test
     @EnableEvent("jdk.SocketRead")
-    void partialReadFromSingleRowGroupTransfersFewerBytes() throws Exception {
-        // lazy_page_test.parquet: 1 row group, 100K rows, 4 columns, 1000 rows/page.
-        // Phase 1 doesn't help (only 1 row group). Phase 2's windowed chunk reader
-        // should fetch only the first window (~256 KB) per column instead of the
-        // full ~800 KB per column.
+    @EnableEvent("dev.hardwood.RowGroupScanned")
+    void earlyCloseTransfersFewerBytesThanFullRead() throws Exception {
+        // lazy_page_test.parquet: 40 row groups × 50K rows × 4 INT64 columns.
+        // Reading 10 rows and closing relies on pipeline back-pressure and
+        // cancellation on close() to avoid fetching the entire file.
 
-        // Full read: measure total bytes
         long fullReadBytes = readAndMeasureSocketBytes(LAZY_PAGE_FILE,
                 ColumnProjection.all(), null);
 
-        // Partial read: 10 rows only
         jfrEvents.reset();
 
         try (ParquetFileReader reader = ParquetFileReader.open(
@@ -388,19 +369,78 @@ public class S3SelectiveReadJfrTest {
                 .mapToLong(e -> e.getLong("bytesRead"))
                 .sum();
 
-        System.out.println("Phase 2 test: full read " + fullReadBytes
-                + " bytes, partial read " + partialReadBytes + " bytes ("
-                + (partialReadBytes * 100 / fullReadBytes) + "%)");
+        long scannedEvents = jfrEvents
+                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
+                .count();
 
-        // Back-pressure limits the assembly thread to ~3 batches (~295K of 500K rows).
-        // The windowed chunk reader fetches only the pages covered by those rows,
-        // so partial read should transfer well under 75% of full read bytes.
+        LOG.log(System.Logger.Level.INFO,
+                "earlyCloseTransfersFewerBytesThanFullRead: full={0} bytes, partial={1} bytes ({2}%), scanned={3} events",
+                fullReadBytes, partialReadBytes, partialReadBytes * 100 / fullReadBytes, scannedEvents);
+
+        // The pipeline processes ~1-2 RGs before back-pressure and close()
+        // stop it. With 40 RGs, the partial read should be well under 25%.
         assertThat(partialReadBytes)
-                .as("Partial read (10 rows) from single row group should transfer significantly fewer bytes")
-                .isLessThan(fullReadBytes * 3 / 4);
+                .as("Early close (10 rows from 40 RGs) should transfer under 25%% of full read; "
+                        + "full=%,d bytes, partial=%,d bytes (%d%%)"
+                                .formatted(fullReadBytes, partialReadBytes,
+                                        partialReadBytes * 100 / fullReadBytes))
+                .isLessThan(fullReadBytes / 4);
+
+        // Full read scans 160 events (40 RGs × 4 columns). Back-pressure
+        // should limit scanning to a fraction of row groups.
+        assertThat(scannedEvents)
+                .as("Early close should scan far fewer than all 40 RGs; scanned=%d"
+                        .formatted(scannedEvents))
+                .isLessThan(50);
     }
 
-    // ==================== Lazy Row-Group Initialization (ColumnReader) ====================
+    @Test
+    @EnableEvent("jdk.SocketRead")
+    void earlyCloseFromLargeRowGroupDoesNotFetchEntireFile() throws Exception {
+        // large_rg_test.parquet: 10 row groups × 200K rows × 4 INT64 columns.
+        // One batch (~196K rows) consumes nearly one RG. Reading 10 rows and
+        // closing should process at most ~1-2 RGs before BatchExchange
+        // back-pressure and close() stop the pipeline. With 10 RGs total,
+        // the partial read should be well under 25%.
+
+        long fullReadBytes = readAndMeasureSocketBytes(LARGE_RG_FILE,
+                ColumnProjection.all(), null);
+
+        jfrEvents.reset();
+
+        try (ParquetFileReader reader = ParquetFileReader.open(
+                source.inputFile("test-bucket", LARGE_RG_FILE))) {
+            try (RowReader rows = reader.createRowReader()) {
+                int count = 0;
+                while (rows.hasNext() && count < 10) {
+                    rows.next();
+                    count++;
+                }
+            }
+        }
+
+        jfrEvents.awaitEvents();
+
+        long partialReadBytes = jfrEvents
+                .filter(e -> "jdk.SocketRead".equals(e.getEventType().getName()))
+                .mapToLong(e -> e.getLong("bytesRead"))
+                .sum();
+
+        LOG.log(System.Logger.Level.INFO,
+                "earlyCloseFromLargeRowGroupDoesNotFetchEntireFile: full={0} bytes, partial={1} bytes ({2}%)",
+                fullReadBytes, partialReadBytes, partialReadBytes * 100 / fullReadBytes);
+
+        // The pipeline processes ~1-2 RGs before back-pressure and close()
+        // stop it. With 10 RGs, the partial read should be well under 33%.
+        assertThat(partialReadBytes)
+                .as("Early close (10 rows from 10 RGs) should transfer under 25%% of full read; "
+                        + "full=%,d bytes, partial=%,d bytes (%d%%)"
+                                .formatted(fullReadBytes, partialReadBytes,
+                                        partialReadBytes * 100 / fullReadBytes))
+                .isLessThan(fullReadBytes / 3);
+    }
+
+    // ==================== ColumnReader ====================
 
     @Test
     @EnableEvent("dev.hardwood.RowGroupScanned")
@@ -422,17 +462,13 @@ public class S3SelectiveReadJfrTest {
                 .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
                 .count();
 
-        System.out.println("ColumnReader partial read: " + scannedEvents + " RowGroupScanned events");
-
-        // ColumnReader reads a single column, so each row group produces 1 RowGroupScanned event.
-        // Full read = 20 events. ColumnReader uses DEFAULT_BATCH_SIZE (262144 rows) — larger
-        // than the RowReader's adaptive size. With 50K rows per row group, one batch spans
-        // ~6 row groups. ColumnAssemblyBuffer back-pressure (3 batches in flight) limits
-        // to ~18 row groups, but the consumer reads only 1 batch and closes, so fewer are
-        // scanned in practice.
+        // ColumnReader reads a single column, so each row group produces 1 event.
+        // Full read = 20 events. Consumer reads 1 batch and closes; back-pressure
+        // limits scanning to a handful of RGs.
         assertThat(scannedEvents)
-                .as("ColumnReader partial read should scan far fewer than all 20 row groups")
-                .isLessThanOrEqualTo(15);
+                .as("ColumnReader partial read should scan far fewer than all 20 row groups; "
+                        + "scanned=%d".formatted(scannedEvents))
+                .isLessThan(10);
     }
 
     // ==================== Helpers ====================

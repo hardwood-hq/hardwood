@@ -7,42 +7,24 @@
  */
 package dev.hardwood.reader;
 
-import java.io.IOException;
-import java.io.UncheckedIOException;
-import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.reader.ChunkRange;
-import dev.hardwood.internal.reader.ColumnAssemblyBuffer;
-import dev.hardwood.internal.reader.ColumnIndexBuffers;
-import dev.hardwood.internal.reader.ColumnValueIterator;
-import dev.hardwood.internal.reader.FileManager;
-import dev.hardwood.internal.reader.FlatColumnData;
+import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.FlatColumnWorker;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.NestedColumnData;
+import dev.hardwood.internal.reader.NestedBatch;
+import dev.hardwood.internal.reader.NestedColumnWorker;
 import dev.hardwood.internal.reader.NestedLevelComputer;
-import dev.hardwood.internal.reader.PageCursor;
-import dev.hardwood.internal.reader.PageInfo;
-import dev.hardwood.internal.reader.PageRange;
-import dev.hardwood.internal.reader.PageRangeData;
-import dev.hardwood.internal.reader.PageScanner;
-import dev.hardwood.internal.reader.RowGroupIndexBuffers;
-import dev.hardwood.internal.reader.RowGroupPageSource;
-import dev.hardwood.internal.reader.RowRanges;
-import dev.hardwood.internal.reader.TypedColumnData;
-import dev.hardwood.internal.reader.WindowedChunkReader;
-import dev.hardwood.internal.thrift.OffsetIndexReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
-import dev.hardwood.metadata.ColumnChunk;
-import dev.hardwood.metadata.OffsetIndex;
+import dev.hardwood.internal.reader.PageSource;
+import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.ProjectedSchema;
 
 /// Batch-oriented column reader for reading a single column across all row groups.
 ///
@@ -91,12 +73,19 @@ public class ColumnReader implements AutoCloseable {
 
     private final ColumnSchema column;
     private final int maxRepetitionLevel;
-    private final ColumnValueIterator iterator;
-    private final int batchSize;
-    private final int[] levelNullThresholds; // pre-computed per rep level
+    private final int maxDefinitionLevel;
+    private final boolean nested;
+    private final BatchExchange<BatchExchange.Batch> flatBuffer;
+    private final BatchExchange<NestedBatch> nestedBuffer;
+    private final AutoCloseable columnWorker;
+    private final RowGroupIterator rowGroupIterator;
+    private final int[] levelNullThresholds;
 
-    // Current batch state
-    private TypedColumnData currentBatch;
+    // Current batch state (flat uses BatchExchange.Batch, nested uses NestedBatch)
+    private BatchExchange.Batch currentFlatBatch;
+    private NestedBatch currentNestedBatch;
+    private int recordCount;
+    private int valueCount;
     private boolean exhausted;
 
     // Computed nested data (lazily populated per batch)
@@ -105,48 +94,30 @@ public class ColumnReader implements AutoCloseable {
     private BitSet elementNulls;
     private boolean nestedDataComputed;
 
-    /// Single-file constructor with lazy row-group and page fetching.
-    ColumnReader(ColumnSchema column, PageScanner firstScanner, HardwoodContextImpl context,
-                 int batchSize, int[] levelNullThresholds,
-                 RowGroupPageSource rowGroupSource, int firstRowGroupIndex,
-                 int totalRowGroups, String fileName) {
+    @SuppressWarnings("unchecked")
+    private ColumnReader(ColumnSchema column, boolean nested,
+                         BatchExchange<?> buffer, AutoCloseable columnWorker,
+                         RowGroupIterator rowGroupIterator, int[] levelNullThresholds) {
         this.column = column;
         this.maxRepetitionLevel = column.maxRepetitionLevel();
-        this.batchSize = batchSize;
+        this.maxDefinitionLevel = column.maxDefinitionLevel();
+        this.nested = nested;
+        this.flatBuffer = nested ? null : (BatchExchange<BatchExchange.Batch>) buffer;
+        this.nestedBuffer = nested ? (BatchExchange<NestedBatch>) buffer : null;
+        this.columnWorker = columnWorker;
+        this.rowGroupIterator = rowGroupIterator;
         this.levelNullThresholds = levelNullThresholds;
-
-        boolean flat = maxRepetitionLevel == 0;
-
-        ColumnAssemblyBuffer assemblyBuffer = null;
-        if (flat) {
-            assemblyBuffer = new ColumnAssemblyBuffer(column, batchSize);
-        }
-
-        PageCursor pageCursor = PageCursor.create(firstScanner, context, 0,
-                fileName, assemblyBuffer, rowGroupSource, firstRowGroupIndex, totalRowGroups);
-        this.iterator = new ColumnValueIterator(pageCursor, column, flat);
     }
 
-    /// Multi-file constructor. When `fileManager` is non-null, creates a [PageCursor]
-    /// with cross-file prefetching — matching the pattern used by [MultiFileRowReader].
-    ColumnReader(ColumnSchema column, List<PageInfo> pageInfos, HardwoodContextImpl context,
-                 int batchSize, int[] levelNullThresholds,
-                 FileManager fileManager, int projectedColumnIndex, String fileName) {
-        this.column = column;
-        this.maxRepetitionLevel = column.maxRepetitionLevel();
-        this.batchSize = batchSize;
-        this.levelNullThresholds = levelNullThresholds;
+    static ColumnReader forFlat(ColumnSchema column, BatchExchange<BatchExchange.Batch> flatBuffer,
+                                AutoCloseable columnWorker, RowGroupIterator rowGroupIterator) {
+        return new ColumnReader(column, false, flatBuffer, columnWorker, rowGroupIterator, null);
+    }
 
-        boolean flat = maxRepetitionLevel == 0;
-
-        ColumnAssemblyBuffer assemblyBuffer = null;
-        if (flat) {
-            assemblyBuffer = new ColumnAssemblyBuffer(column, batchSize);
-        }
-
-        PageCursor pageCursor = PageCursor.create(
-                pageInfos, context, fileManager, projectedColumnIndex, fileName, assemblyBuffer);
-        this.iterator = new ColumnValueIterator(pageCursor, column, flat);
+    static ColumnReader forNested(ColumnSchema column, BatchExchange<NestedBatch> nestedBuffer,
+                                  AutoCloseable columnWorker, RowGroupIterator rowGroupIterator,
+                                  int[] levelNullThresholds) {
+        return new ColumnReader(column, true, nestedBuffer, columnWorker, rowGroupIterator, levelNullThresholds);
     }
 
     // ==================== Batch Iteration ====================
@@ -159,12 +130,33 @@ public class ColumnReader implements AutoCloseable {
             return false;
         }
 
-        currentBatch = iterator.readBatch(batchSize);
-
-        if (currentBatch.recordCount() == 0) {
-            exhausted = true;
-            currentBatch = null;
-            return false;
+        if (nested) {
+            NestedBatch batch = pollNestedBatch();
+            if (batch == null || batch.recordCount == 0) {
+                nestedBuffer.checkError();
+                exhausted = true;
+                currentFlatBatch = null;
+                currentNestedBatch = null;
+                return false;
+            }
+            currentNestedBatch = batch;
+            currentFlatBatch = null;
+            recordCount = batch.recordCount;
+            valueCount = batch.valueCount;
+        }
+        else {
+            BatchExchange.Batch batch = pollFlatBatch();
+            if (batch == null || batch.recordCount == 0) {
+                flatBuffer.checkError();
+                exhausted = true;
+                currentFlatBatch = null;
+                currentNestedBatch = null;
+                return false;
+            }
+            currentFlatBatch = batch;
+            currentNestedBatch = null;
+            recordCount = batch.recordCount;
+            valueCount = batch.recordCount;
         }
 
         // Reset lazy nested computation
@@ -176,73 +168,91 @@ public class ColumnReader implements AutoCloseable {
         return true;
     }
 
+    /// Polls the flat [BatchExchange] for the next batch.
+    private BatchExchange.Batch pollFlatBatch() {
+        currentFlatBatch = null;
+        try {
+            return flatBuffer.poll();
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
+    /// Polls the nested [BatchExchange] for the next batch.
+    private NestedBatch pollNestedBatch() {
+        currentNestedBatch = null;
+        try {
+            return nestedBuffer.poll();
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            return null;
+        }
+    }
+
     /// Number of top-level records in the current batch.
     public int getRecordCount() {
         checkBatchAvailable();
-        return currentBatch.recordCount();
+        return recordCount;
     }
 
     /// Total number of leaf values in the current batch.
     /// For flat columns, this equals [#getRecordCount()].
     public int getValueCount() {
         checkBatchAvailable();
-        return currentBatch.valueCount();
+        return valueCount;
     }
 
     // ==================== Typed Value Arrays ====================
 
     public int[] getInts() {
         checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.IntColumn c -> c.values();
-            case NestedColumnData.IntColumn c -> c.values();
-            default -> throw typeMismatch("int");
-        };
+        if (!(currentValues() instanceof int[] a)) {
+            throw typeMismatch("int");
+        }
+        return a;
     }
 
     public long[] getLongs() {
         checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.LongColumn c -> c.values();
-            case NestedColumnData.LongColumn c -> c.values();
-            default -> throw typeMismatch("long");
-        };
+        if (!(currentValues() instanceof long[] a)) {
+            throw typeMismatch("long");
+        }
+        return a;
     }
 
     public float[] getFloats() {
         checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.FloatColumn c -> c.values();
-            case NestedColumnData.FloatColumn c -> c.values();
-            default -> throw typeMismatch("float");
-        };
+        if (!(currentValues() instanceof float[] a)) {
+            throw typeMismatch("float");
+        }
+        return a;
     }
 
     public double[] getDoubles() {
         checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.DoubleColumn c -> c.values();
-            case NestedColumnData.DoubleColumn c -> c.values();
-            default -> throw typeMismatch("double");
-        };
+        if (!(currentValues() instanceof double[] a)) {
+            throw typeMismatch("double");
+        }
+        return a;
     }
 
     public boolean[] getBooleans() {
         checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.BooleanColumn c -> c.values();
-            case NestedColumnData.BooleanColumn c -> c.values();
-            default -> throw typeMismatch("boolean");
-        };
+        if (!(currentValues() instanceof boolean[] a)) {
+            throw typeMismatch("boolean");
+        }
+        return a;
     }
 
     public byte[][] getBinaries() {
         checkBatchAvailable();
-        return switch (currentBatch) {
-            case FlatColumnData.ByteArrayColumn c -> c.values();
-            case NestedColumnData.ByteArrayColumn c -> c.values();
-            default -> throw typeMismatch("byte[]");
-        };
+        if (!(currentValues() instanceof byte[][] a)) {
+            throw typeMismatch("byte[]");
+        }
+        return a;
     }
 
     // ==================== Logical Type Accessors ====================
@@ -256,10 +266,9 @@ public class ColumnReader implements AutoCloseable {
     /// @throws IllegalStateException if the column is not a BYTE_ARRAY type
     public String[] getStrings() {
         byte[][] raw = getBinaries();
-        int count = currentBatch.valueCount();
         BitSet nulls = getElementNulls();
-        String[] result = new String[count];
-        for (int i = 0; i < count; i++) {
+        String[] result = new String[valueCount];
+        for (int i = 0; i < valueCount; i++) {
             if (nulls != null && nulls.get(i)) {
                 result[i] = null;
             }
@@ -277,8 +286,8 @@ public class ColumnReader implements AutoCloseable {
     /// @return BitSet where set bits indicate null values, or null if all elements are required
     public BitSet getElementNulls() {
         checkBatchAvailable();
-        if (currentBatch instanceof FlatColumnData flat) {
-            return flat.nulls();
+        if (!nested) {
+            return currentFlatBatch.nulls;
         }
         ensureNestedDataComputed();
         return elementNulls;
@@ -323,13 +332,31 @@ public class ColumnReader implements AutoCloseable {
 
     @Override
     public void close() {
-        // No resources to close; PageCursor/assembly buffer clean up via GC
+        if (columnWorker != null) {
+            try {
+                columnWorker.close();
+            }
+            catch (Exception e) {
+                throw new RuntimeException("Failed to close column worker", e);
+            }
+        }
+        if (rowGroupIterator != null) {
+            rowGroupIterator.close();
+        }
     }
 
     // ==================== Internal ====================
 
+    /// Returns the values array from the current batch (flat or nested).
+    private Object currentValues() {
+        if (currentFlatBatch != null) {
+            return currentFlatBatch.values;
+        }
+        return currentNestedBatch.values;
+    }
+
     private void checkBatchAvailable() {
-        if (currentBatch == null) {
+        if (currentFlatBatch == null && currentNestedBatch == null) {
             throw new IllegalStateException("No batch available. Call nextBatch() first.");
         }
     }
@@ -349,35 +376,25 @@ public class ColumnReader implements AutoCloseable {
                 "Column '" + column.name() + "' is " + column.type() + ", not " + expected);
     }
 
-    /// Compute multi-level offsets and per-level null bitmaps from the nested batch data.
+    /// Reads pre-computed index structures from the [NestedBatch].
+    /// The drain thread computes these before publishing.
     private void ensureNestedDataComputed() {
         if (nestedDataComputed) {
             return;
         }
         nestedDataComputed = true;
 
-        if (!(currentBatch instanceof NestedColumnData nested)) {
-            return;
-        }
+        elementNulls = currentNestedBatch.elementNulls;
+        multiLevelOffsets = currentNestedBatch.multiLevelOffsets;
+        levelNulls = currentNestedBatch.levelNulls;
 
-        int[] repLevels = nested.repetitionLevels();
-        int[] defLevels = nested.definitionLevels();
-        int valueCount = nested.valueCount();
-        int recordCount = nested.recordCount();
-        int maxDefLevel = nested.maxDefinitionLevel();
-
-        if (repLevels == null || valueCount == 0) {
+        // Provide empty arrays when fields are null (non-repeated columns)
+        if (multiLevelOffsets == null) {
             multiLevelOffsets = new int[maxRepetitionLevel][];
-            levelNulls = new BitSet[maxRepetitionLevel];
-            elementNulls = NestedLevelComputer.computeElementNulls(defLevels, valueCount, maxDefLevel);
-            return;
         }
-
-        multiLevelOffsets = NestedLevelComputer.computeMultiLevelOffsets(
-                repLevels, valueCount, recordCount, maxRepetitionLevel);
-        elementNulls = NestedLevelComputer.computeElementNulls(defLevels, valueCount, maxDefLevel);
-        levelNulls = NestedLevelComputer.computeLevelNulls(
-                defLevels, repLevels, valueCount, maxRepetitionLevel, levelNullThresholds);
+        if (levelNulls == null) {
+            levelNulls = new BitSet[maxRepetitionLevel];
+        }
     }
 
     // ==================== Factory ====================
@@ -392,7 +409,7 @@ public class ColumnReader implements AutoCloseable {
 
     /// Create a ColumnReader for a named column with page-level filtering.
     ///
-    /// @param filterPredicate resolved predicate, or `null` for no filtering.
+    /// @param filter resolved predicate, or `null` for no filtering.
     static ColumnReader create(String columnName, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context, ResolvedPredicate filter) {
@@ -410,7 +427,7 @@ public class ColumnReader implements AutoCloseable {
 
     /// Create a ColumnReader for a column by index with page-level filtering.
     ///
-    /// @param filterPredicate resolved predicate, or `null` for no filtering.
+    /// @param filter resolved predicate, or `null` for no filtering.
     static ColumnReader create(int columnIndex, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context, ResolvedPredicate filter) {
@@ -418,109 +435,67 @@ public class ColumnReader implements AutoCloseable {
         return create(columnSchema, schema, inputFile, rowGroups, context, filter);
     }
 
-    /// Create a ColumnReader for a given ColumnSchema, scanning only the first row group.
-    /// Subsequent row groups are fetched lazily by `PageCursor` via `RowGroupPageSource`.
-    ///
-    /// @param filterPredicate resolved predicate, or `null` for no filtering.
+    /// Create a ColumnReader for a given ColumnSchema using the v3 pipeline.
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        InputFile inputFile, List<RowGroup> rowGroups,
                                        HardwoodContextImpl context, ResolvedPredicate filter) {
-        int originalIndex = columnSchema.columnIndex();
-        int[] projectedColumns = new int[]{ originalIndex };
-        String fileName = inputFile.name();
+        // Create a single-column projection using the full field path
+        // to avoid ambiguity with duplicate leaf names in nested schemas.
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema,
+                dev.hardwood.schema.ColumnProjection.columns(columnSchema.fieldPath().toString()));
 
-        // RowGroupPageSource for lazy fetching of subsequent row groups
-        RowGroupPageSource rowGroupSource = (rgIndex, colIndex) ->
-                createScannerForRowGroup(rgIndex, columnSchema, rowGroups, inputFile, context, filter,
-                        originalIndex, fileName);
+        RowGroupIterator rowGroupIterator = new RowGroupIterator(
+                List.of(inputFile), context, 0);
+        rowGroupIterator.setFirstFile(schema, rowGroups);
+        rowGroupIterator.initialize(projectedSchema, filter);
 
-        // Create scanner for the first row group
-        PageScanner firstScanner = rowGroups.isEmpty()
-                ? null
-                : createScannerForRowGroup(0, columnSchema, rowGroups, inputFile, context, filter,
-                        originalIndex, fileName);
-
-        int[] thresholds = null;
-        if (columnSchema.maxRepetitionLevel() > 0) {
-            thresholds = NestedLevelComputer.computeLevelNullThresholds(
-                    schema.getRootNode(), columnSchema.columnIndex());
-        }
-        return new ColumnReader(columnSchema, firstScanner, context, DEFAULT_BATCH_SIZE,
-                thresholds, rowGroupSource, 0, rowGroups.size(), fileName);
+        return createFromIterator(columnSchema, schema, rowGroupIterator, context, 0, rowGroupIterator);
     }
 
-    /// Creates a PageScanner for a single row group.
-    private static PageScanner createScannerForRowGroup(int rowGroupIndex, ColumnSchema columnSchema,
-                                                         List<RowGroup> rowGroups, InputFile inputFile,
-                                                         HardwoodContextImpl context, ResolvedPredicate filter,
-                                                         int originalIndex, String fileName) {
-        if (rowGroupIndex >= rowGroups.size()) {
-            return null;
+    /// Creates a ColumnReader from a pre-configured RowGroupIterator.
+    /// Used by both single-file and multi-file paths.
+    ///
+    /// @param projectedColumnIndex the column's index within the projected schema
+    /// @param ownedIterator if non-null, the ColumnReader takes ownership and closes
+    ///        it on [#close()]. Pass `null` when the caller manages the iterator lifecycle.
+    static ColumnReader createFromIterator(ColumnSchema columnSchema, FileSchema schema,
+                                           RowGroupIterator rowGroupIterator,
+                                           HardwoodContextImpl context,
+                                           int projectedColumnIndex,
+                                           RowGroupIterator ownedIterator) {
+        boolean nested = columnSchema.maxRepetitionLevel() > 0;
+
+        PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
+        dev.hardwood.metadata.PhysicalType physType = columnSchema.type();
+
+        if (nested) {
+            BatchExchange<NestedBatch> nestedBuf = BatchExchange.detaching(
+                    columnSchema.name(), () -> {
+                        NestedBatch b = new NestedBatch();
+                        b.values = BatchExchange.allocateArray(physType, DEFAULT_BATCH_SIZE);
+                        return b;
+                    });
+            int[] thresholds = NestedLevelComputer.computeLevelNullThresholds(
+                    schema.getRootNode(), columnSchema.columnIndex());
+            NestedColumnWorker nestedWorker = new NestedColumnWorker(
+                    pageSource, nestedBuf, columnSchema, DEFAULT_BATCH_SIZE,
+                    context.decompressorFactory(), context.executor(), 0,
+                    thresholds);
+            nestedWorker.start();
+            return ColumnReader.forNested(columnSchema, nestedBuf, nestedWorker, ownedIterator, thresholds);
         }
-
-        RowGroup rowGroup = rowGroups.get(rowGroupIndex);
-
-        RowGroupIndexBuffers indexBuffers;
-        try {
-            indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
+        else {
+            BatchExchange<BatchExchange.Batch> flatBuf = BatchExchange.detaching(
+                    columnSchema.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(physType, DEFAULT_BATCH_SIZE);
+                        return b;
+                    });
+            FlatColumnWorker flatWorker = new FlatColumnWorker(
+                    pageSource, flatBuf, columnSchema, DEFAULT_BATCH_SIZE,
+                    context.decompressorFactory(), context.executor(), 0);
+            flatWorker.start();
+            return ColumnReader.forFlat(columnSchema, flatBuf, flatWorker, ownedIterator);
         }
-        catch (IOException e) {
-            throw new UncheckedIOException("Failed to fetch index buffers for row group " + rowGroupIndex, e);
-        }
-
-        RowRanges matchingRows = RowRanges.ALL;
-        if (filter != null) {
-            matchingRows = PageFilterEvaluator.computeMatchingRows(
-                    filter, rowGroup, indexBuffers);
-        }
-
-        ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
-
-        // Try page-range I/O when filtering is active
-        if (!matchingRows.isAll()) {
-            ColumnIndexBuffers colBuffers = indexBuffers.forColumn(originalIndex);
-            if (colBuffers != null && colBuffers.offsetIndex() != null) {
-                try {
-                    OffsetIndex offsetIndex = OffsetIndexReader.read(
-                            new ThriftCompactReader(colBuffers.offsetIndex()));
-                    List<PageRange> pageRanges = PageRange.forColumn(
-                            offsetIndex, matchingRows, columnChunk, rowGroup.numRows(), ChunkRange.MAX_GAP_BYTES);
-                    if (!pageRanges.isEmpty()) {
-                        PageRangeData pageRangeData = PageRangeData.fetch(inputFile, pageRanges);
-                        return new PageScanner(columnSchema, columnChunk, context,
-                                pageRangeData, indexBuffers.forColumn(originalIndex),
-                                rowGroupIndex, fileName, matchingRows, 0);
-                    }
-                }
-                catch (IOException e) {
-                    throw new UncheckedIOException("Failed to fetch page ranges for row group " + rowGroupIndex, e);
-                }
-            }
-        }
-
-        // Determine the column chunk's file offset and length
-        long colChunkOffset = SingleFileRowReader.chunkStartOffset(columnChunk);
-        int colChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
-
-        // OffsetIndex path (no filter): fetch the full chunk for direct page lookup
-        if (columnChunk.offsetIndexOffset() != null) {
-            try {
-                ByteBuffer colChunkData = inputFile.readRange(colChunkOffset, colChunkLength);
-                return new PageScanner(columnSchema, columnChunk, context,
-                        colChunkData, colChunkOffset,
-                        indexBuffers.forColumn(originalIndex),
-                        rowGroupIndex, fileName, matchingRows, 0);
-            }
-            catch (IOException e) {
-                throw new UncheckedIOException("Failed to fetch column chunk data for row group " + rowGroupIndex, e);
-            }
-        }
-
-        // Sequential path (no OffsetIndex): use WindowedChunkReader for lazy fetching
-        WindowedChunkReader chunkReader = new WindowedChunkReader(
-                inputFile, colChunkOffset, colChunkLength);
-        return new PageScanner(columnSchema, columnChunk, context,
-                chunkReader, indexBuffers.forColumn(originalIndex),
-                rowGroupIndex, fileName, matchingRows, 0);
     }
 }

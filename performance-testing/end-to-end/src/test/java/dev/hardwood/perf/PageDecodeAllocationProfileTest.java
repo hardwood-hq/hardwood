@@ -23,10 +23,9 @@ import com.sun.management.ThreadMXBean;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.MappedInputFile;
 import dev.hardwood.internal.reader.Page;
+import dev.hardwood.internal.reader.PageDecoder;
 import dev.hardwood.internal.reader.PageInfo;
-import dev.hardwood.internal.reader.PageReader;
-import dev.hardwood.internal.reader.PageScanner;
-import dev.hardwood.internal.reader.RowRanges;
+import dev.hardwood.internal.reader.SequentialFetchPlan;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
@@ -146,13 +145,18 @@ public class PageDecodeAllocationProfileTest {
                     int chunkLen = Math.toIntExact(meta.totalCompressedSize());
                     ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
 
-                    PageScanner scanner = new PageScanner(columnSchema, columnChunk, context,
-                            chunkData, chunkStart, null, rgIdx, inputFile.name(), RowRanges.ALL, 0);
-                    List<PageInfo> pages = scanner.scanPages();
+                    SequentialFetchPlan plan = SequentialFetchPlan.build(
+                            inputFile, columnSchema, columnChunk,
+                            context, rgIdx, inputFile.name(), 0);
+                    List<PageInfo> pages = new ArrayList<>();
+                    java.util.Iterator<PageInfo> iter = plan.pages();
+                    while (iter.hasNext()) {
+                        pages.add(iter.next());
+                    }
 
                     for (PageInfo pageInfo : pages) {
                         // Warm up: decode once to load classes and JIT
-                        PageReader warmupReader = new PageReader(
+                        PageDecoder warmupReader = new PageDecoder(
                                 pageInfo.columnMetaData(), pageInfo.columnSchema(),
                                 context.decompressorFactory());
                         warmupReader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
@@ -162,13 +166,13 @@ public class PageDecodeAllocationProfileTest {
                         long minAllocated = Long.MAX_VALUE;
                         Page page = null;
 
-                        for (int iter = 0; iter < MEASUREMENT_ITERATIONS; iter++) {
+                        for (int m = 0; m < MEASUREMENT_ITERATIONS; m++) {
                             long beforeBytes = threadMXBean.getThreadAllocatedBytes(threadId);
 
-                            PageReader pageReader = new PageReader(
+                            PageDecoder pageDecoder = new PageDecoder(
                                     pageInfo.columnMetaData(), pageInfo.columnSchema(),
                                     context.decompressorFactory());
-                            page = pageReader.decodePage(pageInfo.pageData(), pageInfo.dictionary());
+                            page = pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
 
                             long afterBytes = threadMXBean.getThreadAllocatedBytes(threadId);
                             long allocated = afterBytes - beforeBytes;

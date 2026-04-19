@@ -11,7 +11,6 @@ import java.util.NoSuchElementException;
 import java.util.PrimitiveIterator;
 import java.util.function.IntConsumer;
 
-import dev.hardwood.internal.reader.NestedColumnData.IntColumn;
 import dev.hardwood.row.PqIntList;
 
 /// Flyweight [PqIntList] that reads int values directly from a column array.
@@ -47,7 +46,7 @@ final class PqIntListImpl implements PqIntList {
         if (batch.isElementNull(projectedCol, valueIdx)) {
             throw new NullPointerException("Element at index " + index + " is null");
         }
-        return ((NestedColumnData.IntColumn) batch.columns[projectedCol]).get(valueIdx);
+        return ((int[]) batch.valueArrays[projectedCol])[valueIdx];
     }
 
     @Override
@@ -74,19 +73,19 @@ final class PqIntListImpl implements PqIntList {
                 if (batch.isElementNull(projectedCol, pos)) {
                     throw new NullPointerException("Element is null");
                 }
-                return ((NestedColumnData.IntColumn) batch.columns[projectedCol]).get(pos++);
+                return ((int[]) batch.valueArrays[projectedCol])[pos++];
             }
         };
     }
 
     @Override
     public void forEach(IntConsumer action) {
-        NestedColumnData.IntColumn col = (NestedColumnData.IntColumn) batch.columns[projectedCol];
+        int[] values = (int[]) batch.valueArrays[projectedCol];
         for (int i = start; i < end; i++) {
             if (batch.isElementNull(projectedCol, i)) {
                 throw new NullPointerException("Element at index " + (i - start) + " is null");
             }
-            action.accept(col.get(i));
+            action.accept(values[i]);
         }
     }
 
@@ -94,12 +93,12 @@ final class PqIntListImpl implements PqIntList {
     public int[] toArray() {
         int size = size();
         int[] result = new int[size];
-        NestedColumnData.IntColumn col = (NestedColumnData.IntColumn) batch.columns[projectedCol];
+        int[] values = (int[]) batch.valueArrays[projectedCol];
         for (int i = 0; i < size; i++) {
             if (batch.isElementNull(projectedCol, start + i)) {
                 throw new NullPointerException("Element at index " + i + " is null");
             }
-            result[i] = col.get(start + i);
+            result[i] = values[start + i];
         }
         return result;
     }

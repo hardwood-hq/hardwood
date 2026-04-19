@@ -28,6 +28,8 @@ import dev.hardwood.s3.internal.S3Api;
 /// Thread-safe once [#open()] has been called.
 public class S3InputFile implements InputFile {
 
+    private static final System.Logger LOG = System.getLogger(S3InputFile.class.getName());
+
     /// Number of bytes to fetch from the tail of the file during [#open()].
     /// 64 KB is large enough to cover the Parquet footer in virtually all files
     /// (footer + footer length + magic is typically a few KB).
@@ -60,8 +62,15 @@ public class S3InputFile implements InputFile {
         }
         fileLength = parseFileLength(response);
         byte[] tail = response.body();
-        tailCache = ByteBuffer.wrap(tail);
+        // Use a direct buffer so slices are usable from FFM-based decompressors
+        // (e.g. libdeflate), which require native MemorySegments.
+        tailCache = ByteBuffer.allocateDirect(tail.length);
+        tailCache.put(tail);
+        tailCache.flip();
         tailCacheOffset = fileLength - tail.length;
+        LOG.log(System.Logger.Level.DEBUG,
+                "[{0}] open: fetched {1} byte tail (offset={2}, fileLength={3})",
+                name(), tail.length, tailCacheOffset, fileLength);
     }
 
     @Override
@@ -70,9 +79,15 @@ public class S3InputFile implements InputFile {
         if (tailCache != null && offset >= tailCacheOffset
                 && offset + length <= tailCacheOffset + tailCache.capacity()) {
             int relOffset = Math.toIntExact(offset - tailCacheOffset);
+            LOG.log(System.Logger.Level.DEBUG,
+                    "[{0}] readRange offset={1} length={2} (tail cache hit)",
+                    name(), offset, length);
             return tailCache.slice(relOffset, length);
         }
 
+        LOG.log(System.Logger.Level.DEBUG,
+                "[{0}] readRange offset={1} length={2} (network fetch)",
+                name(), offset, length);
         String range = "bytes=" + offset + "-" + (offset + length - 1);
         HttpResponse<InputStream> response = api.getStream(bucket, key, range);
         int status = response.statusCode();

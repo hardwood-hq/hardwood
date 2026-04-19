@@ -12,13 +12,41 @@ import java.nio.ByteBuffer;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.schema.ColumnSchema;
 
-/// Holds metadata about a page and the data needed to decode it.
+/// Page metadata and resolved data buffer.
 ///
-/// The pageData buffer is a slice from the file data, avoiding
-/// per-page copy overhead.
-public record PageInfo(
-    ByteBuffer pageData,
-    ColumnSchema columnSchema,
-    ColumnMetaData columnMetaData,
-    Dictionary dictionary
-) {}
+/// The fetch plan resolves the page bytes before creating the `PageInfo`.
+/// By the time a decode task calls [#pageData()], the buffer is ready —
+/// no lazy I/O, no [ChunkHandle] reference. This keeps `PageInfo` a
+/// simple data holder.
+public class PageInfo {
+
+    private final ByteBuffer pageData;
+    private final ColumnSchema columnSchema;
+    private final ColumnMetaData columnMetaData;
+    private final Dictionary dictionary;
+
+    public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
+                    ColumnMetaData columnMetaData, Dictionary dictionary) {
+        this.pageData = pageData;
+        this.columnSchema = columnSchema;
+        this.columnMetaData = columnMetaData;
+        this.dictionary = dictionary;
+    }
+
+    /// Returns the page data buffer (header + compressed data).
+    public ByteBuffer pageData() {
+        return pageData;
+    }
+
+    public ColumnSchema columnSchema() {
+        return columnSchema;
+    }
+
+    public ColumnMetaData columnMetaData() {
+        return columnMetaData;
+    }
+
+    public Dictionary dictionary() {
+        return dictionary;
+    }
+}

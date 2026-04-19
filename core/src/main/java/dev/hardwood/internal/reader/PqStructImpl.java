@@ -15,12 +15,6 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
-import dev.hardwood.internal.reader.NestedColumnData.BooleanColumn;
-import dev.hardwood.internal.reader.NestedColumnData.ByteArrayColumn;
-import dev.hardwood.internal.reader.NestedColumnData.DoubleColumn;
-import dev.hardwood.internal.reader.NestedColumnData.FloatColumn;
-import dev.hardwood.internal.reader.NestedColumnData.IntColumn;
-import dev.hardwood.internal.reader.NestedColumnData.LongColumn;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Primitive;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Struct;
@@ -84,7 +78,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        return ((NestedColumnData.IntColumn) batch.columns[projCol]).get(idx);
+        return ((int[]) batch.valueArrays[projCol])[idx];
     }
 
     @Override
@@ -95,7 +89,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        return ((NestedColumnData.LongColumn) batch.columns[projCol]).get(idx);
+        return ((long[]) batch.valueArrays[projCol])[idx];
     }
 
     @Override
@@ -106,7 +100,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        return ((NestedColumnData.FloatColumn) batch.columns[projCol]).get(idx);
+        return ((float[]) batch.valueArrays[projCol])[idx];
     }
 
     @Override
@@ -117,7 +111,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        return ((NestedColumnData.DoubleColumn) batch.columns[projCol]).get(idx);
+        return ((double[]) batch.valueArrays[projCol])[idx];
     }
 
     @Override
@@ -128,7 +122,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        return ((NestedColumnData.BooleanColumn) batch.columns[projCol]).get(idx);
+        return ((boolean[]) batch.valueArrays[projCol])[idx];
     }
 
     // ==================== Object Types ====================
@@ -141,7 +135,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        byte[] raw = ((NestedColumnData.ByteArrayColumn) batch.columns[projCol]).get(idx);
+        byte[] raw = ((byte[][]) batch.valueArrays[projCol])[idx];
         return new String(raw, StandardCharsets.UTF_8);
     }
 
@@ -153,7 +147,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        return ((NestedColumnData.ByteArrayColumn) batch.columns[projCol]).get(idx);
+        return ((byte[][]) batch.valueArrays[projCol])[idx];
     }
 
     @Override
@@ -286,7 +280,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        Object rawValue = batch.columns[projCol].getValue(idx);
+        Object rawValue = batch.getValue(projCol, idx);
         if (resultClass.isInstance(rawValue)) {
             return resultClass.cast(rawValue);
         }
@@ -315,7 +309,7 @@ final class PqStructImpl implements PqStruct {
             return false;
         }
         int idx = resolveValueIndex(projCol);
-        int defLevel = batch.columns[projCol].getDefLevel(idx);
+        int defLevel = batch.getDefLevel(projCol, idx);
         return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 
@@ -326,7 +320,7 @@ final class PqStructImpl implements PqStruct {
                 if (batch.isElementNull(p.projectedCol(), idx)) {
                     yield null;
                 }
-                yield batch.columns[p.projectedCol()].getValue(idx);
+                yield batch.getValue(p.projectedCol(), idx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> {
                 if (isStructNull(s)) {

@@ -8,9 +8,9 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.List;
 
-import dev.hardwood.Hardwood;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
@@ -18,6 +18,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
+import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.FileMetaData;
@@ -36,7 +37,7 @@ import dev.hardwood.schema.ProjectedSchema;
 /// }
 /// ```
 ///
-/// For multi-file usage with shared thread pool, use [Hardwood].
+/// For multi-file usage with shared thread pool, use [dev.hardwood.Hardwood].
 ///
 /// **Limitation:** When using the default memory-mapped [InputFile],
 /// individual files must be at most 2 GB ([Integer#MAX_VALUE] bytes).
@@ -49,6 +50,7 @@ public class ParquetFileReader implements AutoCloseable {
     private final HardwoodContextImpl context;
     private final boolean ownsContext;
     private final boolean ownsInputFile;
+    private final List<RowGroupIterator> rowGroupIterators = new ArrayList<>();
 
     private ParquetFileReader(InputFile inputFile, FileMetaData fileMetaData,
                               HardwoodContextImpl context, boolean ownsContext, boolean ownsInputFile) {
@@ -174,9 +176,7 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param projection specifies which columns to read
     /// @return a RowReader for the selected columns
     public RowReader createRowReader(ColumnProjection projection) {
-        FileSchema schema = getFileSchema();
-        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        return new SingleFileRowReader(schema, projectedSchema, inputFile, fileMetaData.rowGroups(), context);
+        return createRowReaderInternal(projection, null, 0);
     }
 
     /// Create a RowReader that iterates over selected columns in only matching row groups.
@@ -184,38 +184,7 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param projection specifies which columns to read
     /// @param filter predicate for row group filtering based on statistics
     public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
-        FileSchema schema = getFileSchema();
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        return new SingleFileRowReader(schema, projectedSchema, inputFile, filterRowGroups(resolved), context, resolved);
-    }
-
-    /// Create a RowReader that returns at most `maxRows` rows.
-    ///
-    /// @param maxRows maximum number of rows to return (must be &gt; 0)
-    public RowReader createRowReader(long maxRows) {
-        return createRowReader(ColumnProjection.all(), maxRows);
-    }
-
-    /// Create a RowReader with column projection that returns at most `maxRows` rows.
-    ///
-    /// @param projection specifies which columns to read
-    /// @param maxRows maximum number of rows to return (must be &gt; 0)
-    public RowReader createRowReader(ColumnProjection projection, long maxRows) {
-        if (maxRows <= 0) {
-            throw new IllegalArgumentException("maxRows must be > 0, got " + maxRows);
-        }
-        FileSchema schema = getFileSchema();
-        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        return new SingleFileRowReader(schema, projectedSchema, inputFile, fileMetaData.rowGroups(), context, null, maxRows);
-    }
-
-    /// Create a RowReader with a filter that returns at most `maxRows` rows.
-    ///
-    /// @param filter predicate for row group filtering based on statistics
-    /// @param maxRows maximum number of rows to return (must be &gt; 0)
-    public RowReader createRowReader(FilterPredicate filter, long maxRows) {
-        return createRowReader(ColumnProjection.all(), filter, maxRows);
+        return createRowReaderInternal(projection, filter, 0);
     }
 
     /// Create a RowReader with column projection and filter that returns at most `maxRows` rows.
@@ -227,10 +196,23 @@ public class ParquetFileReader implements AutoCloseable {
         if (maxRows <= 0) {
             throw new IllegalArgumentException("maxRows must be > 0, got " + maxRows);
         }
+        return createRowReaderInternal(projection, filter, maxRows);
+    }
+
+    private RowReader createRowReaderInternal(ColumnProjection projection, FilterPredicate filter, long maxRows) {
         FileSchema schema = getFileSchema();
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        ResolvedPredicate resolved = filter != null
+                ? FilterPredicateResolver.resolve(filter, schema) : null;
+
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        return new SingleFileRowReader(schema, projectedSchema, inputFile, filterRowGroups(resolved), context, resolved, maxRows);
+
+        RowGroupIterator rowGroupIterator = new RowGroupIterator(
+                List.of(inputFile), context, maxRows);
+        rowGroupIterator.setFirstFile(schema, fileMetaData.rowGroups());
+        rowGroupIterator.initialize(projectedSchema, resolved);
+        rowGroupIterators.add(rowGroupIterator);
+
+        return RowReader.create(rowGroupIterator, schema, projectedSchema, context, resolved, maxRows);
     }
 
     private List<RowGroup> filterRowGroups(ResolvedPredicate filter) {
@@ -251,6 +233,11 @@ public class ParquetFileReader implements AutoCloseable {
 
     @Override
     public void close() throws IOException {
+        for (RowGroupIterator iterator : rowGroupIterators) {
+            iterator.close();
+        }
+        rowGroupIterators.clear();
+
         // Only close context if we created it
         // When opened via Hardwood, the context is closed when Hardwood is closed
         if (ownsContext) {

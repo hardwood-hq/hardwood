@@ -31,8 +31,7 @@ import org.openjdk.jmh.infra.Blackhole;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.PageInfo;
-import dev.hardwood.internal.reader.PageScanner;
-import dev.hardwood.internal.reader.RowRanges;
+import dev.hardwood.internal.reader.SequentialFetchPlan;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -114,12 +113,13 @@ public class PageScanBenchmark {
     @Benchmark
     public void scanPages(Blackhole blackhole) throws IOException {
         for (ScanTarget target : scanTargets) {
-            PageScanner scanner = new PageScanner(
-                    target.columnSchema, target.columnChunk, context,
-                    target.chunkData, target.chunkDataFileOffset, null,
-                    target.rowGroupIndex, inputFile.name(), RowRanges.ALL, 0);
-            List<PageInfo> pages = scanner.scanPages();
-            blackhole.consume(pages);
+            SequentialFetchPlan plan = SequentialFetchPlan.build(
+                    inputFile, target.columnSchema, target.columnChunk,
+                    context, target.rowGroupIndex, inputFile.name(), 0);
+            java.util.Iterator<PageInfo> iter = plan.pages();
+            while (iter.hasNext()) {
+                blackhole.consume(iter.next());
+            }
         }
     }
 

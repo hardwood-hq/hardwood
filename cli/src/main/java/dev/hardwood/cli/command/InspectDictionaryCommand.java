@@ -16,11 +16,8 @@ import java.util.concurrent.Callable;
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.internal.reader.DictionaryParser;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.PageInfo;
-import dev.hardwood.internal.reader.PageScanner;
-import dev.hardwood.internal.reader.RowGroupIndexBuffers;
-import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -100,20 +97,18 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             RowGroup rg = rowGroups.get(rgIdx);
             ColumnChunk chunk = rg.columns().get(columnSchema.columnIndex());
 
-            RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rg);
+            // Read just the dictionary prefix of the column chunk
             Long dictOffset = chunk.metaData().dictionaryPageOffset();
             long chunkStart = (dictOffset != null && dictOffset > 0)
                     ? dictOffset
                     : chunk.metaData().dataPageOffset();
-            int chunkLen = Math.toIntExact(chunk.metaData().totalCompressedSize());
-            ByteBuffer chunkData = inputFile.readRange(chunkStart, chunkLen);
+            // Read enough for the dictionary page (typically a few KB)
+            int dictReadSize = Math.toIntExact(Math.min(
+                    chunk.metaData().totalCompressedSize(), 4 * 1024 * 1024));
+            ByteBuffer dictRegion = inputFile.readRange(chunkStart, dictReadSize);
 
-            PageScanner scanner = new PageScanner(columnSchema, chunk, context,
-                    chunkData, chunkStart, indexBuffers.forColumn(columnSchema.columnIndex()),
-                    rgIdx, fileMixin.file, RowRanges.ALL, 0);
-            List<PageInfo> pages = scanner.scanPages();
-
-            Dictionary dictionary = pages.isEmpty() ? null : pages.get(0).dictionary();
+            Dictionary dictionary = DictionaryParser.parse(
+                    dictRegion, columnSchema, chunk.metaData(), context);
 
             spec.commandLine().getOut().printf("Row Group %d / %s%n", rgIdx, Sizes.columnPath(chunk.metaData()));
 

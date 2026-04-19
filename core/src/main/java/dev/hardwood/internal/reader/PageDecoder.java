@@ -34,7 +34,7 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// This class provides page decoding via [#decodePage].
 /// Page scanning and dictionary parsing are handled by [PageScanner].
-public class PageReader {
+public class PageDecoder {
 
     private final ColumnMetaData columnMetaData;
     private final ColumnSchema column;
@@ -45,14 +45,14 @@ public class PageReader {
     /// @param columnMetaData metadata for the column
     /// @param column column schema
     /// @param decompressorFactory factory for creating decompressors
-    public PageReader(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
+    public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
         this.columnMetaData = columnMetaData;
         this.column = column;
         this.decompressorFactory = decompressorFactory;
     }
 
-    /// Checks if this PageReader is compatible with the given column metadata.
-    /// Used for cross-file prefetching to determine if PageReader can be reused.
+    /// Checks if this PageDecoder is compatible with the given column metadata.
+    /// Used for cross-file prefetching to determine if PageDecoder can be reused.
     ///
     /// @param otherMetaData the column metadata to check against
     /// @return true if compatible (same codec), false otherwise
@@ -60,7 +60,7 @@ public class PageReader {
         return columnMetaData.codec() == otherMetaData.codec();
     }
 
-    /// Gets the decompressor factory used by this PageReader.
+    /// Gets the decompressor factory used by this PageDecoder.
     ///
     /// @return the decompressor factory
     public DecompressorFactory getDecompressorFactory() {
