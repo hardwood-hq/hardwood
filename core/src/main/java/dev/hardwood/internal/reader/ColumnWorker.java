@@ -7,7 +7,9 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.util.Set;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
@@ -67,8 +69,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     private final AtomicReference<Throwable> error = new AtomicReference<>();
 
     // === Thread references (for unpark) ===
-    private volatile Thread retrieverThread;
-    private volatile Thread drainThread;
+    volatile Thread retrieverThread;
+    volatile Thread drainThread;
+
+    // === In-flight decode tasks (tracked so close() can await them) ===
+    private final Set<CompletableFuture<Void>> inFlightDecodes = ConcurrentHashMap.newKeySet();
 
     // === Drain assembly state (drain thread only) ===
     final long maxRows;
@@ -126,14 +131,41 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         retrieverThread.start();
     }
 
-    /// Signals the worker to stop. In-flight decodes run to completion but
-    /// their results are not drained.
+    /// Signals the worker to stop and blocks until the pipeline has fully quiesced:
+    /// both VThreads have exited and every in-flight decode task has completed.
+    ///
+    /// This is required so that callers can safely release resources owned by the
+    /// underlying [dev.hardwood.InputFile] (mapped or direct byte buffers, HTTP
+    /// connections, etc.) without risking a SIGSEGV from a decode task still
+    /// reading from a freed buffer.
     @Override
     public void close() {
         done = true;
         exchange.finish();  // signals BatchExchange's timeout loops to exit
         LockSupport.unpark(retrieverThread);
         LockSupport.unpark(drainThread);
+
+        try {
+            retrieverThread.join();
+            drainThread.join();
+        }
+        catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+        }
+
+        // The retriever has exited, so no new decode tasks will be submitted.
+        // Drain any that are still running. Tasks that hadn't yet started early-return
+        // via the `done` check in decode(), so this typically waits only on the small
+        // number that were mid-execution when `done` was set.
+        CompletableFuture<?>[] pending = inFlightDecodes.toArray(new CompletableFuture<?>[0]);
+        if (pending.length > 0) {
+            try {
+                CompletableFuture.allOf(pending).join();
+            }
+            catch (Exception ignored) {
+                // decode tasks call signalError on failure; nothing to re-raise here
+            }
+        }
     }
 
     /// Whether the pipeline has stopped producing batches (for any reason —
@@ -194,7 +226,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 int slot = seq % MAX_INFLIGHT_PAGES;
                 PageInfo pi = pageInfo;
                 PageDecoder rdr = pageDecoder;
-                CompletableFuture.runAsync(() -> decode(slot, pi, rdr), decodeExecutor);
+                CompletableFuture<Void> f = CompletableFuture.runAsync(
+                        () -> decode(slot, pi, rdr), decodeExecutor);
+                inFlightDecodes.add(f);
+                f.whenComplete((v, t) -> inFlightDecodes.remove(f));
             }
 
             if (!done) {

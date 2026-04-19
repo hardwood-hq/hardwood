@@ -8,7 +8,10 @@
 package dev.hardwood.internal.reader;
 
 import java.nio.file.Path;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
@@ -308,6 +311,81 @@ class ColumnWorkerTest {
             assertThat(sawPreComputedIndex)
                     .as("Nested column should have pre-computed multi-level offsets")
                     .isTrue();
+        }
+    }
+
+    /// close() must not return until both VThreads have exited and every in-flight
+    /// decode task submitted to the executor has completed. Otherwise an
+    /// `InputFile` that releases memory in its own `close()` could free a buffer
+    /// a decode task is still reading from.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void closeJoinsThreadsAndAwaitsInFlightDecodes() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+            int batchCapacity = 64;
+
+            CountDownLatch release = new CountDownLatch(1);
+            CountDownLatch firstSubmitted = new CountDownLatch(1);
+            AtomicInteger decodesEntered = new AtomicInteger();
+            AtomicInteger decodesFinished = new AtomicInteger();
+
+            Executor stalledExecutor = command -> Thread.ofVirtual().start(() -> {
+                decodesEntered.incrementAndGet();
+                firstSubmitted.countDown();
+                try {
+                    release.await();
+                }
+                catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                command.run();
+                decodesFinished.incrementAndGet();
+            });
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, batchCapacity,
+                    context.decompressorFactory(), stalledExecutor, 0);
+            worker.start();
+
+            assertThat(firstSubmitted.await(5, TimeUnit.SECONDS))
+                    .as("retriever should have submitted at least one decode task")
+                    .isTrue();
+
+            Thread closer = Thread.ofVirtual().start(worker::close);
+
+            // close() must still be running — decodes are stalled on the latch.
+            Thread.sleep(300);
+            assertThat(closer.isAlive())
+                    .as("close() must not return while decode tasks are still in flight")
+                    .isTrue();
+
+            release.countDown();
+            closer.join(TimeUnit.SECONDS.toMillis(10));
+
+            assertThat(closer.isAlive())
+                    .as("close() should return once decodes drain")
+                    .isFalse();
+            assertThat(worker.retrieverThread.isAlive())
+                    .as("retriever thread must have exited")
+                    .isFalse();
+            assertThat(worker.drainThread.isAlive())
+                    .as("drain thread must have exited")
+                    .isFalse();
+            assertThat(decodesFinished.get())
+                    .as("every submitted decode task should have finished")
+                    .isEqualTo(decodesEntered.get());
         }
     }
 
