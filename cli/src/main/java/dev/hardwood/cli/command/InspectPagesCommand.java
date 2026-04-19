@@ -92,33 +92,83 @@ public class InspectPagesCommand implements Callable<Integer> {
         return CommandLine.ExitCode.OK;
     }
 
+    private static final String[] HEADERS = {"RG", "Page", "Type", "Encoding", "Compressed", "Values"};
+
     private void printPages(FileMetaData metadata, FileSchema schema, InputFile inputFile) throws IOException {
         List<RowGroup> rowGroups = metadata.rowGroups();
         List<ColumnSchema> columns = schema.getColumns();
 
-        String[] headers = {"Page", "Type", "Encoding", "Compressed", "Values"};
-        for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
-            RowGroup rg = rowGroups.get(rgIdx);
-            for (ColumnSchema col : columns) {
-                if (column != null && !col.name().equals(column)) {
-                    continue;
-                }
-                ColumnChunk chunk = rg.columns().get(col.columnIndex());
-                spec.commandLine().getOut().printf("Row Group %d / %s%n", rgIdx, Sizes.columnPath(chunk.metaData()));
-                List<String[]> rows = collectPageHeaders(chunk.metaData(), inputFile);
-                spec.commandLine().getOut().println(RowTable.renderTable(headers, rows));
+        boolean firstColumn = true;
+        for (ColumnSchema col : columns) {
+            if (this.column != null && !col.name().equals(this.column)) {
+                continue;
             }
+            if (!firstColumn) {
+                spec.commandLine().getOut().println();
+            }
+            firstColumn = false;
+            renderColumn(col, rowGroups, inputFile);
         }
     }
 
-    private List<String[]> collectPageHeaders(ColumnMetaData cmd, InputFile inputFile) throws IOException {
+    private void renderColumn(ColumnSchema col, List<RowGroup> rowGroups, InputFile inputFile) throws IOException {
+        List<String[]> rows = new ArrayList<>();
+        List<Integer> separatorsBefore = new ArrayList<>();
+        long totalCompressed = 0;
+        long totalDataValues = 0;
+        String columnLabel = col.name();
+
+        for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
+            RowGroup rg = rowGroups.get(rgIdx);
+            ColumnChunk chunk = rg.columns().get(col.columnIndex());
+            columnLabel = Sizes.columnPath(chunk.metaData());
+
+            List<PageInfo> pages = collectPageHeaders(chunk.metaData(), inputFile);
+            if (rgIdx > 0 && !pages.isEmpty()) {
+                separatorsBefore.add(rows.size());
+            }
+            for (int i = 0; i < pages.size(); i++) {
+                PageInfo p = pages.get(i);
+                rows.add(new String[]{
+                        i == 0 ? String.valueOf(rgIdx) : "",
+                        p.label(),
+                        p.type(),
+                        p.encoding(),
+                        Sizes.format(p.compressedSize()),
+                        String.valueOf(p.numValues())
+                });
+                totalCompressed += p.compressedSize();
+                if (!p.isDictionary()) {
+                    totalDataValues += p.numValues();
+                }
+            }
+        }
+
+        int totalRowIdx = rows.size();
+        rows.add(new String[]{
+                "",
+                "Total",
+                "",
+                "",
+                Sizes.format(totalCompressed),
+                String.valueOf(totalDataValues)
+        });
+
+        spec.commandLine().getOut().println(columnLabel);
+        spec.commandLine().getOut().println(RowTable.renderTable(HEADERS, rows, separatorsBefore, List.of(totalRowIdx)));
+    }
+
+    private record PageInfo(String label, String type, String encoding, long compressedSize, long numValues, boolean isDictionary) {
+    }
+
+    private List<PageInfo> collectPageHeaders(ColumnMetaData cmd, InputFile inputFile) throws IOException {
         Long dictOffset = cmd.dictionaryPageOffset();
         long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : cmd.dataPageOffset();
         long chunkSize = cmd.totalCompressedSize();
 
         ByteBuffer buffer = inputFile.readRange(chunkStart, (int) chunkSize);
 
-        List<String[]> rows = new ArrayList<>();
+        List<PageInfo> rows = new ArrayList<>();
         int pageIndex = 0;
         long valuesRead = 0;
         int position = 0;
@@ -128,14 +178,16 @@ public class InspectPagesCommand implements Callable<Integer> {
             PageHeader header = PageHeaderReader.read(headerReader);
             int headerSize = headerReader.getBytesRead();
 
-            String label = header.type() == PageHeader.PageType.DICTIONARY_PAGE ? "dict" : String.valueOf(pageIndex);
-            rows.add(new String[]{
+            boolean isDictionary = header.type() == PageHeader.PageType.DICTIONARY_PAGE;
+            String label = isDictionary ? "dict" : String.valueOf(pageIndex);
+            rows.add(new PageInfo(
                     label,
                     header.type().toString(),
                     pageEncoding(header),
-                    Sizes.format(header.compressedPageSize()),
-                    String.valueOf(numValues(header))
-            });
+                    header.compressedPageSize(),
+                    numValues(header),
+                    isDictionary
+            ));
 
             if (header.type() == PageHeader.PageType.DATA_PAGE || header.type() == PageHeader.PageType.DATA_PAGE_V2) {
                 valuesRead += numValues(header);

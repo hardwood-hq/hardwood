@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
@@ -198,5 +199,42 @@ public final class RowTable {
     public static String renderTable(String[] headers, List<String[]> rows) {
         Object[][] data = rows.toArray(new String[0][]);
         return AsciiTable.getTable(AsciiTable.BASIC_ASCII_NO_DATA_SEPARATORS, headers, null, data);
+    }
+
+    /// Renders a table like [renderTable(String[], List)], but inserts a horizontal
+    /// border line before each row whose index appears in `separatorsBefore`. Indices
+    /// refer to positions within `rows` (0 = first data row). Rows listed in
+    /// `heavySeparatorsBefore` get a heavier separator (`=` instead of `-`) to visually
+    /// distinguish summary sections such as totals.
+    public static String renderTable(String[] headers, List<String[]> rows,
+                                     List<Integer> separatorsBefore,
+                                     List<Integer> heavySeparatorsBefore) {
+        String table = renderTable(headers, rows);
+        if (separatorsBefore.isEmpty() && heavySeparatorsBefore.isEmpty()) {
+            return table;
+        }
+        String[] lines = table.split("\n", -1);
+        String lightBorder = lines[0];
+        String heavyBorder = lightBorder.replace('-', '=');
+        Set<Integer> lightSet = new HashSet<>(separatorsBefore);
+        Set<Integer> heavySet = new HashSet<>(heavySeparatorsBefore);
+        int extraLines = separatorsBefore.size() + heavySeparatorsBefore.size();
+        StringBuilder sb = new StringBuilder(table.length() + (lightBorder.length() + 1) * extraLines);
+        for (int i = 0; i < lines.length; i++) {
+            if (i >= 3 && i < lines.length - 1) {
+                int dataRowIdx = i - 3;
+                if (heavySet.contains(dataRowIdx)) {
+                    sb.append(heavyBorder).append('\n');
+                }
+                else if (lightSet.contains(dataRowIdx)) {
+                    sb.append(lightBorder).append('\n');
+                }
+            }
+            sb.append(lines[i]);
+            if (i < lines.length - 1) {
+                sb.append('\n');
+            }
+        }
+        return sb.toString();
     }
 }
