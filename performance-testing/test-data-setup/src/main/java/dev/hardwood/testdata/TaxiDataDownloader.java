@@ -87,34 +87,32 @@ public final class TaxiDataDownloader {
         }
     }
 
-    private static void downloadFile(String url, Path target) {
+    private static void downloadFile(String url, Path target) throws IOException {
         System.out.println("Downloading: " + url);
+        HttpClient client = HttpClient.newBuilder()
+                .followRedirects(HttpClient.Redirect.NORMAL)
+                .build();
+        HttpRequest request = HttpRequest.newBuilder()
+                .uri(URI.create(url))
+                .header("User-Agent", "Wget")
+                .GET()
+                .build();
         try {
-            HttpClient client = HttpClient.newBuilder()
-                    .followRedirects(HttpClient.Redirect.NORMAL)
-                    .build();
-            HttpRequest request = HttpRequest.newBuilder()
-                    .uri(URI.create(url))
-                    .header("User-Agent", "Wget")
-                    .GET()
-                    .build();
-            HttpResponse<Path> response = client.send(request,
-                    HttpResponse.BodyHandlers.ofFile(target));
+            HttpResponse<Path> response = client.send(request, HttpResponse.BodyHandlers.ofFile(target));
             if (response.statusCode() != 200) {
                 Files.deleteIfExists(target);
-                System.out.println("  Failed (status " + response.statusCode() + ") - skipping");
+                throw new IOException("Download failed with status " + response.statusCode() + " for " + url);
             }
-            else {
-                System.out.println("  Downloaded: " + Files.size(target) + " bytes");
-            }
-        }
-        catch (Exception e) {
-            System.out.println("  Failed: " + e.getMessage() + " - skipping");
-            try {
+            if (Files.size(target) == 0) {
                 Files.deleteIfExists(target);
+                throw new IOException("Download produced an empty file for " + url);
             }
-            catch (IOException ignored) {
-            }
+            System.out.println("  Downloaded: " + Files.size(target) + " bytes");
+        }
+        catch (InterruptedException e) {
+            Files.deleteIfExists(target);
+            Thread.currentThread().interrupt();
+            throw new IOException("Download interrupted for " + url, e);
         }
     }
 
