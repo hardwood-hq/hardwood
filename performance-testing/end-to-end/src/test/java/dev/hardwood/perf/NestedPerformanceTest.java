@@ -206,10 +206,10 @@ class NestedPerformanceTest {
                     if (!rowReader.isNull("bbox")) {
                         PqStruct bbox = rowReader.getStruct("bbox");
                         System.out.println("  bbox:");
-                        System.out.println("    xmin: " + bbox.getFloat("xmin"));
-                        System.out.println("    xmax: " + bbox.getFloat("xmax"));
-                        System.out.println("    ymin: " + bbox.getFloat("ymin"));
-                        System.out.println("    ymax: " + bbox.getFloat("ymax"));
+                        System.out.println("    xmin: " + bbox.getDouble("xmin"));
+                        System.out.println("    xmax: " + bbox.getDouble("xmax"));
+                        System.out.println("    ymin: " + bbox.getDouble("ymin"));
+                        System.out.println("    ymax: " + bbox.getDouble("ymax"));
                     }
 
                     if (!rowReader.isNull("names")) {
@@ -446,15 +446,15 @@ class NestedPerformanceTest {
                     if (confidence > maxConfidence) maxConfidence = confidence;
                 }
 
-                // bbox (struct -> float)
+                // bbox (struct -> double)
                 if (!rowReader.isNull("bbox")) {
                     PqStruct bbox = rowReader.getStruct("bbox");
                     if (!bbox.isNull("xmin")) {
-                        double xmin = bbox.getFloat("xmin");
+                        double xmin = bbox.getDouble("xmin");
                         if (xmin < minBboxXmin) minBboxXmin = xmin;
                     }
                     if (!bbox.isNull("xmax")) {
-                        double xmax = bbox.getFloat("xmax");
+                        double xmax = bbox.getDouble("xmax");
                         if (xmax > maxBboxXmax) maxBboxXmax = xmax;
                     }
                 }
@@ -561,11 +561,11 @@ class NestedPerformanceTest {
                 if (!rowReader.isNull(bboxIdx)) {
                     PqStruct bbox = rowReader.getStruct(bboxIdx);
                     if (!bbox.isNull("xmin")) {
-                        double xmin = bbox.getFloat("xmin");
+                        double xmin = bbox.getDouble("xmin");
                         if (xmin < minBboxXmin) minBboxXmin = xmin;
                     }
                     if (!bbox.isNull("xmax")) {
-                        double xmax = bbox.getFloat("xmax");
+                        double xmax = bbox.getDouble("xmax");
                         if (xmax > maxBboxXmax) maxBboxXmax = xmax;
                     }
                 }
@@ -686,8 +686,8 @@ class NestedPerformanceTest {
                  ColumnReader xmaxCol = reader.createColumnReader(bboxXmaxColIdx)) {
                 while (xminCol.nextBatch() & xmaxCol.nextBatch()) {
                     int count = xminCol.getRecordCount();
-                    float[] xmins = xminCol.getFloats();
-                    float[] xmaxs = xmaxCol.getFloats();
+                    double[] xmins = xminCol.getDoubles();
+                    double[] xmaxs = xmaxCol.getDoubles();
                     BitSet xminNulls = xminCol.getElementNulls();
                     BitSet xmaxNulls = xmaxCol.getElementNulls();
 
