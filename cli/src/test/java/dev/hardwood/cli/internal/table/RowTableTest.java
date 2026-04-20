@@ -7,9 +7,15 @@
  */
 package dev.hardwood.cli.internal.table;
 
+import java.nio.charset.StandardCharsets;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
+
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -42,6 +48,38 @@ class RowTableTest {
     @Test
     void displayWidthCountsKanaAsWide() {
         assertThat(RowTable.displayWidth("コキンボ")).isEqualTo(8);
+    }
+
+    @Test
+    void renderBareByteArrayAsStringWhenValidUtf8() {
+        SchemaNode.PrimitiveNode schema = bareByteArray();
+        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
+
+        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("hello");
+    }
+
+    @Test
+    void renderBareByteArrayAsByteSummaryWhenInvalidUtf8() {
+        SchemaNode.PrimitiveNode schema = bareByteArray();
+        // Lone continuation byte — not a valid UTF-8 sequence.
+        byte[] bytes = {(byte) 0xC3, (byte) 0x28, (byte) 0xA0, (byte) 0xA1};
+
+        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("<4 bytes>");
+    }
+
+    @Test
+    void renderAnnotatedStringAlwaysDecodes() {
+        SchemaNode.PrimitiveNode schema = new SchemaNode.PrimitiveNode(
+                "f", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                new LogicalType.StringType(), 0, 0, 0);
+        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
+
+        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("hello");
+    }
+
+    private static SchemaNode.PrimitiveNode bareByteArray() {
+        return new SchemaNode.PrimitiveNode(
+                "f", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, null, 0, 0, 0);
     }
 
     @Test

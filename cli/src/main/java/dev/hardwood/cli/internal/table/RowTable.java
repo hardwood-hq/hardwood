@@ -10,6 +10,9 @@ package dev.hardwood.cli.internal.table;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.nio.charset.CharacterCodingException;
+import java.nio.charset.CharsetDecoder;
+import java.nio.charset.CodingErrorAction;
 import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashSet;
@@ -56,26 +59,39 @@ public final class RowTable {
     }
 
     public static String renderField(RowReader rowReader, int fieldIndex, SchemaNode fieldSchema) {
-        if (isStringField(fieldSchema)) {
+        if (isAnnotatedStringField(fieldSchema)) {
             String s = rowReader.getString(fieldIndex);
             return s != null ? s : "null";
         }
         return renderValue(rowReader.getValue(fieldIndex), fieldSchema);
     }
 
-    private static boolean isStringField(SchemaNode node) {
+    private static boolean isAnnotatedStringField(SchemaNode node) {
         if (!(node instanceof SchemaNode.PrimitiveNode pn)) {
             return false;
         }
         LogicalType lt = pn.logicalType();
-        if (lt instanceof LogicalType.StringType
+        return lt instanceof LogicalType.StringType
                 || lt instanceof LogicalType.EnumType
-                || lt instanceof LogicalType.JsonType) {
+                || lt instanceof LogicalType.JsonType;
+    }
+
+    private static boolean isBareByteArray(SchemaNode node) {
+        return node instanceof SchemaNode.PrimitiveNode pn
+                && pn.type() == PhysicalType.BYTE_ARRAY
+                && pn.logicalType() == null;
+    }
+
+    private static boolean isValidUtf8(byte[] bytes) {
+        CharsetDecoder decoder = StandardCharsets.UTF_8.newDecoder()
+                .onMalformedInput(CodingErrorAction.REPORT)
+                .onUnmappableCharacter(CodingErrorAction.REPORT);
+        try {
+            decoder.decode(ByteBuffer.wrap(bytes));
             return true;
+        } catch (CharacterCodingException e) {
+            return false;
         }
-        // BYTE_ARRAY with no logical type is treated as a string, consistent with
-        // ValueConverter.convertValue() fallback behavior.
-        return lt == null && pn.type() == PhysicalType.BYTE_ARRAY;
     }
 
     public static String renderValue(Object value, SchemaNode schema) {
@@ -109,8 +125,17 @@ public final class RowTable {
     }
 
     private static String renderBytes(byte[] bytes, SchemaNode schema) {
-        if (isStringField(schema)) {
+        if (isAnnotatedStringField(schema)) {
             return new String(bytes, StandardCharsets.UTF_8);
+        }
+        if (isBareByteArray(schema)) {
+            // Schema omits the STRING annotation, so we can't trust the column to
+            // be text. Opportunistically decode when the bytes are valid UTF-8 (the
+            // common case for older writers) and summarise otherwise, so binary
+            // payloads aren't silently rendered with U+FFFD replacement characters.
+            return isValidUtf8(bytes)
+                    ? new String(bytes, StandardCharsets.UTF_8)
+                    : "<" + bytes.length + " bytes>";
         }
         if (!(schema instanceof SchemaNode.PrimitiveNode pn)) {
             return "<" + bytes.length + " bytes>";

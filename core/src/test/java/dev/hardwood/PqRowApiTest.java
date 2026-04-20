@@ -1123,6 +1123,24 @@ public class PqRowApiTest {
         }
     }
 
+    /// Bare BYTE_ARRAY (no STRING logical type annotation) must surface as `byte[]`
+    /// from `getValue`, not be silently UTF-8 decoded. Otherwise binary payloads with
+    /// invalid UTF-8 sequences are corrupted with U+FFFD replacement characters.
+    @Test
+    void testGetValueForBareBinaryColumnReturnsBytes() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            rowReader.next();
+
+            Object value = rowReader.getValue("binary_col");
+            assertThat(value).isInstanceOf(byte[].class);
+            assertThat((byte[]) value).containsExactly(0x00, 0x01, 0x02);
+        }
+    }
+
     @Test
     void testByNameAndByIndexConsistency() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");

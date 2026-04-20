@@ -172,14 +172,16 @@ public final class ValueConverter {
             return convertToBinary(rawValue, schema);
         }
 
-        // Fall back to physical type
+        // Fall back to physical type. BYTE_ARRAY without a STRING logical type is
+        // surfaced as raw bytes: the column may contain arbitrary binary payloads
+        // (Protobuf, WKB, custom encodings) which UTF-8 decoding would corrupt.
         return switch (primitive.type()) {
             case INT32 -> convertToInt(rawValue, schema);
             case INT64 -> convertToLong(rawValue, schema);
             case FLOAT -> convertToFloat(rawValue, schema);
             case DOUBLE -> convertToDouble(rawValue, schema);
             case BOOLEAN -> convertToBoolean(rawValue, schema);
-            case BYTE_ARRAY -> convertToString(rawValue, schema);
+            case BYTE_ARRAY -> convertToBinary(rawValue, schema);
             case FIXED_LEN_BYTE_ARRAY -> convertToBinary(rawValue, schema);
             case INT96 -> convertToTimestamp(rawValue, schema);
         };
