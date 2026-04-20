@@ -21,6 +21,8 @@ interface InspectPagesCommandContract {
 
     String dictFile();
 
+    String nestedFile();
+
     String nonexistentFile();
 
     @Test
@@ -96,6 +98,16 @@ interface InspectPagesCommandContract {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("Unknown column");
+    }
+
+    @Test
+    default void columnFilterAcceptsNestedPath(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("inspect", "pages", "-f", nestedFile(), "--column", "tags.list.element");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput())
+                .startsWith("tags.list.element\n")
+                .contains("DATA_PAGE");
     }
 
     @Test

@@ -61,9 +61,10 @@ public class InspectPagesCommand implements Callable<Integer> {
             return CommandLine.ExitCode.SOFTWARE;
         }
 
+        int filterColumnIndex = -1;
         if (column != null) {
             try {
-                schema.getColumn(column);
+                filterColumnIndex = schema.getColumn(column).columnIndex();
             }
             catch (IllegalArgumentException e) {
                 spec.commandLine().getErr().println("Unknown column: " + column);
@@ -74,7 +75,7 @@ public class InspectPagesCommand implements Callable<Integer> {
         InputFile pageInputFile = fileMixin.toInputFile();
         try {
             pageInputFile.open();
-            printPages(metadata, schema, pageInputFile);
+            printPages(metadata, schema, pageInputFile, filterColumnIndex);
         }
         catch (IOException e) {
             spec.commandLine().getErr().println("Error reading pages: " + e.getMessage());
@@ -94,13 +95,13 @@ public class InspectPagesCommand implements Callable<Integer> {
 
     private static final String[] HEADERS = {"RG", "Page", "Type", "Encoding", "Compressed", "Values"};
 
-    private void printPages(FileMetaData metadata, FileSchema schema, InputFile inputFile) throws IOException {
+    private void printPages(FileMetaData metadata, FileSchema schema, InputFile inputFile, int filterColumnIndex) throws IOException {
         List<RowGroup> rowGroups = metadata.rowGroups();
         List<ColumnSchema> columns = schema.getColumns();
 
         boolean firstColumn = true;
         for (ColumnSchema col : columns) {
-            if (this.column != null && !col.name().equals(this.column)) {
+            if (filterColumnIndex >= 0 && col.columnIndex() != filterColumnIndex) {
                 continue;
             }
             if (!firstColumn) {
