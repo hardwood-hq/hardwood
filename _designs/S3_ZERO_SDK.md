@@ -267,9 +267,9 @@ Key `context.json` flags:
 
 Parameterized `Aws4SignerTest` runs all 38 cases, asserting each intermediate result. `Aws4Signer` exposes canonical request and string-to-sign via package-private methods for this purpose.
 
-### S3Mock integration tests
+### s3proxy integration tests
 
-`S3InputFileTest`, `S3MultiFileTest`, `S3SelectiveReadJfrTest` run against S3Mock via Testcontainers. Tests construct `S3Api` directly for upload setup and use `S3Source` for reading.
+`S3InputFileTest`, `S3MultiFileTest`, `S3SelectiveReadJfrTest` run against s3proxy via Testcontainers. Tests construct `S3Api` directly for upload setup and use `S3Source` for reading.
 
 ### `hardwood-aws-auth` tests
 
@@ -281,7 +281,7 @@ Parameterized `Aws4SignerTest` runs all 38 cases, asserting each intermediate re
 
 | Risk | Mitigation |
 |---|---|
-| Signing bug | 38 AWS test vectors + S3Mock integration tests |
+| Signing bug | 38 AWS test vectors + s3proxy integration tests |
 | Future SigV4 changes | Stable since 2012; SigV4a only needed for multi-region access points |
 | SDK exclusions break credential resolution | Excluded modules are signing infrastructure, not credential providers; `http-client-spi` retained for GraalVM compatibility |
 | Session token handling | Explicit signer check + test vectors with session tokens |

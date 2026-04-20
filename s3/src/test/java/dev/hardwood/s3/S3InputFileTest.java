@@ -9,17 +9,16 @@ package dev.hardwood.s3;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-
-import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
+import org.testcontainers.utility.MountableFile;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
@@ -37,25 +36,26 @@ class S3InputFileTest {
             .resolve("../core/src/test/resources").normalize();
 
     @Container
-    static S3MockContainer s3Mock = new S3MockContainer("latest");
+    static GenericContainer<?> s3 = S3ProxyContainers.filesystemBacked()
+            .withCopyFileToContainer(
+                    MountableFile.forHostPath(TEST_RESOURCES.resolve("plain_uncompressed.parquet")),
+                    S3ProxyContainers.objectPath("plain_uncompressed.parquet"))
+            .withCopyFileToContainer(
+                    MountableFile.forHostPath(TEST_RESOURCES.resolve("plain_uncompressed_with_nulls.parquet")),
+                    S3ProxyContainers.objectPath("plain_uncompressed_with_nulls.parquet"))
+            .withCopyFileToContainer(
+                    MountableFile.forHostPath(TEST_RESOURCES.resolve("column_index_pushdown.parquet")),
+                    S3ProxyContainers.objectPath("column_index_pushdown.parquet"));
 
     static S3Source source;
 
     @BeforeAll
-    static void setup() throws Exception {
+    static void setup() {
         source = S3Source.builder()
-                .endpoint(s3Mock.getHttpEndpoint())
+                .endpoint(S3ProxyContainers.endpoint(s3))
                 .pathStyle(true)
-                .credentials(S3Credentials.of("access", "secret"))
+                .credentials(S3Credentials.of(S3ProxyContainers.ACCESS_KEY, S3ProxyContainers.SECRET_KEY))
                 .build();
-
-        source.api().createBucket("test-bucket");
-        source.api().putObject("test-bucket", "plain_uncompressed.parquet", Files.readAllBytes(
-                TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
-        source.api().putObject("test-bucket", "plain_uncompressed_with_nulls.parquet", Files.readAllBytes(
-                TEST_RESOURCES.resolve("plain_uncompressed_with_nulls.parquet")));
-        source.api().putObject("test-bucket", "column_index_pushdown.parquet", Files.readAllBytes(
-                TEST_RESOURCES.resolve("column_index_pushdown.parquet")));
     }
 
     @AfterAll

@@ -7,7 +7,6 @@
  */
 package dev.hardwood.s3;
 
-import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -17,10 +16,11 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.moditect.jfrunit.EnableEvent;
 import org.moditect.jfrunit.JfrEvents;
+import org.testcontainers.containers.GenericContainer;
+import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
-
-import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
+import org.testcontainers.utility.MountableFile;
 
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
@@ -93,34 +93,37 @@ public class S3SelectiveReadJfrTest {
             .resolve("../core/src/test/resources").normalize();
 
     @Container
-    static S3MockContainer s3Mock = new S3MockContainer("latest");
+    static GenericContainer<?> s3 = S3ProxyContainers.filesystemBacked()
+            .withCopyFileToContainer(
+                    MountableFile.forHostPath(TEST_RESOURCES.resolve(PAGE_INDEX_FILE)),
+                    S3ProxyContainers.objectPath(PAGE_INDEX_FILE))
+            .withCopyFileToContainer(
+                    MountableFile.forHostPath(TEST_RESOURCES.resolve(FILTER_PUSHDOWN_FILE)),
+                    S3ProxyContainers.objectPath(FILTER_PUSHDOWN_FILE))
+            .withCopyToContainer(
+                    Transferable.of(TestParquetGenerator.generate(LAZY_RG_COUNT, LAZY_RG_ROWS, LAZY_RG_COLUMNS)),
+                    S3ProxyContainers.objectPath(LAZY_ROWGROUP_FILE))
+            .withCopyToContainer(
+                    Transferable.of(TestParquetGenerator.generate(LAZY_PAGE_RG_COUNT, LAZY_PAGE_RG_ROWS, LAZY_PAGE_COLUMNS)),
+                    S3ProxyContainers.objectPath(LAZY_PAGE_FILE))
+            .withCopyToContainer(
+                    Transferable.of(TestParquetGenerator.generate(LARGE_RG_COUNT, LARGE_RG_ROWS, LARGE_RG_COLUMNS, LARGE_RG_ROWS_PER_PAGE)),
+                    S3ProxyContainers.objectPath(LARGE_RG_FILE));
 
     static S3Source source;
 
     public JfrEvents jfrEvents = new JfrEvents();
 
     @BeforeAll
-    static void setup() throws Exception {
+    static void setup() {
         // Override sequential chunk size for this test class
         System.setProperty("hardwood.internal.sequentialChunkSize", String.valueOf(TEST_CHUNK_SIZE));
 
         source = S3Source.builder()
-                .endpoint(s3Mock.getHttpEndpoint())
+                .endpoint(S3ProxyContainers.endpoint(s3))
                 .pathStyle(true)
-                .credentials(S3Credentials.of("access", "secret"))
+                .credentials(S3Credentials.of(S3ProxyContainers.ACCESS_KEY, S3ProxyContainers.SECRET_KEY))
                 .build();
-
-        source.api().createBucket("test-bucket");
-        source.api().putObject("test-bucket", PAGE_INDEX_FILE, Files.readAllBytes(
-                TEST_RESOURCES.resolve(PAGE_INDEX_FILE)));
-        source.api().putObject("test-bucket", FILTER_PUSHDOWN_FILE, Files.readAllBytes(
-                TEST_RESOURCES.resolve(FILTER_PUSHDOWN_FILE)));
-        source.api().putObject("test-bucket", LAZY_ROWGROUP_FILE,
-                TestParquetGenerator.generate(LAZY_RG_COUNT, LAZY_RG_ROWS, LAZY_RG_COLUMNS));
-        source.api().putObject("test-bucket", LAZY_PAGE_FILE,
-                TestParquetGenerator.generate(LAZY_PAGE_RG_COUNT, LAZY_PAGE_RG_ROWS, LAZY_PAGE_COLUMNS));
-        source.api().putObject("test-bucket", LARGE_RG_FILE,
-                TestParquetGenerator.generate(LARGE_RG_COUNT, LARGE_RG_ROWS, LARGE_RG_COLUMNS, LARGE_RG_ROWS_PER_PAGE));
     }
 
     @AfterAll

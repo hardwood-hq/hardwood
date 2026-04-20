@@ -4,7 +4,7 @@
 
 ## Context
 
-It's a common requirement to read Parquet files stored on object storage (S3). The `InputFile` abstraction (PR #99) decouples the read pipeline from memory-mapped local files, enabling custom backends. This plan adds an `S3InputFile` implementation backed by the AWS SDK for Java v2, along with Testcontainers-based integration tests using [Adobe S3Mock](https://github.com/adobe/S3Mock).
+It's a common requirement to read Parquet files stored on object storage (S3). The `InputFile` abstraction (PR #99) decouples the read pipeline from memory-mapped local files, enabling custom backends. This plan adds an `S3InputFile` implementation backed by the AWS SDK for Java v2, along with Testcontainers-based integration tests using [s3proxy](https://github.com/gaul/s3proxy).
 
 ### Design decisions
 
@@ -77,7 +77,7 @@ Key properties:
 
 ---
 
-## Step 3: Integration Tests with Testcontainers + S3Mock
+## Step 3: Integration Tests with Testcontainers + s3proxy
 
 `S3InputFileTest` — basic read operations: metadata, rows, row values, nulls,
 file-not-found error, name formatting.
@@ -160,6 +160,6 @@ hardwood/
 ## Verification
 
 1. `./mvnw verify -pl core` — existing tests still pass
-2. `./mvnw verify -pl s3` — S3 integration tests pass against S3Mock
+2. `./mvnw verify -pl s3` — S3 integration tests pass against s3proxy
 3. `./mvnw verify` — full build succeeds
 4. All with 180s timeout to detect deadlocks

@@ -97,11 +97,12 @@
         <scope>import</scope>
       </dependency>
 
-      <!-- S3 mock for integration tests -->
+      <!-- Shared s3proxy test container helper, published as the hardwood-s3 test-jar -->
       <dependency>
-        <groupId>com.adobe.testing</groupId>
-        <artifactId>s3mock-testcontainers</artifactId>
-        <version>4.9.1</version>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-s3</artifactId>
+        <version>${project.version}</version>
+        <type>test-jar</type>
       </dependency>
     </dependencies>
   </dependencyManagement>

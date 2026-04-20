@@ -33,6 +33,12 @@
       <artifactId>hardwood-s3</artifactId>
       <scope>test</scope>
     </dependency>
+    <dependency>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-s3</artifactId>
+      <type>test-jar</type>
+      <scope>test</scope>
+    </dependency>
 
     <!-- S3Proxy (via Testcontainers GenericContainer) for S3-based perf tests -->
     <dependency>

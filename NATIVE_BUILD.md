@@ -35,10 +35,14 @@ Automated coverage of the native binary is provided by the Quarkus integration-t
 
 The steps below are useful for ad-hoc manual testing of the native binary against S3.
 
-1. Start S3Mock and set environment
+1. Start s3proxy and set environment
 
 ```bash
-docker run -d --name s3mock -p 9090:9090 adobe/s3mock
+docker run -d --name s3proxy -p 9090:80 \
+    -e S3PROXY_AUTHORIZATION=none \
+    -e S3PROXY_ENDPOINT=http://0.0.0.0:80 \
+    -e JCLOUDS_PROVIDER=transient \
+    andrewgaul/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3
 
 export AWS_ENDPOINT_URL=http://localhost:9090
 export AWS_ACCESS_KEY_ID=foo

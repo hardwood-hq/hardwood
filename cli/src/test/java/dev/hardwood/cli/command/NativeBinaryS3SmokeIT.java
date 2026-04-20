@@ -18,9 +18,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// Smoke test for the native CLI binary against S3. Proves the AWS SDK baked
 /// into the native image can reach an S3 endpoint, authenticate, and read an
-/// object using the `-D` system properties injected by `S3MockTestResource`.
+/// object using the `-D` system properties injected by `S3ProxyTestResource`.
 @QuarkusMainIntegrationTest
-@WithTestResource(S3MockTestResource.class)
+@WithTestResource(S3ProxyTestResource.class)
 class NativeBinaryS3SmokeIT {
 
     @Test

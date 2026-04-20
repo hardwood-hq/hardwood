@@ -7,10 +7,6 @@
  */
 package org.apache.parquet.compat;
 
-import java.net.URI;
-import java.net.http.HttpClient;
-import java.nio.file.Files;
-import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -21,15 +17,13 @@ import org.apache.parquet.hadoop.GroupReadSupport;
 import org.apache.parquet.hadoop.ParquetReader;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
 import org.apache.parquet.io.InputFile;
-import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
+import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
+import org.testcontainers.utility.MountableFile;
 
-import com.adobe.testing.s3mock.testcontainers.S3MockContainer;
-
-import dev.hardwood.s3.S3Credentials;
-import dev.hardwood.s3.internal.S3Api;
+import dev.hardwood.s3.S3ProxyContainers;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -40,32 +34,22 @@ class ParquetReaderS3CompatTest {
     private static final java.nio.file.Path TEST_RESOURCES = java.nio.file.Path.of("").toAbsolutePath()
             .resolve("../core/src/test/resources").normalize();
 
+    private static final java.nio.file.Path FIXTURE = TEST_RESOURCES.resolve("plain_uncompressed.parquet");
+
+    // Note: a fresh MountableFile per copy — Testcontainers rejects the same
+    // instance being attached to two destinations.
     @Container
-    static S3MockContainer s3Mock = new S3MockContainer("latest");
-
-    @BeforeAll
-    static void setup() throws Exception {
-        S3Api api = new S3Api(
-                HttpClient.newHttpClient(),
-                () -> S3Credentials.of("access", "secret"),
-                "us-east-1",
-                URI.create(s3Mock.getHttpEndpoint()),
-                true,
-                Duration.ofSeconds(5),
-                5);
-
-        api.createBucket("test-bucket");
-        api.putObject("test-bucket", "plain_uncompressed.parquet", Files.readAllBytes(
-                TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
-        api.putObject("test-bucket", "subdir/nested.parquet", Files.readAllBytes(
-                TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
-    }
+    static GenericContainer<?> s3 = S3ProxyContainers.filesystemBacked()
+            .withCopyFileToContainer(MountableFile.forHostPath(FIXTURE),
+                    S3ProxyContainers.objectPath("plain_uncompressed.parquet"))
+            .withCopyFileToContainer(MountableFile.forHostPath(FIXTURE),
+                    S3ProxyContainers.objectPath("subdir/nested.parquet"));
 
     private Configuration s3Config() {
         Configuration conf = new Configuration();
-        conf.set("fs.s3a.access.key", "access");
-        conf.set("fs.s3a.secret.key", "secret");
-        conf.set("fs.s3a.endpoint", s3Mock.getHttpEndpoint());
+        conf.set("fs.s3a.access.key", S3ProxyContainers.ACCESS_KEY);
+        conf.set("fs.s3a.secret.key", S3ProxyContainers.SECRET_KEY);
+        conf.set("fs.s3a.endpoint", S3ProxyContainers.endpoint(s3));
         conf.set("fs.s3a.endpoint.region", "us-east-1");
         conf.setBoolean("fs.s3a.path.style.access", true);
         return conf;

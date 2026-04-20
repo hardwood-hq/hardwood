@@ -59,22 +59,12 @@ class FlatS3PerformanceTest {
     private static final String START_PROPERTY = "perf.start";
     private static final String END_PROPERTY = "perf.end";
     private static final String RUNS_PROPERTY = "perf.runs";
-    private static final String BUCKET = "perf-bucket";
-    private static final String ACCESS_KEY = "access";
-    private static final String SECRET_KEY = "secret";
 
     @Container
-    static GenericContainer<?> s3proxy = new GenericContainer<>("andrewgaul/s3proxy:latest")
-            .withExposedPorts(80)
-            .withEnv("S3PROXY_AUTHORIZATION", "aws-v2-or-v4")
-            .withEnv("S3PROXY_IDENTITY", ACCESS_KEY)
-            .withEnv("S3PROXY_CREDENTIAL", SECRET_KEY)
-            .withEnv("S3PROXY_ENDPOINT", "http://0.0.0.0:80")
-            .withEnv("JCLOUDS_PROVIDER", "filesystem")
-            .withEnv("JCLOUDS_FILESYSTEM_BASEDIR", "/data")
+    static GenericContainer<?> s3proxy = S3ProxyContainers.filesystemBacked()
             .withFileSystemBind(
                     DATA_DIR.toAbsolutePath().normalize().toString(),
-                    "/data/" + BUCKET,
+                    "/data/" + S3ProxyContainers.BUCKET,
                     BindMode.READ_ONLY);
 
     private static S3Source source;
@@ -88,11 +78,10 @@ class FlatS3PerformanceTest {
 
     @BeforeAll
     static void setup() throws Exception {
-        String endpoint = "http://" + s3proxy.getHost() + ":" + s3proxy.getMappedPort(80);
         source = S3Source.builder()
-                .endpoint(endpoint)
+                .endpoint(S3ProxyContainers.endpoint(s3proxy))
                 .pathStyle(true)
-                .credentials(S3Credentials.of(ACCESS_KEY, SECRET_KEY))
+                .credentials(S3Credentials.of(S3ProxyContainers.ACCESS_KEY, S3ProxyContainers.SECRET_KEY))
                 .build();
 
         YearMonth start = getStartMonth();
@@ -114,7 +103,7 @@ class FlatS3PerformanceTest {
         }
         System.out.println(String.format("S3Proxy serving %d files (%,.1f MB) from %s as s3://%s/ (range %s..%s)",
                 availableKeys.size(), totalBytes / (1024.0 * 1024.0),
-                DATA_DIR.toAbsolutePath().normalize(), BUCKET, start, end));
+                DATA_DIR.toAbsolutePath().normalize(), S3ProxyContainers.BUCKET, start, end));
     }
 
     @AfterAll
@@ -228,7 +217,7 @@ class FlatS3PerformanceTest {
         java.util.Map<String, Boolean> pcIsLongBySchema = new java.util.HashMap<>();
 
         for (String key : keys) {
-            try (ParquetFileReader reader = ParquetFileReader.open(source.inputFile(BUCKET, key))) {
+            try (ParquetFileReader reader = ParquetFileReader.open(source.inputFile(S3ProxyContainers.BUCKET, key))) {
                 StringBuilder fp = new StringBuilder();
                 for (dev.hardwood.schema.ColumnSchema col : reader.getFileSchema().getColumns()) {
                     fp.append(col.name()).append(':').append(col.type()).append(';');
@@ -240,7 +229,7 @@ class FlatS3PerformanceTest {
                         && pn.type() == PhysicalType.INT64;
 
                 bySchema.computeIfAbsent(fingerprint, k -> new ArrayList<>())
-                        .add(source.inputFile(BUCKET, key));
+                        .add(source.inputFile(S3ProxyContainers.BUCKET, key));
                 pcIsLongBySchema.putIfAbsent(fingerprint, pcIsLong);
             }
             catch (IOException e) {
