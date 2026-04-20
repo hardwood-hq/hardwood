@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.EOFException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
@@ -59,6 +60,16 @@ public final class SequentialFetchPlan implements FetchPlan {
     /// Overridable via the `hardwood.internal.sequentialChunkSize` system property (bytes).
     private static final int DEFAULT_CHUNK_SIZE =
             Integer.getInteger("hardwood.internal.sequentialChunkSize", 128 * 1024 * 1024);
+
+    /// Initial peek size used to read a page header. Grown on demand when the
+    /// page header is larger (e.g. because the writer emitted inline
+    /// `DataPageHeader.statistics` with long `min_value`/`max_value` binaries).
+    private static final int INITIAL_PAGE_HEADER_PEEK_SIZE = 1024;
+
+    /// Upper bound for page header peek growth. Parquet does not formally cap
+    /// the page header size, but 1 MiB is well beyond what any sensible writer
+    /// produces and protects against runaway reads on a corrupt file.
+    private static final int MAX_PAGE_HEADER_PEEK_SIZE = 1024 * 1024;
 
     private final InputFile inputFile;
     private final long columnChunkOffset;
@@ -219,6 +230,36 @@ public final class SequentialFetchPlan implements FetchPlan {
             return hasMore;
         }
 
+        /// Reads a page header at the given relative position, growing the
+        /// peek buffer on EOF. Needed because `DataPageHeader.statistics` may
+        /// carry long `min_value`/`max_value` binaries that push the header
+        /// past the initial peek size.
+        private ParsedHeader readPageHeader(int relPos) throws IOException {
+            int remaining = columnChunkLength - relPos;
+            int peekSize = Math.min(INITIAL_PAGE_HEADER_PEEK_SIZE, remaining);
+            while (true) {
+                ByteBuffer headerBuf = readBytes(relPos, peekSize);
+                ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
+                try {
+                    PageHeader header = PageHeaderReader.read(headerReader);
+                    return new ParsedHeader(header, headerReader.getBytesRead());
+                }
+                catch (EOFException eof) {
+                    if (peekSize >= remaining) {
+                        throw new IOException("Page header for column '"
+                                + columnSchema.name() + "' exceeds the full column chunk remainder ("
+                                + remaining + " bytes) — the file is likely corrupt", eof);
+                    }
+                    if (peekSize >= MAX_PAGE_HEADER_PEEK_SIZE) {
+                        throw new IOException("Page header for column '"
+                                + columnSchema.name() + "' exceeds maximum peek size ("
+                                + MAX_PAGE_HEADER_PEEK_SIZE + " bytes)", eof);
+                    }
+                    peekSize = Math.min(remaining, Math.min(peekSize * 2, MAX_PAGE_HEADER_PEEK_SIZE));
+                }
+            }
+        }
+
         /// Reads bytes at the given relative position, advancing through
         /// chunks as needed. If the range fits in the current chunk,
         /// returns a zero-copy slice. If it spans multiple chunks,
@@ -271,11 +312,9 @@ public final class SequentialFetchPlan implements FetchPlan {
             if (position >= columnChunkLength) {
                 return;
             }
-            int peekSize = Math.min(256, columnChunkLength - position);
-            ByteBuffer headerBuf = readBytes(position, peekSize);
-            ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
-            PageHeader header = PageHeaderReader.read(headerReader);
-            int headerSize = headerReader.getBytesRead();
+            ParsedHeader parsed = readPageHeader(position);
+            PageHeader header = parsed.header();
+            int headerSize = parsed.headerSize();
 
             if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
                 int compressedSize = header.compressedPageSize();
@@ -297,11 +336,9 @@ public final class SequentialFetchPlan implements FetchPlan {
 
         private PageInfo scanNextPage() throws IOException {
             while (valuesRead < metaData.numValues() && position < columnChunkLength) {
-                int peekSize = Math.min(256, columnChunkLength - position);
-                ByteBuffer headerBuf = readBytes(position, peekSize);
-                ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
-                PageHeader header = PageHeaderReader.read(headerReader);
-                int headerSize = headerReader.getBytesRead();
+                ParsedHeader parsed = readPageHeader(position);
+                PageHeader header = parsed.header();
+                int headerSize = parsed.headerSize();
 
                 int compressedSize = header.compressedPageSize();
                 int totalPageSize = headerSize + compressedSize;
@@ -366,6 +403,9 @@ public final class SequentialFetchPlan implements FetchPlan {
             event.pageCount = pageCount;
             event.scanStrategy = RowGroupScannedEvent.STRATEGY_SEQUENTIAL;
             event.commit();
+        }
+
+        private record ParsedHeader(PageHeader header, int headerSize) {
         }
     }
 }
