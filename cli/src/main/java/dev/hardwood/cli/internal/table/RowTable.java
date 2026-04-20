@@ -11,13 +11,12 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.util.Collections;
 import java.util.HashSet;
 import java.util.HexFormat;
 import java.util.List;
 import java.util.Set;
 import java.util.UUID;
-
-import com.github.freva.asciitable.AsciiTable;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
@@ -197,8 +196,7 @@ public final class RowTable {
     }
 
     public static String renderTable(String[] headers, List<String[]> rows) {
-        Object[][] data = rows.toArray(new String[0][]);
-        return AsciiTable.getTable(AsciiTable.BASIC_ASCII_NO_DATA_SEPARATORS, headers, null, data);
+        return renderTable(headers, rows, Collections.emptyList(), Collections.emptyList());
     }
 
     /// Renders a table like [renderTable(String[], List)], but inserts a horizontal
@@ -206,35 +204,113 @@ public final class RowTable {
     /// refer to positions within `rows` (0 = first data row). Rows listed in
     /// `heavySeparatorsBefore` get a heavier separator (`=` instead of `-`) to visually
     /// distinguish summary sections such as totals.
+    ///
+    /// Column widths are computed from terminal display width so that East Asian
+    /// wide characters (CJK, Hangul, Kana, Fullwidth forms) contribute 2 cells each,
+    /// keeping alignment correct across rows that mix Latin and wide-character text.
     public static String renderTable(String[] headers, List<String[]> rows,
                                      List<Integer> separatorsBefore,
                                      List<Integer> heavySeparatorsBefore) {
-        String table = renderTable(headers, rows);
-        if (separatorsBefore.isEmpty() && heavySeparatorsBefore.isEmpty()) {
-            return table;
+        int cols = headers.length;
+        int[] widths = new int[cols];
+        for (int i = 0; i < cols; i++) {
+            widths[i] = displayWidth(headers[i]);
         }
-        String[] lines = table.split("\n", -1);
-        String lightBorder = lines[0];
-        String heavyBorder = lightBorder.replace('-', '=');
+        for (String[] row : rows) {
+            for (int i = 0; i < cols; i++) {
+                widths[i] = Math.max(widths[i], displayWidth(row[i]));
+            }
+        }
+
+        String lightBorder = buildBorder(widths, '-');
+        String heavyBorder = buildBorder(widths, '=');
         Set<Integer> lightSet = new HashSet<>(separatorsBefore);
         Set<Integer> heavySet = new HashSet<>(heavySeparatorsBefore);
-        int extraLines = separatorsBefore.size() + heavySeparatorsBefore.size();
-        StringBuilder sb = new StringBuilder(table.length() + (lightBorder.length() + 1) * extraLines);
-        for (int i = 0; i < lines.length; i++) {
-            if (i >= 3 && i < lines.length - 1) {
-                int dataRowIdx = i - 3;
-                if (heavySet.contains(dataRowIdx)) {
-                    sb.append(heavyBorder).append('\n');
-                }
-                else if (lightSet.contains(dataRowIdx)) {
-                    sb.append(lightBorder).append('\n');
-                }
+
+        StringBuilder sb = new StringBuilder();
+        sb.append(lightBorder).append('\n');
+        sb.append(renderCells(headers, widths, false)).append('\n');
+        sb.append(lightBorder).append('\n');
+        for (int r = 0; r < rows.size(); r++) {
+            if (heavySet.contains(r)) {
+                sb.append(heavyBorder).append('\n');
             }
-            sb.append(lines[i]);
-            if (i < lines.length - 1) {
-                sb.append('\n');
+            else if (lightSet.contains(r)) {
+                sb.append(lightBorder).append('\n');
             }
+            sb.append(renderCells(rows.get(r), widths, true)).append('\n');
+        }
+        sb.append(lightBorder);
+        return sb.toString();
+    }
+
+    private static String buildBorder(int[] widths, char fill) {
+        StringBuilder sb = new StringBuilder();
+        sb.append('+');
+        for (int w : widths) {
+            for (int i = 0; i < w + 2; i++) {
+                sb.append(fill);
+            }
+            sb.append('+');
         }
         return sb.toString();
+    }
+
+    private static String renderCells(String[] cells, int[] widths, boolean rightAlign) {
+        StringBuilder sb = new StringBuilder();
+        sb.append('|');
+        for (int i = 0; i < cells.length; i++) {
+            String cell = cells[i];
+            int padding = widths[i] - displayWidth(cell);
+            sb.append(' ');
+            if (rightAlign) {
+                appendSpaces(sb, padding);
+                sb.append(cell);
+            }
+            else {
+                sb.append(cell);
+                appendSpaces(sb, padding);
+            }
+            sb.append(' ');
+            sb.append('|');
+        }
+        return sb.toString();
+    }
+
+    private static void appendSpaces(StringBuilder sb, int count) {
+        for (int i = 0; i < count; i++) {
+            sb.append(' ');
+        }
+    }
+
+    /// Returns the number of terminal cells the string occupies. East Asian wide
+    /// characters (CJK ideographs, Hangul, Kana, Fullwidth forms) count as 2; other
+    /// characters count as 1. Surrogate pairs are counted once per code point.
+    static int displayWidth(String s) {
+        int width = 0;
+        int i = 0;
+        int len = s.length();
+        while (i < len) {
+            int cp = s.codePointAt(i);
+            width += isWideCodePoint(cp) ? 2 : 1;
+            i += Character.charCount(cp);
+        }
+        return width;
+    }
+
+    private static boolean isWideCodePoint(int cp) {
+        return (cp >= 0x1100 && cp <= 0x115F)     // Hangul Jamo
+                || (cp >= 0x2E80 && cp <= 0x303E) // CJK Radicals, Kangxi, CJK Symbols & Punctuation
+                || (cp >= 0x3041 && cp <= 0x33FF) // Hiragana, Katakana, Bopomofo, Hangul Compat, CJK Strokes
+                || (cp >= 0x3400 && cp <= 0x4DBF) // CJK Unified Ideographs Extension A
+                || (cp >= 0x4E00 && cp <= 0x9FFF) // CJK Unified Ideographs
+                || (cp >= 0xA000 && cp <= 0xA4CF) // Yi Syllables & Radicals
+                || (cp >= 0xAC00 && cp <= 0xD7A3) // Hangul Syllables
+                || (cp >= 0xF900 && cp <= 0xFAFF) // CJK Compatibility Ideographs
+                || (cp >= 0xFE30 && cp <= 0xFE4F) // CJK Compatibility Forms
+                || (cp >= 0xFF00 && cp <= 0xFF60) // Fullwidth Forms
+                || (cp >= 0xFFE0 && cp <= 0xFFE6) // Fullwidth Signs
+                || (cp >= 0x20000 && cp <= 0x2FFFD) // CJK Extensions B–F
+                || (cp >= 0x30000 && cp <= 0x3FFFD); // CJK Extension G
     }
 }
