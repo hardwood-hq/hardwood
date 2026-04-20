@@ -29,6 +29,8 @@ interface PrintCommandContract {
 
     String unsignedIntFile();
 
+    String multiRowGroupIntFile();
+
     @Test
     default void printsAsciiTableDefault(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("print", "-f", plainFile());
@@ -73,6 +75,25 @@ interface PrintCommandContract {
                 | 2  | 200   |
                 | 3  | 300   |
                 +----+-------+""");
+    }
+
+    @Test
+    default void tailOnMultipleRowGroups(QuarkusMainLauncher launcher) {
+        // filter_pushdown_int.parquet has three row groups of 100 rows each.
+        // The tail must reflect the last rows of the file regardless of the
+        // row-group layout; this also exercises the code path that skips
+        // row groups outside the tail.
+        LaunchResult result = launcher.launch("print", "-f", multiRowGroupIntFile(), "-n", "-3");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.getOutput()).isEqualTo("""
+                +-----+-------+---------+
+                | id  | value | label   |
+                +-----+-------+---------+
+                | 298 | 298   | rg3_298 |
+                | 299 | 299   | rg3_299 |
+                | 300 | 300   | rg3_300 |
+                +-----+-------+---------+""");
     }
 
     @Test

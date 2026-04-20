@@ -339,6 +339,77 @@ public class S3SelectiveReadJfrTest {
                 .isLessThan(fullReadBytes / 10);
     }
 
+    @Test
+    @EnableEvent("dev.hardwood.RowGroupScanned")
+    @EnableEvent("jdk.SocketRead")
+    void negativeMaxRowsOnlyFetchesLastRowGroup() throws Exception {
+        // lazy_rowgroup_test.parquet: 20 row groups × 50K rows × 8 columns.
+        // A tail of 10 rows fits entirely within the last row group, so only
+        // that row group should be fetched; bytes transferred should be a small
+        // fraction of a full read.
+
+        long fullReadBytes = readAndMeasureSocketBytes(LAZY_ROWGROUP_FILE,
+                ColumnProjection.all(), null);
+
+        jfrEvents.reset();
+
+        long expectedFirstC0 = (long) LAZY_RG_COUNT * LAZY_RG_ROWS - 10;
+        long expectedLastC0 = (long) LAZY_RG_COUNT * LAZY_RG_ROWS - 1;
+
+        long firstC0 = -1;
+        long lastC0 = -1;
+        int count = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(
+                source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
+            try (RowReader rows = reader.createRowReader(ColumnProjection.all(), null, -10L)) {
+                while (rows.hasNext()) {
+                    rows.next();
+                    long c0 = rows.getLong("c0");
+                    if (count == 0) {
+                        firstC0 = c0;
+                    }
+                    lastC0 = c0;
+                    count++;
+                }
+            }
+        }
+
+        assertThat(count).isEqualTo(10);
+        assertThat(firstC0).isEqualTo(expectedFirstC0);
+        assertThat(lastC0).isEqualTo(expectedLastC0);
+
+        jfrEvents.awaitEvents();
+
+        long scannedEvents = jfrEvents
+                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
+                .count();
+
+        long partialReadBytes = jfrEvents
+                .filter(e -> "jdk.SocketRead".equals(e.getEventType().getName()))
+                .mapToLong(e -> e.getLong("bytesRead"))
+                .sum();
+
+        LOG.log(System.Logger.Level.INFO,
+                "negativeMaxRowsOnlyFetchesLastRowGroup: full={0} bytes, tail=-10 read={1} bytes ({2}%), scanned={3} events",
+                fullReadBytes, partialReadBytes, partialReadBytes * 100 / fullReadBytes, scannedEvents);
+
+        // Tail of 10 rows fits inside the final row group, so only 1 RG ×
+        // 8 columns = 8 RowGroupScanned events should fire.
+        assertThat(scannedEvents)
+                .as("Tail of 10 rows should scan only the final row group (8 events for 8 columns); "
+                        + "scanned=%d".formatted(scannedEvents))
+                .isLessThanOrEqualTo(LAZY_RG_COLUMNS);
+
+        // Tail fetches only 1 of 20 row groups — bytes transferred should be
+        // well under 10% of a full read.
+        assertThat(partialReadBytes)
+                .as("Tail of 10 rows should transfer well under 10%% of full read; "
+                        + "full=%,d bytes, partial=%,d bytes (%d%%)"
+                                .formatted(fullReadBytes, partialReadBytes,
+                                        partialReadBytes * 100 / fullReadBytes))
+                .isLessThan(fullReadBytes / 10);
+    }
+
     // ==================== Lazy Fetch: Early Close ====================
 
     @Test

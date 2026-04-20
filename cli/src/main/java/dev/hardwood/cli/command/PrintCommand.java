@@ -8,7 +8,6 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
-import java.util.ArrayDeque;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Spliterator;
@@ -84,15 +83,13 @@ public class PrintCommand implements Callable<Integer> {
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema fileSchema = reader.getFileSchema();
-            // Pass positive row limits to the reader so it can stop fetching early.
-            // Negative limits (tail) and no limit require reading all rows.
-            try (RowReader rowReader = rowLimit > 0
+            try (RowReader rowReader = rowLimit != 0
                     ? reader.createRowReader(projection, null, rowLimit)
                     : reader.createRowReader(projection)) {
                 String[] headers = RowTable.topLevelFieldNames(fileSchema, projection);
                 List<SchemaNode> fields = projectedFields(fileSchema, projection);
                 AtomicLong rowIndex = addRowIndex ? new AtomicLong() : null;
-                Stream<Object[]> stream = prepareSampling(rowReader, headers, rowLimit);
+                Stream<Object[]> stream = stream(rowReader).map(r -> toData(r, headers.length));
                 if (transpose) {
                     printTransposed(stream, headers, fields, rowIndex);
                 } else {
@@ -173,24 +170,6 @@ public class PrintCommand implements Callable<Integer> {
                 .filter(child -> projection.getProjectedColumnNames().stream()
                         .anyMatch(name -> name.equals(child.name()) || name.startsWith(child.name() + ".")))
                 .toList();
-    }
-
-    private Stream<Object[]> prepareSampling(RowReader rowReader, String[] headers, int rowLimit) {
-        if (rowLimit > 0) {
-            return stream(rowReader).limit(rowLimit).map(r -> toData(r, headers.length));
-        }
-        if (rowLimit < 0) {
-            int tailSize = -rowLimit;
-            ArrayDeque<Object[]> buffer = new ArrayDeque<>(tailSize);
-            stream(rowReader).forEach(r -> {
-                if (buffer.size() == tailSize) {
-                    buffer.removeFirst();
-                }
-                buffer.addLast(toData(r, headers.length));
-            });
-            return buffer.stream();
-        }
-        return stream(rowReader).map(r -> toData(r, headers.length));
     }
 
     private Object[] toData(RowReader rowReader, int fieldCount) {

@@ -20,6 +20,8 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -298,6 +300,100 @@ class ParquetReaderTest {
 
             // Bare leaf name "element" must not resolve — it's ambiguous
             assertThatThrownBy(() -> schema.getColumn("element"))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void negativeMaxRowsReturnsTailAndSkipsEarlierRowGroups() throws Exception {
+        // filter_pushdown_int.parquet has three row groups of 100 rows each:
+        // RG0: id 1-100, RG1: id 101-200, RG2: id 201-300.
+        Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            // Tail of 10 fits inside RG2 so the reader must skip RG0 and RG1
+            // entirely and yield exactly ids 291..300.
+            try (RowReader rows = reader.createRowReader(
+                    ColumnProjection.columns("id"), null, -10L)) {
+                long firstId = Long.MAX_VALUE;
+                long lastId = Long.MIN_VALUE;
+                long count = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    long id = rows.getLong(0);
+                    firstId = Math.min(firstId, id);
+                    lastId = Math.max(lastId, id);
+                    count++;
+                }
+                assertThat(count).isEqualTo(10);
+                assertThat(firstId).isEqualTo(291L);
+                assertThat(lastId).isEqualTo(300L);
+            }
+        }
+    }
+
+    @Test
+    void negativeMaxRowsSpansMultipleRowGroupsWhenNeeded() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            // Tail of 150 crosses the RG1/RG2 boundary: reader must include RG1
+            // and RG2 but skip RG0, and trim the 50 leading rows of RG1.
+            try (RowReader rows = reader.createRowReader(
+                    ColumnProjection.columns("id"), null, -150L)) {
+                long firstId = Long.MAX_VALUE;
+                long lastId = Long.MIN_VALUE;
+                long count = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    long id = rows.getLong(0);
+                    firstId = Math.min(firstId, id);
+                    lastId = Math.max(lastId, id);
+                    count++;
+                }
+                assertThat(count).isEqualTo(150);
+                assertThat(firstId).isEqualTo(151L);
+                assertThat(lastId).isEqualTo(300L);
+            }
+        }
+    }
+
+    @Test
+    void negativeMaxRowsLargerThanFileReadsAllRows() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            try (RowReader rows = reader.createRowReader(
+                    ColumnProjection.columns("id"), null, -10_000L)) {
+                long count = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    count++;
+                }
+                assertThat(count).isEqualTo(300);
+            }
+        }
+    }
+
+    @Test
+    void zeroMaxRowsIsRejected() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            assertThatThrownBy(() -> reader.createRowReader(ColumnProjection.all(), null, 0L))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void negativeMaxRowsWithFilterIsRejected() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            assertThatThrownBy(() -> reader.createRowReader(
+                    ColumnProjection.all(),
+                    dev.hardwood.reader.FilterPredicate.gt("id", 0L),
+                    -10L))
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }

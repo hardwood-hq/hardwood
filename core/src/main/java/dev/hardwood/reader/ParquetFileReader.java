@@ -176,7 +176,7 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param projection specifies which columns to read
     /// @return a RowReader for the selected columns
     public RowReader createRowReader(ColumnProjection projection) {
-        return createRowReaderInternal(projection, null, 0);
+        return createRowReaderInternal(projection, null, 0, fileMetaData.rowGroups());
     }
 
     /// Create a RowReader that iterates over selected columns in only matching row groups.
@@ -184,22 +184,59 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param projection specifies which columns to read
     /// @param filter predicate for row group filtering based on statistics
     public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
-        return createRowReaderInternal(projection, filter, 0);
+        return createRowReaderInternal(projection, filter, 0, fileMetaData.rowGroups());
     }
 
-    /// Create a RowReader with column projection and filter that returns at most `maxRows` rows.
+    /// Create a RowReader that returns at most `|maxRows|` rows.
+    ///
+    /// The sign of `maxRows` selects the end of the file to read from:
+    ///
+    /// - `maxRows > 0` — **head**: return the first `maxRows` rows.
+    /// - `maxRows < 0` — **tail**: return the last `-maxRows` rows. Row groups
+    ///   that do not overlap the tail are skipped entirely, so pages for
+    ///   earlier row groups are never fetched or decoded (useful on remote
+    ///   backends like S3).
+    ///
+    /// Tail mode cannot currently be combined with a filter: the set of
+    /// matching rows is not known from row-group statistics alone, so the
+    /// reader cannot determine which row groups cover the last `-maxRows`
+    /// **matching** rows without scanning the whole file.
     ///
     /// @param projection specifies which columns to read
-    /// @param filter predicate for row group filtering based on statistics
-    /// @param maxRows maximum number of rows to return (must be &gt; 0)
+    /// @param filter predicate for row group filtering based on statistics (must be `null` when `maxRows < 0`)
+    /// @param maxRows row count with direction (must be non-zero)
     public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter, long maxRows) {
-        if (maxRows <= 0) {
-            throw new IllegalArgumentException("maxRows must be > 0, got " + maxRows);
+        if (maxRows == 0) {
+            throw new IllegalArgumentException("maxRows must be non-zero");
         }
-        return createRowReaderInternal(projection, filter, maxRows);
+        if (maxRows < 0) {
+            if (filter != null) {
+                throw new IllegalArgumentException("Tail reading (negative maxRows) cannot be combined with a filter");
+            }
+            return createTailRowReader(projection, -maxRows);
+        }
+        return createRowReaderInternal(projection, filter, maxRows, fileMetaData.rowGroups());
     }
 
-    private RowReader createRowReaderInternal(ColumnProjection projection, FilterPredicate filter, long maxRows) {
+    private RowReader createTailRowReader(ColumnProjection projection, long tailRows) {
+        List<RowGroup> subset = tailRowGroups(fileMetaData.rowGroups(), tailRows);
+        long rowsInSubset = 0;
+        for (RowGroup rg : subset) {
+            rowsInSubset += rg.numRows();
+        }
+        long skip = Math.max(0, rowsInSubset - tailRows);
+
+        RowReader reader = createRowReaderInternal(projection, null, 0, subset);
+        for (long i = 0; i < skip; i++) {
+            if (!reader.hasNext()) {
+                break;
+            }
+            reader.next();
+        }
+        return reader;
+    }
+
+    private RowReader createRowReaderInternal(ColumnProjection projection, FilterPredicate filter, long maxRows, List<RowGroup> rowGroups) {
         FileSchema schema = getFileSchema();
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
@@ -208,11 +245,24 @@ public class ParquetFileReader implements AutoCloseable {
 
         RowGroupIterator rowGroupIterator = new RowGroupIterator(
                 List.of(inputFile), context, maxRows);
-        rowGroupIterator.setFirstFile(schema, fileMetaData.rowGroups());
+        rowGroupIterator.setFirstFile(schema, rowGroups);
         rowGroupIterator.initialize(projectedSchema, resolved);
         rowGroupIterators.add(rowGroupIterator);
 
         return RowReader.create(rowGroupIterator, schema, projectedSchema, context, resolved, maxRows);
+    }
+
+    private static List<RowGroup> tailRowGroups(List<RowGroup> rowGroups, long tailRows) {
+        int startIndex = rowGroups.size();
+        long accumulated = 0;
+        for (int i = rowGroups.size() - 1; i >= 0; i--) {
+            accumulated += rowGroups.get(i).numRows();
+            startIndex = i;
+            if (accumulated >= tailRows) {
+                break;
+            }
+        }
+        return rowGroups.subList(startIndex, rowGroups.size());
     }
 
     private List<RowGroup> filterRowGroups(ResolvedPredicate filter) {

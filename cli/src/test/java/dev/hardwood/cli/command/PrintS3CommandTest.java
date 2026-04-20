@@ -41,4 +41,9 @@ class PrintS3CommandTest extends AbstractS3CommandTest implements PrintCommandCo
     public String unsignedIntFile() {
         return S3_UNSIGNED_INT_FILE;
     }
+
+    @Override
+    public String multiRowGroupIntFile() {
+        return S3_MULTI_ROW_GROUP_INT_FILE;
+    }
 }

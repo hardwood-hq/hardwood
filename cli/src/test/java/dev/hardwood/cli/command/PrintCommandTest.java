@@ -48,6 +48,11 @@ class PrintCommandTest implements PrintCommandContract {
         return getClass().getResource("/unsigned_int_test.parquet").getPath();
     }
 
+    @Override
+    public String multiRowGroupIntFile() {
+        return getClass().getResource("/filter_pushdown_int.parquet").getPath();
+    }
+
     @Test
     void rejectsRemoteUri(QuarkusMainLauncher launcher) {
         LaunchResult result = launcher.launch("print", "-f", "gs://bucket/data.parquet");

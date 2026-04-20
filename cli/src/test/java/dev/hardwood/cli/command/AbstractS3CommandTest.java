@@ -32,6 +32,7 @@ abstract class AbstractS3CommandTest {
     protected static final String S3_NONEXISTENT_FILE = "s3://test-bucket/nonexistent.parquet";
     protected static final String S3_UNSIGNED_INT_FILE = "s3://test-bucket/unsigned_int_test.parquet";
     protected static final String S3_PAGE_INDEX_FILE = "s3://test-bucket/column_index_pushdown.parquet";
+    protected static final String S3_MULTI_ROW_GROUP_INT_FILE = "s3://test-bucket/filter_pushdown_int.parquet";
 
     private static final Path TEST_RESOURCES = Path.of("").toAbsolutePath()
             .resolve("../core/src/test/resources").normalize();
@@ -50,7 +51,9 @@ abstract class AbstractS3CommandTest {
             .withCopyFileToContainer(fixture("unsigned_int_test.parquet"),
                     S3ProxyContainers.objectPath("unsigned_int_test.parquet"))
             .withCopyFileToContainer(fixture("column_index_pushdown.parquet"),
-                    S3ProxyContainers.objectPath("column_index_pushdown.parquet"));
+                    S3ProxyContainers.objectPath("column_index_pushdown.parquet"))
+            .withCopyFileToContainer(fixture("filter_pushdown_int.parquet"),
+                    S3ProxyContainers.objectPath("filter_pushdown_int.parquet"));
 
     private static MountableFile fixture(String name) {
         return MountableFile.forHostPath(TEST_RESOURCES.resolve(name));

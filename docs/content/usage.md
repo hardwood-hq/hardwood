@@ -321,6 +321,24 @@ When combined with a filter, the limit applies to the number of **matching** row
 
 To read without a row limit, use the `createRowReader` overloads without `maxRows`.
 
+### Reading the Tail of a File
+
+Passing a **negative** `maxRows` reads the trailing rows of the file instead of the leading ones. Row groups that do not overlap the tail are skipped entirely, so pages for earlier row groups are never fetched or decoded — especially useful on remote backends like S3, where unneeded row groups avoid HTTP range requests altogether.
+
+```java
+// Read the last 10 rows; earlier row groups are skipped.
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     RowReader rowReader = fileReader.createRowReader(ColumnProjection.all(), null, -10)) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+        // ...
+    }
+}
+```
+
+Tail mode cannot currently be combined with a filter predicate — the set of matching rows is not known from row-group statistics alone, so the reader cannot identify which row groups cover the last N matching rows without scanning the whole file.
+
 ## Column Projection
 
 Column projection allows reading only a subset of columns from a Parquet file, improving performance by skipping I/O, decoding, and memory allocation for unneeded columns.
