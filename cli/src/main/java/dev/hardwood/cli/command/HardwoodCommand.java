@@ -19,7 +19,6 @@ import picocli.CommandLine.IVersionProvider;
 @CommandLine.Command(name = "hardwood", mixinStandardHelpOptions = true, versionProvider = VersionProviderWithConfigProvider.class, subcommands = {
         HelpCommand.class,
         InfoCommand.class,
-        MetadataCommand.class,
         SchemaCommand.class,
         ConvertCommand.class,
         FooterCommand.class,

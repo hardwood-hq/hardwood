@@ -10,11 +10,16 @@ package dev.hardwood.cli.command;
 import io.quarkus.test.junit.main.QuarkusMainTest;
 
 @QuarkusMainTest
-class InspectColumnSizeS3CommandTest extends AbstractS3CommandTest implements InspectColumnSizeCommandContract {
+class InspectColumnsS3CommandTest extends AbstractS3CommandTest implements InspectColumnsCommandContract {
 
     @Override
     public String plainFile() {
         return S3_FILE;
+    }
+
+    @Override
+    public String pageIndexFile() {
+        return S3_PAGE_INDEX_FILE;
     }
 
     @Override

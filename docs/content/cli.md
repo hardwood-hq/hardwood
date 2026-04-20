@@ -30,12 +30,11 @@ Pre-built native binaries for Linux, macOS, and Windows are available from the [
 | `hardwood schema` | Print the file schema |
 | `hardwood print` | Print rows as an ASCII table (head, tail, or all) |
 | `hardwood convert` | Convert a Parquet file to CSV or JSON |
-| `hardwood metadata` | Display full file metadata including row groups and column chunks |
 | `hardwood footer` | Print decoded footer length, offset, and file structure |
-| `hardwood inspect pages` | List data and dictionary pages per column chunk |
+| `hardwood inspect pages` | List data and dictionary pages per column chunk; includes per-page min/max when the file has a page index |
 | `hardwood inspect dictionary` | Print dictionary entries for a column |
-| `hardwood inspect column-index` | Print min/max statistics per page for a column |
-| `hardwood inspect column-size` | Show compressed and uncompressed byte sizes per column |
+| `hardwood inspect columns` | Show compressed and uncompressed byte sizes per column, ranked |
+| `hardwood inspect rowgroups` | Display per-row-group column chunk metadata (sizes, codec) |
 | `hardwood help` | Display help information about a command |
 
 ## Examples

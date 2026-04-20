@@ -29,6 +29,11 @@ class InspectPagesCommandTest implements InspectPagesCommandContract {
     }
 
     @Override
+    public String pageIndexFile() {
+        return getClass().getResource("/column_index_pushdown.parquet").getPath();
+    }
+
+    @Override
     public String nestedFile() {
         return getClass().getResource("/list_basic_test.parquet").getPath();
     }

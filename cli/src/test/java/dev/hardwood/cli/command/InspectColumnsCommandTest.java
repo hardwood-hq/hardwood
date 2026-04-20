@@ -16,11 +16,16 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class InspectColumnSizeCommandTest implements InspectColumnSizeCommandContract {
+class InspectColumnsCommandTest implements InspectColumnsCommandContract {
 
     @Override
     public String plainFile() {
         return getClass().getResource("/plain_uncompressed.parquet").getPath();
+    }
+
+    @Override
+    public String pageIndexFile() {
+        return getClass().getResource("/column_index_pushdown.parquet").getPath();
     }
 
     @Override
@@ -30,7 +35,7 @@ class InspectColumnSizeCommandTest implements InspectColumnSizeCommandContract {
 
     @Test
     void rejectsRemoteUri(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "column-size", "-f", "gs://bucket/data.parquet");
+        LaunchResult result = launcher.launch("inspect", "columns", "-f", "gs://bucket/data.parquet");
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("not implemented yet");

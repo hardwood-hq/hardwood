@@ -16,7 +16,7 @@ import io.quarkus.test.junit.main.QuarkusMainTest;
 import static org.assertj.core.api.Assertions.assertThat;
 
 @QuarkusMainTest
-class MetadataCommandTest implements MetadataCommandContract {
+class InspectRowGroupsCommandTest implements InspectRowGroupsCommandContract {
 
     @Override
     public String plainFile() {
@@ -30,7 +30,7 @@ class MetadataCommandTest implements MetadataCommandContract {
 
     @Test
     void rejectsRemoteUri(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", "hdfs://namenode/data.parquet");
+        LaunchResult result = launcher.launch("inspect", "rowgroups", "-f", "hdfs://namenode/data.parquet");
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.getErrorOutput()).contains("not implemented yet");

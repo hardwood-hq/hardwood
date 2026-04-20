@@ -10,7 +10,7 @@ package dev.hardwood.cli.command;
 import io.quarkus.test.junit.main.QuarkusMainTest;
 
 @QuarkusMainTest
-class MetadataS3CommandTest extends AbstractS3CommandTest implements MetadataCommandContract {
+class InspectRowGroupsS3CommandTest extends AbstractS3CommandTest implements InspectRowGroupsCommandContract {
 
     @Override
     public String plainFile() {

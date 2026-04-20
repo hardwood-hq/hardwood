@@ -29,6 +29,7 @@ abstract class AbstractS3CommandTest {
     protected static final String S3_LIST_FILE = "s3://test-bucket/list_basic_test.parquet";
     protected static final String S3_NONEXISTENT_FILE = "s3://test-bucket/nonexistent.parquet";
     protected static final String S3_UNSIGNED_INT_FILE = "s3://test-bucket/unsigned_int_test.parquet";
+    protected static final String S3_PAGE_INDEX_FILE = "s3://test-bucket/column_index_pushdown.parquet";
 
     static final S3MockContainer s3Mock = new S3MockContainer("latest");
 
@@ -64,6 +65,8 @@ abstract class AbstractS3CommandTest {
                         readClasspathResource("/list_basic_test.parquet"));
                 putS3(http, endpoint, "/test-bucket/unsigned_int_test.parquet",
                         readClasspathResource("/unsigned_int_test.parquet"));
+                putS3(http, endpoint, "/test-bucket/column_index_pushdown.parquet",
+                        readClasspathResource("/column_index_pushdown.parquet"));
             }
         }
         catch (Exception e) {

@@ -12,8 +12,8 @@ import picocli.CommandLine;
 @CommandLine.Command(name = "inspect", description = "Low-level introspection commands.", subcommands = {
         InspectPagesCommand.class,
         InspectDictionaryCommand.class,
-        InspectColumnIndexCommand.class,
-        InspectColumnSizeCommand.class
+        InspectColumnsCommand.class,
+        InspectRowGroupsCommand.class
 })
 public class InspectCommand implements Runnable {
 

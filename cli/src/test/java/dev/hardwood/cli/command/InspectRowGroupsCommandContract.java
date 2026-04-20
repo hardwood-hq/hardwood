@@ -14,24 +14,19 @@ import io.quarkus.test.junit.main.QuarkusMainLauncher;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Shared test contract for the `metadata` command.
-interface MetadataCommandContract {
+/// Shared test contract for the `inspect rowgroups` command.
+interface InspectRowGroupsCommandContract {
 
     String plainFile();
 
     String nonexistentFile();
 
     @Test
-    default void displaysMetadata(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", plainFile());
+    default void displaysRowGroups(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("inspect", "rowgroups", "-f", plainFile());
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput()).isEqualTo("""
-                Format Version: 2
-                Created By:     parquet-cpp-arrow version 22.0.0
-                Row Groups:     1
-                Total Rows:     3
-
                 Row Group 0  (3 rows, 174 B uncompressed)
                 +--------+-------+--------------+------------+--------------+
                 | Column | Type  | Codec        | Compressed | Uncompressed |
@@ -43,7 +38,7 @@ interface MetadataCommandContract {
 
     @Test
     default void failsOnNonexistentFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("metadata", "-f", nonexistentFile());
+        LaunchResult result = launcher.launch("inspect", "rowgroups", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
     }

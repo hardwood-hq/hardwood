@@ -24,8 +24,8 @@ import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
 import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "metadata", description = "Display full file metadata including row groups and column chunks.")
-public class MetadataCommand implements Callable<Integer> {
+@CommandLine.Command(name = "rowgroups", description = "Display per-row-group column chunk metadata (sizes, codec).")
+public class InspectRowGroupsCommand implements Callable<Integer> {
 
     @CommandLine.Mixin
     HelpMixin help;
@@ -46,13 +46,10 @@ public class MetadataCommand implements Callable<Integer> {
             FileMetaData metadata = reader.getFileMetaData();
             List<RowGroup> rowGroups = metadata.rowGroups();
 
-            spec.commandLine().getOut().println("Format Version: " + metadata.version());
-            spec.commandLine().getOut().println("Created By:     " + (metadata.createdBy() != null ? metadata.createdBy() : "unknown"));
-            spec.commandLine().getOut().println("Row Groups:     " + rowGroups.size());
-            spec.commandLine().getOut().println("Total Rows:     " + metadata.numRows());
-            spec.commandLine().getOut().println();
-
             for (int i = 0; i < rowGroups.size(); i++) {
+                if (i > 0) {
+                    spec.commandLine().getOut().println();
+                }
                 printRowGroup(i, rowGroups.get(i));
             }
         }

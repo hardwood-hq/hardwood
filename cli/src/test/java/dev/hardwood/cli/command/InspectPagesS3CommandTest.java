@@ -23,6 +23,11 @@ class InspectPagesS3CommandTest extends AbstractS3CommandTest implements Inspect
     }
 
     @Override
+    public String pageIndexFile() {
+        return S3_PAGE_INDEX_FILE;
+    }
+
+    @Override
     public String nestedFile() {
         return S3_LIST_FILE;
     }
