@@ -125,7 +125,7 @@ Requires Docker. The build runs inside a Linux container and produces a Linux x8
 
 > **Note:** The container build always produces a Linux binary. Running it on macOS will fail with `exec format error`. Use the local GraalVM build for macOS binaries.
 
-See [NATIVE_BUILD.md](NATIVE_BUILD.md) for details on how the native build works (compression codec handling, build arguments, manual testing).
+See [NATIVE_BUILD.md](NATIVE_BUILD.md) for details on how the native build works (compression codec handling, build arguments, testing).
 
 ### Building the Documentation
 

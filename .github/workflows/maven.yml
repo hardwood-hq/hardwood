@@ -210,7 +210,7 @@ jobs:
         env:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
 
-  # Verify the native CLI build on PRs (Linux only, no release)
+  # Verify the native CLI build on PRs
   native-build-check:
     if: github.event_name == 'pull_request'
     needs: build
@@ -237,5 +237,7 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Build Native Image'
-        run: ./mvnw -ntp -B -Dnative package -pl cli -DskipTests
-
+        # -DskipSurefire=true skips the JVM @QuarkusMainTest suite (already run
+        # in the `build` job); Failsafe still runs the native smoke ITs during
+        # integration-test.
+        run: ./mvnw -ntp -B -Dnative verify -pl cli -DskipSurefire=true

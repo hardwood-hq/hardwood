@@ -29,7 +29,11 @@ The solution differs by codec:
 
 `netty-buffer` (an optional dependency of `brotli4j`) is declared explicitly at compile scope so that GraalVM can resolve the `ByteBufUtil` reference in `brotli4j`'s `DirectDecompress` class during image analysis.
 
-## Manual tests of the native CLI binary
+## Testing the native binary
+
+Automated coverage of the native binary is provided by the Quarkus integration-test infrastructure; see [_designs/NATIVE_INTEGRATION_TESTS.md](_designs/NATIVE_INTEGRATION_TESTS.md). The ITs run against the compiled native executable during `./mvnw -Pnative -pl cli verify`.
+
+The steps below are useful for ad-hoc manual testing of the native binary against S3.
 
 1. Start S3Mock and set environment
 

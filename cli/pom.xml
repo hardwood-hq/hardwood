@@ -16,6 +16,9 @@
       <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
       <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
       <quarkus.platform.version>3.27.2</quarkus.platform.version>
+      <!-- Integration tests require a native binary; skip by default.
+           The native profile overrides this to false. -->
+      <skipITs>true</skipITs>
   </properties>
   <parent>
     <groupId>dev.hardwood</groupId>
@@ -457,8 +460,36 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
+          <skipTests>${skipSurefire}</skipTests>
           <argLine>--add-modules jdk.incubator.vector --add-opens java.base/java.lang=ALL-UNNAMED</argLine>
+          <systemPropertyVariables>
+            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+          </systemPropertyVariables>
         </configuration>
+      </plugin>
+
+      <!-- Run native integration tests during the integration-test phase.
+           Skipped by default; enabled when the native profile sets skipITs=false.
+           native.image.path tells the Quarkus integration-test extension where
+           to find the compiled native binary. -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-failsafe-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>native-integration-test</id>
+            <goals>
+              <goal>integration-test</goal>
+              <goal>verify</goal>
+            </goals>
+            <configuration>
+              <systemPropertyVariables>
+                <native.image.path>${project.build.directory}/hardwood-cli${executable-suffix}</native.image.path>
+                <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
+              </systemPropertyVariables>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
 
       <plugin>
