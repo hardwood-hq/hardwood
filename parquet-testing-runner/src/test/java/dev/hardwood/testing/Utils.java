@@ -97,30 +97,39 @@ public class Utils {
             "ARROW-GH-45185.parquet"
     );
 
-    /// Files to skip for row-level nested-value comparison.
-    /// Row count and top-level primitive comparison still works; only deep field-by-field
-    /// equality is impossible for these because of legitimate representation differences
-    /// between the two implementations.
-    static final Set<String> NESTED_ROW_COMPARISON_SKIPPED_FILES = Set.of(
+    /// Files blocking row-level nested-value comparison due to known `PqList` limitations.
+    /// Each entry is the tracking issue whose fix should re-enable the file.
+    private static final java.util.Map<String, String> NESTED_ROW_COMPARISON_SKIPPED_FILES = java.util.Map.of(
             // 2-level Parquet LIST nested inside another 2-level LIST. parquet-java's
             // Avro reader flattens this as `array<array<int>>`, but Hardwood's PqList
             // reports the intermediate repeated group as the element and rejects
             // list-of-list iteration via `lists()`.
-            "old_list_structure.parquet",
+            "old_list_structure.parquet", "hardwood-hq/hardwood#282",
 
             // Deeply nested list-of-list-of-struct under `nested_Struct.c.D`. Hardwood's
             // inner PqList reuses the outer list descriptor, so structs() on the inner
             // list throws "Element is not a struct" even though the element is a struct.
-            "nonnullable.impala.parquet",
-            "nullable.impala.parquet"
+            "nonnullable.impala.parquet", "hardwood-hq/hardwood#283",
+            "nullable.impala.parquet", "hardwood-hq/hardwood#283"
     );
 
-    /// Tests whether a file comes from the shredded_variant test suite. parquet-java's
-    /// Avro reader reconstructs the unshredded Variant binary from the `typed_value`
-    /// shreds and exposes it via the `value` field, while Hardwood surfaces the raw
-    /// shredded columns as stored. The two representations are semantically equivalent
-    /// but cannot be compared field-by-field.
-    static boolean isShreddedVariantFile(Path testFile) {
+    /// Returns a GitHub issue reference blocking row-level nested comparison for
+    /// `testFile`, or `null` if the file can be compared. Skipped cases fall into two
+    /// buckets today: individual files hit by `PqList` iteration bugs, and the entire
+    /// `shredded_variant/` suite, which Hardwood cannot compare against parquet-java
+    /// without shred reassembly (hardwood-hq/hardwood#286).
+    static String rowComparisonSkipReason(Path testFile) {
+        String blocked = NESTED_ROW_COMPARISON_SKIPPED_FILES.get(testFile.getFileName().toString());
+        if (blocked != null) {
+            return blocked;
+        }
+        if (isShreddedVariantFile(testFile)) {
+            return "hardwood-hq/hardwood#286";
+        }
+        return null;
+    }
+
+    private static boolean isShreddedVariantFile(Path testFile) {
         Path parent = testFile.getParent();
         return parent != null && "shredded_variant".equals(parent.getFileName().toString());
     }
