@@ -13,6 +13,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
@@ -48,6 +49,9 @@ public final class NestedRowReader implements RowReader {
     private int rowIndex = -1;
     private int batchSize = 0;
     private boolean exhausted;
+
+    // File name from the current batch — used for exception enrichment
+    private String currentFileName;
 
 
     NestedRowReader(BatchExchange<NestedBatch>[] exchanges, NestedColumnWorker[] columnWorkers,
@@ -141,13 +145,18 @@ public final class NestedRowReader implements RowReader {
 
     @Override
     public boolean hasNext() {
-        if (exhausted) {
-            return false;
+        try {
+            if (exhausted) {
+                return false;
+            }
+            if (rowIndex + 1 < batchSize) {
+                return true;
+            }
+            return loadNextBatch();
         }
-        if (rowIndex + 1 < batchSize) {
-            return true;
+        catch (RuntimeException e) {
+            throw wrapException(e);
         }
-        return loadNextBatch();
     }
 
     @Override
@@ -194,6 +203,7 @@ public final class NestedRowReader implements RowReader {
         }
 
         batchSize = batches[0].recordCount;
+        currentFileName = batches[0].fileName;
 
         // Index structures are pre-computed by the drain — just assemble the view
         dataView.setBatchData(batches, columnSchemas);
@@ -203,50 +213,50 @@ public final class NestedRowReader implements RowReader {
 
     // ==================== Accessors (delegate to NestedBatchDataView) ====================
 
-    @Override public boolean isNull(int i) { return dataView.isNull(i); }
-    @Override public boolean isNull(String name) { return dataView.isNull(name); }
+    @Override public boolean isNull(int i) { try { return dataView.isNull(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public boolean isNull(String name) { try { return dataView.isNull(name); } catch (RuntimeException e) { throw wrapException(e); } }
 
-    @Override public int getInt(int i) { return dataView.getInt(i); }
-    @Override public int getInt(String name) { return dataView.getInt(name); }
-    @Override public long getLong(int i) { return dataView.getLong(i); }
-    @Override public long getLong(String name) { return dataView.getLong(name); }
-    @Override public float getFloat(int i) { return dataView.getFloat(i); }
-    @Override public float getFloat(String name) { return dataView.getFloat(name); }
-    @Override public double getDouble(int i) { return dataView.getDouble(i); }
-    @Override public double getDouble(String name) { return dataView.getDouble(name); }
-    @Override public boolean getBoolean(int i) { return dataView.getBoolean(i); }
-    @Override public boolean getBoolean(String name) { return dataView.getBoolean(name); }
+    @Override public int getInt(int i) { try { return dataView.getInt(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public int getInt(String name) { try { return dataView.getInt(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public long getLong(int i) { try { return dataView.getLong(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public long getLong(String name) { try { return dataView.getLong(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public float getFloat(int i) { try { return dataView.getFloat(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public float getFloat(String name) { try { return dataView.getFloat(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public double getDouble(int i) { try { return dataView.getDouble(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public double getDouble(String name) { try { return dataView.getDouble(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public boolean getBoolean(int i) { try { return dataView.getBoolean(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public boolean getBoolean(String name) { try { return dataView.getBoolean(name); } catch (RuntimeException e) { throw wrapException(e); } }
 
-    @Override public String getString(int i) { return dataView.getString(i); }
-    @Override public String getString(String name) { return dataView.getString(name); }
-    @Override public byte[] getBinary(int i) { return dataView.getBinary(i); }
-    @Override public byte[] getBinary(String name) { return dataView.getBinary(name); }
-    @Override public LocalDate getDate(int i) { return dataView.getDate(i); }
-    @Override public LocalDate getDate(String name) { return dataView.getDate(name); }
-    @Override public LocalTime getTime(int i) { return dataView.getTime(i); }
-    @Override public LocalTime getTime(String name) { return dataView.getTime(name); }
-    @Override public Instant getTimestamp(int i) { return dataView.getTimestamp(i); }
-    @Override public Instant getTimestamp(String name) { return dataView.getTimestamp(name); }
-    @Override public BigDecimal getDecimal(int i) { return dataView.getDecimal(i); }
-    @Override public BigDecimal getDecimal(String name) { return dataView.getDecimal(name); }
-    @Override public UUID getUuid(int i) { return dataView.getUuid(i); }
-    @Override public UUID getUuid(String name) { return dataView.getUuid(name); }
+    @Override public String getString(int i) { try { return dataView.getString(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public String getString(String name) { try { return dataView.getString(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public byte[] getBinary(int i) { try { return dataView.getBinary(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public byte[] getBinary(String name) { try { return dataView.getBinary(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public LocalDate getDate(int i) { try { return dataView.getDate(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public LocalDate getDate(String name) { try { return dataView.getDate(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public LocalTime getTime(int i) { try { return dataView.getTime(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public LocalTime getTime(String name) { try { return dataView.getTime(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public Instant getTimestamp(int i) { try { return dataView.getTimestamp(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public Instant getTimestamp(String name) { try { return dataView.getTimestamp(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public BigDecimal getDecimal(int i) { try { return dataView.getDecimal(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public BigDecimal getDecimal(String name) { try { return dataView.getDecimal(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public UUID getUuid(int i) { try { return dataView.getUuid(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public UUID getUuid(String name) { try { return dataView.getUuid(name); } catch (RuntimeException e) { throw wrapException(e); } }
 
-    @Override public Object getValue(int i) { return dataView.getValue(i); }
-    @Override public Object getValue(String name) { return dataView.getValue(name); }
+    @Override public Object getValue(int i) { try { return dataView.getValue(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public Object getValue(String name) { try { return dataView.getValue(name); } catch (RuntimeException e) { throw wrapException(e); } }
 
-    @Override public PqStruct getStruct(String name) { return dataView.getStruct(name); }
-    @Override public PqStruct getStruct(int i) { return dataView.getStruct(i); }
-    @Override public PqIntList getListOfInts(String name) { return dataView.getListOfInts(name); }
-    @Override public PqIntList getListOfInts(int i) { return dataView.getListOfInts(i); }
-    @Override public PqLongList getListOfLongs(String name) { return dataView.getListOfLongs(name); }
-    @Override public PqLongList getListOfLongs(int i) { return dataView.getListOfLongs(i); }
-    @Override public PqDoubleList getListOfDoubles(String name) { return dataView.getListOfDoubles(name); }
-    @Override public PqDoubleList getListOfDoubles(int i) { return dataView.getListOfDoubles(i); }
-    @Override public PqList getList(String name) { return dataView.getList(name); }
-    @Override public PqList getList(int i) { return dataView.getList(i); }
-    @Override public PqMap getMap(String name) { return dataView.getMap(name); }
-    @Override public PqMap getMap(int i) { return dataView.getMap(i); }
+    @Override public PqStruct getStruct(String name) { try { return dataView.getStruct(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqStruct getStruct(int i) { try { return dataView.getStruct(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqIntList getListOfInts(String name) { try { return dataView.getListOfInts(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqIntList getListOfInts(int i) { try { return dataView.getListOfInts(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqLongList getListOfLongs(String name) { try { return dataView.getListOfLongs(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqLongList getListOfLongs(int i) { try { return dataView.getListOfLongs(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqDoubleList getListOfDoubles(String name) { try { return dataView.getListOfDoubles(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqDoubleList getListOfDoubles(int i) { try { return dataView.getListOfDoubles(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqList getList(String name) { try { return dataView.getList(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqList getList(int i) { try { return dataView.getList(i); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqMap getMap(String name) { try { return dataView.getMap(name); } catch (RuntimeException e) { throw wrapException(e); } }
+    @Override public PqMap getMap(int i) { try { return dataView.getMap(i); } catch (RuntimeException e) { throw wrapException(e); } }
 
     // ==================== Metadata ====================
 
@@ -258,6 +268,12 @@ public final class NestedRowReader implements RowReader {
     @Override
     public String getFieldName(int index) {
         return dataView.getFieldName(index);
+    }
+
+    // ==================== Internal ====================
+
+    private RuntimeException wrapException(RuntimeException e) {
+        return ExceptionContext.addFileContext(currentFileName, e);
     }
 
     // ==================== Close ====================

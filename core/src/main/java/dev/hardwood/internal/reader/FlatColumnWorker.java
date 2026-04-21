@@ -92,6 +92,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         currentBatch.nulls = (currentNulls != null && !currentNulls.isEmpty())
                 ? (BitSet) currentNulls.clone()
                 : null;
+        currentBatch.fileName = currentBatchFileName;
 
         long t0 = System.nanoTime();
         try {

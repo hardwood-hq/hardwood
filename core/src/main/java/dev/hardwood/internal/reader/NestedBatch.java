@@ -30,6 +30,9 @@ public final class NestedBatch {
     public int[] repetitionLevels;
     public int[] recordOffsets;
 
+    // File name of the originating file (set by drain before publish)
+    public String fileName;
+
     // Pre-computed index (computed by drain before publish)
     public BitSet elementNulls;
     public int[][] multiLevelOffsets;

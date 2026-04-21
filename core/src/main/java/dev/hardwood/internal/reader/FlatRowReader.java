@@ -15,6 +15,7 @@ import java.time.LocalTime;
 import java.util.BitSet;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.util.StringToIntMap;
@@ -59,6 +60,9 @@ public final class FlatRowReader implements RowReader {
     private int rowIndex = -1;
     private int batchSize = 0;
     private boolean exhausted;
+
+    // File name from the current batch — used for exception enrichment
+    private String currentFileName;
 
     public FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, FlatColumnWorker[] columnWorkers,
                          FileSchema fileSchema, ProjectedSchema projectedSchema) {
@@ -153,13 +157,18 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public boolean hasNext() {
-        if (exhausted) {
-            return false;
+        try {
+            if (exhausted) {
+                return false;
+            }
+            if (rowIndex + 1 < batchSize) {
+                return true;
+            }
+            return loadNextBatch();
         }
-        if (rowIndex + 1 < batchSize) {
-            return true;
+        catch (RuntimeException e) {
+            throw wrapException(e);
         }
-        return loadNextBatch();
     }
 
     @Override
@@ -171,227 +180,367 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public boolean isNull(int columnIndex) {
-        return flatNulls[columnIndex].get(rowIndex);
+        try {
+            return flatNulls[columnIndex].get(rowIndex);
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public boolean isNull(String name) {
-        return isNull(resolveIndex(name));
+        try {
+            return isNull(resolveIndex(name));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     // ==================== Primitive Accessors by Index ====================
 
     @Override
     public int getInt(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
-            throwNull(columnIndex);
+        try {
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNull(columnIndex);
+            }
+            return ((int[]) flatValueArrays[columnIndex])[rowIndex];
         }
-        return ((int[]) flatValueArrays[columnIndex])[rowIndex];
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public long getLong(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
-            throwNull(columnIndex);
+        try {
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNull(columnIndex);
+            }
+            return ((long[]) flatValueArrays[columnIndex])[rowIndex];
         }
-        return ((long[]) flatValueArrays[columnIndex])[rowIndex];
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public float getFloat(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
-            throwNull(columnIndex);
+        try {
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNull(columnIndex);
+            }
+            return ((float[]) flatValueArrays[columnIndex])[rowIndex];
         }
-        return ((float[]) flatValueArrays[columnIndex])[rowIndex];
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public double getDouble(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
-            throwNull(columnIndex);
+        try {
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNull(columnIndex);
+            }
+            return ((double[]) flatValueArrays[columnIndex])[rowIndex];
         }
-        return ((double[]) flatValueArrays[columnIndex])[rowIndex];
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public boolean getBoolean(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
-            throwNull(columnIndex);
+        try {
+            if (flatNulls[columnIndex].get(rowIndex)) {
+                throwNull(columnIndex);
+            }
+            return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
         }
-        return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     // ==================== Primitive Accessors by Name ====================
 
     @Override
     public int getInt(String name) {
-        return getInt(resolveAndValidate(name, PhysicalType.INT32));
+        try {
+            return getInt(resolveAndValidate(name, PhysicalType.INT32));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public long getLong(String name) {
-        return getLong(resolveAndValidate(name, PhysicalType.INT64));
+        try {
+            return getLong(resolveAndValidate(name, PhysicalType.INT64));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public float getFloat(String name) {
-        return getFloat(resolveAndValidate(name, PhysicalType.FLOAT));
+        try {
+            return getFloat(resolveAndValidate(name, PhysicalType.FLOAT));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public double getDouble(String name) {
-        return getDouble(resolveAndValidate(name, PhysicalType.DOUBLE));
+        try {
+            return getDouble(resolveAndValidate(name, PhysicalType.DOUBLE));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public boolean getBoolean(String name) {
-        return getBoolean(resolveAndValidate(name, PhysicalType.BOOLEAN));
+        try {
+            return getBoolean(resolveAndValidate(name, PhysicalType.BOOLEAN));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     // ==================== String / Binary ====================
 
     @Override
     public String getString(int columnIndex) {
-        if (isNull(columnIndex)) {
-            return null;
+        try {
+            if (isNull(columnIndex)) {
+                return null;
+            }
+            return new String(((byte[][]) flatValueArrays[columnIndex])[rowIndex], StandardCharsets.UTF_8);
         }
-        return new String(((byte[][]) flatValueArrays[columnIndex])[rowIndex], StandardCharsets.UTF_8);
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public String getString(String name) {
-        return getString(resolveIndex(name));
+        try {
+            return getString(resolveIndex(name));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public byte[] getBinary(int columnIndex) {
-        if (isNull(columnIndex)) {
-            return null;
+        try {
+            if (isNull(columnIndex)) {
+                return null;
+            }
+            return ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
         }
-        return ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public byte[] getBinary(String name) {
-        return getBinary(resolveIndex(name));
+        try {
+            return getBinary(resolveIndex(name));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     // ==================== Logical Type Accessors ====================
 
     @Override
     public LocalDate getDate(int columnIndex) {
-        if (isNull(columnIndex)) {
-            return null;
+        try {
+            if (isNull(columnIndex)) {
+                return null;
+            }
+            int rawValue = ((int[]) flatValueArrays[columnIndex])[rowIndex];
+            return LogicalTypeConverter.convertToDate(rawValue, physicalTypes[columnIndex]);
         }
-        int rawValue = ((int[]) flatValueArrays[columnIndex])[rowIndex];
-        return LogicalTypeConverter.convertToDate(rawValue, physicalTypes[columnIndex]);
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public LocalDate getDate(String name) {
-        return getDate(resolveIndex(name));
+        try {
+            return getDate(resolveIndex(name));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public LocalTime getTime(int columnIndex) {
-        if (isNull(columnIndex)) {
-            return null;
+        try {
+            if (isNull(columnIndex)) {
+                return null;
+            }
+            ColumnSchema col = columnSchemas[columnIndex];
+            Object rawValue;
+            if (col.type() == PhysicalType.INT32) {
+                rawValue = ((int[]) flatValueArrays[columnIndex])[rowIndex];
+            }
+            else {
+                rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
+            }
+            return LogicalTypeConverter.convertToTime(rawValue, col.type(),
+                    (LogicalType.TimeType) col.logicalType());
         }
-        ColumnSchema col = columnSchemas[columnIndex];
-        Object rawValue;
-        if (col.type() == PhysicalType.INT32) {
-            rawValue = ((int[]) flatValueArrays[columnIndex])[rowIndex];
+        catch (RuntimeException e) {
+            throw wrapException(e);
         }
-        else {
-            rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
-        }
-        return LogicalTypeConverter.convertToTime(rawValue, col.type(),
-                (LogicalType.TimeType) col.logicalType());
     }
 
     @Override
     public LocalTime getTime(String name) {
-        return getTime(resolveIndex(name));
+        try {
+            return getTime(resolveIndex(name));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public Instant getTimestamp(int columnIndex) {
-        if (isNull(columnIndex)) {
-            return null;
+        try {
+            if (isNull(columnIndex)) {
+                return null;
+            }
+            ColumnSchema col = columnSchemas[columnIndex];
+            if (col.type() == PhysicalType.INT96) {
+                byte[] rawValue = ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
+                return LogicalTypeConverter.int96ToInstant(rawValue);
+            }
+            long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
+            return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(),
+                    (LogicalType.TimestampType) col.logicalType());
         }
-        ColumnSchema col = columnSchemas[columnIndex];
-        if (col.type() == PhysicalType.INT96) {
-            byte[] rawValue = ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
-            return LogicalTypeConverter.int96ToInstant(rawValue);
+        catch (RuntimeException e) {
+            throw wrapException(e);
         }
-        long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
-        return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(),
-                (LogicalType.TimestampType) col.logicalType());
     }
 
     @Override
     public Instant getTimestamp(String name) {
-        return getTimestamp(resolveIndex(name));
+        try {
+            return getTimestamp(resolveIndex(name));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public BigDecimal getDecimal(int columnIndex) {
-        if (isNull(columnIndex)) {
-            return null;
+        try {
+            if (isNull(columnIndex)) {
+                return null;
+            }
+            ColumnSchema col = columnSchemas[columnIndex];
+            Object rawValue = switch (col.type()) {
+                case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
+                case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
+                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
+                default -> throw new IllegalArgumentException(
+                        "Unexpected physical type for DECIMAL: " + col.type());
+            };
+            return LogicalTypeConverter.convertToDecimal(rawValue, col.type(),
+                    (LogicalType.DecimalType) col.logicalType());
         }
-        ColumnSchema col = columnSchemas[columnIndex];
-        Object rawValue = switch (col.type()) {
-            case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
-            case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
-            default -> throw new IllegalArgumentException(
-                    "Unexpected physical type for DECIMAL: " + col.type());
-        };
-        return LogicalTypeConverter.convertToDecimal(rawValue, col.type(),
-                (LogicalType.DecimalType) col.logicalType());
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public BigDecimal getDecimal(String name) {
-        return getDecimal(resolveIndex(name));
+        try {
+            return getDecimal(resolveIndex(name));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public UUID getUuid(int columnIndex) {
-        if (isNull(columnIndex)) {
-            return null;
+        try {
+            if (isNull(columnIndex)) {
+                return null;
+            }
+            return LogicalTypeConverter.convertToUuid(
+                    ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
+                    physicalTypes[columnIndex]);
         }
-        return LogicalTypeConverter.convertToUuid(
-                ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
-                physicalTypes[columnIndex]);
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public UUID getUuid(String name) {
-        return getUuid(resolveIndex(name));
+        try {
+            return getUuid(resolveIndex(name));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     // ==================== Generic Value ====================
 
     @Override
     public Object getValue(int columnIndex) {
-        if (isNull(columnIndex)) {
-            return null;
+        try {
+            if (isNull(columnIndex)) {
+                return null;
+            }
+            return switch (physicalTypes[columnIndex]) {
+                case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
+                case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
+                case FLOAT -> ((float[]) flatValueArrays[columnIndex])[rowIndex];
+                case DOUBLE -> ((double[]) flatValueArrays[columnIndex])[rowIndex];
+                case BOOLEAN -> ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
+                case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 ->
+                        ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
+            };
         }
-        return switch (physicalTypes[columnIndex]) {
-            case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
-            case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            case FLOAT -> ((float[]) flatValueArrays[columnIndex])[rowIndex];
-            case DOUBLE -> ((double[]) flatValueArrays[columnIndex])[rowIndex];
-            case BOOLEAN -> ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 ->
-                    ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
-        };
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     @Override
     public Object getValue(String name) {
-        return getValue(resolveIndex(name));
+        try {
+            return getValue(resolveIndex(name));
+        }
+        catch (RuntimeException e) {
+            throw wrapException(e);
+        }
     }
 
     // ==================== Nested (not supported for flat) ====================
@@ -459,6 +608,7 @@ public final class FlatRowReader implements RowReader {
             previousBatches[i] = batch;
             if (i == 0) {
                 batchSize = batch.recordCount;
+                currentFileName = batch.fileName;
             }
         }
         rowIndex = -1;
@@ -487,6 +637,10 @@ public final class FlatRowReader implements RowReader {
     }
 
     // ==================== Internal ====================
+
+    private RuntimeException wrapException(RuntimeException e) {
+        return ExceptionContext.addFileContext(currentFileName, e);
+    }
 
     private int resolveIndex(String name) {
         int index = nameToIndex.get(name);
