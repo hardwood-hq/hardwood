@@ -324,6 +324,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [x] Statistics-based row group filtering (`RowGroupFilterEvaluator`)
 - [x] Filter evaluation engine (supports INT32, INT64, FLOAT, DOUBLE, BOOLEAN, BINARY/STRING)
 - [x] Page index-based page filtering (`PageFilterEvaluator` with page-range I/O)
+- [x] Inline `DataPageHeader.statistics` fallback when Column Index is absent (`InlinePageStatsScanner`)
 - [ ] Bloom filter-based filtering
 
 ---

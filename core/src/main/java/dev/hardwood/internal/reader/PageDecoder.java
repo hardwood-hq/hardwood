@@ -67,6 +67,35 @@ public class PageDecoder {
         return decompressorFactory;
     }
 
+    /// Produces an all-null typed [Page] of the given size, without reading or
+    /// decompressing any data. Used when inline page statistics have proven that
+    /// no row in the page can match the active filter predicate — row alignment
+    /// with sibling columns is preserved while decompression and value decoding
+    /// are skipped entirely. The row-level filter drops the synthetic nulls via
+    /// SQL three-valued logic (`null <op> x → unknown → non-match`).
+    ///
+    /// Only valid for columns where `maxDefinitionLevel > 0`; for required
+    /// columns the caller must not skip the page.
+    public Page nullPage(int numValues) {
+        int maxDefLevel = column.maxDefinitionLevel();
+        if (maxDefLevel == 0) {
+            throw new IllegalStateException("Cannot create null placeholder page for required column '"
+                    + column.name() + "' — maxDefinitionLevel is 0");
+        }
+        int[] definitionLevels = new int[numValues]; // zero-initialised → all null
+        int[] repetitionLevels = column.maxRepetitionLevel() > 0 ? new int[numValues] : null;
+        PhysicalType type = column.type();
+        return switch (type) {
+            case INT64 -> new Page.LongPage(new long[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
+            case DOUBLE -> new Page.DoublePage(new double[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
+            case INT32 -> new Page.IntPage(new int[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
+            case FLOAT -> new Page.FloatPage(new float[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
+            case BOOLEAN -> new Page.BooleanPage(new boolean[numValues], definitionLevels, repetitionLevels, maxDefLevel, numValues);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 ->
+                    new Page.ByteArrayPage(new byte[numValues][], definitionLevels, repetitionLevels, maxDefLevel, numValues);
+        };
+    }
+
     /// Decode a single data page from a buffer.
     ///
     /// The buffer should contain the complete page including header.

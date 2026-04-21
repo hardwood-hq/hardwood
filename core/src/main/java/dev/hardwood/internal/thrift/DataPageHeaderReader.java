@@ -11,6 +11,7 @@ import java.io.IOException;
 
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.Statistics;
 
 /// Reader for DataPageHeader from Thrift Compact Protocol.
 public class DataPageHeaderReader {
@@ -30,6 +31,7 @@ public class DataPageHeaderReader {
         Encoding encoding = null;
         Encoding definitionLevelEncoding = null;
         Encoding repetitionLevelEncoding = null;
+        Statistics statistics = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -70,12 +72,20 @@ public class DataPageHeaderReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 5: // statistics
+                    if (header.type() == 0x0C) {
+                        statistics = StatisticsReader.read(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 default:
                     reader.skipField(header.type());
                     break;
             }
         }
 
-        return new DataPageHeader(numValues, encoding, definitionLevelEncoding, repetitionLevelEncoding);
+        return new DataPageHeader(numValues, encoding, definitionLevelEncoding, repetitionLevelEncoding, statistics);
     }
 }

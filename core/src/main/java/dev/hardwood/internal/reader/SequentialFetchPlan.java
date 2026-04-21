@@ -12,15 +12,21 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.Iterator;
+import java.util.List;
 import java.util.NoSuchElementException;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.metadata.DataPageHeader;
+import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.predicate.PageDropPredicates;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
 
 /// [FetchPlan] for columns without an OffsetIndex.
@@ -81,11 +87,13 @@ public final class SequentialFetchPlan implements FetchPlan {
     private final long maxRows;
     private final int rowGroupIndex;
     private final String fileName;
+    private final List<ResolvedPredicate> dropLeaves;
 
     private SequentialFetchPlan(InputFile inputFile, long columnChunkOffset, int columnChunkLength,
                                  int chunkSize, ColumnSchema columnSchema,
                                  ColumnChunk columnChunk, HardwoodContextImpl context,
-                                 long maxRows, int rowGroupIndex, String fileName) {
+                                 long maxRows, int rowGroupIndex, String fileName,
+                                 List<ResolvedPredicate> dropLeaves) {
         this.inputFile = inputFile;
         this.columnChunkOffset = columnChunkOffset;
         this.columnChunkLength = columnChunkLength;
@@ -96,6 +104,7 @@ public final class SequentialFetchPlan implements FetchPlan {
         this.maxRows = maxRows;
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
+        this.dropLeaves = dropLeaves;
     }
 
     @Override
@@ -108,17 +117,36 @@ public final class SequentialFetchPlan implements FetchPlan {
         return new SequentialPageIterator();
     }
 
-    /// Builds a [SequentialFetchPlan].
+    /// Builds a [SequentialFetchPlan] with no predicate-driven page skipping.
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows) {
+        return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
+                maxRows, List.of());
+    }
+
+    /// Builds a [SequentialFetchPlan] that may drop data pages whose inline
+    /// [Statistics] prove they cannot match any of the given AND-necessary leaf
+    /// predicates. Dropped pages are replaced with [PageInfo#nullPlaceholder]
+    /// entries carrying the same `numValues`, so row alignment across sibling
+    /// columns is preserved and the record-level filter drops the rows via SQL
+    /// three-valued logic.
+    ///
+    /// Page skipping is only applied when the column is optional
+    /// (`maxDefinitionLevel > 0`) — required columns cannot produce nulls, so
+    /// every page is decoded normally.
+    public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
+                                      ColumnChunk columnChunk, HardwoodContextImpl context,
+                                      int rowGroupIndex, String fileName, long maxRows,
+                                      List<ResolvedPredicate> dropLeaves) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         int columnChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
         int chunkSize = Math.min(columnChunkLength,
                 computeChunkSize(columnChunk.metaData(), maxRows));
 
         return new SequentialFetchPlan(inputFile, columnChunkOffset, columnChunkLength, chunkSize,
-                columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName);
+                columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
+                dropLeaves == null ? List.of() : dropLeaves);
     }
 
     /// Computes the per-fetch chunk size.
@@ -350,9 +378,16 @@ public final class SequentialFetchPlan implements FetchPlan {
 
                 if (header.type() == PageHeader.PageType.DATA_PAGE
                         || header.type() == PageHeader.PageType.DATA_PAGE_V2) {
-                    ByteBuffer pageData = readBytes(position, totalPageSize);
-                    PageInfo pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary);
-                    valuesRead += getValueCount(header);
+                    int numValues = (int) getValueCount(header);
+                    PageInfo pageInfo;
+                    if (canDropByInlineStats(header)) {
+                        pageInfo = PageInfo.nullPlaceholder(numValues, columnSchema, metaData);
+                    }
+                    else {
+                        ByteBuffer pageData = readBytes(position, totalPageSize);
+                        pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary);
+                    }
+                    valuesRead += numValues;
                     position += totalPageSize;
                     pageCount++;
                     return pageInfo;
@@ -393,6 +428,29 @@ public final class SequentialFetchPlan implements FetchPlan {
                 case DATA_PAGE_V2 -> header.dataPageHeaderV2().numValues();
                 case DICTIONARY_PAGE, INDEX_PAGE -> 0;
             };
+        }
+
+        /// Checks whether the given data page's inline [Statistics] (if any) prove
+        /// that no row can match the per-column AND-necessary leaf predicates, in
+        /// which case the caller emits a [PageInfo#nullPlaceholder] instead of the
+        /// real page. Gated on `maxDefinitionLevel > 0` — required columns cannot
+        /// represent nulls and must decode normally.
+        private boolean canDropByInlineStats(PageHeader header) {
+            if (dropLeaves.isEmpty() || columnSchema.maxDefinitionLevel() == 0) {
+                return false;
+            }
+            Statistics inline = switch (header.type()) {
+                case DATA_PAGE -> {
+                    DataPageHeader dp = header.dataPageHeader();
+                    yield dp == null ? null : dp.statistics();
+                }
+                case DATA_PAGE_V2 -> {
+                    DataPageHeaderV2 dp = header.dataPageHeaderV2();
+                    yield dp == null ? null : dp.statistics();
+                }
+                default -> null;
+            };
+            return PageDropPredicates.canDropPage(dropLeaves, inline);
         }
 
         private void emitEvent() {

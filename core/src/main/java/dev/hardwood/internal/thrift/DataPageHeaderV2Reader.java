@@ -11,6 +11,7 @@ import java.io.IOException;
 
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.Statistics;
 
 /// Reader for DataPageHeaderV2 from Thrift Compact Protocol.
 public class DataPageHeaderV2Reader {
@@ -33,6 +34,7 @@ public class DataPageHeaderV2Reader {
         int definitionLevelsByteLength = 0;
         int repetitionLevelsByteLength = 0;
         boolean isCompressed = true; // Default value per Parquet spec
+        Statistics statistics = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -70,6 +72,14 @@ public class DataPageHeaderV2Reader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 8: // statistics
+                    if (header.type() == 0x0C) {
+                        statistics = StatisticsReader.read(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 default:
                     reader.skipField(header.type());
                     break;
@@ -77,6 +87,6 @@ public class DataPageHeaderV2Reader {
         }
 
         return new DataPageHeaderV2(numValues, numNulls, numRows, encoding,
-                definitionLevelsByteLength, repetitionLevelsByteLength, isCompressed);
+                definitionLevelsByteLength, repetitionLevelsByteLength, isCompressed, statistics);
     }
 }

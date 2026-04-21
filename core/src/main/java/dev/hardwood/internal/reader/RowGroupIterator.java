@@ -11,12 +11,14 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
@@ -69,6 +71,10 @@ public class RowGroupIterator {
     private FileSchema referenceSchema;
     private ProjectedSchema projectedSchema;
     private ResolvedPredicate filterPredicate;
+
+    /// AND-necessary leaves per column index, derived once from `filterPredicate`.
+    /// Feeds [SequentialFetchPlan]'s inline-stats page-drop check.
+    private Map<Integer, List<ResolvedPredicate>> dropLeavesByColumn = Map.of();
 
     // Work list: all (file, rowGroup) pairs to process, built during initialize()
     private final List<WorkItem> workItems = new ArrayList<>();
@@ -183,6 +189,7 @@ public class RowGroupIterator {
         }
         this.projectedSchema = projected;
         this.filterPredicate = filter;
+        this.dropLeavesByColumn = filter != null ? PageDropPredicates.byColumn(filter) : Map.of();
 
         buildWorkList();
 
@@ -330,11 +337,14 @@ public class RowGroupIterator {
             ColumnIndexBuffers colBuffers = shared.indexBuffers().forColumn(originalIndex);
 
             if (colBuffers == null || colBuffers.offsetIndex() == null) {
-                // No OffsetIndex — sequential lazy fetching
+                // No OffsetIndex — sequential lazy fetching. Per-page drop via
+                // inline DataPageHeader.statistics happens inside SequentialFetchPlan
+                // for the AND-necessary leaves touching this column.
+                List<ResolvedPredicate> leaves = dropLeavesByColumn.getOrDefault(originalIndex, List.of());
                 plans[projCol] = SequentialFetchPlan.build(
                         inputFile, columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(),
-                        perRgMaxRows);
+                        perRgMaxRows, leaves);
                 continue;
             }
 

@@ -8,11 +8,18 @@
 package dev.hardwood.internal.metadata;
 
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.Statistics;
 
 /// Header for DataPage (v1).
+///
+/// [#statistics] carries the inline per-page statistics from Thrift field 5.
+/// It is `null` when the writer omitted them (the common case when a separate
+/// `ColumnIndex` is written instead). When both the `ColumnIndex` and inline
+/// statistics are present, the `ColumnIndex` is authoritative.
 public record DataPageHeader(
         int numValues,
         Encoding encoding,
         Encoding definitionLevelEncoding,
-        Encoding repetitionLevelEncoding) {
+        Encoding repetitionLevelEncoding,
+        Statistics statistics) {
 }

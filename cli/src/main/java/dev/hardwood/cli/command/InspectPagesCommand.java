@@ -17,6 +17,8 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.table.RowTable;
+import dev.hardwood.internal.metadata.DataPageHeader;
+import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
@@ -28,6 +30,7 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -125,6 +128,9 @@ public class InspectPagesCommand implements Callable<Integer> {
         List<RowGroupData> rgData = new ArrayList<>();
         boolean anyIndex = false;
         String columnLabel = col.name();
+        boolean anyColumnIndex = false;
+        boolean anyInline = false;
+        boolean anyNoStats = false;
 
         for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
             RowGroup rg = rowGroups.get(rgIdx);
@@ -137,13 +143,32 @@ public class InspectPagesCommand implements Callable<Integer> {
                 columnIndex = tryLoadColumnIndex(chunk, inputFile);
                 offsetIndex = tryLoadOffsetIndex(chunk, inputFile);
             }
+
+            boolean trackRowIndex = chunk.metaData().numValues() == rg.numRows();
+            List<PageInfo> pages = collectPageHeaders(chunk.metaData(), inputFile, trackRowIndex);
+
             boolean rgHasIndex = columnIndex != null && offsetIndex != null;
-            if (rgHasIndex) {
+            boolean rgHasInline = !noStats && hasInlineStats(pages);
+            if (rgHasIndex || rgHasInline) {
                 anyIndex = true;
             }
-
-            List<PageInfo> pages = collectPageHeaders(chunk.metaData(), inputFile);
+            if (rgHasIndex) {
+                anyColumnIndex = true;
+            }
+            else if (rgHasInline) {
+                anyInline = true;
+            }
+            else if (!noStats) {
+                anyNoStats = true;
+            }
             rgData.add(new RowGroupData(rgIdx, pages, columnIndex, offsetIndex));
+        }
+
+        if (!noStats) {
+            String suffix = statsSourceSuffix(anyColumnIndex, anyInline, anyNoStats);
+            if (!suffix.isEmpty()) {
+                columnLabel = columnLabel + "  " + suffix;
+            }
         }
 
         String[] headers = anyIndex ? HEADERS_WITH_INDEX : HEADERS_PLAIN;
@@ -233,17 +258,53 @@ public class InspectPagesCommand implements Callable<Integer> {
         spec.commandLine().getOut().println(RowTable.renderTable(headers, rows, separatorsBefore, List.of(totalRowIdx)));
     }
 
+    /// Formats the column label suffix indicating where the Min / Max / Nulls
+    /// cells' values came from for this column. Reports `ColumnIndex` (side-car
+    /// Page Index), `inline` (`DataPageHeader.statistics`), `mixed` when row
+    /// groups disagree, or `no page-level stats` when neither is present.
+    private static String statsSourceSuffix(boolean anyColumnIndex, boolean anyInline, boolean anyNoStats) {
+        int kinds = (anyColumnIndex ? 1 : 0) + (anyInline ? 1 : 0) + (anyNoStats ? 1 : 0);
+        if (kinds == 0) {
+            return "";
+        }
+        if (kinds > 1) {
+            return "(stats: mixed)";
+        }
+        if (anyColumnIndex) {
+            return "(stats: ColumnIndex)";
+        }
+        if (anyInline) {
+            return "(stats: inline)";
+        }
+        return "(no page-level stats)";
+    }
+
+    private static boolean hasInlineStats(List<PageInfo> pages) {
+        for (PageInfo p : pages) {
+            if (!p.isDictionary() && p.inlineStats() != null) {
+                return true;
+            }
+        }
+        return false;
+    }
+
     private static IndexCells indexCellsFor(PageInfo p, int dataPageCounter, RowGroupData rd, ColumnSchema col) {
         if (p.isDictionary()) {
             return IndexCells.DASHES;
         }
         ColumnIndex ci = rd.columnIndex();
         OffsetIndex oi = rd.offsetIndex();
-        if (ci == null || oi == null
-                || dataPageCounter >= oi.pageLocations().size()
-                || dataPageCounter >= ci.minValues().size()) {
-            return IndexCells.DASHES;
+        boolean hasColumnIndex = ci != null && oi != null
+                && dataPageCounter < oi.pageLocations().size()
+                && dataPageCounter < ci.minValues().size();
+        if (hasColumnIndex) {
+            return fromColumnIndex(p, dataPageCounter, ci, oi, col);
         }
+        return fromInlineStats(p, col);
+    }
+
+    private static IndexCells fromColumnIndex(PageInfo p, int dataPageCounter,
+            ColumnIndex ci, OffsetIndex oi, ColumnSchema col) {
         String firstRow = String.valueOf(oi.pageLocations().get(dataPageCounter).firstRowIndex());
         String min;
         String max;
@@ -261,6 +322,27 @@ public class InspectPagesCommand implements Callable<Integer> {
             nullCount = ci.nullCounts().get(dataPageCounter);
             nulls = String.valueOf(nullCount);
         }
+        return new IndexCells(firstRow, min, max, nulls, nullCount);
+    }
+
+    private static IndexCells fromInlineStats(PageInfo p, ColumnSchema col) {
+        Statistics stats = p.inlineStats();
+        String firstRow = p.firstRowIndex() != null ? String.valueOf(p.firstRowIndex()) : "-";
+        if (stats == null) {
+            return new IndexCells(firstRow, "-", "-", "-", -1);
+        }
+        String min;
+        String max;
+        if (stats.isMinMaxDeprecated()) {
+            min = "(deprecated)";
+            max = "(deprecated)";
+        }
+        else {
+            min = stats.minValue() != null ? IndexValueFormatter.format(stats.minValue(), col) : "-";
+            max = stats.maxValue() != null ? IndexValueFormatter.format(stats.maxValue(), col) : "-";
+        }
+        long nullCount = stats.nullCount() != null ? stats.nullCount() : -1;
+        String nulls = nullCount >= 0 ? String.valueOf(nullCount) : "-";
         return new IndexCells(firstRow, min, max, nulls, nullCount);
     }
 
@@ -301,10 +383,11 @@ public class InspectPagesCommand implements Callable<Integer> {
         static final IndexCells DASHES = new IndexCells("-", "-", "-", "-", -1);
     }
 
-    private record PageInfo(String label, String type, String encoding, long compressedSize, long numValues, boolean isDictionary) {
+    private record PageInfo(String label, String type, String encoding, long compressedSize, long numValues,
+            boolean isDictionary, Long firstRowIndex, Statistics inlineStats) {
     }
 
-    private List<PageInfo> collectPageHeaders(ColumnMetaData cmd, InputFile inputFile) throws IOException {
+    private List<PageInfo> collectPageHeaders(ColumnMetaData cmd, InputFile inputFile, boolean trackRowIndex) throws IOException {
         Long dictOffset = cmd.dictionaryPageOffset();
         long chunkStart = (dictOffset != null && dictOffset > 0) ? dictOffset : cmd.dataPageOffset();
         long chunkSize = cmd.totalCompressedSize();
@@ -323,13 +406,24 @@ public class InspectPagesCommand implements Callable<Integer> {
 
             boolean isDictionary = header.type() == PageHeader.PageType.DICTIONARY_PAGE;
             String label = isDictionary ? "dict" : String.valueOf(pageIndex);
+            Long firstRowIndex = null;
+            Statistics inlineStats = null;
+            if (!isDictionary) {
+                if (trackRowIndex) {
+                    firstRowIndex = valuesRead;
+                }
+                inlineStats = inlineStatsOf(header);
+            }
+
             rows.add(new PageInfo(
                     label,
                     shortType(header.type()),
                     pageEncoding(header),
                     header.compressedPageSize(),
                     numValues(header),
-                    isDictionary
+                    isDictionary,
+                    firstRowIndex,
+                    inlineStats
             ));
 
             if (header.type() == PageHeader.PageType.DATA_PAGE || header.type() == PageHeader.PageType.DATA_PAGE_V2) {
@@ -344,6 +438,20 @@ public class InspectPagesCommand implements Callable<Integer> {
         }
 
         return rows;
+    }
+
+    private static Statistics inlineStatsOf(PageHeader header) {
+        return switch (header.type()) {
+            case DATA_PAGE -> {
+                DataPageHeader dp = header.dataPageHeader();
+                yield dp != null ? dp.statistics() : null;
+            }
+            case DATA_PAGE_V2 -> {
+                DataPageHeaderV2 dp = header.dataPageHeaderV2();
+                yield dp != null ? dp.statistics() : null;
+            }
+            case DICTIONARY_PAGE, INDEX_PAGE -> null;
+        };
     }
 
     private static String shortType(PageHeader.PageType type) {

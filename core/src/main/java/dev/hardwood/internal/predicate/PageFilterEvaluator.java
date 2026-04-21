@@ -31,6 +31,10 @@ import dev.hardwood.metadata.RowGroup;
 ///
 /// Leaf predicate evaluation is delegated to [StatisticsFilterSupport#canDropLeaf],
 /// which handles all resolved predicate types against a [MinMaxStats] abstraction.
+///
+/// When the `ColumnIndex` is absent, this evaluator returns `RowRanges.all()` — page
+/// skipping then happens per-column inside [dev.hardwood.internal.reader.SequentialFetchPlan]
+/// based on inline `DataPageHeader.statistics`.
 public class PageFilterEvaluator {
 
     /// Computes the row ranges within a row group that might match the given predicate,

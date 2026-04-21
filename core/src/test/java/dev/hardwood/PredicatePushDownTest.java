@@ -35,6 +35,10 @@ class PredicatePushDownTest {
     private static final Path MIXED_FILE = Paths.get("src/test/resources/filter_pushdown_mixed.parquet");
     private static final Path LIST_FILE = Paths.get("src/test/resources/filter_pushdown_list.parquet");
     private static final Path NESTED_FILE = Paths.get("src/test/resources/filter_pushdown_nested.parquet");
+    /// No ColumnIndex/OffsetIndex; inline DataPageHeader.statistics only. One row group,
+    /// id (required) = [0, 9999], value (nullable) = [1000, 10999], sorted. Many pages
+    /// of ~128 values each so per-page skipping is observable.
+    private static final Path INLINE_STATS_FILE = Paths.get("src/test/resources/inline_page_stats.parquet");
 
     // ==================== ColumnReader with Filter ====================
 
@@ -716,6 +720,84 @@ class PredicatePushDownTest {
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Column 'price' has physical type DOUBLE"
                             + "; given filter predicate type INT64 is incompatible");
+        }
+    }
+
+    // ==================== Inline-stats per-page skip (files without ColumnIndex) ====================
+
+    @Test
+    void inlineStatsSkipProducesCorrectRowsForLeafFilter() throws Exception {
+        // Files without a ColumnIndex still carry inline DataPageHeader.statistics.
+        // SequentialFetchPlan consults those stats per-page, and where a page
+        // cannot match, a null-placeholder is emitted instead of decoding. The
+        // record-level filter drops synthetic nulls via three-valued logic.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE))) {
+            // value column is nullable (optional), so its pages can be skipped.
+            FilterPredicate filter = FilterPredicate.lt("value", 2000L);
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    long value = rows.getLong("value");
+                    long id = rows.getLong("id");
+                    assertThat(value).isLessThan(2000L);
+                    // id is 0..9999; the filter keeps only the first 1000 rows (value 1000..1999).
+                    assertThat(id).isBetween(0L, 999L);
+                    totalRows++;
+                }
+                assertThat(totalRows).isEqualTo(1000);
+            }
+        }
+    }
+
+    @Test
+    void inlineStatsSkipEmptyResultWhenNothingMatches() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE))) {
+            // value range is [1000, 10999]; this matches nothing — every page is droppable.
+            FilterPredicate filter = FilterPredicate.gtEq("value", 100000L);
+            try (RowReader rows = reader.createRowReader(filter)) {
+                assertThat(rows.hasNext()).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void inlineStatsSkipNoDropWhenEverythingMatches() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE))) {
+            // Every page satisfies the filter — no skips, all rows read normally.
+            FilterPredicate filter = FilterPredicate.gtEq("value", 0L);
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                }
+                assertThat(totalRows).isEqualTo(10000);
+            }
+        }
+    }
+
+    @Test
+    void inlineStatsSkipRespectsOrBranchConservatively() throws Exception {
+        // Leaves under an OR are NOT AND-necessary, so pages must not be dropped
+        // based on them. Expected rows: value < 500 (500 rows) + value > 10500 (499 rows) = 999.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE))) {
+            FilterPredicate filter = FilterPredicate.or(
+                    FilterPredicate.lt("value", 1500L),
+                    FilterPredicate.gt("value", 10500L));
+
+            try (RowReader rows = reader.createRowReader(filter)) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    long value = rows.getLong("value");
+                    assertThat(value).matches(v -> v < 1500L || v > 10500L);
+                    totalRows++;
+                }
+                // value 1000..1499 = 500 rows + value 10501..10999 = 499 rows
+                assertThat(totalRows).isEqualTo(999);
+            }
         }
     }
 

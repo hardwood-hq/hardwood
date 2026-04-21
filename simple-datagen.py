@@ -1816,3 +1816,38 @@ pq.write_table(
 
 print("\nGenerated unsigned_int_test.parquet:")
 print("  - Data: uint32_val=[0, 2147483647, 4294967295], uint64_val=[0, 9223372036854775807, 18446744073709551615]")
+
+# ============================================================================
+# Inline page statistics (no ColumnIndex) — models parquet-cpp-arrow defaults
+# ============================================================================
+
+# Files produced by parquet-cpp-arrow (and older pyarrow defaults) emit
+# per-page Statistics inline in DataPageHeader but omit the out-of-band
+# ColumnIndex / OffsetIndex. Used as a fixture for the inline-stats
+# pushdown fallback.
+inline_stats_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('value', pa.int64(), True),   # nullable → optional, maxDefLevel=1 (exercises null-placeholder skip)
+])
+
+inline_stats_table = pa.table({
+    'id': list(range(0, 10000)),
+    'value': list(range(1000, 11000)),
+}, schema=inline_stats_schema)
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/inline_page_stats.parquet',
+    schema=inline_stats_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    data_page_size=1024,
+    write_statistics=True,
+    write_page_index=False,
+)
+writer.write_table(inline_stats_table)
+writer.close()
+
+print("\nGenerated inline_page_stats.parquet:")
+print("  - 1 row group, 10000 rows, sorted id [0,9999] and value [1000,10999]")
+print("  - Parquet v1 with inline DataPageHeader.statistics (no ColumnIndex)")

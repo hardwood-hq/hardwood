@@ -263,7 +263,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             return;
         }
         try {
-            Page page = pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
+            Page page = pageInfo.isNullPlaceholder()
+                    ? pageDecoder.nullPage(pageInfo.placeholderNumValues())
+                    : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
             reorderBuffer.set(slot, page);
         }
         catch (Throwable t) {
