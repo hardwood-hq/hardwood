@@ -19,6 +19,10 @@
       <!-- Integration tests require a native binary; skip by default.
            The native profile overrides this to false. -->
       <skipITs>true</skipITs>
+      <!-- Defaults to ${skipTests} so -Dquick (skipTests=true) also skips
+           Surefire here; the native-image CI job overrides via -DskipSurefire=true
+           to skip only the JVM @QuarkusMainTest suite while keeping Failsafe. -->
+      <skipSurefire>${skipTests}</skipSurefire>
   </properties>
   <parent>
     <groupId>dev.hardwood</groupId>
