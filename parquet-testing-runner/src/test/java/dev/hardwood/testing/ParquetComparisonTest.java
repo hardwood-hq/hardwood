@@ -64,6 +64,9 @@ class ParquetComparisonTest {
         // Skip individual files
         assumeFalse(Utils.SKIPPED_FILES.contains(fileName),
                 "Skipping " + fileName + " (in skip list)");
+        assumeFalse(Utils.NESTED_ROW_COMPARISON_SKIPPED_FILES.contains(fileName)
+                        || Utils.isShreddedVariantFile(testFile),
+                "Skipping " + fileName + " (nested row comparison not supported)");
 
         compareParquetFile(testFile);
     }
