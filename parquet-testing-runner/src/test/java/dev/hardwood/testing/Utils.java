@@ -22,8 +22,14 @@ import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.util.Utf8;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.avro.AvroParquetReader;
+import org.apache.parquet.example.data.Group;
+import org.apache.parquet.example.data.simple.SimpleGroupFactory;
 import org.apache.parquet.hadoop.ParquetReader;
+import org.apache.parquet.hadoop.ParquetWriter;
+import org.apache.parquet.hadoop.example.ExampleParquetWriter;
 import org.apache.parquet.hadoop.util.HadoopInputFile;
+import org.apache.parquet.schema.MessageType;
+import org.apache.parquet.schema.MessageTypeParser;
 import org.assertj.core.api.ThrowableAssert;
 
 import dev.hardwood.metadata.LogicalType;
@@ -89,6 +95,32 @@ public class Utils {
             "data",
             "bad_data",
             "shredded_variant");
+
+    /// Generates `data/good_c.parquet` under the given cloned repo if not already present.
+    /// The file is a valid single-column (`required int32 c`) file sharing its schema with
+    /// `bad_data/ARROW-RS-GH-6229-LEVELS.parquet`, so the multi-file bad-data tests can
+    /// read a good prefix followed by a failing file. Idempotent.
+    static void ensureGoodCFile(Path repoDir) throws IOException {
+        Path output = repoDir.resolve("data/good_c.parquet");
+        if (Files.exists(output)) {
+            return;
+        }
+        MessageType schema = MessageTypeParser.parseMessageType(
+                "message schema { required int32 c; }");
+        Configuration conf = new Configuration();
+        org.apache.hadoop.fs.Path hadoopPath =
+                new org.apache.hadoop.fs.Path(output.toUri());
+        try (ParquetWriter<Group> writer = ExampleParquetWriter
+                .builder(hadoopPath)
+                .withConf(conf)
+                .withType(schema)
+                .build()) {
+            SimpleGroupFactory factory = new SimpleGroupFactory(schema);
+            writer.write(factory.newGroup().append("c", 1));
+            writer.write(factory.newGroup().append("c", 2));
+            writer.write(factory.newGroup().append("c", 3));
+        }
+    }
 
     /// Provides all .parquet files from the parquet-testing test directories.
     static Stream<Path> parquetTestFiles() throws IOException {

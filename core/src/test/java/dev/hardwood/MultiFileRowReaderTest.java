@@ -491,4 +491,13 @@ class MultiFileRowReaderTest {
             assertThat(ids).containsExactly(1L, 2L, 3L);
         }
     }
+
+    @Test
+    void testRejectsEmptyFileList() throws Exception {
+        try (Hardwood hardwood = Hardwood.create()) {
+            assertThatThrownBy(() -> hardwood.openAll(List.of()))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("At least one file must be provided");
+        }
+    }
 }
