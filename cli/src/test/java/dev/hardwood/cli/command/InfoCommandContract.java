@@ -9,9 +9,6 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Shared test contract for the `info` command.
@@ -22,11 +19,11 @@ interface InfoCommandContract {
     String nonexistentFile();
 
     @Test
-    default void displaysFileInfo(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("info", "-f", plainFile());
+    default void displaysFileInfo() {
+        Cli.Result result = Cli.launch("info", "-f", plainFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 Format Version:    2
                 Created By:        parquet-cpp-arrow version 22.0.0
                 Row Groups:        1
@@ -36,8 +33,8 @@ interface InfoCommandContract {
     }
 
     @Test
-    default void failsOnNonexistentFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("info", "-f", nonexistentFile());
+    default void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("info", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
     }

@@ -7,9 +7,6 @@
  */
 package dev.hardwood.cli.command;
 
-import io.quarkus.test.junit.main.QuarkusMainTest;
-
-@QuarkusMainTest
 class InspectPagesS3CommandTest extends AbstractS3CommandTest implements InspectPagesCommandContract {
 
     @Override

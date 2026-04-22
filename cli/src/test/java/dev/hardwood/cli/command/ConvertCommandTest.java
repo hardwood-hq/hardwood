@@ -14,13 +14,8 @@ import java.nio.file.Path;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
 class ConvertCommandTest implements ConvertCommandContract {
 
     @Override
@@ -44,10 +39,10 @@ class ConvertCommandTest implements ConvertCommandContract {
     }
 
     @Test
-    void outputToFile(@TempDir Path tempDir, QuarkusMainLauncher launcher) throws IOException {
+    void outputToFile(@TempDir Path tempDir) throws IOException {
         Path out = tempDir.resolve("output.csv");
 
-        LaunchResult result = launcher.launch("convert", "-f", plainFile(), "--format", "csv", "-o", out.toString());
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-o", out.toString());
 
         assertThat(result.exitCode()).isZero();
         assertThat(Files.readString(out))
@@ -56,16 +51,16 @@ class ConvertCommandTest implements ConvertCommandContract {
     }
 
     @Test
-    void rejectsRemoteUri(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", "gs://bucket/data.parquet", "--format", "csv");
+    void rejectsRemoteUri() {
+        Cli.Result result = Cli.launch("convert", "-f", "gs://bucket/data.parquet", "--format", "csv");
 
         assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).contains("not implemented yet");
+        assertThat(result.errorOutput()).contains("not implemented yet");
     }
 
     @Test
-    void requiresFormatFlag(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("convert", "-f", plainFile());
+    void requiresFormatFlag() {
+        Cli.Result result = Cli.launch("convert", "-f", plainFile());
 
         assertThat(result.exitCode()).isNotZero();
     }

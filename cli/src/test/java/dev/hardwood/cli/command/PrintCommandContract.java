@@ -9,9 +9,6 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Shared test contract for the `print` command.
@@ -32,11 +29,11 @@ interface PrintCommandContract {
     String multiRowGroupIntFile();
 
     @Test
-    default void printsAsciiTableDefault(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", plainFile());
+    default void printsAsciiTableDefault() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +----+-------+
                 | id | value |
                 +----+-------+
@@ -47,11 +44,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void lineSeparatorBetweenRows(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", plainFile(), "--row-delimiter");
+    default void lineSeparatorBetweenRows() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--row-delimiter");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +----+-------+
                 | id | value |
                 +----+-------+
@@ -64,11 +61,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void tail(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", plainFile(), "-n", "-2");
+    default void tail() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "-n", "-2");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +----+-------+
                 | id | value |
                 +----+-------+
@@ -78,15 +75,15 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void tailOnMultipleRowGroups(QuarkusMainLauncher launcher) {
+    default void tailOnMultipleRowGroups() {
         // filter_pushdown_int.parquet has three row groups of 100 rows each.
         // The tail must reflect the last rows of the file regardless of the
         // row-group layout; this also exercises the code path that skips
         // row groups outside the tail.
-        LaunchResult result = launcher.launch("print", "-f", multiRowGroupIntFile(), "-n", "-3");
+        Cli.Result result = Cli.launch("print", "-f", multiRowGroupIntFile(), "-n", "-3");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +-----+-------+---------+
                 | id  | value | label   |
                 +-----+-------+---------+
@@ -97,11 +94,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void head(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", plainFile(), "-n", "2");
+    default void head() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "-n", "2");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +----+-------+
                 | id | value |
                 +----+-------+
@@ -111,11 +108,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void showsRowIndexWhenEnabled(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", plainFile(), "-ri");
+    default void showsRowIndexWhenEnabled() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "-ri");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +----------+----+-------+
                 | rowIndex | id | value |
                 +----------+----+-------+
@@ -126,11 +123,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void columnsFilterOutput(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", plainFile(), "--columns", "value");
+    default void columnsFilterOutput() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--columns", "value");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +-------+
                 | value |
                 +-------+
@@ -141,11 +138,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void columnsFilterWithNestedStruct(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "--columns", "name,account", "-mw", "150");
+    default void columnsFilterWithNestedStruct() {
+        Cli.Result result = Cli.launch("print", "-f", deepNestedFile(), "--columns", "name,account", "-mw", "150");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +---------+-------------------------------------------------------------------------------------------------------------------------+
                 | name    | account                                                                                                                 |
                 +---------+-------------------------------------------------------------------------------------------------------------------------+
@@ -157,11 +154,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void columnsFilterExcludesNestedColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "--columns", "customer_id,name");
+    default void columnsFilterExcludesNestedColumn() {
+        Cli.Result result = Cli.launch("print", "-f", deepNestedFile(), "--columns", "customer_id,name");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +-------------+---------+
                 | customer_id | name    |
                 +-------------+---------+
@@ -173,11 +170,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void columnsFilterWithNestedSubField(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "--columns", "name,account.id");
+    default void columnsFilterWithNestedSubField() {
+        Cli.Result result = Cli.launch("print", "-f", deepNestedFile(), "--columns", "name,account.id");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +---------+------------------+
                 | name    | account          |
                 +---------+------------------+
@@ -189,18 +186,18 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", plainFile(), "--columns", "unknown");
+    default void rejectsUnknownColumn() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "--columns", "unknown");
 
         assertThat(result.exitCode()).isNotZero();
     }
 
     @Test
-    default void explicitAllShowsEveryRow(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", plainFile(), "-n", "ALL");
+    default void explicitAllShowsEveryRow() {
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "-n", "ALL");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +----+-------+
                 | id | value |
                 +----+-------+
@@ -211,11 +208,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void transposesRows(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", byteArrayFile(), "-tp", "-n", "3");
+    default void transposesRows() {
+        Cli.Result result = Cli.launch("print", "-f", byteArrayFile(), "-tp", "-n", "3");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +-----------------+-------+
                 |              id |     1 |
                 +-----------------+-------+
@@ -240,11 +237,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void byteArrayAsString(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", byteArrayFile());
+    default void byteArrayAsString() {
+        Cli.Result result = Cli.launch("print", "-f", byteArrayFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +----+----------------+-----------------+
                 | id | prefix_strings | varying_strings |
                 +----+----------------+-----------------+
@@ -260,11 +257,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void displaysNestedStructFields(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", deepNestedFile(), "-mw", "150");
+    default void displaysNestedStructFields() {
+        Cli.Result result = Cli.launch("print", "-f", deepNestedFile(), "-mw", "150");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +-------------+---------+-------------------------------------------------------------------------------------------------------------------------+
                 | customer_id | name    | account                                                                                                                 |
                 +-------------+---------+-------------------------------------------------------------------------------------------------------------------------+
@@ -276,11 +273,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void wrapsWhenTruncationDisabled(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", byteArrayFile(), "--no-truncate", "-mw", "5");
+    default void wrapsWhenTruncationDisabled() {
+        Cli.Result result = Cli.launch("print", "-f", byteArrayFile(), "--no-truncate", "-mw", "5");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +----+-------+-------+
                 | id | prefi | varyi |
                 |    | x_str | ng_st |
@@ -306,11 +303,11 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void displaysListColumns(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", listFile());
+    default void displaysListColumns() {
+        Cli.Result result = Cli.launch("print", "-f", listFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +----+-----------+--------------+
                 | id | tags      | scores       |
                 +----+-----------+--------------+
@@ -322,18 +319,18 @@ interface PrintCommandContract {
     }
 
     @Test
-    default void failsOnNonexistentFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", nonexistentFile());
+    default void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("print", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
     }
 
     @Test
-    default void displaysUnsignedIntegersAsPositiveNumbers(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("print", "-f", unsignedIntFile());
+    default void displaysUnsignedIntegersAsPositiveNumbers() {
+        Cli.Result result = Cli.launch("print", "-f", unsignedIntFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
             +----+------------+----------------------+
             | id | uint32_val | uint64_val           |
             +----+------------+----------------------+

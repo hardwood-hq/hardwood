@@ -9,9 +9,6 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Shared test contract for the `inspect columns` command.
@@ -24,11 +21,11 @@ interface InspectColumnsCommandContract {
     String nonexistentFile();
 
     @Test
-    default void displaysRankedColumns(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "columns", "-f", plainFile());
+    default void displaysRankedColumns() {
+        Cli.Result result = Cli.launch("inspect", "columns", "-f", plainFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +------+--------+-------+------------+--------------+--------+---------+
                 | Rank | Column | Type  | Compressed | Uncompressed | Ratio  | # Pages |
                 +------+--------+-------+------------+--------------+--------+---------+
@@ -38,11 +35,11 @@ interface InspectColumnsCommandContract {
     }
 
     @Test
-    default void populatesPageCountWhenPageIndexAvailable(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "columns", "-f", pageIndexFile());
+    default void populatesPageCountWhenPageIndexAvailable() {
+        Cli.Result result = Cli.launch("inspect", "columns", "-f", pageIndexFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 +------+--------+-------+------------+--------------+--------+---------+
                 | Rank | Column | Type  | Compressed | Uncompressed | Ratio  | # Pages |
                 +------+--------+-------+------------+--------------+--------+---------+
@@ -52,8 +49,8 @@ interface InspectColumnsCommandContract {
     }
 
     @Test
-    default void failsOnNonexistentFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "columns", "-f", nonexistentFile());
+    default void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("inspect", "columns", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
     }

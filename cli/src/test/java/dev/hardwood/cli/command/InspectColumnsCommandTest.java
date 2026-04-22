@@ -9,13 +9,8 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
 class InspectColumnsCommandTest implements InspectColumnsCommandContract {
 
     @Override
@@ -34,10 +29,10 @@ class InspectColumnsCommandTest implements InspectColumnsCommandContract {
     }
 
     @Test
-    void rejectsRemoteUri(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "columns", "-f", "gs://bucket/data.parquet");
+    void rejectsRemoteUri() {
+        Cli.Result result = Cli.launch("inspect", "columns", "-f", "gs://bucket/data.parquet");
 
         assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).contains("not implemented yet");
+        assertThat(result.errorOutput()).contains("not implemented yet");
     }
 }
