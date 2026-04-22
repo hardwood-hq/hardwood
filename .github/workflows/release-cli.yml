@@ -1,4 +1,4 @@
-name: Publish CLI
+name: Release CLI
 
 on:
   workflow_dispatch:
@@ -6,6 +6,12 @@ on:
       release-version:
         description: 'Release version (must have an existing tag v<version>)'
         required: true
+  workflow_call:
+    inputs:
+      release-version:
+        description: 'Release version (must have an existing tag v<version>)'
+        required: true
+        type: string
 
 jobs:
   validate:
@@ -65,7 +71,7 @@ jobs:
           name: artifacts-${{ runner.os }}-${{ runner.arch }}
           path: cli/target/*.zip
 
-  publish-cli:
+  release-cli:
     needs: package
     runs-on: ubuntu-latest
     permissions:

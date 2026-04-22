@@ -16,7 +16,7 @@ on:
         options:
           - 'UPLOAD'
           - 'FULL'
-      publish-cli:
+      release-cli:
         description: 'Build and publish native CLI binaries'
         required: true
         type: boolean
@@ -86,69 +86,9 @@ jobs:
             target/checkout/target/jreleaser/output.properties
 
 
-  # Build native executable per runner
-  package:
-    if: inputs.publish-cli
+  release-cli:
+    if: inputs.release-cli
     needs: release
-    name: 'Build with Graal on ${{ matrix.os }}'
-    strategy:
-      fail-fast: true
-      matrix:
-        os: [ ubuntu-latest, ubuntu-24.04-arm, macos-26-intel, macos-26, windows-latest ]
-    runs-on: ${{ matrix.os }}
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          ref: v${{ inputs.release-version }}
-          submodules: 'true'
-
-      - name: 'Add Developer Command Prompt for Microsoft Visual C++'
-        if: ${{ runner.os == 'Windows' }}
-        uses: ilammy/msvc-dev-cmd@0b201ec74fa43914dc39ae48a89fd1d8cb592756  # v1 — https://github.com/ilammy/msvc-dev-cmd/releases/tag/v1
-
-      - name: 'Set up Graal'
-        uses: graalvm/setup-graalvm@03e8abf916fd0e281b2efe7b2da3378bb0a1d085  # v1 — https://github.com/graalvm/setup-graalvm/releases/tag/v1
-        with:
-          java-version: '25'
-          distribution: 'graalvm-community'
-          github-token: ${{ secrets.GITHUB_TOKEN }}
-          cache: maven
-
-      - name: 'Build Native Image'
-        run: ./mvnw -ntp -B -Dnative package -pl cli -am -DskipTests "-Ddist.qualifier=${{ inputs.release-version }}"
-
-      - name: 'Upload build artifact (tar.gz)'
-        if: ${{ runner.os != 'Windows' }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
-        with:
-          name: artifacts-${{ runner.os }}-${{ runner.arch }}
-          path: cli/target/*.tar.gz
-
-      - name: 'Upload build artifact (zip)'
-        if: ${{ runner.os == 'Windows' }}
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
-        with:
-          name: artifacts-${{ runner.os }}-${{ runner.arch }}
-          path: cli/target/*.zip
-
-  # Attach CLI binaries to the GitHub release
-  publish-cli:
-    if: inputs.publish-cli
-    needs: package
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-    steps:
-      - name: 'Download all build artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          path: artifacts
-          pattern: artifacts-*
-          merge-multiple: true
-
-      - name: 'Attach CLI binaries to release'
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          GH_REPO: ${{ github.repository }}
-        run: gh release upload "v${{ inputs.release-version }}" artifacts/*
+    uses: ./.github/workflows/release-cli.yml
+    with:
+      release-version: ${{ inputs.release-version }}
