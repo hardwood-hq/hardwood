@@ -1,0 +1,54 @@
+#
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Copyright The original authors
+#
+#  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+#
+
+# Mirrors third-party container images used by the test suite to GitHub
+# Container Registry under `ghcr.io/hardwood-hq/`. Runs only on manual
+# dispatch: the image tags referenced from the codebase are pinned by SHA
+# and change rarely, so there is no need to re-mirror on every build.
+#
+# After adding a new image to the matrix and running this workflow for the
+# first time, a repository admin must flip the resulting package's
+# visibility to "public" in the GitHub UI (Packages → <name> → Package
+# settings). `GITHUB_TOKEN` has `write:packages` but not `admin:packages`,
+# so the workflow cannot do this itself. Subsequent re-pushes inherit the
+# existing visibility.
+
+name: Mirror Container Images
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - source: 'andrewgaul/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3'
+            target: 'ghcr.io/hardwood-hq/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3'
+
+    name: 'Mirror ${{ matrix.source }}'
+
+    steps:
+      - name: 'Log in to GHCR'
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: echo "${GITHUB_TOKEN}" | docker login ghcr.io -u "${GITHUB_ACTOR}" --password-stdin
+
+      - name: 'Mirror image'
+        run: |
+          docker pull "${{ matrix.source }}"
+          docker tag "${{ matrix.source }}" "${{ matrix.target }}"
+          docker push "${{ matrix.target }}"
