@@ -1,24 +1,14 @@
 #
-#  Copyright 2021 The original authors
+#  SPDX-License-Identifier: Apache-2.0
 #
-#  Licensed under the Apache License, Version 2.0 (the "License");
-#  you may not use this file except in compliance with the License.
-#  You may obtain a copy of the License at
+#  Copyright The original authors
 #
-#      http://www.apache.org/licenses/LICENSE-2.0
-#
-#  Unless required by applicable law or agreed to in writing, software
-#  distributed under the License is distributed on an "AS IS" BASIS,
-#  WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
-#  See the License for the specific language governing permissions and
-#  limitations under the License.
+#  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
 #
 
-name: Build
+name: PR Build
 
 on:
-  push:
-    branches: [ main ]
   pull_request:
     branches: [ main ]
 
@@ -342,51 +332,6 @@ jobs:
       - name: 'Run integration tests (with incubating APIs)'
         if: ${{ matrix.install_libdeflate && matrix.enable_incubating }}
         run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector"
-
-  api-change-report:
-    if: github.event_name == 'push'
-    needs: build-core
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Download core artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          name: maven-repo-core
-          path: ~/.m2/repository/dev/hardwood/
-
-      - name: 'Generate API change report'
-        run: |
-          JAPICMP_OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
-          echo "Comparing against ${JAPICMP_OLD_VERSION}"
-          ./mvnw -ntp -B package japicmp:cmp -pl :hardwood-core -DskipTests -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
-
-      - name: 'Upload API change report'
-        uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
-        with:
-          name: japicmp-report
-          path: core/target/japicmp/
 
   performance-tests:
     needs: build-s3
