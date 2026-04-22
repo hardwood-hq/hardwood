@@ -69,12 +69,6 @@
       <artifactId>log4j-jpl</artifactId>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>org.moditect.jfrunit</groupId>
-      <artifactId>jfrunit-core</artifactId>
-      <scope>test</scope>
-    </dependency>
-
     <!-- Optional compression libraries -->
     <dependency>
       <groupId>org.xerial.snappy</groupId>
@@ -135,7 +129,9 @@
         </configuration>
       </plugin>
 
-      <!-- Create multi-release JAR -->
+      <!-- Create multi-release JAR. Also publishes a slim test-jar containing
+           only the shared JFR recorder base class, so downstream modules can
+           reuse it without pulling in any other test classes or resources. -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-jar-plugin</artifactId>
@@ -147,6 +143,19 @@
             </manifestEntries>
           </archive>
         </configuration>
+        <executions>
+          <execution>
+            <id>test-jar</id>
+            <goals>
+              <goal>test-jar</goal>
+            </goals>
+            <configuration>
+              <includes>
+                <include>dev/hardwood/jfr/AbstractJfrRecorderTest.class</include>
+              </includes>
+            </configuration>
+          </execution>
+        </executions>
       </plugin>
 
       <!-- Run integration tests against the packaged JAR to test multi-release classes -->

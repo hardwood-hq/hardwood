@@ -81,13 +81,6 @@
         <version>7.5.0.202512021534-r</version>
       </dependency>
 
-      <!-- JFR testing -->
-      <dependency>
-        <groupId>org.moditect.jfrunit</groupId>
-        <artifactId>jfrunit-core</artifactId>
-        <version>1.0.0.Alpha2</version>
-      </dependency>
-
       <!-- Testcontainers -->
       <dependency>
         <groupId>org.testcontainers</groupId>
@@ -101,6 +94,14 @@
       <dependency>
         <groupId>dev.hardwood</groupId>
         <artifactId>hardwood-s3</artifactId>
+        <version>${project.version}</version>
+        <type>test-jar</type>
+      </dependency>
+
+      <!-- Shared JFR recorder base class, published as the hardwood-core test-jar -->
+      <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-core</artifactId>
         <version>${project.version}</version>
         <type>test-jar</type>
       </dependency>

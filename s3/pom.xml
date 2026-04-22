@@ -97,8 +97,9 @@
       <scope>test</scope>
     </dependency>
     <dependency>
-      <groupId>org.moditect.jfrunit</groupId>
-      <artifactId>jfrunit-core</artifactId>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-core</artifactId>
+      <type>test-jar</type>
       <scope>test</scope>
     </dependency>
   </dependencies>

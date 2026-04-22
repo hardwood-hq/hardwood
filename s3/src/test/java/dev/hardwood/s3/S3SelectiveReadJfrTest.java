@@ -7,6 +7,7 @@
  */
 package dev.hardwood.s3;
 
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Set;
 import java.util.stream.Collectors;
@@ -14,14 +15,13 @@ import java.util.stream.Collectors;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
-import org.moditect.jfrunit.EnableEvent;
-import org.moditect.jfrunit.JfrEvents;
 import org.testcontainers.containers.GenericContainer;
 import org.testcontainers.images.builder.Transferable;
 import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
 
+import dev.hardwood.jfr.AbstractJfrRecorderTest;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
@@ -46,8 +46,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// so that the generated test files stay small while still exercising multi-chunk
 /// behaviour.
 @Testcontainers
-@org.moditect.jfrunit.JfrEventTest
-public class S3SelectiveReadJfrTest {
+public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
 
     private static final System.Logger LOG = System.getLogger(S3SelectiveReadJfrTest.class.getName());
 
@@ -93,29 +92,51 @@ public class S3SelectiveReadJfrTest {
             .resolve("../core/src/test/resources").normalize();
 
     @Container
-    static GenericContainer<?> s3 = S3ProxyContainers.filesystemBacked()
-            .withCopyFileToContainer(
-                    MountableFile.forHostPath(TEST_RESOURCES.resolve(PAGE_INDEX_FILE)),
-                    S3ProxyContainers.objectPath(PAGE_INDEX_FILE))
-            .withCopyFileToContainer(
-                    MountableFile.forHostPath(TEST_RESOURCES.resolve(FILTER_PUSHDOWN_FILE)),
-                    S3ProxyContainers.objectPath(FILTER_PUSHDOWN_FILE))
-            .withCopyToContainer(
-                    Transferable.of(TestParquetGenerator.generate(LAZY_RG_COUNT, LAZY_RG_ROWS, LAZY_RG_COLUMNS)),
-                    S3ProxyContainers.objectPath(LAZY_ROWGROUP_FILE))
-            .withCopyToContainer(
-                    Transferable.of(TestParquetGenerator.generate(LAZY_PAGE_RG_COUNT, LAZY_PAGE_RG_ROWS, LAZY_PAGE_COLUMNS)),
-                    S3ProxyContainers.objectPath(LAZY_PAGE_FILE))
-            .withCopyToContainer(
-                    Transferable.of(TestParquetGenerator.generate(LARGE_RG_COUNT, LARGE_RG_ROWS, LARGE_RG_COLUMNS, LARGE_RG_ROWS_PER_PAGE)),
-                    S3ProxyContainers.objectPath(LARGE_RG_FILE));
+    static GenericContainer<?> s3 = buildContainer();
+
+    /// File sizes as written to the container. Used as the full-read baseline
+    /// in byte-comparison assertions — a full read downloads essentially the
+    /// whole object, so the file size is a reliable upper bound and avoids an
+    /// extra JFR-instrumented read per test.
+    private static long pageIndexFileSize;
+    private static long lazyRowGroupFileSize;
+    private static long lazyPageFileSize;
+    private static long largeRgFileSize;
+
+    private static GenericContainer<?> buildContainer() {
+        byte[] lazyRg = TestParquetGenerator.generate(LAZY_RG_COUNT, LAZY_RG_ROWS, LAZY_RG_COLUMNS);
+        lazyRowGroupFileSize = lazyRg.length;
+
+        byte[] lazyPage = TestParquetGenerator.generate(LAZY_PAGE_RG_COUNT, LAZY_PAGE_RG_ROWS, LAZY_PAGE_COLUMNS);
+        lazyPageFileSize = lazyPage.length;
+
+        byte[] largeRg = TestParquetGenerator.generate(LARGE_RG_COUNT, LARGE_RG_ROWS, LARGE_RG_COLUMNS, LARGE_RG_ROWS_PER_PAGE);
+        largeRgFileSize = largeRg.length;
+
+        return S3ProxyContainers.filesystemBacked()
+                .withCopyFileToContainer(
+                        MountableFile.forHostPath(TEST_RESOURCES.resolve(PAGE_INDEX_FILE)),
+                        S3ProxyContainers.objectPath(PAGE_INDEX_FILE))
+                .withCopyFileToContainer(
+                        MountableFile.forHostPath(TEST_RESOURCES.resolve(FILTER_PUSHDOWN_FILE)),
+                        S3ProxyContainers.objectPath(FILTER_PUSHDOWN_FILE))
+                .withCopyToContainer(
+                        Transferable.of(lazyRg),
+                        S3ProxyContainers.objectPath(LAZY_ROWGROUP_FILE))
+                .withCopyToContainer(
+                        Transferable.of(lazyPage),
+                        S3ProxyContainers.objectPath(LAZY_PAGE_FILE))
+                .withCopyToContainer(
+                        Transferable.of(largeRg),
+                        S3ProxyContainers.objectPath(LARGE_RG_FILE));
+    }
 
     static S3Source source;
 
-    public JfrEvents jfrEvents = new JfrEvents();
-
     @BeforeAll
-    static void setup() {
+    static void setup() throws Exception {
+        pageIndexFileSize = Files.size(TEST_RESOURCES.resolve(PAGE_INDEX_FILE));
+
         // Override sequential chunk size for this test class
         System.setProperty("hardwood.internal.sequentialChunkSize", String.valueOf(TEST_CHUNK_SIZE));
 
@@ -133,7 +154,6 @@ public class S3SelectiveReadJfrTest {
     }
 
     @Test
-    @EnableEvent("dev.hardwood.RowGroupScanned")
     void fullReadScansAllRowGroupsAndReturnsAllRows() throws Exception {
         int expectedRows = LAZY_RG_COUNT * LAZY_RG_ROWS;
         int rowCount = 0;
@@ -157,11 +177,9 @@ public class S3SelectiveReadJfrTest {
                 .as("Last c0 value should be expectedRows - 1")
                 .isEqualTo(expectedRows - 1);
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        long scannedEvents = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
-                .count();
+        long scannedEvents = events("dev.hardwood.RowGroupScanned").count();
 
         long expectedEvents = (long) LAZY_RG_COUNT * LAZY_RG_COLUMNS;
         assertThat(scannedEvents)
@@ -173,7 +191,6 @@ public class S3SelectiveReadJfrTest {
     // ==================== Column Projection ====================
 
     @Test
-    @EnableEvent("dev.hardwood.RowGroupScanned")
     void projectionScansOnlyRequestedColumns() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", PAGE_INDEX_FILE))) {
@@ -186,10 +203,9 @@ public class S3SelectiveReadJfrTest {
             }
         }
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        Set<String> scannedColumns = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
+        Set<String> scannedColumns = events("dev.hardwood.RowGroupScanned")
                 .map(e -> e.getString("column"))
                 .collect(Collectors.toSet());
 
@@ -199,25 +215,25 @@ public class S3SelectiveReadJfrTest {
     }
 
     @Test
-    @EnableEvent("jdk.SocketRead")
     void projectionTransfersFewerBytes() throws Exception {
         // page_index_test.parquet is 170 KB (> 64 KB tail cache), so column chunk
-        // reads go to the network and are observable via jdk.SocketRead.
-        long allColumnsBytes = readAndMeasureSocketBytes(PAGE_INDEX_FILE,
-                ColumnProjection.all(), null);
-
+        // reads go to the network and are observable via jdk.SocketRead. Use
+        // the file size as the full-read baseline — a full read can't transfer
+        // more than the file itself.
         long oneColumnBytes = readAndMeasureSocketBytes(PAGE_INDEX_FILE,
                 ColumnProjection.columns("id"), null);
 
         assertThat(oneColumnBytes)
-                .as("Reading 1 of 3 columns should transfer fewer bytes than reading all columns")
-                .isLessThan(allColumnsBytes);
+                .as("Reading 1 of 3 columns should still transfer some bytes (file > tail cache)")
+                .isGreaterThan(0);
+        assertThat(oneColumnBytes)
+                .as("Reading 1 of 3 columns should transfer fewer bytes than the file size")
+                .isLessThan(pageIndexFileSize);
     }
 
     // ==================== Row Group Filtering ====================
 
     @Test
-    @EnableEvent("dev.hardwood.RowGroupFilter")
     void filterSkipsRowGroups() throws Exception {
         // filter_pushdown_int.parquet has 3 row groups:
         // RG0: id 1-100, RG1: id 101-200, RG2: id 201-300
@@ -233,10 +249,9 @@ public class S3SelectiveReadJfrTest {
             }
         }
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupFilter".equals(e.getEventType().getName()))
+        events("dev.hardwood.RowGroupFilter")
                 .findFirst()
                 .ifPresentOrElse(event -> {
                     assertThat(event.getInt("totalRowGroups"))
@@ -254,7 +269,6 @@ public class S3SelectiveReadJfrTest {
     }
 
     @Test
-    @EnableEvent("dev.hardwood.RowGroupScanned")
     void filterReducesScannedRowGroups() throws Exception {
         // With filter id > 200, only 1 of 3 row groups should be scanned
         FilterPredicate filter = FilterPredicate.gt("id", 200L);
@@ -268,11 +282,9 @@ public class S3SelectiveReadJfrTest {
             }
         }
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        long scannedRowGroups = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
-                .count();
+        long scannedRowGroups = events("dev.hardwood.RowGroupScanned").count();
 
         // File has 3 columns (id, value, label), filter keeps 1 of 3 row groups
         // -> 3 RowGroupScanned events (one per column in the kept row group)
@@ -284,17 +296,13 @@ public class S3SelectiveReadJfrTest {
     // ==================== Row Limit ====================
 
     @Test
-    @EnableEvent("dev.hardwood.RowGroupScanned")
-    @EnableEvent("jdk.SocketRead")
     void maxRowsSkipsUnneededRowGroups() throws Exception {
+        enable("jdk.SocketRead");
+
         // lazy_rowgroup_test.parquet: 20 row groups × 50K rows × 8 columns.
         // With maxRows=10, the reader knows from metadata that only 1 row group
         // is needed (first RG has 50K rows > 10).
-
-        long fullReadBytes = readAndMeasureSocketBytes(LAZY_ROWGROUP_FILE,
-                ColumnProjection.all(), null);
-
-        jfrEvents.reset();
+        long fullReadBytes = lazyRowGroupFileSize;
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
@@ -308,14 +316,11 @@ public class S3SelectiveReadJfrTest {
             }
         }
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        long scannedEvents = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
-                .count();
+        long scannedEvents = events("dev.hardwood.RowGroupScanned").count();
 
-        long partialReadBytes = jfrEvents
-                .filter(e -> "jdk.SocketRead".equals(e.getEventType().getName()))
+        long partialReadBytes = events("jdk.SocketRead")
                 .mapToLong(e -> e.getLong("bytesRead"))
                 .sum();
 
@@ -324,13 +329,16 @@ public class S3SelectiveReadJfrTest {
                 fullReadBytes, partialReadBytes, partialReadBytes * 100 / fullReadBytes, scannedEvents);
 
         // With maxRows=10, totalRowGroups is set to 1 (first RG has 50K rows).
-        // Only 1 row group × 8 columns = 8 RowGroupScanned events.
+        // Exactly 1 row group × 8 columns = 8 RowGroupScanned events.
         assertThat(scannedEvents)
                 .as("maxRows=10 should limit to 1 row group (8 events for 8 columns); "
                         + "scanned=%d".formatted(scannedEvents))
-                .isLessThanOrEqualTo(8);
+                .isEqualTo(LAZY_RG_COLUMNS);
 
-        // maxRows=10 limits to 1 of 40 RGs — should transfer well under 25%.
+        assertThat(partialReadBytes)
+                .as("maxRows=10 should still transfer some bytes")
+                .isGreaterThan(0);
+        // maxRows=10 limits to 1 of 20 RGs — should transfer well under 10%.
         assertThat(partialReadBytes)
                 .as("maxRows=10 should transfer well under 10%% of full read; "
                         + "full=%,d bytes, partial=%,d bytes (%d%%)"
@@ -340,18 +348,14 @@ public class S3SelectiveReadJfrTest {
     }
 
     @Test
-    @EnableEvent("dev.hardwood.RowGroupScanned")
-    @EnableEvent("jdk.SocketRead")
     void negativeMaxRowsOnlyFetchesLastRowGroup() throws Exception {
+        enable("jdk.SocketRead");
+
         // lazy_rowgroup_test.parquet: 20 row groups × 50K rows × 8 columns.
         // A tail of 10 rows fits entirely within the last row group, so only
         // that row group should be fetched; bytes transferred should be a small
-        // fraction of a full read.
-
-        long fullReadBytes = readAndMeasureSocketBytes(LAZY_ROWGROUP_FILE,
-                ColumnProjection.all(), null);
-
-        jfrEvents.reset();
+        // fraction of the file size.
+        long fullReadBytes = lazyRowGroupFileSize;
 
         long expectedFirstC0 = (long) LAZY_RG_COUNT * LAZY_RG_ROWS - 10;
         long expectedLastC0 = (long) LAZY_RG_COUNT * LAZY_RG_ROWS - 1;
@@ -378,14 +382,11 @@ public class S3SelectiveReadJfrTest {
         assertThat(firstC0).isEqualTo(expectedFirstC0);
         assertThat(lastC0).isEqualTo(expectedLastC0);
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        long scannedEvents = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
-                .count();
+        long scannedEvents = events("dev.hardwood.RowGroupScanned").count();
 
-        long partialReadBytes = jfrEvents
-                .filter(e -> "jdk.SocketRead".equals(e.getEventType().getName()))
+        long partialReadBytes = events("jdk.SocketRead")
                 .mapToLong(e -> e.getLong("bytesRead"))
                 .sum();
 
@@ -393,13 +394,16 @@ public class S3SelectiveReadJfrTest {
                 "negativeMaxRowsOnlyFetchesLastRowGroup: full={0} bytes, tail=-10 read={1} bytes ({2}%), scanned={3} events",
                 fullReadBytes, partialReadBytes, partialReadBytes * 100 / fullReadBytes, scannedEvents);
 
-        // Tail of 10 rows fits inside the final row group, so only 1 RG ×
-        // 8 columns = 8 RowGroupScanned events should fire.
+        // Tail of 10 rows fits inside the final row group, so exactly 1 RG ×
+        // 8 columns = 8 RowGroupScanned events fire.
         assertThat(scannedEvents)
                 .as("Tail of 10 rows should scan only the final row group (8 events for 8 columns); "
                         + "scanned=%d".formatted(scannedEvents))
-                .isLessThanOrEqualTo(LAZY_RG_COLUMNS);
+                .isEqualTo(LAZY_RG_COLUMNS);
 
+        assertThat(partialReadBytes)
+                .as("Tail read should still transfer some bytes")
+                .isGreaterThan(0);
         // Tail fetches only 1 of 20 row groups — bytes transferred should be
         // well under 10% of a full read.
         assertThat(partialReadBytes)
@@ -413,17 +417,13 @@ public class S3SelectiveReadJfrTest {
     // ==================== Lazy Fetch: Early Close ====================
 
     @Test
-    @EnableEvent("jdk.SocketRead")
-    @EnableEvent("dev.hardwood.RowGroupScanned")
     void earlyCloseTransfersFewerBytesThanFullRead() throws Exception {
+        enable("jdk.SocketRead");
+
         // lazy_page_test.parquet: 40 row groups × 50K rows × 4 INT64 columns.
         // Reading 10 rows and closing relies on pipeline back-pressure and
         // cancellation on close() to avoid fetching the entire file.
-
-        long fullReadBytes = readAndMeasureSocketBytes(LAZY_PAGE_FILE,
-                ColumnProjection.all(), null);
-
-        jfrEvents.reset();
+        long fullReadBytes = lazyPageFileSize;
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_PAGE_FILE))) {
@@ -436,16 +436,13 @@ public class S3SelectiveReadJfrTest {
             }
         }
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        long partialReadBytes = jfrEvents
-                .filter(e -> "jdk.SocketRead".equals(e.getEventType().getName()))
+        long partialReadBytes = events("jdk.SocketRead")
                 .mapToLong(e -> e.getLong("bytesRead"))
                 .sum();
 
-        long scannedEvents = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
-                .count();
+        long scannedEvents = events("dev.hardwood.RowGroupScanned").count();
 
         LOG.log(System.Logger.Level.INFO,
                 "earlyCloseTransfersFewerBytesThanFullRead: full={0} bytes, partial={1} bytes ({2}%), scanned={3} events",
@@ -454,14 +451,21 @@ public class S3SelectiveReadJfrTest {
         // The pipeline processes ~1-2 RGs before back-pressure and close()
         // stop it. With 40 RGs, the partial read should be well under 25%.
         assertThat(partialReadBytes)
+                .as("Early close should still transfer some bytes")
+                .isGreaterThan(0);
+        assertThat(partialReadBytes)
                 .as("Early close (10 rows from 40 RGs) should transfer under 25%% of full read; "
                         + "full=%,d bytes, partial=%,d bytes (%d%%)"
                                 .formatted(fullReadBytes, partialReadBytes,
                                         partialReadBytes * 100 / fullReadBytes))
                 .isLessThan(fullReadBytes / 4);
 
-        // Full read scans 160 events (40 RGs × 4 columns). Back-pressure
-        // should limit scanning to a fraction of row groups.
+        // Full read scans 160 events (40 RGs × 4 columns). At least the first
+        // RG's columns must scan; back-pressure limits scanning to a fraction.
+        assertThat(scannedEvents)
+                .as("Early close should scan at least one row group's columns; scanned=%d"
+                        .formatted(scannedEvents))
+                .isGreaterThanOrEqualTo(LAZY_PAGE_COLUMNS);
         assertThat(scannedEvents)
                 .as("Early close should scan far fewer than all 40 RGs; scanned=%d"
                         .formatted(scannedEvents))
@@ -469,18 +473,15 @@ public class S3SelectiveReadJfrTest {
     }
 
     @Test
-    @EnableEvent("jdk.SocketRead")
     void earlyCloseFromLargeRowGroupDoesNotFetchEntireFile() throws Exception {
+        enable("jdk.SocketRead");
+
         // large_rg_test.parquet: 10 row groups × 200K rows × 4 INT64 columns.
         // One batch (~196K rows) consumes nearly one RG. Reading 10 rows and
         // closing should process at most ~1-2 RGs before BatchExchange
         // back-pressure and close() stop the pipeline. With 10 RGs total,
         // the partial read should be well under 25%.
-
-        long fullReadBytes = readAndMeasureSocketBytes(LARGE_RG_FILE,
-                ColumnProjection.all(), null);
-
-        jfrEvents.reset();
+        long fullReadBytes = largeRgFileSize;
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LARGE_RG_FILE))) {
@@ -493,10 +494,9 @@ public class S3SelectiveReadJfrTest {
             }
         }
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        long partialReadBytes = jfrEvents
-                .filter(e -> "jdk.SocketRead".equals(e.getEventType().getName()))
+        long partialReadBytes = events("jdk.SocketRead")
                 .mapToLong(e -> e.getLong("bytesRead"))
                 .sum();
 
@@ -506,6 +506,9 @@ public class S3SelectiveReadJfrTest {
 
         // The pipeline processes ~1-2 RGs before back-pressure and close()
         // stop it. With 10 RGs, the partial read should be well under 33%.
+        assertThat(partialReadBytes)
+                .as("Early close should still transfer some bytes")
+                .isGreaterThan(0);
         assertThat(partialReadBytes)
                 .as("Early close (10 rows from 10 RGs) should transfer under 25%% of full read; "
                         + "full=%,d bytes, partial=%,d bytes (%d%%)"
@@ -517,12 +520,9 @@ public class S3SelectiveReadJfrTest {
     // ==================== ColumnReader ====================
 
     @Test
-    @EnableEvent("dev.hardwood.RowGroupScanned")
     void columnReaderPartialReadDoesNotScanAllRowGroups() throws Exception {
         // ColumnReader has the same lazy row-group fetching as RowReader.
         // Reading a single batch from one column should not scan all 20 row groups.
-        jfrEvents.reset();
-
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_ROWGROUP_FILE));
              ColumnReader col = reader.createColumnReader("c0")) {
@@ -530,15 +530,17 @@ public class S3SelectiveReadJfrTest {
             // Consume one batch and close — don't read further
         }
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        long scannedEvents = jfrEvents
-                .filter(e -> "dev.hardwood.RowGroupScanned".equals(e.getEventType().getName()))
-                .count();
+        long scannedEvents = events("dev.hardwood.RowGroupScanned").count();
 
         // ColumnReader reads a single column, so each row group produces 1 event.
         // Full read = 20 events. Consumer reads 1 batch and closes; back-pressure
         // limits scanning to a handful of RGs.
+        assertThat(scannedEvents)
+                .as("ColumnReader should scan at least one row group; scanned=%d"
+                        .formatted(scannedEvents))
+                .isGreaterThanOrEqualTo(1);
         assertThat(scannedEvents)
                 .as("ColumnReader partial read should scan far fewer than all 20 row groups; "
                         + "scanned=%d".formatted(scannedEvents))
@@ -547,10 +549,12 @@ public class S3SelectiveReadJfrTest {
 
     // ==================== Helpers ====================
 
+    /// Reads `file` with the given projection/filter and returns the total
+    /// `jdk.SocketRead.bytesRead` captured during the read. Starts the test
+    /// recording itself, so the caller must not have called `enable(...)`.
     private long readAndMeasureSocketBytes(String file, ColumnProjection projection,
             FilterPredicate filter) throws Exception {
-        jfrEvents.reset();
-
+        enable("jdk.SocketRead");
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", file))) {
             try (RowReader rows = filter != null
@@ -562,10 +566,9 @@ public class S3SelectiveReadJfrTest {
             }
         }
 
-        jfrEvents.awaitEvents();
+        awaitEvents();
 
-        return jfrEvents
-                .filter(e -> "jdk.SocketRead".equals(e.getEventType().getName()))
+        return events("jdk.SocketRead")
                 .mapToLong(e -> e.getLong("bytesRead"))
                 .sum();
     }
