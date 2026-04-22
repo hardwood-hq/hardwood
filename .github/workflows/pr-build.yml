@@ -12,6 +12,10 @@ on:
   pull_request:
     branches: [ main ]
 
+env:
+  # Kept in sync with S3ProxyContainers.IMAGE; see cli/s3/parquet-java-compat tests.
+  S3PROXY_IMAGE: ghcr.io/hardwood-hq/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3
+
 jobs:
   build-core:
     runs-on: ubuntu-latest
@@ -71,6 +75,15 @@ jobs:
         with:
           submodules: 'true'
 
+      - name: 'Pre-pull s3proxy image in background'
+        # Start the image download immediately after checkout so it overlaps
+        # with setup-java, Maven cache restore, and artifact download.
+        # By the time Testcontainers reaches `s3.start()`, layers are cached.
+        run: |
+          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
+          disown
+          echo "Background pull of $S3PROXY_IMAGE started"
+
       - name: 'Set up Java'
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
@@ -116,6 +129,12 @@ jobs:
         with:
           submodules: 'true'
 
+      - name: 'Pre-pull s3proxy image in background'
+        run: |
+          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
+          disown
+          echo "Background pull of $S3PROXY_IMAGE started"
+
       - name: 'Set up Java'
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
         with:
@@ -160,6 +179,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
+
+      - name: 'Pre-pull s3proxy image in background'
+        run: |
+          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
+          disown
+          echo "Background pull of $S3PROXY_IMAGE started"
 
       - name: 'Set up Java'
         uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
@@ -420,6 +445,12 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
         with:
           submodules: 'true'
+
+      - name: 'Pre-pull s3proxy image in background'
+        run: |
+          nohup docker pull "$S3PROXY_IMAGE" > /tmp/s3proxy-pull.log 2>&1 &
+          disown
+          echo "Background pull of $S3PROXY_IMAGE started"
 
       - name: 'Set up Graal'
         uses: graalvm/setup-graalvm@03e8abf916fd0e281b2efe7b2da3378bb0a1d085  # v1 — https://github.com/graalvm/setup-graalvm/releases/tag/v1
