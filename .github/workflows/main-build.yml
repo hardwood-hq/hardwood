@@ -277,6 +277,7 @@ jobs:
   integration-tests:
     needs: build-core
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     name: 'Integration Tests'
 
     steps:

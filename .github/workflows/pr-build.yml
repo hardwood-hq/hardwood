@@ -277,6 +277,7 @@ jobs:
   integration-tests:
     needs: build-core
     runs-on: ubuntu-latest
+    timeout-minutes: 15
 
     strategy:
       matrix:
@@ -321,7 +322,21 @@ jobs:
 
       - name: 'Install libdeflate'
         if: ${{ matrix.install_libdeflate }}
-        run: sudo apt-get update && sudo apt-get install -y libdeflate-dev
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
+        run: |
+          # Freshly booted ubuntu-24.04 runners may still be running
+          # unattended-upgrades, which holds /var/lib/dpkg/lock-frontend and
+          # makes apt-get block indefinitely. Stop the service and wait for
+          # the lock to clear before installing.
+          sudo systemctl stop unattended-upgrades.service 2>/dev/null || true
+          while sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; do
+            echo "Waiting for dpkg lock..."
+            sleep 2
+          done
+          sudo -E apt-get update
+          sudo -E apt-get install -y libdeflate-dev
 
       - name: 'Download core artifacts'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
