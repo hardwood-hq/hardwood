@@ -113,7 +113,8 @@
       "Bash(git commit:*)",
       "Bash(git log:*)",
       "WebFetch(domain:stac.overturemaps.org)",
-      "Bash(gh auth *)"
+      "Bash(gh auth *)",
+      "Bash(git mv *)"
     ]
   }
 }
