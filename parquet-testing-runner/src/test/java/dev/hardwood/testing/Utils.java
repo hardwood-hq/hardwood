@@ -100,12 +100,6 @@ public class Utils {
     /// Files blocking row-level nested-value comparison due to known `PqList` limitations.
     /// Each entry is the tracking issue whose fix should re-enable the file.
     private static final java.util.Map<String, String> NESTED_ROW_COMPARISON_SKIPPED_FILES = java.util.Map.of(
-            // 2-level Parquet LIST nested inside another 2-level LIST. parquet-java's
-            // Avro reader flattens this as `array<array<int>>`, but Hardwood's PqList
-            // reports the intermediate repeated group as the element and rejects
-            // list-of-list iteration via `lists()`.
-            "old_list_structure.parquet", "hardwood-hq/hardwood#282",
-
             // Deeply nested list-of-list-of-struct under `nested_Struct.c.D`. Hardwood's
             // inner PqList reuses the outer list descriptor, so structs() on the inner
             // list throws "Element is not a struct" even though the element is a struct.

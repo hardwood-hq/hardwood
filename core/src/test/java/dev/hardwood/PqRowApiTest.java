@@ -1427,4 +1427,46 @@ public class PqRowApiTest {
                     .hasMessage("Column 'nullable_bool' is null at row 1");
         }
     }
+
+    @Test
+    void testLegacyTwoLevelListOfTwoLevelList() throws Exception {
+        // Schema uses the pre-standard 2-level LIST encoding nested inside another
+        // 2-level LIST (see hardwood-hq/hardwood#282):
+        //   required group a (LIST) {
+        //     repeated group array (LIST) {
+        //       repeated int32 array;
+        //     }
+        //   }
+        // Per the Parquet backward-compatibility rules, the repeated group
+        // named 'array' is itself the list element (not an intermediate
+        // wrapper). So `a` is list<list<int>>; the single row's value is
+        // [[1, 2], [3, 4]].
+        // file taken from parquet-testing
+        Path parquetFile = Paths.get("src/test/resources/old_list_structure_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            rowReader.next();
+
+            PqList outer = rowReader.getList("a");
+            assertThat(outer).isNotNull();
+            assertThat(outer.size()).isEqualTo(2);
+
+            List<List<Integer>> values = new ArrayList<>();
+            for (PqList inner : outer.lists()) {
+                List<Integer> innerValues = new ArrayList<>();
+                for (int v : inner.ints()) {
+                    innerValues.add(v);
+                }
+                values.add(innerValues);
+            }
+
+            assertThat(values).hasSize(2);
+            assertThat(values.get(0)).containsExactly(1, 2);
+            assertThat(values.get(1)).containsExactly(3, 4);
+
+            assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
 }
