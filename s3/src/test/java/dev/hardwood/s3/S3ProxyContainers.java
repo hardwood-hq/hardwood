@@ -25,9 +25,13 @@ import org.testcontainers.containers.GenericContainer;
 /// configuration.
 public final class S3ProxyContainers {
 
-    /// `andrewgaul/s3proxy` image pinned to the s3proxy 3.1.0 release commit.
+    /// `andrewgaul/s3proxy` image pinned to the s3proxy 3.1.0 release commit,
+    /// mirrored to `ghcr.io/hardwood-hq/s3proxy` so CI runs pull from GHCR
+    /// instead of Docker Hub. When bumping this tag, run the
+    /// `Mirror Container Images` workflow first to populate the new tag on
+    /// GHCR — see `.github/workflows/mirror-container-images.yml`.
     /// `andrewgaul/s3proxy` publishes only commit-SHA tags and `master`.
-    public static final String IMAGE = "andrewgaul/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3";
+    public static final String IMAGE = "ghcr.io/hardwood-hq/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3";
 
     public static final String ACCESS_KEY = "access";
     public static final String SECRET_KEY = "secret";
