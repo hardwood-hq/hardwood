@@ -405,7 +405,7 @@ jobs:
             overture-maps-places-
 
       - name: 'Run performance tests (with SIMD)'
-        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start=2023-01 -Dperf.end=2025-12
+        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start=2023-01 -Dperf.end=2025-12 -Dperf.runs=5
         env:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
 
