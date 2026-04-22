@@ -70,6 +70,9 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
             if (rowsInCurrentBatch >= batchCapacity) {
                 publishCurrentBatch();
+                if (done) {
+                    return;
+                }
             }
 
             // Check if we've hit the limit after publishing
@@ -96,15 +99,18 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         long t0 = System.nanoTime();
         try {
             if (!exchange.publish(currentBatch)) {
-                return; // stopped during publish
+                done = true; // stopped during publish
+                return;
             }
             currentBatch = exchange.takeBatch();
             if (currentBatch == null) {
-                return; // stopped during take
+                done = true; // stopped during take
+                return;
             }
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            done = true;
             return;
         }
         publishBlockNanos += System.nanoTime() - t0;

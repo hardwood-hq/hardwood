@@ -389,6 +389,93 @@ class ColumnWorkerTest {
         }
     }
 
+    /// Regression test for #300. When the exchange is stopped during the
+    /// publish/take handshake, `publishCurrentBatch` must set `done = true`
+    /// before returning — otherwise the outer `assemblePage` loop continues
+    /// and dereferences the now-null `currentBatch` in `copyPageData`.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void flatPublishCurrentBatchMarksDoneAfterTakeReturnsNull() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            ColumnSchema column = new ColumnSchema(
+                    dev.hardwood.metadata.FieldPath.of("col"),
+                    PhysicalType.INT32,
+                    dev.hardwood.metadata.RepetitionType.REQUIRED,
+                    null, 0, 0, 0, null);
+            int batchCapacity = 64;
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    null, exchange, column, batchCapacity,
+                    context.decompressorFactory(), context.executor(), 0);
+
+            worker.initDrainState();
+            worker.currentBatch = exchange.takeBatch();
+            worker.rowsInCurrentBatch = batchCapacity;
+
+            // Finish the exchange and drain the free queue so the subsequent
+            // takeBatch() inside publishCurrentBatch() returns null.
+            exchange.finish();
+            while (exchange.takeBatch() != null) {
+                // drain
+            }
+
+            worker.publishCurrentBatch();
+
+            assertThat(worker.done)
+                    .as("done must be set when the exchange was stopped during take")
+                    .isTrue();
+            assertThat(worker.currentBatch).isNull();
+        }
+    }
+
+    /// Regression test for #300, nested variant. Same contract as the flat
+    /// worker: `done` must propagate out of the stopped-during-handshake paths
+    /// so `assemblePage` doesn't dereference a null `currentBatch`.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void nestedPublishCurrentBatchMarksDoneAfterTakeReturnsNull() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
+            ColumnSchema column = new ColumnSchema(
+                    dev.hardwood.metadata.FieldPath.of("col"),
+                    PhysicalType.INT32,
+                    dev.hardwood.metadata.RepetitionType.REQUIRED,
+                    null, 0, 0, 0, null);
+            int batchCapacity = 64;
+
+            BatchExchange<NestedBatch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        NestedBatch b = new NestedBatch();
+                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity * 2);
+                        return b;
+                    });
+            NestedColumnWorker worker = new NestedColumnWorker(
+                    null, exchange, column, batchCapacity,
+                    context.decompressorFactory(), context.executor(), 0, null);
+
+            worker.initDrainState();
+            worker.currentBatch = exchange.takeBatch();
+            worker.rowsInCurrentBatch = batchCapacity;
+
+            exchange.finish();
+            while (exchange.takeBatch() != null) {
+                // drain
+            }
+
+            worker.publishCurrentBatch();
+
+            assertThat(worker.done)
+                    .as("done must be set when the exchange was stopped during take")
+                    .isTrue();
+            assertThat(worker.currentBatch).isNull();
+        }
+    }
+
     // ==================== Helpers ====================
 
     private static RowGroupIterator createIterator(Path file, FileSchema schema,

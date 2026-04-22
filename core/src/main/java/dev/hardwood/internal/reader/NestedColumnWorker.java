@@ -88,6 +88,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                 // Previous record is complete — check if batch is full
                 if (rowsInCurrentBatch >= batchCapacity) {
                     publishCurrentBatch();
+                    if (done) {
+                        return;
+                    }
                 }
 
                 // Check maxRows after publishing
@@ -151,15 +154,18 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         long t0 = System.nanoTime();
         try {
             if (!exchange.publish(currentBatch)) {
-                return; // stopped during publish
+                done = true; // stopped during publish
+                return;
             }
             currentBatch = exchange.takeBatch();
             if (currentBatch == null) {
-                return; // stopped during take
+                done = true; // stopped during take
+                return;
             }
         }
         catch (InterruptedException e) {
             Thread.currentThread().interrupt();
+            done = true;
             return;
         }
         publishBlockNanos += System.nanoTime() - t0;
