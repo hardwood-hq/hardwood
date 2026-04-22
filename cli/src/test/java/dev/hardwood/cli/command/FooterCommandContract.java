@@ -9,9 +9,6 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Shared test contract for the `footer` command.
@@ -22,11 +19,11 @@ interface FooterCommandContract {
     String nonexistentFile();
 
     @Test
-    default void displaysFooterInfo(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("footer", "-f", plainFile());
+    default void displaysFooterInfo() {
+        Cli.Result result = Cli.launch("footer", "-f", plainFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 File Size:     722 bytes
                 Footer Offset: 178 bytes
                 Footer Length: 536 bytes
@@ -35,8 +32,8 @@ interface FooterCommandContract {
     }
 
     @Test
-    default void failsOnNonexistentFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("footer", "-f", nonexistentFile());
+    default void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("footer", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
     }

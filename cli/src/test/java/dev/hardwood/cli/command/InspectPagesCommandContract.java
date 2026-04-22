@@ -9,9 +9,6 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Shared test contract for the `inspect pages` command.
@@ -28,11 +25,11 @@ interface InspectPagesCommandContract {
     String nonexistentFile();
 
     @Test
-    default void printsPageDetails(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", plainFile());
+    default void printsPageDetails() {
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", plainFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 id  (stats: inline)
                 +----+-------+------+----------+-----------+------------+--------+-----+-----+-------+
                 | RG | Page  | Type | Encoding | First Row | Compressed | Values | Min | Max | Nulls |
@@ -53,11 +50,11 @@ interface InspectPagesCommandContract {
     }
 
     @Test
-    default void printsDictionaryPageForDictFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", dictFile());
+    default void printsDictionaryPageForDictFile() {
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", dictFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 id  (stats: inline)
                 +----+-------+------+----------+-----------+------------+--------+-----+-----+-------+
                 | RG | Page  | Type | Encoding | First Row | Compressed | Values | Min | Max | Nulls |
@@ -79,11 +76,11 @@ interface InspectPagesCommandContract {
     }
 
     @Test
-    default void columnFilterRestrictsOutput(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", plainFile(), "--column", "id");
+    default void columnFilterRestrictsOutput() {
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", plainFile(), "--column", "id");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 id  (stats: inline)
                 +----+-------+------+----------+-----------+------------+--------+-----+-----+-------+
                 | RG | Page  | Type | Encoding | First Row | Compressed | Values | Min | Max | Nulls |
@@ -95,19 +92,19 @@ interface InspectPagesCommandContract {
     }
 
     @Test
-    default void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", plainFile(), "--column", "nonexistent");
+    default void rejectsUnknownColumn() {
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", plainFile(), "--column", "nonexistent");
 
         assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).contains("Unknown column");
+        assertThat(result.errorOutput()).contains("Unknown column");
     }
 
     @Test
-    default void enrichesOutputWithPageIndex(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", pageIndexFile(), "--column", "id");
+    default void enrichesOutputWithPageIndex() {
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", pageIndexFile(), "--column", "id");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 id  (stats: ColumnIndex)
                 +----+-------+---------+----------+-----------+------------+--------+------+------+-------+
                 | RG | Page  | Type    | Encoding | First Row | Compressed | Values | Min  | Max  | Nulls |
@@ -128,11 +125,11 @@ interface InspectPagesCommandContract {
     }
 
     @Test
-    default void noStatsSuppressesPageIndexColumns(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", pageIndexFile(), "--column", "id", "--no-stats");
+    default void noStatsSuppressesPageIndexColumns() {
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", pageIndexFile(), "--column", "id", "--no-stats");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("| RG | Page  | Type    | Encoding | Compressed | Values |")
+        assertThat(result.output()).contains("| RG | Page  | Type    | Encoding | Compressed | Values |")
                 .doesNotContain("First Row")
                 .doesNotContain("Min")
                 .doesNotContain("Max")
@@ -140,18 +137,18 @@ interface InspectPagesCommandContract {
     }
 
     @Test
-    default void columnFilterAcceptsNestedPath(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", nestedFile(), "--column", "tags.list.element");
+    default void columnFilterAcceptsNestedPath() {
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", nestedFile(), "--column", "tags.list.element");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
+        assertThat(result.output())
                 .startsWith("tags.list.element  (stats: ")
                 .contains("| DATA |");
     }
 
     @Test
-    default void failsOnNonexistentFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "pages", "-f", nonexistentFile());
+    default void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("inspect", "pages", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
     }

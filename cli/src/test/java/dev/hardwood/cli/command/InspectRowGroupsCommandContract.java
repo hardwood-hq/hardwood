@@ -9,9 +9,6 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Shared test contract for the `inspect rowgroups` command.
@@ -22,11 +19,11 @@ interface InspectRowGroupsCommandContract {
     String nonexistentFile();
 
     @Test
-    default void displaysRowGroups(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "rowgroups", "-f", plainFile());
+    default void displaysRowGroups() {
+        Cli.Result result = Cli.launch("inspect", "rowgroups", "-f", plainFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 Row Group 0  (3 rows, 174 B uncompressed)
                 +--------+-------+--------------+------------+--------------+
                 | Column | Type  | Codec        | Compressed | Uncompressed |
@@ -37,8 +34,8 @@ interface InspectRowGroupsCommandContract {
     }
 
     @Test
-    default void failsOnNonexistentFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "rowgroups", "-f", nonexistentFile());
+    default void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("inspect", "rowgroups", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
     }

@@ -9,9 +9,6 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Shared test contract for the `schema` command.
@@ -22,11 +19,11 @@ interface SchemaCommandContract {
     String nonexistentFile();
 
     @Test
-    default void displaysNativeSchemaByDefault(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", plainFile());
+    default void displaysNativeSchemaByDefault() {
+        Cli.Result result = Cli.launch("schema", "-f", plainFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 message schema {
                   required int64 id;
                   required int64 value;
@@ -34,11 +31,11 @@ interface SchemaCommandContract {
     }
 
     @Test
-    default void displaysAvroSchema(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", plainFile(), "--format", "AVRO");
+    default void displaysAvroSchema() {
+        Cli.Result result = Cli.launch("schema", "-f", plainFile(), "--format", "AVRO");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 {
                   "type": "record",
                   "name": "Schema",
@@ -50,11 +47,11 @@ interface SchemaCommandContract {
     }
 
     @Test
-    default void displaysProtoSchema(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", plainFile(), "--format", "PROTO");
+    default void displaysProtoSchema() {
+        Cli.Result result = Cli.launch("schema", "-f", plainFile(), "--format", "PROTO");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 syntax = "proto3";
 
                 message Schema {
@@ -64,8 +61,8 @@ interface SchemaCommandContract {
     }
 
     @Test
-    default void failsOnNonexistentFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", nonexistentFile());
+    default void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("schema", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
     }

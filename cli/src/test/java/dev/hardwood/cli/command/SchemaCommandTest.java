@@ -9,13 +9,8 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
 class SchemaCommandTest implements SchemaCommandContract {
 
     private final String NESTED_FILE = this.getClass().getResource("/nested_struct_test.parquet").getPath();
@@ -31,28 +26,28 @@ class SchemaCommandTest implements SchemaCommandContract {
     }
 
     @Test
-    void displaysAvroSchemaForNestedFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", NESTED_FILE, "--format", "AVRO");
+    void displaysAvroSchemaForNestedFile() {
+        Cli.Result result = Cli.launch("schema", "-f", NESTED_FILE, "--format", "AVRO");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("\"type\": \"record\"");
+        assertThat(result.output()).contains("\"type\": \"record\"");
     }
 
     @Test
-    void displaysProtoSchemaForNestedFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", NESTED_FILE, "--format", "PROTO");
+    void displaysProtoSchemaForNestedFile() {
+        Cli.Result result = Cli.launch("schema", "-f", NESTED_FILE, "--format", "PROTO");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput())
+        assertThat(result.output())
                 .contains("syntax = \"proto3\"")
                 .contains("message");
     }
 
     @Test
-    void rejectsRemoteUri(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", "gs://bucket/data.parquet");
+    void rejectsRemoteUri() {
+        Cli.Result result = Cli.launch("schema", "-f", "gs://bucket/data.parquet");
 
         assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).contains("not implemented yet");
+        assertThat(result.errorOutput()).contains("not implemented yet");
     }
 }

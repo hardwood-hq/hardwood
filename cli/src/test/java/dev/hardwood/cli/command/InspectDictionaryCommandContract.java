@@ -9,9 +9,6 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Shared test contract for the `inspect dictionary` command.
@@ -24,11 +21,11 @@ interface InspectDictionaryCommandContract {
     String nonexistentFile();
 
     @Test
-    default void printsDictionaryEntriesForDictColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", dictFile(), "--column", "category");
+    default void printsDictionaryEntriesForDictColumn() {
+        Cli.Result result = Cli.launch("inspect", "dictionary", "-f", dictFile(), "--column", "category");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 Row Group 0 / category
                   Dictionary size: 3 entries
                   [   0] A
@@ -37,26 +34,26 @@ interface InspectDictionaryCommandContract {
     }
 
     @Test
-    default void printsNoDictionaryMessageForPlainColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", plainFile(), "--column", "id");
+    default void printsNoDictionaryMessageForPlainColumn() {
+        Cli.Result result = Cli.launch("inspect", "dictionary", "-f", plainFile(), "--column", "id");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).isEqualTo("""
+        assertThat(result.output()).isEqualTo("""
                 Row Group 0 / id
                   No dictionary (column is not dictionary-encoded)""");
     }
 
     @Test
-    default void rejectsUnknownColumn(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", dictFile(), "--column", "nonexistent");
+    default void rejectsUnknownColumn() {
+        Cli.Result result = Cli.launch("inspect", "dictionary", "-f", dictFile(), "--column", "nonexistent");
 
         assertThat(result.exitCode()).isNotZero();
-        assertThat(result.getErrorOutput()).contains("Unknown column");
+        assertThat(result.errorOutput()).contains("Unknown column");
     }
 
     @Test
-    default void failsOnNonexistentFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("inspect", "dictionary", "-f", nonexistentFile(), "--column", "id");
+    default void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("inspect", "dictionary", "-f", nonexistentFile(), "--column", "id");
 
         assertThat(result.exitCode()).isNotZero();
     }
