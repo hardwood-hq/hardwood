@@ -304,12 +304,33 @@ final class PqStructImpl implements PqStruct {
     }
 
     private boolean isStructNull(TopLevelFieldMap.FieldDesc.Struct structDesc) {
-        int projCol = structDesc.firstPrimitiveCol();
-        if (projCol < 0) {
+        int primCol = structDesc.firstPrimitiveCol();
+        if (primCol >= 0) {
+            int idx = resolveValueIndex(primCol);
+            int defLevel = batch.getDefLevel(primCol, idx);
+            return defLevel < structDesc.schema().maxDefinitionLevel();
+        }
+        // Struct has no direct primitive child; fall back to the first leaf at any
+        // depth. In record-index mode the recorded value index already points to
+        // the leaf position. In position mode, `valueIndex` is a rep-level ordinal
+        // at the struct's level, so chase through the leaf column's multi-level
+        // offsets to reach the leaf position for this struct instance.
+        int leafCol = structDesc.firstLeafProjCol();
+        if (leafCol < 0) {
             return false;
         }
-        int idx = resolveValueIndex(projCol);
-        int defLevel = batch.getDefLevel(projCol, idx);
+        int pos;
+        if (valueIndex >= 0) {
+            pos = valueIndex;
+            int structRep = structDesc.schema().maxRepetitionLevel();
+            int leafMaxRep = batch.getMaxRepLevel(leafCol);
+            for (int k = structRep; k < leafMaxRep; k++) {
+                pos = batch.getLevelStart(leafCol, k, pos);
+            }
+        } else {
+            pos = batch.getValueIndex(leafCol, rowIndex);
+        }
+        int defLevel = batch.getDefLevel(leafCol, pos);
         return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 

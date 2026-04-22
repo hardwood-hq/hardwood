@@ -97,28 +97,11 @@ public class Utils {
             "ARROW-GH-45185.parquet"
     );
 
-    /// Files blocking row-level nested-value comparison due to known limitations.
-    /// Each entry is a short reason (ideally a GitHub issue reference) whose
-    /// resolution should re-enable the file.
-    private static final java.util.Map<String, String> NESTED_ROW_COMPARISON_SKIPPED_FILES = java.util.Map.of(
-            // `nested_struct.g` is a Map<string, struct{H: struct{i: list<double>}}>.
-            // PqMapImpl's entry valueIdx is derived from the key column's row
-            // positions, which misaligns when the value contains a repeated field.
-            // `nonnullable.impala.parquet` does not exercise the null/empty inner
-            // list and is covered after the #283 fix.
-            "nullable.impala.parquet", "hardwood-hq/hardwood#293"
-    );
-
     /// Returns a GitHub issue reference blocking row-level nested comparison for
-    /// `testFile`, or `null` if the file can be compared. Skipped cases fall into
-    /// two buckets today: individual files hit by known reader limitations, and the
-    /// `shredded_variant/` suite, which Hardwood cannot compare against parquet-java
-    /// without shred reassembly (hardwood-hq/hardwood#286).
+    /// `testFile`, or `null` if the file can be compared. The `shredded_variant/`
+    /// suite cannot be compared against parquet-java without shred reassembly
+    /// (hardwood-hq/hardwood#286).
     static String rowComparisonSkipReason(Path testFile) {
-        String blocked = NESTED_ROW_COMPARISON_SKIPPED_FILES.get(testFile.getFileName().toString());
-        if (blocked != null) {
-            return blocked;
-        }
         if (isShreddedVariantFile(testFile)) {
             return "hardwood-hq/hardwood#286";
         }

@@ -146,12 +146,22 @@ public final class NestedBatchDataView {
     }
 
     private boolean isStructNull(TopLevelFieldMap.FieldDesc.Struct structDesc) {
-        int projCol = structDesc.firstPrimitiveCol();
-        if (projCol < 0) {
+        int primCol = structDesc.firstPrimitiveCol();
+        if (primCol >= 0) {
+            int valueIdx = cachedValueIndex[primCol];
+            int defLevel = batchIndex.getDefLevel(primCol, valueIdx);
+            return defLevel < structDesc.schema().maxDefinitionLevel();
+        }
+        // Top-level struct with no direct primitive child: use the first leaf at
+        // any depth. `cachedValueIndex` already stores that column's per-row leaf
+        // position via the column's record offsets, so no further translation is
+        // needed for a top-level row.
+        int leafCol = structDesc.firstLeafProjCol();
+        if (leafCol < 0) {
             return false;
         }
-        int valueIdx = cachedValueIndex[projCol];
-        int defLevel = batchIndex.getDefLevel(projCol, valueIdx);
+        int valueIdx = cachedValueIndex[leafCol];
+        int defLevel = batchIndex.getDefLevel(leafCol, valueIdx);
         return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 

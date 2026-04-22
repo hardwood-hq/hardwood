@@ -30,13 +30,17 @@ final class TopLevelFieldMap {
 
         record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {}
 
-        /// @param nameToIndex     name → child ordinal (boundary lookup)
-        /// @param children        ordinal → descriptor (internal lookup)
+        /// @param nameToIndex       name → child ordinal (boundary lookup)
+        /// @param children          ordinal → descriptor (internal lookup)
         /// @param firstPrimitiveCol projected column of first primitive child, or -1 if none
+        /// @param firstLeafProjCol  projected column of first leaf at any depth under this
+        ///                          struct (same as `firstPrimitiveCol` when the struct has
+        ///                          a direct primitive child), or -1 if no leaf is projected
         record Struct(SchemaNode.GroupNode schema,
                       StringToIntMap nameToIndex,
                       FieldDesc[] children,
-                      int firstPrimitiveCol) implements FieldDesc {
+                      int firstPrimitiveCol,
+                      int firstLeafProjCol) implements FieldDesc {
 
             FieldDesc getChild(String name) {
                 int idx = nameToIndex.get(name);
@@ -161,7 +165,10 @@ final class TopLevelFieldMap {
                 idx++;
             }
         }
-        return new FieldDesc.Struct(group, nameToIndex, children, firstPrimitiveCol);
+        int firstLeafProjCol = firstPrimitiveCol >= 0
+                ? firstPrimitiveCol
+                : findFirstLeafProjCol(group, projectedSchema);
+        return new FieldDesc.Struct(group, nameToIndex, children, firstPrimitiveCol, firstLeafProjCol);
     }
 
     static FieldDesc.ListOf buildListDesc(SchemaNode.GroupNode listGroup,

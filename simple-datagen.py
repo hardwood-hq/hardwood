@@ -1075,6 +1075,58 @@ print("\nGenerated map_struct_value_test.parquet:")
 print("  - Schema: id, people: map<string, Person(name, age)>")
 print("  - Data: 3 rows with maps containing struct values")
 
+# 17b. Map value containing a list (hardwood-hq/hardwood#293 regression fixture).
+# Exercises the key/value row alignment when the value column has more rep levels
+# than the key column (value column emits one record per inner list element plus
+# one marker for empty/null inner lists).
+scored_value_type = pa.struct([
+    ('scores', pa.list_(pa.int32()))
+])
+
+map_with_list_value_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('entries', pa.map_(pa.string(), scored_value_type))
+])
+
+map_with_list_value_data = [
+    # Row 0: single entry, non-empty list
+    {
+        'id': 1,
+        'entries': [
+            ('a', {'scores': [10, 20]})
+        ]
+    },
+    # Row 1: four entries covering non-empty, empty, null-struct, null-list
+    {
+        'id': 2,
+        'entries': [
+            ('b', {'scores': [30, 40, 50]}),
+            ('c', {'scores': []}),
+            ('d', None),
+            ('e', {'scores': None})
+        ]
+    },
+    # Row 2: empty map
+    {
+        'id': 3,
+        'entries': []
+    }
+]
+
+map_with_list_value_table = pa.Table.from_pylist(
+    map_with_list_value_data, schema=map_with_list_value_schema)
+pq.write_table(
+    map_with_list_value_table,
+    'core/src/test/resources/map_with_list_value_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0'
+)
+
+print("\nGenerated map_with_list_value_test.parquet:")
+print("  - Schema: id, entries: map<string, struct<scores: list<int32>>>")
+print("  - Data: 3 rows covering non-empty/empty/null value-struct/null-inner-list")
+
 # ============================================================================
 # Primitive Types Test Files (for index-based accessor testing)
 # ============================================================================

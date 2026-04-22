@@ -293,6 +293,77 @@ public class MapSchemaTest {
     }
 
     @Test
+    void testMapWithListInsideStructValue() throws Exception {
+        // Schema: id, entries: map<string, struct<scores: list<int32>>> (hardwood-hq/hardwood#293)
+        Path parquetFile = Paths.get("src/test/resources/map_with_list_value_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0: entries={a: {scores=[10,20]}}
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(1);
+            PqMap entries0 = rowReader.getMap("entries");
+            assertThat(entries0.size()).isEqualTo(1);
+            List<PqMap.Entry> row0Entries = entries0.getEntries();
+            assertThat(row0Entries.get(0).getStringKey()).isEqualTo("a");
+            assertThat(row0Entries.get(0).isValueNull()).isFalse();
+            PqList scoresA = row0Entries.get(0).getStructValue().getList("scores");
+            assertThat(scoresA).isNotNull();
+            List<Integer> scoresAValues = new ArrayList<>();
+            for (int s : scoresA.ints()) {
+                scoresAValues.add(s);
+            }
+            assertThat(scoresAValues).containsExactly(10, 20);
+
+            // Row 1: entries={b: {scores=[30,40,50]}, c: {scores=[]}, d: null, e: {scores=null}}
+            // This is the regression path for #293: the value column emits one record
+            // per list element for 'b' and one marker for each of 'c', 'd', 'e', so a
+            // key-indexed valueIdx of `start+index` no longer matches the value side.
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(2);
+            PqMap entries1 = rowReader.getMap("entries");
+            assertThat(entries1.size()).isEqualTo(4);
+            List<PqMap.Entry> row1Entries = entries1.getEntries();
+
+            assertThat(row1Entries.get(0).getStringKey()).isEqualTo("b");
+            assertThat(row1Entries.get(0).isValueNull()).isFalse();
+            PqList scoresB = row1Entries.get(0).getStructValue().getList("scores");
+            List<Integer> scoresBValues = new ArrayList<>();
+            for (int s : scoresB.ints()) {
+                scoresBValues.add(s);
+            }
+            assertThat(scoresBValues).containsExactly(30, 40, 50);
+
+            // Non-null value struct with an empty inner list
+            assertThat(row1Entries.get(1).getStringKey()).isEqualTo("c");
+            assertThat(row1Entries.get(1).isValueNull()).isFalse();
+            PqList scoresC = row1Entries.get(1).getStructValue().getList("scores");
+            assertThat(scoresC).isNotNull();
+            assertThat(scoresC.isEmpty()).isTrue();
+
+            // Null value struct
+            assertThat(row1Entries.get(2).getStringKey()).isEqualTo("d");
+            assertThat(row1Entries.get(2).isValueNull()).isTrue();
+            assertThat(row1Entries.get(2).getStructValue()).isNull();
+
+            // Non-null value struct but its inner list is null
+            assertThat(row1Entries.get(3).getStringKey()).isEqualTo("e");
+            assertThat(row1Entries.get(3).isValueNull()).isFalse();
+            assertThat(row1Entries.get(3).getStructValue().getList("scores")).isNull();
+
+            // Row 2: empty map
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(3);
+            PqMap entries2 = rowReader.getMap("entries");
+            assertThat(entries2).isNotNull();
+            assertThat(entries2.isEmpty()).isTrue();
+
+            assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
+    @Test
     void testMapByIndex() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
 

@@ -133,6 +133,34 @@ final class PqMapImpl implements PqMap {
         return start >= end;
     }
 
+    /// Translates an entry index (expressed as a position in the key column's leaf
+    /// space, which is what [ColumnarEntry] carries as `valueIdx`) to the
+    /// corresponding leaf position in the value column.
+    ///
+    /// When the value column has more rep levels than the key column — i.e. when
+    /// the value contains a repeated descendant — each entry occupies one-or-more
+    /// records in the value column, while the key column has exactly one record
+    /// per entry. In that case the key-leaf index equals the global entry index
+    /// and indexes the value column's deepest multi-level offset array, which
+    /// maps entry → first-leaf position.
+    ///
+    /// For primitive-equivalent values (same rep-level depth as the key), the
+    /// two indexing spaces coincide and the input is returned unchanged.
+    private int resolveValueLeafIdx(int keyLeafIdx) {
+        int valueProjCol = mapDesc.valueProjCol();
+        if (valueProjCol < 0) {
+            return keyLeafIdx;
+        }
+        int[][] valMl = batch.multiOffsets[valueProjCol];
+        int[][] keyMl = batch.multiOffsets[mapDesc.keyProjCol()];
+        int valLevels = valMl == null ? 0 : valMl.length;
+        int keyLevels = keyMl == null ? 0 : keyMl.length;
+        if (valLevels <= keyLevels) {
+            return keyLeafIdx;
+        }
+        return valMl[valLevels - 1][keyLeafIdx];
+    }
+
     // ==================== Flyweight Entry ====================
 
     private class ColumnarEntry implements Entry {
@@ -306,10 +334,14 @@ final class PqMapImpl implements PqMap {
             if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
                 throw new IllegalArgumentException("Value is not a struct");
             }
-            // Check null via firstPrimitiveCol
-            int projCol = structDesc.firstPrimitiveCol();
-            if (projCol >= 0) {
-                int defLevel = batch.getDefLevel(projCol, valueIdx);
+            // Null check against the value column. `mapDesc.valueProjCol()` may point
+            // to a leaf deeper than the struct's own primitives (e.g. a leaf inside a
+            // list inside the struct), so translate the entry index to the value
+            // column's leaf position before reading its def level.
+            int valueProjCol = mapDesc.valueProjCol();
+            if (valueProjCol >= 0) {
+                int valLeafIdx = resolveValueLeafIdx(valueIdx);
+                int defLevel = batch.getDefLevel(valueProjCol, valLeafIdx);
                 if (defLevel < structDesc.schema().maxDefinitionLevel()) {
                     return null;
                 }
@@ -343,7 +375,16 @@ final class PqMapImpl implements PqMap {
         @Override
         public boolean isValueNull() {
             int valueProjCol = mapDesc.valueProjCol();
-            return batch.isElementNull(valueProjCol, valueIdx);
+            if (valueProjCol < 0) {
+                return false;
+            }
+            // Compare against the value node's own max def level (not the leaf
+            // primitive's), so a non-null complex value with null primitive
+            // descendants is not misreported as null. The value column's leaf
+            // position must be resolved explicitly — see resolveValueLeafIdx.
+            int valLeafIdx = resolveValueLeafIdx(valueIdx);
+            int defLevel = batch.getDefLevel(valueProjCol, valLeafIdx);
+            return defLevel < valueSchema.maxDefinitionLevel();
         }
 
         // ==================== Internal ====================
