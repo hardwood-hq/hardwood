@@ -1429,6 +1429,96 @@ public class PqRowApiTest {
     }
 
     @Test
+    void testListOfListOfStruct() throws Exception {
+        // Schema: id, matrix: list<list<struct{name, score}>> (hardwood-hq/hardwood#283)
+        Path parquetFile = Paths.get("src/test/resources/list_of_list_of_struct_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 0: matrix=[[{a00,10},{a01,11}], [{a10,20},{a11,21},{a12,22}]]
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(1);
+
+            PqList matrix0 = rowReader.getList("matrix");
+            assertThat(matrix0).isNotNull();
+            assertThat(matrix0.size()).isEqualTo(2);
+
+            List<List<String>> names0 = new ArrayList<>();
+            List<List<Integer>> scores0 = new ArrayList<>();
+            for (PqList inner : matrix0.lists()) {
+                List<String> innerNames = new ArrayList<>();
+                List<Integer> innerScores = new ArrayList<>();
+                for (PqStruct row : inner.structs()) {
+                    innerNames.add(row.getString("name"));
+                    innerScores.add(row.getInt("score"));
+                }
+                names0.add(innerNames);
+                scores0.add(innerScores);
+            }
+
+            assertThat(names0.get(0)).containsExactly("a00", "a01");
+            assertThat(scores0.get(0)).containsExactly(10, 11);
+            assertThat(names0.get(1)).containsExactly("a10", "a11", "a12");
+            assertThat(scores0.get(1)).containsExactly(20, 21, 22);
+
+            // Row 1: matrix=[[{b00,30}, null, {null,31}]]
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(2);
+
+            PqList matrix1 = rowReader.getList("matrix");
+            assertThat(matrix1).isNotNull();
+            assertThat(matrix1.size()).isEqualTo(1);
+            List<PqList> inner1 = new ArrayList<>();
+            for (PqList inner : matrix1.lists()) {
+                inner1.add(inner);
+            }
+            PqList row1Inner = inner1.get(0);
+            assertThat(row1Inner.size()).isEqualTo(3);
+            // Struct-null vs field-null distinction: index 0 is non-null, index 1 is a null
+            // struct, index 2 is a non-null struct with a null name
+            assertThat(row1Inner.isNull(0)).isFalse();
+            assertThat(row1Inner.isNull(1)).isTrue();
+            assertThat(row1Inner.isNull(2)).isFalse();
+
+            List<PqStruct> rows1 = new ArrayList<>();
+            for (PqStruct row : row1Inner.structs()) {
+                rows1.add(row);
+            }
+            assertThat(rows1.get(0).getString("name")).isEqualTo("b00");
+            assertThat(rows1.get(0).getInt("score")).isEqualTo(30);
+            assertThat(rows1.get(1)).isNull();
+            assertThat(rows1.get(2).isNull("name")).isTrue();
+            assertThat(rows1.get(2).getInt("score")).isEqualTo(31);
+
+            // Row 2: matrix=[[]]  (single empty inner list)
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(3);
+
+            PqList matrix2 = rowReader.getList("matrix");
+            assertThat(matrix2).isNotNull();
+            assertThat(matrix2.size()).isEqualTo(1);
+            for (PqList inner : matrix2.lists()) {
+                assertThat(inner.isEmpty()).isTrue();
+            }
+
+            // Row 3: matrix=[]  (empty outer list)
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(4);
+            PqList matrix3 = rowReader.getList("matrix");
+            assertThat(matrix3).isNotNull();
+            assertThat(matrix3.isEmpty()).isTrue();
+
+            // Row 4: matrix=null
+            rowReader.next();
+            assertThat(rowReader.getInt("id")).isEqualTo(5);
+            assertThat(rowReader.getList("matrix")).isNull();
+
+            assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
+    @Test
     void testLegacyTwoLevelListOfTwoLevelList() throws Exception {
         // Schema uses the pre-standard 2-level LIST encoding nested inside another
         // 2-level LIST (see hardwood-hq/hardwood#282):

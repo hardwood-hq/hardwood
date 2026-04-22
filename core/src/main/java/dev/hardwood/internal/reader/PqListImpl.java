@@ -141,6 +141,14 @@ final class PqListImpl implements PqList {
     public boolean isNull(int index) {
         checkBounds(index);
         if (subLevel < 0) {
+            // Leaf-level indexing. If the element is a nested group (struct/list/map),
+            // nullness is governed by the group's own definition level, not the leaf
+            // column's element-null bitmap (which only flags a null primitive value).
+            if (elementSchema instanceof SchemaNode.GroupNode group) {
+                int projCol = listDesc.firstLeafProjCol();
+                int defLevel = batch.getDefLevel(projCol, start + index);
+                return defLevel < group.maxDefinitionLevel();
+            }
             return batch.isElementNull(listDesc.firstLeafProjCol(), start + index);
         }
         return isNestedElementNull(index);
@@ -372,6 +380,17 @@ final class PqListImpl implements PqList {
         if (!(elementSchema instanceof SchemaNode.GroupNode group) || !group.isList()) {
             throw new IllegalArgumentException("Element is not a list");
         }
+        // For nested lists (list<list<...>>), the inner list needs its own descriptor so
+        // that subsequent `.structs()` / `.maps()` calls resolve the correct element
+        // metadata. The outer list's pre-built `elementDesc` is the descriptor for the
+        // inner list; fall back to building one if it was not cached.
+        ListOf innerListDesc;
+        if (listDesc.elementDesc() instanceof ListOf cached) {
+            innerListDesc = cached;
+        } else {
+            innerListDesc = DescriptorBuilder.buildListDesc(group, batch.projectedSchema);
+        }
+
         int projCol = listDesc.firstLeafProjCol();
         int itemIndex = start + index;
         int innerStart = batch.getLevelStart(projCol, subLevel, itemIndex);
@@ -392,10 +411,10 @@ final class PqListImpl implements PqList {
             return null;
         }
         if (defLevel < elemDef) {
-            return new PqListImpl(batch, listDesc, innerElement,
+            return new PqListImpl(batch, innerListDesc, innerElement,
                     innerStart, innerStart, innerSubLevel);
         }
-        return new PqListImpl(batch, listDesc, innerElement,
+        return new PqListImpl(batch, innerListDesc, innerElement,
                 innerStart, innerEnd, innerSubLevel);
     }
 

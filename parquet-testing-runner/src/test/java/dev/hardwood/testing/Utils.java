@@ -97,19 +97,21 @@ public class Utils {
             "ARROW-GH-45185.parquet"
     );
 
-    /// Files blocking row-level nested-value comparison due to known `PqList` limitations.
-    /// Each entry is the tracking issue whose fix should re-enable the file.
+    /// Files blocking row-level nested-value comparison due to known limitations.
+    /// Each entry is a short reason (ideally a GitHub issue reference) whose
+    /// resolution should re-enable the file.
     private static final java.util.Map<String, String> NESTED_ROW_COMPARISON_SKIPPED_FILES = java.util.Map.of(
-            // Deeply nested list-of-list-of-struct under `nested_Struct.c.D`. Hardwood's
-            // inner PqList reuses the outer list descriptor, so structs() on the inner
-            // list throws "Element is not a struct" even though the element is a struct.
-            "nonnullable.impala.parquet", "hardwood-hq/hardwood#283",
-            "nullable.impala.parquet", "hardwood-hq/hardwood#283"
+            // `nested_struct.g` is a Map<string, struct{H: struct{i: list<double>}}>.
+            // PqMapImpl's entry valueIdx is derived from the key column's row
+            // positions, which misaligns when the value contains a repeated field.
+            // `nonnullable.impala.parquet` does not exercise the null/empty inner
+            // list and is covered after the #283 fix.
+            "nullable.impala.parquet", "hardwood-hq/hardwood#293"
     );
 
     /// Returns a GitHub issue reference blocking row-level nested comparison for
-    /// `testFile`, or `null` if the file can be compared. Skipped cases fall into two
-    /// buckets today: individual files hit by `PqList` iteration bugs, and the entire
+    /// `testFile`, or `null` if the file can be compared. Skipped cases fall into
+    /// two buckets today: individual files hit by known reader limitations, and the
     /// `shredded_variant/` suite, which Hardwood cannot compare against parquet-java
     /// without shred reassembly (hardwood-hq/hardwood#286).
     static String rowComparisonSkipReason(Path testFile) {

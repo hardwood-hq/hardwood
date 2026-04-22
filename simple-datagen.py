@@ -623,6 +623,78 @@ print("\nGenerated triple_nested_list_test.parquet:")
 print("  - Schema: id, cube: list<list<list<int32>>>")
 print("  - Data: 5 rows with 3-level nested lists")
 
+# 8b. List of list of struct (hardwood-hq/hardwood#283 regression fixture)
+row_struct_type = pa.struct([
+    ('name', pa.string()),
+    ('score', pa.int32())
+])
+
+list_of_list_of_struct_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('matrix', pa.list_(pa.list_(row_struct_type)))
+])
+
+list_of_list_of_struct_data = [
+    # Row 0: 2 outer rows x variable inner cells
+    {
+        'id': 1,
+        'matrix': [
+            [
+                {'name': 'a00', 'score': 10},
+                {'name': 'a01', 'score': 11}
+            ],
+            [
+                {'name': 'a10', 'score': 20},
+                {'name': 'a11', 'score': 21},
+                {'name': 'a12', 'score': 22}
+            ]
+        ]
+    },
+    # Row 1: single outer row, inner list mixing struct, null-struct, and struct with
+    # null field (exercises struct-null vs field-null distinction)
+    {
+        'id': 2,
+        'matrix': [
+            [
+                {'name': 'b00', 'score': 30},
+                None,
+                {'name': None, 'score': 31}
+            ]
+        ]
+    },
+    # Row 2: outer row containing an empty inner list
+    {
+        'id': 3,
+        'matrix': [
+            []
+        ]
+    },
+    # Row 3: empty outer list
+    {
+        'id': 4,
+        'matrix': []
+    },
+    # Row 4: null outer list
+    {
+        'id': 5,
+        'matrix': None
+    }
+]
+
+list_of_list_of_struct_table = pa.Table.from_pylist(
+    list_of_list_of_struct_data, schema=list_of_list_of_struct_schema)
+pq.write_table(
+    list_of_list_of_struct_table,
+    'core/src/test/resources/list_of_list_of_struct_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0'
+)
+
+print("\nGenerated list_of_list_of_struct_test.parquet:")
+print("  - Schema: id, matrix: list<list<struct<name, score>>>")
+print("  - Data: 5 rows covering populated, empty-inner, empty-outer, null-outer")
+
 # ============================================================================
 # Delta Encoding Test Files
 # ============================================================================
