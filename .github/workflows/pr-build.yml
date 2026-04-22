@@ -53,7 +53,11 @@ jobs:
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: maven-repo-core
-          path: ~/.m2/repository/dev/hardwood/
+          path: |
+            ~/.m2/repository/dev/hardwood/hardwood-bom/
+            ~/.m2/repository/dev/hardwood/hardwood-test-bom/
+            ~/.m2/repository/dev/hardwood/hardwood-core/
+            ~/.m2/repository/dev/hardwood/hardwood-avro/
           retention-days: 1
 
   build-s3:
@@ -96,7 +100,9 @@ jobs:
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: maven-repo-s3
-          path: ~/.m2/repository/dev/hardwood/
+          path: |
+            ~/.m2/repository/dev/hardwood/hardwood-s3/
+            ~/.m2/repository/dev/hardwood/hardwood-aws-auth/
           retention-days: 1
 
   build-cli:
@@ -127,11 +133,12 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download s3 artifacts'
+      - name: 'Download core and s3 artifacts'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
-          name: maven-repo-s3
+          pattern: maven-repo-{core,s3}
           path: ~/.m2/repository/dev/hardwood/
+          merge-multiple: true
 
       - name: 'Build and install cli'
         run: ./mvnw -B clean install -pl :hardwood-cli
@@ -140,7 +147,7 @@ jobs:
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: maven-repo-cli
-          path: ~/.m2/repository/dev/hardwood/
+          path: ~/.m2/repository/dev/hardwood/hardwood-cli/
           retention-days: 1
 
   build-parquet-java-compat:
@@ -171,11 +178,12 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download s3 artifacts'
+      - name: 'Download core and s3 artifacts'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
-          name: maven-repo-s3
+          pattern: maven-repo-{core,s3}
           path: ~/.m2/repository/dev/hardwood/
+          merge-multiple: true
 
       - name: 'Build and install parquet-java-compat'
         run: ./mvnw -B clean install -pl :hardwood-parquet-java-compat
@@ -184,7 +192,7 @@ jobs:
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: maven-repo-parquet-java-compat
-          path: ~/.m2/repository/dev/hardwood/
+          path: ~/.m2/repository/dev/hardwood/hardwood-parquet-java-compat/
           retention-days: 1
 
   build-parquet-testing-runner:
@@ -227,7 +235,7 @@ jobs:
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: maven-repo-parquet-testing-runner
-          path: ~/.m2/repository/dev/hardwood/
+          path: ~/.m2/repository/dev/hardwood/hardwood-parquet-testing-runner/
           retention-days: 1
 
   javadoc:
@@ -360,11 +368,12 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download s3 artifacts'
+      - name: 'Download core and s3 artifacts'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
-          name: maven-repo-s3
+          pattern: maven-repo-{core,s3}
           path: ~/.m2/repository/dev/hardwood/
+          merge-multiple: true
 
       - name: 'Cache taxi data'
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
@@ -415,11 +424,12 @@ jobs:
             maven-${{ runner.os }}-build-core-
             maven-${{ runner.os }}-
 
-      - name: 'Download cli artifacts'
+      - name: 'Download built artifacts'
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
         with:
-          name: maven-repo-cli
+          pattern: maven-repo-{core,s3,cli}
           path: ~/.m2/repository/dev/hardwood/
+          merge-multiple: true
 
       - name: 'Build Native Image'
         # -DskipSurefire=true skips the JVM @QuarkusMainTest suite (already run
