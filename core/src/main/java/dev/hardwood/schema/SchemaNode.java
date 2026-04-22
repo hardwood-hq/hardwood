@@ -85,23 +85,42 @@ interface SchemaNode {
             return convertedType == null;
         }
 
-    /// For LIST groups, returns the element node (skipping intermediate 'list' group).
-    /// Returns null if not a list or improperly structured.
+    /// For LIST groups, returns the element node (skipping the intermediate
+    /// `list`/`key_value` group in standard 3-level encoding). Returns `null`
+    /// if not a list or improperly structured.
+    ///
+    /// Applies the Parquet backward-compatibility rules for legacy 2-level
+    /// encodings as defined in the format spec; see
+    /// [Backward-compatibility rules](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#backward-compatibility-rules):
+    ///
+    /// 1. If the repeated field is not a group, the repeated field's type is the element type.
+    /// 2. If the repeated field is a group with multiple fields, the repeated group is the element.
+    /// 3. If the repeated field is a group with one field and is named either `array` or uses
+    ///    the LIST-annotated group's name with `_tuple` appended, the repeated group is the element.
+    /// 4. Otherwise, the repeated field's single child is the element (standard 3-level encoding).
         public SchemaNode getListElement() {
             if (!isList() || children.isEmpty()) {
                 return null;
             }
-            // Standard 3-level list encoding: LIST -> list (repeated) -> element
             SchemaNode inner = children.get(0);
-            if (inner instanceof GroupNode innerGroup && innerGroup.repetitionType() == RepetitionType.REPEATED) {
-                if (!innerGroup.children().isEmpty()) {
-                    return innerGroup.children().get(0);
-                }
+            if (inner.repetitionType() != RepetitionType.REPEATED) {
+                return null;
             }
-            // 2-level list encoding: LIST -> repeated element (less common)
-            if (inner.repetitionType() == RepetitionType.REPEATED) {
+            // Rule 1: repeated primitive — the repeated field is the element.
+            if (!(inner instanceof GroupNode innerGroup)) {
                 return inner;
             }
-            return null;
+            // Rule 2: repeated group with multiple fields — the repeated group is the element.
+            if (innerGroup.children().size() != 1) {
+                return innerGroup;
+            }
+            // Rule 3: repeated group with one field named 'array' or '<listName>_tuple' —
+            // the repeated group is the element (legacy 2-level encoding).
+            String innerName = innerGroup.name();
+            if ("array".equals(innerName) || (name() + "_tuple").equals(innerName)) {
+                return innerGroup;
+            }
+            // Rule 4: standard 3-level encoding — the repeated group's single child is the element.
+            return innerGroup.children().get(0);
         }
 }}
