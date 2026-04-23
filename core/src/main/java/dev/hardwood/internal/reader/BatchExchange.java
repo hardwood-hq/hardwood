@@ -172,15 +172,27 @@ public class BatchExchange<B> {
         return batch;
     }
 
-    /// Returns the ready queue for direct access (used for draining on close).
-    public ArrayBlockingQueue<B> readyQueue() {
-        return readyQueue;
+    /// Returns a consumed batch to the free pool so it can be refilled by the drain.
+    /// Only valid in recycling mode — detaching-mode consumers keep ownership of their batches.
+    public void recycle(B batch) {
+        if (freeQueue == null) {
+            throw new IllegalStateException(
+                    "recycle() is not valid in detaching mode for column '" + columnName + "'");
+        }
+        freeQueue.offer(batch);
     }
 
-    /// Returns the free queue for direct access by the consumer.
-    /// Returns `null` in detaching mode (consumer owns the batches).
-    public ArrayBlockingQueue<B> freeQueue() {
-        return freeQueue;
+    /// Drains any batches left in the ready queue back to the free pool.
+    /// Called from the consumer's `close()` after the drain thread has stopped.
+    /// No-op in detaching mode.
+    public void drainReady() {
+        if (freeQueue == null) {
+            return;
+        }
+        B leftover;
+        while ((leftover = readyQueue.poll()) != null) {
+            freeQueue.offer(leftover);
+        }
     }
 
     /// Checks if the pipeline encountered an error and throws if so.

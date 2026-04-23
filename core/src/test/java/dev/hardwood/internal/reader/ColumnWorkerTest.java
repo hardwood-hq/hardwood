@@ -103,7 +103,7 @@ class ColumnWorkerTest {
                     // All but possibly the last batch should be full
                     // (earlier batches are full; we check after seeing the next)
                 }
-                exchange.freeQueue().offer(batch);
+                exchange.recycle(batch);
             }
             exchange.checkError();
             worker.close();
@@ -154,7 +154,7 @@ class ColumnWorkerTest {
                 if (batch.nulls != null && !batch.nulls.isEmpty()) {
                     sawNulls = true;
                 }
-                exchange.freeQueue().offer(batch);
+                exchange.recycle(batch);
             }
             exchange.checkError();
             worker.close();
@@ -282,7 +282,7 @@ class ColumnWorkerTest {
                     sawPreComputedIndex = true;
                 }
 
-                exchange.freeQueue().offer(batch);
+                exchange.recycle(batch);
             }
             exchange.checkError();
             worker.close();
@@ -481,7 +481,7 @@ class ColumnWorkerTest {
         BatchExchange.Batch batch;
         while ((batch = exchange.poll()) != null) {
             totalRows += batch.recordCount;
-            exchange.freeQueue().offer(batch);
+            exchange.recycle(batch);
         }
         exchange.checkError();
         return totalRows;

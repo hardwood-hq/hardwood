@@ -166,7 +166,7 @@ public final class NestedRowReader implements RowReader {
         NestedBatch[] batches = new NestedBatch[columnCount];
         for (int i = 0; i < columnCount; i++) {
             if (previousBatches[i] != null) {
-                exchanges[i].freeQueue().offer(previousBatches[i]);
+                exchanges[i].recycle(previousBatches[i]);
                 previousBatches[i] = null;
             }
             NestedBatch batch;
@@ -271,13 +271,10 @@ public final class NestedRowReader implements RowReader {
         }
         for (int i = 0; i < columnCount; i++) {
             if (previousBatches[i] != null) {
-                exchanges[i].freeQueue().offer(previousBatches[i]);
+                exchanges[i].recycle(previousBatches[i]);
                 previousBatches[i] = null;
             }
-            NestedBatch leftover;
-            while ((leftover = exchanges[i].readyQueue().poll()) != null) {
-                exchanges[i].freeQueue().offer(leftover);
-            }
+            exchanges[i].drainReady();
         }
     }
 }
