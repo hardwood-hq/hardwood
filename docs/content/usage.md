@@ -218,6 +218,11 @@ The `PqVariantObject` view exposes the same primitive getters as a Parquet struc
 
 **Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value` for better compression and pushdown. Reassembly is transparent: `metadata()` and `value()` return canonical bytes regardless of whether the file was shredded, so `PqVariant` consumers see a single consistent representation.
 
+**Current limitations**
+
+- **No Variant-aware predicate pushdown.** Filter predicates against a Variant sub-path (e.g. `WHERE v.age > 30`) aren't yet understood by the pushdown pipeline. Filtering still works against the file's physical shredded columns if you know the layout — a `FilterPredicate.gt("v.typed_value.age", 30)` gets row-group and page skipping via ordinary column statistics — but that ties query code to the writer's shredding strategy and misses any rows where the payload sits in the opaque `value` blob instead. Tracked as [#309](https://github.com/hardwood-hq/hardwood/issues/309).
+- **No path projection optimization.** Reading only `v.age` from a Variant column still reassembles the whole Variant for each row rather than reading just the shredded `typed_value.age` column. Tracked as part of [#309](https://github.com/hardwood-hq/hardwood/issues/309).
+
 ## Predicate Pushdown (Filter)
 
 Filter predicates enable three levels of predicate pushdown. At the row-group level, entire row groups whose statistics prove no rows can match are skipped. Within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, reducing network I/O. Finally, record-level filtering evaluates the predicate against each decoded row, so `createRowReader(filter)` returns only rows that actually match.

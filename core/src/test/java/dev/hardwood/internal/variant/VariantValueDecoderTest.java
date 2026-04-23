@@ -26,10 +26,14 @@ import dev.hardwood.row.VariantType;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Verifies the Variant binary decoder against the canonical primitive/object/array
-/// fixtures from `apache/parquet-testing`. Each `<name>.metadata` + `<name>.value`
-/// pair encodes a single Variant value whose expected Java representation is
-/// taken from `data_dictionary.json`. Fixtures are checked into
-/// `core/src/test/resources/variant/` so this test runs in any clean build.
+/// fixtures from [`apache/parquet-testing/variant/`](https://github.com/apache/parquet-testing/tree/master/variant).
+/// Each `<name>.metadata` + `<name>.value` pair encodes a single Variant value
+/// whose expected Java representation is taken from the upstream
+/// [`data_dictionary.json`](https://github.com/apache/parquet-testing/blob/master/variant/data_dictionary.json)
+/// (also checked in at `core/src/test/resources/variant/data_dictionary.json`
+/// as a human-readable reference — not loaded by the tests). Fixtures are
+/// checked into `core/src/test/resources/variant/` so this test runs in any
+/// clean build.
 class VariantValueDecoderTest {
 
     private static PqVariant load(String caseName) throws IOException {
@@ -187,6 +191,22 @@ class VariantValueDecoderTest {
         assertThat(v.type()).isEqualTo(VariantType.TIMESTAMP_NTZ);
         // "2025-04-16 12:34:56.78" — no timezone; decoded as UTC micros.
         assertThat(v.asTimestamp()).isEqualTo(Instant.parse("2025-04-16T12:34:56.780Z"));
+    }
+
+    @Test
+    void primitiveTimestampNanos() throws IOException {
+        PqVariant v = load("primitive_timestamp_nanos");
+        assertThat(v.type()).isEqualTo(VariantType.TIMESTAMP_NANOS);
+        // "2024-11-07T12:33:54.123456789+00:00" — nanosecond precision, UTC.
+        assertThat(v.asTimestamp()).isEqualTo(Instant.parse("2024-11-07T12:33:54.123456789Z"));
+    }
+
+    @Test
+    void primitiveTimestampNtzNanos() throws IOException {
+        PqVariant v = load("primitive_timestampntz_nanos");
+        assertThat(v.type()).isEqualTo(VariantType.TIMESTAMP_NTZ_NANOS);
+        // "2024-11-07T12:33:54.123456789" — no timezone; decoded as UTC nanos.
+        assertThat(v.asTimestamp()).isEqualTo(Instant.parse("2024-11-07T12:33:54.123456789Z"));
     }
 
     @Test

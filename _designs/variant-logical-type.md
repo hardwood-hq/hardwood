@@ -287,9 +287,12 @@ public interface PqVariantArray extends Iterable<PqVariant> {
 ```
 
 Elements are always `PqVariant` (heterogeneous); callers inspect `type()` and
-unwrap. No primitive-specialized iterators — the Variant binary layout can't
-deliver the zero-boxing win those bring on the columnar `PqList`, so adding them
-would be ceremony without benefit.
+unwrap. No primitive-specialized iterators in the initial surface; typed
+array access (`PqVariant.asInts()` / `asLongs()` / `asDoubles()` etc.) is
+tracked as a follow-up in #314. Shredded arrays whose elements live in a
+typed Parquet column can serve those accessors as a zero-copy view over the
+primitive column — a real perf win that the canonical Variant binary alone
+would not offer.
 
 All three types are implemented by internal classes under
 `internal.variant` (`PqVariantImpl`, `PqVariantObjectImpl`, `PqVariantArrayImpl`),
@@ -326,11 +329,13 @@ public interface StructAccessor extends FieldAccessor {
 `RowReader` and `PqStruct` continue to implement `StructAccessor` (no change for
 existing callers). `PqVariantObject` implements only `FieldAccessor`.
 
-The new `getVariant(String)` / `isVariant(String)` pair lives on `FieldAccessor`,
-not `StructAccessor`, so Variant fields are reachable from both Parquet structs
-(a Parquet struct whose field is Variant-annotated) and Variant objects (a
-Variant object whose field is itself a Variant — which is always, since every
-Variant field value IS a Variant).
+The `getVariant(String)` method lives on `FieldAccessor` (not `StructAccessor`),
+so Variant fields are reachable from both Parquet structs (a Parquet struct whose
+field is Variant-annotated) and Variant objects (a Variant object whose field is
+itself a Variant — which is always, since every Variant field value IS a
+Variant). Callers who need to tell "this field is a Variant" from "this field is
+a Parquet struct" consult the schema via `SchemaNode.GroupNode.isVariant()`;
+there is no parallel `FieldAccessor.isVariant(String)` predicate.
 
 The `RowReader` / `PqStruct` `getVariant` implementation reads the two child
 binary columns (`metadata`, `value`) and constructs a `PqVariantImpl` pointing
@@ -355,14 +360,11 @@ the compat shim does not expose Variant directly.
   assert decoded type and value against the filename convention (e.g.
   `primitive_int8.value` decodes as `INT8`) and against `data_dictionary.json` where
   applicable.
-- `VariantLogicalTypeTest` — mirrors `JsonLogicalTypeTest`: read a generated
-  Parquet file containing a Variant column, assert the column schema reports
-  `LogicalType.VariantType` and that `getVariant()` returns a `PqVariant` matching
-  the expected shape.
-- `VariantRowReaderTest` — generate (via `simple-datagen.py`) a file with flat and
-  nested Variant columns and exercise `PqVariantObject` / `PqVariantArray`
-  navigation, including primitive accessors inherited from `FieldAccessor` and
-  the Variant-specific `getObject` / `getArray`.
+- `VariantLogicalTypeTest` — mirrors `JsonLogicalTypeTest`: reads the generated
+  `variant_test.parquet` (produced by `simple-datagen.py` + the
+  `parquet_variant_annotation.py` footer-rewrite helper), asserts the column
+  schema reports `LogicalType.VariantType`, and iterates the rows calling
+  `asBoolean` / `asInt` / `asString` via `getVariant()`.
 - `FieldAccessorSplitTest` — assert `PqStruct` and `RowReader` still implement
   `StructAccessor`, and that `PqVariantObject` implements `FieldAccessor` but
   not `StructAccessor` (compile-time + reflective check).
@@ -514,7 +516,7 @@ New user-visible symbols:
 | `VariantType` (enum) | `hardwood-core` | 1 |
 | `VariantTypeException` | `hardwood-core` | 1 |
 | `FieldAccessor` (interface, extracted from `StructAccessor`) | `hardwood-core` | 1 |
-| `FieldAccessor#getVariant(String)` + `isVariant(String)` | `hardwood-core` | 1 |
+| `FieldAccessor#getVariant(String)` | `hardwood-core` | 1 |
 
 Internal-only (no public API):
 
@@ -557,9 +559,8 @@ Internal-only (no public API):
 | `core/src/test/.../VariantMetadataTest.java` | New |
 | `core/src/test/.../VariantValueDecoderTest.java` | New |
 | `core/src/test/.../VariantLogicalTypeTest.java` | New |
-| `core/src/test/.../VariantRowReaderTest.java` | New |
 | `core/src/test/.../FieldAccessorSplitTest.java` | New |
-| `simple-datagen.py` | Add `--variant` mode |
+| `simple-datagen.py` / `parquet_variant_annotation.py` | Emit `variant_test.parquet` + footer-stamp VARIANT logical type |
 | `docs/content/usage.md` | Add Variant section + logical-type table row |
 
 ### Phase 2

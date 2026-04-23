@@ -10,11 +10,15 @@ package dev.hardwood.internal.reader;
 import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.UUID;
 
 import dev.hardwood.internal.variant.ShredLevel;
 import dev.hardwood.internal.variant.ShredLevel.Typed;
 import dev.hardwood.internal.variant.VariantMetadata;
+import dev.hardwood.internal.variant.VariantValueDecoder;
+import dev.hardwood.internal.variant.VariantValueDecoder.ObjectLayout;
 import dev.hardwood.internal.variant.VariantValueEncoder;
 import dev.hardwood.metadata.LogicalType;
 
@@ -143,7 +147,7 @@ public final class VariantShredReassembler {
         if (logical instanceof LogicalType.TimestampType ts) {
             boolean adjusted = ts.isAdjustedToUTC();
             switch (ts.unit()) {
-                case MILLIS -> pos = VariantValueEncoder.writeTimestampMicros(scratch, pos, v * 1_000L, adjusted);
+                case MILLIS -> pos = VariantValueEncoder.writeTimestampMicros(scratch, pos, Math.multiplyExact(v, 1_000L), adjusted);
                 case MICROS -> pos = VariantValueEncoder.writeTimestampMicros(scratch, pos, v, adjusted);
                 case NANOS -> pos = VariantValueEncoder.writeTimestampNanos(scratch, pos, v, adjusted);
             }
@@ -178,7 +182,7 @@ public final class VariantShredReassembler {
         if (logical instanceof LogicalType.UuidType) {
             long msb = bytesToLongBE(raw, 0);
             long lsb = bytesToLongBE(raw, 8);
-            pos = VariantValueEncoder.writeUuid(scratch, pos, new java.util.UUID(msb, lsb));
+            pos = VariantValueEncoder.writeUuid(scratch, pos, new UUID(msb, lsb));
             return;
         }
         if (logical instanceof LogicalType.DecimalType d) {
@@ -195,10 +199,13 @@ public final class VariantShredReassembler {
     }
 
     private void encodeInt96(byte[][] values, int idx) {
-        // INT96 is a legacy timestamp encoding; writers rarely use it for Variant
-        // shredding. Emit as raw 12-byte binary for diagnostic visibility rather
-        // than silently corrupting a value we don't know how to convert.
-        pos = VariantValueEncoder.writeBinary(scratch, pos, values[idx]);
+        // INT96 is a deprecated legacy timestamp encoding with no direct
+        // Variant equivalent. Writers that want a shredded timestamp should use
+        // INT64 + TIMESTAMP(MICROS/NANOS); silently mistyping an INT96 as
+        // BINARY would corrupt the Variant's type tag.
+        throw new UnsupportedOperationException(
+                "Shredded Variant typed_value with INT96 physical type is not supported; "
+                        + "convert to INT64 TIMESTAMP before writing");
     }
 
     private static int pickDecimalWidth(int precision) {
@@ -225,12 +232,18 @@ public final class VariantShredReassembler {
             return valuePresent ? writeRawValue(batch, valueCol, valueIdx) : -1;
         }
 
-        // Materialize each shredded field's bytes in name order.
+        // Materialize each shredded field's bytes. Primitive-array-backed work
+        // storage avoids the Integer[] boxing a Comparator-driven sort would
+        // introduce in emitObject; allocation is per-call so recursion into
+        // nested objects doesn't clobber our slots.
         int fieldCount = typed.fieldNames().length;
-        List<String> presentNames = new ArrayList<>(fieldCount);
-        List<byte[]> presentValues = new ArrayList<>(fieldCount);
+        int extraFromMerge = valuePresent
+                ? VariantValueDecoder.parseObject(rawBytes(batch, valueCol, valueIdx), 0).numElements()
+                : 0;
+        String[] names = new String[fieldCount + extraFromMerge];
+        byte[][] values = new byte[fieldCount + extraFromMerge][];
+        int count = 0;
         for (int i = 0; i < fieldCount; i++) {
-            // Snapshot pos, recurse; if the field is missing (-1) roll back.
             int snap = pos;
             int produced = writeLevel(typed.fields()[i], batch, rowIndex);
             if (produced < 0) {
@@ -240,92 +253,104 @@ public final class VariantShredReassembler {
             byte[] fieldBytes = new byte[produced];
             System.arraycopy(scratch, snap, fieldBytes, 0, produced);
             pos = snap; // object-framing writer re-emits into scratch below
-            presentNames.add(typed.fieldNames()[i]);
-            presentValues.add(fieldBytes);
+            names[count] = typed.fieldNames()[i];
+            values[count] = fieldBytes;
+            count++;
         }
 
-        // Merge with partial unshredded `value` object if present.
         if (valuePresent) {
             byte[] raw = rawBytes(batch, valueCol, valueIdx);
-            mergeUnshreddedObject(raw, presentNames, presentValues);
+            count = mergeUnshreddedObject(raw, names, values, count);
         }
 
-        emitObject(batch, valueCol, valueIdx, presentNames, presentValues);
+        emitObject(names, values, count);
         return pos - before;
     }
 
     /// Decode the partial-unshredded object bytes in `raw`, appending each
-    /// (name, valueBytes) pair to `names` / `values`. Spec guarantees these
-    /// names are disjoint from the shredded set, so we can simply append — no
-    /// deduplication needed. Field ids index into the top-level metadata
-    /// dictionary (same for all nesting depths within a variant), which is
-    /// stored in `currentMetadata`.
-    private void mergeUnshreddedObject(byte[] raw, List<String> names, List<byte[]> values) {
-        dev.hardwood.internal.variant.VariantValueDecoder.ObjectLayout layout =
-                dev.hardwood.internal.variant.VariantValueDecoder.parseObject(raw, 0);
+    /// (name, valueBytes) pair into `names` / `values` starting at `count`.
+    /// Spec guarantees these names are disjoint from the shredded set, so we
+    /// can simply append — no deduplication needed. Field ids index into the
+    /// top-level metadata dictionary (same for all nesting depths within a
+    /// variant), resolved via `currentMetadata`. Returns the new count.
+    private int mergeUnshreddedObject(byte[] raw, String[] names, byte[][] values, int count) {
+        ObjectLayout layout = VariantValueDecoder.parseObject(raw, 0);
         int n = layout.numElements();
         for (int i = 0; i < n; i++) {
-            int fieldId = dev.hardwood.internal.variant.VariantValueDecoder.objectFieldId(raw, layout, i);
+            int fieldId = VariantValueDecoder.objectFieldId(raw, layout, i);
             String fieldName = currentMetadata.getField(fieldId);
-            int valueStart = dev.hardwood.internal.variant.VariantValueDecoder.objectValueOffset(raw, layout, i);
+            int valueStart = VariantValueDecoder.objectValueOffset(raw, layout, i);
             // The object's offset array has `numElements + 1` entries, so
             // offset[i+1] is always valid and points at the byte past element i.
-            int valueEnd = dev.hardwood.internal.variant.VariantValueDecoder.objectValueOffset(raw, layout, i + 1);
+            int valueEnd = VariantValueDecoder.objectValueOffset(raw, layout, i + 1);
             byte[] fieldBytes = new byte[valueEnd - valueStart];
             System.arraycopy(raw, valueStart, fieldBytes, 0, fieldBytes.length);
-            names.add(fieldName);
-            values.add(fieldBytes);
+            names[count] = fieldName;
+            values[count] = fieldBytes;
+            count++;
         }
+        return count;
     }
 
     /// Emit the object framing with fields sorted alphabetically (spec
-    /// requirement) and field-ids resolved from the top-level metadata, passed
-    /// implicitly via the caller-provided metadata — resolved lazily in
-    /// [#emitObjectWithMetadata].
-    private void emitObject(NestedBatchIndex batch, int valueCol, int valueIdx,
-                            List<String> names, List<byte[]> values) {
-        // Sort by name (unsigned lex) — Variant spec requires field_ids to be
-        // sorted so the id array matches sorted name order. In shredded
-        // reassembly, we maintain the metadata's dictionary ordering by
-        // sorting the output field list alphabetically.
-        int n = names.size();
-        Integer[] order = new Integer[n];
+    /// requirement) and field-ids resolved from the top-level metadata, which
+    /// the caller sets via [#setCurrentMetadata] before invoking.
+    ///
+    /// Uses a primitive `int[]` index permutation + insertion sort to avoid
+    /// the `Integer[]` boxing that a `Comparator<Integer>` sort would
+    /// introduce. Insertion sort is chosen because Variant objects typically
+    /// have small `n`.
+    private void emitObject(String[] names, byte[][] values, int n) {
+        int[] order = new int[n];
         for (int i = 0; i < n; i++) {
             order[i] = i;
         }
-        java.util.Arrays.sort(order, (a, b) -> {
-            byte[] ab = names.get(a).getBytes(StandardCharsets.UTF_8);
-            byte[] bb = names.get(b).getBytes(StandardCharsets.UTF_8);
-            return java.util.Arrays.compareUnsigned(ab, bb);
-        });
-        String[] sortedNames = new String[n];
-        byte[][] sortedValues = new byte[n][];
-        for (int i = 0; i < n; i++) {
-            sortedNames[i] = names.get(order[i]);
-            sortedValues[i] = values.get(order[i]);
-        }
-        // Field id resolution is deferred to caller-supplied metadata via
-        // setCurrentMetadata().
+        insertionSortByName(order, names, n);
+
         int[] fieldIds = new int[n];
         int maxId = -1;
+        int totalBytes = 0;
+        byte[][] sortedValues = new byte[n][];
         for (int i = 0; i < n; i++) {
-            int id = currentMetadata.findField(sortedNames[i]);
+            int src = order[i];
+            String name = names[src];
+            int id = currentMetadata.findField(name);
             if (id < 0) {
                 throw new IllegalStateException(
-                        "Shredded Variant field '" + sortedNames[i] + "' not present in metadata dictionary");
+                        "Shredded Variant field '" + name + "' not present in metadata dictionary");
             }
             fieldIds[i] = id;
             if (id > maxId) {
                 maxId = id;
             }
-        }
-        int totalBytes = 0;
-        for (byte[] v : sortedValues) {
+            byte[] v = values[src];
+            sortedValues[i] = v;
             totalBytes += v.length;
         }
+
         // Estimate capacity: 1 header + up to 4 num + n*idSize + (n+1)*offSize + payload.
         ensureCapacity(16 + n * 8 + totalBytes);
         pos = VariantValueEncoder.writeObject(scratch, pos, fieldIds, sortedValues, maxId);
+    }
+
+    /// In-place insertion sort over `order[0..n)`, stable, using unsigned-lex
+    /// ordering of `names[order[i]]`. Small `n` (Variant objects rarely have
+    /// many fields) — O(n²) is fine.
+    private static void insertionSortByName(int[] order, String[] names, int n) {
+        for (int i = 1; i < n; i++) {
+            int cur = order[i];
+            byte[] curBytes = names[cur].getBytes(StandardCharsets.UTF_8);
+            int j = i - 1;
+            while (j >= 0) {
+                byte[] prev = names[order[j]].getBytes(StandardCharsets.UTF_8);
+                if (Arrays.compareUnsigned(prev, curBytes) <= 0) {
+                    break;
+                }
+                order[j + 1] = order[j];
+                j--;
+            }
+            order[j + 1] = cur;
+        }
     }
 
     // ==================== Array shredding ====================
@@ -440,7 +465,7 @@ public final class VariantShredReassembler {
 
         if (element.typed() == null) {
             if (valuePresent) {
-                writeRawValueAtIdx(batch, valueCol, elementIdx);
+                writeRawValue(batch, valueCol, elementIdx);
                 return pos - before;
             }
             return -1;
@@ -467,7 +492,7 @@ public final class VariantShredReassembler {
             return pos - before;
         }
         if (valuePresent) {
-            writeRawValueAtIdx(batch, valueCol, elementIdx);
+            writeRawValue(batch, valueCol, elementIdx);
             return pos - before;
         }
         return -1;
@@ -480,8 +505,12 @@ public final class VariantShredReassembler {
         // the children's value index.
         int before = pos;
         int fieldCount = typed.fieldNames().length;
-        List<String> presentNames = new ArrayList<>(fieldCount);
-        List<byte[]> presentValues = new ArrayList<>(fieldCount);
+        int extraFromMerge = valuePresent
+                ? VariantValueDecoder.parseObject(rawBytes(batch, valueCol, elementIdx), 0).numElements()
+                : 0;
+        String[] names = new String[fieldCount + extraFromMerge];
+        byte[][] values = new byte[fieldCount + extraFromMerge][];
+        int count = 0;
         for (int i = 0; i < fieldCount; i++) {
             int snap = pos;
             int produced = writeElementAt(typed.fields()[i], batch, elementIdx);
@@ -492,19 +521,18 @@ public final class VariantShredReassembler {
             byte[] fieldBytes = new byte[produced];
             System.arraycopy(scratch, snap, fieldBytes, 0, produced);
             pos = snap;
-            presentNames.add(typed.fieldNames()[i]);
-            presentValues.add(fieldBytes);
+            names[count] = typed.fieldNames()[i];
+            values[count] = fieldBytes;
+            count++;
         }
-        if (presentNames.isEmpty() && !valuePresent) {
+        if (count == 0 && !valuePresent) {
             return -1;
         }
         if (valuePresent) {
-            // Partial unshredded object at element level — not exercised in
-            // fixtures and not yet implemented.
             byte[] raw = rawBytes(batch, valueCol, elementIdx);
-            mergeUnshreddedObject(raw, presentNames, presentValues);
+            count = mergeUnshreddedObject(raw, names, values, count);
         }
-        emitObject(batch, valueCol, elementIdx, presentNames, presentValues);
+        emitObject(names, values, count);
         return pos - before;
     }
 
@@ -521,9 +549,13 @@ public final class VariantShredReassembler {
         }
         int innerStart = batch.getLevelStart(innerLeaf, 1, elementIdx);
         int innerEnd = batch.getLevelEnd(innerLeaf, 1, elementIdx);
-        int probeIdx = innerStart < innerEnd ? innerStart : innerStart;
-        int probeDef = probeIdx >= 0 ? batch.getDefLevel(innerLeaf, probeIdx) : -1;
-        boolean listPresent = probeDef >= typed.listDefLevel();
+        // Present-but-empty lists still carry a synthetic entry at `innerStart`
+        // whose def level reports the list's max def level; truly-null lists
+        // carry a lower def level at that position. `innerStart == innerEnd`
+        // just means there are no real elements — the synthetic entry (if any)
+        // sits at `innerStart`, which is the valid probe position either way.
+        boolean listPresent = innerStart < batch.valueCounts[innerLeaf]
+                && batch.getDefLevel(innerLeaf, innerStart) >= typed.listDefLevel();
         if (!listPresent) {
             return valuePresent ? writeRawValue(batch, valueCol, elementIdx) : -1;
         }
@@ -563,11 +595,6 @@ public final class VariantShredReassembler {
         return raw.length;
     }
 
-    private void writeRawValueAtIdx(NestedBatchIndex batch, int valueCol, int valueIdx) {
-        byte[] raw = rawBytes(batch, valueCol, valueIdx);
-        ensureCapacity(raw.length);
-        pos = VariantValueEncoder.writeRaw(scratch, pos, raw, 0, raw.length);
-    }
 
     private static byte[] rawBytes(NestedBatchIndex batch, int valueCol, int valueIdx) {
         return ((byte[][]) batch.valueArrays[valueCol])[valueIdx];

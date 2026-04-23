@@ -44,6 +44,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
     /// sorted. Rather than conditionally switching strategies, this looks up the
     /// target name's dictionary id once and then scans the object's id array
     /// linearly — simple and correct for both sorted and unsorted metadata.
+    ///
+    /// Complexity is O(n) in the object's field count. Acceptable for typical
+    /// Variant objects with a handful of fields. If large-field-count objects
+    /// become a hot path, a binary search by comparing `metadata.getField(id)`
+    /// at each midpoint (bytes, not the decoded String) is the next step.
     private int indexOf(String name) {
         int dictId = metadata.findField(name);
         if (dictId < 0) {

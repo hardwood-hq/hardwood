@@ -7,6 +7,7 @@
  */
 package dev.hardwood.avro;
 
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
@@ -20,6 +21,9 @@ import dev.hardwood.InputFile;
 import dev.hardwood.avro.internal.AvroSchemaConverter;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqVariant;
+import dev.hardwood.row.VariantType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -225,8 +229,53 @@ class AvroRowReaderTest {
         }
     }
 
+    @Test
+    void shreddedVariantExposesTypedAccessViaPqVariant() throws Exception {
+        // Companion to readShreddedVariantColumn, asserting the PqVariant API
+        // surface directly rather than the Avro record form. Same fixture, same
+        // four rows; this pins that reassembly produces the expected VariantType
+        // for each row, including the SQL-null-vs-Variant-NULL distinction on
+        // row 3 (both value and typed_value absent → Variant NULL, not SQL null).
+        Path fixture = Path.of("").toAbsolutePath()
+                .resolve("src/test/resources/variant_shredded_test.parquet").normalize();
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture));
+                RowReader rowReader = fileReader.createRowReader()) {
+
+            // Row 1: shredded INT64(42).
+            rowReader.next();
+            PqVariant v1 = rowReader.getVariant("var");
+            assertThat(v1).isNotNull();
+            assertThat(v1.type()).isEqualTo(VariantType.INT64);
+            assertThat(v1.asLong()).isEqualTo(42L);
+
+            // Row 2: unshredded BOOLEAN_TRUE.
+            rowReader.next();
+            PqVariant v2 = rowReader.getVariant("var");
+            assertThat(v2.type()).isEqualTo(VariantType.BOOLEAN_TRUE);
+            assertThat(v2.asBoolean()).isTrue();
+
+            // Row 3: Variant NULL (not SQL null — the group is present, both
+            // value and typed_value absent → canonical single 0x00 byte).
+            rowReader.next();
+            PqVariant v3 = rowReader.getVariant("var");
+            assertThat(v3).as("row 3 group is non-null").isNotNull();
+            assertThat(v3.type()).isEqualTo(VariantType.NULL);
+            assertThat(v3.isNull()).isTrue();
+            assertThat(v3.value()).containsExactly(0x00);
+
+            // Row 4: shredded INT64(10^12).
+            rowReader.next();
+            PqVariant v4 = rowReader.getVariant("var");
+            assertThat(v4.type()).isEqualTo(VariantType.INT64);
+            assertThat(v4.asLong()).isEqualTo(1_000_000_000_000L);
+
+            assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
     private static byte[] bytes(Object avroBinary) {
-        if (avroBinary instanceof java.nio.ByteBuffer bb) {
+        if (avroBinary instanceof ByteBuffer bb) {
             byte[] out = new byte[bb.remaining()];
             bb.duplicate().get(out);
             return out;

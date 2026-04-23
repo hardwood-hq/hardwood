@@ -8,6 +8,7 @@
 package dev.hardwood.row;
 
 import java.util.Iterator;
+import java.util.NoSuchElementException;
 
 /// Indexed view of a Variant `ARRAY` value. Elements are heterogeneous Variants
 /// — callers inspect each element's [VariantType] and unwrap appropriately.
@@ -43,7 +44,7 @@ public interface PqVariantArray extends Iterable<PqVariant> {
             @Override
             public PqVariant next() {
                 if (next >= size()) {
-                    throw new java.util.NoSuchElementException();
+                    throw new NoSuchElementException();
                 }
                 return get(next++);
             }

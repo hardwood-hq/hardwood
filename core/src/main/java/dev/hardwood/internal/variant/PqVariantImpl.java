@@ -55,29 +55,22 @@ public final class PqVariantImpl implements PqVariant {
 
     @Override
     public byte[] metadata() {
-        return metadata.buffer();
+        byte[] src = metadata.buffer();
+        byte[] out = new byte[src.length];
+        System.arraycopy(src, 0, out, 0, src.length);
+        return out;
     }
 
     @Override
     public byte[] value() {
-        // For a top-level Variant (offset == 0), the value buffer is the value
-        // itself. For nested views, return a copy starting at the value's header
-        // byte so callers see the canonical bytes for that sub-value.
-        if (valueOffset == 0) {
-            return valueBuf;
-        }
-        int end = computeEndOffset();
-        byte[] out = new byte[end - valueOffset];
-        System.arraycopy(valueBuf, valueOffset, out, 0, out.length);
+        // Return a fresh byte[] containing exactly this value's bytes —
+        // defensive copy protects the batch's column arrays, and
+        // `VariantValueDecoder.valueLength` walks the encoding to get the real
+        // extent for sub-values (array elements, object fields).
+        int length = VariantValueDecoder.valueLength(valueBuf, valueOffset);
+        byte[] out = new byte[length];
+        System.arraycopy(valueBuf, valueOffset, out, 0, length);
         return out;
-    }
-
-    private int computeEndOffset() {
-        // Determining the exact byte length of an arbitrary Variant value requires
-        // walking the encoding. For sub-values produced by navigation, the
-        // containing view tracks the extent; for now, fall back to the buffer end
-        // (sufficient for value() on the top-level since valueOffset == 0 there).
-        return valueBuf.length;
     }
 
     @Override

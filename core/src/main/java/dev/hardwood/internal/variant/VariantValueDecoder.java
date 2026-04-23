@@ -259,6 +259,64 @@ public final class VariantValueDecoder {
         return new ArrayLayout(numElements, offsetSize, offsetsStart, valuesStart);
     }
 
+    /// Returns the byte length of the Variant value whose header byte lives at
+    /// `buf[offset]`, computed by walking the encoding. Used by
+    /// [dev.hardwood.internal.variant.PqVariantImpl#value()] to produce a
+    /// correctly-sized copy for sub-values.
+    public static int valueLength(byte[] buf, int offset) {
+        int header = buf[offset] & 0xFF;
+        int basic = header & VariantBinary.BASIC_TYPE_MASK;
+        if (basic == VariantBinary.BASIC_TYPE_SHORT_STRING) {
+            int length = header >>> VariantBinary.VALUE_HEADER_SHIFT;
+            return 1 + length;
+        }
+        if (basic == VariantBinary.BASIC_TYPE_PRIMITIVE) {
+            int tag = header >>> VariantBinary.VALUE_HEADER_SHIFT;
+            return 1 + primitivePayloadLength(buf, offset, tag);
+        }
+        if (basic == VariantBinary.BASIC_TYPE_OBJECT) {
+            ObjectLayout layout = parseObject(buf, offset);
+            int lastOff = VariantBinary.readUnsignedLE(buf,
+                    layout.offsetsStart() + layout.numElements() * layout.offsetSize(),
+                    layout.offsetSize());
+            return layout.valuesStart() - offset + lastOff;
+        }
+        // ARRAY
+        ArrayLayout layout = parseArray(buf, offset);
+        int lastOff = VariantBinary.readUnsignedLE(buf,
+                layout.offsetsStart() + layout.numElements() * layout.offsetSize(),
+                layout.offsetSize());
+        return layout.valuesStart() - offset + lastOff;
+    }
+
+    private static int primitivePayloadLength(byte[] buf, int offset, int tag) {
+        return switch (tag) {
+            case VariantBinary.PRIM_NULL,
+                 VariantBinary.PRIM_BOOLEAN_TRUE,
+                 VariantBinary.PRIM_BOOLEAN_FALSE -> 0;
+            case VariantBinary.PRIM_INT8 -> 1;
+            case VariantBinary.PRIM_INT16 -> 2;
+            case VariantBinary.PRIM_INT32,
+                 VariantBinary.PRIM_FLOAT,
+                 VariantBinary.PRIM_DATE -> 4;
+            case VariantBinary.PRIM_INT64,
+                 VariantBinary.PRIM_DOUBLE,
+                 VariantBinary.PRIM_TIMESTAMP,
+                 VariantBinary.PRIM_TIMESTAMP_NTZ,
+                 VariantBinary.PRIM_TIME_NTZ,
+                 VariantBinary.PRIM_TIMESTAMP_NANOS,
+                 VariantBinary.PRIM_TIMESTAMP_NTZ_NANOS -> 8;
+            case VariantBinary.PRIM_DECIMAL4 -> 1 + 4;  // scale byte + int32
+            case VariantBinary.PRIM_DECIMAL8 -> 1 + 8;  // scale byte + int64
+            case VariantBinary.PRIM_DECIMAL16 -> 1 + 16; // scale byte + 128-bit
+            case VariantBinary.PRIM_UUID -> 16;
+            case VariantBinary.PRIM_STRING,
+                 VariantBinary.PRIM_BINARY -> 4 + readIntLE(buf, offset + 1, 4);
+            default -> throw new IllegalArgumentException(
+                    "Unknown Variant primitive tag " + tag + " at offset " + offset);
+        };
+    }
+
     /// Reads the field id stored at index `i` in an object's id array.
     public static int objectFieldId(byte[] buf, ObjectLayout layout, int i) {
         return VariantBinary.readUnsignedLE(buf, layout.idsStart() + i * layout.idSize(), layout.idSize());

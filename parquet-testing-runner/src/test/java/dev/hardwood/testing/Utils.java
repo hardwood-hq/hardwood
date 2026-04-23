@@ -41,6 +41,7 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -282,7 +283,7 @@ public class Utils {
     /// Compare a Variant-annotated column by byte-comparing the canonical
     /// `metadata` and `value` binaries against those surfaced by parquet-java's
     /// Avro reader (which sees the Variant group as a plain record).
-    private static void compareVariant(String context, GenericRecord reference, dev.hardwood.row.PqVariant actual) {
+    private static void compareVariant(String context, GenericRecord reference, PqVariant actual) {
         assertThat(actual).as(context + " variant").isNotNull();
         byte[] refMetadata = toBytes(reference.get("metadata"));
         byte[] refValue = toBytes(reference.get("value"));

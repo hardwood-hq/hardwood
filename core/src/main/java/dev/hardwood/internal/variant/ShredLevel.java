@@ -37,11 +37,9 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
         /// @param defLevel def level at or above which typed_value is non-null
         /// @param physicalType Parquet physical type of typed_value
         /// @param logicalType Parquet logical type on typed_value (may be null)
-        /// @param typeLength byte length for FIXED_LEN_BYTE_ARRAY; 0 otherwise
         record Primitive(int col, int defLevel,
                          PhysicalType physicalType,
-                         LogicalType logicalType,
-                         int typeLength) implements Typed {}
+                         LogicalType logicalType) implements Typed {}
 
         /// typed_value is a LIST group whose element is itself a shredded level
         /// (so elements may carry their own `value` / `typed_value` pair).
@@ -121,8 +119,7 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
                     projectedSchema.toProjectedIndex(prim.columnIndex()),
                     prim.maxDefinitionLevel(),
                     prim.type(),
-                    prim.logicalType(),
-                    primitiveTypeLength(prim));
+                    prim.logicalType());
             case SchemaNode.GroupNode group -> buildTypedGroup(group, projectedSchema);
         };
     }
@@ -158,14 +155,6 @@ public record ShredLevel(int valueCol, int valueDefLevel, Typed typed) {
             fields[i] = buildNested(childGroup, projectedSchema);
         }
         return new Typed.Object(group.maxDefinitionLevel(), names, fields);
-    }
-
-    private static int primitiveTypeLength(SchemaNode.PrimitiveNode prim) {
-        // The typeLength field isn't exposed on PrimitiveNode; callers only need
-        // it for FIXED_LEN_BYTE_ARRAY (currently unused by the reassembler for
-        // the types shredding produces). Return 0 as a placeholder; extend when
-        // a FLBA-shredded case actually appears.
-        return 0;
     }
 
     // ==================== Convenience ====================

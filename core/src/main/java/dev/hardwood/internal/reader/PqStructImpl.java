@@ -19,6 +19,7 @@ import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Primitive;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Struct;
 import dev.hardwood.internal.variant.PqVariantImpl;
+import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
@@ -240,15 +241,20 @@ final class PqStructImpl implements PqStruct {
         byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[metaIdx];
 
         if (variantDesc.root().typed() != null) {
-            // Variant-in-struct reassembly uses the row-level ShredLevel tree;
-            // for position-mode (struct inside a list), the scratch reassembler
-            // would need list-aware indices. Fall back to a single-row
-            // reassembler attached to the batch's top-level rowIndex.
-            dev.hardwood.internal.variant.VariantMetadata meta = new dev.hardwood.internal.variant.VariantMetadata(metadataBytes);
+            // Position-mode (struct inside a list/map) would need list-aware
+            // indices inside the reassembler; record-mode uses the row index
+            // directly. No fixture exercises the former today, and silently
+            // returning bytes reassembled against row 0 would corrupt results.
+            // Fail fast until list-aware reassembly is implemented.
+            if (rowIndex < 0) {
+                throw new UnsupportedOperationException(
+                        "Shredded Variant inside a repeated context (list/map element) "
+                                + "is not yet supported; field '" + name + "'");
+            }
+            VariantMetadata meta = new VariantMetadata(metadataBytes);
             VariantShredReassembler reassembler = new VariantShredReassembler();
             reassembler.setCurrentMetadata(meta);
-            int effectiveRow = rowIndex >= 0 ? rowIndex : 0;
-            byte[] value = reassembler.reassemble(variantDesc.root(), batch, effectiveRow);
+            byte[] value = reassembler.reassemble(variantDesc.root(), batch, rowIndex);
             if (value == null) {
                 return null;
             }

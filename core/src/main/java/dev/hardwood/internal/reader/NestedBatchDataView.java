@@ -17,6 +17,7 @@ import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.variant.PqVariantImpl;
+import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
@@ -586,7 +587,7 @@ public final class NestedBatchDataView {
 
         // Shredded when the top-level ShredLevel has a typed_value component.
         if (desc.root().typed() != null) {
-            dev.hardwood.internal.variant.VariantMetadata meta = new dev.hardwood.internal.variant.VariantMetadata(metadataBytes);
+            VariantMetadata meta = new VariantMetadata(metadataBytes);
             variantReassembler.setCurrentMetadata(meta);
             byte[] value = variantReassembler.reassemble(desc.root(), batchIndex, rowIndex);
             if (value == null) {
