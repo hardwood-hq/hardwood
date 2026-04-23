@@ -19,6 +19,7 @@ import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -140,7 +141,7 @@ public class ConvertCommand implements Callable<Integer> {
     }
 
     private static void flattenHeaders(SchemaNode node, String prefix, List<String> headers) {
-        if (node instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap()) {
+        if (node instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap() && !group.isVariant()) {
             for (SchemaNode child : group.children()) {
                 flattenHeaders(child, prefix + "." + child.name(), headers);
             }
@@ -150,7 +151,7 @@ public class ConvertCommand implements Callable<Integer> {
     }
 
     private static void flattenValues(Object value, SchemaNode schema, List<String> values) {
-        if (schema instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap()) {
+        if (schema instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap() && !group.isVariant()) {
             if (value == null) {
                 // null struct — emit null for each leaf
                 for (SchemaNode child : group.children()) {
@@ -169,7 +170,7 @@ public class ConvertCommand implements Callable<Integer> {
     }
 
     private static void flattenNulls(SchemaNode schema, List<String> values) {
-        if (schema instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap()) {
+        if (schema instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap() && !group.isVariant()) {
             for (SchemaNode child : group.children()) {
                 flattenNulls(child, values);
             }
@@ -203,8 +204,15 @@ public class ConvertCommand implements Callable<Integer> {
             for (int i = 0; i < headers.length; i++) {
                 if (i > 0)
                     out.print(",");
-                String val = RowTable.renderField(rowReader, i, fields.get(i));
-                out.print("\"" + jsonEscape(headers[i]) + "\":\"" + jsonEscape(val) + "\"");
+                SchemaNode fieldSchema = fields.get(i);
+                out.print("\"" + jsonEscape(headers[i]) + "\":");
+                if (fieldSchema instanceof SchemaNode.GroupNode group && group.isVariant()) {
+                    PqVariant variant = rowReader.getVariant(fieldSchema.name());
+                    out.print(RowTable.renderVariant(variant));
+                } else {
+                    String val = RowTable.renderField(rowReader, i, fieldSchema);
+                    out.print("\"" + jsonEscape(val) + "\"");
+                }
             }
             out.print("}");
         }

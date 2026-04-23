@@ -28,6 +28,9 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
+import dev.hardwood.row.PqVariantArray;
+import dev.hardwood.row.PqVariantObject;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -97,6 +100,9 @@ public final class RowTable {
     public static String renderValue(Object value, SchemaNode schema) {
         if (value == null) {
             return "null";
+        }
+        if (value instanceof PqVariant variant) {
+            return renderVariant(variant);
         }
         if (value instanceof byte[] bytes) {
             return renderBytes(bytes, schema);
@@ -184,6 +190,105 @@ public final class RowTable {
             sb.append(renderValue(list.get(i), elementSchema));
         }
         return sb.append("]").toString();
+    }
+
+    /// Render a Variant value as a JSON-like text fragment. Matches the example
+    /// output shown in the `print` and `convert` commands' specs: objects render
+    /// as `{"k": v, ...}`, arrays as `[v, ...]`, scalars as their JSON form, and
+    /// the Variant `NULL` type as the literal `null`.
+    public static String renderVariant(PqVariant variant) {
+        if (variant == null) {
+            return "null";
+        }
+        StringBuilder sb = new StringBuilder();
+        appendVariant(sb, variant);
+        return sb.toString();
+    }
+
+    private static void appendVariant(StringBuilder sb, PqVariant variant) {
+        switch (variant.type()) {
+            case NULL -> sb.append("null");
+            case BOOLEAN_TRUE -> sb.append("true");
+            case BOOLEAN_FALSE -> sb.append("false");
+            case INT8, INT16, INT32 -> sb.append(variant.asInt());
+            case INT64 -> sb.append(variant.asLong());
+            case FLOAT -> sb.append(variant.asFloat());
+            case DOUBLE -> sb.append(variant.asDouble());
+            case DECIMAL4, DECIMAL8, DECIMAL16 -> sb.append(variant.asDecimal().toPlainString());
+            case STRING -> appendJsonString(sb, variant.asString());
+            case BINARY -> appendJsonString(sb, HexFormat.of().formatHex(variant.asBinary()));
+            case DATE -> appendJsonString(sb, variant.asDate().toString());
+            case TIME_NTZ -> appendJsonString(sb, variant.asTime().toString());
+            case TIMESTAMP, TIMESTAMP_NTZ, TIMESTAMP_NANOS, TIMESTAMP_NTZ_NANOS ->
+                appendJsonString(sb, variant.asTimestamp().toString());
+            case UUID -> appendJsonString(sb, variant.asUuid().toString());
+            case OBJECT -> appendVariantObject(sb, variant.asObject());
+            case ARRAY -> appendVariantArray(sb, variant.asArray());
+        }
+    }
+
+    private static void appendVariantObject(StringBuilder sb, PqVariantObject object) {
+        sb.append('{');
+        int fieldCount = object.getFieldCount();
+        for (int i = 0; i < fieldCount; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            String name = object.getFieldName(i);
+            appendJsonString(sb, name);
+            sb.append(": ");
+            PqVariant fieldValue = object.getVariant(name);
+            if (fieldValue == null) {
+                sb.append("null");
+            }
+            else {
+                appendVariant(sb, fieldValue);
+            }
+        }
+        sb.append('}');
+    }
+
+    private static void appendVariantArray(StringBuilder sb, PqVariantArray array) {
+        sb.append('[');
+        int size = array.size();
+        for (int i = 0; i < size; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            PqVariant element = array.get(i);
+            if (element == null) {
+                sb.append("null");
+            }
+            else {
+                appendVariant(sb, element);
+            }
+        }
+        sb.append(']');
+    }
+
+    private static void appendJsonString(StringBuilder sb, String s) {
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(String.format("\\u%04x", (int) c));
+                    }
+                    else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        sb.append('"');
     }
 
     private static String renderMap(PqMap map, SchemaNode.GroupNode schemaNode) {

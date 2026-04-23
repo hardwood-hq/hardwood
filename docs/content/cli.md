@@ -27,9 +27,9 @@ Pre-built native binaries for Linux, macOS, and Windows are available from the [
 | Command | Description |
 |---------|-------------|
 | `hardwood info` | Display high-level file information |
-| `hardwood schema` | Print the file schema |
-| `hardwood print` | Print rows as an ASCII table (head, tail, or all) |
-| `hardwood convert` | Convert a Parquet file to CSV or JSON |
+| `hardwood schema` | Print the file schema, including logical-type annotations such as `VARIANT(1)` on Variant groups |
+| `hardwood print` | Print rows as an ASCII table (head, tail, or all); Variant columns are decoded to JSON-like text |
+| `hardwood convert` | Convert a Parquet file to CSV or JSON; Variant columns are emitted as a JSON string in CSV and as a native JSON subtree in JSON |
 | `hardwood footer` | Print decoded footer length, offset, and file structure |
 | `hardwood inspect pages` | List data and dictionary pages per column chunk; includes per-page min/max when the file has a page index |
 | `hardwood inspect dictionary` | Print dictionary entries for a column |

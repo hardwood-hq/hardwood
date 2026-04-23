@@ -13,6 +13,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class PrintCommandTest implements PrintCommandContract {
 
+    private final String VARIANT_FILE = getClass().getResource("/variant_test.parquet").getPath();
+
+    private final String VARIANT_SHREDDED_FILE = getClass().getResource("/variant_shredded_test.parquet").getPath();
+
+    private final String VARIANT_ATTRIBUTES_FILE = getClass().getResource("/variant_attributes_example.parquet").getPath();
+
     @Override
     public String plainFile() {
         return getClass().getResource("/plain_uncompressed.parquet").getPath();
@@ -54,5 +60,52 @@ class PrintCommandTest implements PrintCommandContract {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).isEqualTo("Remote URIs are not implemented yet.");
+    }
+
+    @Test
+    void rendersUnshreddedVariantValuesAsDecodedScalars() {
+        Cli.Result result = Cli.launch("print", "-f", VARIANT_FILE);
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----+-------+
+                | id | var   |
+                +----+-------+
+                | 1  | true  |
+                | 2  | false |
+                | 3  | 42    |
+                | 4  | "hi"  |
+                +----+-------+""");
+    }
+
+    @Test
+    void rendersShreddedVariantValuesAsDecodedScalars() {
+        Cli.Result result = Cli.launch("print", "-f", VARIANT_SHREDDED_FILE);
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----+---------------+
+                | id | var           |
+                +----+---------------+
+                | 1  | 42            |
+                | 2  | true          |
+                | 3  | null          |
+                | 4  | 1000000000000 |
+                +----+---------------+""");
+    }
+
+    @Test
+    void rendersVariantObjectAsJsonLikeText() {
+        Cli.Result result = Cli.launch("print", "-f", VARIANT_ATTRIBUTES_FILE, "-mw", "120");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                +----+-------------+-----------------------------------+
+                | id | name        | value                             |
+                +----+-------------+-----------------------------------+
+                | 1  | age         | 42                                |
+                | 1  | email       | "ada@example.com"                 |
+                | 1  | preferences | {"opt_in": true, "theme": "dark"} |
+                +----+-------------+-----------------------------------+""");
     }
 }

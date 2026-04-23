@@ -94,6 +94,11 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
                 throw new IllegalArgumentException("specVersion must be >= 1: " + specVersion);
             }
         }
+
+        @Override
+        public String toString() {
+            return "VARIANT(" + specVersion + ")";
+        }
     }
 
     /// Resolution of time and timestamp logical types.

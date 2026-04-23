@@ -18,6 +18,12 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 class ConvertCommandTest implements ConvertCommandContract {
 
+    private final String VARIANT_FILE = getClass().getResource("/variant_test.parquet").getPath();
+
+    private final String VARIANT_SHREDDED_FILE = getClass().getResource("/variant_shredded_test.parquet").getPath();
+
+    private final String VARIANT_ATTRIBUTES_FILE = getClass().getResource("/variant_attributes_example.parquet").getPath();
+
     @Override
     public String plainFile() {
         return getClass().getResource("/plain_uncompressed.parquet").getPath();
@@ -63,5 +69,84 @@ class ConvertCommandTest implements ConvertCommandContract {
         Cli.Result result = Cli.launch("convert", "-f", plainFile());
 
         assertThat(result.exitCode()).isNotZero();
+    }
+
+    @Test
+    void csvEmitsVariantAsSingleColumnWithDecodedValues() {
+        Cli.Result result = Cli.launch("convert", "-f", VARIANT_FILE, "--format", "csv");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id,var
+                1,true
+                2,false
+                3,42
+                4,\"\"\"hi\"\"\"""");
+    }
+
+    @Test
+    void csvEmitsShreddedVariantAsSingleColumn() {
+        Cli.Result result = Cli.launch("convert", "-f", VARIANT_SHREDDED_FILE, "--format", "csv");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id,var
+                1,42
+                2,true
+                3,null
+                4,1000000000000""");
+    }
+
+    @Test
+    void csvEmitsVariantObjectAsJsonStringInOneCell() {
+        Cli.Result result = Cli.launch("convert", "-f", VARIANT_ATTRIBUTES_FILE, "--format", "csv");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id,name,value
+                1,age,42
+                1,email,\"\"\"ada@example.com\"\"\"
+                1,preferences,\"{\"\"opt_in\"\": true, \"\"theme\"\": \"\"dark\"\"}\"""");
+    }
+
+    @Test
+    void jsonEmitsVariantAsNativeJsonSubtree() {
+        Cli.Result result = Cli.launch("convert", "-f", VARIANT_FILE, "--format", "json");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                [
+                  {"id":"1","var":true},
+                  {"id":"2","var":false},
+                  {"id":"3","var":42},
+                  {"id":"4","var":"hi"}
+                ]""");
+    }
+
+    @Test
+    void jsonEmitsShreddedVariantAsNativeJsonScalars() {
+        Cli.Result result = Cli.launch("convert", "-f", VARIANT_SHREDDED_FILE, "--format", "json");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                [
+                  {"id":"1","var":42},
+                  {"id":"2","var":true},
+                  {"id":"3","var":null},
+                  {"id":"4","var":1000000000000}
+                ]""");
+    }
+
+    @Test
+    void jsonEmitsVariantObjectAsInlineJson() {
+        Cli.Result result = Cli.launch("convert", "-f", VARIANT_ATTRIBUTES_FILE, "--format", "json");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                [
+                  {"id":"1","name":"age","value":42},
+                  {"id":"1","name":"email","value":"ada@example.com"},
+                  {"id":"1","name":"preferences","value":{"opt_in": true, "theme": "dark"}}
+                ]""");
     }
 }

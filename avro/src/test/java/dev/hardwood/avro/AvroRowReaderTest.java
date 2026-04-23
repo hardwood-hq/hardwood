@@ -185,7 +185,7 @@ class AvroRowReaderTest {
         // bytes. Typed access to the payload is available via the file
         // reader's PqVariant API; this test exercises the raw Avro surface.
         Path fixture = Path.of("").toAbsolutePath()
-                .resolve("src/test/resources/variant_shredded_test.parquet").normalize();
+                .resolve("../core/src/test/resources/variant_shredded_test.parquet").normalize();
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture));
              AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
@@ -237,7 +237,7 @@ class AvroRowReaderTest {
         // for each row, including the SQL-null-vs-Variant-NULL distinction on
         // row 3 (both value and typed_value absent → Variant NULL, not SQL null).
         Path fixture = Path.of("").toAbsolutePath()
-                .resolve("src/test/resources/variant_shredded_test.parquet").normalize();
+                .resolve("../core/src/test/resources/variant_shredded_test.parquet").normalize();
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture));
                 RowReader rowReader = fileReader.createRowReader()) {
