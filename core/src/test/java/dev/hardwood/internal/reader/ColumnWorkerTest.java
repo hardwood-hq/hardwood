@@ -95,15 +95,8 @@ class ColumnWorkerTest {
 
             int batchCount = 0;
             int lastBatchSize = 0;
-            while (true) {
-                BatchExchange.Batch batch = exchange.readyQueue().poll(1, TimeUnit.SECONDS);
-                if (batch == null) {
-                    if (exchange.isFinished()) {
-                        exchange.checkError();
-                        break;
-                    }
-                    continue;
-                }
+            BatchExchange.Batch batch;
+            while ((batch = exchange.poll()) != null) {
                 batchCount++;
                 lastBatchSize = batch.recordCount;
                 if (batchCount > 1) {
@@ -112,6 +105,7 @@ class ColumnWorkerTest {
                 }
                 exchange.freeQueue().offer(batch);
             }
+            exchange.checkError();
             worker.close();
 
             assertThat(batchCount).as("Should produce multiple batches").isGreaterThan(1);
@@ -155,20 +149,14 @@ class ColumnWorkerTest {
             worker.start();
 
             boolean sawNulls = false;
-            while (true) {
-                BatchExchange.Batch batch = exchange.readyQueue().poll(1, TimeUnit.SECONDS);
-                if (batch == null) {
-                    if (exchange.isFinished()) {
-                        exchange.checkError();
-                        break;
-                    }
-                    continue;
-                }
+            BatchExchange.Batch batch;
+            while ((batch = exchange.poll()) != null) {
                 if (batch.nulls != null && !batch.nulls.isEmpty()) {
                     sawNulls = true;
                 }
                 exchange.freeQueue().offer(batch);
             }
+            exchange.checkError();
             worker.close();
 
             assertThat(sawNulls)
@@ -282,15 +270,8 @@ class ColumnWorkerTest {
 
             long totalRows = 0;
             boolean sawPreComputedIndex = false;
-            while (true) {
-                NestedBatch batch = exchange.readyQueue().poll(1, TimeUnit.SECONDS);
-                if (batch == null) {
-                    if (exchange.isFinished()) {
-                        exchange.checkError();
-                        break;
-                    }
-                    continue;
-                }
+            NestedBatch batch;
+            while ((batch = exchange.poll()) != null) {
                 totalRows += batch.recordCount;
 
                 // Verify pre-computed index fields are present
@@ -303,6 +284,7 @@ class ColumnWorkerTest {
 
                 exchange.freeQueue().offer(batch);
             }
+            exchange.checkError();
             worker.close();
 
             assertThat(totalRows)
@@ -496,18 +478,12 @@ class ColumnWorkerTest {
     private static long consumeAllBatches(BatchExchange<BatchExchange.Batch> exchange)
             throws InterruptedException {
         long totalRows = 0;
-        while (true) {
-            BatchExchange.Batch batch = exchange.readyQueue().poll(1, TimeUnit.SECONDS);
-            if (batch == null) {
-                if (exchange.isFinished()) {
-                    exchange.checkError();
-                    break;
-                }
-                continue;
-            }
+        BatchExchange.Batch batch;
+        while ((batch = exchange.poll()) != null) {
             totalRows += batch.recordCount;
             exchange.freeQueue().offer(batch);
         }
+        exchange.checkError();
         return totalRows;
     }
 }
