@@ -25,10 +25,23 @@ final class TopLevelFieldMap {
                 case Struct s -> s.schema().name();
                 case ListOf l -> l.schema().name();
                 case MapOf m -> m.schema().name();
+                case Variant v -> v.schema().name();
             };
         }
 
         record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {}
+
+        /// Variant logical-type group. `metadataCol` and `valueCol` reference the
+        /// two required binary child columns that together carry the canonical
+        /// Variant bytes.
+        ///
+        /// @param schema the Variant-annotated GroupNode
+        /// @param metadataCol projected column index of the `metadata` binary child
+        /// @param valueCol projected column index of the `value` binary child
+        /// @param nullDefLevel def level below which the Variant group itself is null
+        record Variant(SchemaNode.GroupNode schema,
+                       int metadataCol, int valueCol,
+                       int nullDefLevel) implements FieldDesc {}
 
         /// @param nameToIndex       name → child ordinal (boundary lookup)
         /// @param children          ordinal → descriptor (internal lookup)
@@ -123,7 +136,10 @@ final class TopLevelFieldMap {
                 yield new FieldDesc.Primitive(projCol, prim);
             }
             case SchemaNode.GroupNode group -> {
-                if (group.isList()) {
+                if (group.isVariant()) {
+                    yield buildVariantDesc(group, projectedSchema);
+                }
+                else if (group.isList()) {
                     yield buildListDesc(group, schema, projectedSchema);
                 }
                 else if (group.isMap()) {
@@ -134,6 +150,17 @@ final class TopLevelFieldMap {
                 }
             }
         };
+    }
+
+    static FieldDesc.Variant buildVariantDesc(SchemaNode.GroupNode group, ProjectedSchema projectedSchema) {
+        // FileSchema validation guarantees the first two children are PrimitiveNodes
+        // named `metadata` and `value`; any third child (`typed_value`) is ignored
+        // in Phase 1 and only consulted once shredded-variant reassembly lands.
+        SchemaNode.PrimitiveNode metadataNode = (SchemaNode.PrimitiveNode) group.children().get(0);
+        SchemaNode.PrimitiveNode valueNode = (SchemaNode.PrimitiveNode) group.children().get(1);
+        int metadataCol = projectedSchema.toProjectedIndex(metadataNode.columnIndex());
+        int valueCol = projectedSchema.toProjectedIndex(valueNode.columnIndex());
+        return new FieldDesc.Variant(group, metadataCol, valueCol, group.maxDefinitionLevel());
     }
 
     static FieldDesc.Struct buildStructDesc(SchemaNode.GroupNode group,
@@ -236,7 +263,10 @@ final class TopLevelFieldMap {
                 if (!isChildProjected(group, projectedSchema)) {
                     yield null;
                 }
-                if (group.isList()) {
+                if (group.isVariant()) {
+                    yield buildVariantDesc(group, projectedSchema);
+                }
+                else if (group.isList()) {
                     yield buildListDesc(group, schema, projectedSchema);
                 }
                 else if (group.isMap()) {

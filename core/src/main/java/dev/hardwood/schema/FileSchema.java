@@ -12,6 +12,7 @@ import java.util.List;
 
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.FieldPath;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 
@@ -144,6 +145,7 @@ public class FileSchema {
                 root.name(),
                 root.repetitionType() != null ? root.repetitionType() : RepetitionType.REQUIRED,
                 root.convertedType(),
+                root.logicalType(),
                 rootChildren,
                 0, // Root has def level 0
                 0 // Root has rep level 0
@@ -216,13 +218,18 @@ public class FileSchema {
                         columns,
                         columnIndex);
 
-                children.add(new SchemaNode.GroupNode(
+                SchemaNode.GroupNode groupNode = new SchemaNode.GroupNode(
                         element.name(),
                         repType,
                         element.convertedType(),
+                        element.logicalType(),
                         groupChildren,
                         defLevel,
-                        repLevel));
+                        repLevel);
+                if (groupNode.isVariant()) {
+                    validateVariantGroup(groupNode);
+                }
+                children.add(groupNode);
 
                 // Skip over this group and all its descendants
                 currentIndex = currentIndex + 1 + countDescendants(elements, currentIndex + 1, groupNumChildren);
@@ -230,6 +237,34 @@ public class FileSchema {
         }
 
         return children;
+    }
+
+    /// Validate a Variant-annotated group's shape: required `metadata` binary
+    /// child, required `value` binary child, and at most one optional `typed_value`
+    /// sibling (reassembled in Phase 2; permitted but not yet consulted).
+    private static void validateVariantGroup(SchemaNode.GroupNode group) {
+        List<SchemaNode> kids = group.children();
+        if (kids.size() < 2 || kids.size() > 3) {
+            throw new IllegalArgumentException(
+                    "Variant group '" + group.name() + "' must have 2 or 3 children (metadata, value[, typed_value]), found: " + kids.size());
+        }
+        requireVariantBinaryChild(group, kids.get(0), "metadata");
+        requireVariantBinaryChild(group, kids.get(1), "value");
+        if (kids.size() == 3 && !"typed_value".equals(kids.get(2).name())) {
+            throw new IllegalArgumentException(
+                    "Variant group '" + group.name() + "' third child must be named 'typed_value', found: " + kids.get(2).name());
+        }
+    }
+
+    private static void requireVariantBinaryChild(SchemaNode.GroupNode group, SchemaNode child, String expectedName) {
+        if (!expectedName.equals(child.name())) {
+            throw new IllegalArgumentException(
+                    "Variant group '" + group.name() + "' expected child '" + expectedName + "', found: " + child.name());
+        }
+        if (!(child instanceof SchemaNode.PrimitiveNode prim) || prim.type() != PhysicalType.BYTE_ARRAY) {
+            throw new IllegalArgumentException(
+                    "Variant group '" + group.name() + "' child '" + expectedName + "' must be a BYTE_ARRAY primitive");
+        }
     }
 
     /// Count total descendants of a group (including nested groups).
@@ -271,7 +306,10 @@ public class FileSchema {
                 sb.append(prefix);
                 sb.append(group.repetitionType().name().toLowerCase());
                 sb.append(" group ").append(group.name());
-                if (group.convertedType() != null) {
+                if (group.logicalType() != null) {
+                    sb.append(" (").append(group.logicalType()).append(")");
+                }
+                else if (group.convertedType() != null) {
                     sb.append(" (").append(group.convertedType()).append(")");
                 }
                 sb.append(" {\n");

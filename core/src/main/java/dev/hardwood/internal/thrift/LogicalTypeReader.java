@@ -66,6 +66,7 @@ public class LogicalTypeReader {
                         reader.skipField(header.type()); // Empty struct
                         yield new LogicalType.UuidType();
                     }
+                    case 16 -> readVariantType(reader);
                     // Skip unsupported types (MAP, LIST, etc.)
                     default -> {
                         reader.skipField(header.type());
@@ -267,6 +268,43 @@ public class LogicalTypeReader {
         }
 
         return new LogicalType.IntType(bitWidth, isSigned);
+    }
+
+    private static LogicalType.VariantType readVariantType(ThriftCompactReader reader) throws IOException {
+        short saved = reader.pushFieldIdContext();
+        try {
+            return readVariantTypeInternal(reader);
+        }
+        finally {
+            reader.popFieldIdContext(saved);
+        }
+    }
+
+    private static LogicalType.VariantType readVariantTypeInternal(ThriftCompactReader reader) throws IOException {
+        int specVersion = 1; // Per Parquet Variant spec: default when unset.
+
+        while (true) {
+            ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
+            if (header == null) {
+                break;
+            }
+
+            switch (header.fieldId()) {
+                case 1: // specification_version (optional i8)
+                    if (header.type() == 0x03) { // I8
+                        specVersion = reader.readByte();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
+                default:
+                    reader.skipField(header.type());
+                    break;
+            }
+        }
+
+        return new LogicalType.VariantType(specVersion);
     }
 
     private static TimeUnit readTimeUnit(ThriftCompactReader reader) throws IOException {

@@ -16,6 +16,7 @@ import java.util.BitSet;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
@@ -24,6 +25,7 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
@@ -142,7 +144,20 @@ public final class NestedBatchDataView {
                     PqListImpl.isListNull(batchIndex, l, rowIndex, -1);
             case TopLevelFieldMap.FieldDesc.MapOf m ->
                     PqMapImpl.isMapNull(batchIndex, m, rowIndex, -1);
+            case TopLevelFieldMap.FieldDesc.Variant v -> isVariantNull(v);
         };
+    }
+
+    private boolean isVariantNull(TopLevelFieldMap.FieldDesc.Variant desc) {
+        // Variant nullness is determined by the def level of one of its binary
+        // children — pick whichever is projected.
+        int col = desc.metadataCol() >= 0 ? desc.metadataCol() : desc.valueCol();
+        if (col < 0) {
+            return true;
+        }
+        int valueIdx = cachedValueIndex[col];
+        int defLevel = batchIndex.getDefLevel(col, valueIdx);
+        return defLevel < desc.nullDefLevel();
     }
 
     private boolean isStructNull(TopLevelFieldMap.FieldDesc.Struct structDesc) {
@@ -532,6 +547,39 @@ public final class NestedBatchDataView {
             }
             case TopLevelFieldMap.FieldDesc.ListOf l -> createList(l);
             case TopLevelFieldMap.FieldDesc.MapOf m -> createMap(m);
+            case TopLevelFieldMap.FieldDesc.Variant v -> createVariant(v);
         };
+    }
+
+    // ==================== Variant accessor ====================
+
+    public PqVariant getVariant(String name) {
+        TopLevelFieldMap.FieldDesc desc = lookupField(name);
+        if (!(desc instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
+            throw new IllegalArgumentException("Field '" + name + "' is not annotated as VARIANT");
+        }
+        return createVariant(variantDesc);
+    }
+
+    public PqVariant getVariant(int projectedIndex) {
+        if (!(fieldDescs[projectedIndex] instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
+            throw new IllegalArgumentException("Field at index " + projectedIndex + " is not annotated as VARIANT");
+        }
+        return createVariant(variantDesc);
+    }
+
+    private PqVariant createVariant(TopLevelFieldMap.FieldDesc.Variant desc) {
+        if (isVariantNull(desc)) {
+            return null;
+        }
+        if (desc.metadataCol() < 0 || desc.valueCol() < 0) {
+            throw new IllegalStateException(
+                    "Variant column '" + desc.schema().name() + "' requires both 'metadata' and 'value' children in the projection");
+        }
+        int metaIdx = cachedValueIndex[desc.metadataCol()];
+        int valIdx = cachedValueIndex[desc.valueCol()];
+        byte[] metadata = ((byte[][]) batchIndex.valueArrays[desc.metadataCol()])[metaIdx];
+        byte[] value = ((byte[][]) batchIndex.valueArrays[desc.valueCol()])[valIdx];
+        return new PqVariantImpl(metadata, value);
     }
 }

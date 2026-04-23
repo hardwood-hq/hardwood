@@ -50,3 +50,4 @@ release-output.log
 
 # Claude
 .claude/worktrees/
+__pycache__/

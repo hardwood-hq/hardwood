@@ -7,8 +7,13 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.List;
+import java.util.UUID;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -26,6 +31,7 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.FileSchema;
 
@@ -383,8 +389,12 @@ class RecordFilterEvaluatorTest {
     private static StructAccessor twoIntStub(String name1, int value1, String name2, int value2) {
         return new StructAccessor() {
             @Override public int getInt(String name) {
-                if (name.equals(name1)) return value1;
-                if (name.equals(name2)) return value2;
+                if (name.equals(name1)) {
+                    return value1;
+                }
+                if (name.equals(name2)) {
+                    return value2;
+                }
                 throw new IllegalArgumentException(name);
             }
             @Override public boolean isNull(String name) { return false; }
@@ -394,17 +404,18 @@ class RecordFilterEvaluatorTest {
             @Override public boolean getBoolean(String name) { throw new UnsupportedOperationException(); }
             @Override public String getString(String name) { throw new UnsupportedOperationException(); }
             @Override public byte[] getBinary(String name) { throw new UnsupportedOperationException(); }
-            @Override public java.time.LocalDate getDate(String name) { throw new UnsupportedOperationException(); }
-            @Override public java.time.LocalTime getTime(String name) { throw new UnsupportedOperationException(); }
-            @Override public java.time.Instant getTimestamp(String name) { throw new UnsupportedOperationException(); }
-            @Override public java.math.BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
-            @Override public java.util.UUID getUuid(String name) { throw new UnsupportedOperationException(); }
+            @Override public LocalDate getDate(String name) { throw new UnsupportedOperationException(); }
+            @Override public LocalTime getTime(String name) { throw new UnsupportedOperationException(); }
+            @Override public Instant getTimestamp(String name) { throw new UnsupportedOperationException(); }
+            @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
+            @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(); }
             @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(); }
             @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(); }
             @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(); }
             @Override public PqDoubleList getListOfDoubles(String name) { throw new UnsupportedOperationException(); }
             @Override public PqList getList(String name) { throw new UnsupportedOperationException(); }
             @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(); }
+            @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
             @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
             @Override public int getFieldCount() { return 2; }
             @Override public String getFieldName(int index) { return index == 0 ? name1 : name2; }
@@ -433,17 +444,18 @@ class RecordFilterEvaluatorTest {
         @Override public boolean getBoolean(String name) { throw new UnsupportedOperationException(); }
         @Override public String getString(String name) { throw new UnsupportedOperationException(); }
         @Override public byte[] getBinary(String name) { throw new UnsupportedOperationException(); }
-        @Override public java.time.LocalDate getDate(String name) { throw new UnsupportedOperationException(); }
-        @Override public java.time.LocalTime getTime(String name) { throw new UnsupportedOperationException(); }
-        @Override public java.time.Instant getTimestamp(String name) { throw new UnsupportedOperationException(); }
-        @Override public java.math.BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
-        @Override public java.util.UUID getUuid(String name) { throw new UnsupportedOperationException(); }
+        @Override public LocalDate getDate(String name) { throw new UnsupportedOperationException(); }
+        @Override public LocalTime getTime(String name) { throw new UnsupportedOperationException(); }
+        @Override public Instant getTimestamp(String name) { throw new UnsupportedOperationException(); }
+        @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
+        @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(); }
         @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(); }
         @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(); }
         @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(); }
         @Override public PqDoubleList getListOfDoubles(String name) { throw new UnsupportedOperationException(); }
         @Override public PqList getList(String name) { throw new UnsupportedOperationException(); }
         @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(); }
+        @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
         @Override public int getFieldCount() { return 1; }
         @Override public String getFieldName(int index) { return fieldName; }

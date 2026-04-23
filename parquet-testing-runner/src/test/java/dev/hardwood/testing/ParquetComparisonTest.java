@@ -107,9 +107,10 @@ class ParquetComparisonTest {
              MultiFileParquetReader mfReader = new MultiFileParquetReader(inputs, context);
              RowReader rowReader = mfReader.createRowReader()) {
 
+            FileSchema schema = mfReader.getFileSchema();
             while (rowReader.hasNext()) {
                 rowReader.next();
-                Utils.compareRow(rowIndex, reference.get(rowIndex), rowReader);
+                Utils.compareRow(rowIndex, reference.get(rowIndex), rowReader, schema);
                 rowIndex++;
             }
         }
@@ -129,9 +130,10 @@ class ParquetComparisonTest {
                      List.of(InputFile.of(file)), context);
              RowReader rowReader = mfReader.createRowReader()) {
 
+            FileSchema schema = mfReader.getFileSchema();
             while (rowReader.hasNext()) {
                 rowReader.next();
-                Utils.compareRow(rowIndex, reference.get(rowIndex), rowReader);
+                Utils.compareRow(rowIndex, reference.get(rowIndex), rowReader, schema);
                 rowIndex++;
             }
         }
@@ -277,12 +279,13 @@ class ParquetComparisonTest {
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
              RowReader rowReader = fileReader.createRowReader()) {
+            FileSchema schema = fileReader.getFileSchema();
             while (rowReader.hasNext()) {
                 rowReader.next();
                 assertThat(rowIndex)
                         .as("Hardwood has more rows than reference")
                         .isLessThan(referenceRows.size());
-                Utils.compareRow(rowIndex, referenceRows.get(rowIndex), rowReader);
+                Utils.compareRow(rowIndex, referenceRows.get(rowIndex), rowReader, schema);
                 rowIndex++;
             }
         }

@@ -14,7 +14,7 @@ package dev.hardwood.metadata;
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public sealed
 interface LogicalType
-permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType
+permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType,LogicalType.VariantType
 {
 
     /// UTF-8 encoded string.
@@ -82,6 +82,19 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
 
     /// Map (key-value pairs) logical type.
     record MapType() implements LogicalType {}
+
+    /// Variant (self-describing, semi-structured) logical type per the Parquet
+    /// Variant spec. Annotates a group whose children are `metadata` (binary) and
+    /// `value` (binary), optionally with a `typed_value` sibling for shredded form.
+    ///
+    /// @param specVersion spec version declared by the writer (currently always `1`)
+    record VariantType(int specVersion) implements LogicalType {
+        public VariantType {
+            if (specVersion < 1) {
+                throw new IllegalArgumentException("specVersion must be >= 1: " + specVersion);
+            }
+        }
+    }
 
     /// Resolution of time and timestamp logical types.
     enum TimeUnit {

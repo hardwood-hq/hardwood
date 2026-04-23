@@ -13,6 +13,7 @@ from decimal import Decimal
 import uuid
 
 from parquet_bson_annotation import annotate_column_as_bson
+from parquet_variant_annotation import annotate_group_as_variant
 
 # Plain encoding with no compression (for Milestone 1)
 # Create a simple table with NO nulls first, explicitly marking fields as non-nullable
@@ -1975,3 +1976,54 @@ writer.close()
 print("\nGenerated inline_page_stats.parquet:")
 print("  - 1 row group, 10000 rows, sorted id [0,9999] and value [1000,10999]")
 print("  - Parquet v1 with inline DataPageHeader.statistics (no ColumnIndex)")
+
+# ============================================================================
+# Variant logical type
+# ============================================================================
+#
+# ============================================================================
+# Variant logical type — unshredded
+# ============================================================================
+#
+# PyArrow 23.0.1 lacks a public `pa.variant()` writer, but the Variant column
+# is just a group of two binary fields `{metadata, value}` — we write that
+# structure with PyArrow, then post-process the footer to stamp the
+# VARIANT(specification_version=1) annotation on the outer group. Same
+# footer-rewrite pattern as parquet_bson_annotation.py.
+
+# A minimal unshredded Variant column with a few rows covering the distinct
+# cases: BOOLEAN_TRUE, BOOLEAN_FALSE, INT32, and STRING. Every row has
+# `metadata` = empty dictionary (`01 00 00`) and `value` = the variant payload.
+
+_empty_metadata = bytes([0x01, 0x00, 0x00])  # v1, unsorted, offset_size=1, dict_size=0, offset[0]=0
+
+variant_unshredded_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('var', pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), False),
+    ]), True),
+])
+
+variant_unshredded_table = pa.table({
+    'id': [1, 2, 3, 4],
+    'var': [
+        {'metadata': _empty_metadata, 'value': bytes([0x04])},                            # BOOLEAN_TRUE
+        {'metadata': _empty_metadata, 'value': bytes([0x08])},                            # BOOLEAN_FALSE
+        {'metadata': _empty_metadata, 'value': bytes([0x14, 42, 0, 0, 0])},               # INT32 = 42
+        {'metadata': _empty_metadata, 'value': bytes([0x09, ord('h'), ord('i')])},         # short string "hi" (basic_type=1, length=2)
+    ],
+}, schema=variant_unshredded_schema)
+
+pq.write_table(
+    variant_unshredded_table,
+    'core/src/test/resources/variant_test.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant('core/src/test/resources/variant_test.parquet', 'var')
+
+print("\nGenerated variant_test.parquet:")
+print("  - 4 rows: BOOLEAN_TRUE, BOOLEAN_FALSE, INT32(42), short string 'hi'")
+print("  - `var` is a VARIANT-annotated group of {metadata, value} binaries")

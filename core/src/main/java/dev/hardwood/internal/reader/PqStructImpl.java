@@ -18,6 +18,7 @@ import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Primitive;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Struct;
+import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
@@ -25,6 +26,7 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.SchemaNode;
 
 /// Flyweight [PqStruct] that navigates directly over column arrays.
@@ -221,6 +223,26 @@ final class PqStructImpl implements PqStruct {
         return PqMapImpl.create(batch, mapDesc, rowIndex, valueIndex);
     }
 
+    @Override
+    public PqVariant getVariant(String name) {
+        TopLevelFieldMap.FieldDesc child = lookupChild(name);
+        if (!(child instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
+            throw new IllegalArgumentException("Field '" + name + "' is not annotated as VARIANT");
+        }
+        if (variantDesc.metadataCol() < 0 || variantDesc.valueCol() < 0) {
+            throw new IllegalStateException(
+                    "Variant column '" + name + "' requires both 'metadata' and 'value' children in the projection");
+        }
+        int metaIdx = resolveValueIndex(variantDesc.metadataCol());
+        int valIdx = resolveValueIndex(variantDesc.valueCol());
+        if (batch.isElementNull(variantDesc.metadataCol(), metaIdx)) {
+            return null;
+        }
+        byte[] metadata = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[metaIdx];
+        byte[] value = ((byte[][]) batch.valueArrays[variantDesc.valueCol()])[valIdx];
+        return new PqVariantImpl(metadata, value);
+    }
+
     // ==================== Generic Fallback ====================
 
     @Override
@@ -300,7 +322,18 @@ final class PqStructImpl implements PqStruct {
                     PqListImpl.isListNull(batch, l, rowIndex, valueIndex);
             case TopLevelFieldMap.FieldDesc.MapOf m ->
                     PqMapImpl.isMapNull(batch, m, rowIndex, valueIndex);
+            case TopLevelFieldMap.FieldDesc.Variant v -> isVariantNull(v);
         };
+    }
+
+    private boolean isVariantNull(TopLevelFieldMap.FieldDesc.Variant desc) {
+        int col = desc.metadataCol() >= 0 ? desc.metadataCol() : desc.valueCol();
+        if (col < 0) {
+            return true;
+        }
+        int idx = resolveValueIndex(col);
+        int defLevel = batch.getDefLevel(col, idx);
+        return defLevel < desc.nullDefLevel();
     }
 
     private boolean isStructNull(TopLevelFieldMap.FieldDesc.Struct structDesc) {
@@ -355,6 +388,7 @@ final class PqStructImpl implements PqStruct {
                     PqListImpl.createGenericList(batch, l, rowIndex, valueIndex);
             case TopLevelFieldMap.FieldDesc.MapOf m ->
                     PqMapImpl.create(batch, m, rowIndex, valueIndex);
+            case TopLevelFieldMap.FieldDesc.Variant v -> getVariant(v.schema().name());
         };
     }
 }

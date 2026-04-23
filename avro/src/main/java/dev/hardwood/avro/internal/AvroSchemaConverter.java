@@ -127,6 +127,8 @@ public final class AvroSchemaConverter {
                     Schema.createFixed("interval", null, null, 12);
             case LogicalType.ListType l -> convertPhysicalType(physicalType, prim);
             case LogicalType.MapType m -> convertPhysicalType(physicalType, prim);
+            case LogicalType.VariantType v -> throw new IllegalStateException(
+                    "VariantType is a group-level annotation; encountered on primitive column " + prim.name());
         };
     }
 
