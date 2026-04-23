@@ -99,11 +99,39 @@ public class AvroRowReader implements AutoCloseable {
             case STRING -> reader.getString(name);
             case BYTES -> wrapBytes(reader.getBinary(name));
             case FIXED -> wrapBytes(reader.getBinary(name));
-            case RECORD -> materializeStruct(reader.getStruct(name), resolved);
+            case RECORD -> isVariantShape(resolved)
+                    ? materializeVariant(reader.getVariant(name), resolved)
+                    : materializeStruct(reader.getStruct(name), resolved);
             case ARRAY -> materializeList(reader.getList(name), resolved.getElementType());
             case MAP -> materializeMap(reader.getMap(name), resolved.getValueType());
             default -> reader.getValue(name);
         };
+    }
+
+    /// Detect the two-field `{metadata: bytes, value: bytes}` RECORD shape
+    /// emitted by [dev.hardwood.avro.internal.AvroSchemaConverter#convertVariant]
+    /// for Variant-annotated columns.
+    private static boolean isVariantShape(Schema recordSchema) {
+        List<Schema.Field> fields = recordSchema.getFields();
+        if (fields.size() != 2) {
+            return false;
+        }
+        Schema.Field first = fields.get(0);
+        Schema.Field second = fields.get(1);
+        return "metadata".equals(first.name())
+                && first.schema().getType() == Schema.Type.BYTES
+                && "value".equals(second.name())
+                && second.schema().getType() == Schema.Type.BYTES;
+    }
+
+    private static GenericRecord materializeVariant(dev.hardwood.row.PqVariant variant, Schema recordSchema) {
+        if (variant == null) {
+            return null;
+        }
+        GenericRecord record = new GenericData.Record(recordSchema);
+        record.put(0, ByteBuffer.wrap(variant.metadata()));
+        record.put(1, ByteBuffer.wrap(variant.value()));
+        return record;
     }
 
     private Object materializeStructValue(PqStruct struct, String name, Schema schema) {
@@ -117,7 +145,9 @@ public class AvroRowReader implements AutoCloseable {
             case STRING -> struct.getString(name);
             case BYTES -> wrapBytes(struct.getBinary(name));
             case FIXED -> wrapBytes(struct.getBinary(name));
-            case RECORD -> materializeStruct(struct.getStruct(name), resolved);
+            case RECORD -> isVariantShape(resolved)
+                    ? materializeVariant(struct.getVariant(name), resolved)
+                    : materializeStruct(struct.getStruct(name), resolved);
             case ARRAY -> materializeList(struct.getList(name), resolved.getElementType());
             case MAP -> materializeMap(struct.getMap(name), resolved.getValueType());
             default -> struct.getValue(name);

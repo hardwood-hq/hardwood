@@ -2027,3 +2027,47 @@ annotate_group_as_variant('core/src/test/resources/variant_test.parquet', 'var')
 print("\nGenerated variant_test.parquet:")
 print("  - 4 rows: BOOLEAN_TRUE, BOOLEAN_FALSE, INT32(42), short string 'hi'")
 print("  - `var` is a VARIANT-annotated group of {metadata, value} binaries")
+
+# ============================================================================
+# Variant logical type — shredded (typed_value: int64)
+# ============================================================================
+#
+# Exercises the reassembly path: typed_value non-null → encode as Variant
+# INT64; typed_value null and value non-null → pass through; both null at
+# non-null group → emit Variant NULL per the parquet-java convention.
+
+variant_shredded_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('var', pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), True),
+        pa.field('typed_value', pa.int64(), True),
+    ]), True),
+])
+
+variant_shredded_table = pa.table({
+    'id': [1, 2, 3, 4],
+    'var': [
+        # Row 1: shredded — value null, typed_value = 42 → reassemble as INT64(42)
+        {'metadata': _empty_metadata, 'value': None, 'typed_value': 42},
+        # Row 2: unshredded — value carries the Variant bytes, typed_value null
+        {'metadata': _empty_metadata, 'value': bytes([0x04]), 'typed_value': None},
+        # Row 3: both null at non-null group → Variant NULL (0x00) per spec
+        {'metadata': _empty_metadata, 'value': None, 'typed_value': None},
+        # Row 4: shredded — typed_value = 1_000_000_000_000
+        {'metadata': _empty_metadata, 'value': None, 'typed_value': 1_000_000_000_000},
+    ],
+}, schema=variant_shredded_schema)
+
+pq.write_table(
+    variant_shredded_table,
+    'avro/src/test/resources/variant_shredded_test.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant('avro/src/test/resources/variant_shredded_test.parquet', 'var')
+
+print("\nGenerated variant_shredded_test.parquet:")
+print("  - 4 rows exercising the shredded reassembly paths")
+print("  - typed_value: int64 — shredded (rows 1, 4), unshredded (row 2), Variant NULL (row 3)")

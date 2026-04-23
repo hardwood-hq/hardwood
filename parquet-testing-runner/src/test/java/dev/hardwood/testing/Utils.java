@@ -75,6 +75,14 @@ public class Utils {
             "repeated_primitive_no_list.parquet", // ClassCast: int32 Int32_list is not a group
             "unknown-logical-type.parquet", // Unknown logical type
 
+            // shredded_variant INVALID fixtures: the parquet-testing cases.json
+            // flags these as "not valid according to the spec; implementations
+            // can choose to error or read the shredded value." parquet-java
+            // and Hardwood diverge in which interpretation they pick, so row-
+            // level comparison is not meaningful.
+            "case-043-INVALID.parquet",
+            "case-125-INVALID.parquet",
+
             // shredded_variant files with parquet-java issues
             "case-040.parquet", // ParquetDecodingException
             "case-041.parquet", // NullPointer on Schema field
@@ -99,42 +107,11 @@ public class Utils {
     );
 
     /// Returns a GitHub issue reference blocking row-level nested comparison for
-    /// `testFile`, or `null` if the file can be compared. Files under
-    /// `shredded_variant/` whose `var` group carries a `typed_value` sibling
-    /// (shredded encoding) still require reassembly (hardwood-hq/hardwood#286);
-    /// unshredded cases in the same directory pass through via Phase 1 Variant
-    /// recognition.
+    /// `testFile`, or `null` if the file can be compared. No files are currently
+    /// blocked — shredded Variant reassembly (#286) is now handled end-to-end,
+    /// so `shredded_variant/*.parquet` files round-trip through the comparison.
     static String rowComparisonSkipReason(Path testFile) {
-        if (isShreddedVariantFile(testFile)) {
-            return "hardwood-hq/hardwood#286";
-        }
         return null;
-    }
-
-    private static boolean isShreddedVariantFile(Path testFile) {
-        Path parent = testFile.getParent();
-        if (parent == null || !"shredded_variant".equals(parent.getFileName().toString())) {
-            return false;
-        }
-        // Distinguish unshredded files (var = {metadata, value}) from shredded
-        // ones (var has a `typed_value` sibling) by inspecting the Parquet
-        // schema. Only the shredded variety needs #286 reassembly.
-        try (dev.hardwood.reader.ParquetFileReader reader = dev.hardwood.reader.ParquetFileReader.open(
-                dev.hardwood.InputFile.of(testFile))) {
-            dev.hardwood.schema.SchemaNode node = reader.getFileSchema().getField("var");
-            if (!(node instanceof dev.hardwood.schema.SchemaNode.GroupNode group)) {
-                return false;
-            }
-            for (dev.hardwood.schema.SchemaNode child : group.children()) {
-                if ("typed_value".equals(child.name())) {
-                    return true;
-                }
-            }
-            return false;
-        } catch (IOException e) {
-            // If we can't peek, err on the side of skipping.
-            return true;
-        }
     }
 
     /// Directories containing test parquet files.

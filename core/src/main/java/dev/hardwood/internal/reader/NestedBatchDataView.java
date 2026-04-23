@@ -568,18 +568,44 @@ public final class NestedBatchDataView {
         return createVariant(variantDesc);
     }
 
+    private final VariantShredReassembler variantReassembler = new VariantShredReassembler();
+
+    /// Single-byte Variant NULL value ("basic_type=primitive, primitive_header=null").
+    private static final byte[] VARIANT_NULL_VALUE = new byte[] { 0x00 };
+
     private PqVariant createVariant(TopLevelFieldMap.FieldDesc.Variant desc) {
         if (isVariantNull(desc)) {
             return null;
         }
-        if (desc.metadataCol() < 0 || desc.valueCol() < 0) {
+        if (desc.metadataCol() < 0) {
             throw new IllegalStateException(
-                    "Variant column '" + desc.schema().name() + "' requires both 'metadata' and 'value' children in the projection");
+                    "Variant column '" + desc.schema().name() + "' requires its 'metadata' child in the projection");
         }
         int metaIdx = cachedValueIndex[desc.metadataCol()];
-        int valIdx = cachedValueIndex[desc.valueCol()];
-        byte[] metadata = ((byte[][]) batchIndex.valueArrays[desc.metadataCol()])[metaIdx];
-        byte[] value = ((byte[][]) batchIndex.valueArrays[desc.valueCol()])[valIdx];
-        return new PqVariantImpl(metadata, value);
+        byte[] metadataBytes = ((byte[][]) batchIndex.valueArrays[desc.metadataCol()])[metaIdx];
+
+        // Shredded when the top-level ShredLevel has a typed_value component.
+        if (desc.root().typed() != null) {
+            dev.hardwood.internal.variant.VariantMetadata meta = new dev.hardwood.internal.variant.VariantMetadata(metadataBytes);
+            variantReassembler.setCurrentMetadata(meta);
+            byte[] value = variantReassembler.reassemble(desc.root(), batchIndex, rowIndex);
+            if (value == null) {
+                // The variant group is non-null (checked above) but both `value`
+                // and `typed_value` are absent — parquet-java convention surfaces
+                // this as Variant NULL rather than SQL NULL.
+                value = VARIANT_NULL_VALUE;
+            }
+            return new PqVariantImpl(meta, value, 0);
+        }
+
+        // Unshredded: the raw value bytes ARE the canonical value bytes.
+        int valueCol = desc.valueCol();
+        if (valueCol < 0) {
+            throw new IllegalStateException(
+                    "Variant column '" + desc.schema().name() + "' requires its 'value' child in the projection");
+        }
+        int valIdx = cachedValueIndex[valueCol];
+        byte[] value = ((byte[][]) batchIndex.valueArrays[valueCol])[valIdx];
+        return new PqVariantImpl(metadataBytes, value);
     }
 }

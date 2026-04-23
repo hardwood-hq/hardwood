@@ -265,7 +265,8 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
   - [x] `VARIANT` logical-type recognition on group nodes (Phase 1, #74)
   - [x] Variant binary decoder (metadata dictionary + value navigation)
   - [x] `PqVariant` / `PqVariantObject` / `PqVariantArray` row-API
-  - [ ] Shredded variant reassembly (Phase 2, #286)
+  - [x] Shredded variant reassembly — primitive, object, array, nested (Phase 2, #286)
+  - [x] Cross-impl byte-for-byte oracle against `parquet-testing/shredded_variant/*.variant.bin`
 - [ ] Not implemented (future)
   - [ ] INTERVAL
 

@@ -216,7 +216,7 @@ The `PqVariantObject` view exposes the same primitive getters as a Parquet struc
 
 **Primitive extraction on `PqVariant`:** When you already hold a `PqVariant` (e.g. an array element) use the `as*()` methods — `asInt`, `asString`, `asTimestamp`, and so on. Each throws `VariantTypeException` if the variant's type tag doesn't match.
 
-**Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value` for better compression and pushdown. Phase 1 of Variant support ignores `typed_value`; rows where the payload was shredded will surface an empty or null `value`. Full shredded-variant reassembly is planned as a follow-up (see issue #286).
+**Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value` for better compression and pushdown. Reassembly is transparent: `metadata()` and `value()` return canonical bytes regardless of whether the file was shredded, so `PqVariant` consumers see a single consistent representation.
 
 ## Predicate Pushdown (Filter)
 

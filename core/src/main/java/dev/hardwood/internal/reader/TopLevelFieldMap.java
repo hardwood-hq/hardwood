@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.List;
 
 import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.internal.variant.ShredLevel;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -31,17 +32,26 @@ final class TopLevelFieldMap {
 
         record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {}
 
-        /// Variant logical-type group. `metadataCol` and `valueCol` reference the
-        /// two required binary child columns that together carry the canonical
-        /// Variant bytes.
+        /// Variant logical-type group. Holds the `metadata` column index plus
+        /// a [ShredLevel] tree describing the shape of `value` / `typed_value`
+        /// (and, for shredded files, their nested sub-levels). The
+        /// [ShredLevel] root's `valueCol` is the variant group's `value` column;
+        /// its `typed` component is non-null iff the writer emitted a
+        /// `typed_value` sibling.
         ///
         /// @param schema the Variant-annotated GroupNode
         /// @param metadataCol projected column index of the `metadata` binary child
-        /// @param valueCol projected column index of the `value` binary child
         /// @param nullDefLevel def level below which the Variant group itself is null
+        /// @param root top-level shredded tree for this Variant column
         record Variant(SchemaNode.GroupNode schema,
-                       int metadataCol, int valueCol,
-                       int nullDefLevel) implements FieldDesc {}
+                       int metadataCol, int nullDefLevel,
+                       ShredLevel root) implements FieldDesc {
+
+            /// Shorthand for the top-level `value` column index.
+            int valueCol() {
+                return root.valueCol();
+            }
+        }
 
         /// @param nameToIndex       name → child ordinal (boundary lookup)
         /// @param children          ordinal → descriptor (internal lookup)
@@ -153,14 +163,10 @@ final class TopLevelFieldMap {
     }
 
     static FieldDesc.Variant buildVariantDesc(SchemaNode.GroupNode group, ProjectedSchema projectedSchema) {
-        // FileSchema validation guarantees the first two children are PrimitiveNodes
-        // named `metadata` and `value`; any third child (`typed_value`) is ignored
-        // in Phase 1 and only consulted once shredded-variant reassembly lands.
         SchemaNode.PrimitiveNode metadataNode = (SchemaNode.PrimitiveNode) group.children().get(0);
-        SchemaNode.PrimitiveNode valueNode = (SchemaNode.PrimitiveNode) group.children().get(1);
         int metadataCol = projectedSchema.toProjectedIndex(metadataNode.columnIndex());
-        int valueCol = projectedSchema.toProjectedIndex(valueNode.columnIndex());
-        return new FieldDesc.Variant(group, metadataCol, valueCol, group.maxDefinitionLevel());
+        ShredLevel root = ShredLevel.build(group, projectedSchema);
+        return new FieldDesc.Variant(group, metadataCol, group.maxDefinitionLevel(), root);
     }
 
     static FieldDesc.Struct buildStructDesc(SchemaNode.GroupNode group,

@@ -1,6 +1,6 @@
 # Design: Parquet Variant logical type support
 
-**Status: Phase 1 implemented. Phase 2 (shredded reassembly) pending.**
+**Status: Implemented (Phases 1 & 2).**
 
 **Issues:** #74 (Variant logical type recognition + read API), #286 (Shredded Variant reassembly)
 

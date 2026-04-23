@@ -229,18 +229,40 @@ final class PqStructImpl implements PqStruct {
         if (!(child instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
             throw new IllegalArgumentException("Field '" + name + "' is not annotated as VARIANT");
         }
-        if (variantDesc.metadataCol() < 0 || variantDesc.valueCol() < 0) {
+        if (variantDesc.metadataCol() < 0) {
             throw new IllegalStateException(
-                    "Variant column '" + name + "' requires both 'metadata' and 'value' children in the projection");
+                    "Variant column '" + name + "' requires its 'metadata' child in the projection");
         }
         int metaIdx = resolveValueIndex(variantDesc.metadataCol());
-        int valIdx = resolveValueIndex(variantDesc.valueCol());
         if (batch.isElementNull(variantDesc.metadataCol(), metaIdx)) {
             return null;
         }
-        byte[] metadata = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[metaIdx];
-        byte[] value = ((byte[][]) batch.valueArrays[variantDesc.valueCol()])[valIdx];
-        return new PqVariantImpl(metadata, value);
+        byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[metaIdx];
+
+        if (variantDesc.root().typed() != null) {
+            // Variant-in-struct reassembly uses the row-level ShredLevel tree;
+            // for position-mode (struct inside a list), the scratch reassembler
+            // would need list-aware indices. Fall back to a single-row
+            // reassembler attached to the batch's top-level rowIndex.
+            dev.hardwood.internal.variant.VariantMetadata meta = new dev.hardwood.internal.variant.VariantMetadata(metadataBytes);
+            VariantShredReassembler reassembler = new VariantShredReassembler();
+            reassembler.setCurrentMetadata(meta);
+            int effectiveRow = rowIndex >= 0 ? rowIndex : 0;
+            byte[] value = reassembler.reassemble(variantDesc.root(), batch, effectiveRow);
+            if (value == null) {
+                return null;
+            }
+            return new PqVariantImpl(meta, value, 0);
+        }
+
+        int valueCol = variantDesc.valueCol();
+        if (valueCol < 0) {
+            throw new IllegalStateException(
+                    "Variant column '" + name + "' requires its 'value' child in the projection");
+        }
+        int valIdx = resolveValueIndex(valueCol);
+        byte[] value = ((byte[][]) batch.valueArrays[valueCol])[valIdx];
+        return new PqVariantImpl(metadataBytes, value);
     }
 
     // ==================== Generic Fallback ====================
