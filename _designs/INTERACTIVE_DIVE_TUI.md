@@ -1023,30 +1023,16 @@ those commits. Check them off as they land.
     visible slice (plus a small overscan); blocked on checking whether
     tamboui's `Table` exposes a row-provider / lazy API before we
     reimplement viewport math in the screen.
-- [ ] **Data preview: pagination re-reads from row 0 every time.**
-  `DataPreviewScreen.loadPage` creates a fresh `RowReader` on every
-  PgDn / PgUp and `next()`-skips `firstRow` rows to reach the target —
-  so paging to row 1,000,000 means silently iterating a million rows
-  before reading the next page. Each page gets progressively slower the
-  further you've paged. The captured `G` jump-to-end follow-up would
-  trigger a single skip over ~N rows, which on a big file would feel
-  terrible.
-  **Fix shape:**
-    - Preserve the `RowReader` across forward page flips. PgDn from
-      `firstRow=F` to `firstRow=F+pageSize` should keep reading the same
-      reader, not recreate. Requires the screen (or a model-side
-      cursor) to hold a `(RowReader, currentRow)` cursor across state
-      transitions, closing it on screen pop.
-    - Recreate only when the cursor needs to go **backwards** (PgUp from
-      a forward-only reader, `g` jump-to-top).
-    - For `G` jump-to-end: `ParquetFileReader` may expose row-group-level
-      seek that cheaply lands near the end; if not, the jump is
-      inherently expensive and we should show a spinner / accept the
-      cost (or skip straight to opening a `RowReader` at the last row
-      group's first row, then forward-read from there).
-  Different shape from the Dictionary perf item above — that one is
-  pure in-memory recomputation; this one is I/O-and-iteration cost
-  that compounds with position in the file.
+- [x] **Data preview: pagination re-reads from row 0 every time.** Fixed
+  by moving the `RowReader` cursor onto `ParquetModel` via a new
+  `readPreviewPage(firstRow, pageSize, Consumer<RowReader>)` method
+  that reuses a forward-only cursor across calls. Forward moves skip
+  ahead without reopening; backward moves (`PgUp`, `g` jump-to-top)
+  close and recreate. The cursor is closed on `model.close()` so no
+  leak. `G` jump-to-end still pays the forward-read cost over a large
+  gap when the cursor is near row 0 — a row-group-level seek primitive
+  in core would make it cheap but isn't available yet; noted for a
+  future follow-up if the jump feels slow on huge files.
 - [ ] **Async I/O pass.** All index / page-header / dictionary reads currently block
   the render thread. **Decided: defer** until we have profiling evidence of a
   real problem. A spinner without async is cosmetic; a full async refactor

@@ -31,6 +31,7 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
 
 /// Snapshot of a Parquet file exposed to the dive screens.
@@ -49,6 +50,12 @@ public final class ParquetModel implements AutoCloseable {
     private final FileSchema schema;
     private final Facts facts;
     private int previewPageSize = 20;
+    // Forward-read cursor for Data preview pagination. Reusing the same
+    // RowReader across forward page flips avoids re-iterating from row 0 on
+    // every PgDn. Closed + recreated on backward moves (PgUp, g jump-to-top)
+    // and at session end.
+    private RowReader previewCursor;
+    private long previewCursorPosition;
     private static final int DICTIONARY_CACHE_CAPACITY = 4;
     private static final int DICTIONARY_READ_CAP_BYTES = 4 * 1024 * 1024;
 
@@ -247,8 +254,46 @@ public final class ParquetModel implements AutoCloseable {
         this.previewPageSize = pageSize;
     }
 
+    /// Reads a page of rows starting at `firstRow`. The `consumer` is called
+    /// once per row with a [RowReader] already positioned on that row. Reuses
+    /// a forward-only cursor across calls: moving forward skips ahead without
+    /// reopening, moving backwards closes and recreates the reader.
+    public void readPreviewPage(long firstRow, int pageSize, java.util.function.Consumer<RowReader> consumer)
+            throws IOException {
+        if (previewCursor == null || firstRow < previewCursorPosition) {
+            closePreviewCursor();
+            previewCursor = reader.createRowReader();
+            previewCursorPosition = 0;
+        }
+        while (previewCursorPosition < firstRow && previewCursor.hasNext()) {
+            previewCursor.next();
+            previewCursorPosition++;
+        }
+        int read = 0;
+        while (read < pageSize && previewCursor.hasNext()) {
+            previewCursor.next();
+            previewCursorPosition++;
+            consumer.accept(previewCursor);
+            read++;
+        }
+    }
+
+    private void closePreviewCursor() {
+        if (previewCursor != null) {
+            try {
+                previewCursor.close();
+            }
+            catch (RuntimeException ignored) {
+                // Best-effort close; the outer model close still needs to run.
+            }
+            previewCursor = null;
+            previewCursorPosition = 0;
+        }
+    }
+
     @Override
     public void close() throws IOException {
+        closePreviewCursor();
         reader.close();
     }
 

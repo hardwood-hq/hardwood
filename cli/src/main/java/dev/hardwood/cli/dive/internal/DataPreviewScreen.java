@@ -13,7 +13,6 @@ import java.util.List;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.RowValueFormatter;
-import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.SchemaNode;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
@@ -30,10 +29,10 @@ import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 
 /// Projected-row preview. `firstRow` / `pageSize` define which rows are currently
-/// loaded; `←/→` scrolls the visible column window for wide schemas;
-/// `PgDn`/`PgUp` flip pages by re-creating a [RowReader] starting from row 0 and
-/// skipping ahead. Forward-only `RowReader` means each page-flip re-walks the
-/// file from the start — fine for casual inspection, not intended for iteration.
+/// loaded; `←/→` scrolls the visible column window for wide schemas; `PgDn`/`PgUp`
+/// (or `Shift+↓/↑`) flip pages. [ParquetModel#readPreviewPage] maintains a
+/// forward-only cursor across calls, so stepping forward never re-iterates from
+/// row 0 — only backward moves (`PgUp`, `g` jump-to-top) recreate the reader.
 public final class DataPreviewScreen {
 
     private static final int VISIBLE_COLUMNS = 5;
@@ -164,20 +163,17 @@ public final class DataPreviewScreen {
         }
         int fieldCount = columnNames.size();
         List<List<String>> rows = new ArrayList<>();
-        try (RowReader reader = model.reader().createRowReader()) {
-            for (long skip = 0; skip < firstRow && reader.hasNext(); skip++) {
-                reader.next();
-            }
-            int read = 0;
-            while (read < pageSize && reader.hasNext()) {
-                reader.next();
+        try {
+            model.readPreviewPage(firstRow, pageSize, reader -> {
                 List<String> row = new ArrayList<>(fieldCount);
                 for (int c = 0; c < fieldCount; c++) {
                     row.add(truncate(RowValueFormatter.format(reader, c, topLevel.get(c)), VALUE_TRUNCATE));
                 }
                 rows.add(row);
-                read++;
-            }
+            });
+        }
+        catch (java.io.IOException e) {
+            throw new java.io.UncheckedIOException(e);
         }
         return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, columnScroll);
     }
