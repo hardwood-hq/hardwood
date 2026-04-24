@@ -252,6 +252,9 @@ public final class DictionaryScreen {
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
+        // Wipe the area so the underlying dictionary table doesn't bleed through
+        // cells that the Paragraph doesn't paint.
+        dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
 
         String full = fullValue(dict, index);
         List<Line> lines = new ArrayList<>();

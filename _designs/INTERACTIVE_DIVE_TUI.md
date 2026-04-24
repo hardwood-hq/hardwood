@@ -718,22 +718,15 @@ those commits. Check them off as they land.
   byte count in parentheses alongside the human-readable form. Adds one
   helper (or inlines the same concatenation used on `File size`) and
   updates five lines.
-- [ ] **Modals don't fully occlude the screen behind them** (bleed-through).
-  Reporter spotted this as `DATA_PAGE_V22` on the Pages page-header modal:
-  the stray `2` turned out to be a digit from the Pages table rendered
-  behind the modal, visible because the modal's cells to the right of
-  each text line weren't overwritten. `Paragraph` only paints the cells
-  it has text for, so trailing cells inside the modal rectangle keep
-  their pre-modal buffer content. Affects every modal currently drawn:
-    - `PagesScreen.renderHeaderModal` (the reported case)
-    - `DictionaryScreen.renderValueModal`
-    - `HelpOverlay.render`
-  **Fix:** render tamboui's `dev.tamboui.widgets.Clear` widget over the
-  modal's Rect before the Block+Paragraph. `Clear` zeroes out every cell
-  in its area, after which the modal content draws onto a clean
-  background. This is the purpose-built primitive; cheaper and more
-  correct than padding every line to the inner width or forcing a
-  solid-color background on every Block.
+- [x] **Modals don't fully occlude the screen behind them** (bleed-through).
+  Fixed in all three modal call sites (`PagesScreen.renderHeaderModal`,
+  `DictionaryScreen.renderValueModal`, `HelpOverlay.render`) by rendering
+  `dev.tamboui.widgets.Clear.INSTANCE` over the modal Rect before drawing
+  the Block+Paragraph. Clear zeroes every cell in its area, so trailing
+  cells beyond each line's last character no longer show the underlying
+  screen's content. Symptom report was `DATA_PAGE_V22` on the Pages
+  page-header modal (the stray `2` being a digit from the Pages table
+  behind the modal).
 - [x] **Data preview: `ArrayIndexOutOfBoundsException` on nested schemas.**
   Fixed in `DataPreviewScreen.loadPage`: iterate `getRootNode().children()`
   (top-level fields) instead of `model.columnCount()` (leaf count), build

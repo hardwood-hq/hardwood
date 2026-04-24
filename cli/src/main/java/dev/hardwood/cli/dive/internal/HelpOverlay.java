@@ -34,6 +34,9 @@ public final class HelpOverlay {
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
+        // Wipe the area so the underlying screen doesn't bleed through cells
+        // that the Paragraph doesn't paint.
+        dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
 
         List<Line> lines = List.of(
                 Line.from(new Span("Navigation", Style.EMPTY.bold())),

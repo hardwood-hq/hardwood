@@ -194,6 +194,9 @@ public final class PagesScreen {
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
+        // Wipe the area so the underlying table doesn't bleed through cells
+        // that the Paragraph doesn't paint (Paragraph only writes where text is).
+        dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
 
         List<Line> lines = new ArrayList<>();
         lines.add(kv("Type", header.type().name()));
