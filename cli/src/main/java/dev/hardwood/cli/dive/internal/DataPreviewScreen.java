@@ -54,7 +54,9 @@ public final class DataPreviewScreen {
         // columnNames already carries the top-level-field count (see loadPage —
         // the reader indexes into fields, not leaves, so leaf count would overshoot).
         int columnCount = state.columnNames().size();
-        if (event.code() == KeyCode.PAGE_DOWN) {
+        // Page forward: PgDn, or Shift+↓ — the Shift alias is a one-hand chord
+        // on macOS laptops where PgDn is Fn+↓.
+        if (event.code() == KeyCode.PAGE_DOWN || (event.hasShift() && event.isDown())) {
             long nextFirst = Math.min(total, state.firstRow() + state.pageSize());
             if (nextFirst >= total) {
                 return false;
@@ -62,7 +64,7 @@ public final class DataPreviewScreen {
             stack.replaceTop(loadPage(model, nextFirst, state.pageSize(), state.columnScroll()));
             return true;
         }
-        if (event.code() == KeyCode.PAGE_UP) {
+        if (event.code() == KeyCode.PAGE_UP || (event.hasShift() && event.isUp())) {
             long prevFirst = Math.max(0, state.firstRow() - state.pageSize());
             if (prevFirst == state.firstRow()) {
                 return false;
@@ -147,7 +149,7 @@ public final class DataPreviewScreen {
     }
 
     public static String keybarKeys() {
-        return "[←→] columns  [PgDn/PgUp] page  [Esc] back";
+        return "[←→] columns  [PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [Esc] back";
     }
 
     private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize, int columnScroll) {

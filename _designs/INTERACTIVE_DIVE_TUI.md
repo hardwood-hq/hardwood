@@ -901,16 +901,12 @@ those commits. Check them off as they land.
       of the Dictionary records' primitive arrays.
   Sits as a sibling of the existing `IndexValueFormatter` (which already
   handles the byte[]-stats case for min/max).
-- [ ] **Data preview: add `Shift+↓` / `Shift+↑` as aliases for PgDn / PgUp.**
-  On macOS laptops PgDn / PgUp require `Fn+↓` / `Fn+↑`, which is a two-hand
-  chord. Shift-modified arrows are a one-hand alternative that works on any
-  keyboard, and there's no semantic collision (Data preview has no
-  multi-select concept, so shift-as-extend-selection is free). Keep the
-  existing PgDn / PgUp bindings as fallbacks — some older / remote
-  terminals drop the shift modifier, so non-Mac users shouldn't lose the
-  portable keys. Implementation: check `event.hasShift() && event.isDown()`
-  (and the `isUp` mirror) in `DataPreviewScreen.handle`, route to the
-  same branches that currently handle `KeyCode.PAGE_DOWN` / `PAGE_UP`.
+- [x] **Data preview: add `Shift+↓` / `Shift+↑` as aliases for PgDn / PgUp.**
+  Added a short-circuit in `DataPreviewScreen.handle`: the PgDn branch
+  now also fires on `hasShift() && isDown()`, and PgUp mirrors with
+  `isUp()`. PgDn/PgUp still work for users with dedicated keys; the
+  Shift-arrow alias is the one-hand chord for macOS laptops. Keybar
+  updated to list both.
 - [ ] **Pages screen: column additions and width tuning.**
   Current columns: `# | Type | First row | Values | Encoding | Comp | Min | Max`.
   Several coordinated tweaks on the same table:
