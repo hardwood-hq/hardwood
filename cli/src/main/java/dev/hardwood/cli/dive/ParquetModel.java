@@ -8,14 +8,24 @@
 package dev.hardwood.cli.dive;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.thrift.ColumnIndexReader;
+import dev.hardwood.internal.thrift.OffsetIndexReader;
+import dev.hardwood.internal.thrift.PageHeaderReader;
+import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
@@ -30,14 +40,19 @@ public final class ParquetModel implements AutoCloseable {
 
     private final String displayPath;
     private final long fileSizeBytes;
+    private final InputFile inputFile;
     private final ParquetFileReader reader;
     private final FileMetaData metadata;
     private final FileSchema schema;
     private final Facts facts;
+    private final Map<ChunkKey, ColumnIndex> columnIndexCache = new HashMap<>();
+    private final Map<ChunkKey, OffsetIndex> offsetIndexCache = new HashMap<>();
+    private final Map<ChunkKey, List<PageHeader>> pageHeaderCache = new HashMap<>();
 
-    private ParquetModel(String displayPath, long fileSizeBytes, ParquetFileReader reader) {
+    private ParquetModel(String displayPath, long fileSizeBytes, InputFile inputFile, ParquetFileReader reader) {
         this.displayPath = displayPath;
         this.fileSizeBytes = fileSizeBytes;
+        this.inputFile = inputFile;
         this.reader = reader;
         this.metadata = reader.getFileMetaData();
         this.schema = reader.getFileSchema();
@@ -47,7 +62,7 @@ public final class ParquetModel implements AutoCloseable {
     public static ParquetModel open(InputFile inputFile, String displayPath) throws IOException {
         ParquetFileReader reader = ParquetFileReader.open(inputFile);
         try {
-            return new ParquetModel(displayPath, inputFile.length(), reader);
+            return new ParquetModel(displayPath, inputFile.length(), inputFile, reader);
         }
         catch (RuntimeException e) {
             reader.close();
@@ -91,9 +106,93 @@ public final class ParquetModel implements AutoCloseable {
         return rowGroup(rowGroupIndex).columns().get(columnIndex);
     }
 
+    /// Reads the column index for a chunk, caching the result for the session.
+    /// Returns `null` when the chunk has no column index.
+    public ColumnIndex columnIndex(int rowGroupIndex, int columnIndex) {
+        ChunkKey key = new ChunkKey(rowGroupIndex, columnIndex);
+        if (columnIndexCache.containsKey(key)) {
+            return columnIndexCache.get(key);
+        }
+        ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
+        Long offset = cc.columnIndexOffset();
+        Integer length = cc.columnIndexLength();
+        ColumnIndex result = null;
+        if (offset != null && length != null && length > 0) {
+            try {
+                ByteBuffer buffer = inputFile.readRange(offset, length);
+                result = ColumnIndexReader.read(new ThriftCompactReader(buffer));
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        columnIndexCache.put(key, result);
+        return result;
+    }
+
+    /// Reads the offset index for a chunk, caching the result for the session.
+    /// Returns `null` when the chunk has no offset index.
+    public OffsetIndex offsetIndex(int rowGroupIndex, int columnIndex) {
+        ChunkKey key = new ChunkKey(rowGroupIndex, columnIndex);
+        if (offsetIndexCache.containsKey(key)) {
+            return offsetIndexCache.get(key);
+        }
+        ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
+        Long offset = cc.offsetIndexOffset();
+        Integer length = cc.offsetIndexLength();
+        OffsetIndex result = null;
+        if (offset != null && length != null && length > 0) {
+            try {
+                ByteBuffer buffer = inputFile.readRange(offset, length);
+                result = OffsetIndexReader.read(new ThriftCompactReader(buffer));
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        }
+        offsetIndexCache.put(key, result);
+        return result;
+    }
+
+    /// Walks a column chunk's byte range and returns its page headers (dictionary
+    /// header first if present, then data pages). Cached after the first call.
+    public List<PageHeader> pageHeaders(int rowGroupIndex, int columnIndex) {
+        ChunkKey key = new ChunkKey(rowGroupIndex, columnIndex);
+        List<PageHeader> cached = pageHeaderCache.get(key);
+        if (cached != null) {
+            return cached;
+        }
+        ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
+        ColumnMetaData cmd = cc.metaData();
+        Long dictOffset = cmd.dictionaryPageOffset();
+        long start = dictOffset != null && dictOffset > 0 ? dictOffset : cmd.dataPageOffset();
+        long totalBytes = cmd.totalCompressedSize();
+        List<PageHeader> headers = new ArrayList<>();
+        try {
+            ByteBuffer buffer = inputFile.readRange(start, Math.toIntExact(totalBytes));
+            int position = 0;
+            while (position < buffer.limit()) {
+                ThriftCompactReader tcr = new ThriftCompactReader(buffer, position);
+                PageHeader header = PageHeaderReader.read(tcr);
+                headers.add(header);
+                int headerSize = tcr.getBytesRead();
+                position += headerSize + header.compressedPageSize();
+            }
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(e);
+        }
+        List<PageHeader> result = List.copyOf(headers);
+        pageHeaderCache.put(key, result);
+        return result;
+    }
+
     @Override
     public void close() throws IOException {
         reader.close();
+    }
+
+    private record ChunkKey(int rowGroupIndex, int columnIndex) {
     }
 
     private Facts computeFacts() {

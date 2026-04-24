@@ -101,6 +101,12 @@ public final class Chrome {
             case ScreenState.ColumnChunks cc -> "RG #" + cc.rowGroupIndex() + " › Column chunks";
             case ScreenState.ColumnChunkDetail d ->
                     model.schema().getColumn(d.columnIndex()).fieldPath().toString();
+            case ScreenState.Pages ignored -> "Pages";
+            case ScreenState.ColumnIndexView ignored -> "Column index";
+            case ScreenState.OffsetIndexView ignored -> "Offset index";
+            case ScreenState.Footer ignored -> "Footer & indexes";
+            case ScreenState.ColumnAcrossRowGroups c ->
+                    model.schema().getColumn(c.columnIndex()).fieldPath() + " across RGs";
         };
     }
 

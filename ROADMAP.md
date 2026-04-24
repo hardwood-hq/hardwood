@@ -464,9 +464,9 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 ### Interactive CLI (`hardwood dive`)
 TUI for exploring Parquet file structure. See `_designs/INTERACTIVE_DIVE_TUI.md`.
 - [x] Phase 1: skeleton + Overview / Schema (flat) / Row groups / Column chunks / Column chunk detail / Help overlay (#324)
-- [ ] Phase 2: Pages / Column index / Offset index / Footer / Column-across-row-groups / Schema tree expansion
+- [x] Phase 2: Pages + page-header modal / Column index / Offset index / Footer / Column-across-row-groups / Chunk-detail drill menu (#324)
 - [ ] Phase 3: Dictionary / Data preview
-- [ ] Phase 4: search, polish, docs with screenshots
+- [ ] Phase 4: Schema tree expansion, search, polish, docs with screenshots
 
 ## Testing
 

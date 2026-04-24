@@ -45,6 +45,10 @@ public final class SchemaScreen {
             stack.replaceTop(new ScreenState.Schema(Math.min(count - 1, state.selection() + 1)));
             return true;
         }
+        if (event.isConfirm() && count > 0) {
+            stack.push(new ScreenState.ColumnAcrossRowGroups(state.selection(), 0));
+            return true;
+        }
         return false;
     }
 
@@ -83,6 +87,6 @@ public final class SchemaScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Esc] back";
+        return "[↑↓] move  [Enter] column across RGs  [Esc] back";
     }
 }
