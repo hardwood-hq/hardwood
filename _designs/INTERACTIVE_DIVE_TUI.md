@@ -1089,22 +1089,14 @@ those commits. Check them off as they land.
 
 ### Data exposure gaps
 
-- [ ] **Pages screen: fall back to inline page statistics when ColumnIndex
-  is absent.** The list and the page-header modal currently only read
-  per-page min / max / null-count from `ColumnIndex`; when the file was
-  written without a ColumnIndex (older writers, or modern writers with
-  page indexes disabled), the same data is still present inline on each
-  page header (`DataPageHeader.statistics` for v1,
-  `DataPageHeaderV2.statistics` for v2) and is silently ignored. Result:
-  `Min` / `Max` / `Nulls` render as `—` even when the data exists.
-  **Fix:** when `model.columnIndex(rg, col)` is null, fall back to the
-  per-page `Statistics` record on the page header (prefer v2 over v1 if
-  both happen to be present; ColumnIndex remains authoritative when it
-  exists). Use the existing `IndexValueFormatter` for the byte[] stats,
-  matching how chunk-level stats are already formatted. Also surface
-  inline stats in the page-header modal (currently the modal omits the
-  `statistics` field entirely). Related prior work on the filter-pushdown
-  side: `_designs/INLINE_PAGE_STATS_FALLBACK.md`.
+- [x] **Pages screen: fall back to inline page statistics when ColumnIndex
+  is absent.** `PagesScreen` now reads min/max from `DataPageHeader.statistics`
+  / `DataPageHeaderV2.statistics` via an `inlineStats(PageHeader)` helper
+  that prefers v2 when both are present. Applied in both the list (fallback
+  branch of the existing ColumnIndex check) and the page-header modal
+  (new "Inline statistics" section showing Min / Max / Nulls when
+  available). ColumnIndex remains authoritative when present. Related
+  core work: `_designs/INLINE_PAGE_STATS_FALLBACK.md` (filter pushdown).
 - [ ] **Bloom filter bytes in the Footer screen.** Blocked on #325 (expose
   `bloomFilterLength()` on `ColumnChunk` in hardwood-core). Once that lands,
   add a `Bloom filters` line to `FooterScreen` alongside the existing column

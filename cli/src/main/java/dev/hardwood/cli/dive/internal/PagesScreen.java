@@ -22,6 +22,7 @@ import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
+import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
@@ -107,6 +108,13 @@ public final class PagesScreen {
                     min = formatStat(columnIndex.minValues().get(dataPageIdx), col);
                     max = formatStat(columnIndex.maxValues().get(dataPageIdx), col);
                 }
+                else {
+                    Statistics inline = inlineStats(h);
+                    if (inline != null) {
+                        min = formatStat(inline.minValue(), col);
+                        max = formatStat(inline.maxValue(), col);
+                    }
+                }
                 dataPageIdx++;
             }
             rows.add(Row.from(
@@ -150,7 +158,7 @@ public final class PagesScreen {
         table.render(area, buffer, tableState);
 
         if (state.modalOpen() && !headers.isEmpty()) {
-            renderHeaderModal(buffer, area, headers.get(state.selection()), state.selection());
+            renderHeaderModal(buffer, area, headers.get(state.selection()), state.selection(), col);
         }
     }
 
@@ -188,7 +196,7 @@ public final class PagesScreen {
         return IndexValueFormatter.format(bytes, col);
     }
 
-    private static void renderHeaderModal(Buffer buffer, Rect screenArea, PageHeader header, int index) {
+    private static void renderHeaderModal(Buffer buffer, Rect screenArea, PageHeader header, int index, ColumnSchema col) {
         int width = Math.min(60, screenArea.width() - 4);
         int height = Math.min(20, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
@@ -226,6 +234,16 @@ public final class PagesScreen {
             lines.add(kv("Num values", String.format("%,d", dictHeader.numValues())));
             lines.add(kv("Encoding", dictHeader.encoding().name()));
         }
+        Statistics inline = inlineStats(header);
+        if (inline != null) {
+            lines.add(Line.empty());
+            lines.add(Line.from(new Span(" Inline statistics ", Style.EMPTY.bold())));
+            lines.add(kv("  Min", formatStat(inline.minValue(), col)));
+            lines.add(kv("  Max", formatStat(inline.maxValue(), col)));
+            if (inline.nullCount() != null) {
+                lines.add(kv("  Nulls", String.format("%,d", inline.nullCount())));
+            }
+        }
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Press Esc or Enter to close", Style.EMPTY.fg(Color.GRAY))));
 
@@ -240,6 +258,18 @@ public final class PagesScreen {
 
     private static String dualSize(long bytes) {
         return Sizes.format(bytes) + "  (" + String.format("%,d", bytes) + " B)";
+    }
+
+    /// Returns the per-page inline statistics (if any), preferring v2 over v1
+    /// since both can technically be present on exotic files.
+    private static Statistics inlineStats(PageHeader h) {
+        if (h.dataPageHeaderV2() != null && h.dataPageHeaderV2().statistics() != null) {
+            return h.dataPageHeaderV2().statistics();
+        }
+        if (h.dataPageHeader() != null && h.dataPageHeader().statistics() != null) {
+            return h.dataPageHeader().statistics();
+        }
+        return null;
     }
 
     private static Line kv(String key, String value) {
