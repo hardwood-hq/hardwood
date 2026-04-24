@@ -33,4 +33,14 @@ class NativeBinarySmokeIT {
         assertThat(result.exitCode()).isZero();
         assertThat(result.getOutput()).contains("message schema");
     }
+
+    @Test
+    void diveSmokeRenderExitsZero(QuarkusMainLauncher launcher) {
+        LaunchResult result = launcher.launch("dive", "-f", plainFile, "--smoke-render");
+
+        assertThat(result.exitCode())
+                .withFailMessage("dive --smoke-render failed: stdout=%s stderr=%s",
+                        result.getOutput(), result.getErrorOutput())
+                .isZero();
+    }
 }

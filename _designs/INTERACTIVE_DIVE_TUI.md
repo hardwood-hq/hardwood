@@ -675,3 +675,74 @@ the end of each phase to move entries from `[ ]` to `[x]`.
    Propose: 64 MB soft cap, configurable via `--max-dict-bytes`.
 
 These are resolvable during phase 1 review; noting them so they aren't forgotten.
+
+## Follow-ups
+
+Items surfaced during phase-1 through phase-4 implementation that were scoped out of
+those commits. Check them off as they land.
+
+### Native image
+
+- [x] **Add `hardwood dive --smoke-render` to `NativeBinarySmokeIT`** so the compiled
+  native binary is exercised alongside the JVM suite — catches class-init / reflection
+  regressions that the surefire test can't.
+- [x] **Reflect-config for tamboui.** Adapted from tamboui's `basic-demo` and scoped
+  to JNI-only providers: registered `BackendProvider` / `JLineBackendProvider` /
+  `JLineBackend` (required by `SafeServiceLoader.load(BackendProvider.class)`), plus
+  the `org.jline.terminal.*` and `org.jline.nativ.*` classes the JLine `TerminalBuilder`
+  reflects on. Done by hand rather than the tracing agent — that path is still a
+  valid option if further reflection regressions surface.
+- [x] **Extra `--initialize-at-run-time` entries.** Added `org.jline.terminal.impl.jni`
+  (covers the Windows / Linux / macOS / FreeBSD `NativeWin*` / `*NativePty` classes
+  that call `Kernel32.init()` at `<clinit>`) alongside the existing
+  `org.jline.nativ` entry.
+
+### Screen / UX polish
+
+- [ ] **Search on Schema and Column index.** The pattern is demonstrated by the
+  Dictionary screen's `/` mode (state has `filter` + `searching`, DiveApp skips global
+  keymap while input mode is active). Extend the same shape to Schema (filter by path)
+  and Column index (filter by min/max literal).
+- [ ] **"Jump to chunk #N" from the Footer screen.** When the cursor is on a row-group
+  or column-chunk line of the footer layout, `Enter` pushes directly into the
+  corresponding [ColumnChunkDetail]. Avoids the RowGroups → ColumnChunks drill when
+  the target chunk is already known.
+- [ ] **Data preview test fixture.** `DiveStateTest.dataPreviewPageDownAdvancesFirstRow`
+  no-ops for fixtures with fewer than 4 rows — the current `compat_plain_int64.parquet`
+  has 1 row, so the pagination path isn't actually covered. Either point the test at a
+  larger fixture under `core/src/test/resources/` or synthesise one via
+  `simple-datagen.py`.
+
+### Rendering / performance
+
+- [ ] **Async I/O pass.** All index / page-header / dictionary reads currently block
+  the render thread. Profile interactive navigation on a large file; if blocking is
+  visible (spinner needed), move reads to a worker via `runner.runOnRenderThread` for
+  completion. Needs runtime data to justify the complexity.
+- [ ] **Narrow-terminal column policy for tables.** Column chunks, Column-across-RGs,
+  and Data preview each have >6 columns that don't fit at 80×24. Data preview already
+  has `←/→` column scroll; the others truncate implicitly via tamboui. Define a
+  per-screen priority list and elide low-priority columns below a width threshold.
+
+### Data exposure gaps
+
+- [ ] **Bloom filter bytes in the Footer screen.** `FooterScreen` currently notes
+  "Bloom filter sizes are not exposed by the reader" as a placeholder. If / when
+  `ColumnChunk` gains `bloomFilterLength()` (core-side change), plumb it through.
+
+### Documentation
+
+- [ ] **Screenshots in `docs/content/cli.md`.** The current docs use ASCII sketches;
+  capture terminal screenshots of the main flows (Overview → Row groups → Column
+  chunks → Pages, Schema tree expansion, Dictionary search) once the native binary
+  runs on a real TTY.
+
+### Design-doc open questions still unresolved
+
+- [ ] **Colour palette decision** (*Open question 1*). Phase 1–4 use ad-hoc Cyan /
+  Gray highlighting — no central theme. Decide whether to extract a `Theme` class and
+  which palette to standardise on.
+- [ ] **Dictionary soft-cap flag** (*Open question 3*). Design proposed a 64 MB cap
+  exposed via `--max-dict-bytes`. Phase 3 currently caps the chunk-read at a fixed
+  4 MiB (`ParquetModel.DICTIONARY_READ_CAP_BYTES`) with no CLI knob — promote this
+  to a configurable option and wire it through `DiveCommand`.
