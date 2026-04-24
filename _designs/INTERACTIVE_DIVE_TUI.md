@@ -1069,12 +1069,14 @@ those commits. Check them off as they land.
   screen now uses the Theme constants; only `Theme.java` references
   `Color.*` directly. No visual change. Future retheme (light-terminal
   variant, `--no-color`) now lives in one file.
-- [ ] **Dictionary soft-cap flag** (*Open question 3*). Phase 3 caps the
-  chunk-read at a fixed 4 MiB (`ParquetModel.DICTIONARY_READ_CAP_BYTES`)
-  with no CLI knob.
-  **Decided:** raise the default to 16 MiB (middle ground between "always
-  works" and "memory-safe") and add a `--max-dict-bytes N` flag on
-  `DiveCommand`. On overflow, the Dictionary screen does **not** silently
-  truncate — it renders a `Dictionary is ~N MB. Load anyway? [Enter to
-  load, Esc to cancel]` prompt so the memory cost is visible and the user
-  opts in inline without restarting.
+- [x] **Dictionary soft-cap flag** (*Open question 3*). Default raised
+  from 4 MiB to 16 MiB and exposed via a new `--max-dict-bytes N` flag
+  on `DiveCommand`. `ParquetModel` now distinguishes `dictionary()`
+  (respects cap, returns null over it) from `dictionaryForced()`
+  (bypass), and exposes `dictionaryChunkBytes()` + `dictionaryReadCapBytes()`
+  so the screen can check upfront. `DictionaryView` state gains a
+  `loadConfirmed` flag; when the chunk exceeds the cap, the screen
+  renders a confirm prompt ("would need to load N MB; press Enter to
+  load anyway, Esc to cancel"). Enter flips `loadConfirmed` and the
+  next render loads via the forced path. Esc falls through to the
+  global back-navigation as normal.

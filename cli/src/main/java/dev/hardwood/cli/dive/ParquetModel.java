@@ -50,6 +50,7 @@ public final class ParquetModel implements AutoCloseable {
     private final FileSchema schema;
     private final Facts facts;
     private int previewPageSize = 20;
+    private int dictionaryReadCapBytes = DEFAULT_DICTIONARY_READ_CAP_BYTES;
     // Forward-read cursor for Data preview pagination. Reusing the same
     // RowReader across forward page flips avoids re-iterating from row 0 on
     // every PgDn. Closed + recreated on backward moves (PgUp, g jump-to-top)
@@ -57,7 +58,12 @@ public final class ParquetModel implements AutoCloseable {
     private RowReader previewCursor;
     private long previewCursorPosition;
     private static final int DICTIONARY_CACHE_CAPACITY = 4;
-    private static final int DICTIONARY_READ_CAP_BYTES = 4 * 1024 * 1024;
+    /// Default maximum chunk-size for a Dictionary load. Larger chunks need the
+    /// user to opt in via the Dictionary-screen confirm prompt (or via
+    /// `--max-dict-bytes` to raise this default). 16 MiB covers typical
+    /// numeric and short-string dictionaries without accidentally loading
+    /// hundreds of MB of BYTE_ARRAY values.
+    private static final int DEFAULT_DICTIONARY_READ_CAP_BYTES = 16 * 1024 * 1024;
 
     private final Map<ChunkKey, ColumnIndex> columnIndexCache = new HashMap<>();
     private final Map<ChunkKey, OffsetIndex> offsetIndexCache = new HashMap<>();
@@ -208,10 +214,42 @@ public final class ParquetModel implements AutoCloseable {
         return result;
     }
 
-    /// Loads the dictionary for a column chunk, caching the most recent entries to
-    /// bound memory for wide BYTE_ARRAY dictionaries. Returns `null` if the chunk
-    /// is not dictionary-encoded.
+    /// Loads the dictionary for a column chunk when the chunk is within the
+    /// `dictionaryReadCapBytes` size limit. Returns `null` if the chunk is not
+    /// dictionary-encoded **or** if the chunk size would exceed the cap; in
+    /// the latter case, call [#dictionaryForced] to bypass and load anyway.
     public Dictionary dictionary(int rowGroupIndex, int columnIndex) {
+        if (dictionaryChunkBytes(rowGroupIndex, columnIndex) > dictionaryReadCapBytes) {
+            return null;
+        }
+        return loadDictionary(rowGroupIndex, columnIndex);
+    }
+
+    /// Bypasses the size cap. Used by the Dictionary screen's confirm-load
+    /// path after the user explicitly opts into reading an oversize chunk.
+    public Dictionary dictionaryForced(int rowGroupIndex, int columnIndex) {
+        return loadDictionary(rowGroupIndex, columnIndex);
+    }
+
+    /// The total compressed byte size of a column chunk — used by the
+    /// Dictionary screen to decide whether to show a confirm-load prompt
+    /// before calling [#dictionaryForced].
+    public long dictionaryChunkBytes(int rowGroupIndex, int columnIndex) {
+        return chunk(rowGroupIndex, columnIndex).metaData().totalCompressedSize();
+    }
+
+    public int dictionaryReadCapBytes() {
+        return dictionaryReadCapBytes;
+    }
+
+    public void setDictionaryReadCapBytes(int capBytes) {
+        if (capBytes <= 0) {
+            throw new IllegalArgumentException("dictionary read cap must be positive: " + capBytes);
+        }
+        this.dictionaryReadCapBytes = capBytes;
+    }
+
+    private Dictionary loadDictionary(int rowGroupIndex, int columnIndex) {
         ChunkKey key = new ChunkKey(rowGroupIndex, columnIndex);
         Dictionary cached = dictionaryCache.get(key);
         if (cached != null) {
@@ -221,7 +259,7 @@ public final class ParquetModel implements AutoCloseable {
         ColumnMetaData cmd = cc.metaData();
         Long dictOffset = cmd.dictionaryPageOffset();
         long chunkStart = dictOffset != null && dictOffset > 0 ? dictOffset : cmd.dataPageOffset();
-        int readSize = Math.toIntExact(Math.min(cmd.totalCompressedSize(), DICTIONARY_READ_CAP_BYTES));
+        int readSize = Math.toIntExact(cmd.totalCompressedSize());
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
             ByteBuffer region = inputFile.readRange(chunkStart, readSize);
             Dictionary dict = DictionaryParser.parse(region, schema.getColumn(columnIndex), cmd, context);

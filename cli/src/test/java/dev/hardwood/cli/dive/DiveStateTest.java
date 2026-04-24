@@ -404,7 +404,7 @@ class DiveStateTest {
 
     @Test
     void dictionarySlashEntersSearchMode() {
-        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "", false));
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "", false, false));
 
         DictionaryScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '/'), model, stack);
@@ -415,7 +415,7 @@ class DiveStateTest {
 
     @Test
     void dictionarySearchAppendsCharToFilter() {
-        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "", true));
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "", true, false));
 
         DictionaryScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'a'), model, stack);
@@ -425,7 +425,7 @@ class DiveStateTest {
 
     @Test
     void dictionarySearchEscClearsFilter() {
-        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "abc", true));
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "abc", true, false));
 
         DictionaryScreen.handle(key(KeyCode.ESCAPE), model, stack);
 
@@ -436,7 +436,7 @@ class DiveStateTest {
 
     @Test
     void dictionarySearchEnterKeepsFilter() {
-        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "abc", true));
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "abc", true, false));
 
         DictionaryScreen.handle(key(KeyCode.ENTER), model, stack);
 
@@ -447,7 +447,7 @@ class DiveStateTest {
 
     @Test
     void dictionaryBackspaceTrimsFilter() {
-        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "abc", true));
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "abc", true, false));
 
         DictionaryScreen.handle(key(KeyCode.BACKSPACE), model, stack);
 
@@ -551,7 +551,7 @@ class DiveStateTest {
         for (int rg = 0; rg < model.rowGroupCount(); rg++) {
             for (int c = 0; c < model.rowGroup(rg).columns().size(); c++) {
                 if (model.chunk(rg, c).metaData().dictionaryPageOffset() != null) {
-                    NavigationStack stack = rooted(new ScreenState.DictionaryView(rg, c, 0, false, "", false));
+                    NavigationStack stack = rooted(new ScreenState.DictionaryView(rg, c, 0, false, "", false, false));
 
                     DictionaryScreen.handle(key(KeyCode.ENTER), model, stack);
                     assertThat(((ScreenState.DictionaryView) stack.top()).modalOpen()).isTrue();

@@ -67,6 +67,15 @@ public final class DictionaryScreen {
         if (state.searching()) {
             return handleSearching(event, state, stack);
         }
+        if (needsConfirmation(model, state)) {
+            // Confirm-to-load prompt: Enter opts in, Esc falls through to the
+            // default DiveApp.Esc-pops-back behaviour.
+            if (event.isConfirm()) {
+                stack.replaceTop(withConfirmed(state, true));
+                return true;
+            }
+            return false;
+        }
         if (state.modalOpen()) {
             if (event.isCancel() || event.isConfirm()) {
                 stack.replaceTop(with(state, state.selection(), false, state.filter(), false));
@@ -78,7 +87,7 @@ public final class DictionaryScreen {
             stack.replaceTop(with(state, 0, false, state.filter(), true));
             return true;
         }
-        Dictionary dict = model.dictionary(state.rowGroupIndex(), state.columnIndex());
+        Dictionary dict = loadDictionary(model, state);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         List<Integer> filtered = filteredIndices(dict, col, state.filter());
         if (event.isUp()) {
@@ -140,7 +149,11 @@ public final class DictionaryScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.DictionaryView state) {
-        Dictionary dict = model.dictionary(state.rowGroupIndex(), state.columnIndex());
+        if (needsConfirmation(model, state)) {
+            renderConfirmPrompt(buffer, area, model, state);
+            return;
+        }
+        Dictionary dict = loadDictionary(model, state);
         if (dict == null) {
             renderEmpty(buffer, area);
             return;
@@ -238,7 +251,26 @@ public final class DictionaryScreen {
     private static ScreenState.DictionaryView with(ScreenState.DictionaryView state,
                                                     int selection, boolean modalOpen, String filter, boolean searching) {
         return new ScreenState.DictionaryView(
-                state.rowGroupIndex(), state.columnIndex(), selection, modalOpen, filter, searching);
+                state.rowGroupIndex(), state.columnIndex(), selection, modalOpen, filter, searching,
+                state.loadConfirmed());
+    }
+
+    private static ScreenState.DictionaryView withConfirmed(ScreenState.DictionaryView state, boolean confirmed) {
+        return new ScreenState.DictionaryView(
+                state.rowGroupIndex(), state.columnIndex(), state.selection(), state.modalOpen(),
+                state.filter(), state.searching(), confirmed);
+    }
+
+    private static boolean needsConfirmation(ParquetModel model, ScreenState.DictionaryView state) {
+        return !state.loadConfirmed()
+                && model.dictionaryChunkBytes(state.rowGroupIndex(), state.columnIndex())
+                > model.dictionaryReadCapBytes();
+    }
+
+    private static Dictionary loadDictionary(ParquetModel model, ScreenState.DictionaryView state) {
+        return state.loadConfirmed()
+                ? model.dictionaryForced(state.rowGroupIndex(), state.columnIndex())
+                : model.dictionary(state.rowGroupIndex(), state.columnIndex());
     }
 
     private static String formatValue(Dictionary dict, int index, ColumnSchema col, int max) {
@@ -258,6 +290,32 @@ public final class DictionaryScreen {
             case Dictionary.ByteArrayDictionary d -> d.values()[index];
         };
         return RowValueFormatter.formatDictionaryValue(raw, col);
+    }
+
+    private static void renderConfirmPrompt(Buffer buffer, Rect area, ParquetModel model,
+                                            ScreenState.DictionaryView state) {
+        long chunkBytes = model.dictionaryChunkBytes(state.rowGroupIndex(), state.columnIndex());
+        int capBytes = model.dictionaryReadCapBytes();
+        List<Line> lines = new ArrayList<>();
+        lines.add(Line.empty());
+        lines.add(Line.from(Span.raw(" This chunk would need to load "
+                + dev.hardwood.cli.internal.Sizes.format(chunkBytes)
+                + " of dictionary bytes,")));
+        lines.add(Line.from(Span.raw(" exceeding the current "
+                + dev.hardwood.cli.internal.Sizes.format(capBytes) + " cap.")));
+        lines.add(Line.empty());
+        lines.add(Line.from(Span.raw(" Press Enter to load anyway,  Esc to cancel.")));
+        lines.add(Line.empty());
+        lines.add(Line.from(new Span(
+                " (raise the cap with --max-dict-bytes on the next launch)",
+                Style.EMPTY.fg(Theme.DIM))));
+        Block block = Block.builder()
+                .title(" Dictionary — load confirmation ")
+                .borders(Borders.ALL)
+                .borderType(BorderType.ROUNDED)
+                .borderColor(Theme.ACCENT)
+                .build();
+        Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
 
     private static void renderEmpty(Buffer buffer, Rect area) {

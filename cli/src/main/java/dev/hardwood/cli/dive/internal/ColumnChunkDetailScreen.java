@@ -89,7 +89,7 @@ public final class ColumnChunkDetailScreen {
                 case OFFSET_INDEX -> stack.push(new ScreenState.OffsetIndexView(
                         state.rowGroupIndex(), state.columnIndex(), 0));
                 case DICTIONARY -> stack.push(new ScreenState.DictionaryView(
-                        state.rowGroupIndex(), state.columnIndex(), 0, false, "", false));
+                        state.rowGroupIndex(), state.columnIndex(), 0, false, "", false, false));
             }
             return true;
         }

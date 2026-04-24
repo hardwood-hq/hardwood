@@ -82,14 +82,17 @@ public sealed interface ScreenState {
     /// Dictionary entries for one column chunk. `selection` is the position
     /// within the currently-filtered view; `modalOpen` is the full-value modal
     /// that opens on Enter; `filter` is the live search substring (empty = no
-    /// filter); `searching` is the inline search-edit mode toggled with `/`.
+    /// filter); `searching` is the inline search-edit mode toggled with `/`;
+    /// `loadConfirmed` flips to true after the user opts into reading a
+    /// chunk whose size exceeds `ParquetModel.dictionaryReadCapBytes()`.
     record DictionaryView(
             int rowGroupIndex,
             int columnIndex,
             int selection,
             boolean modalOpen,
             String filter,
-            boolean searching) implements ScreenState {
+            boolean searching,
+            boolean loadConfirmed) implements ScreenState {
     }
 
     /// Projected rows. `firstRow` is the 0-based absolute index of the first row
