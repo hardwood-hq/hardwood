@@ -61,10 +61,19 @@ public final class RowGroupsScreen {
             RowGroup rg = model.rowGroup(i);
             long compressed = 0;
             long uncompressed = 0;
+            int ciCount = 0;
+            int oiCount = 0;
+            int chunkCount = rg.columns().size();
             for (ColumnChunk cc : rg.columns()) {
                 ColumnMetaData cmd = cc.metaData();
                 compressed += cmd.totalCompressedSize();
                 uncompressed += cmd.totalUncompressedSize();
+                if (cc.columnIndexOffset() != null) {
+                    ciCount++;
+                }
+                if (cc.offsetIndexOffset() != null) {
+                    oiCount++;
+                }
             }
             double ratio = compressed == 0 ? 0.0 : (double) uncompressed / compressed;
             rows.add(Row.from(
@@ -72,9 +81,12 @@ public final class RowGroupsScreen {
                     formatLong(rg.numRows()),
                     Sizes.format(uncompressed),
                     Sizes.format(compressed),
-                    String.format("%.1f×", ratio)));
+                    String.format("%.1f×", ratio),
+                    ciCount + "/" + chunkCount,
+                    oiCount + "/" + chunkCount));
         }
-        Row header = Row.from("#", "Rows", "Uncompressed", "Compressed", "Ratio").style(Style.EMPTY.bold());
+        Row header = Row.from("#", "Rows", "Uncompressed", "Compressed", "Ratio", "CI", "OI")
+                .style(Style.EMPTY.bold());
         Block block = Block.builder()
                 .title(" Row groups (" + model.rowGroupCount() + ") ")
                 .borders(Borders.ALL)
@@ -88,6 +100,8 @@ public final class RowGroupsScreen {
                         new Constraint.Length(14),
                         new Constraint.Length(14),
                         new Constraint.Length(14),
+                        new Constraint.Length(8),
+                        new Constraint.Length(8),
                         new Constraint.Length(8))
                 .columnSpacing(2)
                 .block(block)

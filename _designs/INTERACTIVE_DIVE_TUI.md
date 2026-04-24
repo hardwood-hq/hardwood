@@ -777,17 +777,12 @@ those commits. Check them off as they land.
   drill in." Names are the handle; `[col N]` is metadata and belongs in the
   secondary-info region (right). The vertical-alignment item below does more
   for scannability than re-ordering would.
-- [ ] **Row groups list: add CI / OI coverage indicators.** Each row in
-  the Row groups table currently shows index-row count, byte sizes,
-  ratio, and first offset — no hint about whether the row group's
-  chunks carry ColumnIndex or OffsetIndex. Add two narrow columns
-  (`CI`, `OI`) rendering `N/M` where M is the chunk count and N is
-  how many have the respective index (e.g. `16/16`, `7/16`, `0/16`).
-  Answers "does this RG have page indexes?" at a glance — useful
-  triage before drilling into chunk detail, and a quick way to spot
-  RGs written by older / page-index-disabled writers. No navigation
-  change; just two columns sourced from each chunk's
-  `columnIndexOffset` / `offsetIndexOffset`.
+- [x] **Row groups list: add CI / OI coverage indicators.** Added two
+  columns to `RowGroupsScreen`, rendering `N/M` where M is the chunk
+  count and N is how many of that RG's chunks carry ColumnIndex /
+  OffsetIndex. Sourced from each `ColumnChunk.columnIndexOffset()` /
+  `offsetIndexOffset()`. Makes it possible to spot RGs written without
+  page indexes at a glance.
 - [ ] **Dedicated Row group detail screen.** Today `Enter` on a row
   group jumps straight to the Column chunks table, bypassing any
   RG-level overview. Add a new screen between Row groups and Column
