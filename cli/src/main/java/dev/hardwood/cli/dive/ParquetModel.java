@@ -17,9 +17,11 @@ import java.util.Map;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.reader.ColumnIndexBuffers;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.DictionaryParser;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
@@ -68,6 +70,12 @@ public final class ParquetModel implements AutoCloseable {
     private final Map<ChunkKey, ColumnIndex> columnIndexCache = new HashMap<>();
     private final Map<ChunkKey, OffsetIndex> offsetIndexCache = new HashMap<>();
     private final Map<ChunkKey, List<PageHeader>> pageHeaderCache = new HashMap<>();
+    // Per-row-group index-region prefetch. Populated lazily the first time any
+    // chunk in that RG is asked for its index; subsequent column-index /
+    // offset-index calls for chunks in the same RG hit this cache instead of
+    // issuing their own readRange (one HTTP round-trip per RG on S3 instead of
+    // one per chunk). See `_designs/COALESCED_OFFSET_INDEX_READS.md`.
+    private final Map<Integer, RowGroupIndexBuffers> indexBuffersCache = new HashMap<>();
     private final java.util.LinkedHashMap<ChunkKey, Dictionary> dictionaryCache =
             new java.util.LinkedHashMap<>(DICTIONARY_CACHE_CAPACITY, 0.75f, true) {
                 @Override
@@ -140,14 +148,11 @@ public final class ParquetModel implements AutoCloseable {
         if (columnIndexCache.containsKey(key)) {
             return columnIndexCache.get(key);
         }
-        ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
-        Long offset = cc.columnIndexOffset();
-        Integer length = cc.columnIndexLength();
+        ColumnIndexBuffers buffers = indexBuffersFor(rowGroupIndex).forColumn(columnIndex);
         ColumnIndex result = null;
-        if (offset != null && length != null && length > 0) {
+        if (buffers != null && buffers.columnIndex() != null) {
             try {
-                ByteBuffer buffer = inputFile.readRange(offset, length);
-                result = ColumnIndexReader.read(new ThriftCompactReader(buffer));
+                result = ColumnIndexReader.read(new ThriftCompactReader(buffers.columnIndex()));
             }
             catch (IOException e) {
                 throw new UncheckedIOException(e);
@@ -164,14 +169,11 @@ public final class ParquetModel implements AutoCloseable {
         if (offsetIndexCache.containsKey(key)) {
             return offsetIndexCache.get(key);
         }
-        ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
-        Long offset = cc.offsetIndexOffset();
-        Integer length = cc.offsetIndexLength();
+        ColumnIndexBuffers buffers = indexBuffersFor(rowGroupIndex).forColumn(columnIndex);
         OffsetIndex result = null;
-        if (offset != null && length != null && length > 0) {
+        if (buffers != null && buffers.offsetIndex() != null) {
             try {
-                ByteBuffer buffer = inputFile.readRange(offset, length);
-                result = OffsetIndexReader.read(new ThriftCompactReader(buffer));
+                result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()));
             }
             catch (IOException e) {
                 throw new UncheckedIOException(e);
@@ -179,6 +181,22 @@ public final class ParquetModel implements AutoCloseable {
         }
         offsetIndexCache.put(key, result);
         return result;
+    }
+
+    /// Lazy per-RG fetch of the contiguous offset+column index region. One
+    /// `readRange` per row group instead of N per chunk — the index entries
+    /// are stored contiguously in the Parquet footer, so there's no advantage
+    /// to fetching them one at a time, and on remote storage a single
+    /// round-trip is much cheaper than N small ones.
+    private RowGroupIndexBuffers indexBuffersFor(int rowGroupIndex) {
+        return indexBuffersCache.computeIfAbsent(rowGroupIndex, rg -> {
+            try {
+                return RowGroupIndexBuffers.fetch(inputFile, rowGroup(rg));
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
     }
 
     /// Walks a column chunk's byte range and returns its page headers (dictionary

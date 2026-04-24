@@ -969,26 +969,15 @@ those commits. Check them off as they land.
 
 ### Rendering / performance
 
-- [ ] **Coalesce per-row-group index reads.** Parquet stores all
-  ColumnIndex structures for a row group's chunks in one contiguous
-  region, and likewise OffsetIndex. `ParquetModel.columnIndex(rg, col)`
-  and `offsetIndex(rg, col)` currently issue one `inputFile.readRange`
-  per chunk, so drilling through N chunks of the same RG on an S3-backed
-  file is N HTTP round-trips instead of 1. Prefetch the RG's whole
-  index span in a single range read when entering the Column chunks
-  screen (or whichever screen first touches a chunk in that RG),
-  cache the block, and serve per-chunk requests from the cache.
-  **Implementation:** reuse whatever coalescing primitive core provides
-  — `_designs/COALESCED_OFFSET_INDEX_READS.md` is the relevant core
-  work. The CLI is allowed to depend on `dev.hardwood.internal.*`
-  classes directly (same pattern as `ParquetModel`'s existing use of
-  `ColumnIndexReader` / `DictionaryParser` / `HardwoodContextImpl`),
-  so internal-only APIs are fine — no promotion step needed. If core
-  has no coalescing primitive at all, implement directly in
-  `ParquetModel` using the offsets already on `ColumnChunk`. Distinct
-  from the Dictionary and Data preview performance items above — this
-  one is about I/O round-trips on remote storage rather than in-memory
-  recomputation or sequential skip cost.
+- [x] **Coalesce per-row-group index reads.** `ParquetModel` now routes
+  `columnIndex(rg, col)` and `offsetIndex(rg, col)` through a
+  per-RG `RowGroupIndexBuffers` (core's existing coalescing primitive
+  from `dev.hardwood.internal.reader`) — first access to any column in
+  a row group prefetches the whole contiguous index region in one
+  `readRange`; later accesses for other columns in the same RG hit
+  the cache. Drilling through N chunks of one RG on an S3-backed
+  file is now 1 HTTP round-trip instead of N, with the same shape as
+  the core's reader uses on its scan path.
 - [ ] **Dictionary screen: Up/Down feels sluggish on large dictionaries.**
   - [x] **Filter-index cache.** One-slot memoisation in
     `DictionaryScreen` keyed on `(dict reference, filter)`. Navigation
