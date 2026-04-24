@@ -20,14 +20,20 @@ public sealed interface ScreenState {
     }
 
     /// Expandable tree of schema nodes. `selection` is the visible-row index;
-    /// `expanded` tracks which group paths are currently expanded.
-    record Schema(int selection, java.util.Set<String> expanded) implements ScreenState {
+    /// `expanded` tracks which group paths are currently expanded. `filter` is
+    /// the live search substring (empty = show the tree); `searching` toggles
+    /// inline filter-edit mode via `/`.
+    record Schema(
+            int selection,
+            java.util.Set<String> expanded,
+            String filter,
+            boolean searching) implements ScreenState {
         public Schema {
             expanded = java.util.Set.copyOf(expanded);
         }
 
         public static Schema initial() {
-            return new Schema(0, java.util.Set.of());
+            return new Schema(0, java.util.Set.of(), "", false);
         }
     }
 
@@ -49,8 +55,15 @@ public sealed interface ScreenState {
             implements ScreenState {
     }
 
-    /// Per-page statistics view for one column chunk.
-    record ColumnIndexView(int rowGroupIndex, int columnIndex, int selection) implements ScreenState {
+    /// Per-page statistics view for one column chunk. `filter` is the live
+    /// search substring matched against each page's formatted min / max;
+    /// `searching` toggles inline filter-edit mode via `/`.
+    record ColumnIndexView(
+            int rowGroupIndex,
+            int columnIndex,
+            int selection,
+            String filter,
+            boolean searching) implements ScreenState {
     }
 
     /// Page-location view for one column chunk.

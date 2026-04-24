@@ -17,6 +17,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.dive.internal.ColumnAcrossRowGroupsScreen;
 import dev.hardwood.cli.dive.internal.ColumnChunkDetailScreen;
 import dev.hardwood.cli.dive.internal.ColumnChunksScreen;
+import dev.hardwood.cli.dive.internal.ColumnIndexScreen;
 import dev.hardwood.cli.dive.internal.DataPreviewScreen;
 import dev.hardwood.cli.dive.internal.DictionaryScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
@@ -38,7 +39,10 @@ class DiveStateTest {
 
     @BeforeEach
     void openFixture() throws Exception {
-        Path path = Path.of(getClass().getResource("/compat_plain_int64.parquet").getPath());
+        // 10 000 rows × 2 columns (id, value) in 1 RG / ~10 pages; has a Column Index.
+        // Covers pagination, schema navigation, and column-index drills without
+        // needing multiple fixtures.
+        Path path = Path.of(getClass().getResource("/column_index_pushdown.parquet").getPath());
         model = ParquetModel.open(InputFile.of(path), path.toString());
     }
 
@@ -274,12 +278,7 @@ class DiveStateTest {
 
     @Test
     void dataPreviewPageDownAdvancesFirstRow() {
-        int pageSize = 2;
-        if (model.facts().totalRows() < pageSize * 2) {
-            // Fixture too small to exercise pagination; the is-it-clamped path is
-            // covered by the PAGE_UP test below.
-            return;
-        }
+        int pageSize = 10;
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
         NavigationStack stack = rooted(initial);
 
@@ -287,6 +286,21 @@ class DiveStateTest {
 
         ScreenState.DataPreview next = (ScreenState.DataPreview) stack.top();
         assertThat(next.firstRow()).isEqualTo(pageSize);
+        assertThat(next.rows()).hasSize(pageSize);
+    }
+
+    @Test
+    void dataPreviewPageDownLoadsContiguousRows() {
+        int pageSize = 10;
+        ScreenState.DataPreview first = DataPreviewScreen.initialState(model, pageSize);
+        NavigationStack stack = rooted(first);
+
+        DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
+
+        ScreenState.DataPreview second = (ScreenState.DataPreview) stack.top();
+        // `id` column in column_index_pushdown.parquet is sorted 0..9999.
+        // Page 1 starts at row 10 → first id value in the second page is "10".
+        assertThat(second.rows().get(0).get(0)).isEqualTo("10");
     }
 
     @Test
@@ -389,6 +403,88 @@ class DiveStateTest {
         DictionaryScreen.handle(key(KeyCode.BACKSPACE), model, stack);
 
         assertThat(((ScreenState.DictionaryView) stack.top()).filter()).isEqualTo("ab");
+    }
+
+    @Test
+    void schemaSlashEntersSearchMode() {
+        NavigationStack stack = rooted(ScreenState.Schema.initial());
+
+        SchemaScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '/'), model, stack);
+
+        assertThat(((ScreenState.Schema) stack.top()).searching()).isTrue();
+    }
+
+    @Test
+    void schemaSearchAppendsCharsToFilter() {
+        NavigationStack stack = rooted(new ScreenState.Schema(0, java.util.Set.of(), "", true));
+
+        SchemaScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'v'), model, stack);
+        SchemaScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'a'), model, stack);
+        SchemaScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'l'), model, stack);
+
+        assertThat(((ScreenState.Schema) stack.top()).filter()).isEqualTo("val");
+        // The filter's effect on visibleRows is covered observably by
+        // schemaSearchEnterDrillsIntoColumnAcrossRowGroups below.
+    }
+
+    @Test
+    void schemaSearchEscClearsFilter() {
+        NavigationStack stack = rooted(
+                new ScreenState.Schema(0, java.util.Set.of(), "abc", true));
+
+        SchemaScreen.handle(key(KeyCode.ESCAPE), model, stack);
+
+        ScreenState.Schema top = (ScreenState.Schema) stack.top();
+        assertThat(top.searching()).isFalse();
+        assertThat(top.filter()).isEmpty();
+    }
+
+    @Test
+    void schemaSearchEnterDrillsIntoColumnAcrossRowGroups() {
+        // Filter narrows to "value" (columnIndex 1 in the fixture), then pressing Enter
+        // while not in search-edit mode drills into the cross-RG view.
+        NavigationStack stack = rooted(
+                new ScreenState.Schema(0, java.util.Set.of(), "value", false));
+
+        SchemaScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnAcrossRowGroups.class);
+        assertThat(((ScreenState.ColumnAcrossRowGroups) stack.top()).columnIndex()).isEqualTo(1);
+    }
+
+    @Test
+    void columnIndexSlashEntersSearchMode() {
+        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", false));
+
+        ColumnIndexScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '/'), model, stack);
+
+        assertThat(((ScreenState.ColumnIndexView) stack.top()).searching()).isTrue();
+    }
+
+    @Test
+    void columnIndexSearchAppendsCharsToFilter() {
+        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", true));
+
+        ColumnIndexScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '5'), model, stack);
+
+        assertThat(((ScreenState.ColumnIndexView) stack.top()).filter()).isEqualTo("5");
+    }
+
+    @Test
+    void columnIndexSearchEscClearsFilter() {
+        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "abc", true));
+
+        ColumnIndexScreen.handle(key(KeyCode.ESCAPE), model, stack);
+
+        ScreenState.ColumnIndexView top = (ScreenState.ColumnIndexView) stack.top();
+        assertThat(top.searching()).isFalse();
+        assertThat(top.filter()).isEmpty();
     }
 
     @Test

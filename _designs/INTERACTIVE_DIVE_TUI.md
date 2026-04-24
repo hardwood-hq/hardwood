@@ -699,19 +699,23 @@ those commits. Check them off as they land.
 
 ### Screen / UX polish
 
-- [ ] **Search on Schema and Column index.** The pattern is demonstrated by the
-  Dictionary screen's `/` mode (state has `filter` + `searching`, DiveApp skips global
-  keymap while input mode is active). Extend the same shape to Schema (filter by path)
-  and Column index (filter by min/max literal).
-- [ ] **"Jump to chunk #N" from the Footer screen.** When the cursor is on a row-group
-  or column-chunk line of the footer layout, `Enter` pushes directly into the
-  corresponding [ColumnChunkDetail]. Avoids the RowGroups → ColumnChunks drill when
-  the target chunk is already known.
-- [ ] **Data preview test fixture.** `DiveStateTest.dataPreviewPageDownAdvancesFirstRow`
-  no-ops for fixtures with fewer than 4 rows — the current `compat_plain_int64.parquet`
-  has 1 row, so the pagination path isn't actually covered. Either point the test at a
-  larger fixture under `core/src/test/resources/` or synthesise one via
-  `simple-datagen.py`.
+- [x] **Search on Schema and Column index.** Both screens now mirror Dictionary's `/`
+  pattern — state carries `filter` + `searching`, DiveApp's input-mode switch covers
+  them, and the screens filter their row list case-insensitively. Schema filters
+  match leaf field paths and collapse the tree view to a flat match-list; Column
+  index matches against each page's formatted min / max.
+- [ ] **"Jump to chunk #N" from the Footer screen.** The current Footer shows
+  aggregates (file size, footer trailer offset, index bytes, compressed totals),
+  not per-row-group lines; the jump-to-chunk affordance needs the Footer to gain
+  a selectable per-RG / per-chunk layout first. Row-group navigation is already
+  covered by the Overview → Row groups path (which exposes first-offset per RG),
+  so this is best-effort polish rather than load-bearing — consider whether it's
+  worth the Footer redesign.
+- [x] **Data preview test fixture.** Swapped in `column_index_pushdown.parquet`
+  (10 000 rows × 2 cols, 1 RG / ~10 pages, has column index) — covers pagination,
+  schema navigation, and column-index drills from one fixture. Removed the
+  adaptive skip on the PgDown test; added a page-boundary assertion proving
+  contiguous rows load.
 
 ### Rendering / performance
 

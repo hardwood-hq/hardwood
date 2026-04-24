@@ -105,8 +105,12 @@ public final class DiveApp {
     }
 
     private boolean isTopInInputMode() {
-        return stack.top() instanceof ScreenState.DictionaryView d
-                && DictionaryScreen.isInInputMode(d);
+        return switch (stack.top()) {
+            case ScreenState.DictionaryView d -> DictionaryScreen.isInInputMode(d);
+            case ScreenState.Schema s -> SchemaScreen.isInInputMode(s);
+            case ScreenState.ColumnIndexView c -> ColumnIndexScreen.isInInputMode(c);
+            default -> false;
+        };
     }
 
     private boolean dispatchToScreen(KeyEvent ke) {

@@ -124,12 +124,20 @@ primitive nodes with `→` / `←`; `Enter` on a leaf drills into a
 *Column-across-row-groups* view — one row per row group showing that column's
 sizes, encoding, stats — and from there into the chunk detail.
 
-### Searching dictionaries
+### Inline search
 
-Open the **Dictionary** screen, then press `/` to enter inline search mode.
-Typed characters extend the filter; *Backspace* trims it; *Esc* clears the
-filter; *Enter* commits it (keeps the filter applied but exits edit mode).
-The table re-filters live as you type.
+The **Schema**, **Column index**, and **Dictionary** screens support inline
+search. Press `/` to enter search-edit mode:
+
+- **Schema** — filters leaf columns whose field path contains the query.
+  While the filter is active, the tree collapses to a flat list of matches.
+- **Column index** — filters pages whose formatted min or max value
+  contains the query.
+- **Dictionary** — filters entries whose value contains the query.
+
+In all three cases: typed characters extend the filter; *Backspace* trims;
+*Esc* clears the filter and exits edit mode; *Enter* commits (keeps the
+filter applied but exits edit mode). The table re-filters live as you type.
 
 ## Reading Files from S3
 

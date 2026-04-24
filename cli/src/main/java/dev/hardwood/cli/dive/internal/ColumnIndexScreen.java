@@ -25,6 +25,7 @@ import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
+import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
@@ -36,26 +37,69 @@ import dev.tamboui.widgets.table.TableState;
 
 /// Per-page statistics for one column chunk: null_pages, null counts, min, max.
 /// Boundary order is shown above the table.
+///
+/// `/` enters inline search: the filter matches against each page's formatted
+/// min or max value (case-insensitive substring).
 public final class ColumnIndexScreen {
 
     private ColumnIndexScreen() {
     }
 
+    /// Used by [DiveApp] to decide whether the screen should receive printable
+    /// chars instead of the global keymap.
+    public static boolean isInInputMode(ScreenState.ColumnIndexView state) {
+        return state.searching();
+    }
+
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.ColumnIndexView state = (ScreenState.ColumnIndexView) stack.top();
+        if (state.searching()) {
+            return handleSearching(event, state, stack);
+        }
         ColumnIndex ci = model.columnIndex(state.rowGroupIndex(), state.columnIndex());
-        int count = ci != null ? ci.getPageCount() : 0;
+        if (ci == null) {
+            return false;
+        }
+        if (event.code() == KeyCode.CHAR && event.character() == '/') {
+            stack.replaceTop(with(state, 0, state.filter(), true));
+            return true;
+        }
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        List<Integer> filtered = filteredPages(ci, col, state.filter());
         if (event.isUp()) {
-            stack.replaceTop(new ScreenState.ColumnIndexView(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.max(0, state.selection() - 1)));
+            stack.replaceTop(with(state, Math.max(0, state.selection() - 1), state.filter(), false));
             return true;
         }
         if (event.isDown()) {
-            stack.replaceTop(new ScreenState.ColumnIndexView(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.min(count - 1, state.selection() + 1)));
+            int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
+            stack.replaceTop(with(state, Math.min(max, state.selection() + 1), state.filter(), false));
             return true;
+        }
+        return false;
+    }
+
+    private static boolean handleSearching(KeyEvent event, ScreenState.ColumnIndexView state,
+                                           NavigationStack stack) {
+        if (event.isCancel()) {
+            stack.replaceTop(with(state, 0, "", false));
+            return true;
+        }
+        if (event.isConfirm()) {
+            stack.replaceTop(with(state, 0, state.filter(), false));
+            return true;
+        }
+        if (event.isDeleteBackward()) {
+            String f = state.filter();
+            String next = f.isEmpty() ? f : f.substring(0, f.length() - 1);
+            stack.replaceTop(with(state, 0, next, true));
+            return true;
+        }
+        if (event.code() == KeyCode.CHAR) {
+            char c = event.character();
+            if (c >= ' ' && c != 127) {
+                stack.replaceTop(with(state, 0, state.filter() + c, true));
+                return true;
+            }
         }
         return false;
     }
@@ -66,8 +110,14 @@ public final class ColumnIndexScreen {
             renderEmpty(buffer, area, "No column index for this chunk.");
             return;
         }
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        List<Integer> filtered = filteredPages(ci, col, state.filter());
+
         List<Rect> split = Layout.vertical()
-                .constraints(new Constraint.Length(1), new Constraint.Fill(1))
+                .constraints(
+                        new Constraint.Length(1),
+                        new Constraint.Length(1),
+                        new Constraint.Fill(1))
                 .split(area);
 
         Paragraph.builder()
@@ -78,22 +128,24 @@ public final class ColumnIndexScreen {
                 .build()
                 .render(split.get(0), buffer);
 
-        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        renderSearchBar(buffer, split.get(1), state, ci.getPageCount(), filtered.size());
+
         List<Row> rows = new ArrayList<>();
-        for (int i = 0; i < ci.getPageCount(); i++) {
-            String nulls = ci.nullCounts() != null && i < ci.nullCounts().size()
-                    ? String.format("%,d", ci.nullCounts().get(i))
+        for (int idx : filtered) {
+            String nulls = ci.nullCounts() != null && idx < ci.nullCounts().size()
+                    ? String.format("%,d", ci.nullCounts().get(idx))
                     : "—";
             rows.add(Row.from(
-                    String.valueOf(i),
-                    Boolean.TRUE.equals(ci.nullPages().get(i)) ? "yes" : "no",
+                    String.valueOf(idx),
+                    Boolean.TRUE.equals(ci.nullPages().get(idx)) ? "yes" : "no",
                     nulls,
-                    formatStat(ci.minValues().get(i), col),
-                    formatStat(ci.maxValues().get(i), col)));
+                    formatStat(ci.minValues().get(idx), col),
+                    formatStat(ci.maxValues().get(idx), col)));
         }
         Row header = Row.from("#", "NullPg", "Nulls", "Min", "Max").style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" Column index (" + ci.getPageCount() + " pages) ")
+                .title(" Column index (" + ci.getPageCount() + " pages"
+                        + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching") + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Color.CYAN)
@@ -112,14 +164,60 @@ public final class ColumnIndexScreen {
                 .highlightStyle(Style.EMPTY.bold())
                 .build();
         TableState tableState = new TableState();
-        if (ci.getPageCount() > 0) {
-            tableState.select(state.selection());
+        if (!filtered.isEmpty()) {
+            tableState.select(Math.min(state.selection(), filtered.size() - 1));
         }
-        table.render(split.get(1), buffer, tableState);
+        table.render(split.get(2), buffer, tableState);
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Esc] back";
+        return "[↑↓] move  [/] search  [Esc] back";
+    }
+
+    private static List<Integer> filteredPages(ColumnIndex ci, ColumnSchema col, String filter) {
+        List<Integer> out = new ArrayList<>();
+        if (ci == null) {
+            return out;
+        }
+        String needle = filter.toLowerCase();
+        for (int i = 0; i < ci.getPageCount(); i++) {
+            if (needle.isEmpty()) {
+                out.add(i);
+                continue;
+            }
+            String min = formatStat(ci.minValues().get(i), col).toLowerCase();
+            String max = formatStat(ci.maxValues().get(i), col).toLowerCase();
+            if (min.contains(needle) || max.contains(needle)) {
+                out.add(i);
+            }
+        }
+        return out;
+    }
+
+    private static void renderSearchBar(Buffer buffer, Rect area, ScreenState.ColumnIndexView state,
+                                        int totalPages, int matchCount) {
+        if (!state.searching() && state.filter().isEmpty()) {
+            Paragraph.builder()
+                    .text(Text.from(Line.from(new Span(
+                            " " + totalPages + " pages. Press / to filter by min/max.",
+                            Style.EMPTY.fg(Color.GRAY)))))
+                    .left()
+                    .build()
+                    .render(area, buffer);
+            return;
+        }
+        String cursor = state.searching() ? "█" : "";
+        Line line = Line.from(
+                new Span(" / ", Style.EMPTY.fg(Color.CYAN).bold()),
+                new Span(state.filter() + cursor, Style.EMPTY.bold()),
+                new Span("  (" + matchCount + " / " + totalPages + " pages)", Style.EMPTY.fg(Color.GRAY)));
+        Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
+    }
+
+    private static ScreenState.ColumnIndexView with(ScreenState.ColumnIndexView state,
+                                                     int selection, String filter, boolean searching) {
+        return new ScreenState.ColumnIndexView(
+                state.rowGroupIndex(), state.columnIndex(), selection, filter, searching);
     }
 
     private static String formatStat(byte[] bytes, ColumnSchema col) {
