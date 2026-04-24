@@ -12,6 +12,7 @@ import java.util.List;
 
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.RowValueFormatter;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.SchemaNode;
 import dev.tamboui.buffer.Buffer;
@@ -155,12 +156,7 @@ public final class DataPreviewScreen {
                 reader.next();
                 List<String> row = new ArrayList<>(fieldCount);
                 for (int c = 0; c < fieldCount; c++) {
-                    if (reader.isNull(c)) {
-                        row.add("null");
-                    }
-                    else {
-                        row.add(truncate(String.valueOf(reader.getValue(c)), VALUE_TRUNCATE));
-                    }
+                    row.add(truncate(RowValueFormatter.format(reader, c, topLevel.get(c)), VALUE_TRUNCATE));
                 }
                 rows.add(row);
                 read++;

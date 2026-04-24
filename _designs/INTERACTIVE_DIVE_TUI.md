@@ -860,7 +860,19 @@ those commits. Check them off as they land.
   keybar hint so `[Enter] full value` shows only on rows where there is
   something extra to reveal. Works uniformly across physical types —
   short BYTE_ARRAY entries also benefit.
-- [ ] **Logical-type-aware value formatting in Data preview and Dictionary.**
+- [x] **Logical-type-aware value formatting in Data preview and Dictionary.**
+  Implemented in `dev.hardwood.cli.internal.RowValueFormatter`, sibling to
+  the existing `IndexValueFormatter`. Two entry points share one dispatch
+  core: `format(RowReader, int, SchemaNode)` for Data preview (uses the
+  reader's typed accessors — `getTimestamp` / `getDate` / `getDecimal` /
+  `getUuid` / `getString` — and falls back to `getValue().toString()` for
+  group fields) and `formatDictionaryValue(Object, ColumnSchema)` for
+  Dictionary (dispatches on logical type over raw `Integer` / `Long` /
+  `Float` / `Double` / `byte[]` drawn from the Dictionary record's
+  primitive arrays). TIMESTAMP drops the trailing `Z` when
+  `isAdjustedToUTC=false`; DECIMAL routes through `BigDecimal.toPlainString`;
+  UTF-8 and UUID handled from raw bytes; unsigned INT variants rendered
+  via `Long.toUnsignedString`. 7 unit tests lock the main cases.
   Both screens currently render values ignoring the column's logical type:
     - **Data preview** calls `String.valueOf(reader.getValue(c))` — for an
       INT64 `TimestampType[isAdjustedToUTC=false, unit=MICROS]` that

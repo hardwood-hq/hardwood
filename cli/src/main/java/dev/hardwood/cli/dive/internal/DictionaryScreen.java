@@ -7,14 +7,15 @@
  */
 package dev.hardwood.cli.dive.internal;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.RowValueFormatter;
 import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
@@ -70,7 +71,8 @@ public final class DictionaryScreen {
             return true;
         }
         Dictionary dict = model.dictionary(state.rowGroupIndex(), state.columnIndex());
-        List<Integer> filtered = filteredIndices(dict, state.filter());
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        List<Integer> filtered = filteredIndices(dict, col, state.filter());
         if (event.isUp()) {
             stack.replaceTop(with(state, Math.max(0, state.selection() - 1), false, state.filter(), false));
             return true;
@@ -119,7 +121,8 @@ public final class DictionaryScreen {
             return;
         }
 
-        List<Integer> filtered = filteredIndices(dict, state.filter());
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        List<Integer> filtered = filteredIndices(dict, col, state.filter());
         List<Rect> split = Layout.vertical()
                 .constraints(new Constraint.Length(1), new Constraint.Fill(1))
                 .split(area);
@@ -130,7 +133,7 @@ public final class DictionaryScreen {
         for (int idx : filtered) {
             rows.add(Row.from(
                     "[" + idx + "]",
-                    formatValue(dict, idx, VALUE_PREVIEW_MAX)));
+                    formatValue(dict, idx, col, VALUE_PREVIEW_MAX)));
         }
         Row header = Row.from("#", "Value").style(Style.EMPTY.bold());
         Block block = Block.builder()
@@ -157,7 +160,7 @@ public final class DictionaryScreen {
 
         if (state.modalOpen() && !filtered.isEmpty()) {
             int dictIdx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
-            renderValueModal(buffer, area, dict, dictIdx);
+            renderValueModal(buffer, area, dict, col, dictIdx);
         }
     }
 
@@ -184,14 +187,14 @@ public final class DictionaryScreen {
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 
-    private static List<Integer> filteredIndices(Dictionary dict, String filter) {
+    private static List<Integer> filteredIndices(Dictionary dict, ColumnSchema col, String filter) {
         List<Integer> out = new ArrayList<>();
         if (dict == null) {
             return out;
         }
         String needle = filter.toLowerCase();
         for (int i = 0; i < dict.size(); i++) {
-            if (needle.isEmpty() || fullValue(dict, i).toLowerCase().contains(needle)) {
+            if (needle.isEmpty() || fullValue(dict, i, col).toLowerCase().contains(needle)) {
                 out.add(i);
             }
         }
@@ -204,29 +207,23 @@ public final class DictionaryScreen {
                 state.rowGroupIndex(), state.columnIndex(), selection, modalOpen, filter, searching);
     }
 
-    private static String formatValue(Dictionary dict, int index, int max) {
-        String full = fullValue(dict, index);
+    private static String formatValue(Dictionary dict, int index, ColumnSchema col, int max) {
+        String full = fullValue(dict, index, col);
         if (full.length() <= max) {
             return full;
         }
         return full.substring(0, max - 1) + "…";
     }
 
-    private static String fullValue(Dictionary dict, int index) {
-        return switch (dict) {
-            case Dictionary.IntDictionary d -> Integer.toString(d.values()[index]);
-            case Dictionary.LongDictionary d -> Long.toString(d.values()[index]);
-            case Dictionary.FloatDictionary d -> Float.toString(d.values()[index]);
-            case Dictionary.DoubleDictionary d -> Double.toString(d.values()[index]);
-            case Dictionary.ByteArrayDictionary d -> formatBytes(d.values()[index]);
+    private static String fullValue(Dictionary dict, int index, ColumnSchema col) {
+        Object raw = switch (dict) {
+            case Dictionary.IntDictionary d -> d.values()[index];
+            case Dictionary.LongDictionary d -> d.values()[index];
+            case Dictionary.FloatDictionary d -> d.values()[index];
+            case Dictionary.DoubleDictionary d -> d.values()[index];
+            case Dictionary.ByteArrayDictionary d -> d.values()[index];
         };
-    }
-
-    private static String formatBytes(byte[] bytes) {
-        if (bytes == null) {
-            return "null";
-        }
-        return new String(bytes, StandardCharsets.UTF_8);
+        return RowValueFormatter.formatDictionaryValue(raw, col);
     }
 
     private static void renderEmpty(Buffer buffer, Rect area) {
@@ -246,7 +243,7 @@ public final class DictionaryScreen {
                 .render(area, buffer);
     }
 
-    private static void renderValueModal(Buffer buffer, Rect screenArea, Dictionary dict, int index) {
+    private static void renderValueModal(Buffer buffer, Rect screenArea, Dictionary dict, ColumnSchema col, int index) {
         int width = Math.min(80, screenArea.width() - 4);
         int height = Math.min(16, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
@@ -256,7 +253,7 @@ public final class DictionaryScreen {
         // cells that the Paragraph doesn't paint.
         dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
 
-        String full = fullValue(dict, index);
+        String full = fullValue(dict, index, col);
         List<Line> lines = new ArrayList<>();
         lines.add(Line.empty());
         lines.add(Line.from(Span.raw(" " + full)));
