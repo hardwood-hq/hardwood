@@ -96,7 +96,8 @@ public final class ColumnAcrossRowGroupsScreen {
         Row header = Row.from("RG", "Rows", "Comp", "Ratio", "Dict", "CI", "Nulls", "Min", "Max")
                 .style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" " + col.fieldPath() + " across " + model.rowGroupCount() + " RGs ")
+                .title(" " + truncateLeft(col.fieldPath().toString(), 40)
+                        + " across " + model.rowGroupCount() + " RGs ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Color.CYAN)
@@ -125,5 +126,12 @@ public final class ColumnAcrossRowGroupsScreen {
 
     public static String keybarKeys() {
         return "[↑↓] move  [Enter] chunk detail  [Esc] back";
+    }
+
+    private static String truncateLeft(String s, int maxWidth) {
+        if (s.length() <= maxWidth) {
+            return s;
+        }
+        return "…" + s.substring(s.length() - maxWidth + 1);
     }
 }

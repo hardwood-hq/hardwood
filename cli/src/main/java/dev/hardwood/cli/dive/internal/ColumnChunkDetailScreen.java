@@ -132,7 +132,7 @@ public final class ColumnChunkDetailScreen {
         boolean focused = state.focus() == ScreenState.ColumnChunkDetail.Pane.FACTS;
 
         List<Line> lines = new ArrayList<>();
-        lines.add(fact("Path", Sizes.columnPath(cmd)));
+        lines.addAll(pathLines(Sizes.columnPath(cmd)));
         lines.add(fact("Column idx", String.valueOf(col.columnIndex())));
         lines.add(fact("Physical", cmd.type().name()));
         lines.add(fact("Logical", col.logicalType() != null ? col.logicalType().toString() : "—"));
@@ -161,7 +161,8 @@ public final class ColumnChunkDetailScreen {
         lines.add(fact("Min", stats != null ? formatStatValue(stats.minValue(), col) : "—"));
         lines.add(fact("Max", stats != null ? formatStatValue(stats.maxValue(), col) : "—"));
 
-        Block block = paneBlock(" " + Sizes.columnPath(cmd) + " (RG #" + state.rowGroupIndex() + ") ", focused);
+        Block block = paneBlock(" " + truncateLeft(Sizes.columnPath(cmd), 40)
+                + " (RG #" + state.rowGroupIndex() + ") ", focused);
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
 
@@ -216,6 +217,20 @@ public final class ColumnChunkDetailScreen {
                 new Span(value, Style.EMPTY.bold()));
     }
 
+    /// Special-case the Path row: when the path is short, a single "Path  value"
+    /// line is fine; for a deeply-nested path the value would overflow the pane,
+    /// so split it over two lines — key on its own line, path value indented below.
+    private static List<Line> pathLines(String path) {
+        // 22 is the key-padding width used by `fact`, plus 1 leading space.
+        int inlineBudget = 50 - 23;
+        if (path.length() <= inlineBudget) {
+            return List.of(fact("Path", path));
+        }
+        return List.of(
+                Line.from(new Span(" " + padRight("Path", 22), Style.EMPTY)),
+                Line.from(new Span("   " + path, Style.EMPTY.bold())));
+    }
+
     private static String formatStatValue(byte[] bytes, ColumnSchema col) {
         if (bytes == null) {
             return "—";
@@ -228,5 +243,12 @@ public final class ColumnChunkDetailScreen {
             return s;
         }
         return s + " ".repeat(width - s.length());
+    }
+
+    private static String truncateLeft(String s, int maxWidth) {
+        if (s.length() <= maxWidth) {
+            return s;
+        }
+        return "…" + s.substring(s.length() - maxWidth + 1);
     }
 }

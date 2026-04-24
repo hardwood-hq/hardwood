@@ -940,22 +940,21 @@ those commits. Check them off as they land.
   page headers over the whole chunk, which is the same blocking I/O the
   *Async I/O pass* follow-up defers; showing a real count here should
   land together with that work.
-- [ ] **Long column paths overflow on Column chunk detail and friends.**
-  A deeply-nested path like
-  `brand.names.rules.list.element.perspectives.countries.list.element`
-  spills out of the left facts pane, the block title, and the breadcrumb.
-  Three coordinated changes, one per surface:
-    - **Breadcrumb**: replace the full path with `[col N]` for screens
-      whose body already displays the path (Column chunk detail,
-      Column-across-row-groups). Breaks the triple redundancy — the
-      chrome stops duplicating what the body already shows.
-    - **Block title**: truncate-left with a leading `…` so the leaf
-      segment stays visible on one line (e.g. `…countries.list.element
-      (RG #0)`). The tail is the distinguishing part of the path.
-    - **Facts pane `Path` row**: when the value wouldn't fit beside the
-      `Path` key, render the key on one line and the full path on the
-      next, padded so it's visually part of the row. Wrap further if the
-      path itself exceeds the pane width.
+- [x] **Long column paths overflow on Column chunk detail and friends.**
+  Fixed across three surfaces:
+    - **Breadcrumb** (`Chrome.breadcrumbLabel`) now returns `[col N]`
+      for `ColumnChunkDetail` and `[col N] across RGs` for
+      `ColumnAcrossRowGroups`. Breaks the triple redundancy — the body
+      of each of those screens already displays the path.
+    - **Block title** — both `ColumnChunkDetailScreen` and
+      `ColumnAcrossRowGroupsScreen` now pass the path through a
+      `truncateLeft(s, 40)` helper that emits `"…countries.list.element"`
+      when the path exceeds 40 chars. Leaf segment stays visible.
+    - **Facts pane `Path` row** — a `pathLines` helper on
+      `ColumnChunkDetailScreen` renders the key + path inline when the
+      path is short, and splits onto two lines (key on its own, value
+      indented below) for long paths. Threshold is 27 chars of value
+      budget beside the 22-char padded key.
 - [ ] **Keymap: `g` / `G` for jump-to-top / jump-to-bottom; move
   return-to-Overview to `o`.** Reassigns the current global `g` intercept
   in `DiveApp` onto `o` (mnemonic for Overview). Frees `g` / `G` to be

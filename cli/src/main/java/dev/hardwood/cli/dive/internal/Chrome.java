@@ -99,14 +99,15 @@ public final class Chrome {
             case ScreenState.Schema ignored -> "Schema";
             case ScreenState.RowGroups ignored -> "Row groups";
             case ScreenState.ColumnChunks cc -> "RG #" + cc.rowGroupIndex() + " › Column chunks";
-            case ScreenState.ColumnChunkDetail d ->
-                    model.schema().getColumn(d.columnIndex()).fieldPath().toString();
+            // Use [col N] instead of the full path — the body of ColumnChunkDetail and
+            // ColumnAcrossRowGroups already displays the path; the chrome stops
+            // duplicating what the body shows and avoids overflow on deeply-nested paths.
+            case ScreenState.ColumnChunkDetail d -> "[col " + d.columnIndex() + "]";
             case ScreenState.Pages ignored -> "Pages";
             case ScreenState.ColumnIndexView ignored -> "Column index";
             case ScreenState.OffsetIndexView ignored -> "Offset index";
             case ScreenState.Footer ignored -> "Footer & indexes";
-            case ScreenState.ColumnAcrossRowGroups c ->
-                    model.schema().getColumn(c.columnIndex()).fieldPath() + " across RGs";
+            case ScreenState.ColumnAcrossRowGroups c -> "[col " + c.columnIndex() + "] across RGs";
             case ScreenState.DictionaryView ignored -> "Dictionary";
             case ScreenState.DataPreview ignored -> "Data preview";
         };
