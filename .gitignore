@@ -42,6 +42,7 @@ nb-configuration.xml
 .venv
 .docker-venv
 .release-env
+__pycache__/
 docs/hooks/__pycache__/
 
 # JReleaser

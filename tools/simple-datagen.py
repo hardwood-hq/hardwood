@@ -2304,3 +2304,44 @@ strip_converted_type(_map_ann_base, 'core/src/test/resources/map_annotation_mode
 
 print("\nGenerated map_annotation_both/modern_only_test.parquet:")
 print("  - Schema: id INT32, attrs MAP<STRING, INT32>")
+
+# =====================================================================
+# Misaligned per-column page boundaries for issue #277
+# Two columns whose pages flush at different row positions within the
+# same row group, exercising cross-column row alignment under filter
+# pushdown.
+# =====================================================================
+
+misaligned_schema = pa.schema([
+    ('narrow', pa.int32(), False),
+    ('wide', pa.binary(), False),
+])
+
+misaligned_table = pa.table({
+    'narrow': list(range(10000)),
+    'wide': [f"row={i:08d}-{'x' * 83}".encode() for i in range(10000)],
+}, schema=misaligned_schema)
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/misaligned_pages.parquet',
+    schema=misaligned_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='2.0',
+    data_page_size=4096,
+    # write_batch_size=17 so narrow's page period (61×17 = 1037 values) is not
+    # a multiple of wide's page period (3×17 = 51 values). Narrow page
+    # boundaries therefore never coincide with wide page boundaries, forcing
+    # the first kept page of the two columns to start at different global rows
+    # under any non-trivial filter.
+    write_batch_size=17,
+    write_statistics=True,
+    write_page_index=True,
+)
+writer.write_table(misaligned_table)
+writer.close()
+
+print("\nGenerated misaligned_pages.parquet:")
+print("  - 1 row group, 10000 rows, Parquet v2 with ColumnIndex + OffsetIndex")
+print("  - narrow INT32 (4 B/value, ~10 pages) vs wide BYTE_ARRAY (~96 B/value, ~197 pages)")
+print("  - Per-column page boundaries do not line up — exercises cross-column row alignment")
