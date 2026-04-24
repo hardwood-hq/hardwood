@@ -200,8 +200,8 @@ public final class PagesScreen {
 
         List<Line> lines = new ArrayList<>();
         lines.add(kv("Type", header.type().name()));
-        lines.add(kv("Compressed size", String.format("%,d", header.compressedPageSize())));
-        lines.add(kv("Uncompressed size", String.format("%,d", header.uncompressedPageSize())));
+        lines.add(kv("Compressed size", dualSize(header.compressedPageSize())));
+        lines.add(kv("Uncompressed size", dualSize(header.uncompressedPageSize())));
         lines.add(kv("CRC", header.crc() != null ? "0x" + Integer.toHexString(header.crc()) : "—"));
         lines.add(Line.empty());
         DataPageHeader dph = header.dataPageHeader();
@@ -236,6 +236,10 @@ public final class PagesScreen {
                 .borderColor(Color.CYAN)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
+    }
+
+    private static String dualSize(long bytes) {
+        return Sizes.format(bytes) + "  (" + String.format("%,d", bytes) + " B)";
     }
 
     private static Line kv(String key, String value) {

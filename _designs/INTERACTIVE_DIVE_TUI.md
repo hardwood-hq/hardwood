@@ -699,25 +699,17 @@ those commits. Check them off as they land.
 
 ### Bugs
 
-- [ ] **Pages modal: show compressed / uncompressed sizes in both
-  human-readable and raw-byte form.** The Pages list shows
-  `Sizes.format(compressedPageSize)` ("8.0 KB"), the modal shows
-  `String.format("%,d", compressedPageSize)` ("8,192"). Swap the modal
-  to `Sizes.format(...) + "  (" + String.format("%,d", ...) + " B)"`
-  so it reads `"8.0 KB  (8,192 B)"`. Apply the same treatment to the
-  `Uncompressed size` line. There's prior art for this exact dual
-  rendering on `FooterScreen.File size`. List stays terse for
-  at-a-glance scanning; the modal is the investigation surface where
-  precise byte counts matter.
-- [ ] **Footer screen: dual rendering on every size line.** Currently
-  only `File size` uses the `Sizes.format(...) + " (N B)"` dual form;
-  `Column indexes`, `Offset indexes`, `Compressed data`,
-  `Uncompressed data` all show only `Sizes.format(...)`. The Footer is
-  the dedicated byte-layout screen — its value is precision, not
-  at-a-glance scanning — so every size line should include the raw
-  byte count in parentheses alongside the human-readable form. Adds one
-  helper (or inlines the same concatenation used on `File size`) and
-  updates five lines.
+- [x] **Pages modal: show compressed / uncompressed sizes in both
+  human-readable and raw-byte form.** Fixed via a `dualSize(long)`
+  helper in `PagesScreen` that concatenates `Sizes.format(...) + "  (N B)"`,
+  applied to both `Compressed size` and `Uncompressed size` lines of
+  the page-header modal. Matches the dual form used on
+  `FooterScreen.File size`.
+- [x] **Footer screen: dual rendering on every size line.** Added the
+  same `dualSize(long)` helper to `FooterScreen` and applied it to
+  `File size` (previously the only dual line, now factored through the
+  helper), `Column indexes`, `Offset indexes`, `Compressed data`, and
+  `Uncompressed data`.
 - [x] **Modals don't fully occlude the screen behind them** (bleed-through).
   Fixed in all three modal call sites (`PagesScreen.renderHeaderModal`,
   `DictionaryScreen.renderValueModal`, `HelpOverlay.render`) by rendering

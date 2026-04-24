@@ -58,19 +58,19 @@ public final class FooterScreen {
         long footerApproxOffset = fileSize - FOOTER_TRAILER_BYTES;
 
         List<Line> lines = new ArrayList<>();
-        lines.add(fact("File size", Sizes.format(fileSize) + "  (" + String.format("%,d", fileSize) + " B)"));
+        lines.add(fact("File size", dualSize(fileSize)));
         lines.add(fact("Footer trailer offset", String.format("%,d", footerApproxOffset)));
         lines.add(fact("Trailer bytes", String.valueOf(FOOTER_TRAILER_BYTES)));
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Page indexes ", Style.EMPTY.bold())));
-        lines.add(fact("  Column indexes", Sizes.format(columnIndexBytes)
+        lines.add(fact("  Column indexes", dualSize(columnIndexBytes)
                 + " across " + chunkCount(model) + " chunks"));
-        lines.add(fact("  Offset indexes", Sizes.format(offsetIndexBytes)
+        lines.add(fact("  Offset indexes", dualSize(offsetIndexBytes)
                 + " across " + chunkCount(model) + " chunks"));
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Aggregate ", Style.EMPTY.bold())));
-        lines.add(fact("  Compressed data", Sizes.format(model.facts().compressedBytes())));
-        lines.add(fact("  Uncompressed data", Sizes.format(model.facts().uncompressedBytes())));
+        lines.add(fact("  Compressed data", dualSize(model.facts().compressedBytes())));
+        lines.add(fact("  Uncompressed data", dualSize(model.facts().uncompressedBytes())));
         lines.add(fact("  Compression ratio", String.format("%.2f×", model.facts().compressionRatio())));
 
         Block block = Block.builder()
@@ -84,6 +84,10 @@ public final class FooterScreen {
 
     public static String keybarKeys() {
         return "[Esc] back";
+    }
+
+    private static String dualSize(long bytes) {
+        return Sizes.format(bytes) + "  (" + String.format("%,d", bytes) + " B)";
     }
 
     private static int chunkCount(ParquetModel model) {
