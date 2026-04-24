@@ -15,6 +15,10 @@ class SchemaCommandTest implements SchemaCommandContract {
 
     private final String NESTED_FILE = this.getClass().getResource("/nested_struct_test.parquet").getPath();
 
+    private final String VARIANT_FILE = this.getClass().getResource("/variant_test.parquet").getPath();
+
+    private final String VARIANT_SHREDDED_FILE = this.getClass().getResource("/variant_shredded_test.parquet").getPath();
+
     @Override
     public String plainFile() {
         return getClass().getResource("/plain_uncompressed.parquet").getPath();
@@ -49,5 +53,36 @@ class SchemaCommandTest implements SchemaCommandContract {
 
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).contains("not implemented yet");
+    }
+
+    @Test
+    void displaysVariantAnnotation() {
+        Cli.Result result = Cli.launch("schema", "-f", VARIANT_FILE);
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                message schema {
+                  required int32 id;
+                  optional group var (VARIANT(1)) {
+                    required byte_array metadata;
+                    required byte_array value;
+                  }
+                }""");
+    }
+
+    @Test
+    void displaysShreddedVariantAnnotationWithTypedValueChild() {
+        Cli.Result result = Cli.launch("schema", "-f", VARIANT_SHREDDED_FILE);
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                message schema {
+                  required int32 id;
+                  optional group var (VARIANT(1)) {
+                    required byte_array metadata;
+                    optional byte_array value;
+                    optional int64 typed_value;
+                  }
+                }""");
     }
 }

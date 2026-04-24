@@ -58,6 +58,9 @@ public final class AvroSchemaConverter {
     }
 
     private static Schema convertGroupNode(SchemaNode.GroupNode group) {
+        if (group.isVariant()) {
+            return convertVariant(group);
+        }
         if (group.isList()) {
             return convertList(group);
         }
@@ -66,6 +69,19 @@ public final class AvroSchemaConverter {
         }
         // Plain struct
         return convertGroup(group, group.name());
+    }
+
+    /// Emit a two-field Avro RECORD carrying the canonical Variant bytes.
+    /// Matches parquet-java's [org.apache.parquet.avro.AvroParquetReader]
+    /// output shape so tooling that already consumes the parquet-java Avro
+    /// surface works unchanged. Callers who want typed access to the Variant
+    /// payload use [dev.hardwood.reader.RowReader#getVariant] on the file
+    /// reader and the [dev.hardwood.row.PqVariant] API.
+    private static Schema convertVariant(SchemaNode.GroupNode group) {
+        List<Schema.Field> fields = List.of(
+                new Schema.Field("metadata", Schema.create(Schema.Type.BYTES), null, null),
+                new Schema.Field("value", Schema.create(Schema.Type.BYTES), null, null));
+        return Schema.createRecord(group.name(), null, null, false, new ArrayList<>(fields));
     }
 
     private static Schema convertList(SchemaNode.GroupNode listGroup) {
@@ -129,6 +145,8 @@ public final class AvroSchemaConverter {
             case LogicalType.MapType m -> convertPhysicalType(physicalType, prim);
             case LogicalType.GeometryType g -> Schema.create(Schema.Type.BYTES);
             case LogicalType.GeographyType g -> Schema.create(Schema.Type.BYTES);
+            case LogicalType.VariantType v -> throw new IllegalStateException(
+                    "VariantType is a group-level annotation; encountered on primitive column " + prim.name());
         };
     }
 

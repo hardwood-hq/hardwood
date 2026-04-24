@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.util.List;
 
 import dev.hardwood.internal.util.StringToIntMap;
+import dev.hardwood.internal.variant.ShredLevel;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 import dev.hardwood.schema.SchemaNode;
@@ -25,10 +26,32 @@ final class TopLevelFieldMap {
                 case Struct s -> s.schema().name();
                 case ListOf l -> l.schema().name();
                 case MapOf m -> m.schema().name();
+                case Variant v -> v.schema().name();
             };
         }
 
         record Primitive(int projectedCol, SchemaNode.PrimitiveNode schema) implements FieldDesc {}
+
+        /// Variant logical-type group. Holds the `metadata` column index plus
+        /// a [ShredLevel] tree describing the shape of `value` / `typed_value`
+        /// (and, for shredded files, their nested sub-levels). The
+        /// [ShredLevel] root's `valueCol` is the variant group's `value` column;
+        /// its `typed` component is non-null iff the writer emitted a
+        /// `typed_value` sibling.
+        ///
+        /// @param schema the Variant-annotated GroupNode
+        /// @param metadataCol projected column index of the `metadata` binary child
+        /// @param nullDefLevel def level below which the Variant group itself is null
+        /// @param root top-level shredded tree for this Variant column
+        record Variant(SchemaNode.GroupNode schema,
+                       int metadataCol, int nullDefLevel,
+                       ShredLevel root) implements FieldDesc {
+
+            /// Shorthand for the top-level `value` column index.
+            int valueCol() {
+                return root.valueCol();
+            }
+        }
 
         /// @param nameToIndex       name → child ordinal (boundary lookup)
         /// @param children          ordinal → descriptor (internal lookup)
@@ -123,7 +146,10 @@ final class TopLevelFieldMap {
                 yield new FieldDesc.Primitive(projCol, prim);
             }
             case SchemaNode.GroupNode group -> {
-                if (group.isList()) {
+                if (group.isVariant()) {
+                    yield buildVariantDesc(group, projectedSchema);
+                }
+                else if (group.isList()) {
                     yield buildListDesc(group, schema, projectedSchema);
                 }
                 else if (group.isMap()) {
@@ -134,6 +160,13 @@ final class TopLevelFieldMap {
                 }
             }
         };
+    }
+
+    static FieldDesc.Variant buildVariantDesc(SchemaNode.GroupNode group, ProjectedSchema projectedSchema) {
+        SchemaNode.PrimitiveNode metadataNode = (SchemaNode.PrimitiveNode) group.children().get(0);
+        int metadataCol = projectedSchema.toProjectedIndex(metadataNode.columnIndex());
+        ShredLevel root = ShredLevel.build(group, projectedSchema);
+        return new FieldDesc.Variant(group, metadataCol, group.maxDefinitionLevel(), root);
     }
 
     static FieldDesc.Struct buildStructDesc(SchemaNode.GroupNode group,
@@ -236,7 +269,10 @@ final class TopLevelFieldMap {
                 if (!isChildProjected(group, projectedSchema)) {
                     yield null;
                 }
-                if (group.isList()) {
+                if (group.isVariant()) {
+                    yield buildVariantDesc(group, projectedSchema);
+                }
+                else if (group.isList()) {
                     yield buildListDesc(group, schema, projectedSchema);
                 }
                 else if (group.isMap()) {

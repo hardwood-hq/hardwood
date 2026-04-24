@@ -41,9 +41,11 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.*;
 
@@ -74,6 +76,14 @@ public class Utils {
             "repeated_primitive_no_list.parquet", // ClassCast: int32 Int32_list is not a group
             "unknown-logical-type.parquet", // Unknown logical type
 
+            // shredded_variant INVALID fixtures: the parquet-testing cases.json
+            // flags these as "not valid according to the spec; implementations
+            // can choose to error or read the shredded value." parquet-java
+            // and Hardwood diverge in which interpretation they pick, so row-
+            // level comparison is not meaningful.
+            "case-043-INVALID.parquet",
+            "case-125-INVALID.parquet",
+
             // shredded_variant files with parquet-java issues
             "case-040.parquet", // ParquetDecodingException
             "case-041.parquet", // NullPointer on Schema field
@@ -98,19 +108,11 @@ public class Utils {
     );
 
     /// Returns a GitHub issue reference blocking row-level nested comparison for
-    /// `testFile`, or `null` if the file can be compared. The `shredded_variant/`
-    /// suite cannot be compared against parquet-java without shred reassembly
-    /// (hardwood-hq/hardwood#286).
+    /// `testFile`, or `null` if the file can be compared. No files are currently
+    /// blocked — shredded Variant reassembly (#286) is now handled end-to-end,
+    /// so `shredded_variant/*.parquet` files round-trip through the comparison.
     static String rowComparisonSkipReason(Path testFile) {
-        if (isShreddedVariantFile(testFile)) {
-            return "hardwood-hq/hardwood#286";
-        }
         return null;
-    }
-
-    private static boolean isShreddedVariantFile(Path testFile) {
-        Path parent = testFile.getParent();
-        return parent != null && "shredded_variant".equals(parent.getFileName().toString());
     }
 
     /// Directories containing test parquet files.
@@ -198,26 +200,31 @@ public class Utils {
     }
 
     /// Compare a single row field by field.
-    static void compareRow(int rowIndex, GenericRecord reference, RowReader rowReader) {
-        compareStruct("Row " + rowIndex, reference, rowReader);
+    static void compareRow(int rowIndex, GenericRecord reference, RowReader rowReader, FileSchema schema) {
+        compareStruct("Row " + rowIndex, reference, rowReader, schema.getRootNode());
     }
 
     /// Compare all fields of a struct-like value against an Avro [GenericRecord].
-    /// Used both for top-level rows (via [RowReader]) and nested structs (via [PqStruct]),
-    /// which both implement [StructAccessor].
-    private static void compareStruct(String path, GenericRecord reference, StructAccessor actual) {
+    /// The `group` parameter carries the corresponding Hardwood schema node so
+    /// Variant-annotated fields can be dispatched via [SchemaNode.GroupNode#isVariant()]
+    /// instead of a runtime accessor check. May be `null` when schema context is
+    /// unavailable (inside list/map elements); in that case Variant-in-list dispatch
+    /// falls back to the struct path.
+    private static void compareStruct(String path, GenericRecord reference, StructAccessor actual,
+            SchemaNode.GroupNode group) {
         org.apache.avro.Schema schema = reference.getSchema();
         for (org.apache.avro.Schema.Field field : schema.getFields()) {
             String fieldName = field.name();
             Object refValue = reference.get(fieldName);
             String fieldPath = path + ", field '" + fieldName + "'";
-            compareField(fieldPath, fieldName, field.schema(), refValue, actual);
+            compareField(fieldPath, fieldName, field.schema(), refValue, actual, group);
         }
     }
 
     /// Compare a single named field against its reference value, dispatching on Avro type.
     private static void compareField(String context, String fieldName,
-            org.apache.avro.Schema fieldSchema, Object refValue, StructAccessor actual) {
+            org.apache.avro.Schema fieldSchema, Object refValue, StructAccessor actual,
+            SchemaNode.GroupNode parentGroup) {
         org.apache.avro.Schema resolved = resolveNonNull(fieldSchema);
 
         if (refValue == null) {
@@ -230,11 +237,19 @@ public class Utils {
                 .as(context + " should not be null")
                 .isFalse();
 
+        SchemaNode childNode = findChild(parentGroup, fieldName);
+
         switch (resolved.getType()) {
             case RECORD -> {
-                PqStruct nested = actual.getStruct(fieldName);
-                assertThat(nested).as(context).isNotNull();
-                compareStruct(context, (GenericRecord) refValue, nested);
+                if (childNode instanceof SchemaNode.GroupNode childGroup && childGroup.isVariant()) {
+                    compareVariant(context, (GenericRecord) refValue, actual.getVariant(fieldName));
+                }
+                else {
+                    PqStruct nested = actual.getStruct(fieldName);
+                    assertThat(nested).as(context).isNotNull();
+                    SchemaNode.GroupNode nestedGroup = childNode instanceof SchemaNode.GroupNode g ? g : null;
+                    compareStruct(context, (GenericRecord) refValue, nested, nestedGroup);
+                }
             }
             case ARRAY -> {
                 PqList list = actual.getList(fieldName);
@@ -251,6 +266,48 @@ public class Utils {
                 compareLeafValues(context, refValue, actualValue);
             }
         }
+    }
+
+    private static SchemaNode findChild(SchemaNode.GroupNode parentGroup, String name) {
+        if (parentGroup == null) {
+            return null;
+        }
+        for (SchemaNode child : parentGroup.children()) {
+            if (child.name().equals(name)) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    /// Compare a Variant-annotated column by byte-comparing the canonical
+    /// `metadata` and `value` binaries against those surfaced by parquet-java's
+    /// Avro reader (which sees the Variant group as a plain record).
+    private static void compareVariant(String context, GenericRecord reference, PqVariant actual) {
+        assertThat(actual).as(context + " variant").isNotNull();
+        byte[] refMetadata = toBytes(reference.get("metadata"));
+        byte[] refValue = toBytes(reference.get("value"));
+        assertThat(actual.metadata())
+                .as(context + " variant metadata bytes")
+                .isEqualTo(refMetadata);
+        assertThat(actual.value())
+                .as(context + " variant value bytes")
+                .isEqualTo(refValue);
+    }
+
+    private static byte[] toBytes(Object avroBinary) {
+        if (avroBinary == null) {
+            return null;
+        }
+        if (avroBinary instanceof ByteBuffer bb) {
+            byte[] out = new byte[bb.remaining()];
+            bb.duplicate().get(out);
+            return out;
+        }
+        if (avroBinary instanceof byte[] b) {
+            return b;
+        }
+        throw new IllegalArgumentException("Unexpected Avro binary value type: " + avroBinary.getClass());
     }
 
     /// Unwrap a nullable UNION to its single non-null branch. Returns the input
@@ -375,7 +432,7 @@ public class Utils {
             else {
                 assertThat(actualNull).as(elemContext + " should not be null").isFalse();
                 switch (resolvedElement.getType()) {
-                    case RECORD -> compareStruct(elemContext, (GenericRecord) refElement, structIt.next());
+                    case RECORD -> compareStruct(elemContext, (GenericRecord) refElement, structIt.next(), null);
                     case ARRAY -> compareList(elemContext, resolvedElement.getElementType(),
                             (Collection<?>) refElement, listIt.next());
                     case MAP -> compareMap(elemContext, resolvedElement.getValueType(),
@@ -444,7 +501,7 @@ public class Utils {
 
             switch (resolvedValue.getType()) {
                 case RECORD -> compareStruct(entryContext, (GenericRecord) refValue,
-                        actualEntry.getStructValue());
+                        actualEntry.getStructValue(), null);
                 case ARRAY -> compareList(entryContext, resolvedValue.getElementType(),
                         (Collection<?>) refValue, actualEntry.getListValue());
                 case MAP -> compareMap(entryContext, resolvedValue.getValueType(),

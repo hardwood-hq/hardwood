@@ -54,11 +54,12 @@ interface SchemaNode {
             int maxRepetitionLevel) implements SchemaNode {
     }
 
-    /// Group node representing a struct, list, or map.
+    /// Group node representing a struct, list, map, or variant.
     ///
     /// @param name field name
     /// @param repetitionType whether the group is required, optional, or repeated
     /// @param convertedType legacy annotation indicating list, map, or map-key-value semantics, or `null` for plain structs
+    /// @param logicalType modern logical-type annotation applied to the group (e.g. [LogicalType.VariantType]), or `null` if unannotated
     /// @param children child nodes of this group
     /// @param maxDefinitionLevel maximum definition level
     /// @param maxRepetitionLevel maximum repetition level
@@ -66,6 +67,7 @@ interface SchemaNode {
             String name,
             RepetitionType repetitionType,
             ConvertedType convertedType,
+            LogicalType logicalType,
             List<SchemaNode> children,
             int maxDefinitionLevel,
             int maxRepetitionLevel) implements SchemaNode {
@@ -80,9 +82,14 @@ interface SchemaNode {
             return convertedType == ConvertedType.MAP;
         }
 
-    /// Returns true if this is a plain struct (no converted type).
+    /// Returns true if this is a plain struct (no converted type and no modern logical-type annotation).
         public boolean isStruct() {
-            return convertedType == null;
+            return convertedType == null && logicalType == null;
+        }
+
+    /// Returns true if this group carries the [LogicalType.VariantType] annotation.
+        public boolean isVariant() {
+            return logicalType instanceof LogicalType.VariantType;
         }
 
     /// For LIST groups, returns the element node (skipping the intermediate

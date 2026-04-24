@@ -13,6 +13,7 @@ from decimal import Decimal
 import uuid
 
 from parquet_bson_annotation import annotate_column_as_bson
+from parquet_variant_annotation import annotate_group_as_variant
 
 # Plain encoding with no compression (for Milestone 1)
 # Create a simple table with NO nulls first, explicitly marking fields as non-nullable
@@ -2062,3 +2063,164 @@ print("\nGenerated geospatial_stats_test.parquet:")
 print("  - city_geom column has GeospatialStatistics at field 17")
 print("  - BoundingBox: xmin=-4.0, xmax=7.5, ymin=20.96, ymax=77.08, zmin=10.5, zmax=90.0")
 print("  - geospatial_types: [1, 6]")
+# ============================================================================
+# Variant logical type
+# ============================================================================
+#
+# ============================================================================
+# Variant logical type — unshredded
+# ============================================================================
+#
+# PyArrow 23.0.1 lacks a public `pa.variant()` writer, but the Variant column
+# is just a group of two binary fields `{metadata, value}` — we write that
+# structure with PyArrow, then post-process the footer to stamp the
+# VARIANT(specification_version=1) annotation on the outer group. Same
+# footer-rewrite pattern as parquet_bson_annotation.py.
+
+# A minimal unshredded Variant column with a few rows covering the distinct
+# cases: BOOLEAN_TRUE, BOOLEAN_FALSE, INT32, and STRING. Every row has
+# `metadata` = empty dictionary (`01 00 00`) and `value` = the variant payload.
+
+_empty_metadata = bytes([0x01, 0x00, 0x00])  # v1, unsorted, offset_size=1, dict_size=0, offset[0]=0
+
+variant_unshredded_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('var', pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), False),
+    ]), True),
+])
+
+variant_unshredded_table = pa.table({
+    'id': [1, 2, 3, 4],
+    'var': [
+        {'metadata': _empty_metadata, 'value': bytes([0x04])},                            # BOOLEAN_TRUE
+        {'metadata': _empty_metadata, 'value': bytes([0x08])},                            # BOOLEAN_FALSE
+        {'metadata': _empty_metadata, 'value': bytes([0x14, 42, 0, 0, 0])},               # INT32 = 42
+        {'metadata': _empty_metadata, 'value': bytes([0x09, ord('h'), ord('i')])},         # short string "hi" (basic_type=1, length=2)
+    ],
+}, schema=variant_unshredded_schema)
+
+pq.write_table(
+    variant_unshredded_table,
+    'core/src/test/resources/variant_test.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant('core/src/test/resources/variant_test.parquet', 'var')
+
+print("\nGenerated variant_test.parquet:")
+print("  - 4 rows: BOOLEAN_TRUE, BOOLEAN_FALSE, INT32(42), short string 'hi'")
+print("  - `var` is a VARIANT-annotated group of {metadata, value} binaries")
+
+# ============================================================================
+# Variant logical type — shredded (typed_value: int64)
+# ============================================================================
+#
+# Exercises the reassembly path: typed_value non-null → encode as Variant
+# INT64; typed_value null and value non-null → pass through; both null at
+# non-null group → emit Variant NULL per the parquet-java convention.
+
+variant_shredded_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('var', pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), True),
+        pa.field('typed_value', pa.int64(), True),
+    ]), True),
+])
+
+variant_shredded_table = pa.table({
+    'id': [1, 2, 3, 4],
+    'var': [
+        # Row 1: shredded — value null, typed_value = 42 → reassemble as INT64(42)
+        {'metadata': _empty_metadata, 'value': None, 'typed_value': 42},
+        # Row 2: unshredded — value carries the Variant bytes, typed_value null
+        {'metadata': _empty_metadata, 'value': bytes([0x04]), 'typed_value': None},
+        # Row 3: both null at non-null group → Variant NULL (0x00) per spec
+        {'metadata': _empty_metadata, 'value': None, 'typed_value': None},
+        # Row 4: shredded — typed_value = 1_000_000_000_000
+        {'metadata': _empty_metadata, 'value': None, 'typed_value': 1_000_000_000_000},
+    ],
+}, schema=variant_shredded_schema)
+
+pq.write_table(
+    variant_shredded_table,
+    'core/src/test/resources/variant_shredded_test.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant('core/src/test/resources/variant_shredded_test.parquet', 'var')
+
+print("\nGenerated variant_shredded_test.parquet:")
+print("  - 4 rows exercising the shredded reassembly paths")
+print("  - typed_value: int64 — shredded (rows 1, 4), unshredded (row 2), Variant NULL (row 3)")
+
+# ============================================================================
+# Variant attributes example — EAV table backing the docs/tweet snippet
+# ============================================================================
+#
+# Three rows of an entity-attribute-value table where the VARIANT column
+# `value` carries a different shape per row: INT64, STRING, OBJECT. Backs
+# VariantAttributesExampleTest (which mirrors the published code snippet).
+
+# Metadata with empty dict (reused by rows whose value carries no object keys).
+_attr_empty_metadata = bytes([0x01, 0x00, 0x00])  # v1, unsorted, offset_size=1, dict_size=0
+
+# Metadata with dictionary ["opt_in", "theme"] (sorted by name).
+#   header 0x11 = v1 + sorted + offset_size=1
+#   dict_size=2, offsets=[0, 6, 11], keys="opt_in" + "theme"
+_attr_object_metadata = bytes([0x11, 0x02, 0x00, 0x06, 0x0B]) + b'opt_in' + b'theme'
+
+# INT64(42): primitive header (PRIM_INT64=6) → 0x18, then 8-byte LE payload.
+_attr_value_age = bytes([0x18, 0x2A, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00])
+
+# Short string "ada@example.com" (15 bytes): header=(15<<2)|1=0x3D, then bytes.
+_attr_value_email = bytes([0x3D]) + b'ada@example.com'
+
+# OBJECT {"opt_in": true, "theme": "dark"}:
+#   header 0x02 = BASIC_TYPE_OBJECT with value_header=0 (offset_size=1,
+#   id_size=1, is_large=0); n=2; field ids [0,1] (asc by field name);
+#   offsets [0,1,6]; values = BOOL_TRUE (0x04) + short-string "dark" (0x11 + 'dark')
+_attr_value_prefs = bytes([
+    0x02,                   # object header
+    0x02,                   # num_elements = 2
+    0x00, 0x01,             # field ids: opt_in=0, theme=1
+    0x00, 0x01, 0x06,       # offsets: 0, 1, 6
+    0x04,                   # value[0]: BOOLEAN_TRUE
+    0x11, ord('d'), ord('a'), ord('r'), ord('k'),  # value[1]: short-string "dark"
+])
+
+variant_attributes_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('name', pa.string(), False),
+    ('value', pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), False),
+    ]), True),
+])
+
+variant_attributes_table = pa.table({
+    'id':   [1, 1, 1],
+    'name': ['age', 'email', 'preferences'],
+    'value': [
+        {'metadata': _attr_empty_metadata,  'value': _attr_value_age},
+        {'metadata': _attr_empty_metadata,  'value': _attr_value_email},
+        {'metadata': _attr_object_metadata, 'value': _attr_value_prefs},
+    ],
+}, schema=variant_attributes_schema)
+
+pq.write_table(
+    variant_attributes_table,
+    'core/src/test/resources/variant_attributes_example.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant('core/src/test/resources/variant_attributes_example.parquet', 'value')
+
+print("\nGenerated variant_attributes_example.parquet:")
+print("  - EAV table (id, name, value) backing the docs/tweet Variant snippet")
+print("  - 3 rows: INT64(age=42), STRING(email), OBJECT(preferences)")

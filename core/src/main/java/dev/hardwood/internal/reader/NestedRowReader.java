@@ -22,6 +22,7 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
@@ -247,6 +248,7 @@ public final class NestedRowReader implements RowReader {
     @Override public PqList getList(int i) { return dataView.getList(i); }
     @Override public PqMap getMap(String name) { return dataView.getMap(name); }
     @Override public PqMap getMap(int i) { return dataView.getMap(i); }
+    @Override public PqVariant getVariant(String name) { return dataView.getVariant(name); }
 
     // ==================== Metadata ====================
 

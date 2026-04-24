@@ -22,6 +22,7 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.FileSchema;
 
 /// Filtered wrapper around any [RowReader] that skips non-matching rows.
@@ -106,6 +107,7 @@ public final class FilteredRowReader implements RowReader {
     @Override public PqList getList(int i) { return delegate.getList(i); }
     @Override public PqMap getMap(String name) { return delegate.getMap(name); }
     @Override public PqMap getMap(int i) { return delegate.getMap(i); }
+    @Override public PqVariant getVariant(String name) { return delegate.getVariant(name); }
 
     @Override
     public void close() {
