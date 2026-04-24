@@ -905,33 +905,18 @@ those commits. Check them off as they land.
   `isUp()`. PgDn/PgUp still work for users with dedicated keys; the
   Shift-arrow alias is the one-hand chord for macOS laptops. Keybar
   updated to list both.
-- [ ] **Pages screen: column additions and width tuning.**
-  Current columns: `# | Type | First row | Values | Encoding | Comp | Min | Max`.
-  Several coordinated tweaks on the same table:
-    - **Add Nulls column** sourced from `ColumnIndex.nullCounts()` when
-      present (renders `—` otherwise). Useful for scanning for null-heavy
-      pages at a glance.
-    - **Add Uncompressed column** sourced from
-      `PageHeader.uncompressedPageSize()`. Helps spot pages where the
-      codec isn't earning its keep; sits next to the existing `Comp`.
-    - **Widen `Encoding` column.** Currently `Constraint.Length(12)`,
-      which truncates `RLE_DICTIONARY` (14) → `RLE_DICTIONA`, and longer
-      names like `DELTA_BINARY_PACKED` (19), `DELTA_LENGTH_BYTE_ARRAY`
-      (23), `BYTE_STREAM_SPLIT` (17). Switch to
-      `Constraint.Min(14).Max(23)` — natural width for common cases,
-      room to grow for the long encodings.
-    - **Tighten `Min` / `Max` width.** They are currently
-      `Constraint.Fill(1)` each, so they split all remaining horizontal
-      space even when values are short or `—`. Use `Min(N).Max(M)` so
-      they stay useful for long string values without hogging space
-      when they're narrow.
-    - **Hide `Min` / `Max` when the chunk has no ColumnIndex** — every
-      row would be `—` and the columns are pure noise. Add a
-      `(no column index)` hint to the screen header so the absence is
-      explicit.
-  Landing order: the additions plus the width retune want to coexist
-  with the narrow-terminal elide policy; elide priority for this table
-  is `Uncompressed → Nulls → Min/Max`.
+- [x] **Pages screen: column additions and width tuning.** New columns
+  `Uncomp` (from `PageHeader.uncompressedPageSize()`) and `Nulls`
+  (from ColumnIndex null-counts with inline-stats fallback). Encoding
+  column widened to `Length(23)` so `DELTA_LENGTH_BYTE_ARRAY` no longer
+  truncates. `Min` / `Max` left as `Fill(1)` for the moment; tightening
+  them waits for the narrow-terminal elide policy where a proper
+  `Min.Max` constraint could keep value strings visible at narrow
+  widths. `Min` / `Max` now **hidden entirely** when no page-level
+  stats are available — the screen title gains ` (no column index)`
+  to make the absence explicit. Tamboui's Table still truncates on
+  narrow terminals until the narrow-terminal elide policy lands
+  separately.
 - [x] **Column chunk detail: clarify the Pages drill-menu hint when
   OffsetIndex is absent.** `…` replaced with `—` in
   `ColumnChunkDetailScreen.menuHint`. Matches the "not available from
@@ -967,13 +952,13 @@ those commits. Check them off as they land.
   so typed `g`/`G` during filter entry extend the filter instead of
   navigating. Help overlay + docs updated; two regression tests lock
   the semantics for Row groups and Data preview.
-- [ ] **Column chunks screen: add Logical type column.** Currently shows
-  `Column | Type | Codec | Compressed | Ratio | Dict`. Add a `Logical`
-  column right after `Type`, sourced from `model.schema().getColumn(i).logicalType()`
-  (render `—` when null), mirroring the Physical / Logical grouping on the
-  Column chunk detail screen. Depends on the narrow-terminal elide policy in
-  *Rendering / performance* — this pushes the table past 80 cols, so either
-  land the elide first (Dict elides first) or ship both in one change.
+- [x] **Column chunks screen: add Logical type column.** Added right after
+  `Type` (18-char constraint), rendering
+  `model.schema().getColumn(i).logicalType().toString()` or `—` when
+  absent. Mirrors the Physical / Logical grouping on the Column chunk
+  detail screen. Total table width pushes past 80 cols on narrow
+  terminals — tamboui Table truncates until the narrow-terminal elide
+  policy ships.
 - [x] **Schema: vertically align the type / repetition columns.**
   Pre-computes the max prefix width in the currently-visible row set
   (prefix = indent + marker + name in tree mode, path in filter mode)

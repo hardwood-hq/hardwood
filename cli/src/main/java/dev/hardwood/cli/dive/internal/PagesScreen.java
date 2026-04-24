@@ -96,13 +96,20 @@ public final class PagesScreen {
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
 
         List<Row> rows = new ArrayList<>();
+        // Hide Min / Max columns entirely when no page-level stats are available
+        // anywhere (no ColumnIndex AND no inline statistics on any page). Every
+        // row would be "—" otherwise, pure visual noise.
+        boolean hasAnyStats = columnIndex != null || headers.stream()
+                .anyMatch(h -> h.type() != PageHeader.PageType.DICTIONARY_PAGE && inlineStats(h) != null);
         int dataPageIdx = 0;
         for (int i = 0; i < headers.size(); i++) {
             PageHeader h = headers.get(i);
             String firstRow = "—";
             String min = "—";
             String max = "—";
+            String nulls = "—";
             int values;
+            String uncompressed = Sizes.format(h.uncompressedPageSize());
             if (h.type() == PageHeader.PageType.DICTIONARY_PAGE) {
                 DictionaryPageHeader dph = h.dictionaryPageHeader();
                 values = dph != null ? dph.numValues() : 0;
@@ -116,45 +123,78 @@ public final class PagesScreen {
                 if (columnIndex != null && dataPageIdx < columnIndex.getPageCount()) {
                     min = formatStat(columnIndex.minValues().get(dataPageIdx), col);
                     max = formatStat(columnIndex.maxValues().get(dataPageIdx), col);
+                    if (columnIndex.nullCounts() != null
+                            && dataPageIdx < columnIndex.nullCounts().size()) {
+                        nulls = String.format("%,d", columnIndex.nullCounts().get(dataPageIdx));
+                    }
                 }
                 else {
                     Statistics inline = inlineStats(h);
                     if (inline != null) {
                         min = formatStat(inline.minValue(), col);
                         max = formatStat(inline.maxValue(), col);
+                        if (inline.nullCount() != null) {
+                            nulls = String.format("%,d", inline.nullCount());
+                        }
                     }
                 }
                 dataPageIdx++;
             }
-            rows.add(Row.from(
-                    String.valueOf(i),
-                    h.type().name(),
-                    firstRow,
-                    String.format("%,d", values),
-                    dataEncoding(h),
-                    Sizes.format(h.compressedPageSize()),
-                    min,
-                    max));
+            if (hasAnyStats) {
+                rows.add(Row.from(
+                        String.valueOf(i),
+                        h.type().name(),
+                        firstRow,
+                        String.format("%,d", values),
+                        dataEncoding(h),
+                        Sizes.format(h.compressedPageSize()),
+                        uncompressed,
+                        nulls,
+                        min,
+                        max));
+            }
+            else {
+                rows.add(Row.from(
+                        String.valueOf(i),
+                        h.type().name(),
+                        firstRow,
+                        String.format("%,d", values),
+                        dataEncoding(h),
+                        Sizes.format(h.compressedPageSize()),
+                        uncompressed,
+                        nulls));
+            }
         }
-        Row header = Row.from("#", "Type", "First row", "Values", "Encoding", "Comp", "Min", "Max")
-                .style(Style.EMPTY.bold());
+        Row header = hasAnyStats
+                ? Row.from("#", "Type", "First row", "Values", "Encoding", "Comp", "Uncomp", "Nulls", "Min", "Max")
+                        .style(Style.EMPTY.bold())
+                : Row.from("#", "Type", "First row", "Values", "Encoding", "Comp", "Uncomp", "Nulls")
+                        .style(Style.EMPTY.bold());
+        String titleSuffix = hasAnyStats ? "" : " (no column index)";
         Block block = Block.builder()
-                .title(" Pages (" + headers.size() + ") ")
+                .title(" Pages (" + Plurals.format(headers.size(), "page", "pages") + ")"
+                        + titleSuffix + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)
                 .build();
+        List<Constraint> widths = new ArrayList<>();
+        widths.add(new Constraint.Length(4));   // #
+        widths.add(new Constraint.Length(16));  // Type
+        widths.add(new Constraint.Length(12));  // First row
+        widths.add(new Constraint.Length(10));  // Values
+        widths.add(new Constraint.Length(23));  // Encoding (fits DELTA_LENGTH_BYTE_ARRAY = 23)
+        widths.add(new Constraint.Length(10));  // Comp
+        widths.add(new Constraint.Length(10));  // Uncomp
+        widths.add(new Constraint.Length(10));  // Nulls
+        if (hasAnyStats) {
+            widths.add(new Constraint.Fill(1)); // Min
+            widths.add(new Constraint.Fill(1)); // Max
+        }
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
-                .widths(new Constraint.Length(4),
-                        new Constraint.Length(16),
-                        new Constraint.Length(12),
-                        new Constraint.Length(10),
-                        new Constraint.Length(12),
-                        new Constraint.Length(10),
-                        new Constraint.Fill(1),
-                        new Constraint.Fill(1))
+                .widths(widths)
                 .columnSpacing(1)
                 .block(block)
                 .highlightSymbol("▶ ")

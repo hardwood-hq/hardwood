@@ -66,20 +66,23 @@ public final class ColumnChunksScreen {
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnChunks state) {
         RowGroup rg = model.rowGroup(state.rowGroupIndex());
         List<Row> rows = new ArrayList<>();
-        for (ColumnChunk cc : rg.columns()) {
+        for (int i = 0; i < rg.columns().size(); i++) {
+            ColumnChunk cc = rg.columns().get(i);
             ColumnMetaData cmd = cc.metaData();
             double ratio = cmd.totalCompressedSize() == 0
                     ? 0.0
                     : (double) cmd.totalUncompressedSize() / cmd.totalCompressedSize();
+            dev.hardwood.metadata.LogicalType logical = model.schema().getColumn(i).logicalType();
             rows.add(Row.from(
                     Sizes.columnPath(cmd),
                     cmd.type().name(),
+                    logical != null ? logical.toString() : "—",
                     cmd.codec().name(),
                     Sizes.format(cmd.totalCompressedSize()),
                     String.format("%.1f×", ratio),
                     cmd.dictionaryPageOffset() != null ? "yes" : "no"));
         }
-        Row header = Row.from("Column", "Type", "Codec", "Compressed", "Ratio", "Dict")
+        Row header = Row.from("Column", "Type", "Logical", "Codec", "Compressed", "Ratio", "Dict")
                 .style(Style.EMPTY.bold());
         Block block = Block.builder()
                 .title(" RG #" + state.rowGroupIndex() + " column chunks ")
@@ -92,6 +95,7 @@ public final class ColumnChunksScreen {
                 .rows(rows)
                 .widths(new Constraint.Fill(3),
                         new Constraint.Length(16),
+                        new Constraint.Length(18),
                         new Constraint.Length(10),
                         new Constraint.Length(12),
                         new Constraint.Length(8),
