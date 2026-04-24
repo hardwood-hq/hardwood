@@ -15,6 +15,8 @@ import dev.hardwood.metadata.PageLocation;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertFalse;
+import static org.junit.jupiter.api.Assertions.assertNull;
+import static org.junit.jupiter.api.Assertions.assertSame;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class RowRangesTest {
@@ -323,5 +325,107 @@ class RowRangesTest {
         result = empty.union(a);
         assertEquals(1, result.intervalCount());
         assertTrue(result.overlapsPage(0, 50));
+    }
+
+    @Test
+    void testMaskForPageOnAllReturnsAllSentinel() {
+        assertSame(PageRowMask.ALL, RowRanges.ALL.maskForPage(0, 100));
+        assertSame(PageRowMask.ALL, RowRanges.ALL.maskForPage(50, 60));
+    }
+
+    @Test
+    void testMaskForPageReturnsNullWhenPageDisjointFromAllRanges() {
+        // Range [100, 200), page entirely before
+        RowRanges ranges = singleRange(100, 200);
+        assertNull(ranges.maskForPage(0, 100));
+        assertNull(ranges.maskForPage(50, 100));
+        // Page entirely after
+        assertNull(ranges.maskForPage(200, 300));
+        assertNull(ranges.maskForPage(250, 350));
+    }
+
+    @Test
+    void testMaskForPageWholePageInsideSingleRange() {
+        // Range [100, 200), page [120, 180) entirely inside → mask covers full page
+        RowRanges ranges = singleRange(100, 200);
+        PageRowMask mask = ranges.maskForPage(120, 180);
+        assertEquals(1, mask.intervalCount());
+        assertEquals(0, mask.start(0));
+        assertEquals(60, mask.end(0));
+        assertEquals(60, mask.totalRecords());
+    }
+
+    @Test
+    void testMaskForPageRangeStartsInsidePage() {
+        // Range [120, 200), page [100, 200) → mask is [20, 100)
+        RowRanges ranges = singleRange(120, 200);
+        PageRowMask mask = ranges.maskForPage(100, 200);
+        assertEquals(1, mask.intervalCount());
+        assertEquals(20, mask.start(0));
+        assertEquals(100, mask.end(0));
+    }
+
+    @Test
+    void testMaskForPageRangeEndsInsidePage() {
+        // Range [50, 120), page [100, 200) → mask is [0, 20)
+        RowRanges ranges = singleRange(50, 120);
+        PageRowMask mask = ranges.maskForPage(100, 200);
+        assertEquals(1, mask.intervalCount());
+        assertEquals(0, mask.start(0));
+        assertEquals(20, mask.end(0));
+    }
+
+    @Test
+    void testMaskForPageRangeStraddlesBothEnds() {
+        // Range [50, 250), page [100, 200) → mask is [0, 100)
+        RowRanges ranges = singleRange(50, 250);
+        PageRowMask mask = ranges.maskForPage(100, 200);
+        assertEquals(1, mask.intervalCount());
+        assertEquals(0, mask.start(0));
+        assertEquals(100, mask.end(0));
+    }
+
+    @Test
+    void testMaskForPageMultipleRangesProducesMultipleIntervals() {
+        // Ranges [110, 130) ∪ [160, 190), page [100, 200) → mask [10, 30) ∪ [60, 90)
+        RowRanges ranges = singleRange(110, 130).union(singleRange(160, 190));
+        PageRowMask mask = ranges.maskForPage(100, 200);
+        assertEquals(2, mask.intervalCount());
+        assertEquals(10, mask.start(0));
+        assertEquals(30, mask.end(0));
+        assertEquals(60, mask.start(1));
+        assertEquals(90, mask.end(1));
+        assertEquals(50, mask.totalRecords());
+    }
+
+    @Test
+    void testMaskForPageDropsRangesEntirelyOutsidePage() {
+        // Ranges [10, 30) ∪ [120, 150) ∪ [400, 500), page [100, 200) → mask [20, 50)
+        RowRanges ranges = singleRange(10, 30)
+                .union(singleRange(120, 150))
+                .union(singleRange(400, 500));
+        PageRowMask mask = ranges.maskForPage(100, 200);
+        assertEquals(1, mask.intervalCount());
+        assertEquals(20, mask.start(0));
+        assertEquals(50, mask.end(0));
+    }
+
+    @Test
+    void testMaskForPageBoundariesAreExclusive() {
+        // Range [100, 200), page [0, 100) — touches at 100 but no overlap
+        RowRanges ranges = singleRange(100, 200);
+        assertNull(ranges.maskForPage(0, 100));
+        // Page [200, 300) — touches at 200 but no overlap
+        assertNull(ranges.maskForPage(200, 300));
+    }
+
+    /// Builds a `RowRanges` containing the single interval `[start, end)`.
+    /// Helper for the maskForPage tests so each one can read at a glance.
+    private static RowRanges singleRange(long start, long end) {
+        // 2-page setup: drop page 0, keep page 1 covering [start, end).
+        List<PageLocation> pages = List.of(
+                new PageLocation(0, 100, 0),
+                new PageLocation(100, 100, start));
+        return RowRanges.fromPages(pages, new boolean[]{ false, true }, end);
     }
 }
