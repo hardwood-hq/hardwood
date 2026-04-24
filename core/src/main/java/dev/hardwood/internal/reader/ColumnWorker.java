@@ -44,8 +44,14 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
     private static final System.Logger LOG = System.getLogger(ColumnWorker.class.getName());
 
-    /// Sentinel page stored in the reorder buffer to signal end-of-stream.
-    private static final Page EMPTY_SENTINEL = new Page.IntPage(new int[0], null, null, 0, -1);
+    /// Decoded page paired with its [PageRowMask]. Stored in the reorder
+    /// buffer so the drain receives both the decoded values and the per-page
+    /// row selection in a single read.
+    record DecodedPage(Page page, PageRowMask mask) {}
+
+    /// Sentinel value stored in the reorder buffer to signal end-of-stream.
+    private static final DecodedPage EMPTY_SENTINEL =
+            new DecodedPage(new Page.IntPage(new int[0], null, null, 0, -1), PageRowMask.ALL);
 
     private final PageSource pageSource;
     private final DecompressorFactory decompressorFactory;
@@ -58,7 +64,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     final int maxDefinitionLevel;
 
     // === Circular reorder buffer: decode tasks write, drain thread reads ===
-    private final AtomicReferenceArray<Page> reorderBuffer;
+    private final AtomicReferenceArray<DecodedPage> reorderBuffer;
 
     // === File name per reorder-buffer slot (retriever writes, drain reads) ===
     // Visibility: retriever writes fileNameBuffer[slot] before submitting the
@@ -136,7 +142,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     abstract void initDrainState();
 
     /// Assembles a single decoded page into the current batch.
-    abstract void assemblePage(Page page);
+    /// `mask` selects which records of the page to keep — [PageRowMask#ALL]
+    /// when filter pushdown is inactive (or matched the whole page), otherwise
+    /// a tighter per-page mask.
+    abstract void assemblePage(Page page, PageRowMask mask);
 
     /// Publishes the current batch to the [BatchExchange] and takes a new free batch.
     abstract void publishCurrentBatch();
@@ -289,7 +298,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             Page page = pageInfo.isNullPlaceholder()
                     ? pageDecoder.nullPage(pageInfo.placeholderNumValues())
                     : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
-            reorderBuffer.set(slot, page);
+            reorderBuffer.set(slot, new DecodedPage(page, pageInfo.mask()));
         }
         catch (Throwable t) {
             signalError(enrichWithFileName(t, fileNameBuffer[slot]));
@@ -346,11 +355,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         boolean drained = false;
         while (!done) {
             int slot = consumePosition % MAX_INFLIGHT_PAGES;
-            Page page = reorderBuffer.getAndSet(slot, null);
-            if (page == null) {
+            DecodedPage decoded = reorderBuffer.getAndSet(slot, null);
+            if (decoded == null) {
                 break;
             }
-            if (page == EMPTY_SENTINEL) {
+            if (decoded == EMPTY_SENTINEL) {
                 finishDrain();
                 return true;
             }
@@ -367,7 +376,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 currentBatchFileName = pageFileName;
             }
 
-            assemblePage(page);
+            assemblePage(decoded.page(), decoded.mask());
             consumePosition++;
             totalPagesDrained++;
             unparkRetriever();

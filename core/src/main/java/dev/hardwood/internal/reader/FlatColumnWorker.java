@@ -44,7 +44,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     }
 
     @Override
-    void assemblePage(Page page) {
+    void assemblePage(Page page, PageRowMask mask) {
         int pageSize = page.size();
         int pagePosition = 0;
 
