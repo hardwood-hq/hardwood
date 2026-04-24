@@ -64,7 +64,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     }
 
     @Override
-    void assemblePage(Page page) {
+    void assemblePage(Page page, PageRowMask mask) {
         int pageSize = page.size();
         int[] pageDefLevels = page.definitionLevels();
         int[] pageRepLevels = page.repetitionLevels();

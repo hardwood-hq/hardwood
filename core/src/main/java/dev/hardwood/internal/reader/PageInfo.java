@@ -26,6 +26,11 @@ import dev.hardwood.schema.ColumnSchema;
 /// [#placeholderNumValues()] gives the number of rows the placeholder stands
 /// in for. Decoding short-circuits to an all-null typed page, preserving
 /// cross-column row alignment while skipping decompression and value decoding.
+///
+/// The optional [#mask()] selects which records of the decoded page the
+/// assembler should keep. Defaults to [PageRowMask#ALL] (keep everything);
+/// the filter-pushdown path attaches a tighter mask when the page only
+/// partially overlaps the matching rows.
 public class PageInfo {
 
     private final ByteBuffer pageData;
@@ -33,20 +38,31 @@ public class PageInfo {
     private final ColumnMetaData columnMetaData;
     private final Dictionary dictionary;
     private final int placeholderNumValues;
+    private final PageRowMask mask;
 
     public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                     ColumnMetaData columnMetaData, Dictionary dictionary) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0);
+        this(pageData, columnSchema, columnMetaData, dictionary, 0, PageRowMask.ALL);
+    }
+
+    public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
+                    ColumnMetaData columnMetaData, Dictionary dictionary,
+                    PageRowMask mask) {
+        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask);
     }
 
     private PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                      ColumnMetaData columnMetaData, Dictionary dictionary,
-                     int placeholderNumValues) {
+                     int placeholderNumValues, PageRowMask mask) {
+        if (mask == null) {
+            throw new IllegalArgumentException("mask must not be null; use PageRowMask.ALL");
+        }
         this.pageData = pageData;
         this.columnSchema = columnSchema;
         this.columnMetaData = columnMetaData;
         this.dictionary = dictionary;
         this.placeholderNumValues = placeholderNumValues;
+        this.mask = mask;
     }
 
     /// Creates a null-placeholder `PageInfo` representing `numValues` rows whose
@@ -58,7 +74,7 @@ public class PageInfo {
         if (numValues <= 0) {
             throw new IllegalArgumentException("placeholder numValues must be positive: " + numValues);
         }
-        return new PageInfo(null, columnSchema, columnMetaData, null, numValues);
+        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL);
     }
 
     /// Returns the page data buffer (header + compressed data), or `null` if this
@@ -86,5 +102,11 @@ public class PageInfo {
     /// Number of rows the null-placeholder stands in for. Zero for regular pages.
     public int placeholderNumValues() {
         return placeholderNumValues;
+    }
+
+    /// Per-page row selection. [PageRowMask#ALL] when the assembler should keep
+    /// every row; otherwise a tighter mask coming from filter pushdown.
+    public PageRowMask mask() {
+        return mask;
     }
 }
