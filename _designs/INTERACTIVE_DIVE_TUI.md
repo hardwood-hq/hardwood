@@ -1021,31 +1021,19 @@ those commits. Check them off as they land.
   one is about I/O round-trips on remote storage rather than in-memory
   recomputation or sequential skip cost.
 - [ ] **Dictionary screen: Up/Down feels sluggish on large dictionaries.**
-  Observed on a yellow-taxi `tpep_pickup_datetime` column (INT64 TIMESTAMP)
-  where the dictionary fills the 4 MiB cap — roughly half a million
-  entries. Two hot-path inefficiencies:
-    - `DictionaryScreen.filteredIndices` walks the entire dictionary on
-      every event: once in `handle` to clamp `selection` against
-      `filtered.size()`, once in `render` to build the row list.
-      Navigation doesn't change `filter` / `rgIndex` / `columnIndex`, so
-      the result is stable until the filter edits.
-      **Fix**: cache keyed on `(rgIndex, columnIndex, filter)` alongside
-      the existing index / page-header / dictionary caches on
-      `ParquetModel`. Up/Down becomes a cache hit; the walk runs once
-      per filter change instead of twice per keystroke.
-    - Every render materializes a tamboui `Row` for every filtered entry
-      and passes the full `List<Row>` to `Table.builder().rows(...)`.
-      ~500k `Row` objects plus their string formatting per frame
-      dominates the perceived lag even though the widget only paints
-      ~40 visible rows.
-      **Fix**: windowed row construction — only build `Row` objects for
-      the currently-visible slice plus a small overscan. Needs the
-      table's viewport height plumbed through; check whether tamboui's
-      `Table` has a row-provider / lazy API before duplicating
-      viewport math in the screen.
-  The index-cache fix alone is likely to solve most of the observable
-  lag (removes the per-keystroke double-walk); windowed materialization
-  is the second-phase fix for truly massive dictionaries.
+  - [x] **Filter-index cache.** One-slot memoisation in
+    `DictionaryScreen` keyed on `(dict reference, filter)`. Navigation
+    keystrokes hit the cache (Dictionary reference is stable because
+    `ParquetModel.dictionary` caches by `(rg, col)`); filter edits
+    invalidate. Eliminates the per-keystroke double-walk.
+  - [ ] **Windowed row materialization.** Even with cached filter
+    results, every render materializes a tamboui `Row` for every
+    filtered entry and passes the full `List<Row>` to
+    `Table.builder().rows(...)`. For ~500 k entries that allocation
+    pass still dominates. Fix is only build rows for the currently
+    visible slice (plus a small overscan); blocked on checking whether
+    tamboui's `Table` exposes a row-provider / lazy API before we
+    reimplement viewport math in the screen.
 - [ ] **Data preview: pagination re-reads from row 0 every time.**
   `DataPreviewScreen.loadPage` creates a fresh `RowReader` on every
   PgDn / PgUp and `next()`-skips `firstRow` rows to reach the target —

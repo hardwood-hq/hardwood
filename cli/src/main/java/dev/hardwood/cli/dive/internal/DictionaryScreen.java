@@ -45,6 +45,15 @@ public final class DictionaryScreen {
 
     private static final int VALUE_PREVIEW_MAX = 60;
 
+    /// One-slot memoisation for filteredIndices. A dictionary with hundreds of
+    /// thousands of entries re-filters twice per navigation keystroke (once in
+    /// handle, once in render); caching the most recent (dict, filter) result
+    /// turns navigation into O(1) lookups while still invalidating when the
+    /// user types / deletes a character.
+    private static Dictionary cachedDict;
+    private static String cachedFilter;
+    private static List<Integer> cachedFiltered;
+
     private DictionaryScreen() {
     }
 
@@ -188,17 +197,24 @@ public final class DictionaryScreen {
     }
 
     private static List<Integer> filteredIndices(Dictionary dict, ColumnSchema col, String filter) {
-        List<Integer> out = new ArrayList<>();
         if (dict == null) {
-            return out;
+            return List.of();
         }
+        if (dict == cachedDict && filter.equals(cachedFilter)) {
+            return cachedFiltered;
+        }
+        List<Integer> out = new ArrayList<>();
         String needle = filter.toLowerCase();
         for (int i = 0; i < dict.size(); i++) {
             if (needle.isEmpty() || fullValue(dict, i, col).toLowerCase().contains(needle)) {
                 out.add(i);
             }
         }
-        return out;
+        List<Integer> result = List.copyOf(out);
+        cachedDict = dict;
+        cachedFilter = filter;
+        cachedFiltered = result;
+        return result;
     }
 
     private static ScreenState.DictionaryView with(ScreenState.DictionaryView state,
