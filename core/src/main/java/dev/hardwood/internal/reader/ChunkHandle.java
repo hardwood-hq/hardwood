@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 
 /// Lazy fetch handle for a contiguous byte range in a Parquet file.
 ///
@@ -111,8 +112,10 @@ public class ChunkHandle {
                 data = inputFile.readRange(fileOffset, length);
             }
             catch (IOException e) {
-                throw new UncheckedIOException("Failed to fetch chunk at offset " + fileOffset
-                        + " (length " + length + ") from " + inputFile.name(), e);
+                throw new UncheckedIOException(
+                        ExceptionContext.filePrefix(inputFile.name())
+                        + "Failed to fetch chunk at offset " + fileOffset
+                        + " (length " + length + ")", e);
             }
         }
     }

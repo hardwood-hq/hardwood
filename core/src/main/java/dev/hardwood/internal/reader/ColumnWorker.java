@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -15,6 +17,7 @@ import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
@@ -57,6 +60,20 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // === Circular reorder buffer: decode tasks write, drain thread reads ===
     private final AtomicReferenceArray<Page> reorderBuffer;
 
+    // === File name per reorder-buffer slot (retriever writes, drain reads) ===
+    // Visibility: retriever writes fileNameBuffer[slot] before submitting the
+    // decode task. The decode task's volatile write to reorderBuffer[slot]
+    // happens-after the retriever's plain write. The drain's volatile read of
+    // reorderBuffer[slot] sees the fileName via the happens-before chain.
+    //
+    // Slot reuse safety: the retriever may only reuse a slot once consumePosition
+    // has advanced past it (throttle: nextSeq - consumePosition < MAX_INFLIGHT_PAGES).
+    // drainReadyPages reads fileNameBuffer[slot] before incrementing consumePosition,
+    // so the previous occupant's fileName is always read before being overwritten.
+    // Any future change to the throttle or to the read-then-increment ordering must
+    // preserve this invariant.
+    private final String[] fileNameBuffer;
+
     // === Drain position (only modified by drain thread, read by retriever for throttle) ===
     private volatile int consumePosition;
 
@@ -80,6 +97,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     long totalRowsAssembled;
     B currentBatch;
     int rowsInCurrentBatch;
+
+    /// File name of the file being assembled into the current batch.
+    /// Written only by the drain thread.
+    String currentBatchFileName;
 
     // === Instrumentation (drain thread only) ===
     long publishBlockNanos;
@@ -108,6 +129,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         this.decodeExecutor = decodeExecutor;
         this.maxRows = maxRows;
         this.reorderBuffer = new AtomicReferenceArray<>(MAX_INFLIGHT_PAGES);
+        this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
     }
 
     /// Initializes subclass-specific drain state (called at the start of `runDrain`).
@@ -224,6 +246,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 int seq = nextSeq++;
                 totalPagesSubmitted++;
                 int slot = seq % MAX_INFLIGHT_PAGES;
+                fileNameBuffer[slot] = pageSource.getCurrentFileName();
                 PageInfo pi = pageInfo;
                 PageDecoder rdr = pageDecoder;
                 CompletableFuture<Void> f = CompletableFuture.runAsync(
@@ -253,7 +276,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     sourceNanos / 1_000_000.0, throttleNanos / 1_000_000.0, throttleParks);
         }
         catch (Throwable t) {
-            signalError(t);
+            signalError(enrichWithFileName(t, pageSource.getCurrentFileName()));
         }
     }
 
@@ -269,7 +292,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             reorderBuffer.set(slot, page);
         }
         catch (Throwable t) {
-            signalError(t);
+            signalError(enrichWithFileName(t, fileNameBuffer[slot]));
         }
         LockSupport.unpark(drainThread);
     }
@@ -313,7 +336,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     publishBlockNanos / 1_000_000.0);
         }
         catch (Throwable t) {
-            signalError(t);
+            signalError(enrichWithFileName(t, currentBatchFileName));
         }
     }
 
@@ -331,6 +354,19 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 finishDrain();
                 return true;
             }
+
+            // Detect file boundary: flush the current batch when the file changes
+            // so that each batch is attributed to a single file.
+            String pageFileName = fileNameBuffer[slot];
+            if (pageFileName != null) {
+                if (currentBatchFileName != null
+                        && !pageFileName.equals(currentBatchFileName)
+                        && rowsInCurrentBatch > 0) {
+                    publishCurrentBatch();
+                }
+                currentBatchFileName = pageFileName;
+            }
+
             assemblePage(page);
             consumePosition++;
             totalPagesDrained++;
@@ -360,6 +396,30 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         exchange.signalError(t);
         LockSupport.unpark(retrieverThread);
         LockSupport.unpark(drainThread);
+    }
+
+    /// Enriches a throwable with file-name context if possible.
+    ///
+    /// `RuntimeException` is enriched in-place via [ExceptionContext#addFileContext],
+    /// preserving the original type. `IOException` is wrapped in a fresh
+    /// [UncheckedIOException] carrying the prefix; this prevents
+    /// [BatchExchange#checkError] from later wrapping it in a generic
+    /// `RuntimeException("Error in pipeline for column 'X'")` that would lose the
+    /// file context. `Error` and other throwables propagate unchanged.
+    private static Throwable enrichWithFileName(Throwable t, String fileName) {
+        if (fileName == null || fileName.isEmpty()) {
+            return t;
+        }
+        if (t instanceof RuntimeException re) {
+            return ExceptionContext.addFileContext(fileName, re);
+        }
+        if (t instanceof IOException ioe) {
+            return new UncheckedIOException(
+                    ExceptionContext.filePrefix(fileName)
+                            + (ioe.getMessage() != null ? ioe.getMessage() : "I/O failure"),
+                    ioe);
+        }
+        return t;
     }
 
     private void unparkRetriever() {

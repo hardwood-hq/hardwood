@@ -44,6 +44,12 @@ public class PageSource {
         this.workItemIterator = rowGroupIterator.getWorkItems().iterator();
     }
 
+    /// Returns the name of the file currently being read, or `null` if no work item
+    /// is active. Only valid on the retriever thread.
+    public String getCurrentFileName() {
+        return currentWorkItem != null ? currentWorkItem.inputFile().name() : null;
+    }
+
     public PageInfo next() {
         while (true) {
             if (currentPlan != null && currentPlan.hasNext()) {

@@ -146,6 +146,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         currentBatch.repetitionLevels = Arrays.copyOf(nestedRepLevels, nestedValueCount);
         currentBatch.recordOffsets = Arrays.copyOf(nestedRecordOffsets, rowsInCurrentBatch);
         currentBatch.values = trimValues(nestedValues, nestedValueCount);
+        currentBatch.fileName = currentBatchFileName;
 
         // Compute index structures before publishing so the consumer thread
         // doesn't need to do expensive index computation.

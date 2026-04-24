@@ -14,10 +14,12 @@ import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -34,6 +36,7 @@ import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -246,8 +249,9 @@ public class RowGroupIterator {
                 return new SharedRowGroupMetadata(indexBuffers, matchingRows);
             }
             catch (IOException e) {
-                throw new UncheckedIOException("Failed to fetch metadata for row group "
-                        + workItem.rowGroupIndex() + " in " + workItem.inputFile().name(), e);
+                throw new UncheckedIOException(
+                        ExceptionContext.filePrefix(workItem.inputFile().name())
+                        + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
             }
         });
     }
@@ -574,10 +578,27 @@ public class RowGroupIterator {
     }
 
     /// Gets or loads a prepared file, blocking if necessary.
+    ///
+    /// Unwraps the [CompletionException] that [CompletableFuture#join] would
+    /// otherwise wrap around the load failure, so callers see the original
+    /// exception (e.g. [SchemaIncompatibleException], [UncheckedIOException])
+    /// directly rather than as a `CompletionException` cause.
     private PreparedFile getPreparedFile(int fileIndex) {
         CompletableFuture<PreparedFile> future = fileFutures.computeIfAbsent(
                 fileIndex, this::loadFileAsync);
-        return future.join();
+        try {
+            return future.join();
+        }
+        catch (CompletionException e) {
+            Throwable cause = e.getCause();
+            if (cause instanceof RuntimeException re) {
+                throw re;
+            }
+            if (cause instanceof Error err) {
+                throw err;
+            }
+            throw e;
+        }
     }
 
     /// Triggers async loading of the file at the given index.
@@ -597,7 +618,8 @@ public class RowGroupIterator {
             inputFile.open();
         }
         catch (IOException e) {
-            throw new UncheckedIOException("Failed to open file: " + inputFile.name(), e);
+            throw new UncheckedIOException(
+                    ExceptionContext.filePrefix(inputFile.name()) + "Failed to open file", e);
         }
 
         PreparedFile prepared = openAndReadMetadata(inputFile);
@@ -628,7 +650,14 @@ public class RowGroupIterator {
             return new PreparedFile(inputFile, metaData, schema, metaData.rowGroups());
         }
         catch (IOException e) {
-            throw new UncheckedIOException("Failed to read metadata: " + inputFile.name(), e);
+            throw new UncheckedIOException(
+                    ExceptionContext.filePrefix(inputFile.name()) + "Failed to read metadata", e);
+        }
+        catch (RuntimeException e) {
+            // RuntimeExceptions thrown during Thrift parsing (e.g. ThriftEnumLookup
+            // for corrupt enum values) escape the IOException catch above — enrich
+            // them with file context so they're attributable.
+            throw ExceptionContext.addFileContext(inputFile.name(), e);
         }
     }
 
@@ -661,40 +690,37 @@ public class RowGroupIterator {
                 fileColumn = fileSchema.getColumn(refColumn.fieldPath());
             }
             catch (IllegalArgumentException e) {
-                throw new RowGroupIterator.SchemaIncompatibleException(
-                        "Column '" + refColumn.fieldPath() + "' not found in file: " + inputFile.name());
+                throw new SchemaIncompatibleException(
+                        ExceptionContext.filePrefix(inputFile.name())
+                                + "Column '" + refColumn.fieldPath() + "' not found");
             }
 
             PhysicalType refType = refColumn.type();
             PhysicalType fileType = fileColumn.type();
             if (refType != fileType) {
-                throw new RowGroupIterator.SchemaIncompatibleException(
-                        "Column '" + refColumn.fieldPath() + "' has incompatible type in file " + inputFile.name()
+                throw new SchemaIncompatibleException(
+                        ExceptionContext.filePrefix(inputFile.name())
+                                + "Column '" + refColumn.fieldPath() + "' has incompatible type"
                                 + ": expected " + refType + " but found " + fileType);
             }
 
             LogicalType refLogical = refColumn.logicalType();
             LogicalType fileLogical = fileColumn.logicalType();
             if (!Objects.equals(refLogical, fileLogical)) {
-                throw new RowGroupIterator.SchemaIncompatibleException(
-                        "Column '" + refColumn.fieldPath() + "' has incompatible logical type in file "
-                                + inputFile.name() + ": expected " + refLogical + " but found " + fileLogical);
+                throw new SchemaIncompatibleException(
+                        ExceptionContext.filePrefix(inputFile.name())
+                                + "Column '" + refColumn.fieldPath() + "' has incompatible logical type"
+                                + ": expected " + refLogical + " but found " + fileLogical);
             }
 
             RepetitionType refRep = refColumn.repetitionType();
             RepetitionType fileRep = fileColumn.repetitionType();
             if (refRep != fileRep) {
-                throw new RowGroupIterator.SchemaIncompatibleException(
-                        "Column '" + refColumn.fieldPath() + "' has incompatible repetition type in file "
-                                + inputFile.name() + ": expected " + refRep + " but found " + fileRep);
+                throw new SchemaIncompatibleException(
+                        ExceptionContext.filePrefix(inputFile.name())
+                                + "Column '" + refColumn.fieldPath() + "' has incompatible repetition type"
+                                + ": expected " + refRep + " but found " + fileRep);
             }
-        }
-    }
-
-    /// Thrown when a file's schema is incompatible with the reference schema.
-    public static class SchemaIncompatibleException extends RuntimeException {
-        public SchemaIncompatibleException(String message) {
-            super(message);
         }
     }
 }

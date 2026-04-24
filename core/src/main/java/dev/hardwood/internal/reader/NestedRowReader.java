@@ -184,7 +184,8 @@ public final class NestedRowReader implements RowReader {
                 }
                 if (i > 0) {
                     throw new IllegalStateException(
-                            "Column count mismatch: column " + i + " produced no data"
+                            "[" + batches[0].fileName + "] "
+                            + "Column count mismatch: column " + i + " produced no data"
                             + " while earlier columns had " + batches[0].recordCount + " records");
                 }
                 exhausted = true;
@@ -197,7 +198,7 @@ public final class NestedRowReader implements RowReader {
         batchSize = batches[0].recordCount;
 
         // Index structures are pre-computed by the drain — just assemble the view
-        dataView.setBatchData(batches, columnSchemas);
+        dataView.setBatchData(batches, columnSchemas, batches[0].fileName);
         rowIndex = -1;
         return true;
     }

@@ -48,7 +48,8 @@ class BadDataHandlingTest {
     void rejectParquet1481() throws IOException {
         // Corrupted schema Thrift value: physical type field is -7
         assertBadDataRejected("PARQUET-1481.parquet",
-                "Invalid or corrupt physical type value: -7");
+                "[PARQUET-1481.parquet] Invalid or corrupt physical type value: -7 (expected 0-7)."
+                        + " File metadata may be corrupted");
     }
 
     @Test
@@ -86,21 +87,30 @@ class BadDataHandlingTest {
     void rejectArrowGH45185() throws IOException {
         // Repetition levels start with 1 instead of the required 0
         assertBadDataRejected("ARROW-GH-45185.parquet",
-                "first repetition level must be 0 but was 1");
+                "[ARROW-GH-45185.parquet] Invalid column chunk for 'element':"
+                        + " first repetition level must be 0 but was 1");
     }
 
     @Test
     void rejectCorruptChecksum() throws IOException {
-        // Intentionally corrupted CRC checksums in data pages
+        // Intentionally corrupted CRC checksums in data pages.
+        // The CRC IOException is wrapped in UncheckedIOException with file context
+        // by ColumnWorker before BatchExchange forwards it.
         assertCorruptChecksumRejected("data/datapage_v1-corrupt-checksum.parquet",
-                "CRC mismatch");
+                "[datapage_v1-corrupt-checksum.parquet]"
+                        + " CRC mismatch for column a: expected bbce3b9d but computed f4f6d0a",
+                "CRC mismatch for column a: expected bbce3b9d but computed f4f6d0a");
     }
 
     @Test
     void rejectCorruptDictionaryChecksum() throws IOException {
-        // Intentionally corrupted CRC checksum in dictionary page
+        // Intentionally corrupted CRC checksum in dictionary page.
+        // Caught and wrapped by IndexedFetchPlan as UncheckedIOException with
+        // a `[fileName]` prefix.
         assertCorruptChecksumRejected("data/rle-dict-uncompressed-corrupt-checksum.parquet",
-                "CRC mismatch");
+                "[rle-dict-uncompressed-corrupt-checksum.parquet]"
+                        + " Failed to parse dictionary for column 'long_field'",
+                "CRC mismatch for column long_field: expected 6522df6a but computed 6522df69");
     }
 
     @Test
@@ -128,7 +138,8 @@ class BadDataHandlingTest {
         Path good = repoDir.resolve("data/alltypes_plain.parquet");
         Path bad = repoDir.resolve("bad_data/PARQUET-1481.parquet");
         Utils.assertBadDataRejected("PARQUET-1481.parquet",
-                "Invalid or corrupt physical type value: -7",
+                "[PARQUET-1481.parquet] Invalid or corrupt physical type value: -7 (expected 0-7)."
+                        + " File metadata may be corrupted",
                 multiFileReadAction(good, bad));
     }
 
@@ -145,13 +156,14 @@ class BadDataHandlingTest {
         Path good = repoDir.resolve("data/good_c.parquet");
         Path bad = repoDir.resolve("bad_data/ARROW-RS-GH-6229-LEVELS.parquet");
         Utils.assertBadDataRejected("ARROW-RS-GH-6229-LEVELS.parquet",
-                "Column 'c' not found in file: ARROW-RS-GH-6229-LEVELS.parquet",
+                "[ARROW-RS-GH-6229-LEVELS.parquet] Column 'c' not found",
                 multiFileReadAction(good, bad));
     }
 
     // ==================== Helpers ====================
 
-    private void assertCorruptChecksumRejected(String relativePath, String expectedMessage) throws IOException {
+    private void assertCorruptChecksumRejected(String relativePath, String expectedMessage,
+                                                String expectedCauseMessage) throws IOException {
         Path testFile = repoDir.resolve(relativePath);
 
         assertThatThrownBy(() -> {
@@ -162,7 +174,8 @@ class BadDataHandlingTest {
                 }
             }
         }).as("Expected %s to be rejected due to corrupt checksum", relativePath)
-          .hasStackTraceContaining(expectedMessage);
+          .hasMessage(expectedMessage)
+          .hasRootCauseMessage(expectedCauseMessage);
     }
 
     private ThrowableAssert.ThrowingCallable singleFileReadAction(String fileName) {

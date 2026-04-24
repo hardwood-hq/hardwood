@@ -9,13 +9,12 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.concurrent.CompletionException;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.reader.SchemaIncompatibleException;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -37,10 +36,8 @@ class SchemaCompatibilityTest {
                         reader.next();
                     }
                 }
-            }).isInstanceOf(CompletionException.class)
-                    .hasCauseInstanceOf(RowGroupIterator.SchemaIncompatibleException.class)
-                    .cause()
-                    .hasMessage("Column 'ts' has incompatible logical type in file compat_ts_millis.parquet:" +
+            }).isInstanceOf(SchemaIncompatibleException.class)
+                    .hasMessage("[compat_ts_millis.parquet] Column 'ts' has incompatible logical type:" +
                             " expected TimestampType[isAdjustedToUTC=true, unit=MICROS]" +
                             " but found TimestampType[isAdjustedToUTC=true, unit=MILLIS]");
         }
@@ -59,10 +56,8 @@ class SchemaCompatibilityTest {
                         reader.next();
                     }
                 }
-            }).isInstanceOf(CompletionException.class)
-                    .hasCauseInstanceOf(RowGroupIterator.SchemaIncompatibleException.class)
-                    .cause()
-                    .hasMessage("Column 'amount' has incompatible logical type in file compat_decimal_10_4.parquet:" +
+            }).isInstanceOf(SchemaIncompatibleException.class)
+                    .hasMessage("[compat_decimal_10_4.parquet] Column 'amount' has incompatible logical type:" +
                             " expected DecimalType[scale=2, precision=10]" +
                             " but found DecimalType[scale=4, precision=10]");
         }
@@ -81,10 +76,8 @@ class SchemaCompatibilityTest {
                         reader.next();
                     }
                 }
-            }).isInstanceOf(CompletionException.class)
-                    .hasCauseInstanceOf(RowGroupIterator.SchemaIncompatibleException.class)
-                    .cause()
-                    .hasMessage("Column 'value' has incompatible repetition type in file compat_optional_value.parquet:" +
+            }).isInstanceOf(SchemaIncompatibleException.class)
+                    .hasMessage("[compat_optional_value.parquet] Column 'value' has incompatible repetition type:" +
                             " expected REQUIRED but found OPTIONAL");
         }
     }
@@ -102,10 +95,8 @@ class SchemaCompatibilityTest {
                         reader.next();
                     }
                 }
-            }).isInstanceOf(CompletionException.class)
-                    .hasCauseInstanceOf(RowGroupIterator.SchemaIncompatibleException.class)
-                    .cause()
-                    .hasMessage("Column 'ts' has incompatible logical type in file compat_plain_int64.parquet:" +
+            }).isInstanceOf(SchemaIncompatibleException.class)
+                    .hasMessage("[compat_plain_int64.parquet] Column 'ts' has incompatible logical type:" +
                             " expected TimestampType[isAdjustedToUTC=true, unit=MICROS] but found null");
         }
     }

@@ -12,6 +12,7 @@ import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.internal.reader.FlatColumnWorker;
@@ -94,6 +95,9 @@ public class ColumnReader implements AutoCloseable {
     private BitSet elementNulls;
     private boolean nestedDataComputed;
 
+    // File name from the current batch — used for exception enrichment
+    private String currentFileName;
+
     @SuppressWarnings("unchecked")
     private ColumnReader(ColumnSchema column, boolean nested,
                          BatchExchange<?> buffer, AutoCloseable columnWorker,
@@ -143,6 +147,7 @@ public class ColumnReader implements AutoCloseable {
             currentFlatBatch = null;
             recordCount = batch.recordCount;
             valueCount = batch.valueCount;
+            currentFileName = batch.fileName;
         }
         else {
             BatchExchange.Batch batch = pollFlatBatch();
@@ -157,6 +162,7 @@ public class ColumnReader implements AutoCloseable {
             currentNestedBatch = null;
             recordCount = batch.recordCount;
             valueCount = batch.recordCount;
+            currentFileName = batch.fileName;
         }
 
         // Reset lazy nested computation
@@ -347,6 +353,10 @@ public class ColumnReader implements AutoCloseable {
 
     // ==================== Internal ====================
 
+    private String prefix() {
+        return ExceptionContext.filePrefix(currentFileName);
+    }
+
     /// Returns the values array from the current batch (flat or nested).
     private Object currentValues() {
         if (currentFlatBatch != null) {
@@ -357,23 +367,23 @@ public class ColumnReader implements AutoCloseable {
 
     private void checkBatchAvailable() {
         if (currentFlatBatch == null && currentNestedBatch == null) {
-            throw new IllegalStateException("No batch available. Call nextBatch() first.");
+            throw new IllegalStateException(prefix() + "No batch available. Call nextBatch() first.");
         }
     }
 
     private void checkNestedLevel(int level) {
         if (maxRepetitionLevel == 0) {
-            throw new IllegalStateException("Not valid for flat columns (nestingDepth=0)");
+            throw new IllegalStateException(prefix() + "Not valid for flat columns (nestingDepth=0)");
         }
         if (level < 0 || level >= maxRepetitionLevel) {
-            throw new IndexOutOfBoundsException(
-                    "Level " + level + " out of range [0, " + maxRepetitionLevel + ")");
+            throw new IndexOutOfBoundsException(prefix()
+                    + "Level " + level + " out of range [0, " + maxRepetitionLevel + ")");
         }
     }
 
     private IllegalStateException typeMismatch(String expected) {
-        return new IllegalStateException(
-                "Column '" + column.name() + "' is " + column.type() + ", not " + expected);
+        return new IllegalStateException(prefix()
+                + "Column '" + column.name() + "' is " + column.type() + ", not " + expected);
     }
 
     /// Reads pre-computed index structures from the [NestedBatch].

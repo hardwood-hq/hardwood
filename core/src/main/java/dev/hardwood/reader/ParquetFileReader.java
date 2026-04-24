@@ -13,6 +13,7 @@ import java.util.List;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
@@ -107,7 +108,16 @@ public class ParquetFileReader implements AutoCloseable {
         FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
         fileOpenedEvent.begin();
 
-        FileMetaData fileMetaData = ParquetMetadataReader.readMetadata(inputFile);
+        FileMetaData fileMetaData;
+        try {
+            fileMetaData = ParquetMetadataReader.readMetadata(inputFile);
+        }
+        catch (RuntimeException e) {
+            // Thrift parsing throws RuntimeExceptions (e.g. ThriftEnumLookup for
+            // corrupt enum values) that escape the IOException-only contract of
+            // readMetadata — enrich them with file context so they're attributable.
+            throw ExceptionContext.addFileContext(inputFile.name(), e);
+        }
         FileSchema fileSchema = FileSchema.fromSchemaElements(fileMetaData.schema());
 
         fileOpenedEvent.file = inputFile.name();

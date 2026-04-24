@@ -39,6 +39,7 @@ public class BatchExchange<B> {
         public Object values;
         public BitSet nulls;
         public int recordCount;
+        public String fileName;
     }
 
     private final ArrayBlockingQueue<B> readyQueue;

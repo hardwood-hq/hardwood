@@ -173,7 +173,7 @@ public class Utils {
     static void assertBadDataRejected(String fileName, String expectedMessage, ThrowableAssert.ThrowingCallable action) throws IOException {
         assertThatThrownBy(action)
                 .as("Expected %s to be rejected", fileName)
-                .hasStackTraceContaining(expectedMessage);
+                .hasMessage(expectedMessage);
     }
 
     /// Read all rows using parquet-java's AvroParquetReader.

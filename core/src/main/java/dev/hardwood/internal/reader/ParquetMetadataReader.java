@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.FileMetaData;
@@ -40,7 +41,8 @@ public final class ParquetMetadataReader {
     public static FileMetaData readMetadata(InputFile inputFile) throws IOException {
         long fileSize = inputFile.length();
         if (fileSize < MAGIC_SIZE + MAGIC_SIZE + FOOTER_LENGTH_SIZE) {
-            throw new IOException("File too small to be a valid Parquet file: " + inputFile.name());
+            throw new IOException(ExceptionContext.filePrefix(inputFile.name())
+                    + "File too small to be a valid Parquet file");
         }
 
         // Validate magic number at start
@@ -48,7 +50,8 @@ public final class ParquetMetadataReader {
         byte[] startMagic = new byte[MAGIC_SIZE];
         startMagicBuf.get(startMagic);
         if (!Arrays.equals(startMagic, MAGIC)) {
-            throw new IOException("Not a Parquet file (invalid magic number at start): " + inputFile.name());
+            throw new IOException(ExceptionContext.filePrefix(inputFile.name())
+                    + "Not a Parquet file (invalid magic number at start)");
         }
 
         // Read footer size and magic number at end
@@ -59,7 +62,8 @@ public final class ParquetMetadataReader {
         byte[] endMagic = new byte[MAGIC_SIZE];
         footerInfoBuf.get(endMagic);
         if (!Arrays.equals(endMagic, MAGIC)) {
-            throw new IOException("Not a Parquet file (invalid magic number at end): " + inputFile.name());
+            throw new IOException(ExceptionContext.filePrefix(inputFile.name())
+                    + "Not a Parquet file (invalid magic number at end)");
         }
 
         // Validate footer length

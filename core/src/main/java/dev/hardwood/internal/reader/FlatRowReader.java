@@ -15,6 +15,7 @@ import java.time.LocalTime;
 import java.util.BitSet;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.util.StringToIntMap;
@@ -60,6 +61,9 @@ public final class FlatRowReader implements RowReader {
     private int rowIndex = -1;
     private int batchSize = 0;
     private boolean exhausted;
+
+    // File name from the current batch — used for exception enrichment
+    private String currentFileName;
 
     public FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, FlatColumnWorker[] columnWorkers,
                          FileSchema fileSchema, ProjectedSchema projectedSchema) {
@@ -285,7 +289,12 @@ public final class FlatRowReader implements RowReader {
             return null;
         }
         int rawValue = ((int[]) flatValueArrays[columnIndex])[rowIndex];
-        return LogicalTypeConverter.convertToDate(rawValue, physicalTypes[columnIndex]);
+        try {
+            return LogicalTypeConverter.convertToDate(rawValue, physicalTypes[columnIndex]);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
     }
 
     @Override
@@ -306,8 +315,13 @@ public final class FlatRowReader implements RowReader {
         else {
             rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
         }
-        return LogicalTypeConverter.convertToTime(rawValue, col.type(),
-                (LogicalType.TimeType) col.logicalType());
+        try {
+            return LogicalTypeConverter.convertToTime(rawValue, col.type(),
+                    (LogicalType.TimeType) col.logicalType());
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
     }
 
     @Override
@@ -321,13 +335,18 @@ public final class FlatRowReader implements RowReader {
             return null;
         }
         ColumnSchema col = columnSchemas[columnIndex];
-        if (col.type() == PhysicalType.INT96) {
-            byte[] rawValue = ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
-            return LogicalTypeConverter.int96ToInstant(rawValue);
+        try {
+            if (col.type() == PhysicalType.INT96) {
+                byte[] rawValue = ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
+                return LogicalTypeConverter.int96ToInstant(rawValue);
+            }
+            long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
+            return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(),
+                    (LogicalType.TimestampType) col.logicalType());
         }
-        long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
-        return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(),
-                (LogicalType.TimestampType) col.logicalType());
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
     }
 
     @Override
@@ -345,11 +364,16 @@ public final class FlatRowReader implements RowReader {
             case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
             case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
-            default -> throw new IllegalArgumentException(
-                    "Unexpected physical type for DECIMAL: " + col.type());
+            default -> throw new IllegalArgumentException(prefix()
+                    + "Unexpected physical type for DECIMAL: " + col.type());
         };
-        return LogicalTypeConverter.convertToDecimal(rawValue, col.type(),
-                (LogicalType.DecimalType) col.logicalType());
+        try {
+            return LogicalTypeConverter.convertToDecimal(rawValue, col.type(),
+                    (LogicalType.DecimalType) col.logicalType());
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
     }
 
     @Override
@@ -362,9 +386,14 @@ public final class FlatRowReader implements RowReader {
         if (isNull(columnIndex)) {
             return null;
         }
-        return LogicalTypeConverter.convertToUuid(
-                ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
-                physicalTypes[columnIndex]);
+        try {
+            return LogicalTypeConverter.convertToUuid(
+                    ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
+                    physicalTypes[columnIndex]);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
     }
 
     @Override
@@ -449,8 +478,8 @@ public final class FlatRowReader implements RowReader {
                 // If earlier columns returned data but this one is empty,
                 // the file is corrupt (column count mismatch).
                 if (i > 0) {
-                    throw new IllegalStateException(
-                            "Column count mismatch: column " + i + " produced no data"
+                    throw new IllegalStateException(prefix()
+                            + "Column count mismatch: column " + i + " produced no data"
                             + " while earlier columns had " + batchSize + " records");
                 }
                 exhausted = true;
@@ -461,6 +490,7 @@ public final class FlatRowReader implements RowReader {
             previousBatches[i] = batch;
             if (i == 0) {
                 batchSize = batch.recordCount;
+                currentFileName = batch.fileName;
             }
         }
         rowIndex = -1;
@@ -487,10 +517,14 @@ public final class FlatRowReader implements RowReader {
 
     // ==================== Internal ====================
 
+    private String prefix() {
+        return ExceptionContext.filePrefix(currentFileName);
+    }
+
     private int resolveIndex(String name) {
         int index = nameToIndex.get(name);
         if (index < 0) {
-            throw new IllegalArgumentException("Column not in projection: " + name);
+            throw new IllegalArgumentException(prefix() + "Column not in projection: " + name);
         }
         return index;
     }
@@ -498,16 +532,16 @@ public final class FlatRowReader implements RowReader {
     private int resolveAndValidate(String name, PhysicalType expectedType) {
         int index = resolveIndex(name);
         if (physicalTypes[index] != expectedType) {
-            throw new IllegalArgumentException(
-                    "Field '" + name + "' has physical type " + physicalTypes[index]
-                            + ", expected " + expectedType);
+            throw new IllegalArgumentException(prefix()
+                    + "Field '" + name + "' has physical type " + physicalTypes[index]
+                    + ", expected " + expectedType);
         }
         return index;
     }
 
     private void throwNull(int columnIndex) {
         String name = getFieldName(columnIndex);
-        throw new NullPointerException("Column '" + name + "' is null at row " + rowIndex);
+        throw new NullPointerException(prefix() + "Column '" + name + "' is null at row " + rowIndex);
     }
 
     private static UnsupportedOperationException nestedUnsupported() {
