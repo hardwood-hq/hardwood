@@ -17,6 +17,7 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FieldPath;
+import dev.hardwood.metadata.GeospatialStatistics;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.Statistics;
 
@@ -45,6 +46,7 @@ public class ColumnMetaDataReader {
         long dataPageOffset = 0;
         Long dictionaryPageOffset = null;
         Statistics statistics = null;
+        GeospatialStatistics geospatialStatistics = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -150,6 +152,14 @@ public class ColumnMetaDataReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 17: // geospatial statistics (optional)
+                    if (header.type() == 0x0C) {
+                        geospatialStatistics = GeospatialStatisticsReader.read(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 default:
                     reader.skipField(header.type());
                     break;
@@ -158,6 +168,6 @@ public class ColumnMetaDataReader {
 
         return new ColumnMetaData(type, encodings, new FieldPath(List.copyOf(pathInSchema)), codec, numValues,
                 totalUncompressedSize, totalCompressedSize, keyValueMetadata, dataPageOffset, dictionaryPageOffset,
-                statistics);
+                statistics, geospatialStatistics);
     }
 }

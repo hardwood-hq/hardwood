@@ -141,6 +141,7 @@ public class RecordFilterEvaluator {
                 }
                 yield false;
             }
+            case ResolvedPredicate.GeospatialPredicate p -> true;
         };
     }
 

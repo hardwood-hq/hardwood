@@ -65,6 +65,7 @@ public final class PageDropPredicates {
             case ResolvedPredicate.BinaryInPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.IsNullPredicate l -> add(out, l.columnIndex(), l);
             case ResolvedPredicate.IsNotNullPredicate l -> add(out, l.columnIndex(), l);
+            case ResolvedPredicate.GeospatialPredicate l -> add(out, l.columnIndex(), l);
         }
     }
 
