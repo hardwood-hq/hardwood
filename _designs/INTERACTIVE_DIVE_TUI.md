@@ -752,23 +752,22 @@ those commits. Check them off as they land.
   schema navigation, and column-index drills from one fixture. Removed the
   adaptive skip on the PgDown test; added a page-boundary assertion proving
   contiguous rows load.
-- [ ] **Expand truncated key/value metadata entries.** The Overview file-facts
-  pane truncates each KV value to ~32 chars (`OverviewScreen.trim`) with an
-  ellipsis; there is no way to see the full payload.
-  **Decided:** inline modal on the Overview file-facts pane. Tab focuses the
-  KV list, arrow keys select, Enter opens a modal with the full value —
-  mirrors the Dictionary full-value modal pattern. No separate "Metadata"
-  drill; most files have a handful of KV entries and a dedicated screen is
-  overkill until we see files with 20+ keys.
-- [ ] **Decode well-known metadata formats in the full-value view.** Several
-  common KV entries are encoded: `ARROW:schema` is base64-encoded Arrow IPC
-  (FlatBuffers — starts with `/////` which decodes to the `0xFFFFFFFF` IPC
-  continuation marker); `org.apache.spark.sql.parquet.row.metadata` is JSON.
-  **Decided:** hand-rolled JSON pretty-printer (~50 lines, no new dep; the
-  known payload is shallow enough that a non-validating formatter is fine).
-  For `ARROW:schema`, render base64-decoded bytes with a format hint — full
-  FlatBuffers decode would require the Arrow library, out of scope. Fallback
-  to raw text for unknown keys.
+- [x] **Expand truncated key/value metadata entries.** `Overview` state
+  gained `kvSelection` + `kvModalOpen` fields; when the FACTS pane has
+  focus (Tab), arrow keys move through the KV list and Enter opens a
+  modal with the full value (Clear widget first, then Block+Paragraph,
+  consistent with the other modals). KV pane row selection is
+  highlighted with a `▶` cursor and bold style. Keybar updated.
+- [x] **Decode well-known metadata formats in the full-value view.**
+  New `KvMetadataFormatter` routes the value through one of three
+  paths: `ARROW:schema` (or anything starting with the Arrow IPC
+  base64 continuation marker `/////`) decodes to a hex dump with a
+  byte-count header and a note that full FlatBuffers decode is out of
+  scope; JSON-looking payloads route through a hand-rolled
+  pretty-printer (walks the string once, respects string escapes,
+  inserts newlines + indent around `{`, `[`, `,`); unknown values
+  pass through unchanged. 4 unit tests cover the JSON formatter,
+  escape handling, Arrow detection, and plain-string passthrough.
 - [x] **Schema: expand / collapse all shortcut.** `E` (shift-e) populates
   `expanded` with every group path in the schema; `C` (shift-c) clears it.
   Both gated on no-modifiers and fall through when the user is in

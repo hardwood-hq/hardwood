@@ -15,8 +15,17 @@ package dev.hardwood.cli.dive;
 public sealed interface ScreenState {
 
     /// Landing screen. Two panes: file-facts (left) and drill-into menu (right).
-    record Overview(Pane focus, int menuSelection) implements ScreenState {
+    /// `kvSelection` is the row index within the key/value metadata list in the
+    /// facts pane (0 = first KV entry); `kvModalOpen` is true when the
+    /// full-value modal is showing for the selected KV entry.
+    record Overview(Pane focus, int menuSelection, int kvSelection, boolean kvModalOpen)
+            implements ScreenState {
         public enum Pane { FACTS, MENU }
+
+        /// Default state: menu pane focused, selection at 0, no KV interaction.
+        public static Overview initial() {
+            return new Overview(Pane.MENU, 0, 0, false);
+        }
     }
 
     /// Expandable tree of schema nodes. `selection` is the visible-row index;

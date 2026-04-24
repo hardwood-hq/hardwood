@@ -43,7 +43,7 @@ public final class DiveApp {
 
     public DiveApp(ParquetModel model) {
         this.model = model;
-        this.stack = new NavigationStack(new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0));
+        this.stack = new NavigationStack(ScreenState.Overview.initial());
         this.helpOpen = false;
     }
 
