@@ -769,9 +769,11 @@ those commits. Check them off as they land.
   For `ARROW:schema`, render base64-decoded bytes with a format hint — full
   FlatBuffers decode would require the Arrow library, out of scope. Fallback
   to raw text for unknown keys.
-- [ ] **Schema: expand / collapse all shortcut.**
-  **Decided:** `E` expands all group nodes, `C` collapses all. Populates /
-  clears the `expanded` set in bulk instead of walking the tree node by node.
+- [x] **Schema: expand / collapse all shortcut.** `E` (shift-e) populates
+  `expanded` with every group path in the schema; `C` (shift-c) clears it.
+  Both gated on no-modifiers and fall through when the user is in
+  filter-edit mode so a typed capital letter extends the filter instead.
+  Keybar + help overlay updated.
 - ~~Schema: move `[col N]` before the type annotation.~~ **Dropped.**
   The primary task on the Schema screen is "find a column by name, then
   drill in." Names are the handle; `[col N]` is metadata and belongs in the
@@ -845,15 +847,12 @@ those commits. Check them off as they land.
   shorthand not a noun count), Chrome `formatRowCount` (retains the
   "12.4 M rows" compact form for the top bar where horizontal space is
   at a premium).
-- [ ] **Dictionary modal: gate on actual truncation.** Pressing Enter on
-  a dictionary entry currently always opens a modal with the "full"
-  value, even when nothing was truncated — a numeric dictionary entry
-  like `2` shows the same character in a bigger frame. Compare the
-  row-displayed string (the truncated version) to the full value in
-  `DictionaryScreen.handle`; if equal, Enter is a no-op. Update the
-  keybar hint so `[Enter] full value` shows only on rows where there is
-  something extra to reveal. Works uniformly across physical types —
-  short BYTE_ARRAY entries also benefit.
+- [x] **Dictionary modal: gate on actual truncation.** `DictionaryScreen.handle`
+  now checks the full-value length before opening the modal on Enter:
+  if it's within the `VALUE_PREVIEW_MAX` (60 chars) budget, nothing
+  was truncated in the row and the modal is a no-op. Fires only when
+  there's something extra to reveal. Works uniformly across physical
+  types.
 - [x] **Logical-type-aware value formatting in Data preview and Dictionary.**
   Implemented in `dev.hardwood.cli.internal.RowValueFormatter`, sibling to
   the existing `IndexValueFormatter`. Two entry points share one dispatch
@@ -933,15 +932,13 @@ those commits. Check them off as they land.
   Landing order: the additions plus the width retune want to coexist
   with the narrow-terminal elide policy; elide priority for this table
   is `Uncompressed → Nulls → Min/Max`.
-- [ ] **Column chunk detail: clarify the Pages drill-menu hint when
-  OffsetIndex is absent.** Today the menu shows `N pages` when the chunk
-  has an OffsetIndex (count read cheaply from the index) and `…` when it
-  doesn't. Replace the `…` with `—` to match the "not available from
-  cheap metadata" convention used elsewhere (e.g. missing stats).
-  Computing the real page count without an OffsetIndex requires walking
-  page headers over the whole chunk, which is the same blocking I/O the
-  *Async I/O pass* follow-up defers; showing a real count here should
-  land together with that work.
+- [x] **Column chunk detail: clarify the Pages drill-menu hint when
+  OffsetIndex is absent.** `…` replaced with `—` in
+  `ColumnChunkDetailScreen.menuHint`. Matches the "not available from
+  cheap metadata" convention used by other `—` renderings (missing
+  stats, missing offsets). Computing a real count without an
+  OffsetIndex still requires walking page headers, which lands
+  together with the async I/O pass.
 - [x] **Long column paths overflow on Column chunk detail and friends.**
   Fixed across three surfaces:
     - **Breadcrumb** (`Chrome.breadcrumbLabel`) now returns `[col N]`

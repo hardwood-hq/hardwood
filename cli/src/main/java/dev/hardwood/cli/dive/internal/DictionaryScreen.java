@@ -99,6 +99,15 @@ public final class DictionaryScreen {
             return true;
         }
         if (event.isConfirm() && !filtered.isEmpty()) {
+            // Only open the modal if the displayed value was actually truncated.
+            // For numeric dictionaries like VendorID=1, the row already shows the
+            // full value, so a modal would just redraw the same character in a
+            // bigger frame.
+            int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            String full = fullValue(dict, idx, col);
+            if (full.length() <= VALUE_PREVIEW_MAX) {
+                return false;
+            }
             stack.replaceTop(with(state, state.selection(), true, state.filter(), false));
             return true;
         }

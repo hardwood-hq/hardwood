@@ -192,8 +192,9 @@ public final class ColumnChunkDetailScreen {
         ColumnChunk chunk = model.chunk(state.rowGroupIndex(), state.columnIndex());
         return switch (item) {
             case PAGES -> {
-                var oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
-                yield oi != null ? Plurals.format(oi.pageLocations().size(), "page", "pages") : "…";
+                dev.hardwood.metadata.OffsetIndex oi =
+                        model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
+                yield oi != null ? Plurals.format(oi.pageLocations().size(), "page", "pages") : "—";
             }
             case COLUMN_INDEX -> chunk.columnIndexOffset() != null ? "present" : "n/a";
             case OFFSET_INDEX -> chunk.offsetIndexOffset() != null ? "present" : "n/a";

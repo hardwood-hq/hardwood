@@ -49,6 +49,7 @@ public final class HelpOverlay {
                 Line.from(new Span("Schema tree", Style.EMPTY.bold())),
                 kv("→ / Enter", "expand group · drill leaf"),
                 kv("←", "collapse group"),
+                kv("E / C", "expand / collapse all groups"),
                 Line.empty(),
                 Line.from(new Span("Inline search", Style.EMPTY.bold())),
                 kv("/", "enter filter mode (Schema, Column index, Dictionary)"),

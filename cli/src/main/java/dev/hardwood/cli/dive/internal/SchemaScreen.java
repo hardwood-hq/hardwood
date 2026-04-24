@@ -86,6 +86,18 @@ public final class SchemaScreen {
             stack.replaceTop(with(state, rows.size() - 1, state.expanded(), state.filter(), false));
             return true;
         }
+        // Expand / collapse all — uppercase E / C (shift-e / shift-c).
+        if (event.code() == KeyCode.CHAR && event.character() == 'E'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            Set<String> all = allGroupPaths(model);
+            stack.replaceTop(with(state, state.selection(), all, state.filter(), false));
+            return true;
+        }
+        if (event.code() == KeyCode.CHAR && event.character() == 'C'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(with(state, 0, Set.of(), state.filter(), false));
+            return true;
+        }
         Row current = rows.get(Math.min(state.selection(), rows.size() - 1));
         if (event.isRight()) {
             if (current.isGroup() && !state.expanded().contains(current.path())) {
@@ -199,7 +211,7 @@ public final class SchemaScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [→/Enter] expand · drill  [←] collapse  [/] search  [Esc] back";
+        return "[↑↓] move  [→/Enter] expand · drill  [←] collapse  [E/C] all  [/] search  [Esc] back";
     }
 
     private static void renderSearchBar(Buffer buffer, Rect area, ScreenState.Schema state,
@@ -266,6 +278,25 @@ public final class SchemaScreen {
             }
         }
         return Collections.unmodifiableList(matched);
+    }
+
+    private static Set<String> allGroupPaths(ParquetModel model) {
+        Set<String> out = new HashSet<>();
+        SchemaNode.GroupNode root = model.schema().getRootNode();
+        for (SchemaNode child : root.children()) {
+            collectGroupPaths(child, "", out);
+        }
+        return out;
+    }
+
+    private static void collectGroupPaths(SchemaNode node, String parentPath, Set<String> out) {
+        if (node instanceof SchemaNode.GroupNode g) {
+            String path = parentPath.isEmpty() ? g.name() : parentPath + "." + g.name();
+            out.add(path);
+            for (SchemaNode child : g.children()) {
+                collectGroupPaths(child, path, out);
+            }
+        }
     }
 
     private static void collectAllLeaves(SchemaNode node, String parentPath, List<Row> out) {
