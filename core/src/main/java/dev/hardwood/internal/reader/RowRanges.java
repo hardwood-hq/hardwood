@@ -166,4 +166,46 @@ public class RowRanges {
     public int intervalCount() {
         return ranges.length / 2;
     }
+
+    /// Returns the per-page [PageRowMask] for the page covering rows
+    /// `[pageFirstRow, pageLastRow)`.
+    ///
+    /// - [PageRowMask#ALL] when this is [#isAll()] — keep every row in the page.
+    /// - `null` when no matching range overlaps the page — caller drops the page.
+    /// - Otherwise a mask whose intervals are the intersections of the matching
+    ///   ranges with `[pageFirstRow, pageLastRow)`, expressed as page-relative
+    ///   offsets.
+    public PageRowMask maskForPage(long pageFirstRow, long pageLastRow) {
+        if (all) {
+            return PageRowMask.ALL;
+        }
+        if (pageLastRow <= pageFirstRow) {
+            return null;
+        }
+        int[] result = new int[ranges.length];
+        int pos = 0;
+        for (int i = 0; i < ranges.length; i += 2) {
+            long rangeStart = ranges[i];
+            long rangeEnd = ranges[i + 1];
+            if (rangeEnd <= pageFirstRow) {
+                continue;
+            }
+            if (rangeStart >= pageLastRow) {
+                break;
+            }
+            long start = Math.max(rangeStart, pageFirstRow) - pageFirstRow;
+            long end = Math.min(rangeEnd, pageLastRow) - pageFirstRow;
+            result[pos++] = Math.toIntExact(start);
+            result[pos++] = Math.toIntExact(end);
+        }
+        if (pos == 0) {
+            return null;
+        }
+        if (pos != result.length) {
+            int[] trimmed = new int[pos];
+            System.arraycopy(result, 0, trimmed, 0, pos);
+            return PageRowMask.of(trimmed);
+        }
+        return PageRowMask.of(result);
+    }
 }
