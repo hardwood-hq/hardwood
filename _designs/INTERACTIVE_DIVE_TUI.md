@@ -1001,15 +1001,21 @@ those commits. Check them off as they land.
   report or benchmark surfaces a slow flow, move those specific reads via
   `runner.runOnRenderThread` and propagate a loading flag through the screen
   record.
-- [ ] **Narrow-terminal column policy for tables.** Column chunks,
-  Column-across-RGs, and Data preview each have >6 columns that don't fit at
-  80×24. Data preview already has `←/→` column scroll; the others truncate
-  implicitly via tamboui.
-  **Decided:** elide low-priority columns by default — define a per-screen
-  priority list, drop the lowest-priority columns below a width threshold,
-  show a `…N more` indicator in the header. Fall back to `←/→` scroll on
-  Pages and Column index where every column is load-bearing and the user
-  shouldn't have us picking which to hide.
+- [ ] **Narrow-terminal column policy for tables.** Still open.
+  Data preview has its own `←/→` column scroll with an identity column
+  (row #) fixed. Pages hides `Min` / `Max` entirely when no page-level
+  stats exist (a narrow-terminal-adjacent optimisation). The remaining
+  wide tables — Column chunks (7 cols since Logical was added),
+  Column-across-RGs (9 cols), Pages (8–10 cols depending on stats) —
+  truncate implicitly at the right edge on an 80-col terminal.
+  **Decision** stays as captured: elide low-priority columns by default,
+  `←/→` scroll fallback on Pages / Column index. Deferred for a
+  dedicated commit because a correct implementation needs (a) a
+  per-screen priority list, (b) the viewport width plumbed into the
+  render path, (c) a "fixed identity column" concept so the left-most
+  column (chunk name, RG index, page #) stays visible through scroll,
+  (d) the `…N more` header indicator. Too invasive to shoehorn into
+  the current batch.
 
 ### Data exposure gaps
 
@@ -1030,15 +1036,15 @@ those commits. Check them off as they land.
 
 ### Documentation
 
-- [ ] **Screenshots in `docs/content/cli.md`.** The current docs use ASCII sketches;
-  capture terminal screenshots of the main flows.
-  **Decided:** six PNG screen grabs — (1) Overview landing; (2) Schema tree
-  expanded and collapsed; (3) Row groups → Column chunks → Column chunk
-  detail (three-shot mini-sequence); (4) Pages with the page-header modal
-  open; (5) Dictionary with `/` search active and some matches; (6) Data
-  preview with columns scrolled right. PNG format (not asciinema — mkdocs
-  theming for an embedded player is overkill for six stills; revisit if we
-  later want interaction demos).
+- [ ] **Screenshots in `docs/content/cli.md`.** Still open — needs a real
+  TTY to capture. **Decision** stays: six PNG screen grabs — (1) Overview
+  landing; (2) Schema tree expanded and collapsed; (3) Row groups → Row
+  group detail → Column chunks → Column chunk detail (a four-shot
+  mini-sequence now that Row group detail sits in between); (4) Pages
+  with the page-header modal open; (5) Dictionary with `/` search active
+  and some matches; (6) Data preview with columns scrolled right. PNG
+  format. Blocked on whoever has a shell to run `hardwood dive` against
+  a representative file.
 
 ### Design-doc open questions still unresolved
 
