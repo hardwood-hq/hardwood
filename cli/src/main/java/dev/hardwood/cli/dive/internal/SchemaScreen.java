@@ -167,6 +167,16 @@ public final class SchemaScreen {
 
         List<Line> lines = new ArrayList<>();
         boolean filtering = !state.filter().isEmpty();
+        // Pre-compute the longest "prefix" in the currently-visible row set so
+        // every row's type-info column lines up. Prefix = indent + marker + name
+        // in tree mode, just the path in filtered mode.
+        int maxPrefix = 0;
+        for (Row row : rows) {
+            int w = filtering
+                    ? row.path().length()
+                    : row.depth() * 2 + 2 + row.node().name().length();
+            maxPrefix = Math.max(maxPrefix, w);
+        }
         for (int i = 0; i < rows.size(); i++) {
             Row row = rows.get(i);
             boolean selected = i == state.selection();
@@ -175,9 +185,11 @@ public final class SchemaScreen {
             if (filtering) {
                 String typeInfo = typeOf(row.node());
                 String colSuffix = "  [col " + row.columnIndex() + "]";
+                String pad = " ".repeat(maxPrefix - row.path().length());
                 lines.add(Line.from(
                         Span.raw(cursor),
                         new Span(row.path(), nameStyle),
+                        Span.raw(pad),
                         new Span("  " + typeInfo, Style.EMPTY.fg(Theme.DIM)),
                         new Span(colSuffix, Style.EMPTY.fg(Theme.DIM))));
                 continue;
@@ -192,11 +204,14 @@ public final class SchemaScreen {
             }
             String typeInfo = typeOf(row.node());
             String colSuffix = !row.isGroup() ? "  [col " + row.columnIndex() + "]" : "";
+            int rowPrefix = row.depth() * 2 + 2 + row.node().name().length();
+            String pad = " ".repeat(maxPrefix - rowPrefix);
             lines.add(Line.from(
                     Span.raw(cursor),
                     Span.raw(indent),
                     new Span(marker, Style.EMPTY.fg(Theme.ACCENT)),
                     new Span(row.node().name(), nameStyle),
+                    Span.raw(pad),
                     new Span("  " + typeInfo, Style.EMPTY.fg(Theme.DIM)),
                     new Span(colSuffix, Style.EMPTY.fg(Theme.DIM))));
         }

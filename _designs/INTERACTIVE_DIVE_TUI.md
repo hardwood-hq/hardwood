@@ -974,14 +974,14 @@ those commits. Check them off as they land.
   Column chunk detail screen. Depends on the narrow-terminal elide policy in
   *Rendering / performance* — this pushes the table past 80 cols, so either
   land the elide first (Dict elides first) or ship both in one change.
-- [ ] **Schema: vertically align the type / repetition columns.** The current
-  renderer concatenates `"  " + typeInfo` after each node name, so the type
-  columns shift around because names vary in length.
-  **Decided:** pad each visible row's name to the longest name **in the
-  currently-visible row set** (visible-max per frame), not the whole schema.
-  Adapts to the tree's current expansion state without wasting horizontal
-  space on narrow terminals; the "jump" on expand is expected feedback, not
-  jitter. Apply the same treatment to the `[col N]` column.
+- [x] **Schema: vertically align the type / repetition columns.**
+  Pre-computes the max prefix width in the currently-visible row set
+  (prefix = indent + marker + name in tree mode, path in filter mode)
+  and pads each row's name before the type-info span. The type column
+  lines up regardless of node-name variation; expanding/collapsing
+  recomputes the max so layout adapts to current state rather than
+  wasting space. `[col N]` suffix left untouched — it's at the end of
+  the line and alignment there doesn't improve scannability.
 
 ### Rendering / performance
 
