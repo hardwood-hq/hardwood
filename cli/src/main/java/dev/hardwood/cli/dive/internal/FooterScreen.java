@@ -45,7 +45,6 @@ public final class FooterScreen {
         long fileSize = model.fileSizeBytes();
         long columnIndexBytes = 0;
         long offsetIndexBytes = 0;
-        long bloomFilterBytes = 0;
         for (RowGroup rg : model.metadata().rowGroups()) {
             for (ColumnChunk cc : rg.columns()) {
                 if (cc.columnIndexLength() != null) {
@@ -54,11 +53,9 @@ public final class FooterScreen {
                 if (cc.offsetIndexLength() != null) {
                     offsetIndexBytes += cc.offsetIndexLength();
                 }
-                // bloom filter length may not be exposed on ColumnChunk in this codebase; omit.
             }
         }
-        long footerApproxOffset = fileSize - FOOTER_TRAILER_BYTES; // without parsing the trailer we can't
-        // know exact footer offset/length; show what we can infer.
+        long footerApproxOffset = fileSize - FOOTER_TRAILER_BYTES;
 
         List<Line> lines = new ArrayList<>();
         lines.add(fact("File size", Sizes.format(fileSize) + "  (" + String.format("%,d", fileSize) + " B)"));
@@ -75,12 +72,6 @@ public final class FooterScreen {
         lines.add(fact("  Compressed data", Sizes.format(model.facts().compressedBytes())));
         lines.add(fact("  Uncompressed data", Sizes.format(model.facts().uncompressedBytes())));
         lines.add(fact("  Compression ratio", String.format("%.2f×", model.facts().compressionRatio())));
-
-        if (bloomFilterBytes == 0) {
-            lines.add(Line.empty());
-            lines.add(Line.from(new Span(" Bloom filter sizes are not exposed by the reader (see #TODO)",
-                    Style.EMPTY.fg(Color.GRAY))));
-        }
 
         Block block = Block.builder()
                 .title(" Footer & indexes ")

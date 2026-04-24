@@ -697,6 +697,65 @@ those commits. Check them off as they land.
   that call `Kernel32.init()` at `<clinit>`) alongside the existing
   `org.jline.nativ` entry.
 
+### Bugs
+
+- [ ] **Pages modal: show compressed / uncompressed sizes in both
+  human-readable and raw-byte form.** The Pages list shows
+  `Sizes.format(compressedPageSize)` ("8.0 KB"), the modal shows
+  `String.format("%,d", compressedPageSize)` ("8,192"). Swap the modal
+  to `Sizes.format(...) + "  (" + String.format("%,d", ...) + " B)"`
+  so it reads `"8.0 KB  (8,192 B)"`. Apply the same treatment to the
+  `Uncompressed size` line. There's prior art for this exact dual
+  rendering on `FooterScreen.File size`. List stays terse for
+  at-a-glance scanning; the modal is the investigation surface where
+  precise byte counts matter.
+- [ ] **Footer screen: dual rendering on every size line.** Currently
+  only `File size` uses the `Sizes.format(...) + " (N B)"` dual form;
+  `Column indexes`, `Offset indexes`, `Compressed data`,
+  `Uncompressed data` all show only `Sizes.format(...)`. The Footer is
+  the dedicated byte-layout screen — its value is precision, not
+  at-a-glance scanning — so every size line should include the raw
+  byte count in parentheses alongside the human-readable form. Adds one
+  helper (or inlines the same concatenation used on `File size`) and
+  updates five lines.
+- [ ] **Modals don't fully occlude the screen behind them** (bleed-through).
+  Reporter spotted this as `DATA_PAGE_V22` on the Pages page-header modal:
+  the stray `2` turned out to be a digit from the Pages table rendered
+  behind the modal, visible because the modal's cells to the right of
+  each text line weren't overwritten. `Paragraph` only paints the cells
+  it has text for, so trailing cells inside the modal rectangle keep
+  their pre-modal buffer content. Affects every modal currently drawn:
+    - `PagesScreen.renderHeaderModal` (the reported case)
+    - `DictionaryScreen.renderValueModal`
+    - `HelpOverlay.render`
+  **Fix:** render tamboui's `dev.tamboui.widgets.Clear` widget over the
+  modal's Rect before the Block+Paragraph. `Clear` zeroes out every cell
+  in its area, after which the modal content draws onto a clean
+  background. This is the purpose-built primitive; cheaper and more
+  correct than padding every line to the inner width or forcing a
+  solid-color background on every Block.
+- [ ] **Data preview: `ArrayIndexOutOfBoundsException` on nested schemas.**
+  `DataPreviewScreen.loadPage` iterates `for (int c = 0; c < columnNames.size(); c++)`
+  with `columnNames.size() == model.columnCount()`, but `columnCount()` returns
+  the **leaf** column count (one per primitive) while `RowReader.isNull(int)` /
+  `getValue(int)` index into **top-level** fields (direct children of the root
+  message). The two coincide for flat schemas and diverge as soon as there's a
+  list / struct / map / variant at the root — Overture, iceberg-style tables,
+  and anything written by Spark with nested types all hit this. Reproducer:
+  open any Overture *.parquet in `hardwood dive` and press Enter on Data
+  preview → `java.lang.ArrayIndexOutOfBoundsException: Index 17 out of bounds
+  for length 17` (field count mismatch).
+  **Fix shape:**
+    - Iterate top-level fields: use `schema.getRootNode().children().size()`
+      (or the `ProjectedSchema` on the reader, whichever reads cleaner) as the
+      loop bound.
+    - Render header from field names (`root.children().get(i).name()`), not
+      leaf field-paths.
+    - Nested values render via `Object.toString()` on the returned `PqStruct`
+      / `PqList` / `PqMap` / `PqVariant`. Crude but structurally correct;
+      prettier rendering (e.g. JSON-ish for structs) is a separate polish
+      item.
+
 ### Screen / UX polish
 
 - [x] **Search on Schema and Column index.** Both screens now mirror Dictionary's `/`
@@ -718,37 +777,378 @@ those commits. Check them off as they land.
   schema navigation, and column-index drills from one fixture. Removed the
   adaptive skip on the PgDown test; added a page-boundary assertion proving
   contiguous rows load.
+- [ ] **Expand truncated key/value metadata entries.** The Overview file-facts
+  pane truncates each KV value to ~32 chars (`OverviewScreen.trim`) with an
+  ellipsis; there is no way to see the full payload.
+  **Decided:** inline modal on the Overview file-facts pane. Tab focuses the
+  KV list, arrow keys select, Enter opens a modal with the full value —
+  mirrors the Dictionary full-value modal pattern. No separate "Metadata"
+  drill; most files have a handful of KV entries and a dedicated screen is
+  overkill until we see files with 20+ keys.
+- [ ] **Decode well-known metadata formats in the full-value view.** Several
+  common KV entries are encoded: `ARROW:schema` is base64-encoded Arrow IPC
+  (FlatBuffers — starts with `/////` which decodes to the `0xFFFFFFFF` IPC
+  continuation marker); `org.apache.spark.sql.parquet.row.metadata` is JSON.
+  **Decided:** hand-rolled JSON pretty-printer (~50 lines, no new dep; the
+  known payload is shallow enough that a non-validating formatter is fine).
+  For `ARROW:schema`, render base64-decoded bytes with a format hint — full
+  FlatBuffers decode would require the Arrow library, out of scope. Fallback
+  to raw text for unknown keys.
+- [ ] **Schema: expand / collapse all shortcut.**
+  **Decided:** `E` expands all group nodes, `C` collapses all. Populates /
+  clears the `expanded` set in bulk instead of walking the tree node by node.
+- ~~Schema: move `[col N]` before the type annotation.~~ **Dropped.**
+  The primary task on the Schema screen is "find a column by name, then
+  drill in." Names are the handle; `[col N]` is metadata and belongs in the
+  secondary-info region (right). The vertical-alignment item below does more
+  for scannability than re-ordering would.
+- [ ] **Row groups list: add CI / OI coverage indicators.** Each row in
+  the Row groups table currently shows index-row count, byte sizes,
+  ratio, and first offset — no hint about whether the row group's
+  chunks carry ColumnIndex or OffsetIndex. Add two narrow columns
+  (`CI`, `OI`) rendering `N/M` where M is the chunk count and N is
+  how many have the respective index (e.g. `16/16`, `7/16`, `0/16`).
+  Answers "does this RG have page indexes?" at a glance — useful
+  triage before drilling into chunk detail, and a quick way to spot
+  RGs written by older / page-index-disabled writers. No navigation
+  change; just two columns sourced from each chunk's
+  `columnIndexOffset` / `offsetIndexOffset`.
+- [ ] **Dedicated Row group detail screen.** Today `Enter` on a row
+  group jumps straight to the Column chunks table, bypassing any
+  RG-level overview. Add a new screen between Row groups and Column
+  chunks: two-pane layout with (left) RG-level facts — row count,
+  total byte size, compressed / uncompressed totals and ratio,
+  encoding mix across chunks, codec mix, aggregate column-index /
+  offset-index / bloom-filter bytes for *this* RG specifically —
+  and (right) a drill menu: **Column chunks** (current behaviour)
+  and **Indexes for this RG** (new, see below).
+  **New screen: Indexes for this RG** — a tabular view with one
+  row per column chunk showing `Column | CI offset | CI bytes | OI
+  offset | OI bytes | Bloom offset | Bloom bytes`. Makes the
+  contiguous per-RG index region visible and addressable. The design
+  rationale: Parquet stores page indexes *per row group*, not per
+  chunk or globally (see the Parquet layout notes earlier in the
+  file — each RG has its own contiguous ColumnIndex and OffsetIndex
+  regions following its data pages). The UI currently mirrors the
+  *logical* hierarchy but hides the *physical* grouping; an RG
+  overview + per-RG indexes screen lets users see the layout they
+  actually have on disk. User-visible change: `Enter` on Row groups
+  now takes one extra keypress to reach Column chunks (stop at the
+  RG detail first) — the trade-off is the new pane plus the
+  Indexes drill. Worth flagging in the commit message.
+- [ ] **Overview drill menu: spell out hints + axis annotation.**
+  Two coupled changes to the drill menu hints:
+    - **Spell out the counts.** `"16 cols"` → `"16 columns"` /
+      `"1 column"`; `"3 RGs"` → `"3 groups"` / `"1 group"`. Uses
+      `Plurals.format` from the helper item below. `RGs` is redundant
+      anyway since the menu label already reads "Row groups".
+    - **Add axis annotations** on `Schema` and `Row groups` so users
+      see the two-dimensional-navigation model at the decision point.
+      Render a dim `· browse by column` after the Schema hint and
+      `· browse by row group` after the Row groups hint. Keeps Parquet
+      terminology (Schema / Row groups stay as the labels) while
+      addressing the "why are there two ways to get to chunk detail"
+      confusion. Footer hint (size) and Data preview hint (`N rows`)
+      are unchanged — they aren't axis alternatives.
+  Final shape:
+  ```
+  ▶ Schema              16 columns   · browse by column
+    Row groups          3 groups     · browse by row group
+    Footer & indexes    158.0 KB
+    Data preview        10,000 rows
+  ```
+- [ ] **Pluralization + thousand-separator helper.** Two related
+  inconsistencies that share the same call sites, so fix both together:
+    - **Hard-coded plural form.** A file with one row group reads
+      `"1 RGs"`, one row reads `"1 rows"`, etc.
+    - **Raw int rendering.** `" Dictionary (131706 entries)"` — no
+      grouping separator, inconsistent with places that do use
+      `String.format("%,d", …)`.
+  Introduce `dev.hardwood.cli.dive.internal.Plurals.format(long n,
+  String singular, String plural)` that returns `"1 entry"`,
+  `"131,706 entries"`, `"0 rows"` (0 follows plural form, standard
+  English; grouping-separator applied unconditionally). Irregular
+  plurals ("entry/entries", "leaf/leaves") need explicit plural
+  arguments, so callers pass both forms.
+  Apply to the ~13 call sites: top bar (`Chrome.renderTopBar` — RGs,
+  rows); Overview drill menu (cols, RGs, rows); Schema title and search
+  bar (columns, leaves); Pages / Column index / Offset index titles
+  (pages); Dictionary title and search bar (entries);
+  Column-across-RGs title (RGs); Chunk-detail drill hint (pages);
+  RowGroupsScreen title (row groups).
+- [ ] **Dictionary modal: gate on actual truncation.** Pressing Enter on
+  a dictionary entry currently always opens a modal with the "full"
+  value, even when nothing was truncated — a numeric dictionary entry
+  like `2` shows the same character in a bigger frame. Compare the
+  row-displayed string (the truncated version) to the full value in
+  `DictionaryScreen.handle`; if equal, Enter is a no-op. Update the
+  keybar hint so `[Enter] full value` shows only on rows where there is
+  something extra to reveal. Works uniformly across physical types —
+  short BYTE_ARRAY entries also benefit.
+- [ ] **Logical-type-aware value formatting in Data preview and Dictionary.**
+  Both screens currently render values ignoring the column's logical type:
+    - **Data preview** calls `String.valueOf(reader.getValue(c))` — for an
+      INT64 `TimestampType[isAdjustedToUTC=false, unit=MICROS]` that
+      produces `1735689600123456` instead of a timestamp.
+    - **Dictionary** dispatches on physical type only
+      (`IntDictionary.values()`, `LongDictionary.values()`, etc.) and
+      returns `Long.toString(rawMicros)` for the same column. Same class
+      of problem on a different screen.
+  Dispatch on `ColumnSchema.logicalType()`:
+    - `TIMESTAMP` → render as `Instant.toString()` (ISO-8601); for
+      `isAdjustedToUTC=false` drop the trailing `Z`.
+    - `DATE` → `LocalDate.toString()`.
+    - `TIME` → `LocalTime.toString()`.
+    - `DECIMAL` → `BigDecimal.toPlainString()`.
+    - `UUID` → `UUID.toString()`.
+    - `STRING` / `ENUM` / `JSON` / `BSON` → the UTF-8 text.
+    - `INT_8..64` / `UINT_8..64` → signed / unsigned integer text.
+    - Others (LIST / MAP / VARIANT / nested groups) — Data preview only —
+      `toString()` on the `PqStruct` / `PqList` / `PqMap` / `PqVariant`
+      wrapper, as in the nested-schema bug fix.
+  Canonical (machine-reparseable) rendering, not localized pretty-printing —
+  these screens are inspection tools.
+  **Two entry points** for one shared dispatch core:
+    - `RowValueFormatter.format(RowReader reader, int fieldIndex, ColumnSchema col)`
+      — Data preview path; uses the typed `RowReader` accessors
+      (`getTimestamp`, `getDate`, `getDecimal`, `getUuid`, `getString`).
+    - `RowValueFormatter.format(Object rawPrimitive, ColumnSchema col)`
+      — Dictionary path; converts raw primitive (`long` micros →
+      `Instant`, `byte[]` → UTF-8 string, etc.) before formatting. No
+      `RowReader` available because dictionary values come straight out
+      of the Dictionary records' primitive arrays.
+  Sits as a sibling of the existing `IndexValueFormatter` (which already
+  handles the byte[]-stats case for min/max).
+- [ ] **Data preview: add `Shift+↓` / `Shift+↑` as aliases for PgDn / PgUp.**
+  On macOS laptops PgDn / PgUp require `Fn+↓` / `Fn+↑`, which is a two-hand
+  chord. Shift-modified arrows are a one-hand alternative that works on any
+  keyboard, and there's no semantic collision (Data preview has no
+  multi-select concept, so shift-as-extend-selection is free). Keep the
+  existing PgDn / PgUp bindings as fallbacks — some older / remote
+  terminals drop the shift modifier, so non-Mac users shouldn't lose the
+  portable keys. Implementation: check `event.hasShift() && event.isDown()`
+  (and the `isUp` mirror) in `DataPreviewScreen.handle`, route to the
+  same branches that currently handle `KeyCode.PAGE_DOWN` / `PAGE_UP`.
+- [ ] **Pages screen: column additions and width tuning.**
+  Current columns: `# | Type | First row | Values | Encoding | Comp | Min | Max`.
+  Several coordinated tweaks on the same table:
+    - **Add Nulls column** sourced from `ColumnIndex.nullCounts()` when
+      present (renders `—` otherwise). Useful for scanning for null-heavy
+      pages at a glance.
+    - **Add Uncompressed column** sourced from
+      `PageHeader.uncompressedPageSize()`. Helps spot pages where the
+      codec isn't earning its keep; sits next to the existing `Comp`.
+    - **Widen `Encoding` column.** Currently `Constraint.Length(12)`,
+      which truncates `RLE_DICTIONARY` (14) → `RLE_DICTIONA`, and longer
+      names like `DELTA_BINARY_PACKED` (19), `DELTA_LENGTH_BYTE_ARRAY`
+      (23), `BYTE_STREAM_SPLIT` (17). Switch to
+      `Constraint.Min(14).Max(23)` — natural width for common cases,
+      room to grow for the long encodings.
+    - **Tighten `Min` / `Max` width.** They are currently
+      `Constraint.Fill(1)` each, so they split all remaining horizontal
+      space even when values are short or `—`. Use `Min(N).Max(M)` so
+      they stay useful for long string values without hogging space
+      when they're narrow.
+    - **Hide `Min` / `Max` when the chunk has no ColumnIndex** — every
+      row would be `—` and the columns are pure noise. Add a
+      `(no column index)` hint to the screen header so the absence is
+      explicit.
+  Landing order: the additions plus the width retune want to coexist
+  with the narrow-terminal elide policy; elide priority for this table
+  is `Uncompressed → Nulls → Min/Max`.
+- [ ] **Column chunk detail: clarify the Pages drill-menu hint when
+  OffsetIndex is absent.** Today the menu shows `N pages` when the chunk
+  has an OffsetIndex (count read cheaply from the index) and `…` when it
+  doesn't. Replace the `…` with `—` to match the "not available from
+  cheap metadata" convention used elsewhere (e.g. missing stats).
+  Computing the real page count without an OffsetIndex requires walking
+  page headers over the whole chunk, which is the same blocking I/O the
+  *Async I/O pass* follow-up defers; showing a real count here should
+  land together with that work.
+- [ ] **Long column paths overflow on Column chunk detail and friends.**
+  A deeply-nested path like
+  `brand.names.rules.list.element.perspectives.countries.list.element`
+  spills out of the left facts pane, the block title, and the breadcrumb.
+  Three coordinated changes, one per surface:
+    - **Breadcrumb**: replace the full path with `[col N]` for screens
+      whose body already displays the path (Column chunk detail,
+      Column-across-row-groups). Breaks the triple redundancy — the
+      chrome stops duplicating what the body already shows.
+    - **Block title**: truncate-left with a leading `…` so the leaf
+      segment stays visible on one line (e.g. `…countries.list.element
+      (RG #0)`). The tail is the distinguishing part of the path.
+    - **Facts pane `Path` row**: when the value wouldn't fit beside the
+      `Path` key, render the key on one line and the full path on the
+      next, padded so it's visually part of the row. Wrap further if the
+      path itself exceeds the pane width.
+- [ ] **Keymap: `g` / `G` for jump-to-top / jump-to-bottom; move
+  return-to-Overview to `o`.** Reassigns the current global `g` intercept
+  in `DiveApp` onto `o` (mnemonic for Overview). Frees `g` / `G` to be
+  handled per-screen.
+  **Scope:** apply on the eight screens with a navigable list — Schema,
+  RowGroups, ColumnChunks, ColumnAcrossRowGroups, Pages, ColumnIndex,
+  OffsetIndex, Dictionary. Skip the four-item drill menus (Overview,
+  ColumnChunkDetail) where arrow-keys already reach every entry in at
+  most three presses.
+  **Data preview:** `g` reloads at `firstRow = 0`; `G` reloads at
+  `firstRow = max(0, totalRows - pageSize)`. Consistent with PgDn/PgUp
+  semantics (reload-on-move) — jumps land at file-level boundaries, not
+  within the currently-loaded page.
+  Update keybars and the Help overlay. User-visible breaking change to
+  the keymap; note it in the commit message.
+- [ ] **Column chunks screen: add Logical type column.** Currently shows
+  `Column | Type | Codec | Compressed | Ratio | Dict`. Add a `Logical`
+  column right after `Type`, sourced from `model.schema().getColumn(i).logicalType()`
+  (render `—` when null), mirroring the Physical / Logical grouping on the
+  Column chunk detail screen. Depends on the narrow-terminal elide policy in
+  *Rendering / performance* — this pushes the table past 80 cols, so either
+  land the elide first (Dict elides first) or ship both in one change.
+- [ ] **Schema: vertically align the type / repetition columns.** The current
+  renderer concatenates `"  " + typeInfo` after each node name, so the type
+  columns shift around because names vary in length.
+  **Decided:** pad each visible row's name to the longest name **in the
+  currently-visible row set** (visible-max per frame), not the whole schema.
+  Adapts to the tree's current expansion state without wasting horizontal
+  space on narrow terminals; the "jump" on expand is expected feedback, not
+  jitter. Apply the same treatment to the `[col N]` column.
 
 ### Rendering / performance
 
+- [ ] **Coalesce per-row-group index reads.** Parquet stores all
+  ColumnIndex structures for a row group's chunks in one contiguous
+  region, and likewise OffsetIndex. `ParquetModel.columnIndex(rg, col)`
+  and `offsetIndex(rg, col)` currently issue one `inputFile.readRange`
+  per chunk, so drilling through N chunks of the same RG on an S3-backed
+  file is N HTTP round-trips instead of 1. Prefetch the RG's whole
+  index span in a single range read when entering the Column chunks
+  screen (or whichever screen first touches a chunk in that RG),
+  cache the block, and serve per-chunk requests from the cache.
+  Core may already have a coalescing primitive — check
+  `_designs/COALESCED_OFFSET_INDEX_READS.md`; if it exposes a public
+  API, reuse it rather than reimplementing. Distinct from the
+  Dictionary and Data preview performance items above — this one is
+  about I/O round-trips on remote storage rather than in-memory
+  recomputation or sequential skip cost.
+- [ ] **Dictionary screen: Up/Down feels sluggish on large dictionaries.**
+  Observed on a yellow-taxi `tpep_pickup_datetime` column (INT64 TIMESTAMP)
+  where the dictionary fills the 4 MiB cap — roughly half a million
+  entries. Two hot-path inefficiencies:
+    - `DictionaryScreen.filteredIndices` walks the entire dictionary on
+      every event: once in `handle` to clamp `selection` against
+      `filtered.size()`, once in `render` to build the row list.
+      Navigation doesn't change `filter` / `rgIndex` / `columnIndex`, so
+      the result is stable until the filter edits.
+      **Fix**: cache keyed on `(rgIndex, columnIndex, filter)` alongside
+      the existing index / page-header / dictionary caches on
+      `ParquetModel`. Up/Down becomes a cache hit; the walk runs once
+      per filter change instead of twice per keystroke.
+    - Every render materializes a tamboui `Row` for every filtered entry
+      and passes the full `List<Row>` to `Table.builder().rows(...)`.
+      ~500k `Row` objects plus their string formatting per frame
+      dominates the perceived lag even though the widget only paints
+      ~40 visible rows.
+      **Fix**: windowed row construction — only build `Row` objects for
+      the currently-visible slice plus a small overscan. Needs the
+      table's viewport height plumbed through; check whether tamboui's
+      `Table` has a row-provider / lazy API before duplicating
+      viewport math in the screen.
+  The index-cache fix alone is likely to solve most of the observable
+  lag (removes the per-keystroke double-walk); windowed materialization
+  is the second-phase fix for truly massive dictionaries.
+- [ ] **Data preview: pagination re-reads from row 0 every time.**
+  `DataPreviewScreen.loadPage` creates a fresh `RowReader` on every
+  PgDn / PgUp and `next()`-skips `firstRow` rows to reach the target —
+  so paging to row 1,000,000 means silently iterating a million rows
+  before reading the next page. Each page gets progressively slower the
+  further you've paged. The captured `G` jump-to-end follow-up would
+  trigger a single skip over ~N rows, which on a big file would feel
+  terrible.
+  **Fix shape:**
+    - Preserve the `RowReader` across forward page flips. PgDn from
+      `firstRow=F` to `firstRow=F+pageSize` should keep reading the same
+      reader, not recreate. Requires the screen (or a model-side
+      cursor) to hold a `(RowReader, currentRow)` cursor across state
+      transitions, closing it on screen pop.
+    - Recreate only when the cursor needs to go **backwards** (PgUp from
+      a forward-only reader, `g` jump-to-top).
+    - For `G` jump-to-end: `ParquetFileReader` may expose row-group-level
+      seek that cheaply lands near the end; if not, the jump is
+      inherently expensive and we should show a spinner / accept the
+      cost (or skip straight to opening a `RowReader` at the last row
+      group's first row, then forward-read from there).
+  Different shape from the Dictionary perf item above — that one is
+  pure in-memory recomputation; this one is I/O-and-iteration cost
+  that compounds with position in the file.
 - [ ] **Async I/O pass.** All index / page-header / dictionary reads currently block
-  the render thread. Profile interactive navigation on a large file; if blocking is
-  visible (spinner needed), move reads to a worker via `runner.runOnRenderThread` for
-  completion. Needs runtime data to justify the complexity.
-- [ ] **Narrow-terminal column policy for tables.** Column chunks, Column-across-RGs,
-  and Data preview each have >6 columns that don't fit at 80×24. Data preview already
-  has `←/→` column scroll; the others truncate implicitly via tamboui. Define a
-  per-screen priority list and elide low-priority columns below a width threshold.
+  the render thread. **Decided: defer** until we have profiling evidence of a
+  real problem. A spinner without async is cosmetic; a full async refactor
+  without knowing which screens are slow risks moving the wrong loads. When a
+  report or benchmark surfaces a slow flow, move those specific reads via
+  `runner.runOnRenderThread` and propagate a loading flag through the screen
+  record.
+- [ ] **Narrow-terminal column policy for tables.** Column chunks,
+  Column-across-RGs, and Data preview each have >6 columns that don't fit at
+  80×24. Data preview already has `←/→` column scroll; the others truncate
+  implicitly via tamboui.
+  **Decided:** elide low-priority columns by default — define a per-screen
+  priority list, drop the lowest-priority columns below a width threshold,
+  show a `…N more` indicator in the header. Fall back to `←/→` scroll on
+  Pages and Column index where every column is load-bearing and the user
+  shouldn't have us picking which to hide.
 
 ### Data exposure gaps
 
-- [ ] **Bloom filter bytes in the Footer screen.** `FooterScreen` currently notes
-  "Bloom filter sizes are not exposed by the reader" as a placeholder. If / when
-  `ColumnChunk` gains `bloomFilterLength()` (core-side change), plumb it through.
+- [ ] **Pages screen: fall back to inline page statistics when ColumnIndex
+  is absent.** The list and the page-header modal currently only read
+  per-page min / max / null-count from `ColumnIndex`; when the file was
+  written without a ColumnIndex (older writers, or modern writers with
+  page indexes disabled), the same data is still present inline on each
+  page header (`DataPageHeader.statistics` for v1,
+  `DataPageHeaderV2.statistics` for v2) and is silently ignored. Result:
+  `Min` / `Max` / `Nulls` render as `—` even when the data exists.
+  **Fix:** when `model.columnIndex(rg, col)` is null, fall back to the
+  per-page `Statistics` record on the page header (prefer v2 over v1 if
+  both happen to be present; ColumnIndex remains authoritative when it
+  exists). Use the existing `IndexValueFormatter` for the byte[] stats,
+  matching how chunk-level stats are already formatted. Also surface
+  inline stats in the page-header modal (currently the modal omits the
+  `statistics` field entirely). Related prior work on the filter-pushdown
+  side: `_designs/INLINE_PAGE_STATS_FALLBACK.md`.
+- [ ] **Bloom filter bytes in the Footer screen.** Blocked on #325 (expose
+  `bloomFilterLength()` on `ColumnChunk` in hardwood-core). Once that lands,
+  add a `Bloom filters` line to `FooterScreen` alongside the existing column
+  / offset index aggregate lines. The earlier placeholder has been removed
+  from the screen — the section simply won't mention bloom filters until
+  the data is available.
 
 ### Documentation
 
 - [ ] **Screenshots in `docs/content/cli.md`.** The current docs use ASCII sketches;
-  capture terminal screenshots of the main flows (Overview → Row groups → Column
-  chunks → Pages, Schema tree expansion, Dictionary search) once the native binary
-  runs on a real TTY.
+  capture terminal screenshots of the main flows.
+  **Decided:** six PNG screen grabs — (1) Overview landing; (2) Schema tree
+  expanded and collapsed; (3) Row groups → Column chunks → Column chunk
+  detail (three-shot mini-sequence); (4) Pages with the page-header modal
+  open; (5) Dictionary with `/` search active and some matches; (6) Data
+  preview with columns scrolled right. PNG format (not asciinema — mkdocs
+  theming for an embedded player is overkill for six stills; revisit if we
+  later want interaction demos).
 
 ### Design-doc open questions still unresolved
 
-- [ ] **Colour palette decision** (*Open question 1*). Phase 1–4 use ad-hoc Cyan /
-  Gray highlighting — no central theme. Decide whether to extract a `Theme` class and
-  which palette to standardise on.
-- [ ] **Dictionary soft-cap flag** (*Open question 3*). Design proposed a 64 MB cap
-  exposed via `--max-dict-bytes`. Phase 3 currently caps the chunk-read at a fixed
-  4 MiB (`ParquetModel.DICTIONARY_READ_CAP_BYTES`) with no CLI knob — promote this
-  to a configurable option and wire it through `DiveCommand`.
+- [ ] **Colour palette decision** (*Open question 1*). Phase 1–4 use ad-hoc
+  Cyan / Gray highlighting — no central theme.
+  **Decided:** formalize the current palette in place. Introduce a
+  `dev.hardwood.cli.dive.internal.Theme` class with named constants
+  (`ACCENT`, `DIM`, `SELECTED_BOLD`, `ERROR`, etc.) mapped to the colours
+  screens are already using. No visual change; centralises future tweaks
+  (light-terminal variant, `--no-color`, etc.) so we don't have to grep
+  `Color.CYAN` across every screen.
+- [ ] **Dictionary soft-cap flag** (*Open question 3*). Phase 3 caps the
+  chunk-read at a fixed 4 MiB (`ParquetModel.DICTIONARY_READ_CAP_BYTES`)
+  with no CLI knob.
+  **Decided:** raise the default to 16 MiB (middle ground between "always
+  works" and "memory-safe") and add a `--max-dict-bytes N` flag on
+  `DiveCommand`. On overflow, the Dictionary screen does **not** silently
+  truncate — it renders a `Dictionary is ~N MB. Load anyway? [Enter to
+  load, Esc to cancel]` prompt so the memory cost is visible and the user
+  opts in inline without restarting.
