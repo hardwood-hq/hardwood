@@ -704,13 +704,15 @@ those commits. Check them off as they land.
   them, and the screens filter their row list case-insensitively. Schema filters
   match leaf field paths and collapse the tree view to a flat match-list; Column
   index matches against each page's formatted min / max.
-- [ ] **"Jump to chunk #N" from the Footer screen.** The current Footer shows
-  aggregates (file size, footer trailer offset, index bytes, compressed totals),
-  not per-row-group lines; the jump-to-chunk affordance needs the Footer to gain
-  a selectable per-RG / per-chunk layout first. Row-group navigation is already
-  covered by the Overview → Row groups path (which exposes first-offset per RG),
-  so this is best-effort polish rather than load-bearing — consider whether it's
-  worth the Footer redesign.
+- ~~"Jump to chunk #N" from the Footer screen.~~ **Dropped.** The original
+  design-doc phase-4 line proposed this as a convenience drill, but there is no
+  natural selection context on the Footer to drive the jump: the Footer shows
+  file-level aggregates (file size, footer trailer offset, index bytes,
+  compressed totals), not per-row-group or per-chunk rows. Making it a per-chunk
+  table would duplicate the Overview → Row groups → Column chunks path, which
+  already exposes first-offset per RG and is the canonical drill into any
+  specific chunk. The Footer's value is the aggregate view itself — keeping it
+  aggregate-only is the right shape.
 - [x] **Data preview test fixture.** Swapped in `column_index_pushdown.parquet`
   (10 000 rows × 2 cols, 1 RG / ~10 pages, has column index) — covers pagination,
   schema navigation, and column-index drills from one fixture. Removed the
