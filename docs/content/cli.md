@@ -35,6 +35,7 @@ Pre-built native binaries for Linux, macOS, and Windows are available from the [
 | `hardwood inspect dictionary` | Print dictionary entries for a column |
 | `hardwood inspect columns` | Show compressed and uncompressed byte sizes per column, ranked |
 | `hardwood inspect rowgroups` | Display per-row-group column chunk metadata (sizes, codec) |
+| `hardwood dive` | Interactively explore a file's structure in a TUI |
 | `hardwood help` | Display help information about a command |
 
 ## Examples
@@ -58,6 +59,32 @@ hardwood print -f data.parquet
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
 ```
+
+## Interactive exploration (`dive`)
+
+`hardwood dive` launches a terminal UI for navigating a Parquet file's structure
+without re-invoking the CLI for each slice:
+
+```shell
+hardwood dive -f data.parquet
+```
+
+From the Overview landing screen, drill into **Schema** or **Row groups**,
+then into column chunks and per-chunk metadata.
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Move selection |
+| `Enter` | Drill into the selected item |
+| `Esc` / `Backspace` | Go back one level |
+| `Tab` / `Shift-Tab` | Switch focused pane |
+| `g` | Jump back to Overview |
+| `?` | Toggle help overlay |
+| `q` / `Ctrl-C` | Quit |
+
+Phase 1 supports navigation through Schema, Row groups, Column chunks, and
+Column chunk detail. Pages, indexes, dictionary, and data preview land in
+later phases.
 
 ## Reading Files from S3
 

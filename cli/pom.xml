@@ -89,6 +89,25 @@
       <artifactId>ascii-table</artifactId>
     </dependency>
 
+    <!-- TamboUI (TUI library for the `dive` subcommand) -->
+    <dependency>
+      <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-widgets</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-tui</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-jline3-backend</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
     <!-- Optional compression libraries -->
     <dependency>
       <groupId>org.xerial.snappy</groupId>
