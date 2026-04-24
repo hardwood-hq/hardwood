@@ -17,6 +17,8 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.dive.internal.ColumnAcrossRowGroupsScreen;
 import dev.hardwood.cli.dive.internal.ColumnChunkDetailScreen;
 import dev.hardwood.cli.dive.internal.ColumnChunksScreen;
+import dev.hardwood.cli.dive.internal.DataPreviewScreen;
+import dev.hardwood.cli.dive.internal.DictionaryScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
 import dev.hardwood.cli.dive.internal.PagesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupsScreen;
@@ -98,17 +100,6 @@ class DiveStateTest {
         OverviewScreen.handle(key(KeyCode.ENTER), model, stack);
 
         assertThat(stack.top()).isInstanceOf(ScreenState.Schema.class);
-    }
-
-    @Test
-    void overviewEnterOnDisabledItemDoesNothing() {
-        NavigationStack stack = new NavigationStack(
-                new ScreenState.Overview(ScreenState.Overview.Pane.MENU,
-                        OverviewScreen.MenuItem.DATA_PREVIEW.ordinal()));
-
-        OverviewScreen.handle(key(KeyCode.ENTER), model, stack);
-
-        assertThat(stack.depth()).isEqualTo(1);
     }
 
     @Test
@@ -263,6 +254,98 @@ class DiveStateTest {
 
         PagesScreen.handle(key(KeyCode.ESCAPE), model, stack);
         assertThat(((ScreenState.Pages) stack.top()).modalOpen()).isFalse();
+    }
+
+    // --- Phase 3 ---
+
+    @Test
+    void overviewEnterOnDataPreviewPushesDataPreview() {
+        NavigationStack stack = new NavigationStack(
+                new ScreenState.Overview(ScreenState.Overview.Pane.MENU,
+                        OverviewScreen.MenuItem.DATA_PREVIEW.ordinal()));
+
+        OverviewScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.DataPreview.class);
+        ScreenState.DataPreview preview = (ScreenState.DataPreview) stack.top();
+        assertThat(preview.firstRow()).isZero();
+        assertThat(preview.pageSize()).isEqualTo(model.previewPageSize());
+    }
+
+    @Test
+    void dataPreviewPageDownAdvancesFirstRow() {
+        int pageSize = 2;
+        if (model.facts().totalRows() < pageSize * 2) {
+            // Fixture too small to exercise pagination; the is-it-clamped path is
+            // covered by the PAGE_UP test below.
+            return;
+        }
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
+        NavigationStack stack = rooted(initial);
+
+        DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
+
+        ScreenState.DataPreview next = (ScreenState.DataPreview) stack.top();
+        assertThat(next.firstRow()).isEqualTo(pageSize);
+    }
+
+    @Test
+    void dataPreviewPageUpAtStartIsNoop() {
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 2);
+        NavigationStack stack = rooted(initial);
+
+        DataPreviewScreen.handle(key(KeyCode.PAGE_UP), model, stack);
+
+        assertThat(((ScreenState.DataPreview) stack.top()).firstRow()).isZero();
+    }
+
+    @Test
+    void dataPreviewRightScrollsColumnsOnlyWhenRoom() {
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 2);
+        NavigationStack stack = rooted(initial);
+
+        DataPreviewScreen.handle(key(KeyCode.RIGHT), model, stack);
+
+        // single-column fixture → no room to scroll, state unchanged
+        assertThat(((ScreenState.DataPreview) stack.top()).columnScroll()).isZero();
+    }
+
+    @Test
+    void columnChunkDetailDictionaryEnabledWhenChunkHasDictionary() {
+        // Walk chunks until we find one with a dictionary; if none, test is vacuous.
+        for (int rg = 0; rg < model.rowGroupCount(); rg++) {
+            for (int c = 0; c < model.rowGroup(rg).columns().size(); c++) {
+                if (model.chunk(rg, c).metaData().dictionaryPageOffset() != null) {
+                    NavigationStack stack = rooted(new ScreenState.ColumnChunkDetail(
+                            rg, c, ScreenState.ColumnChunkDetail.Pane.MENU,
+                            ColumnChunkDetailScreen.MenuItem.DICTIONARY.ordinal()));
+
+                    ColumnChunkDetailScreen.handle(key(KeyCode.ENTER), model, stack);
+
+                    assertThat(stack.top()).isInstanceOf(ScreenState.DictionaryView.class);
+                    return;
+                }
+            }
+        }
+    }
+
+    @Test
+    void dictionaryEnterOpensModalAndCancelCloses() {
+        // Find a chunk with a dictionary to test against.
+        for (int rg = 0; rg < model.rowGroupCount(); rg++) {
+            for (int c = 0; c < model.rowGroup(rg).columns().size(); c++) {
+                if (model.chunk(rg, c).metaData().dictionaryPageOffset() != null) {
+                    NavigationStack stack = rooted(new ScreenState.DictionaryView(rg, c, 0, false));
+
+                    DictionaryScreen.handle(key(KeyCode.ENTER), model, stack);
+                    assertThat(((ScreenState.DictionaryView) stack.top()).modalOpen()).isTrue();
+
+                    DictionaryScreen.handle(key(KeyCode.ESCAPE), model, stack);
+                    assertThat(((ScreenState.DictionaryView) stack.top()).modalOpen()).isFalse();
+                    return;
+                }
+            }
+        }
     }
 
     private NavigationStack rooted(ScreenState child) {

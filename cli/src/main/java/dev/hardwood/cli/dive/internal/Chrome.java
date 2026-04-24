@@ -107,6 +107,8 @@ public final class Chrome {
             case ScreenState.Footer ignored -> "Footer & indexes";
             case ScreenState.ColumnAcrossRowGroups c ->
                     model.schema().getColumn(c.columnIndex()).fieldPath() + " across RGs";
+            case ScreenState.DictionaryView ignored -> "Dictionary";
+            case ScreenState.DataPreview ignored -> "Data preview";
         };
     }
 

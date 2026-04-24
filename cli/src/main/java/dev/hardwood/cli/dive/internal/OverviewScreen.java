@@ -41,7 +41,7 @@ public final class OverviewScreen {
         SCHEMA("Schema", true),
         ROW_GROUPS("Row groups", true),
         FOOTER("Footer & indexes", true),
-        DATA_PREVIEW("Data preview", false);
+        DATA_PREVIEW("Data preview", true);
 
         final String label;
         final boolean enabled;
@@ -86,7 +86,8 @@ public final class OverviewScreen {
                     case SCHEMA -> stack.push(new ScreenState.Schema(0));
                     case ROW_GROUPS -> stack.push(new ScreenState.RowGroups(0));
                     case FOOTER -> stack.push(new ScreenState.Footer());
-                    default -> { }
+                    case DATA_PREVIEW -> stack.push(
+                            DataPreviewScreen.initialState(model, model.previewPageSize()));
                 }
                 return true;
             }
@@ -153,7 +154,7 @@ public final class OverviewScreen {
             case SCHEMA -> model.columnCount() + " cols";
             case ROW_GROUPS -> model.rowGroupCount() + " RGs";
             case FOOTER -> Sizes.format(model.fileSizeBytes());
-            case DATA_PREVIEW -> "(phase 3)";
+            case DATA_PREVIEW -> String.format("%,d rows", model.facts().totalRows());
         };
     }
 
