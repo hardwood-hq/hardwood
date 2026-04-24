@@ -1023,11 +1023,16 @@ those commits. Check them off as they land.
   index span in a single range read when entering the Column chunks
   screen (or whichever screen first touches a chunk in that RG),
   cache the block, and serve per-chunk requests from the cache.
-  Core may already have a coalescing primitive — check
-  `_designs/COALESCED_OFFSET_INDEX_READS.md`; if it exposes a public
-  API, reuse it rather than reimplementing. Distinct from the
-  Dictionary and Data preview performance items above — this one is
-  about I/O round-trips on remote storage rather than in-memory
+  **Implementation:** reuse whatever coalescing primitive core provides
+  — `_designs/COALESCED_OFFSET_INDEX_READS.md` is the relevant core
+  work. The CLI is allowed to depend on `dev.hardwood.internal.*`
+  classes directly (same pattern as `ParquetModel`'s existing use of
+  `ColumnIndexReader` / `DictionaryParser` / `HardwoodContextImpl`),
+  so internal-only APIs are fine — no promotion step needed. If core
+  has no coalescing primitive at all, implement directly in
+  `ParquetModel` using the offsets already on `ColumnChunk`. Distinct
+  from the Dictionary and Data preview performance items above — this
+  one is about I/O round-trips on remote storage rather than in-memory
   recomputation or sequential skip cost.
 - [ ] **Dictionary screen: Up/Down feels sluggish on large dictionaries.**
   Observed on a yellow-taxi `tpep_pickup_datetime` column (INT64 TIMESTAMP)
