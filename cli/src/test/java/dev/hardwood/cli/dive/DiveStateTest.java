@@ -332,6 +332,37 @@ class DiveStateTest {
     }
 
     @Test
+    void rowGroupsGJumpsToFirstShiftGToLast() {
+        int last = model.rowGroupCount() - 1;
+        NavigationStack stack = rooted(new ScreenState.RowGroups(last));
+
+        RowGroupsScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'g'), model, stack);
+        assertThat(((ScreenState.RowGroups) stack.top()).selection()).isZero();
+
+        RowGroupsScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), model, stack);
+        assertThat(((ScreenState.RowGroups) stack.top()).selection()).isEqualTo(last);
+    }
+
+    @Test
+    void dataPreviewGReloadsAtRowZeroShiftGAtEnd() {
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 10);
+        NavigationStack stack = rooted(initial);
+
+        DataPreviewScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), model, stack);
+
+        long expectedFirst = Math.max(0, model.facts().totalRows() - 10);
+        assertThat(((ScreenState.DataPreview) stack.top()).firstRow()).isEqualTo(expectedFirst);
+
+        DataPreviewScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'g'), model, stack);
+
+        assertThat(((ScreenState.DataPreview) stack.top()).firstRow()).isZero();
+    }
+
+    @Test
     void dataPreviewRightScrollsColumnsOnlyWhenRoom() {
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 2);
         NavigationStack stack = rooted(initial);

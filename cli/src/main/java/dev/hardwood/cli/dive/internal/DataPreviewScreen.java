@@ -89,6 +89,21 @@ public final class DataPreviewScreen {
                     state.columnScroll() + 1));
             return true;
         }
+        if (Keys.isJumpTop(event)) {
+            if (state.firstRow() == 0) {
+                return false;
+            }
+            stack.replaceTop(loadPage(model, 0, state.pageSize(), state.columnScroll()));
+            return true;
+        }
+        if (Keys.isJumpBottom(event)) {
+            long lastPageFirst = Math.max(0, total - state.pageSize());
+            if (state.firstRow() == lastPageFirst) {
+                return false;
+            }
+            stack.replaceTop(loadPage(model, lastPageFirst, state.pageSize(), state.columnScroll()));
+            return true;
+        }
         return false;
     }
 

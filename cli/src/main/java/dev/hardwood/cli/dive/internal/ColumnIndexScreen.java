@@ -75,6 +75,14 @@ public final class ColumnIndexScreen {
             stack.replaceTop(with(state, Math.min(max, state.selection() + 1), state.filter(), false));
             return true;
         }
+        if (Keys.isJumpTop(event) && !filtered.isEmpty()) {
+            stack.replaceTop(with(state, 0, state.filter(), false));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && !filtered.isEmpty()) {
+            stack.replaceTop(with(state, filtered.size() - 1, state.filter(), false));
+            return true;
+        }
         return false;
     }
 

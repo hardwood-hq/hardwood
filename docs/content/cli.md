@@ -75,10 +75,11 @@ then into column chunks and per-chunk metadata.
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Move selection |
+| `g` / `G` | Jump to first / last row |
 | `Enter` | Drill into the selected item |
 | `Esc` / `Backspace` | Go back one level |
 | `Tab` / `Shift-Tab` | Switch focused pane |
-| `g` | Jump back to Overview |
+| `o` | Jump back to Overview |
 | `?` | Toggle help overlay |
 | `q` / `Ctrl-C` | Quit |
 

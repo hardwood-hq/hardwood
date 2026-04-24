@@ -962,21 +962,19 @@ those commits. Check them off as they land.
       path is short, and splits onto two lines (key on its own, value
       indented below) for long paths. Threshold is 27 chars of value
       budget beside the 22-char padded key.
-- [ ] **Keymap: `g` / `G` for jump-to-top / jump-to-bottom; move
-  return-to-Overview to `o`.** Reassigns the current global `g` intercept
-  in `DiveApp` onto `o` (mnemonic for Overview). Frees `g` / `G` to be
-  handled per-screen.
-  **Scope:** apply on the eight screens with a navigable list — Schema,
-  RowGroups, ColumnChunks, ColumnAcrossRowGroups, Pages, ColumnIndex,
-  OffsetIndex, Dictionary. Skip the four-item drill menus (Overview,
-  ColumnChunkDetail) where arrow-keys already reach every entry in at
-  most three presses.
-  **Data preview:** `g` reloads at `firstRow = 0`; `G` reloads at
-  `firstRow = max(0, totalRows - pageSize)`. Consistent with PgDn/PgUp
-  semantics (reload-on-move) — jumps land at file-level boundaries, not
-  within the currently-loaded page.
-  Update keybars and the Help overlay. User-visible breaking change to
-  the keymap; note it in the commit message.
+- [x] **Keymap: `g` / `G` for jump-to-top / jump-to-bottom; move
+  return-to-Overview to `o`.** `DiveApp`'s global `g` intercept moved
+  onto `o` (mnemonic for Overview); `g` / `G` now handled per-screen
+  via a shared `Keys.isJumpTop` / `isJumpBottom` helper. Applied on
+  the eight navigable-list screens (Schema, RowGroups, ColumnChunks,
+  ColumnAcrossRowGroups, Pages, ColumnIndex, OffsetIndex, Dictionary).
+  Data preview's `g` / `G` reload at `firstRow=0` / `firstRow=max(0,
+  total-pageSize)` respectively, matching PgDn/PgUp's reload-on-move
+  semantics. Screens with a search-edit mode (Schema, Dictionary,
+  ColumnIndex) correctly fall through to `DiveApp.isTopInInputMode`
+  so typed `g`/`G` during filter entry extend the filter instead of
+  navigating. Help overlay + docs updated; two regression tests lock
+  the semantics for Row groups and Data preview.
 - [ ] **Column chunks screen: add Logical type column.** Currently shows
   `Column | Type | Codec | Compressed | Ratio | Dict`. Add a `Logical`
   column right after `Type`, sourced from `model.schema().getColumn(i).logicalType()`

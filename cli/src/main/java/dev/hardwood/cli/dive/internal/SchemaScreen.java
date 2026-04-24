@@ -79,6 +79,14 @@ public final class SchemaScreen {
                     Math.min(rows.size() - 1, state.selection() + 1), state.expanded(), state.filter(), false));
             return true;
         }
+        if (Keys.isJumpTop(event)) {
+            stack.replaceTop(with(state, 0, state.expanded(), state.filter(), false));
+            return true;
+        }
+        if (Keys.isJumpBottom(event)) {
+            stack.replaceTop(with(state, rows.size() - 1, state.expanded(), state.filter(), false));
+            return true;
+        }
         Row current = rows.get(Math.min(state.selection(), rows.size() - 1));
         if (event.isRight()) {
             if (current.isGroup() && !state.expanded().contains(current.path())) {

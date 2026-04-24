@@ -41,10 +41,11 @@ public final class HelpOverlay {
         List<Line> lines = List.of(
                 Line.from(new Span("Navigation", Style.EMPTY.bold())),
                 kv("↑ / ↓", "move selection"),
+                kv("g / G", "jump to first / last row"),
                 kv("Enter", "drill into selected item"),
                 kv("Esc / Backspace", "go back one level"),
                 kv("Tab / Shift-Tab", "switch focused pane"),
-                kv("g", "return to Overview"),
+                kv("o", "return to Overview"),
                 Line.empty(),
                 Line.from(new Span("Schema tree", Style.EMPTY.bold())),
                 kv("→ / Enter", "expand group · drill leaf"),
@@ -58,6 +59,11 @@ public final class HelpOverlay {
                 Line.from(new Span("Global", Style.EMPTY.bold())),
                 kv("?", "toggle this help"),
                 kv("q / Ctrl-C", "quit"),
+                Line.empty(),
+                Line.from(new Span("Data preview", Style.EMPTY.bold())),
+                kv("PgDn / PgUp", "page forward / back (Shift+↓/↑ on macOS)"),
+                kv("← / →", "scroll visible columns"),
+                kv("g / G", "jump to first / last row of file"),
                 Line.empty(),
                 Line.from(new Span("Press ? or Esc to close", Style.EMPTY.fg(Color.GRAY))));
 

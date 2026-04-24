@@ -48,6 +48,14 @@ public final class ColumnChunksScreen {
             stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), Math.min(count - 1, state.selection() + 1)));
             return true;
         }
+        if (Keys.isJumpTop(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), 0));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), count - 1));
+            return true;
+        }
         if (event.isConfirm() && count > 0) {
             stack.push(new ScreenState.ColumnChunkDetail(state.rowGroupIndex(), state.selection(),
                     ScreenState.ColumnChunkDetail.Pane.MENU, 0));

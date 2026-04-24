@@ -72,6 +72,16 @@ public final class PagesScreen {
                     Math.min(headers.size() - 1, state.selection() + 1), false));
             return true;
         }
+        if (Keys.isJumpTop(event) && !headers.isEmpty()) {
+            stack.replaceTop(new ScreenState.Pages(
+                    state.rowGroupIndex(), state.columnIndex(), 0, false));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && !headers.isEmpty()) {
+            stack.replaceTop(new ScreenState.Pages(
+                    state.rowGroupIndex(), state.columnIndex(), headers.size() - 1, false));
+            return true;
+        }
         if (event.isConfirm() && !headers.isEmpty()) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(), state.selection(), true));

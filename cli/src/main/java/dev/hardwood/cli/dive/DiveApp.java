@@ -88,7 +88,7 @@ public final class DiveApp {
             }
             return false;
         }
-        if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == 'g' && !ke.hasCtrl() && !ke.hasAlt()) {
+        if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == 'o' && !ke.hasCtrl() && !ke.hasAlt()) {
             stack.clearToRoot();
             return true;
         }

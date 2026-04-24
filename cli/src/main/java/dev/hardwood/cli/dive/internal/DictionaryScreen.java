@@ -91,6 +91,14 @@ public final class DictionaryScreen {
             stack.replaceTop(with(state, Math.min(max, state.selection() + 1), false, state.filter(), false));
             return true;
         }
+        if (Keys.isJumpTop(event) && !filtered.isEmpty()) {
+            stack.replaceTop(with(state, 0, false, state.filter(), false));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && !filtered.isEmpty()) {
+            stack.replaceTop(with(state, filtered.size() - 1, false, state.filter(), false));
+            return true;
+        }
         if (event.isConfirm() && !filtered.isEmpty()) {
             stack.replaceTop(with(state, state.selection(), true, state.filter(), false));
             return true;

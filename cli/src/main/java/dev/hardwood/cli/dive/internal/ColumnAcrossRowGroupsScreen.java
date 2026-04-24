@@ -53,6 +53,14 @@ public final class ColumnAcrossRowGroupsScreen {
                     state.columnIndex(), Math.min(count - 1, state.selection() + 1)));
             return true;
         }
+        if (Keys.isJumpTop(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), 0));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), count - 1));
+            return true;
+        }
         if (event.isConfirm() && count > 0) {
             stack.push(new ScreenState.ColumnChunkDetail(
                     state.selection(), state.columnIndex(),
