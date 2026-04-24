@@ -11,7 +11,6 @@ import java.util.List;
 
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -65,13 +64,13 @@ public final class HelpOverlay {
                 kv("← / →", "scroll visible columns"),
                 kv("g / G", "jump to first / last row of file"),
                 Line.empty(),
-                Line.from(new Span("Press ? or Esc to close", Style.EMPTY.fg(Color.GRAY))));
+                Line.from(new Span("Press ? or Esc to close", Style.EMPTY.fg(Theme.DIM))));
 
         Block block = Block.builder()
                 .title(" hardwood dive — help ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
@@ -79,7 +78,7 @@ public final class HelpOverlay {
     private static Line kv(String key, String description) {
         return Line.from(
                 Span.raw("  "),
-                new Span(padRight(key, 18), Style.EMPTY.fg(Color.CYAN)),
+                new Span(padRight(key, 18), Style.EMPTY.fg(Theme.ACCENT)),
                 new Span(description, Style.EMPTY));
     }
 

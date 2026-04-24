@@ -1080,14 +1080,13 @@ those commits. Check them off as they land.
 
 ### Design-doc open questions still unresolved
 
-- [ ] **Colour palette decision** (*Open question 1*). Phase 1–4 use ad-hoc
-  Cyan / Gray highlighting — no central theme.
-  **Decided:** formalize the current palette in place. Introduce a
-  `dev.hardwood.cli.dive.internal.Theme` class with named constants
-  (`ACCENT`, `DIM`, `SELECTED_BOLD`, `ERROR`, etc.) mapped to the colours
-  screens are already using. No visual change; centralises future tweaks
-  (light-terminal variant, `--no-color`, etc.) so we don't have to grep
-  `Color.CYAN` across every screen.
+- [x] **Colour palette decision** (*Open question 1*). Extracted the two
+  colours in use (`Color.CYAN` for accents / focused borders, `Color.GRAY`
+  for dim secondary text and unfocused borders) into
+  `dev.hardwood.cli.dive.internal.Theme.ACCENT` / `Theme.DIM`. Every
+  screen now uses the Theme constants; only `Theme.java` references
+  `Color.*` directly. No visual change. Future retheme (light-terminal
+  variant, `--no-color`) now lives in one file.
 - [ ] **Dictionary soft-cap flag** (*Open question 3*). Phase 3 caps the
   chunk-read at a fixed 4 MiB (`ParquetModel.DICTIONARY_READ_CAP_BYTES`)
   with no CLI knob.

@@ -17,7 +17,6 @@ import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -77,7 +76,7 @@ public final class FooterScreen {
                 .title(" Footer & indexes ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }

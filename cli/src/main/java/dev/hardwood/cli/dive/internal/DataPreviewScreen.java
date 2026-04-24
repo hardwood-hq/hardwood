@@ -17,7 +17,6 @@ import dev.hardwood.schema.SchemaNode;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
@@ -130,7 +129,7 @@ public final class DataPreviewScreen {
                 .title(title)
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         List<Constraint> widths = new ArrayList<>();
         for (int i = 0; i < visible.size(); i++) {

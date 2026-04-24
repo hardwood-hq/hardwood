@@ -23,7 +23,6 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
@@ -108,7 +107,7 @@ public final class ColumnAcrossRowGroupsScreen {
                         + " across " + Plurals.format(model.rowGroupCount(), "RG", "RGs") + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)

@@ -22,7 +22,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -167,8 +166,8 @@ public final class SchemaScreen {
                 lines.add(Line.from(
                         Span.raw(cursor),
                         new Span(row.path(), nameStyle),
-                        new Span("  " + typeInfo, Style.EMPTY.fg(Color.GRAY)),
-                        new Span(colSuffix, Style.EMPTY.fg(Color.GRAY))));
+                        new Span("  " + typeInfo, Style.EMPTY.fg(Theme.DIM)),
+                        new Span(colSuffix, Style.EMPTY.fg(Theme.DIM))));
                 continue;
             }
             String indent = "  ".repeat(row.depth());
@@ -184,17 +183,17 @@ public final class SchemaScreen {
             lines.add(Line.from(
                     Span.raw(cursor),
                     Span.raw(indent),
-                    new Span(marker, Style.EMPTY.fg(Color.CYAN)),
+                    new Span(marker, Style.EMPTY.fg(Theme.ACCENT)),
                     new Span(row.node().name(), nameStyle),
-                    new Span("  " + typeInfo, Style.EMPTY.fg(Color.GRAY)),
-                    new Span(colSuffix, Style.EMPTY.fg(Color.GRAY))));
+                    new Span("  " + typeInfo, Style.EMPTY.fg(Theme.DIM)),
+                    new Span(colSuffix, Style.EMPTY.fg(Theme.DIM))));
         }
         Block block = Block.builder()
                 .title(" Schema (" + Plurals.format(model.columnCount(), "leaf column", "leaf columns")
                         + (filtering ? "; " + rows.size() + " matching" : "") + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(split.get(1), buffer);
     }
@@ -210,7 +209,7 @@ public final class SchemaScreen {
                     .text(Text.from(Line.from(new Span(
                             " " + Plurals.format(totalColumns, "leaf column", "leaf columns")
                                     + ". Press / to filter by path.",
-                            Style.EMPTY.fg(Color.GRAY)))))
+                            Style.EMPTY.fg(Theme.DIM)))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -218,10 +217,10 @@ public final class SchemaScreen {
         }
         String cursor = state.searching() ? "█" : "";
         Line line = Line.from(
-                new Span(" / ", Style.EMPTY.fg(Color.CYAN).bold()),
+                new Span(" / ", Style.EMPTY.fg(Theme.ACCENT).bold()),
                 new Span(state.filter() + cursor, Style.EMPTY.bold()),
                 new Span("  (" + String.format("%,d", matchCount) + " / "
-                        + Plurals.format(totalColumns, "leaf", "leaves") + ")", Style.EMPTY.fg(Color.GRAY)));
+                        + Plurals.format(totalColumns, "leaf", "leaves") + ")", Style.EMPTY.fg(Theme.DIM)));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 

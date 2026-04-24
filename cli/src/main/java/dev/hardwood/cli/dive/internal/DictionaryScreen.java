@@ -20,7 +20,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -158,7 +157,7 @@ public final class DictionaryScreen {
                         + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching") + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -191,7 +190,7 @@ public final class DictionaryScreen {
             Paragraph.builder()
                     .text(Text.from(Line.from(new Span(
                             " " + Plurals.format(totalSize, "entry", "entries") + ". Press / to filter.",
-                            Style.EMPTY.fg(Color.GRAY)))))
+                            Style.EMPTY.fg(Theme.DIM)))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -199,10 +198,10 @@ public final class DictionaryScreen {
         }
         String cursor = state.searching() ? "█" : "";
         Line line = Line.from(
-                new Span(" / ", Style.EMPTY.fg(Color.CYAN).bold()),
+                new Span(" / ", Style.EMPTY.fg(Theme.ACCENT).bold()),
                 new Span(state.filter() + cursor, Style.EMPTY.bold()),
                 new Span("  (" + String.format("%,d", filteredSize) + " / "
-                        + Plurals.format(totalSize, "entry", "entries") + ")", Style.EMPTY.fg(Color.GRAY)));
+                        + Plurals.format(totalSize, "entry", "entries") + ")", Style.EMPTY.fg(Theme.DIM)));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 
@@ -257,13 +256,13 @@ public final class DictionaryScreen {
                 .title(" Dictionary ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.GRAY)
+                .borderColor(Theme.DIM)
                 .build();
         Paragraph.builder()
                 .block(block)
                 .text(Text.from(Line.from(new Span(
                         " This chunk is not dictionary-encoded.",
-                        Style.EMPTY.fg(Color.GRAY)))))
+                        Style.EMPTY.fg(Theme.DIM)))))
                 .left()
                 .build()
                 .render(area, buffer);
@@ -284,13 +283,13 @@ public final class DictionaryScreen {
         lines.add(Line.empty());
         lines.add(Line.from(Span.raw(" " + full)));
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Press Esc or Enter to close", Style.EMPTY.fg(Color.GRAY))));
+        lines.add(Line.from(new Span(" Press Esc or Enter to close", Style.EMPTY.fg(Theme.DIM))));
 
         Block block = Block.builder()
                 .title(" Entry #" + index + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }

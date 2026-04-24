@@ -20,7 +20,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -130,7 +129,7 @@ public final class ColumnIndexScreen {
 
         Paragraph.builder()
                 .text(Text.from(Line.from(
-                        new Span(" Boundary order: ", Style.EMPTY.fg(Color.GRAY)),
+                        new Span(" Boundary order: ", Style.EMPTY.fg(Theme.DIM)),
                         new Span(ci.boundaryOrder().name(), Style.EMPTY.bold()))))
                 .left()
                 .build()
@@ -156,7 +155,7 @@ public final class ColumnIndexScreen {
                         + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching") + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -209,7 +208,7 @@ public final class ColumnIndexScreen {
                     .text(Text.from(Line.from(new Span(
                             " " + Plurals.format(totalPages, "page", "pages")
                                     + ". Press / to filter by min/max.",
-                            Style.EMPTY.fg(Color.GRAY)))))
+                            Style.EMPTY.fg(Theme.DIM)))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -217,10 +216,10 @@ public final class ColumnIndexScreen {
         }
         String cursor = state.searching() ? "█" : "";
         Line line = Line.from(
-                new Span(" / ", Style.EMPTY.fg(Color.CYAN).bold()),
+                new Span(" / ", Style.EMPTY.fg(Theme.ACCENT).bold()),
                 new Span(state.filter() + cursor, Style.EMPTY.bold()),
                 new Span("  (" + String.format("%,d", matchCount) + " / "
-                        + Plurals.format(totalPages, "page", "pages") + ")", Style.EMPTY.fg(Color.GRAY)));
+                        + Plurals.format(totalPages, "page", "pages") + ")", Style.EMPTY.fg(Theme.DIM)));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 
@@ -242,11 +241,11 @@ public final class ColumnIndexScreen {
                 .title(" Column index ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.GRAY)
+                .borderColor(Theme.DIM)
                 .build();
         Paragraph.builder()
                 .block(block)
-                .text(Text.from(Line.from(new Span(" " + message, Style.EMPTY.fg(Color.GRAY)))))
+                .text(Text.from(Line.from(new Span(" " + message, Style.EMPTY.fg(Theme.DIM)))))
                 .left()
                 .build()
                 .render(area, buffer);

@@ -18,7 +18,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -53,10 +52,10 @@ public final class Chrome {
 
     public static void renderTopBar(Buffer buffer, Rect area, ParquetModel model) {
         Style bold = Style.EMPTY.bold();
-        Style dim = Style.EMPTY.fg(Color.GRAY);
+        Style dim = Style.EMPTY.fg(Theme.DIM);
         ParquetModel.Facts f = model.facts();
         Line line = Line.from(
-                new Span(" hardwood dive ", bold.fg(Color.CYAN)),
+                new Span(" hardwood dive ", bold.fg(Theme.ACCENT)),
                 new Span("│ ", dim),
                 Span.raw(model.displayPath()),
                 new Span(" │ ", dim),
@@ -74,17 +73,17 @@ public final class Chrome {
         List<ScreenState> frames = stack.frames();
         for (int i = 0; i < frames.size(); i++) {
             if (i > 0) {
-                spans.add(new Span(" › ", Style.EMPTY.fg(Color.GRAY)));
+                spans.add(new Span(" › ", Style.EMPTY.fg(Theme.DIM)));
             }
             boolean last = i == frames.size() - 1;
-            Style style = last ? Style.EMPTY.bold() : Style.EMPTY.fg(Color.GRAY);
+            Style style = last ? Style.EMPTY.bold() : Style.EMPTY.fg(Theme.DIM);
             spans.add(new Span(breadcrumbLabel(frames.get(i), model), style));
         }
         Paragraph.builder().text(convert(Line.from(spans))).left().build().render(area, buffer);
     }
 
     public static void renderKeybar(Buffer buffer, Rect area, String screenKeys, String globalKeys) {
-        Style dim = Style.EMPTY.fg(Color.GRAY);
+        Style dim = Style.EMPTY.fg(Theme.DIM);
         Line line = Line.from(
                 Span.raw(" "),
                 new Span(screenKeys, dim),

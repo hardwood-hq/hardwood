@@ -19,7 +19,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -138,9 +137,9 @@ public final class OverviewScreen {
             String cursor = selected ? "▶ " : "  ";
             String hint = menuHint(item, model);
             Style labelStyle = !item.enabled
-                    ? Style.EMPTY.fg(Color.GRAY)
+                    ? Style.EMPTY.fg(Theme.DIM)
                     : selected ? Style.EMPTY.bold() : Style.EMPTY;
-            Style hintStyle = Style.EMPTY.fg(Color.GRAY);
+            Style hintStyle = Style.EMPTY.fg(Theme.DIM);
             lines.add(Line.from(
                     new Span(cursor, labelStyle),
                     new Span(padRight(item.label, 20), labelStyle),
@@ -172,10 +171,10 @@ public final class OverviewScreen {
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED);
         if (focused) {
-            b.borderColor(Color.CYAN);
+            b.borderColor(Theme.ACCENT);
         }
         else {
-            b.borderColor(Color.GRAY);
+            b.borderColor(Theme.DIM);
         }
         return b.build();
     }
