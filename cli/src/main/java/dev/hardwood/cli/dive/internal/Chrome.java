@@ -97,6 +97,8 @@ public final class Chrome {
             case ScreenState.Overview ignored -> "Overview";
             case ScreenState.Schema ignored -> "Schema";
             case ScreenState.RowGroups ignored -> "Row groups";
+            case ScreenState.RowGroupDetail d -> "RG #" + d.rowGroupIndex();
+            case ScreenState.RowGroupIndexes i -> "RG #" + i.rowGroupIndex() + " › Indexes";
             case ScreenState.ColumnChunks cc -> "RG #" + cc.rowGroupIndex() + " › Column chunks";
             // Use [col N] instead of the full path — the body of ColumnChunkDetail and
             // ColumnAcrossRowGroups already displays the path; the chrome stops

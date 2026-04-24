@@ -56,7 +56,8 @@ public final class RowGroupsScreen {
             return true;
         }
         if (event.isConfirm() && count > 0) {
-            stack.push(new ScreenState.ColumnChunks(state.selection(), 0));
+            stack.push(new ScreenState.RowGroupDetail(
+                    state.selection(), ScreenState.RowGroupDetail.Pane.MENU, 0));
             return true;
         }
         return false;

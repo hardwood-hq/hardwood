@@ -21,6 +21,8 @@ import dev.hardwood.cli.dive.internal.HelpOverlay;
 import dev.hardwood.cli.dive.internal.OffsetIndexScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
 import dev.hardwood.cli.dive.internal.PagesScreen;
+import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
+import dev.hardwood.cli.dive.internal.RowGroupIndexesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupsScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
 import dev.tamboui.buffer.Buffer;
@@ -118,6 +120,8 @@ public final class DiveApp {
             case ScreenState.Overview ignored -> OverviewScreen.handle(ke, model, stack);
             case ScreenState.Schema ignored -> SchemaScreen.handle(ke, model, stack);
             case ScreenState.RowGroups ignored -> RowGroupsScreen.handle(ke, model, stack);
+            case ScreenState.RowGroupDetail ignored -> RowGroupDetailScreen.handle(ke, model, stack);
+            case ScreenState.RowGroupIndexes ignored -> RowGroupIndexesScreen.handle(ke, model, stack);
             case ScreenState.ColumnChunks ignored -> ColumnChunksScreen.handle(ke, model, stack);
             case ScreenState.ColumnChunkDetail ignored -> ColumnChunkDetailScreen.handle(ke, model, stack);
             case ScreenState.Pages ignored -> PagesScreen.handle(ke, model, stack);
@@ -151,6 +155,8 @@ public final class DiveApp {
             case ScreenState.Overview s -> OverviewScreen.render(buffer, area, model, s);
             case ScreenState.Schema s -> SchemaScreen.render(buffer, area, model, s);
             case ScreenState.RowGroups s -> RowGroupsScreen.render(buffer, area, model, s);
+            case ScreenState.RowGroupDetail s -> RowGroupDetailScreen.render(buffer, area, model, s);
+            case ScreenState.RowGroupIndexes s -> RowGroupIndexesScreen.render(buffer, area, model, s);
             case ScreenState.ColumnChunks s -> ColumnChunksScreen.render(buffer, area, model, s);
             case ScreenState.ColumnChunkDetail s -> ColumnChunkDetailScreen.render(buffer, area, model, s);
             case ScreenState.Pages s -> PagesScreen.render(buffer, area, model, s);
@@ -168,6 +174,8 @@ public final class DiveApp {
             case ScreenState.Overview ignored -> OverviewScreen.keybarKeys();
             case ScreenState.Schema ignored -> SchemaScreen.keybarKeys();
             case ScreenState.RowGroups ignored -> RowGroupsScreen.keybarKeys();
+            case ScreenState.RowGroupDetail ignored -> RowGroupDetailScreen.keybarKeys();
+            case ScreenState.RowGroupIndexes ignored -> RowGroupIndexesScreen.keybarKeys();
             case ScreenState.ColumnChunks ignored -> ColumnChunksScreen.keybarKeys();
             case ScreenState.ColumnChunkDetail ignored -> ColumnChunkDetailScreen.keybarKeys();
             case ScreenState.Pages ignored -> PagesScreen.keybarKeys();

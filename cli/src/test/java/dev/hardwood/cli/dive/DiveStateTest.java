@@ -22,6 +22,7 @@ import dev.hardwood.cli.dive.internal.DataPreviewScreen;
 import dev.hardwood.cli.dive.internal.DictionaryScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
 import dev.hardwood.cli.dive.internal.PagesScreen;
+import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
 import dev.hardwood.cli.dive.internal.RowGroupsScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
 import dev.tamboui.tui.event.KeyCode;
@@ -118,13 +119,35 @@ class DiveStateTest {
     }
 
     @Test
-    void rowGroupsEnterDrillsIntoColumnChunks() {
+    void rowGroupsEnterDrillsIntoRowGroupDetail() {
         NavigationStack stack = rooted(new ScreenState.RowGroups(0));
 
         RowGroupsScreen.handle(key(KeyCode.ENTER), model, stack);
 
+        assertThat(stack.top()).isInstanceOf(ScreenState.RowGroupDetail.class);
+        assertThat(((ScreenState.RowGroupDetail) stack.top()).rowGroupIndex()).isZero();
+    }
+
+    @Test
+    void rowGroupDetailEnterOnColumnChunksDrills() {
+        NavigationStack stack = rooted(new ScreenState.RowGroupDetail(
+                0, ScreenState.RowGroupDetail.Pane.MENU,
+                RowGroupDetailScreen.MenuItem.COLUMN_CHUNKS.ordinal()));
+
+        RowGroupDetailScreen.handle(key(KeyCode.ENTER), model, stack);
+
         assertThat(stack.top()).isInstanceOf(ScreenState.ColumnChunks.class);
-        assertThat(((ScreenState.ColumnChunks) stack.top()).rowGroupIndex()).isZero();
+    }
+
+    @Test
+    void rowGroupDetailEnterOnIndexesDrills() {
+        NavigationStack stack = rooted(new ScreenState.RowGroupDetail(
+                0, ScreenState.RowGroupDetail.Pane.MENU,
+                RowGroupDetailScreen.MenuItem.INDEXES.ordinal()));
+
+        RowGroupDetailScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.RowGroupIndexes.class);
     }
 
     @Test

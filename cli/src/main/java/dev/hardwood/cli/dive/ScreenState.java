@@ -49,6 +49,17 @@ public sealed interface ScreenState {
     /// Row groups in the file, one row per group.
     record RowGroups(int selection) implements ScreenState {}
 
+    /// Two-pane overview of one row group: facts (left) + drill menu (right)
+    /// leading to Column chunks and Indexes-for-this-RG.
+    record RowGroupDetail(int rowGroupIndex, Pane focus, int menuSelection)
+            implements ScreenState {
+        public enum Pane { FACTS, MENU }
+    }
+
+    /// Per-chunk index location table for one row group: Column |
+    /// CI offset | CI bytes | OI offset | OI bytes.
+    record RowGroupIndexes(int rowGroupIndex, int selection) implements ScreenState {}
+
     /// Column chunks within one row group.
     record ColumnChunks(int rowGroupIndex, int selection) implements ScreenState {}
 

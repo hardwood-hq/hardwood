@@ -784,29 +784,21 @@ those commits. Check them off as they land.
   OffsetIndex. Sourced from each `ColumnChunk.columnIndexOffset()` /
   `offsetIndexOffset()`. Makes it possible to spot RGs written without
   page indexes at a glance.
-- [ ] **Dedicated Row group detail screen.** Today `Enter` on a row
-  group jumps straight to the Column chunks table, bypassing any
-  RG-level overview. Add a new screen between Row groups and Column
-  chunks: two-pane layout with (left) RG-level facts — row count,
-  total byte size, compressed / uncompressed totals and ratio,
-  encoding mix across chunks, codec mix, aggregate column-index /
-  offset-index / bloom-filter bytes for *this* RG specifically —
-  and (right) a drill menu: **Column chunks** (current behaviour)
-  and **Indexes for this RG** (new, see below).
-  **New screen: Indexes for this RG** — a tabular view with one
-  row per column chunk showing `Column | CI offset | CI bytes | OI
-  offset | OI bytes | Bloom offset | Bloom bytes`. Makes the
-  contiguous per-RG index region visible and addressable. The design
-  rationale: Parquet stores page indexes *per row group*, not per
-  chunk or globally (see the Parquet layout notes earlier in the
-  file — each RG has its own contiguous ColumnIndex and OffsetIndex
-  regions following its data pages). The UI currently mirrors the
-  *logical* hierarchy but hides the *physical* grouping; an RG
-  overview + per-RG indexes screen lets users see the layout they
-  actually have on disk. User-visible change: `Enter` on Row groups
-  now takes one extra keypress to reach Column chunks (stop at the
-  RG detail first) — the trade-off is the new pane plus the
-  Indexes drill. Worth flagging in the commit message.
+- [x] **Dedicated Row group detail screen.** New `RowGroupDetailScreen`
+  sits between Row groups and Column chunks. Two-pane: left shows
+  per-RG facts (row count, chunk count, total byte size, compressed /
+  uncompressed + ratio, encoding mix rendered as
+  `PLAIN (3), RLE_DICTIONARY (1)`, codec mix same shape, and
+  aggregate Column-index / Offset-index bytes with N/M coverage).
+  Right is a two-item drill menu: **Column chunks** (the original
+  drill target) and **Indexes for this RG**. User-visible change:
+  pressing Enter on a row group now lands on the detail screen —
+  one extra keystroke to reach Column chunks, in exchange for
+  the per-RG overview.
+  New `RowGroupIndexesScreen` renders one row per column chunk with
+  CI offset / CI bytes / OI offset / OI bytes. Enter on a row drills
+  into the matching `ColumnChunkDetail`. Bloom-filter columns will
+  land once #325 exposes `bloomFilterLength()` on `ColumnChunk`.
 - [x] **Overview drill menu: spell out hints + axis annotation.**
   Applied. Schema hint reads `"16 columns   · browse by column"`; Row
   groups reads `"3 groups    · browse by row group"` (both via
