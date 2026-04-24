@@ -99,7 +99,7 @@ public final class OffsetIndexScreen {
         }
         Row header = Row.from("#", "Offset", "Size", "First row").style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" Offset index (" + locations.size() + " pages) ")
+                .title(" Offset index (" + Plurals.format(locations.size(), "page", "pages") + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Color.CYAN)

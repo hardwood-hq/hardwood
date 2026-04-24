@@ -105,7 +105,7 @@ public final class ColumnAcrossRowGroupsScreen {
                 .style(Style.EMPTY.bold());
         Block block = Block.builder()
                 .title(" " + truncateLeft(col.fieldPath().toString(), 40)
-                        + " across " + model.rowGroupCount() + " RGs ")
+                        + " across " + Plurals.format(model.rowGroupCount(), "RG", "RGs") + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Color.CYAN)

@@ -151,10 +151,12 @@ public final class OverviewScreen {
 
     private static String menuHint(MenuItem item, ParquetModel model) {
         return switch (item) {
-            case SCHEMA -> model.columnCount() + " cols";
-            case ROW_GROUPS -> model.rowGroupCount() + " RGs";
+            case SCHEMA -> Plurals.format(model.columnCount(), "column", "columns")
+                    + "   · browse by column";
+            case ROW_GROUPS -> Plurals.format(model.rowGroupCount(), "group", "groups")
+                    + "    · browse by row group";
             case FOOTER -> Sizes.format(model.fileSizeBytes());
-            case DATA_PREVIEW -> String.format("%,d rows", model.facts().totalRows());
+            case DATA_PREVIEW -> Plurals.format(model.facts().totalRows(), "row", "rows");
         };
     }
 

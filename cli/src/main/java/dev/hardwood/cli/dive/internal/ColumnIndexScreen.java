@@ -152,7 +152,7 @@ public final class ColumnIndexScreen {
         }
         Row header = Row.from("#", "NullPg", "Nulls", "Min", "Max").style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" Column index (" + ci.getPageCount() + " pages"
+                .title(" Column index (" + Plurals.format(ci.getPageCount(), "page", "pages")
                         + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching") + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
@@ -207,7 +207,8 @@ public final class ColumnIndexScreen {
         if (!state.searching() && state.filter().isEmpty()) {
             Paragraph.builder()
                     .text(Text.from(Line.from(new Span(
-                            " " + totalPages + " pages. Press / to filter by min/max.",
+                            " " + Plurals.format(totalPages, "page", "pages")
+                                    + ". Press / to filter by min/max.",
                             Style.EMPTY.fg(Color.GRAY)))))
                     .left()
                     .build()
@@ -218,7 +219,8 @@ public final class ColumnIndexScreen {
         Line line = Line.from(
                 new Span(" / ", Style.EMPTY.fg(Color.CYAN).bold()),
                 new Span(state.filter() + cursor, Style.EMPTY.bold()),
-                new Span("  (" + matchCount + " / " + totalPages + " pages)", Style.EMPTY.fg(Color.GRAY)));
+                new Span("  (" + String.format("%,d", matchCount) + " / "
+                        + Plurals.format(totalPages, "page", "pages") + ")", Style.EMPTY.fg(Color.GRAY)));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 

@@ -806,7 +806,11 @@ those commits. Check them off as they land.
   now takes one extra keypress to reach Column chunks (stop at the
   RG detail first) — the trade-off is the new pane plus the
   Indexes drill. Worth flagging in the commit message.
-- [ ] **Overview drill menu: spell out hints + axis annotation.**
+- [x] **Overview drill menu: spell out hints + axis annotation.**
+  Applied. Schema hint reads `"16 columns   · browse by column"`; Row
+  groups reads `"3 groups    · browse by row group"` (both via
+  `Plurals.format`). Footer hint (size) and Data preview hint
+  (`Plurals.format(rows, "row", "rows")`) unchanged in shape.
   Two coupled changes to the drill menu hints:
     - **Spell out the counts.** `"16 cols"` → `"16 columns"` /
       `"1 column"`; `"3 RGs"` → `"3 groups"` / `"1 group"`. Uses
@@ -827,25 +831,20 @@ those commits. Check them off as they land.
     Footer & indexes    158.0 KB
     Data preview        10,000 rows
   ```
-- [ ] **Pluralization + thousand-separator helper.** Two related
-  inconsistencies that share the same call sites, so fix both together:
-    - **Hard-coded plural form.** A file with one row group reads
-      `"1 RGs"`, one row reads `"1 rows"`, etc.
-    - **Raw int rendering.** `" Dictionary (131706 entries)"` — no
-      grouping separator, inconsistent with places that do use
-      `String.format("%,d", …)`.
-  Introduce `dev.hardwood.cli.dive.internal.Plurals.format(long n,
-  String singular, String plural)` that returns `"1 entry"`,
-  `"131,706 entries"`, `"0 rows"` (0 follows plural form, standard
-  English; grouping-separator applied unconditionally). Irregular
-  plurals ("entry/entries", "leaf/leaves") need explicit plural
-  arguments, so callers pass both forms.
-  Apply to the ~13 call sites: top bar (`Chrome.renderTopBar` — RGs,
-  rows); Overview drill menu (cols, RGs, rows); Schema title and search
-  bar (columns, leaves); Pages / Column index / Offset index titles
-  (pages); Dictionary title and search bar (entries);
-  Column-across-RGs title (RGs); Chunk-detail drill hint (pages);
-  RowGroupsScreen title (row groups).
+- [x] **Pluralization + thousand-separator helper.** Introduced
+  `dev.hardwood.cli.dive.internal.Plurals.format(long, String, String)`
+  that returns forms like `"1 entry"`, `"131,706 entries"`, `"0 rows"`
+  — grouping separator unconditional, zero follows plural. Applied at:
+  top bar (`Chrome` — RG count), Overview drill menu (columns, groups,
+  rows), Schema title + search bar (leaf columns / leaves), Column
+  index title + search bar (pages), Offset index title (pages),
+  Dictionary title + search bar (entries), Column-across-RGs title
+  (RGs), Chunk-detail drill hint (pages). Didn't touch:
+  `RowGroupsScreen` title (shows raw count, not noun), Data preview
+  "cols N–M of K" title (already uses `%,d` and "cols" is column-window
+  shorthand not a noun count), Chrome `formatRowCount` (retains the
+  "12.4 M rows" compact form for the top bar where horizontal space is
+  at a premium).
 - [ ] **Dictionary modal: gate on actual truncation.** Pressing Enter on
   a dictionary entry currently always opens a modal with the "full"
   value, even when nothing was truncated — a numeric dictionary entry

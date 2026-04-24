@@ -190,7 +190,7 @@ public final class SchemaScreen {
                     new Span(colSuffix, Style.EMPTY.fg(Color.GRAY))));
         }
         Block block = Block.builder()
-                .title(" Schema (" + model.columnCount() + " leaf columns"
+                .title(" Schema (" + Plurals.format(model.columnCount(), "leaf column", "leaf columns")
                         + (filtering ? "; " + rows.size() + " matching" : "") + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
@@ -208,7 +208,8 @@ public final class SchemaScreen {
         if (!state.searching() && state.filter().isEmpty()) {
             Paragraph.builder()
                     .text(Text.from(Line.from(new Span(
-                            " " + totalColumns + " leaf columns. Press / to filter by path.",
+                            " " + Plurals.format(totalColumns, "leaf column", "leaf columns")
+                                    + ". Press / to filter by path.",
                             Style.EMPTY.fg(Color.GRAY)))))
                     .left()
                     .build()
@@ -219,7 +220,8 @@ public final class SchemaScreen {
         Line line = Line.from(
                 new Span(" / ", Style.EMPTY.fg(Color.CYAN).bold()),
                 new Span(state.filter() + cursor, Style.EMPTY.bold()),
-                new Span("  (" + matchCount + " / " + totalColumns + " leaves)", Style.EMPTY.fg(Color.GRAY)));
+                new Span("  (" + String.format("%,d", matchCount) + " / "
+                        + Plurals.format(totalColumns, "leaf", "leaves") + ")", Style.EMPTY.fg(Color.GRAY)));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 

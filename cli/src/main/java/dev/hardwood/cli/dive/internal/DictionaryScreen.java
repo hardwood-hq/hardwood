@@ -154,7 +154,7 @@ public final class DictionaryScreen {
         }
         Row header = Row.from("#", "Value").style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" Dictionary (" + dict.size() + " entries"
+                .title(" Dictionary (" + Plurals.format(dict.size(), "entry", "entries")
                         + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching") + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
@@ -190,7 +190,8 @@ public final class DictionaryScreen {
         if (!state.searching() && state.filter().isEmpty()) {
             Paragraph.builder()
                     .text(Text.from(Line.from(new Span(
-                            " " + totalSize + " entries. Press / to filter.", Style.EMPTY.fg(Color.GRAY)))))
+                            " " + Plurals.format(totalSize, "entry", "entries") + ". Press / to filter.",
+                            Style.EMPTY.fg(Color.GRAY)))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -200,7 +201,8 @@ public final class DictionaryScreen {
         Line line = Line.from(
                 new Span(" / ", Style.EMPTY.fg(Color.CYAN).bold()),
                 new Span(state.filter() + cursor, Style.EMPTY.bold()),
-                new Span("  (" + filteredSize + " / " + totalSize + ")", Style.EMPTY.fg(Color.GRAY)));
+                new Span("  (" + String.format("%,d", filteredSize) + " / "
+                        + Plurals.format(totalSize, "entry", "entries") + ")", Style.EMPTY.fg(Color.GRAY)));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 

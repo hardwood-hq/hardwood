@@ -62,7 +62,7 @@ public final class Chrome {
                 new Span(" │ ", dim),
                 Span.raw(Sizes.format(model.fileSizeBytes())),
                 new Span(" │ ", dim),
-                Span.raw(f.rowGroupCount() + " RGs"),
+                Span.raw(Plurals.format(f.rowGroupCount(), "RG", "RGs")),
                 new Span(" │ ", dim),
                 Span.raw(formatRowCount(f.totalRows()) + " rows"));
         Paragraph.builder().text(convert(line)).left().build().render(area, buffer);
