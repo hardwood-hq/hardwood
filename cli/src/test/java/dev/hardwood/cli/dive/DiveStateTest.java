@@ -290,6 +290,24 @@ class DiveStateTest {
     }
 
     @Test
+    void dataPreviewLoadsNestedSchemaWithoutIndexOutOfBounds() throws Exception {
+        // Regression for the AIOOBE that fired when loadPage iterated leaf-column
+        // indices against a RowReader that expects top-level field indices.
+        Path nested = Path.of(getClass().getResource("/nested_struct_test.parquet").getPath());
+        try (ParquetModel nestedModel = ParquetModel.open(InputFile.of(nested), nested.toString())) {
+            ScreenState.DataPreview state = DataPreviewScreen.initialState(nestedModel, 5);
+
+            int topLevelFieldCount = nestedModel.schema().getRootNode().children().size();
+            assertThat(state.columnNames()).hasSize(topLevelFieldCount);
+            // Rows must also have exactly topLevelFieldCount cells — anything else
+            // means the field / leaf confusion is back.
+            if (!state.rows().isEmpty()) {
+                assertThat(state.rows().get(0)).hasSize(topLevelFieldCount);
+            }
+        }
+    }
+
+    @Test
     void dataPreviewPageDownLoadsContiguousRows() {
         int pageSize = 10;
         ScreenState.DataPreview first = DataPreviewScreen.initialState(model, pageSize);

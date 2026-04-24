@@ -734,27 +734,17 @@ those commits. Check them off as they land.
   background. This is the purpose-built primitive; cheaper and more
   correct than padding every line to the inner width or forcing a
   solid-color background on every Block.
-- [ ] **Data preview: `ArrayIndexOutOfBoundsException` on nested schemas.**
-  `DataPreviewScreen.loadPage` iterates `for (int c = 0; c < columnNames.size(); c++)`
-  with `columnNames.size() == model.columnCount()`, but `columnCount()` returns
-  the **leaf** column count (one per primitive) while `RowReader.isNull(int)` /
-  `getValue(int)` index into **top-level** fields (direct children of the root
-  message). The two coincide for flat schemas and diverge as soon as there's a
-  list / struct / map / variant at the root — Overture, iceberg-style tables,
-  and anything written by Spark with nested types all hit this. Reproducer:
-  open any Overture *.parquet in `hardwood dive` and press Enter on Data
-  preview → `java.lang.ArrayIndexOutOfBoundsException: Index 17 out of bounds
-  for length 17` (field count mismatch).
-  **Fix shape:**
-    - Iterate top-level fields: use `schema.getRootNode().children().size()`
-      (or the `ProjectedSchema` on the reader, whichever reads cleaner) as the
-      loop bound.
-    - Render header from field names (`root.children().get(i).name()`), not
-      leaf field-paths.
-    - Nested values render via `Object.toString()` on the returned `PqStruct`
-      / `PqList` / `PqMap` / `PqVariant`. Crude but structurally correct;
-      prettier rendering (e.g. JSON-ish for structs) is a separate polish
-      item.
+- [x] **Data preview: `ArrayIndexOutOfBoundsException` on nested schemas.**
+  Fixed in `DataPreviewScreen.loadPage`: iterate `getRootNode().children()`
+  (top-level fields) instead of `model.columnCount()` (leaf count), build
+  column header from field names, and use the field count in the render /
+  handle paths too (`state.columnNames().size()`). Nested values fall back
+  to `Object.toString()` on the returned `PqStruct` / `PqList` / `PqMap` /
+  `PqVariant` wrapper — a logical-type-aware formatter is the separate
+  "logical-type-aware value formatting" item. Regression test
+  (`dataPreviewLoadsNestedSchemaWithoutIndexOutOfBounds`) opens
+  `nested_struct_test.parquet` through Data preview and asserts the
+  loaded rows are shaped by field count, not leaf count.
 
 ### Screen / UX polish
 

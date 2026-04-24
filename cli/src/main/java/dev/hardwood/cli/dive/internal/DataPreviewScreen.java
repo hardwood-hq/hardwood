@@ -13,7 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.SchemaNode;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
@@ -50,7 +50,9 @@ public final class DataPreviewScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, dev.hardwood.cli.dive.NavigationStack stack) {
         ScreenState.DataPreview state = (ScreenState.DataPreview) stack.top();
         long total = model.facts().totalRows();
-        int columnCount = model.columnCount();
+        // columnNames already carries the top-level-field count (see loadPage —
+        // the reader indexes into fields, not leaves, so leaf count would overshoot).
+        int columnCount = state.columnNames().size();
         if (event.code() == KeyCode.PAGE_DOWN) {
             long nextFirst = Math.min(total, state.firstRow() + state.pageSize());
             if (nextFirst >= total) {
@@ -90,7 +92,7 @@ public final class DataPreviewScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.DataPreview state) {
-        int columnCount = model.columnCount();
+        int columnCount = state.columnNames().size();
         int windowEnd = Math.min(columnCount, state.columnScroll() + VISIBLE_COLUMNS);
         List<String> visible = state.columnNames().subList(state.columnScroll(), windowEnd);
 
@@ -133,11 +135,16 @@ public final class DataPreviewScreen {
     }
 
     private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize, int columnScroll) {
-        List<String> columnNames = new ArrayList<>(model.columnCount());
-        for (int i = 0; i < model.columnCount(); i++) {
-            ColumnSchema col = model.schema().getColumn(i);
-            columnNames.add(col.fieldPath().toString());
+        // `RowReader` indexes into the root message's top-level fields, not into
+        // leaf columns. For a flat schema those counts coincide; for a schema
+        // with lists / structs / maps / variants at the root they diverge, and
+        // iterating to model.columnCount() (leaf count) overruns the reader.
+        List<SchemaNode> topLevel = model.schema().getRootNode().children();
+        List<String> columnNames = new ArrayList<>(topLevel.size());
+        for (SchemaNode node : topLevel) {
+            columnNames.add(node.name());
         }
+        int fieldCount = columnNames.size();
         List<List<String>> rows = new ArrayList<>();
         try (RowReader reader = model.reader().createRowReader()) {
             for (long skip = 0; skip < firstRow && reader.hasNext(); skip++) {
@@ -146,8 +153,8 @@ public final class DataPreviewScreen {
             int read = 0;
             while (read < pageSize && reader.hasNext()) {
                 reader.next();
-                List<String> row = new ArrayList<>(columnNames.size());
-                for (int c = 0; c < columnNames.size(); c++) {
+                List<String> row = new ArrayList<>(fieldCount);
+                for (int c = 0; c < fieldCount; c++) {
                     if (reader.isNull(c)) {
                         row.add("null");
                     }
