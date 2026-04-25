@@ -265,6 +265,17 @@ class DiveStateTest {
     }
 
     @Test
+    void dictionaryWithCrcFixtureHasDictOnCategoryColumnOnly() throws Exception {
+        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            // col0 = id (int64): no dictionary
+            assertThat(m.chunk(0, 0).metaData().dictionaryPageOffset()).isNull();
+            // col1 = category (string): has dictionary
+            assertThat(m.chunk(0, 1).metaData().dictionaryPageOffset()).isNotNull();
+        }
+    }
+
+    @Test
     void columnChunkDetailDisabledSelectionSnapsToFirstEnabled() {
         // The fixture chunk has no dictionary, so opening the menu with
         // DICTIONARY selected should snap to the first enabled item
