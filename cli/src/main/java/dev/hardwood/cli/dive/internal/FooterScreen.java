@@ -157,7 +157,7 @@ public final class FooterScreen {
 
     private static void styleAnchor(List<Line> visible, List<Line> all, int scroll,
                                     int absoluteLine, boolean active, boolean enabled) {
-        if (absoluteLine < 0) {
+        if (absoluteLine < 0 || !active) {
             return;
         }
         int offset = absoluteLine - scroll;
@@ -167,7 +167,7 @@ public final class FooterScreen {
         String text = renderLine(all.get(absoluteLine));
         String marker = enabled ? "▶" : " ";
         String shown = text.startsWith(" ") ? marker + text.substring(1) : marker + text;
-        Style style = active && enabled
+        Style style = enabled
                 ? Style.EMPTY.bold().fg(Theme.ACCENT)
                 : Style.EMPTY.bold();
         visible.set(offset, Line.from(new Span(shown, style)));
