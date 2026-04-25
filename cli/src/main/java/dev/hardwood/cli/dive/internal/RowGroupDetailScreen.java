@@ -139,11 +139,11 @@ public final class RowGroupDetailScreen {
         lines.add(fact("Row group index", String.valueOf(state.rowGroupIndex())));
         lines.add(fact("Rows", String.format("%,d", rg.numRows())));
         lines.add(fact("Column chunks", String.valueOf(chunkCount)));
-        lines.add(fact("Total byte size", dualSize(rg.totalByteSize())));
+        lines.add(fact("Total byte size", Sizes.dualFormat(rg.totalByteSize())));
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Compression ", Style.EMPTY.bold())));
-        lines.add(fact("  Compressed", dualSize(compressed)));
-        lines.add(fact("  Uncompressed", dualSize(uncompressed)));
+        lines.add(fact("  Compressed", Sizes.dualFormat(compressed)));
+        lines.add(fact("  Uncompressed", Sizes.dualFormat(uncompressed)));
         lines.add(fact("  Ratio", String.format("%.2f×", ratio)));
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Encoding mix ", Style.EMPTY.bold())));
@@ -151,9 +151,9 @@ public final class RowGroupDetailScreen {
         lines.add(fact("  Codecs", mix(codecCounts)));
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Page indexes ", Style.EMPTY.bold())));
-        lines.add(fact("  Column indexes", dualSize(ciBytes)
+        lines.add(fact("  Column indexes", Sizes.dualFormat(ciBytes)
                 + "  (" + ciCount + "/" + chunkCount + " chunks)"));
-        lines.add(fact("  Offset indexes", dualSize(oiBytes)
+        lines.add(fact("  Offset indexes", Sizes.dualFormat(oiBytes)
                 + "  (" + oiCount + "/" + chunkCount + " chunks)"));
 
         Block block = paneBlock(" RG #" + state.rowGroupIndex() + " ", focused);
@@ -185,10 +185,6 @@ public final class RowGroupDetailScreen {
         return counts.entrySet().stream()
                 .map(e -> e.getKey() + " (" + e.getValue() + ")")
                 .collect(Collectors.joining(", "));
-    }
-
-    private static String dualSize(long bytes) {
-        return Sizes.format(bytes) + "  (" + String.format("%,d", bytes) + " B)";
     }
 
     private static Block paneBlock(String title, boolean focused) {

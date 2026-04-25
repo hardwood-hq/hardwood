@@ -49,22 +49,31 @@ public final class FooterScreen {
         int total = body.lines().size();
         int viewport = Keys.viewportStride();
         int maxScroll = Math.max(0, total - viewport);
-        // ↑/↓ toggle the cursor between the two drillable anchors. PgDn /
-        // PgUp scroll the body for reading the other sections.
+        // ↑/↓ cycle the cursor through the three drillable anchors
+        // (Column → Offset → Dictionary). PgDn / PgUp scroll the body
+        // for reading other sections.
         if (Keys.isStepUp(event)) {
-            if (state.cursor() == ScreenState.Footer.Anchor.COLUMN) {
+            ScreenState.Footer.Anchor prev = switch (state.cursor()) {
+                case COLUMN -> null;
+                case OFFSET -> ScreenState.Footer.Anchor.COLUMN;
+                case DICTIONARY -> ScreenState.Footer.Anchor.OFFSET;
+            };
+            if (prev == null) {
                 return false;
             }
-            stack.replaceTop(new ScreenState.Footer(
-                    ScreenState.Footer.Anchor.COLUMN, state.scroll()));
+            stack.replaceTop(new ScreenState.Footer(prev, state.scroll()));
             return true;
         }
         if (Keys.isStepDown(event)) {
-            if (state.cursor() == ScreenState.Footer.Anchor.OFFSET) {
+            ScreenState.Footer.Anchor next = switch (state.cursor()) {
+                case COLUMN -> ScreenState.Footer.Anchor.OFFSET;
+                case OFFSET -> ScreenState.Footer.Anchor.DICTIONARY;
+                case DICTIONARY -> null;
+            };
+            if (next == null) {
                 return false;
             }
-            stack.replaceTop(new ScreenState.Footer(
-                    ScreenState.Footer.Anchor.OFFSET, state.scroll()));
+            stack.replaceTop(new ScreenState.Footer(next, state.scroll()));
             return true;
         }
         if (Keys.isPageDown(event)) {
@@ -86,16 +95,16 @@ public final class FooterScreen {
             return true;
         }
         if (event.isConfirm()) {
-            if (state.cursor() == ScreenState.Footer.Anchor.COLUMN
-                    && body.columnIndexCount() > 0) {
-                stack.push(new ScreenState.FileIndexes(
-                        ScreenState.FileIndexes.Kind.COLUMN, 0));
-                return true;
-            }
-            if (state.cursor() == ScreenState.Footer.Anchor.OFFSET
-                    && body.offsetIndexCount() > 0) {
-                stack.push(new ScreenState.FileIndexes(
-                        ScreenState.FileIndexes.Kind.OFFSET, 0));
+            ScreenState.FileIndexes.Kind kind = switch (state.cursor()) {
+                case COLUMN -> body.columnIndexCount() > 0
+                        ? ScreenState.FileIndexes.Kind.COLUMN : null;
+                case OFFSET -> body.offsetIndexCount() > 0
+                        ? ScreenState.FileIndexes.Kind.OFFSET : null;
+                case DICTIONARY -> body.dictionaryCount() > 0
+                        ? ScreenState.FileIndexes.Kind.DICTIONARY : null;
+            };
+            if (kind != null) {
+                stack.push(new ScreenState.FileIndexes(kind, 0));
                 return true;
             }
         }
@@ -110,8 +119,11 @@ public final class FooterScreen {
         int viewport = Math.max(1, area.height() - 4);
         int total = all.size();
         int maxScroll = Math.max(0, total - viewport);
-        int cursorLine = state.cursor() == ScreenState.Footer.Anchor.COLUMN
-                ? body.columnIndexLine() : body.offsetIndexLine();
+        int cursorLine = switch (state.cursor()) {
+            case COLUMN -> body.columnIndexLine();
+            case OFFSET -> body.offsetIndexLine();
+            case DICTIONARY -> body.dictionaryLine();
+        };
         int scroll = Math.max(0, Math.min(maxScroll, state.scroll()));
         // Auto-scroll to keep the cursor anchor visible.
         if (cursorLine >= 0) {
@@ -132,6 +144,8 @@ public final class FooterScreen {
                 state.cursor() == ScreenState.Footer.Anchor.COLUMN, body.columnIndexCount() > 0);
         styleAnchor(lines, all, scroll, body.offsetIndexLine(),
                 state.cursor() == ScreenState.Footer.Anchor.OFFSET, body.offsetIndexCount() > 0);
+        styleAnchor(lines, all, scroll, body.dictionaryLine(),
+                state.cursor() == ScreenState.Footer.Anchor.DICTIONARY, body.dictionaryCount() > 0);
 
         lines.add(Line.empty());
         String hint;
@@ -188,7 +202,9 @@ public final class FooterScreen {
             int columnIndexLine,
             int columnIndexCount,
             int offsetIndexLine,
-            int offsetIndexCount) {
+            int offsetIndexCount,
+            int dictionaryLine,
+            int dictionaryCount) {
     }
 
     private static FooterBody bodyAndAnchors(ParquetModel model) {
@@ -196,6 +212,7 @@ public final class FooterScreen {
         FooterStats stats = computeStats(model);
         int columnIndexLine = -1;
         int offsetIndexLine = -1;
+        int dictionaryLine = -1;
         for (int i = 0; i < lines.size(); i++) {
             String text = renderLine(lines.get(i)).trim();
             if (text.startsWith("Column indexes")) {
@@ -204,9 +221,13 @@ public final class FooterScreen {
             else if (text.startsWith("Offset indexes")) {
                 offsetIndexLine = i;
             }
+            else if (text.startsWith("With dictionary")) {
+                dictionaryLine = i;
+            }
         }
         return new FooterBody(lines, columnIndexLine, stats.columnIndexCount(),
-                offsetIndexLine, stats.offsetIndexCount());
+                offsetIndexLine, stats.offsetIndexCount(),
+                dictionaryLine, stats.dictionaryCount());
     }
 
     private static List<Line> bodyLines(ParquetModel model) {
@@ -217,7 +238,7 @@ public final class FooterScreen {
         List<Line> lines = new ArrayList<>();
 
         lines.add(Line.from(new Span(" File layout ", Style.EMPTY.bold())));
-        lines.add(fact("  File size", dualSize(fileSize)));
+        lines.add(fact("  File size", Sizes.dualFormat(fileSize)));
         lines.add(fact("  Format version", String.valueOf(model.metadata().version())));
         lines.add(fact("  Created by",
                 model.facts().createdBy() != null ? model.facts().createdBy() : "unknown"));
@@ -229,7 +250,7 @@ public final class FooterScreen {
                             stats.minDataOffset(), stats.maxDataEnd(),
                             Sizes.format(stats.maxDataEnd() - stats.minDataOffset()))));
             lines.add(fact("  Footer + indexes",
-                    dualSize(footerAndIndexBytes(model))));
+                    Sizes.dualFormat(footerAndIndexBytes(model))));
         }
 
         lines.add(Line.empty());
@@ -251,10 +272,10 @@ public final class FooterScreen {
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Page indexes ", Style.EMPTY.bold())));
         lines.add(fact("  Column indexes",
-                dualSize(stats.columnIndexBytes()) + "  ("
+                Sizes.dualFormat(stats.columnIndexBytes()) + "  ("
                         + coverage(stats.columnIndexCount(), stats.totalChunks()) + ")"));
         lines.add(fact("  Offset indexes",
-                dualSize(stats.offsetIndexBytes()) + "  ("
+                Sizes.dualFormat(stats.offsetIndexBytes()) + "  ("
                         + coverage(stats.offsetIndexCount(), stats.totalChunks()) + ")"));
 
         lines.add(Line.empty());
@@ -264,8 +285,8 @@ public final class FooterScreen {
 
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Aggregate ", Style.EMPTY.bold())));
-        lines.add(fact("  Compressed data", dualSize(model.facts().compressedBytes())));
-        lines.add(fact("  Uncompressed data", dualSize(model.facts().uncompressedBytes())));
+        lines.add(fact("  Compressed data", Sizes.dualFormat(model.facts().compressedBytes())));
+        lines.add(fact("  Uncompressed data", Sizes.dualFormat(model.facts().uncompressedBytes())));
         lines.add(fact("  Compression ratio",
                 String.format("%.2f×", model.facts().compressionRatio())));
         return lines;
@@ -370,10 +391,6 @@ public final class FooterScreen {
             out.put(e.getKey(), e.getValue());
         }
         return out;
-    }
-
-    private static String dualSize(long bytes) {
-        return Sizes.format(bytes) + "  (" + String.format("%,d", bytes) + " B)";
     }
 
     private static String coverage(int count, int total) {

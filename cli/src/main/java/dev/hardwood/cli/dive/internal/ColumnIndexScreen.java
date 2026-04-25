@@ -107,15 +107,19 @@ public final class ColumnIndexScreen {
                     state.filter(), false, !state.logicalTypes(), false));
             return true;
         }
-        // Open the full Min/Max modal on Enter. The earlier gate looked for an
-        // ellipsis suffix in the formatted string, but tamboui's Table clips
-        // cells at column width without rewriting the underlying value, so
-        // the gate never fired for the visible truncation. Opening
-        // unconditionally is also fine UX-wise — the modal is harmless when
-        // the value already fits, and Esc dismisses it.
+        // Open the full Min/Max modal on Enter only when at least one of the
+        // selected page's values is actually truncated — `formatStat` adds an
+        // `…` suffix when it caps the value to the cell budget, so the gate
+        // is now reliable (the previous one looked for ellipses in
+        // `IndexValueFormatter.format`'s output, which doesn't add them).
         if (event.isConfirm() && !filtered.isEmpty()) {
-            stack.replaceTop(withModal(state, true));
-            return true;
+            int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            String min = formatStat(ci.minValues().get(idx), col, state.logicalTypes());
+            String max = formatStat(ci.maxValues().get(idx), col, state.logicalTypes());
+            if (min.endsWith("…") || max.endsWith("…")) {
+                stack.replaceTop(withModal(state, true));
+                return true;
+            }
         }
         return false;
     }
@@ -186,7 +190,7 @@ public final class ColumnIndexScreen {
                     formatStat(ci.minValues().get(idx), col, state.logicalTypes()),
                     formatStat(ci.maxValues().get(idx), col, state.logicalTypes())));
         }
-        Row header = Row.from("#", "NullPg", "Nulls", "Min", "Max").style(Style.EMPTY.bold());
+        Row header = Row.from("#", "Null page", "Nulls", "Min", "Max").style(Style.EMPTY.bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" Column index (" + Plurals.format(ci.getPageCount(), "page", "pages")
@@ -200,7 +204,7 @@ public final class ColumnIndexScreen {
                 .header(header)
                 .rows(rows)
                 .widths(new Constraint.Length(5),
-                        new Constraint.Length(8),
+                        new Constraint.Length(10),
                         new Constraint.Length(10),
                         new Constraint.Fill(1),
                         new Constraint.Fill(1))
@@ -309,11 +313,20 @@ public final class ColumnIndexScreen {
                 s.filter(), s.searching(), s.logicalTypes(), modal);
     }
 
+    /// tamboui's Table clips silently at column width. Cap the formatted
+    /// value ourselves so an `…` suffix is visible when truncation
+    /// happened — users then know the modal will reveal more on Enter.
+    private static final int CELL_MAX = 24;
+
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical) {
         if (bytes == null) {
             return "—";
         }
-        return IndexValueFormatter.format(bytes, col, logical);
+        String full = IndexValueFormatter.format(bytes, col, logical);
+        if (full.length() <= CELL_MAX) {
+            return full;
+        }
+        return full.substring(0, CELL_MAX - 1) + "…";
     }
 
     private static void renderEmpty(Buffer buffer, Rect area, String message) {

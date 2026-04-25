@@ -304,8 +304,8 @@ public final class PagesScreen {
 
         List<Line> lines = new ArrayList<>();
         lines.add(kv("Type", header.type().name()));
-        lines.add(kv("Compressed size", dualSize(header.compressedPageSize())));
-        lines.add(kv("Uncompressed size", dualSize(header.uncompressedPageSize())));
+        lines.add(kv("Compressed size", Sizes.dualFormat(header.compressedPageSize())));
+        lines.add(kv("Uncompressed size", Sizes.dualFormat(header.uncompressedPageSize())));
         lines.add(kv("CRC", header.crc() != null ? "0x" + Integer.toHexString(header.crc()) : "—"));
         lines.add(Line.empty());
         DataPageHeader dph = header.dataPageHeader();
@@ -350,10 +350,6 @@ public final class PagesScreen {
                 .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
-    }
-
-    private static String dualSize(long bytes) {
-        return Sizes.format(bytes) + "  (" + String.format("%,d", bytes) + " B)";
     }
 
     /// Returns the per-page inline statistics (if any), preferring v2 over v1

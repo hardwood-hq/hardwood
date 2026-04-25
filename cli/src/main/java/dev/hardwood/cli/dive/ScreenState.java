@@ -103,25 +103,24 @@ public sealed interface ScreenState {
     }
 
     /// Raw footer layout: file size, footer offset/length, aggregate index bytes.
-    /// The cursor only lands on the two drillable anchors — `Anchor#COLUMN`
-    /// for the Column-indexes line, `Anchor#OFFSET` for the Offset-indexes
-    /// line — so ↑/↓ toggle between them and Enter always drills. Body
-    /// content is scrolled separately with `PgDn` / `PgUp`; `scroll` is the
-    /// line offset into the body content.
+    /// The cursor only lands on the drillable anchors — `Anchor#COLUMN`,
+    /// `Anchor#OFFSET`, `Anchor#DICTIONARY` — so ↑/↓ cycle between them
+    /// and Enter always drills. Body content is scrolled separately with
+    /// `PgDn` / `PgUp`; `scroll` is the line offset into the body content.
     record Footer(Anchor cursor, int scroll) implements ScreenState {
-        public enum Anchor { COLUMN, OFFSET }
+        public enum Anchor { COLUMN, OFFSET, DICTIONARY }
 
         public static Footer initial() {
             return new Footer(Anchor.COLUMN, 0);
         }
     }
 
-    /// File-wide list of every column chunk that carries either a Column
-    /// index (`Kind#COLUMN`) or an Offset index (`Kind#OFFSET`); chunks
-    /// without the relevant index are filtered out. Enter drills into the
-    /// matching per-chunk index screen.
+    /// File-wide list of every column chunk that carries the selected kind
+    /// of side data — Column index, Offset index, or Dictionary. Chunks
+    /// without the relevant data are filtered out. Enter drills into the
+    /// matching per-chunk screen.
     record FileIndexes(Kind kind, int selection) implements ScreenState {
-        public enum Kind { COLUMN, OFFSET }
+        public enum Kind { COLUMN, OFFSET, DICTIONARY }
     }
 
     /// Cross-row-group view of one leaf column. `selection` drills into

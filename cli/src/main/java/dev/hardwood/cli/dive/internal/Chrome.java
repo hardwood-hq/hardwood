@@ -114,6 +114,7 @@ public final class Chrome {
             case ScreenState.FileIndexes f -> switch (f.kind()) {
                 case COLUMN -> "All column indexes";
                 case OFFSET -> "All offset indexes";
+                case DICTIONARY -> "All dictionaries";
             };
         };
     }

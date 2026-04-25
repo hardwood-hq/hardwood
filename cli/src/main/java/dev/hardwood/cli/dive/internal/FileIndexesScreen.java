@@ -80,6 +80,8 @@ public final class FileIndexesScreen {
                         e.rowGroupIndex(), e.columnIndex(), 0, "", false, true, false));
                 case OFFSET -> stack.push(new ScreenState.OffsetIndexView(
                         e.rowGroupIndex(), e.columnIndex(), 0));
+                case DICTIONARY -> stack.push(new ScreenState.DictionaryView(
+                        e.rowGroupIndex(), e.columnIndex(), 0, false, "", false, false));
             }
             return true;
         }
@@ -105,6 +107,17 @@ public final class FileIndexesScreen {
                         columnPath,
                         String.format("%,d", cc.offsetIndexOffset()),
                         Sizes.format(cc.offsetIndexLength())));
+                case DICTIONARY -> {
+                    long dictOffset = cmd.dictionaryPageOffset();
+                    long dataOffset = cmd.dataPageOffset();
+                    long dictSpan = Math.max(0, dataOffset - dictOffset);
+                    rows.add(Row.from(
+                            String.valueOf(e.rowGroupIndex()),
+                            columnPath,
+                            String.format("%,d", dictOffset),
+                            String.format("%,d", dataOffset),
+                            Sizes.format(dictSpan)));
+                }
             }
         }
         Row header;
@@ -128,11 +141,22 @@ public final class FileIndexesScreen {
                         new Constraint.Length(16),
                         new Constraint.Length(10));
             }
+            case DICTIONARY -> {
+                header = Row.from("RG", "Column", "Dict offset", "Data offset", "Dict span")
+                        .style(Style.EMPTY.bold());
+                widths = List.of(
+                        new Constraint.Length(4),
+                        new Constraint.Fill(3),
+                        new Constraint.Length(14),
+                        new Constraint.Length(14),
+                        new Constraint.Length(10));
+            }
             default -> throw new IllegalStateException("kind: " + state.kind());
         }
         String title = switch (state.kind()) {
             case COLUMN -> " All column indexes (" + Plurals.format(entries.size(), "chunk", "chunks") + ") ";
             case OFFSET -> " All offset indexes (" + Plurals.format(entries.size(), "chunk", "chunks") + ") ";
+            case DICTIONARY -> " All dictionaries (" + Plurals.format(entries.size(), "chunk", "chunks") + ") ";
         };
         Block block = Block.builder()
                 .title(title)
@@ -170,6 +194,7 @@ public final class FileIndexesScreen {
                 boolean has = switch (kind) {
                     case COLUMN -> cc.columnIndexOffset() != null && cc.columnIndexLength() != null;
                     case OFFSET -> cc.offsetIndexOffset() != null && cc.offsetIndexLength() != null;
+                    case DICTIONARY -> cc.metaData().dictionaryPageOffset() != null;
                 };
                 if (has) {
                     out.add(new Entry(rg, c, cc));
