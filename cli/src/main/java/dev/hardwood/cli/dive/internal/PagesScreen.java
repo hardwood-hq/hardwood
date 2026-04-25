@@ -240,14 +240,20 @@ public final class PagesScreen {
         }
     }
 
-    public static String keybarKeys(ScreenState.Pages state) {
+    public static String keybarKeys(ScreenState.Pages state, ParquetModel model) {
         if (state.modalOpen()) {
-            // The page-header modal renders its own hint inside the modal.
-            // Suppress the table-level keys here so the keybar doesn't
-            // duplicate or contradict.
             return "";
         }
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] page header  [t] logical types  [Esc] back";
+        int count = model.pageHeaders(state.rowGroupIndex(), state.columnIndex()).size();
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        boolean hasLogical = col.logicalType() != null;
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 0, "[Enter] page header")
+                .add(hasLogical, "[t] logical types")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static int dataValues(PageHeader h) {

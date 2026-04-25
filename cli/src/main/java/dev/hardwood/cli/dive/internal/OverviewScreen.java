@@ -193,12 +193,19 @@ public final class OverviewScreen {
         }
     }
 
-    public static String keybarKeys(ScreenState.Overview state) {
+    public static String keybarKeys(ScreenState.Overview state, ParquetModel model) {
         if (state.kvModalOpen()) {
-            // KV modal owns the keys; its own hint is the source of truth.
             return "";
         }
-        return "[Tab] pane  [↑↓] move  [Enter] view entry";
+        boolean onFacts = state.focus() == ScreenState.Overview.Pane.FACTS;
+        int kvCount = model.facts().keyValueMetadata().size();
+        boolean factsHasKv = kvCount > 0;
+        return new Keys.Hints()
+                .add(factsHasKv, "[Tab] pane")
+                .add(onFacts ? kvCount > 1 : MENU_SIZE > 1, "[↑↓] move")
+                .add(onFacts && factsHasKv, "[Enter] view entry")
+                .add(!onFacts, "[Enter] drill")
+                .build();
     }
 
     private static void renderFactsPane(Buffer buffer, Rect area, ParquetModel model, ScreenState.Overview state) {

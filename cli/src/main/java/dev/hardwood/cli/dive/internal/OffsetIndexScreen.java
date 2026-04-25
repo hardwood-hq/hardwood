@@ -135,7 +135,13 @@ public final class OffsetIndexScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Esc] back";
+    public static String keybarKeys(ScreenState.OffsetIndexView state, ParquetModel model) {
+        OffsetIndex oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
+        int count = oi != null ? oi.pageLocations().size() : 0;
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(true, "[Esc] back")
+                .build();
     }
 }

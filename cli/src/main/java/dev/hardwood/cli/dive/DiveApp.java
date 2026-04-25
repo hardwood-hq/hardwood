@@ -177,21 +177,21 @@ public final class DiveApp {
 
     private String keybarForActive() {
         return switch (stack.top()) {
-            case ScreenState.Overview s -> OverviewScreen.keybarKeys(s);
-            case ScreenState.Schema ignored -> SchemaScreen.keybarKeys();
-            case ScreenState.RowGroups ignored -> RowGroupsScreen.keybarKeys();
-            case ScreenState.RowGroupDetail ignored -> RowGroupDetailScreen.keybarKeys();
-            case ScreenState.RowGroupIndexes ignored -> RowGroupIndexesScreen.keybarKeys();
-            case ScreenState.ColumnChunks ignored -> ColumnChunksScreen.keybarKeys();
-            case ScreenState.ColumnChunkDetail ignored -> ColumnChunkDetailScreen.keybarKeys();
-            case ScreenState.Pages s -> PagesScreen.keybarKeys(s);
-            case ScreenState.ColumnIndexView s -> ColumnIndexScreen.keybarKeys(s);
-            case ScreenState.OffsetIndexView ignored -> OffsetIndexScreen.keybarKeys();
-            case ScreenState.Footer ignored -> FooterScreen.keybarKeys();
-            case ScreenState.ColumnAcrossRowGroups ignored -> ColumnAcrossRowGroupsScreen.keybarKeys();
-            case ScreenState.DictionaryView ignored -> DictionaryScreen.keybarKeys();
-            case ScreenState.DataPreview s -> DataPreviewScreen.keybarKeys(s);
-            case ScreenState.FileIndexes ignored -> FileIndexesScreen.keybarKeys();
+            case ScreenState.Overview s -> OverviewScreen.keybarKeys(s, model);
+            case ScreenState.Schema s -> SchemaScreen.keybarKeys(s, model);
+            case ScreenState.RowGroups s -> RowGroupsScreen.keybarKeys(s, model);
+            case ScreenState.RowGroupDetail s -> RowGroupDetailScreen.keybarKeys(s);
+            case ScreenState.RowGroupIndexes s -> RowGroupIndexesScreen.keybarKeys(s, model);
+            case ScreenState.ColumnChunks s -> ColumnChunksScreen.keybarKeys(s, model);
+            case ScreenState.ColumnChunkDetail s -> ColumnChunkDetailScreen.keybarKeys(s, model);
+            case ScreenState.Pages s -> PagesScreen.keybarKeys(s, model);
+            case ScreenState.ColumnIndexView s -> ColumnIndexScreen.keybarKeys(s, model);
+            case ScreenState.OffsetIndexView s -> OffsetIndexScreen.keybarKeys(s, model);
+            case ScreenState.Footer s -> FooterScreen.keybarKeys(s, model);
+            case ScreenState.ColumnAcrossRowGroups s -> ColumnAcrossRowGroupsScreen.keybarKeys(s, model);
+            case ScreenState.DictionaryView s -> DictionaryScreen.keybarKeys(s, model);
+            case ScreenState.DataPreview s -> DataPreviewScreen.keybarKeys(s, model);
+            case ScreenState.FileIndexes s -> FileIndexesScreen.keybarKeys(s, model);
         };
     }
 

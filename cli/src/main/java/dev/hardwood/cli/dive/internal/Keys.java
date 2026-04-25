@@ -86,4 +86,27 @@ public final class Keys {
     public static boolean hasObservedViewport() {
         return observedViewportRows > 0;
     }
+
+    /// Conditional-keybar builder. Each `add(enabled, binding)` appends the
+    /// binding to the keybar only when `enabled` — so the resulting string
+    /// lists exactly the keys that have a meaningful effect in the current
+    /// screen state. Callers should phrase enablement at the
+    /// "would-pressing-this-do-something-visible" level.
+    public static final class Hints {
+        private final StringBuilder sb = new StringBuilder();
+
+        public Hints add(boolean enabled, String binding) {
+            if (enabled) {
+                if (!sb.isEmpty()) {
+                    sb.append("  ");
+                }
+                sb.append(binding);
+            }
+            return this;
+        }
+
+        public String build() {
+            return sb.toString();
+        }
+    }
 }

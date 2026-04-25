@@ -132,8 +132,14 @@ public final class RowGroupsScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] drill  [Esc] back";
+    public static String keybarKeys(ScreenState.RowGroups state, ParquetModel model) {
+        int count = model.rowGroupCount();
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 0, "[Enter] drill")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static String formatLong(long v) {

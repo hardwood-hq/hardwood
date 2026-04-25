@@ -438,16 +438,31 @@ public final class DataPreviewScreen {
         return out;
     }
 
-    public static String keybarKeys(ScreenState.DataPreview state) {
+    public static String keybarKeys(ScreenState.DataPreview state, ParquetModel model) {
         if (state.modalRow() >= 0) {
-            // Modal owns the keys — its own footer hint is the source of
-            // truth. Suppress the screen's table keys here so the global
-            // keybar doesn't duplicate (and contradict, when the toggle
-            // suppresses navigation/expand) what the modal already shows.
             return "";
         }
-        return "[↑↓] row  [Enter] view record  [←→] columns  "
-                + "[PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [t] logical types  [Esc] back";
+        long total = model.facts().totalRows();
+        int loaded = state.rows().size();
+        int columnCount = state.columnNames().size();
+        boolean canPage = total > state.pageSize();
+        boolean canColumnScroll = columnCount > VISIBLE_COLUMNS;
+        boolean anyLogical = false;
+        for (SchemaNode child : model.schema().getRootNode().children()) {
+            if (child instanceof SchemaNode.PrimitiveNode p && p.logicalType() != null) {
+                anyLogical = true;
+                break;
+            }
+        }
+        return new Keys.Hints()
+                .add(loaded > 1, "[↑↓] row")
+                .add(loaded > 0, "[Enter] view record")
+                .add(canColumnScroll, "[←→] columns")
+                .add(canPage, "[PgDn/PgUp or Shift+↓↑] page")
+                .add(canPage, "[g/G] start/end")
+                .add(anyLogical, "[t] logical types")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,

@@ -123,8 +123,25 @@ public final class ColumnChunkDetailScreen {
         renderMenuPane(buffer, cols.get(1), model, state);
     }
 
-    public static String keybarKeys() {
-        return "[Tab] pane  [↑↓] move  [Enter] drill  [Esc] back";
+    public static String keybarKeys(ScreenState.ColumnChunkDetail state, ParquetModel model) {
+        boolean onMenu = state.focus() == ScreenState.ColumnChunkDetail.Pane.MENU;
+        MenuItem[] items = MenuItem.values();
+        int enabledCount = 0;
+        boolean currentEnabled = false;
+        for (int i = 0; i < items.length; i++) {
+            if (itemEnabled(items[i], model, state)) {
+                enabledCount++;
+                if (i == state.menuSelection()) {
+                    currentEnabled = true;
+                }
+            }
+        }
+        return new Keys.Hints()
+                .add(true, "[Tab] pane")
+                .add(onMenu && enabledCount > 1, "[↑↓] move")
+                .add(onMenu && currentEnabled, "[Enter] drill")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static ScreenState.ColumnChunkDetail state(ScreenState.ColumnChunkDetail state, int selection) {

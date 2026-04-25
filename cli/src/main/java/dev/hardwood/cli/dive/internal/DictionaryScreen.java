@@ -218,8 +218,26 @@ public final class DictionaryScreen {
         }
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] full value  [/] search  [Esc] back";
+    public static String keybarKeys(ScreenState.DictionaryView state, ParquetModel model) {
+        Dictionary dict = needsConfirmation(model, state) ? null : loadDictionary(model, state);
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        java.util.List<Integer> filtered = dict == null ? java.util.List.of()
+                : filteredIndices(dict, col, state.filter());
+        int count = filtered.size();
+        // Enter opens the full-value modal only when the selected entry
+        // would actually reveal more than the row already shows.
+        boolean canExpand = false;
+        if (dict != null && count > 0) {
+            int idx = filtered.get(Math.min(state.selection(), count - 1));
+            canExpand = fullValue(dict, idx, col).length() > VALUE_PREVIEW_MAX;
+        }
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(canExpand, "[Enter] full value")
+                .add(dict != null, "[/] search")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static void renderSearchBar(Buffer buffer, Rect area, ScreenState.DictionaryView state,

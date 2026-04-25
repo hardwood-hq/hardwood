@@ -121,7 +121,13 @@ public final class ColumnChunksScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] inspect chunk  [Esc] back";
+    public static String keybarKeys(ScreenState.ColumnChunks state, ParquetModel model) {
+        int count = model.rowGroup(state.rowGroupIndex()).columns().size();
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 0, "[Enter] inspect chunk")
+                .add(true, "[Esc] back")
+                .build();
     }
 }

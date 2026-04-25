@@ -253,8 +253,22 @@ public final class SchemaScreen {
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(split.get(1), buffer);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [→/Enter] expand · drill  [←] collapse  [e/c] all  [/] search  [Esc] back";
+    public static String keybarKeys(ScreenState.Schema state, ParquetModel model) {
+        List<Row> rows = visibleRows(model.schema(), state.expanded(), state.filter());
+        int count = rows.size();
+        Row current = count > 0 ? rows.get(Math.min(state.selection(), count - 1)) : null;
+        boolean isGroup = current != null && current.isGroup();
+        boolean expanded = isGroup && state.expanded().contains(current.path());
+        boolean hasGroups = !allGroupPaths(model).isEmpty();
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(current != null, isGroup ? "[→/Enter] expand" : "[Enter] drill")
+                .add(expanded, "[←] collapse")
+                .add(hasGroups, "[e/c] all")
+                .add(true, "[/] search")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static void renderSearchBar(Buffer buffer, Rect area, ScreenState.Schema state,

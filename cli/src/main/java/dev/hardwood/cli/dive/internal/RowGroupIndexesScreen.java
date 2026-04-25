@@ -144,7 +144,20 @@ public final class RowGroupIndexesScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] column index  [o] offset index  [Esc] back";
+    public static String keybarKeys(ScreenState.RowGroupIndexes state, ParquetModel model) {
+        java.util.List<ColumnChunk> chunks = model.rowGroup(state.rowGroupIndex()).columns();
+        int count = chunks.size();
+        ColumnChunk selected = count > 0 && state.selection() < count
+                ? chunks.get(state.selection()) : null;
+        boolean hasCi = selected != null && selected.columnIndexOffset() != null;
+        boolean hasOi = selected != null && selected.offsetIndexOffset() != null;
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(hasCi, "[Enter] column index")
+                .add(hasCi && hasOi, "[o] offset index")
+                .add(!hasCi && hasOi, "[Enter] offset index")
+                .add(true, "[Esc] back")
+                .build();
     }
 }

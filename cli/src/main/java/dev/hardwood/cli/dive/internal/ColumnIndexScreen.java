@@ -255,11 +255,32 @@ public final class ColumnIndexScreen {
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(modal, buffer);
     }
 
-    public static String keybarKeys(ScreenState.ColumnIndexView state) {
+    public static String keybarKeys(ScreenState.ColumnIndexView state, ParquetModel model) {
         if (state.modalOpen()) {
             return "";
         }
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] view min/max  [/] search  [t] logical types  [Esc] back";
+        ColumnIndex ci = model.columnIndex(state.rowGroupIndex(), state.columnIndex());
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        java.util.List<Integer> filtered = filteredPages(ci, col, state.filter());
+        int count = filtered.size();
+        boolean hasLogical = col.logicalType() != null;
+        // Enter opens the modal only when the selected row's Min or Max
+        // actually got truncated (ends with "…" after formatStat capping).
+        boolean canExpand = false;
+        if (count > 0) {
+            int idx = filtered.get(Math.min(state.selection(), count - 1));
+            String min = formatStat(ci.minValues().get(idx), col, state.logicalTypes());
+            String max = formatStat(ci.maxValues().get(idx), col, state.logicalTypes());
+            canExpand = min.endsWith("…") || max.endsWith("…");
+        }
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(canExpand, "[Enter] view min/max")
+                .add(count > 0, "[/] search")
+                .add(hasLogical, "[t] logical types")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static List<Integer> filteredPages(ColumnIndex ci, ColumnSchema col, String filter) {

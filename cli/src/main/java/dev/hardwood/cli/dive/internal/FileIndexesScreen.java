@@ -180,8 +180,14 @@ public final class FileIndexesScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] open  [Esc] back";
+    public static String keybarKeys(ScreenState.FileIndexes state, ParquetModel model) {
+        int count = entries(model, state.kind()).size();
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 0, "[Enter] open")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static List<Entry> entries(ParquetModel model, ScreenState.FileIndexes.Kind kind) {

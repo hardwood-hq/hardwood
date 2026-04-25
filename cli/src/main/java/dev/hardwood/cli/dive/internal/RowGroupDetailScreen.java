@@ -95,8 +95,14 @@ public final class RowGroupDetailScreen {
         renderMenuPane(buffer, cols.get(1), model, state);
     }
 
-    public static String keybarKeys() {
-        return "[Tab] pane  [↑↓] move  [Enter] drill  [Esc] back";
+    public static String keybarKeys(ScreenState.RowGroupDetail state) {
+        boolean onMenu = state.focus() == ScreenState.RowGroupDetail.Pane.MENU;
+        return new Keys.Hints()
+                .add(true, "[Tab] pane")
+                .add(onMenu && MenuItem.values().length > 1, "[↑↓] move")
+                .add(onMenu, "[Enter] drill")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static ScreenState.RowGroupDetail state(ScreenState.RowGroupDetail s, int selection) {

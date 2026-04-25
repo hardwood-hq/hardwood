@@ -161,8 +161,17 @@ public final class ColumnAcrossRowGroupsScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] chunk detail  [t] logical types  [Esc] back";
+    public static String keybarKeys(ScreenState.ColumnAcrossRowGroups state, ParquetModel model) {
+        int count = model.rowGroupCount();
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        boolean hasLogical = col.logicalType() != null;
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 0, "[Enter] chunk detail")
+                .add(hasLogical, "[t] logical types")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static String truncateLeft(String s, int maxWidth) {

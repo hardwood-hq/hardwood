@@ -338,8 +338,28 @@ public final class FooterScreen {
         return lines;
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] pick anchor  [Enter] drill  [PgDn/PgUp or Shift+↓↑] scroll  [g/G] top/bottom  [Esc] back";
+    public static String keybarKeys(ScreenState.Footer state, ParquetModel model) {
+        FooterBody body = bodyAndAnchors(model);
+        int enabledAnchors = 0;
+        for (ScreenState.Footer.Anchor a : ScreenState.Footer.Anchor.values()) {
+            if (isEnabled(a, body)) {
+                enabledAnchors++;
+            }
+        }
+        boolean cursorEnabled = isEnabled(state.cursor(), body)
+                || (enabledAnchors > 0 && firstEnabledAnchor(body) == state.cursor());
+        // Body-overflow estimate using viewport stride (close enough; the
+        // exact body height only matters for visual scroll, not for
+        // whether scrolling is meaningful at all).
+        int total = body.lines().size();
+        boolean overflows = total > Keys.viewportStride();
+        return new Keys.Hints()
+                .add(enabledAnchors > 1, "[↑↓] pick anchor")
+                .add(cursorEnabled, "[Enter] drill")
+                .add(overflows, "[PgDn/PgUp or Shift+↓↑] scroll")
+                .add(overflows, "[g/G] top/bottom")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     /// Total bytes occupied by the footer thrift + page indexes + trailer —
