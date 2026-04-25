@@ -90,6 +90,21 @@ public final class DictionaryScreen {
         Dictionary dict = loadDictionary(model, state);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         List<Integer> filtered = filteredIndices(dict, col, state.filter());
+        // Plain Up/Down step one entry; PgDn/PgUp (and the Shift+↓/↑ Mac
+        // chord since most macOS laptops have no dedicated PgDn/PgUp keys)
+        // move 20 entries — same pageStride as the Column index view.
+        int pageStride = 20;
+        if (event.code() == KeyCode.PAGE_DOWN || (event.hasShift() && event.isDown())) {
+            int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
+            stack.replaceTop(with(state, Math.min(max, state.selection() + pageStride),
+                    false, state.filter(), false));
+            return true;
+        }
+        if (event.code() == KeyCode.PAGE_UP || (event.hasShift() && event.isUp())) {
+            stack.replaceTop(with(state, Math.max(0, state.selection() - pageStride),
+                    false, state.filter(), false));
+            return true;
+        }
         if (event.isUp()) {
             stack.replaceTop(with(state, Math.max(0, state.selection() - 1), false, state.filter(), false));
             return true;
@@ -203,7 +218,7 @@ public final class DictionaryScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] full value  [/] search  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] full value  [/] search  [Esc] back";
     }
 
     private static void renderSearchBar(Buffer buffer, Rect area, ScreenState.DictionaryView state,

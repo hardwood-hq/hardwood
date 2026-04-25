@@ -72,6 +72,18 @@ public final class ColumnIndexScreen {
         }
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         List<Integer> filtered = filteredPages(ci, col, state.filter());
+        int pageStride = 20;
+        if (event.code() == KeyCode.PAGE_DOWN || (event.hasShift() && event.isDown())) {
+            int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
+            stack.replaceTop(with(state, Math.min(max, state.selection() + pageStride),
+                    state.filter(), false));
+            return true;
+        }
+        if (event.code() == KeyCode.PAGE_UP || (event.hasShift() && event.isUp())) {
+            stack.replaceTop(with(state, Math.max(0, state.selection() - pageStride),
+                    state.filter(), false));
+            return true;
+        }
         if (event.isUp()) {
             stack.replaceTop(with(state, Math.max(0, state.selection() - 1), state.filter(), false));
             return true;
@@ -96,18 +108,15 @@ public final class ColumnIndexScreen {
                     state.filter(), false, !state.logicalTypes(), false));
             return true;
         }
-        // Open the full Min/Max modal on Enter when the selected row's rendering
-        // was truncated. If both Min and Max fit within the table cell budget,
-        // the modal would just echo the row, so suppress.
+        // Open the full Min/Max modal on Enter. The earlier gate looked for an
+        // ellipsis suffix in the formatted string, but tamboui's Table clips
+        // cells at column width without rewriting the underlying value, so
+        // the gate never fired for the visible truncation. Opening
+        // unconditionally is also fine UX-wise — the modal is harmless when
+        // the value already fits, and Esc dismisses it.
         if (event.isConfirm() && !filtered.isEmpty()) {
-            int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
-            String min = formatStat(ci.minValues().get(idx), col, state.logicalTypes());
-            String max = formatStat(ci.maxValues().get(idx), col, state.logicalTypes());
-            if (min.endsWith("…") || min.endsWith("...")
-                    || max.endsWith("…") || max.endsWith("...")) {
-                stack.replaceTop(withModal(state, true));
-                return true;
-            }
+            stack.replaceTop(withModal(state, true));
+            return true;
         }
         return false;
     }
@@ -241,7 +250,7 @@ public final class ColumnIndexScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] view min/max  [/] search  [t] logical types  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] view min/max  [/] search  [t] logical types  [Esc] back";
     }
 
     private static List<Integer> filteredPages(ColumnIndex ci, ColumnSchema col, String filter) {
