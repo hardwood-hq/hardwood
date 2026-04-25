@@ -106,13 +106,14 @@ public class InspectDictionaryCommand implements Callable<Integer> {
         List<String[]> rows = new ArrayList<>();
         List<Integer> separatorsBefore = new ArrayList<>();
         List<String> messages = new ArrayList<>();
-        String columnLabel = columnSchema.name();
+        String columnLabel = rowGroups.isEmpty()
+                ? columnSchema.name()
+                : Sizes.columnPath(rowGroups.getFirst().columns().get(columnSchema.columnIndex()).metaData());
         boolean includeLength = hasVariableWidthDictionaryValues(columnSchema);
 
         for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
             RowGroup rg = rowGroups.get(rgIdx);
             ColumnChunk chunk = rg.columns().get(columnSchema.columnIndex());
-            columnLabel = Sizes.columnPath(chunk.metaData());
 
             // Read just the dictionary prefix of the column chunk
             Long dictOffset = chunk.metaData().dictionaryPageOffset();
@@ -158,7 +159,13 @@ public class InspectDictionaryCommand implements Callable<Integer> {
     private static void addDictionaryRows(List<String[]> rows, int rgIdx, Dictionary dictionary,
                                           ColumnSchema columnSchema, int displayed) {
         switch (dictionary) {
-            case Dictionary.IntDictionary, Dictionary.LongDictionary, Dictionary.FloatDictionary, Dictionary.DoubleDictionary -> addValueRows(rows, rgIdx, columnSchema, displayed,
+            case Dictionary.IntDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
+                    i -> d.values()[i]);
+            case Dictionary.LongDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
+                    i -> d.values()[i]);
+            case Dictionary.FloatDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
+                    i -> d.values()[i]);
+            case Dictionary.DoubleDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
                     i -> d.values()[i]);
             case Dictionary.ByteArrayDictionary d -> addByteArrayRows(rows, rgIdx, d.values(), columnSchema,
                     displayed);

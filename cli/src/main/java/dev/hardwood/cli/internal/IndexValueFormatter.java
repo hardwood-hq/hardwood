@@ -60,21 +60,41 @@ public final class IndexValueFormatter {
         };
     }
 
-    /// Formats an already-decoded value, such as a dictionary entry, using the
-    /// same display rules as raw page-index values.
+    /// Formats an already-decoded physical value, such as a dictionary entry,
+    /// using the same display rules as raw page-index values.
+    ///
+    /// Expected value types are determined by [ColumnSchema#type()]:
+    ///
+    /// - `BOOLEAN`: [Boolean]
+    /// - `INT32`: [Integer]
+    /// - `INT64`: [Long]
+    /// - `FLOAT`: [Float]
+    /// - `DOUBLE`: [Double]
+    /// - `INT96`, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`: `byte[]`
+    ///
+    /// @throws IllegalArgumentException when `value` does not match the column's
+    /// physical type.
     public static String formatDecoded(Object value, ColumnSchema col) {
         if (value == null) {
             return "-";
         }
         LogicalType lt = col.logicalType();
         return switch (col.type()) {
-            case BOOLEAN -> String.valueOf(value);
-            case INT32 -> formatDecodedInt((Integer) value, col, lt);
-            case INT64 -> formatDecodedLong((Long) value, col, lt);
-            case FLOAT -> Float.toString((Float) value);
-            case DOUBLE -> Double.toString((Double) value);
-            case INT96, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> format((byte[]) value, col);
+            case BOOLEAN -> Boolean.toString(requireType(value, col, Boolean.class));
+            case INT32 -> formatDecodedInt(requireType(value, col, Integer.class), col, lt);
+            case INT64 -> formatDecodedLong(requireType(value, col, Long.class), col, lt);
+            case FLOAT -> Float.toString(requireType(value, col, Float.class));
+            case DOUBLE -> Double.toString(requireType(value, col, Double.class));
+            case INT96, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> format(requireType(value, col, byte[].class), col);
         };
+    }
+
+    private static <T> T requireType(Object value, ColumnSchema col, Class<T> expected) {
+        if (expected.isInstance(value)) {
+            return expected.cast(value);
+        }
+        throw new IllegalArgumentException("Expected decoded " + expected.getSimpleName() + " value for " + col.type()
+                + " column '" + col.name() + "', got " + value.getClass().getName());
     }
 
     private static String formatInt32(byte[] bytes, LogicalType lt) {
