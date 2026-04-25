@@ -15,6 +15,7 @@ import java.util.TreeMap;
 
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
+import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -43,10 +44,78 @@ public final class FooterScreen {
     }
 
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
+        ScreenState.Footer state = (ScreenState.Footer) stack.top();
+        int total = bodyLines(model).size();
+        int viewport = Keys.viewportStride();
+        int maxScroll = Math.max(0, total - viewport);
+        if (Keys.isStepUp(event)) {
+            if (state.scroll() == 0) {
+                return false;
+            }
+            stack.replaceTop(new ScreenState.Footer(state.scroll() - 1));
+            return true;
+        }
+        if (Keys.isStepDown(event)) {
+            if (state.scroll() >= maxScroll) {
+                return false;
+            }
+            stack.replaceTop(new ScreenState.Footer(state.scroll() + 1));
+            return true;
+        }
+        if (Keys.isPageDown(event)) {
+            stack.replaceTop(new ScreenState.Footer(Math.min(maxScroll, state.scroll() + viewport)));
+            return true;
+        }
+        if (Keys.isPageUp(event)) {
+            stack.replaceTop(new ScreenState.Footer(Math.max(0, state.scroll() - viewport)));
+            return true;
+        }
+        if (Keys.isJumpTop(event)) {
+            stack.replaceTop(new ScreenState.Footer(0));
+            return true;
+        }
+        if (Keys.isJumpBottom(event)) {
+            stack.replaceTop(new ScreenState.Footer(maxScroll));
+            return true;
+        }
         return false;
     }
 
-    public static void render(Buffer buffer, Rect area, ParquetModel model) {
+    public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.Footer state) {
+        // Block borders + 2 rows for trailing scroll hint = 4 chrome rows.
+        Keys.observeViewport(area.height() - 4);
+        List<Line> all = bodyLines(model);
+        int viewport = Math.max(1, area.height() - 4);
+        int maxScroll = Math.max(0, all.size() - viewport);
+        int scroll = Math.max(0, Math.min(state.scroll(), maxScroll));
+        int end = Math.min(all.size(), scroll + viewport);
+
+        List<Line> lines = new ArrayList<>(all.subList(scroll, end));
+        lines.add(Line.empty());
+        String hint;
+        if (scroll + viewport < all.size()) {
+            hint = " ↓ " + (all.size() - end) + " more lines · ↑↓ scroll · PgDn/PgUp page · Esc back";
+        }
+        else if (scroll > 0) {
+            hint = " ↑ " + scroll + " lines above · ↑↓ scroll · PgDn/PgUp page · Esc back";
+        }
+        else {
+            hint = "";
+        }
+        if (!hint.isEmpty()) {
+            lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
+        }
+
+        Block block = Block.builder()
+                .title(" Footer & indexes ")
+                .borders(Borders.ALL)
+                .borderType(BorderType.ROUNDED)
+                .borderColor(Theme.ACCENT)
+                .build();
+        Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
+    }
+
+    private static List<Line> bodyLines(ParquetModel model) {
         FooterStats stats = computeStats(model);
         long fileSize = model.fileSizeBytes();
         long footerTrailerOffset = fileSize - FOOTER_TRAILER_BYTES;
@@ -105,18 +174,11 @@ public final class FooterScreen {
         lines.add(fact("  Uncompressed data", dualSize(model.facts().uncompressedBytes())));
         lines.add(fact("  Compression ratio",
                 String.format("%.2f×", model.facts().compressionRatio())));
-
-        Block block = Block.builder()
-                .title(" Footer & indexes ")
-                .borders(Borders.ALL)
-                .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
-                .build();
-        Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
+        return lines;
     }
 
     public static String keybarKeys() {
-        return "[Esc] back";
+        return "[↑↓] scroll  [PgDn/PgUp] page  [g/G] top/bottom  [Esc] back";
     }
 
     /// Total bytes occupied by the footer thrift + page indexes + trailer —
@@ -225,7 +287,7 @@ public final class FooterScreen {
             return "0/0";
         }
         int pct = (int) Math.round(100.0 * count / total);
-        return count + "/" + total + " chunks  (" + pct + "%)";
+        return String.format("%,d/%,d chunks  (%d%%)", count, total, pct);
     }
 
     private static Line fact(String key, String value) {

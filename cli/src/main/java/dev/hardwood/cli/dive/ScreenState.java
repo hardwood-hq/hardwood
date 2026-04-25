@@ -103,7 +103,13 @@ public sealed interface ScreenState {
     }
 
     /// Raw footer layout: file size, footer offset/length, aggregate index bytes.
-    record Footer() implements ScreenState {
+    /// `scroll` is the line offset into the body content — the screen renders
+    /// many sections that don't fit on a small terminal, so ↑/↓ moves the
+    /// viewport.
+    record Footer(int scroll) implements ScreenState {
+        public static Footer initial() {
+            return new Footer(0);
+        }
     }
 
     /// Cross-row-group view of one leaf column. `selection` drills into

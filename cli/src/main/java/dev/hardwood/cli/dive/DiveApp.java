@@ -162,7 +162,7 @@ public final class DiveApp {
             case ScreenState.Pages s -> PagesScreen.render(buffer, area, model, s);
             case ScreenState.ColumnIndexView s -> ColumnIndexScreen.render(buffer, area, model, s);
             case ScreenState.OffsetIndexView s -> OffsetIndexScreen.render(buffer, area, model, s);
-            case ScreenState.Footer ignored -> FooterScreen.render(buffer, area, model);
+            case ScreenState.Footer s -> FooterScreen.render(buffer, area, model, s);
             case ScreenState.ColumnAcrossRowGroups s -> ColumnAcrossRowGroupsScreen.render(buffer, area, model, s);
             case ScreenState.DictionaryView s -> DictionaryScreen.render(buffer, area, model, s);
             case ScreenState.DataPreview s -> DataPreviewScreen.render(buffer, area, model, s);

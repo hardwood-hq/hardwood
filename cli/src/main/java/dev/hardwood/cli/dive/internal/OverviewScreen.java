@@ -136,7 +136,7 @@ public final class OverviewScreen {
             switch (item) {
                 case SCHEMA -> stack.push(ScreenState.Schema.initial());
                 case ROW_GROUPS -> stack.push(new ScreenState.RowGroups(0));
-                case FOOTER -> stack.push(new ScreenState.Footer());
+                case FOOTER -> stack.push(ScreenState.Footer.initial());
                 case DATA_PREVIEW -> stack.push(DataPreviewScreen.initialState(model));
             }
             return true;
