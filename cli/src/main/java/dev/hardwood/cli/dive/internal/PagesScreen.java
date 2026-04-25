@@ -283,7 +283,8 @@ public final class PagesScreen {
         if (bytes == null) {
             return "—";
         }
-        return IndexValueFormatter.format(bytes, col, logical);
+        // Modal has space — bypass the per-string 20-char cap.
+        return IndexValueFormatter.format(bytes, col, logical, false);
     }
 
     private static void renderHeaderModal(Buffer buffer, Rect screenArea, PageHeader header,

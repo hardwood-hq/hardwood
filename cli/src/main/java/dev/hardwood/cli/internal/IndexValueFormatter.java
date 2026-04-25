@@ -34,7 +34,7 @@ public final class IndexValueFormatter {
     }
 
     public static String format(byte[] bytes, ColumnSchema col) {
-        return format(bytes, col, true);
+        return format(bytes, col, true, true);
     }
 
     /// Logical-type-aware variant. When `useLogicalType=false`, dispatch is on
@@ -42,6 +42,15 @@ public final class IndexValueFormatter {
     /// then render as raw int / long / hex form, useful for confirming the
     /// underlying storage in the dive UI.
     public static String format(byte[] bytes, ColumnSchema col, boolean useLogicalType) {
+        return format(bytes, col, useLogicalType, true);
+    }
+
+    /// Untruncated variant. When `truncate=false`, the per-string and per-binary
+    /// length cap (`MAX_STRING_LEN`) is bypassed — useful for facts panes /
+    /// modals where the full value is wanted regardless of length. Callers who
+    /// render into a tight cell should keep the default `truncate=true`.
+    public static String format(byte[] bytes, ColumnSchema col,
+                                 boolean useLogicalType, boolean truncate) {
         if (bytes == null) {
             return "-";
         }
@@ -96,7 +105,7 @@ public final class IndexValueFormatter {
             case FLOAT -> Float.toString(StatisticsDecoder.decodeFloat(bytes));
             case DOUBLE -> Double.toString(StatisticsDecoder.decodeDouble(bytes));
             case INT96 -> HexFormat.of().formatHex(bytes);
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> formatBinary(bytes, lt, col.type());
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> formatBinary(bytes, lt, col.type(), truncate);
         };
     }
 
@@ -116,18 +125,19 @@ public final class IndexValueFormatter {
         return Long.toString(v);
     }
 
-    private static String formatBinary(byte[] bytes, LogicalType lt, PhysicalType pt) {
+    private static String formatBinary(byte[] bytes, LogicalType lt, PhysicalType pt, boolean truncate) {
         if (isStringLogical(lt) || (lt == null && pt == PhysicalType.BYTE_ARRAY)) {
-            return formatString(bytes);
+            return formatString(bytes, truncate);
         }
         if (lt instanceof LogicalType.UuidType && bytes.length == 16) {
             ByteBuffer bb = ByteBuffer.wrap(bytes);
             return new UUID(bb.getLong(), bb.getLong()).toString();
         }
-        return truncate(HexFormat.of().formatHex(bytes));
+        String hex = HexFormat.of().formatHex(bytes);
+        return truncate ? truncate(hex) : hex;
     }
 
-    private static String formatString(byte[] bytes) {
+    private static String formatString(byte[] bytes, boolean truncate) {
         String utf8 = new String(bytes, StandardCharsets.UTF_8);
         int printable = 0;
         for (int i = 0; i < utf8.length(); i++) {
@@ -136,17 +146,19 @@ public final class IndexValueFormatter {
             }
         }
         if (utf8.length() > 0 && printable == 0) {
-            return truncate("0x" + HexFormat.of().formatHex(bytes));
+            String hex = "0x" + HexFormat.of().formatHex(bytes);
+            return truncate ? truncate(hex) : hex;
         }
         if (printable == utf8.length()) {
-            return truncate(utf8);
+            return truncate ? truncate(utf8) : utf8;
         }
         StringBuilder sb = new StringBuilder(utf8.length());
         for (int i = 0; i < utf8.length(); i++) {
             char c = utf8.charAt(i);
             sb.append(Character.isISOControl(c) ? NON_PRINTABLE_PLACEHOLDER : c);
         }
-        return truncate(sb.toString());
+        String result = sb.toString();
+        return truncate ? truncate(result) : result;
     }
 
     private static boolean isStringLogical(LogicalType lt) {

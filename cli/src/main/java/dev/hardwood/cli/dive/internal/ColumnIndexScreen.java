@@ -224,8 +224,9 @@ public final class ColumnIndexScreen {
     private static void renderMinMaxModal(Buffer buffer, Rect screenArea, int pageIndex,
                                           byte[] minBytes, byte[] maxBytes,
                                           ColumnSchema col, boolean logical) {
-        String min = minBytes == null ? "—" : IndexValueFormatter.format(minBytes, col, logical);
-        String max = maxBytes == null ? "—" : IndexValueFormatter.format(maxBytes, col, logical);
+        // Modal has space — bypass the per-string 20-char cap.
+        String min = minBytes == null ? "—" : IndexValueFormatter.format(minBytes, col, logical, false);
+        String max = maxBytes == null ? "—" : IndexValueFormatter.format(maxBytes, col, logical, false);
 
         int width = Math.min(100, screenArea.width() - 4);
         int height = Math.min(screenArea.height() - 2, 8);

@@ -236,7 +236,9 @@ public final class ColumnChunkDetailScreen {
         if (bytes == null) {
             return "—";
         }
-        return IndexValueFormatter.format(bytes, col);
+        // Facts pane has plenty of horizontal room — render the full value
+        // without IndexValueFormatter's per-string 20-char cap.
+        return IndexValueFormatter.format(bytes, col, true, false);
     }
 
     private static String padRight(String s, int width) {
