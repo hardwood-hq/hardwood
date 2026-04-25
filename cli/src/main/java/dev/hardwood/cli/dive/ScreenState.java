@@ -103,13 +103,22 @@ public sealed interface ScreenState {
     }
 
     /// Raw footer layout: file size, footer offset/length, aggregate index bytes.
-    /// `scroll` is the line offset into the body content — the screen renders
-    /// many sections that don't fit on a small terminal, so ↑/↓ moves the
-    /// viewport.
-    record Footer(int scroll) implements ScreenState {
+    /// `cursor` is the highlighted body line — used for the per-section drill
+    /// targets (Enter on "Column indexes" / "Offset indexes" opens the
+    /// file-wide list). The viewport scroll position is derived from cursor
+    /// at render time so the cursor stays visible.
+    record Footer(int cursor) implements ScreenState {
         public static Footer initial() {
             return new Footer(0);
         }
+    }
+
+    /// File-wide list of every column chunk that carries either a Column
+    /// index (`Kind#COLUMN`) or an Offset index (`Kind#OFFSET`); chunks
+    /// without the relevant index are filtered out. Enter drills into the
+    /// matching per-chunk index screen.
+    record FileIndexes(Kind kind, int selection) implements ScreenState {
+        public enum Kind { COLUMN, OFFSET }
     }
 
     /// Cross-row-group view of one leaf column. `selection` drills into

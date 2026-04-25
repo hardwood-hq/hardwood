@@ -21,6 +21,8 @@ import dev.hardwood.cli.dive.internal.ColumnChunksScreen;
 import dev.hardwood.cli.dive.internal.ColumnIndexScreen;
 import dev.hardwood.cli.dive.internal.DataPreviewScreen;
 import dev.hardwood.cli.dive.internal.DictionaryScreen;
+import dev.hardwood.cli.dive.internal.FileIndexesScreen;
+import dev.hardwood.cli.dive.internal.FooterScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
 import dev.hardwood.cli.dive.internal.PagesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
@@ -695,6 +697,35 @@ class DiveStateTest {
                     return;
                 }
             }
+        }
+    }
+
+    @Test
+    void footerEnterOnColumnIndexLineDrillsIntoFileIndexes() {
+        // The fixture (column_index_pushdown.parquet) has a column index, so
+        // the drill is enabled.
+        NavigationStack stack = rooted(ScreenState.Footer.initial());
+        // Walk the cursor down to a "Column indexes" line. Body layout
+        // depends on the file but the section sits a fixed distance below
+        // top. Use a generous loop and stop when we see the drill engage.
+        boolean drilled = false;
+        for (int i = 0; i < 30; i++) {
+            FooterScreen.handle(key(KeyCode.DOWN), model, stack);
+            FooterScreen.handle(key(KeyCode.ENTER), model, stack);
+            if (stack.top() instanceof ScreenState.FileIndexes) {
+                drilled = true;
+                break;
+            }
+        }
+        assertThat(drilled).isTrue();
+        ScreenState.FileIndexes opened = (ScreenState.FileIndexes) stack.top();
+        // Enter drills further into the per-chunk view of the matching kind.
+        FileIndexesScreen.handle(key(KeyCode.ENTER), model, stack);
+        if (opened.kind() == ScreenState.FileIndexes.Kind.COLUMN) {
+            assertThat(stack.top()).isInstanceOf(ScreenState.ColumnIndexView.class);
+        }
+        else {
+            assertThat(stack.top()).isInstanceOf(ScreenState.OffsetIndexView.class);
         }
     }
 

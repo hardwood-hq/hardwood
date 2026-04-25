@@ -111,6 +111,10 @@ public final class Chrome {
             case ScreenState.ColumnAcrossRowGroups c -> "[col " + c.columnIndex() + "] across RGs";
             case ScreenState.DictionaryView ignored -> "Dictionary";
             case ScreenState.DataPreview ignored -> "Data preview";
+            case ScreenState.FileIndexes f -> switch (f.kind()) {
+                case COLUMN -> "All column indexes";
+                case OFFSET -> "All offset indexes";
+            };
         };
     }
 
