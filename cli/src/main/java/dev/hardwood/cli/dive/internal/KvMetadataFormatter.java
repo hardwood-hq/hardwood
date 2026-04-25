@@ -52,7 +52,7 @@ public final class KvMetadataFormatter {
         sb.append("Arrow IPC schema (base64-decoded, ")
                 .append(decoded.length)
                 .append(" bytes)\n\n");
-        sb.append("Hex dump (first 256 bytes):\n");
+        sb.append(decoded.length > 256 ? "Hex dump (first 256 bytes):\n" : "Hex dump:\n");
         int limit = Math.min(decoded.length, 256);
         for (int i = 0; i < limit; i += 16) {
             sb.append(String.format("%04x  ", i));
