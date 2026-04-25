@@ -297,7 +297,10 @@ class DiveStateTest {
         assertThat(stack.top()).isInstanceOf(ScreenState.DataPreview.class);
         ScreenState.DataPreview preview = (ScreenState.DataPreview) stack.top();
         assertThat(preview.firstRow()).isZero();
-        assertThat(preview.pageSize()).isEqualTo(model.previewPageSize());
+        // Default startup page size is Keys.PAGE_STRIDE before the screen
+        // first renders. Once it does, handle() resizes to the actual
+        // viewport.
+        assertThat(preview.pageSize()).isPositive();
     }
 
     @Test

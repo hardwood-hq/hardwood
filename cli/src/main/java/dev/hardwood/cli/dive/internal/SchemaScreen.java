@@ -80,13 +80,13 @@ public final class SchemaScreen {
         }
         if (Keys.isPageDown(event)) {
             stack.replaceTop(with(state,
-                    Math.min(rows.size() - 1, state.selection() + Keys.PAGE_STRIDE),
+                    Math.min(rows.size() - 1, state.selection() + Keys.viewportStride()),
                     state.expanded(), state.filter(), false));
             return true;
         }
         if (Keys.isPageUp(event)) {
             stack.replaceTop(with(state,
-                    Math.max(0, state.selection() - Keys.PAGE_STRIDE),
+                    Math.max(0, state.selection() - Keys.viewportStride()),
                     state.expanded(), state.filter(), false));
             return true;
         }
@@ -173,6 +173,8 @@ public final class SchemaScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.Schema state) {
+        // Search bar (1) + Block borders (2) = 3 cells of chrome.
+        Keys.observeViewport(area.height() - 3);
         List<Row> rows = visibleRows(model.schema(), state.expanded(), state.filter());
         List<Rect> split = Layout.vertical()
                 .constraints(new Constraint.Length(1), new Constraint.Fill(1))

@@ -45,6 +45,7 @@ public final class DataPreviewScreen {
     private static final int VALUE_TRUNCATE = 32;
     private static final int PAGE_CACHE_CAP = 5;
 
+
     /// Memoises recent (firstRow, pageSize, logicalTypes) lookups so that
     /// stepping back through pages with PgUp doesn't re-walk the parquet
     /// reader from row 0 each time. Scoped to one ParquetModel — clearing
@@ -69,8 +70,17 @@ public final class DataPreviewScreen {
     private DataPreviewScreen() {
     }
 
-    /// Loads the first page of rows for the given page size; used when the screen
-    /// is first pushed onto the navigation stack.
+    /// Loads the first page; the page size starts at the most recently
+    /// observed viewport stride (or `Keys.PAGE_STRIDE` as a pre-render
+    /// fallback) and gets re-loaded to the actual viewport on the first
+    /// event after the screen renders.
+    public static ScreenState.DataPreview initialState(ParquetModel model) {
+        return initialState(model, Keys.viewportStride());
+    }
+
+    /// Test entry point — caller picks an explicit page size for
+    /// deterministic page-boundary assertions. Production code uses the
+    /// viewport-derived overload.
     public static ScreenState.DataPreview initialState(ParquetModel model, int pageSize) {
         if (cachedFor != model) {
             PAGE_CACHE.clear();
@@ -81,6 +91,16 @@ public final class DataPreviewScreen {
 
     public static boolean handle(KeyEvent event, ParquetModel model, dev.hardwood.cli.dive.NavigationStack stack) {
         ScreenState.DataPreview state = (ScreenState.DataPreview) stack.top();
+        // Auto-resize the page to match the current viewport. The first
+        // render after initialState observes the available rows; on the
+        // first subsequent event we re-load to fill the actual viewport.
+        // Skip while a modal is open — the modal owns the screen.
+        if (state.modalRow() < 0 && Keys.hasObservedViewport()
+                && state.pageSize() != Keys.viewportStride()) {
+            state = loadPage(model, state.firstRow(), Keys.viewportStride(),
+                    state.columnScroll(), state.logicalTypes());
+            stack.replaceTop(state);
+        }
         long total = model.facts().totalRows();
         // columnNames already carries the top-level-field count (see loadPage —
         // the reader indexes into fields, not leaves, so leaf count would overshoot).
@@ -196,6 +216,9 @@ public final class DataPreviewScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.DataPreview state) {
+        // Block borders (top + bottom) + header row = 3 cells of chrome
+        // around the data rows.
+        Keys.observeViewport(area.height() - 3);
         int columnCount = state.columnNames().size();
         int windowEnd = Math.min(columnCount, state.columnScroll() + VISIBLE_COLUMNS);
         List<String> visible = state.columnNames().subList(state.columnScroll(), windowEnd);

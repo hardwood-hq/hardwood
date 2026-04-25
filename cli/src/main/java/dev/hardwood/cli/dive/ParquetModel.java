@@ -51,7 +51,6 @@ public final class ParquetModel implements AutoCloseable {
     private final FileMetaData metadata;
     private final FileSchema schema;
     private final Facts facts;
-    private int previewPageSize = 100;
     private int dictionaryReadCapBytes = DEFAULT_DICTIONARY_READ_CAP_BYTES;
     // Forward-read cursor for Data preview pagination. Reusing the same
     // RowReader across forward page flips avoids re-iterating from row 0 on
@@ -297,17 +296,6 @@ public final class ParquetModel implements AutoCloseable {
 
     public ParquetFileReader reader() {
         return reader;
-    }
-
-    public int previewPageSize() {
-        return previewPageSize;
-    }
-
-    public void setPreviewPageSize(int pageSize) {
-        if (pageSize <= 0) {
-            throw new IllegalArgumentException("preview page size must be positive: " + pageSize);
-        }
-        this.previewPageSize = pageSize;
     }
 
     /// Reads a page of rows starting at `firstRow`. The `consumer` is called

@@ -74,12 +74,12 @@ public final class ColumnIndexScreen {
         List<Integer> filtered = filteredPages(ci, col, state.filter());
         if (Keys.isPageDown(event)) {
             int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
-            stack.replaceTop(with(state, Math.min(max, state.selection() + Keys.PAGE_STRIDE),
+            stack.replaceTop(with(state, Math.min(max, state.selection() + Keys.viewportStride()),
                     state.filter(), false));
             return true;
         }
         if (Keys.isPageUp(event)) {
-            stack.replaceTop(with(state, Math.max(0, state.selection() - Keys.PAGE_STRIDE),
+            stack.replaceTop(with(state, Math.max(0, state.selection() - Keys.viewportStride()),
                     state.filter(), false));
             return true;
         }
@@ -147,6 +147,8 @@ public final class ColumnIndexScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnIndexView state) {
+        // Boundary-order line + search bar + block borders + header = 5 chrome rows.
+        Keys.observeViewport(area.height() - 5);
         ColumnIndex ci = model.columnIndex(state.rowGroupIndex(), state.columnIndex());
         if (ci == null) {
             renderEmpty(buffer, area, "No column index for this chunk.");

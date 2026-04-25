@@ -55,12 +55,12 @@ public final class RowGroupIndexesScreen {
         }
         if (Keys.isPageDown(event) && count > 0) {
             stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(),
-                    Math.min(count - 1, state.selection() + Keys.PAGE_STRIDE)));
+                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
             stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(),
-                    Math.max(0, state.selection() - Keys.PAGE_STRIDE)));
+                    Math.max(0, state.selection() - Keys.viewportStride())));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
@@ -81,6 +81,7 @@ public final class RowGroupIndexesScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.RowGroupIndexes state) {
+        Keys.observeViewport(area.height() - 3);
         RowGroup rg = model.rowGroup(state.rowGroupIndex());
         List<Row> rows = new ArrayList<>();
         for (ColumnChunk cc : rg.columns()) {

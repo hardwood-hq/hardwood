@@ -56,13 +56,13 @@ public final class ColumnAcrossRowGroupsScreen {
         if (Keys.isPageDown(event) && count > 0) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
                     state.columnIndex(),
-                    Math.min(count - 1, state.selection() + Keys.PAGE_STRIDE), logical));
+                    Math.min(count - 1, state.selection() + Keys.viewportStride()), logical));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
                     state.columnIndex(),
-                    Math.max(0, state.selection() - Keys.PAGE_STRIDE), logical));
+                    Math.max(0, state.selection() - Keys.viewportStride()), logical));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
@@ -89,6 +89,7 @@ public final class ColumnAcrossRowGroupsScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnAcrossRowGroups state) {
+        Keys.observeViewport(area.height() - 3);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < model.rowGroupCount(); i++) {

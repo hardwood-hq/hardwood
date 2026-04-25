@@ -60,6 +60,30 @@ public final class Keys {
         return event.isUp() && !event.hasShift();
     }
 
-    /// Recommended stride for PgDn/PgUp on list-shaped screens.
+    /// Fallback stride when no screen has yet rendered (no viewport observed).
     public static final int PAGE_STRIDE = 20;
+
+    /// Side channel from a list screen's render → its handle: the visible
+    /// row count the screen settled on. Used to size PgDn/PgUp jumps so
+    /// they advance by exactly one viewport instead of a hard-coded 20.
+    private static int observedViewportRows = -1;
+
+    /// Called by a list screen's `render` to record the body row count it
+    /// can show. The next `handle` will use this as the PgDn/PgUp stride.
+    public static void observeViewport(int rows) {
+        observedViewportRows = Math.max(1, rows);
+    }
+
+    /// Effective PgDn/PgUp stride: the most recently observed viewport row
+    /// count, or `PAGE_STRIDE` before any screen has rendered.
+    public static int viewportStride() {
+        return observedViewportRows > 0 ? observedViewportRows : PAGE_STRIDE;
+    }
+
+    /// True iff a screen has rendered and recorded a viewport size — used
+    /// by Data preview to gate viewport-driven page resizing so unit tests
+    /// that supply an explicit page size aren't overridden.
+    public static boolean hasObservedViewport() {
+        return observedViewportRows > 0;
+    }
 }

@@ -92,15 +92,15 @@ public final class DictionaryScreen {
         List<Integer> filtered = filteredIndices(dict, col, state.filter());
         // Plain Up/Down step one entry; PgDn/PgUp (and the Shift+↓/↑ Mac
         // chord since most macOS laptops have no dedicated PgDn/PgUp keys)
-        // move Keys.PAGE_STRIDE entries via the shared helper.
+        // move Keys.viewportStride() entries via the shared helper.
         if (Keys.isPageDown(event)) {
             int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
-            stack.replaceTop(with(state, Math.min(max, state.selection() + Keys.PAGE_STRIDE),
+            stack.replaceTop(with(state, Math.min(max, state.selection() + Keys.viewportStride()),
                     false, state.filter(), false));
             return true;
         }
         if (Keys.isPageUp(event)) {
-            stack.replaceTop(with(state, Math.max(0, state.selection() - Keys.PAGE_STRIDE),
+            stack.replaceTop(with(state, Math.max(0, state.selection() - Keys.viewportStride()),
                     false, state.filter(), false));
             return true;
         }
@@ -163,6 +163,8 @@ public final class DictionaryScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.DictionaryView state) {
+        // Search bar + block borders + header = 4 chrome rows.
+        Keys.observeViewport(area.height() - 4);
         if (needsConfirmation(model, state)) {
             renderConfirmPrompt(buffer, area, model, state);
             return;

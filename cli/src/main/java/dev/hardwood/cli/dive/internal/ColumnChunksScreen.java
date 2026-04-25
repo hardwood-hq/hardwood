@@ -49,12 +49,12 @@ public final class ColumnChunksScreen {
         }
         if (Keys.isPageDown(event) && count > 0) {
             stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(),
-                    Math.min(count - 1, state.selection() + Keys.PAGE_STRIDE)));
+                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
             stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(),
-                    Math.max(0, state.selection() - Keys.PAGE_STRIDE)));
+                    Math.max(0, state.selection() - Keys.viewportStride())));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
@@ -74,6 +74,7 @@ public final class ColumnChunksScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnChunks state) {
+        Keys.observeViewport(area.height() - 3);
         RowGroup rg = model.rowGroup(state.rowGroupIndex());
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < rg.columns().size(); i++) {

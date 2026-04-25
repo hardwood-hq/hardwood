@@ -36,12 +36,6 @@ public class DiveCommand implements Callable<Integer> {
     CommandSpec spec;
 
     @CommandLine.Option(
-            names = "--rows",
-            description = "Page size for the Data preview screen. Default: ${DEFAULT-VALUE}.",
-            defaultValue = "100")
-    int rowsPerPage;
-
-    @CommandLine.Option(
             names = "--max-dict-bytes",
             description = "Maximum chunk size (in bytes) to auto-load on the Dictionary screen; "
                     + "larger chunks require a confirm prompt. Default: ${DEFAULT-VALUE} (16 MiB).",
@@ -62,7 +56,6 @@ public class DiveCommand implements Callable<Integer> {
         }
 
         try (ParquetModel model = ParquetModel.open(inputFile, fileMixin.file)) {
-            model.setPreviewPageSize(rowsPerPage);
             model.setDictionaryReadCapBytes(maxDictBytes);
             DiveApp app = new DiveApp(model);
             if (smokeRender) {

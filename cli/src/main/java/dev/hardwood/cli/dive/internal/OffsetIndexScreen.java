@@ -58,13 +58,13 @@ public final class OffsetIndexScreen {
         if (Keys.isPageDown(event) && count > 0) {
             stack.replaceTop(new ScreenState.OffsetIndexView(
                     state.rowGroupIndex(), state.columnIndex(),
-                    Math.min(count - 1, state.selection() + Keys.PAGE_STRIDE)));
+                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
             stack.replaceTop(new ScreenState.OffsetIndexView(
                     state.rowGroupIndex(), state.columnIndex(),
-                    Math.max(0, state.selection() - Keys.PAGE_STRIDE)));
+                    Math.max(0, state.selection() - Keys.viewportStride())));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
@@ -81,6 +81,7 @@ public final class OffsetIndexScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.OffsetIndexView state) {
+        Keys.observeViewport(area.height() - 3);
         OffsetIndex oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
         if (oi == null) {
             Block emptyBlock = Block.builder()

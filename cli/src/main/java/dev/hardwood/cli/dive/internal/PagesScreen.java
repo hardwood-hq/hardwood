@@ -75,14 +75,14 @@ public final class PagesScreen {
         if (Keys.isPageDown(event) && !headers.isEmpty()) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(),
-                    Math.min(headers.size() - 1, state.selection() + Keys.PAGE_STRIDE),
+                    Math.min(headers.size() - 1, state.selection() + Keys.viewportStride()),
                     false, logical));
             return true;
         }
         if (Keys.isPageUp(event) && !headers.isEmpty()) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(),
-                    Math.max(0, state.selection() - Keys.PAGE_STRIDE),
+                    Math.max(0, state.selection() - Keys.viewportStride()),
                     false, logical));
             return true;
         }
@@ -111,6 +111,7 @@ public final class PagesScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.Pages state) {
+        Keys.observeViewport(area.height() - 3);
         List<PageHeader> headers = model.pageHeaders(state.rowGroupIndex(), state.columnIndex());
         ColumnIndex columnIndex = model.columnIndex(state.rowGroupIndex(), state.columnIndex());
         OffsetIndex offsetIndex = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
