@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.HexFormat;
 import java.util.UUID;
 
 import dev.hardwood.metadata.LogicalType;
@@ -84,7 +85,16 @@ public final class RowValueFormatter {
             };
             return Long.toUnsignedString(raw);
         }
-        return String.valueOf(reader.getValue(fieldIndex));
+        // BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY / INT96 with no string-like logical
+        // type fall through here. `getValue` returns the raw byte[]; the default
+        // `String.valueOf(byte[])` would emit the JVM's array-hashcode form
+        // ([B@...). Render printable UTF-8 as text, else 0x-hex — mirrors how
+        // IndexValueFormatter handles raw-byte stats.
+        Object raw = reader.getValue(fieldIndex);
+        if (raw instanceof byte[] bytes) {
+            return formatRawBytes(bytes);
+        }
+        return String.valueOf(raw);
     }
 
     /// Dictionary entry point. Converts a raw primitive drawn from a
@@ -144,7 +154,31 @@ public final class RowValueFormatter {
             ByteBuffer bb = ByteBuffer.wrap(raw);
             return new UUID(bb.getLong(), bb.getLong()).toString();
         }
-        return new String(raw, StandardCharsets.UTF_8);
+        return formatRawBytes(raw);
+    }
+
+    /// Renders a raw byte array as either UTF-8 text (when the bytes are
+    /// well-formed UTF-8 with no control characters) or `0x`-prefixed
+    /// lowercase hex. Truncation is left to the caller (the dive screens
+    /// already truncate each rendered cell to a fixed width).
+    private static String formatRawBytes(byte[] raw) {
+        if (raw.length == 0) {
+            return "";
+        }
+        try {
+            String utf8 = StandardCharsets.UTF_8.newDecoder()
+                    .decode(ByteBuffer.wrap(raw))
+                    .toString();
+            for (int i = 0; i < utf8.length(); i++) {
+                if (Character.isISOControl(utf8.charAt(i))) {
+                    return "0x" + HexFormat.of().formatHex(raw);
+                }
+            }
+            return utf8;
+        }
+        catch (java.nio.charset.CharacterCodingException e) {
+            return "0x" + HexFormat.of().formatHex(raw);
+        }
     }
 
     private static String formatTimestamp(Instant instant, LogicalType.TimestampType type) {

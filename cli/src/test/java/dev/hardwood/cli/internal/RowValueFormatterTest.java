@@ -82,6 +82,22 @@ class RowValueFormatterTest {
                 .isEqualTo("4294967295");
     }
 
+    @Test
+    void rawBinaryWithoutLogicalTypeRendersAsHex() {
+        ColumnSchema col = column(PhysicalType.BYTE_ARRAY, null);
+        byte[] bytes = new byte[]{(byte) 0xDE, (byte) 0xAD, (byte) 0xBE, (byte) 0xEF};
+        assertThat(RowValueFormatter.formatDictionaryValue(bytes, col))
+                .isEqualTo("0xdeadbeef");
+    }
+
+    @Test
+    void printableBinaryWithoutLogicalTypeRendersAsString() {
+        ColumnSchema col = column(PhysicalType.BYTE_ARRAY, null);
+        byte[] bytes = "hello".getBytes(java.nio.charset.StandardCharsets.UTF_8);
+        assertThat(RowValueFormatter.formatDictionaryValue(bytes, col))
+                .isEqualTo("hello");
+    }
+
     private static ColumnSchema column(PhysicalType type, LogicalType logical) {
         return new ColumnSchema(
                 FieldPath.of("value"),
