@@ -43,6 +43,28 @@ public final class DataPreviewScreen {
 
     private static final int VISIBLE_COLUMNS = 5;
     private static final int VALUE_TRUNCATE = 32;
+    private static final int PAGE_CACHE_CAP = 5;
+
+    /// Memoises recent (firstRow, pageSize, logicalTypes) lookups so that
+    /// stepping back through pages with PgUp doesn't re-walk the parquet
+    /// reader from row 0 each time. Scoped to one ParquetModel — clearing
+    /// whenever a different model first calls `initialState`.
+    private record PageKey(long firstRow, int pageSize, boolean logicalTypes) {
+    }
+
+    private record CachedPage(List<List<String>> rows, List<List<String>> expandedRows,
+                              List<String> columnNames) {
+    }
+
+    private static final java.util.LinkedHashMap<PageKey, CachedPage> PAGE_CACHE =
+            new java.util.LinkedHashMap<>(PAGE_CACHE_CAP, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(java.util.Map.Entry<PageKey, CachedPage> e) {
+                    return size() > PAGE_CACHE_CAP;
+                }
+            };
+
+    private static ParquetModel cachedFor;
 
     private DataPreviewScreen() {
     }
@@ -50,6 +72,10 @@ public final class DataPreviewScreen {
     /// Loads the first page of rows for the given page size; used when the screen
     /// is first pushed onto the navigation stack.
     public static ScreenState.DataPreview initialState(ParquetModel model, int pageSize) {
+        if (cachedFor != model) {
+            PAGE_CACHE.clear();
+            cachedFor = model;
+        }
         return loadPage(model, 0, pageSize, 0, true);
     }
 
@@ -493,6 +519,17 @@ public final class DataPreviewScreen {
 
     private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize,
                                                     int columnScroll, boolean logicalTypes) {
+        if (cachedFor != model) {
+            PAGE_CACHE.clear();
+            cachedFor = model;
+        }
+        PageKey key = new PageKey(firstRow, pageSize, logicalTypes);
+        CachedPage cached = PAGE_CACHE.get(key);
+        if (cached != null) {
+            return new ScreenState.DataPreview(firstRow, pageSize, cached.columnNames(),
+                    cached.rows(), cached.expandedRows(), columnScroll, 0, -1,
+                    logicalTypes, Set.of(), 0);
+        }
         // `RowReader` indexes into the root message's top-level fields, not into
         // leaf columns. For a flat schema those counts coincide; for a schema
         // with lists / structs / maps / variants at the root they diverge, and
@@ -521,6 +558,7 @@ public final class DataPreviewScreen {
         catch (java.io.IOException e) {
             throw new java.io.UncheckedIOException(e);
         }
+        PAGE_CACHE.put(key, new CachedPage(rows, expandedRows, columnNames));
         return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, expandedRows,
                 columnScroll, 0, -1, logicalTypes, Set.of(), 0);
     }
