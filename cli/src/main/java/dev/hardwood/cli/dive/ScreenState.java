@@ -140,10 +140,10 @@ public sealed interface ScreenState {
     /// whether values render via their logical type (default) or the raw
     /// physical-type form — toggled with `t`. Inside the record modal,
     /// `modalCursorLine` is the per-line cursor (collapsed fields = 1 line,
-    /// expanded fields = N lines), `expandedColumn` is the field whose
-    /// pretty-printed value is rendered inline (-1 = nothing expanded).
-    /// `expandedRows` is parallel to `rows` and holds the multi-line
-    /// pretty-printed form of each cell, populated by
+    /// expanded fields = N lines); `expandedColumns` is the set of fields
+    /// whose pretty-printed value is rendered inline (multi-line, no
+    /// element caps). `expandedRows` is parallel to `rows` and holds the
+    /// multi-line pretty-printed form of each cell, populated by
     /// `RowValueFormatter.formatExpanded`.
     record DataPreview(
             long firstRow,
@@ -155,13 +155,14 @@ public sealed interface ScreenState {
             int selectedRow,
             int modalRow,
             boolean logicalTypes,
-            int expandedColumn,
+            java.util.Set<Integer> expandedColumns,
             int modalCursorLine)
             implements ScreenState {
         public DataPreview {
             columnNames = java.util.List.copyOf(columnNames);
             rows = java.util.List.copyOf(rows);
             expandedRows = java.util.List.copyOf(expandedRows);
+            expandedColumns = java.util.Set.copyOf(expandedColumns);
         }
     }
 }

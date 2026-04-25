@@ -456,7 +456,7 @@ class DiveStateTest {
         ScreenState.DataPreview opened = (ScreenState.DataPreview) stack.top();
         assertThat(opened.modalRow()).isEqualTo(0);
         assertThat(opened.modalCursorLine()).isEqualTo(0);
-        assertThat(opened.expandedColumn()).isEqualTo(-1);
+        assertThat(opened.expandedColumns()).isEmpty();
 
         // ↓ moves the per-line cursor within the modal.
         DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
@@ -464,15 +464,33 @@ class DiveStateTest {
 
         // Enter expands the field at the cursor (column 1).
         DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
-        assertThat(((ScreenState.DataPreview) stack.top()).expandedColumn()).isEqualTo(1);
+        assertThat(((ScreenState.DataPreview) stack.top()).expandedColumns()).containsExactly(1);
 
         // Enter again on the same field collapses it.
         DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
-        assertThat(((ScreenState.DataPreview) stack.top()).expandedColumn()).isEqualTo(-1);
+        assertThat(((ScreenState.DataPreview) stack.top()).expandedColumns()).isEmpty();
 
         // Esc closes the row modal entirely.
         DataPreviewScreen.handle(key(KeyCode.ESCAPE), model, stack);
         assertThat(((ScreenState.DataPreview) stack.top()).modalRow()).isEqualTo(-1);
+    }
+
+    @Test
+    void dataPreviewRowModalExpandAllAndCollapseAll() {
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 5);
+        NavigationStack stack = rooted(initial);
+
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+        int columnCount = ((ScreenState.DataPreview) stack.top()).columnNames().size();
+
+        DataPreviewScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'e'), model, stack);
+        assertThat(((ScreenState.DataPreview) stack.top()).expandedColumns())
+                .hasSize(columnCount);
+
+        DataPreviewScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'c'), model, stack);
+        assertThat(((ScreenState.DataPreview) stack.top()).expandedColumns()).isEmpty();
     }
 
     @Test
