@@ -359,15 +359,37 @@ public final class DataPreviewScreen {
 
         List<Line> lines = new ArrayList<>(all.subList(scroll, end));
         lines.add(Line.empty());
-        String hint;
+        // Hint is tiered: drop "↑↓ navigate" when there's only one line
+        // (cursor can't go anywhere); drop "Enter expand" + "e/c all"
+        // when no field in this row has a multi-line expanded form
+        // (i.e. all-primitive rows where formatExpanded == format and
+        // expansion produces no extra lines visible to the user).
+        boolean canNavigate = totalLines > 1;
+        boolean canExpand = false;
+        for (String e : expanded) {
+            if (e.indexOf('\n') >= 0) {
+                canExpand = true;
+                break;
+            }
+        }
+        List<String> segments = new ArrayList<>();
         if (scroll + viewport < totalLines) {
-            hint = " ↓ " + (totalLines - end) + " more lines · ↑↓ navigate · Enter expand · e/c all · Esc close";
+            segments.add(" ↓ " + (totalLines - end) + " more lines");
         }
         else if (scroll > 0) {
-            hint = " ↑ " + scroll + " lines above · ↑↓ navigate · Enter expand · e/c all · Esc close";
+            segments.add(" ↑ " + scroll + " lines above");
         }
-        else {
-            hint = " ↑↓ navigate · Enter expand · e/c all · Esc close";
+        if (canNavigate) {
+            segments.add("↑↓ navigate");
+        }
+        if (canExpand) {
+            segments.add("Enter expand");
+            segments.add("e/c all");
+        }
+        segments.add("Esc close");
+        String hint = String.join(" · ", segments);
+        if (!hint.startsWith(" ")) {
+            hint = " " + hint;
         }
         lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
 
