@@ -715,6 +715,19 @@ class DiveStateTest {
     }
 
     @Test
+    void footerDownSkipsDisabledDictionaryAnchor() {
+        // The fixture has 0 chunks with dictionary, so ↓ from OFFSET should
+        // not advance to DICTIONARY (it's disabled).
+        NavigationStack stack = rooted(new ScreenState.Footer(
+                ScreenState.Footer.Anchor.OFFSET, 0));
+
+        FooterScreen.handle(key(KeyCode.DOWN), model, stack);
+
+        assertThat(((ScreenState.Footer) stack.top()).cursor())
+                .isEqualTo(ScreenState.Footer.Anchor.OFFSET);
+    }
+
+    @Test
     void footerDownTogglesToOffsetAnchorThenEnterDrills() {
         NavigationStack stack = rooted(ScreenState.Footer.initial());
         FooterScreen.handle(key(KeyCode.DOWN), model, stack);

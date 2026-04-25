@@ -46,18 +46,26 @@ public final class FooterScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.Footer state = (ScreenState.Footer) stack.top();
         FooterBody body = bodyAndAnchors(model);
+        // Snap an out-of-place cursor to the first enabled anchor so a file
+        // missing the section we entered on (e.g. no column indexes) doesn't
+        // sit on a dead anchor.
+        if (!isEnabled(state.cursor(), body)) {
+            ScreenState.Footer.Anchor first = firstEnabledAnchor(body);
+            if (first != null && first != state.cursor()) {
+                state = new ScreenState.Footer(first, state.scroll());
+                stack.replaceTop(state);
+            }
+        }
         int total = body.lines().size();
         int viewport = Keys.viewportStride();
         int maxScroll = Math.max(0, total - viewport);
-        // ↑/↓ cycle the cursor through the three drillable anchors
-        // (Column → Offset → Dictionary). PgDn / PgUp scroll the body
-        // for reading other sections.
+        // ↑/↓ cycle the cursor through the drillable anchors that are
+        // actually populated. Anchors whose count is zero (e.g. a file
+        // without dictionaries) are skipped so the cursor doesn't land on
+        // a non-actionable line. PgDn / PgUp scroll the body for reading
+        // other sections.
         if (Keys.isStepUp(event)) {
-            ScreenState.Footer.Anchor prev = switch (state.cursor()) {
-                case COLUMN -> null;
-                case OFFSET -> ScreenState.Footer.Anchor.COLUMN;
-                case DICTIONARY -> ScreenState.Footer.Anchor.OFFSET;
-            };
+            ScreenState.Footer.Anchor prev = previousEnabledAnchor(state.cursor(), body);
             if (prev == null) {
                 return false;
             }
@@ -65,11 +73,7 @@ public final class FooterScreen {
             return true;
         }
         if (Keys.isStepDown(event)) {
-            ScreenState.Footer.Anchor next = switch (state.cursor()) {
-                case COLUMN -> ScreenState.Footer.Anchor.OFFSET;
-                case OFFSET -> ScreenState.Footer.Anchor.DICTIONARY;
-                case DICTIONARY -> null;
-            };
+            ScreenState.Footer.Anchor next = nextEnabledAnchor(state.cursor(), body);
             if (next == null) {
                 return false;
             }
@@ -115,11 +119,23 @@ public final class FooterScreen {
         // Block borders + 2 rows for trailing scroll hint = 4 chrome rows.
         Keys.observeViewport(area.height() - 4);
         FooterBody body = bodyAndAnchors(model);
+        // On the first render after entering the screen, state.cursor() may
+        // point to an anchor the file doesn't actually have (the initial
+        // value is COLUMN). Snap the rendered cursor to the first enabled
+        // anchor so the marker shows up immediately; handle() will fix up
+        // state on the next event.
+        ScreenState.Footer.Anchor effective = state.cursor();
+        if (!isEnabled(effective, body)) {
+            ScreenState.Footer.Anchor first = firstEnabledAnchor(body);
+            if (first != null) {
+                effective = first;
+            }
+        }
         List<Line> all = body.lines();
         int viewport = Math.max(1, area.height() - 4);
         int total = all.size();
         int maxScroll = Math.max(0, total - viewport);
-        int cursorLine = switch (state.cursor()) {
+        int cursorLine = switch (effective) {
             case COLUMN -> body.columnIndexLine();
             case OFFSET -> body.offsetIndexLine();
             case DICTIONARY -> body.dictionaryLine();
@@ -141,11 +157,11 @@ public final class FooterScreen {
         // colour; the inactive one is bold-only.
         List<Line> lines = new ArrayList<>(all.subList(scroll, end));
         styleAnchor(lines, all, scroll, body.columnIndexLine(),
-                state.cursor() == ScreenState.Footer.Anchor.COLUMN, body.columnIndexCount() > 0);
+                effective == ScreenState.Footer.Anchor.COLUMN, body.columnIndexCount() > 0);
         styleAnchor(lines, all, scroll, body.offsetIndexLine(),
-                state.cursor() == ScreenState.Footer.Anchor.OFFSET, body.offsetIndexCount() > 0);
+                effective == ScreenState.Footer.Anchor.OFFSET, body.offsetIndexCount() > 0);
         styleAnchor(lines, all, scroll, body.dictionaryLine(),
-                state.cursor() == ScreenState.Footer.Anchor.DICTIONARY, body.dictionaryCount() > 0);
+                effective == ScreenState.Footer.Anchor.DICTIONARY, body.dictionaryCount() > 0);
 
         lines.add(Line.empty());
         String hint;
@@ -205,6 +221,48 @@ public final class FooterScreen {
             int offsetIndexCount,
             int dictionaryLine,
             int dictionaryCount) {
+    }
+
+    private static boolean isEnabled(ScreenState.Footer.Anchor anchor, FooterBody body) {
+        return switch (anchor) {
+            case COLUMN -> body.columnIndexCount() > 0;
+            case OFFSET -> body.offsetIndexCount() > 0;
+            case DICTIONARY -> body.dictionaryCount() > 0;
+        };
+    }
+
+    private static ScreenState.Footer.Anchor nextEnabledAnchor(
+            ScreenState.Footer.Anchor from, FooterBody body) {
+        ScreenState.Footer.Anchor[] all = ScreenState.Footer.Anchor.values();
+        for (int i = from.ordinal() + 1; i < all.length; i++) {
+            if (isEnabled(all[i], body)) {
+                return all[i];
+            }
+        }
+        return null;
+    }
+
+    private static ScreenState.Footer.Anchor previousEnabledAnchor(
+            ScreenState.Footer.Anchor from, FooterBody body) {
+        ScreenState.Footer.Anchor[] all = ScreenState.Footer.Anchor.values();
+        for (int i = from.ordinal() - 1; i >= 0; i--) {
+            if (isEnabled(all[i], body)) {
+                return all[i];
+            }
+        }
+        return null;
+    }
+
+    /// First enabled anchor, or null if no anchor is drillable on this file.
+    /// Used to choose a sensible cursor on entry so the screen doesn't open
+    /// pointing at an unavailable section.
+    private static ScreenState.Footer.Anchor firstEnabledAnchor(FooterBody body) {
+        for (ScreenState.Footer.Anchor a : ScreenState.Footer.Anchor.values()) {
+            if (isEnabled(a, body)) {
+                return a;
+            }
+        }
+        return null;
     }
 
     private static FooterBody bodyAndAnchors(ParquetModel model) {
