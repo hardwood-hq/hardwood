@@ -51,12 +51,19 @@ public final class PagesScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.Pages state = (ScreenState.Pages) stack.top();
         boolean logical = state.logicalTypes();
-        // `t` toggles the logical-type rendering at any time — including
-        // while the page-header modal is open, since the modal renders
-        // inline statistics that need to refresh too. Handled before the
-        // modal-open short-circuit so the toggle isn't swallowed.
+        List<PageHeader> headers = model.pageHeaders(state.rowGroupIndex(), state.columnIndex());
+        // `t` toggles logical-type rendering of inline-stats Min / Max
+        // values, which only exist on data pages. When the cursor is on
+        // a dictionary page (or no pages at all) the toggle has no
+        // visible effect, so ignore it — keeps the keybar's own gate
+        // honest. Handled before the modal-open short-circuit so the
+        // toggle isn't swallowed when the page-header modal is open
+        // on a data page.
+        boolean onDataPage = !headers.isEmpty()
+                && state.selection() < headers.size()
+                && headers.get(state.selection()).type() != PageHeader.PageType.DICTIONARY_PAGE;
         if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
-                && !event.hasCtrl() && !event.hasAlt()) {
+                && !event.hasCtrl() && !event.hasAlt() && onDataPage) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(),
                     state.selection(), state.modalOpen(), !logical));
@@ -70,7 +77,6 @@ public final class PagesScreen {
             }
             return false;
         }
-        List<PageHeader> headers = model.pageHeaders(state.rowGroupIndex(), state.columnIndex());
         if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(),
