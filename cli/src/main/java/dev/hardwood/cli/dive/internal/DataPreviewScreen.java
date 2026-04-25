@@ -18,11 +18,16 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
+import dev.tamboui.text.Line;
+import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
+import dev.tamboui.widgets.Clear;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
+import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
@@ -52,6 +57,31 @@ public final class DataPreviewScreen {
         // columnNames already carries the top-level-field count (see loadPage —
         // the reader indexes into fields, not leaves, so leaf count would overshoot).
         int columnCount = state.columnNames().size();
+        if (state.modalRow() >= 0) {
+            return handleModal(event, state, stack);
+        }
+        // Plain ↑/↓ moves the selected-row cursor inside the current page; Shift+↑/↓
+        // pages, handled below. Enter opens the full-record modal at the cursor.
+        if (event.isUp() && !event.hasShift()) {
+            int rowsLoaded = state.rows().size();
+            if (rowsLoaded == 0) {
+                return false;
+            }
+            stack.replaceTop(withSelectedRow(state, Math.max(0, state.selectedRow() - 1)));
+            return true;
+        }
+        if (event.isDown() && !event.hasShift()) {
+            int rowsLoaded = state.rows().size();
+            if (rowsLoaded == 0) {
+                return false;
+            }
+            stack.replaceTop(withSelectedRow(state, Math.min(rowsLoaded - 1, state.selectedRow() + 1)));
+            return true;
+        }
+        if (event.isConfirm() && !state.rows().isEmpty()) {
+            stack.replaceTop(withModalRow(state, state.selectedRow()));
+            return true;
+        }
         // Page forward: PgDn, or Shift+↓ — the Shift alias is a one-hand chord
         // on macOS laptops where PgDn is Fn+↓.
         if (event.code() == KeyCode.PAGE_DOWN || (event.hasShift() && event.isDown())) {
@@ -74,9 +104,7 @@ public final class DataPreviewScreen {
             if (state.columnScroll() == 0) {
                 return false;
             }
-            stack.replaceTop(new ScreenState.DataPreview(
-                    state.firstRow(), state.pageSize(), state.columnNames(), state.rows(),
-                    Math.max(0, state.columnScroll() - 1)));
+            stack.replaceTop(withColumnScroll(state, Math.max(0, state.columnScroll() - 1)));
             return true;
         }
         if (event.isRight()) {
@@ -84,9 +112,7 @@ public final class DataPreviewScreen {
             if (state.columnScroll() >= maxScroll) {
                 return false;
             }
-            stack.replaceTop(new ScreenState.DataPreview(
-                    state.firstRow(), state.pageSize(), state.columnNames(), state.rows(),
-                    state.columnScroll() + 1));
+            stack.replaceTop(withColumnScroll(state, state.columnScroll() + 1));
             return true;
         }
         if (Keys.isJumpTop(event)) {
@@ -141,13 +167,111 @@ public final class DataPreviewScreen {
                 .widths(widths)
                 .columnSpacing(2)
                 .block(block)
+                .highlightSymbol("▶ ")
+                .highlightStyle(Style.EMPTY.bold())
                 .build();
         TableState tableState = new TableState();
+        if (!state.rows().isEmpty()) {
+            tableState.select(Math.min(state.selectedRow(), state.rows().size() - 1));
+        }
         table.render(area, buffer, tableState);
+        if (state.modalRow() >= 0 && state.modalRow() < state.rows().size()) {
+            renderRecordModal(buffer, area, state);
+        }
+    }
+
+    private static void renderRecordModal(Buffer buffer, Rect screenArea, ScreenState.DataPreview state) {
+        List<String> values = state.rows().get(state.modalRow());
+        List<String> names = state.columnNames();
+        int width = Math.min(100, screenArea.width() - 4);
+        int contentLines = names.size();
+        int height = Math.min(screenArea.height() - 2, contentLines + 4);
+        int x = screenArea.left() + (screenArea.width() - width) / 2;
+        int y = screenArea.top() + (screenArea.height() - height) / 2;
+        Rect area = new Rect(x, y, width, height);
+        Clear.INSTANCE.render(area, buffer);
+
+        int maxKeyWidth = 0;
+        for (String name : names) {
+            maxKeyWidth = Math.max(maxKeyWidth, name.length());
+        }
+
+        List<Line> lines = new ArrayList<>();
+        for (int i = 0; i < names.size(); i++) {
+            String name = names.get(i);
+            String value = i < values.size() ? values.get(i) : "";
+            String pad = " ".repeat(maxKeyWidth - name.length());
+            lines.add(Line.from(
+                    new Span(" " + name + pad + " : ", Style.EMPTY.bold()),
+                    Span.raw(value)));
+        }
+        lines.add(Line.empty());
+        lines.add(Line.from(new Span(
+                " ↑/↓ next/prev row   Esc/Enter close",
+                Style.EMPTY.fg(Theme.DIM))));
+        long absRow = state.firstRow() + state.modalRow();
+        Block block = Block.builder()
+                .title(String.format(" Row %,d ", absRow + 1))
+                .borders(Borders.ALL)
+                .borderType(BorderType.ROUNDED)
+                .borderColor(Theme.ACCENT)
+                .build();
+        Paragraph.builder()
+                .block(block)
+                .text(Text.from(lines))
+                .left()
+                .build()
+                .render(area, buffer);
     }
 
     public static String keybarKeys() {
-        return "[←→] columns  [PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [Esc] back";
+        return "[↑↓] row  [Enter] view record  [←→] columns  "
+                + "[PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [Esc] back";
+    }
+
+    private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,
+                                       dev.hardwood.cli.dive.NavigationStack stack) {
+        if (event.isCancel() || event.isConfirm()) {
+            stack.replaceTop(withModalRow(state, -1));
+            return true;
+        }
+        if (event.isUp()) {
+            if (state.modalRow() == 0) {
+                return false;
+            }
+            int next = state.modalRow() - 1;
+            stack.replaceTop(new ScreenState.DataPreview(
+                    state.firstRow(), state.pageSize(), state.columnNames(), state.rows(),
+                    state.columnScroll(), next, next));
+            return true;
+        }
+        if (event.isDown()) {
+            int last = state.rows().size() - 1;
+            if (state.modalRow() >= last) {
+                return false;
+            }
+            int next = state.modalRow() + 1;
+            stack.replaceTop(new ScreenState.DataPreview(
+                    state.firstRow(), state.pageSize(), state.columnNames(), state.rows(),
+                    state.columnScroll(), next, next));
+            return true;
+        }
+        return false;
+    }
+
+    private static ScreenState.DataPreview withSelectedRow(ScreenState.DataPreview s, int sel) {
+        return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
+                s.columnScroll(), sel, s.modalRow());
+    }
+
+    private static ScreenState.DataPreview withModalRow(ScreenState.DataPreview s, int modalRow) {
+        return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
+                s.columnScroll(), s.selectedRow(), modalRow);
+    }
+
+    private static ScreenState.DataPreview withColumnScroll(ScreenState.DataPreview s, int scroll) {
+        return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
+                scroll, s.selectedRow(), s.modalRow());
     }
 
     private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize, int columnScroll) {
@@ -174,7 +298,7 @@ public final class DataPreviewScreen {
         catch (java.io.IOException e) {
             throw new java.io.UncheckedIOException(e);
         }
-        return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, columnScroll);
+        return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, columnScroll, 0, -1);
     }
 
     private static String truncate(String s, int max) {

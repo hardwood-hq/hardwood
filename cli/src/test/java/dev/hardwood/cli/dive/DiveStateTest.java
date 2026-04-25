@@ -406,6 +406,27 @@ class DiveStateTest {
     }
 
     @Test
+    void dataPreviewEnterOpensRecordModalForSelectedRow() {
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 5);
+        NavigationStack stack = rooted(initial);
+
+        DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        ScreenState.DataPreview opened = (ScreenState.DataPreview) stack.top();
+        assertThat(opened.modalRow()).isEqualTo(2);
+
+        // ↑ inside the modal moves modalRow without closing.
+        DataPreviewScreen.handle(key(KeyCode.UP), model, stack);
+        assertThat(((ScreenState.DataPreview) stack.top()).modalRow()).isEqualTo(1);
+
+        // Esc closes the modal.
+        DataPreviewScreen.handle(key(KeyCode.ESCAPE), model, stack);
+        assertThat(((ScreenState.DataPreview) stack.top()).modalRow()).isEqualTo(-1);
+    }
+
+    @Test
     void dataPreviewRightScrollsColumnsOnlyWhenRoom() {
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 2);
         NavigationStack stack = rooted(initial);

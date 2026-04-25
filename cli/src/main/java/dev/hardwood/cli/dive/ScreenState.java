@@ -119,12 +119,17 @@ public sealed interface ScreenState {
     /// currently displayed; `pageSize` controls how many rows fit on a page; the
     /// loaded `rows` are pre-formatted strings per column. `columnNames`
     /// duplicates the projection so renderers don't re-derive it.
+    /// `selectedRow` is the page-relative cursor (0-based) used for the
+    /// full-record modal; `modalRow` is the page-relative index whose record
+    /// modal is currently open (-1 when closed).
     record DataPreview(
             long firstRow,
             int pageSize,
             java.util.List<String> columnNames,
             java.util.List<java.util.List<String>> rows,
-            int columnScroll)
+            int columnScroll,
+            int selectedRow,
+            int modalRow)
             implements ScreenState {
         public DataPreview {
             columnNames = java.util.List.copyOf(columnNames);
