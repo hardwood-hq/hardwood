@@ -199,13 +199,13 @@ public final class DataPreviewScreen {
 
     private static void renderRecordModal(Buffer buffer, Rect screenArea, ScreenState.DataPreview state) {
         List<String> values = state.rows().get(state.modalRow());
+        List<String> expanded = state.expandedRows().get(state.modalRow());
         List<String> names = state.columnNames();
         // Grow the modal to fill the available area (minus 2-cell margin) so
         // long values get the full screen width instead of being clipped to
         // the narrow window the table cells lived in.
         int width = Math.max(40, screenArea.width() - 4);
-        int contentLines = names.size();
-        int height = Math.min(screenArea.height() - 2, contentLines + 4);
+        int height = Math.max(8, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
@@ -215,27 +215,64 @@ public final class DataPreviewScreen {
         for (String name : names) {
             maxKeyWidth = Math.max(maxKeyWidth, name.length());
         }
-        // Each line is " name<pad> : value"; subtract the borders (2), the
-        // single leading space, the maxKeyWidth, the " : " separator, and a
-        // trailing space to get the value budget.
+        // " name<pad> : value" — borders + " " + name + " : " + trailing
         int valueBudget = Math.max(8, width - 2 - 1 - maxKeyWidth - 3 - 1);
+        // Continuation lines use the same indent as where the value started
+        // so wrapped multi-line values line up under the leading column.
+        String continuationIndent = " ".repeat(1 + maxKeyWidth + 3);
 
-        List<Line> lines = new ArrayList<>();
+        // Build the full content list first, then slice by modalScroll into
+        // the viewport so expanded values can scroll past the visible area.
+        List<Line> all = new ArrayList<>();
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
-            String value = i < values.size() ? values.get(i) : "";
             String pad = " ".repeat(maxKeyWidth - name.length());
             boolean selected = i == state.modalColumn();
+            boolean isExpanded = i == state.expandedColumn();
             String cursor = selected ? "▶" : " ";
             Style nameStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY.bold();
-            lines.add(Line.from(
-                    new Span(cursor + name + pad + " : ", nameStyle),
-                    Span.raw(truncate(value, valueBudget))));
+            String value = i < values.size() ? values.get(i) : "";
+            if (isExpanded) {
+                String fullValue = i < expanded.size() ? expanded.get(i) : value;
+                List<String> wrapped = wrapValue(fullValue, valueBudget);
+                if (wrapped.isEmpty()) {
+                    wrapped.add("");
+                }
+                all.add(Line.from(
+                        new Span(cursor + name + pad + " : ", nameStyle),
+                        Span.raw(wrapped.get(0))));
+                for (int k = 1; k < wrapped.size(); k++) {
+                    all.add(Line.from(Span.raw(continuationIndent + wrapped.get(k))));
+                }
+            }
+            else {
+                all.add(Line.from(
+                        new Span(cursor + name + pad + " : ", nameStyle),
+                        Span.raw(truncate(value, valueBudget))));
+            }
         }
+
+        // Reserve 2 rows for borders + 2 rows for blank + hint.
+        int viewport = Math.max(1, height - 4);
+        int totalLines = all.size();
+        int maxScroll = Math.max(0, totalLines - viewport);
+        int scroll = Math.max(0, Math.min(state.modalScroll(), maxScroll));
+        int end = Math.min(totalLines, scroll + viewport);
+
+        List<Line> lines = new ArrayList<>(all.subList(scroll, end));
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(
-                " ↑/↓ row   ←/→ column   Enter view full value   Esc close",
-                Style.EMPTY.fg(Theme.DIM))));
+        String hint;
+        if (scroll + viewport < totalLines) {
+            hint = " ↓ " + (totalLines - end) + " more lines · ↑↓ row · ←/→ column · Enter expand · Shift+↑↓ scroll · Esc close";
+        }
+        else if (scroll > 0) {
+            hint = " ↑ " + scroll + " lines above · ↑↓ row · ←/→ column · Enter expand · Shift+↑↓ scroll · Esc close";
+        }
+        else {
+            hint = " ↑↓ row · ←/→ column · Enter expand · Shift+↑↓ scroll · Esc close";
+        }
+        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
+
         long absRow = state.firstRow() + state.modalRow();
         Block block = Block.builder()
                 .title(String.format(" Row %,d ", absRow + 1))
@@ -249,56 +286,30 @@ public final class DataPreviewScreen {
                 .left()
                 .build()
                 .render(area, buffer);
-
-        if (state.valueModalOpen()) {
-            renderValueModal(buffer, screenArea, state);
-        }
     }
 
-    private static void renderValueModal(Buffer buffer, Rect screenArea, ScreenState.DataPreview state) {
-        List<String> values = state.rows().get(state.modalRow());
-        List<String> names = state.columnNames();
-        int col = Math.min(state.modalColumn(), names.size() - 1);
-        if (col < 0) {
-            return;
+    /// Splits a possibly multi-line value into display lines that each fit
+    /// within `width` cells. Hard line breaks in the source are preserved;
+    /// each segment is then chunked at `width` if it's longer.
+    private static List<String> wrapValue(String value, int width) {
+        List<String> out = new ArrayList<>();
+        if (width <= 0) {
+            out.add(value);
+            return out;
         }
-        String name = names.get(col);
-        String value = col < values.size() ? values.get(col) : "";
-
-        // Inset the value modal one cell so the row modal underneath stays
-        // visible at the edges — that's the visual cue that this is a drill.
-        int width = Math.max(20, screenArea.width() - 6);
-        int height = Math.max(8, screenArea.height() - 4);
-        int x = screenArea.left() + (screenArea.width() - width) / 2;
-        int y = screenArea.top() + (screenArea.height() - height) / 2;
-        Rect modal = new Rect(x, y, width, height);
-        Clear.INSTANCE.render(modal, buffer);
-
-        String[] all = value.split("\n", -1);
-        int viewport = Math.max(1, height - 4);
-        int scroll = Math.max(0, Math.min(state.valueModalScroll(), Math.max(0, all.length - 1)));
-        int end = Math.min(all.length, scroll + viewport);
-
-        List<Line> bodyLines = new ArrayList<>();
-        for (int i = scroll; i < end; i++) {
-            bodyLines.add(Line.from(Span.raw(" " + all[i])));
+        for (String line : value.split("\n", -1)) {
+            if (line.isEmpty()) {
+                out.add("");
+                continue;
+            }
+            int i = 0;
+            while (i < line.length()) {
+                int end = Math.min(line.length(), i + width);
+                out.add(line.substring(i, end));
+                i = end;
+            }
         }
-        bodyLines.add(Line.empty());
-        String hint = scroll + viewport < all.length
-                ? " ↓ " + (all.length - end) + " more lines · Esc / Enter close · ↑↓ scroll · Shift+↑↓ page"
-                : (scroll > 0
-                        ? " ↑ " + scroll + " lines above · Esc / Enter close · ↑↓ scroll · Shift+↑↓ page"
-                        : " Press Esc or Enter to close");
-        bodyLines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
-
-        long absRow = state.firstRow() + state.modalRow();
-        Block block = Block.builder()
-                .title(String.format(" Row %,d · %s ", absRow + 1, name))
-                .borders(Borders.ALL)
-                .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
-                .build();
-        Paragraph.builder().block(block).text(Text.from(bodyLines)).left().build().render(modal, buffer);
+        return out;
     }
 
     public static String keybarKeys() {
@@ -308,20 +319,18 @@ public final class DataPreviewScreen {
 
     private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,
                                        dev.hardwood.cli.dive.NavigationStack stack) {
-        if (state.valueModalOpen()) {
-            return handleValueModal(event, state, stack);
-        }
-        // Esc closes the row modal; Enter opens the value modal for the
-        // currently highlighted column.
+        // Esc closes the row modal; Enter toggles inline expansion for the
+        // currently highlighted column. ↑/↓ row-step (collapsing on row
+        // change since expansion is per-column-in-current-row);
+        // Shift+↑/↓ scroll the modal viewport vertically.
         if (event.isCancel()) {
             stack.replaceTop(withModalRow(state, -1));
             return true;
         }
         if (event.isConfirm()) {
-            stack.replaceTop(rebuild(state, state.firstRow(), state.pageSize(),
-                    state.columnNames(), state.rows(), state.columnScroll(),
-                    state.selectedRow(), state.modalRow(), state.logicalTypes(),
-                    state.modalColumn(), true, 0));
+            int newExpanded = state.expandedColumn() == state.modalColumn()
+                    ? -1 : state.modalColumn();
+            stack.replaceTop(withExpandedColumn(state, newExpanded));
             return true;
         }
         if (event.isUp() && !event.hasShift()) {
@@ -330,9 +339,9 @@ public final class DataPreviewScreen {
             }
             int next = state.modalRow() - 1;
             stack.replaceTop(rebuild(state, state.firstRow(), state.pageSize(),
-                    state.columnNames(), state.rows(), state.columnScroll(),
-                    next, next, state.logicalTypes(),
-                    state.modalColumn(), false, 0));
+                    state.columnNames(), state.rows(), state.expandedRows(),
+                    state.columnScroll(), next, next, state.logicalTypes(),
+                    state.modalColumn(), -1, 0));
             return true;
         }
         if (event.isDown() && !event.hasShift()) {
@@ -342,16 +351,27 @@ public final class DataPreviewScreen {
             }
             int next = state.modalRow() + 1;
             stack.replaceTop(rebuild(state, state.firstRow(), state.pageSize(),
-                    state.columnNames(), state.rows(), state.columnScroll(),
-                    next, next, state.logicalTypes(),
-                    state.modalColumn(), false, 0));
+                    state.columnNames(), state.rows(), state.expandedRows(),
+                    state.columnScroll(), next, next, state.logicalTypes(),
+                    state.modalColumn(), -1, 0));
+            return true;
+        }
+        if (event.isUp() && event.hasShift()) {
+            stack.replaceTop(withModalScroll(state, Math.max(0, state.modalScroll() - 10)));
+            return true;
+        }
+        if (event.isDown() && event.hasShift()) {
+            stack.replaceTop(withModalScroll(state, state.modalScroll() + 10));
             return true;
         }
         if (event.isLeft()) {
             if (state.modalColumn() == 0) {
                 return false;
             }
-            stack.replaceTop(withModalColumn(state, state.modalColumn() - 1));
+            stack.replaceTop(rebuild(state, state.firstRow(), state.pageSize(),
+                    state.columnNames(), state.rows(), state.expandedRows(),
+                    state.columnScroll(), state.selectedRow(), state.modalRow(),
+                    state.logicalTypes(), state.modalColumn() - 1, -1, 0));
             return true;
         }
         if (event.isRight()) {
@@ -359,102 +379,59 @@ public final class DataPreviewScreen {
             if (state.modalColumn() >= last) {
                 return false;
             }
-            stack.replaceTop(withModalColumn(state, state.modalColumn() + 1));
-            return true;
-        }
-        return false;
-    }
-
-    private static boolean handleValueModal(KeyEvent event, ScreenState.DataPreview state,
-                                            dev.hardwood.cli.dive.NavigationStack stack) {
-        if (event.isCancel() || event.isConfirm()) {
             stack.replaceTop(rebuild(state, state.firstRow(), state.pageSize(),
-                    state.columnNames(), state.rows(), state.columnScroll(),
-                    state.selectedRow(), state.modalRow(), state.logicalTypes(),
-                    state.modalColumn(), false, 0));
-            return true;
-        }
-        int totalLines = valueLineCount(state);
-        if (event.isUp() && !event.hasShift()) {
-            if (state.valueModalScroll() == 0) {
-                return false;
-            }
-            stack.replaceTop(withValueScroll(state, state.valueModalScroll() - 1));
-            return true;
-        }
-        if (event.isDown() && !event.hasShift()) {
-            if (state.valueModalScroll() >= Math.max(0, totalLines - 1)) {
-                return false;
-            }
-            stack.replaceTop(withValueScroll(state, state.valueModalScroll() + 1));
-            return true;
-        }
-        if (event.isUp() && event.hasShift()) {
-            stack.replaceTop(withValueScroll(state, Math.max(0, state.valueModalScroll() - 10)));
-            return true;
-        }
-        if (event.isDown() && event.hasShift()) {
-            int max = Math.max(0, totalLines - 1);
-            stack.replaceTop(withValueScroll(state, Math.min(max, state.valueModalScroll() + 10)));
+                    state.columnNames(), state.rows(), state.expandedRows(),
+                    state.columnScroll(), state.selectedRow(), state.modalRow(),
+                    state.logicalTypes(), state.modalColumn() + 1, -1, 0));
             return true;
         }
         return false;
-    }
-
-    private static int valueLineCount(ScreenState.DataPreview state) {
-        if (state.modalRow() < 0 || state.modalRow() >= state.rows().size()) {
-            return 0;
-        }
-        List<String> values = state.rows().get(state.modalRow());
-        int col = Math.min(state.modalColumn(), values.size() - 1);
-        if (col < 0) {
-            return 0;
-        }
-        return values.get(col).split("\n", -1).length;
     }
 
     private static ScreenState.DataPreview withSelectedRow(ScreenState.DataPreview s, int sel) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
-                s.columnScroll(), sel, s.modalRow(), s.logicalTypes(),
-                s.modalColumn(), s.valueModalOpen(), s.valueModalScroll());
+                s.expandedRows(), s.columnScroll(), sel, s.modalRow(), s.logicalTypes(),
+                s.modalColumn(), s.expandedColumn(), s.modalScroll());
     }
 
     private static ScreenState.DataPreview withModalRow(ScreenState.DataPreview s, int modalRow) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
-                s.columnScroll(), s.selectedRow(), modalRow, s.logicalTypes(),
+                s.expandedRows(), s.columnScroll(), s.selectedRow(), modalRow, s.logicalTypes(),
                 modalRow < 0 ? 0 : s.modalColumn(),
-                modalRow < 0 ? false : s.valueModalOpen(),
-                modalRow < 0 ? 0 : s.valueModalScroll());
+                modalRow < 0 ? -1 : s.expandedColumn(),
+                modalRow < 0 ? 0 : s.modalScroll());
     }
 
     private static ScreenState.DataPreview withColumnScroll(ScreenState.DataPreview s, int scroll) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
-                scroll, s.selectedRow(), s.modalRow(), s.logicalTypes(),
-                s.modalColumn(), s.valueModalOpen(), s.valueModalScroll());
+                s.expandedRows(), scroll, s.selectedRow(), s.modalRow(), s.logicalTypes(),
+                s.modalColumn(), s.expandedColumn(), s.modalScroll());
     }
 
-    private static ScreenState.DataPreview withModalColumn(ScreenState.DataPreview s, int col) {
+    private static ScreenState.DataPreview withExpandedColumn(ScreenState.DataPreview s, int col) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
-                s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
-                col, s.valueModalOpen(), 0);
+                s.expandedRows(), s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
+                s.modalColumn(), col, 0);
     }
 
-    private static ScreenState.DataPreview withValueScroll(ScreenState.DataPreview s, int scroll) {
+    private static ScreenState.DataPreview withModalScroll(ScreenState.DataPreview s, int scroll) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
-                s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
-                s.modalColumn(), s.valueModalOpen(), scroll);
+                s.expandedRows(), s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
+                s.modalColumn(), s.expandedColumn(), scroll);
     }
 
     private static ScreenState.DataPreview rebuild(ScreenState.DataPreview s,
                                                    long firstRow, int pageSize,
                                                    List<String> columnNames,
                                                    List<List<String>> rows,
+                                                   List<List<String>> expandedRows,
                                                    int columnScroll, int selectedRow,
                                                    int modalRow, boolean logicalTypes,
-                                                   int modalColumn, boolean valueModalOpen,
-                                                   int valueModalScroll) {
-        return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, columnScroll,
-                selectedRow, modalRow, logicalTypes, modalColumn, valueModalOpen, valueModalScroll);
+                                                   int modalColumn, int expandedColumn,
+                                                   int modalScroll) {
+        return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, expandedRows,
+                columnScroll, selectedRow, modalRow, logicalTypes, modalColumn, expandedColumn,
+                modalScroll);
     }
 
     private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize,
@@ -470,20 +447,25 @@ public final class DataPreviewScreen {
         }
         int fieldCount = columnNames.size();
         List<List<String>> rows = new ArrayList<>();
+        List<List<String>> expandedRows = new ArrayList<>();
         try {
             model.readPreviewPage(firstRow, pageSize, reader -> {
                 List<String> row = new ArrayList<>(fieldCount);
+                List<String> expanded = new ArrayList<>(fieldCount);
                 for (int c = 0; c < fieldCount; c++) {
-                    row.add(RowValueFormatter.format(reader, c, topLevel.get(c), logicalTypes));
+                    SchemaNode field = topLevel.get(c);
+                    row.add(RowValueFormatter.format(reader, c, field, logicalTypes));
+                    expanded.add(RowValueFormatter.formatExpanded(reader, c, field, logicalTypes));
                 }
                 rows.add(row);
+                expandedRows.add(expanded);
             });
         }
         catch (java.io.IOException e) {
             throw new java.io.UncheckedIOException(e);
         }
-        return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, columnScroll, 0, -1,
-                logicalTypes, 0, false, 0);
+        return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, expandedRows,
+                columnScroll, 0, -1, logicalTypes, 0, -1, 0);
     }
 
     private static String truncate(String s, int max) {

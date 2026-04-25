@@ -119,6 +119,158 @@ public final class RowValueFormatter {
         return String.valueOf(raw);
     }
 
+    /// Multi-line, fully-expanded variant — no element-count caps and no
+    /// depth caps; nested types render with one entry per line and indented
+    /// children. Used by the dive record modal's inline-expansion path so
+    /// users can read the full value, no `…+N` ellipses.
+    public static String formatExpanded(RowReader reader, int fieldIndex, SchemaNode field,
+                                        boolean useLogicalType) {
+        if (reader.isNull(fieldIndex)) {
+            return "null";
+        }
+        if (field instanceof SchemaNode.GroupNode) {
+            return formatNestedPretty(reader.getValue(fieldIndex), 0);
+        }
+        // For primitive leaves the expanded form is identical to the
+        // single-line logical / physical rendering.
+        return format(reader, fieldIndex, field, useLogicalType);
+    }
+
+    private static String formatNestedPretty(Object value, int indent) {
+        if (value == null) {
+            return "null";
+        }
+        if (value instanceof PqList list) {
+            return prettyList(list, indent);
+        }
+        if (value instanceof PqStruct struct) {
+            return prettyStruct(struct, indent);
+        }
+        if (value instanceof PqMap map) {
+            return prettyMap(map, indent);
+        }
+        if (value instanceof PqVariant variant) {
+            return prettyVariant(variant, indent);
+        }
+        if (value instanceof byte[] bytes) {
+            return formatRawBytes(bytes);
+        }
+        return String.valueOf(value);
+    }
+
+    private static String prettyList(PqList list, int indent) {
+        if (list.isEmpty()) {
+            return "[]";
+        }
+        StringBuilder sb = new StringBuilder("[\n");
+        String childPad = pad(indent + 1);
+        boolean first = true;
+        for (Object element : list.values()) {
+            if (!first) {
+                sb.append(",\n");
+            }
+            sb.append(childPad).append(formatNestedPretty(element, indent + 1));
+            first = false;
+        }
+        sb.append("\n").append(pad(indent)).append("]");
+        return sb.toString();
+    }
+
+    private static String prettyStruct(PqStruct struct, int indent) {
+        int count = struct.getFieldCount();
+        if (count == 0) {
+            return "{}";
+        }
+        StringBuilder sb = new StringBuilder("{\n");
+        String childPad = pad(indent + 1);
+        for (int i = 0; i < count; i++) {
+            String fieldName = struct.getFieldName(i);
+            Object fieldValue = struct.isNull(fieldName) ? null : struct.getValue(fieldName);
+            sb.append(childPad).append(fieldName).append(": ")
+                    .append(formatNestedPretty(fieldValue, indent + 1));
+            if (i < count - 1) {
+                sb.append(",");
+            }
+            sb.append("\n");
+        }
+        sb.append(pad(indent)).append("}");
+        return sb.toString();
+    }
+
+    private static String prettyMap(PqMap map, int indent) {
+        if (map.isEmpty()) {
+            return "{}";
+        }
+        StringBuilder sb = new StringBuilder("{\n");
+        String childPad = pad(indent + 1);
+        java.util.List<PqMap.Entry> entries = map.getEntries();
+        for (int i = 0; i < entries.size(); i++) {
+            PqMap.Entry entry = entries.get(i);
+            sb.append(childPad)
+                    .append(formatNestedPretty(entry.getKey(), indent + 1))
+                    .append(": ")
+                    .append(formatNestedPretty(entry.isValueNull() ? null : entry.getValue(), indent + 1));
+            if (i < entries.size() - 1) {
+                sb.append(",");
+            }
+            sb.append("\n");
+        }
+        sb.append(pad(indent)).append("}");
+        return sb.toString();
+    }
+
+    private static String prettyVariant(PqVariant variant, int indent) {
+        VariantType type = variant.type();
+        return switch (type) {
+            case OBJECT -> prettyVariantObject(variant.asObject(), indent);
+            case ARRAY -> prettyVariantArray(variant.asArray(), indent);
+            // Primitives use the single-line form.
+            default -> formatVariant(variant, indent);
+        };
+    }
+
+    private static String prettyVariantObject(PqVariantObject obj, int indent) {
+        int count = obj.getFieldCount();
+        if (count == 0) {
+            return "{}";
+        }
+        StringBuilder sb = new StringBuilder("{\n");
+        String childPad = pad(indent + 1);
+        for (int i = 0; i < count; i++) {
+            String name = obj.getFieldName(i);
+            sb.append(childPad).append(name).append(": ")
+                    .append(formatNestedPretty(obj.getVariant(name), indent + 1));
+            if (i < count - 1) {
+                sb.append(",");
+            }
+            sb.append("\n");
+        }
+        sb.append(pad(indent)).append("}");
+        return sb.toString();
+    }
+
+    private static String prettyVariantArray(PqVariantArray array, int indent) {
+        int size = array.size();
+        if (size == 0) {
+            return "[]";
+        }
+        StringBuilder sb = new StringBuilder("[\n");
+        String childPad = pad(indent + 1);
+        for (int i = 0; i < size; i++) {
+            sb.append(childPad).append(formatNestedPretty(array.get(i), indent + 1));
+            if (i < size - 1) {
+                sb.append(",");
+            }
+            sb.append("\n");
+        }
+        sb.append(pad(indent)).append("]");
+        return sb.toString();
+    }
+
+    private static String pad(int indent) {
+        return "  ".repeat(indent);
+    }
+
     /// Renders a value as its underlying physical-type text. Bypasses
     /// logical-type dispatch — used when the user toggles logical rendering
     /// off to inspect storage form. byte[]s still hex-render so cells aren't

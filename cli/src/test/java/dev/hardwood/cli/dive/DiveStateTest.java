@@ -444,7 +444,7 @@ class DiveStateTest {
     }
 
     @Test
-    void dataPreviewRowModalRightEnterOpensValueModal() {
+    void dataPreviewRowModalEnterTogglesInlineExpansion() {
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 5);
         NavigationStack stack = rooted(initial);
 
@@ -452,19 +452,22 @@ class DiveStateTest {
         ScreenState.DataPreview opened = (ScreenState.DataPreview) stack.top();
         assertThat(opened.modalRow()).isEqualTo(0);
         assertThat(opened.modalColumn()).isEqualTo(0);
-        assertThat(opened.valueModalOpen()).isFalse();
+        assertThat(opened.expandedColumn()).isEqualTo(-1);
 
         DataPreviewScreen.handle(key(KeyCode.RIGHT), model, stack);
         assertThat(((ScreenState.DataPreview) stack.top()).modalColumn()).isEqualTo(1);
 
+        // Enter expands column 1 inline.
         DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
-        assertThat(((ScreenState.DataPreview) stack.top()).valueModalOpen()).isTrue();
+        assertThat(((ScreenState.DataPreview) stack.top()).expandedColumn()).isEqualTo(1);
 
-        // Esc inside the value modal returns to the row modal, not the table.
+        // Enter again on the same column collapses it.
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+        assertThat(((ScreenState.DataPreview) stack.top()).expandedColumn()).isEqualTo(-1);
+
+        // Esc closes the row modal entirely.
         DataPreviewScreen.handle(key(KeyCode.ESCAPE), model, stack);
-        ScreenState.DataPreview back = (ScreenState.DataPreview) stack.top();
-        assertThat(back.valueModalOpen()).isFalse();
-        assertThat(back.modalRow()).isEqualTo(0);
+        assertThat(((ScreenState.DataPreview) stack.top()).modalRow()).isEqualTo(-1);
     }
 
     @Test
