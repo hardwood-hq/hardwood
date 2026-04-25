@@ -43,12 +43,12 @@ public final class RowGroupIndexesScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.RowGroupIndexes state = (ScreenState.RowGroupIndexes) stack.top();
         int count = model.rowGroup(state.rowGroupIndex()).columns().size();
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.RowGroupIndexes(
                     state.rowGroupIndex(), Math.max(0, state.selection() - 1)));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.RowGroupIndexes(
                     state.rowGroupIndex(), Math.min(count - 1, state.selection() + 1)));
             return true;

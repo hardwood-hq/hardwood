@@ -38,7 +38,7 @@ public class DiveCommand implements Callable<Integer> {
     @CommandLine.Option(
             names = "--rows",
             description = "Page size for the Data preview screen. Default: ${DEFAULT-VALUE}.",
-            defaultValue = "20")
+            defaultValue = "100")
     int rowsPerPage;
 
     @CommandLine.Option(

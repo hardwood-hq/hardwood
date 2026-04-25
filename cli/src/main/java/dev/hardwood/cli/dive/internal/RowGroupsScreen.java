@@ -39,11 +39,11 @@ public final class RowGroupsScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.RowGroups state = (ScreenState.RowGroups) stack.top();
         int count = model.rowGroupCount();
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.RowGroups(Math.max(0, state.selection() - 1)));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.RowGroups(Math.min(count - 1, state.selection() + 1)));
             return true;
         }

@@ -39,11 +39,11 @@ public final class ColumnChunksScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.ColumnChunks state = (ScreenState.ColumnChunks) stack.top();
         int count = model.rowGroup(state.rowGroupIndex()).columns().size();
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), Math.max(0, state.selection() - 1)));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), Math.min(count - 1, state.selection() + 1)));
             return true;
         }

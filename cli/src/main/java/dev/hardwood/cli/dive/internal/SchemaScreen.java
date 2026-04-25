@@ -68,12 +68,12 @@ public final class SchemaScreen {
         if (rows.isEmpty()) {
             return false;
         }
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(with(state,
                     Math.max(0, state.selection() - 1), state.expanded(), state.filter(), false));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(with(state,
                     Math.min(rows.size() - 1, state.selection() + 1), state.expanded(), state.filter(), false));
             return true;

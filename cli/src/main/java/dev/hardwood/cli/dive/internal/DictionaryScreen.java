@@ -104,11 +104,11 @@ public final class DictionaryScreen {
                     false, state.filter(), false));
             return true;
         }
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(with(state, Math.max(0, state.selection() - 1), false, state.filter(), false));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
             stack.replaceTop(with(state, Math.min(max, state.selection() + 1), false, state.filter(), false));
             return true;

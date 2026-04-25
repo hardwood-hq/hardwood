@@ -51,7 +51,7 @@ public final class ParquetModel implements AutoCloseable {
     private final FileMetaData metadata;
     private final FileSchema schema;
     private final Facts facts;
-    private int previewPageSize = 20;
+    private int previewPageSize = 100;
     private int dictionaryReadCapBytes = DEFAULT_DICTIONARY_READ_CAP_BYTES;
     // Forward-read cursor for Data preview pagination. Reusing the same
     // RowReader across forward page flips avoids re-iterating from row 0 on

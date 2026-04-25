@@ -43,12 +43,12 @@ public final class ColumnAcrossRowGroupsScreen {
         ScreenState.ColumnAcrossRowGroups state = (ScreenState.ColumnAcrossRowGroups) stack.top();
         int count = model.rowGroupCount();
         boolean logical = state.logicalTypes();
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
                     state.columnIndex(), Math.max(0, state.selection() - 1), logical));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
                     state.columnIndex(), Math.min(count - 1, state.selection() + 1), logical));
             return true;

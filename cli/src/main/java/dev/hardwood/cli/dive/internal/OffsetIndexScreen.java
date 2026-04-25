@@ -43,13 +43,13 @@ public final class OffsetIndexScreen {
         ScreenState.OffsetIndexView state = (ScreenState.OffsetIndexView) stack.top();
         OffsetIndex oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
         int count = oi != null ? oi.pageLocations().size() : 0;
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.OffsetIndexView(
                     state.rowGroupIndex(), state.columnIndex(),
                     Math.max(0, state.selection() - 1)));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.OffsetIndexView(
                     state.rowGroupIndex(), state.columnIndex(),
                     Math.min(count - 1, state.selection() + 1)));

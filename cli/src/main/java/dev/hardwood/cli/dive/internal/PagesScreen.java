@@ -60,13 +60,13 @@ public final class PagesScreen {
             return false;
         }
         List<PageHeader> headers = model.pageHeaders(state.rowGroupIndex(), state.columnIndex());
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(),
                     Math.max(0, state.selection() - 1), false, logical));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(),
                     Math.min(headers.size() - 1, state.selection() + 1), false, logical));

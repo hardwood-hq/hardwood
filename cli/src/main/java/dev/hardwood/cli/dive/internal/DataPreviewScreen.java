@@ -89,30 +89,52 @@ public final class DataPreviewScreen {
             return handleModal(event, state, stack);
         }
         // Plain ↑/↓ moves the selected-row cursor inside the current page; Shift+↑/↓
-        // pages, handled below. Enter opens the full-record modal at the cursor.
-        if (event.isUp() && !event.hasShift()) {
+        // pages (handled by the PgDn/PgUp branches below). Enter opens the
+        // full-record modal at the cursor. When the cursor would move past
+        // the loaded slice, auto-page so the cursor walks through the whole
+        // dataset like any other list screen.
+        if (Keys.isStepUp(event)) {
             int rowsLoaded = state.rows().size();
             if (rowsLoaded == 0) {
                 return false;
             }
-            stack.replaceTop(withSelectedRow(state, Math.max(0, state.selectedRow() - 1)));
+            if (state.selectedRow() == 0) {
+                if (state.firstRow() == 0) {
+                    return false;
+                }
+                long prevFirst = Math.max(0, state.firstRow() - state.pageSize());
+                ScreenState.DataPreview loaded = loadPage(model, prevFirst, state.pageSize(),
+                        state.columnScroll(), state.logicalTypes());
+                int lastRow = Math.max(0, loaded.rows().size() - 1);
+                stack.replaceTop(withSelectedRow(loaded, lastRow));
+                return true;
+            }
+            stack.replaceTop(withSelectedRow(state, state.selectedRow() - 1));
             return true;
         }
-        if (event.isDown() && !event.hasShift()) {
+        if (Keys.isStepDown(event)) {
             int rowsLoaded = state.rows().size();
             if (rowsLoaded == 0) {
                 return false;
             }
-            stack.replaceTop(withSelectedRow(state, Math.min(rowsLoaded - 1, state.selectedRow() + 1)));
+            if (state.selectedRow() >= rowsLoaded - 1) {
+                long nextFirst = state.firstRow() + state.pageSize();
+                if (nextFirst >= total) {
+                    return false;
+                }
+                ScreenState.DataPreview loaded = loadPage(model, nextFirst, state.pageSize(),
+                        state.columnScroll(), state.logicalTypes());
+                stack.replaceTop(withSelectedRow(loaded, 0));
+                return true;
+            }
+            stack.replaceTop(withSelectedRow(state, state.selectedRow() + 1));
             return true;
         }
         if (event.isConfirm() && !state.rows().isEmpty()) {
             stack.replaceTop(withModalRow(state, state.selectedRow()));
             return true;
         }
-        // Page forward: PgDn, or Shift+↓ — the Shift alias is a one-hand chord
-        // on macOS laptops where PgDn is Fn+↓.
-        if (event.code() == KeyCode.PAGE_DOWN || (event.hasShift() && event.isDown())) {
+        if (Keys.isPageDown(event)) {
             long nextFirst = Math.min(total, state.firstRow() + state.pageSize());
             if (nextFirst >= total) {
                 return false;
@@ -121,7 +143,7 @@ public final class DataPreviewScreen {
                     state.logicalTypes()));
             return true;
         }
-        if (event.code() == KeyCode.PAGE_UP || (event.hasShift() && event.isUp())) {
+        if (Keys.isPageUp(event)) {
             long prevFirst = Math.max(0, state.firstRow() - state.pageSize());
             if (prevFirst == state.firstRow()) {
                 return false;
