@@ -48,43 +48,52 @@ public final class FooterScreen {
         FooterBody body = bodyAndAnchors(model);
         int total = body.lines().size();
         int viewport = Keys.viewportStride();
+        int maxScroll = Math.max(0, total - viewport);
+        // ↑/↓ toggle the cursor between the two drillable anchors. PgDn /
+        // PgUp scroll the body for reading the other sections.
         if (Keys.isStepUp(event)) {
-            if (state.cursor() == 0) {
+            if (state.cursor() == ScreenState.Footer.Anchor.COLUMN) {
                 return false;
             }
-            stack.replaceTop(new ScreenState.Footer(state.cursor() - 1));
+            stack.replaceTop(new ScreenState.Footer(
+                    ScreenState.Footer.Anchor.COLUMN, state.scroll()));
             return true;
         }
         if (Keys.isStepDown(event)) {
-            if (state.cursor() >= total - 1) {
+            if (state.cursor() == ScreenState.Footer.Anchor.OFFSET) {
                 return false;
             }
-            stack.replaceTop(new ScreenState.Footer(state.cursor() + 1));
+            stack.replaceTop(new ScreenState.Footer(
+                    ScreenState.Footer.Anchor.OFFSET, state.scroll()));
             return true;
         }
         if (Keys.isPageDown(event)) {
-            stack.replaceTop(new ScreenState.Footer(Math.min(total - 1, state.cursor() + viewport)));
+            stack.replaceTop(new ScreenState.Footer(state.cursor(),
+                    Math.min(maxScroll, state.scroll() + viewport)));
             return true;
         }
         if (Keys.isPageUp(event)) {
-            stack.replaceTop(new ScreenState.Footer(Math.max(0, state.cursor() - viewport)));
+            stack.replaceTop(new ScreenState.Footer(state.cursor(),
+                    Math.max(0, state.scroll() - viewport)));
             return true;
         }
         if (Keys.isJumpTop(event)) {
-            stack.replaceTop(new ScreenState.Footer(0));
+            stack.replaceTop(new ScreenState.Footer(state.cursor(), 0));
             return true;
         }
         if (Keys.isJumpBottom(event)) {
-            stack.replaceTop(new ScreenState.Footer(total - 1));
+            stack.replaceTop(new ScreenState.Footer(state.cursor(), maxScroll));
             return true;
         }
         if (event.isConfirm()) {
-            if (state.cursor() == body.columnIndexLine() && body.columnIndexCount() > 0) {
+            if (state.cursor() == ScreenState.Footer.Anchor.COLUMN
+                    && body.columnIndexCount() > 0) {
                 stack.push(new ScreenState.FileIndexes(
                         ScreenState.FileIndexes.Kind.COLUMN, 0));
                 return true;
             }
-            if (state.cursor() == body.offsetIndexLine() && body.offsetIndexCount() > 0) {
+            if (state.cursor() == ScreenState.Footer.Anchor.OFFSET
+                    && body.offsetIndexCount() > 0) {
                 stack.push(new ScreenState.FileIndexes(
                         ScreenState.FileIndexes.Kind.OFFSET, 0));
                 return true;
@@ -100,39 +109,40 @@ public final class FooterScreen {
         List<Line> all = body.lines();
         int viewport = Math.max(1, area.height() - 4);
         int total = all.size();
-        int cursor = Math.max(0, Math.min(state.cursor(), total - 1));
-        // Centre the cursor in the viewport when possible.
         int maxScroll = Math.max(0, total - viewport);
-        int scroll = Math.max(0, Math.min(maxScroll, cursor - viewport / 2));
+        int cursorLine = state.cursor() == ScreenState.Footer.Anchor.COLUMN
+                ? body.columnIndexLine() : body.offsetIndexLine();
+        int scroll = Math.max(0, Math.min(maxScroll, state.scroll()));
+        // Auto-scroll to keep the cursor anchor visible.
+        if (cursorLine >= 0) {
+            if (cursorLine < scroll) {
+                scroll = cursorLine;
+            }
+            else if (cursorLine >= scroll + viewport) {
+                scroll = Math.max(0, cursorLine - viewport + 1);
+            }
+        }
         int end = Math.min(total, scroll + viewport);
 
-        // Emit a copy of the body slice; restyle the cursor's line in-place
-        // with the accent colour so it's visible on entry. Drill-target
-        // lines (Column indexes / Offset indexes) get a ▶ marker when
-        // hovered to advertise the Enter affordance.
+        // Always paint both anchors with the ▶ marker so they're discoverable
+        // without hovering. The currently-selected one renders in accent
+        // colour; the inactive one is bold-only.
         List<Line> lines = new ArrayList<>(all.subList(scroll, end));
-        int cursorOffset = cursor - scroll;
-        if (cursorOffset >= 0 && cursorOffset < lines.size()) {
-            boolean drillable = (cursor == body.columnIndexLine() && body.columnIndexCount() > 0)
-                    || (cursor == body.offsetIndexLine() && body.offsetIndexCount() > 0);
-            String marker = drillable ? "▶" : " ";
-            String text = renderLine(all.get(cursor));
-            // Replace the leading single space with the marker, keep the rest.
-            String shown = text.startsWith(" ") ? marker + text.substring(1) : marker + text;
-            lines.set(cursorOffset, Line.from(
-                    new Span(shown, Style.EMPTY.bold().fg(Theme.ACCENT))));
-        }
+        styleAnchor(lines, all, scroll, body.columnIndexLine(),
+                state.cursor() == ScreenState.Footer.Anchor.COLUMN, body.columnIndexCount() > 0);
+        styleAnchor(lines, all, scroll, body.offsetIndexLine(),
+                state.cursor() == ScreenState.Footer.Anchor.OFFSET, body.offsetIndexCount() > 0);
 
         lines.add(Line.empty());
         String hint;
         if (scroll + viewport < total) {
-            hint = " ↓ " + (total - end) + " more lines · ↑↓ navigate · Enter drill · PgDn/PgUp page · Esc back";
+            hint = " ↓ " + (total - end) + " more lines · ↑↓ pick anchor · Enter drill · PgDn/PgUp scroll · Esc back";
         }
         else if (scroll > 0) {
-            hint = " ↑ " + scroll + " lines above · ↑↓ navigate · Enter drill · PgDn/PgUp page · Esc back";
+            hint = " ↑ " + scroll + " lines above · ↑↓ pick anchor · Enter drill · PgDn/PgUp scroll · Esc back";
         }
         else {
-            hint = " ↑↓ navigate · Enter drill on Column / Offset indexes · Esc back";
+            hint = " ↑↓ pick Column / Offset · Enter drill · Esc back";
         }
         lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
 
@@ -143,6 +153,24 @@ public final class FooterScreen {
                 .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
+    }
+
+    private static void styleAnchor(List<Line> visible, List<Line> all, int scroll,
+                                    int absoluteLine, boolean active, boolean enabled) {
+        if (absoluteLine < 0) {
+            return;
+        }
+        int offset = absoluteLine - scroll;
+        if (offset < 0 || offset >= visible.size()) {
+            return;
+        }
+        String text = renderLine(all.get(absoluteLine));
+        String marker = enabled ? "▶" : " ";
+        String shown = text.startsWith(" ") ? marker + text.substring(1) : marker + text;
+        Style style = active && enabled
+                ? Style.EMPTY.bold().fg(Theme.ACCENT)
+                : Style.EMPTY.bold();
+        visible.set(offset, Line.from(new Span(shown, style)));
     }
 
     private static String renderLine(Line line) {
@@ -244,7 +272,7 @@ public final class FooterScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] scroll  [PgDn/PgUp] page  [g/G] top/bottom  [Esc] back";
+        return "[↑↓] pick anchor  [Enter] drill  [PgDn/PgUp] scroll  [g/G] top/bottom  [Esc] back";
     }
 
     /// Total bytes occupied by the footer thrift + page indexes + trailer —

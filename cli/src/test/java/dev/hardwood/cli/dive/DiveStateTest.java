@@ -701,32 +701,31 @@ class DiveStateTest {
     }
 
     @Test
-    void footerEnterOnColumnIndexLineDrillsIntoFileIndexes() {
-        // The fixture (column_index_pushdown.parquet) has a column index, so
-        // the drill is enabled.
+    void footerEnterOnColumnAnchorDrillsIntoFileIndexes() {
+        // Initial cursor is the Column anchor; Enter drills.
         NavigationStack stack = rooted(ScreenState.Footer.initial());
-        // Walk the cursor down to a "Column indexes" line. Body layout
-        // depends on the file but the section sits a fixed distance below
-        // top. Use a generous loop and stop when we see the drill engage.
-        boolean drilled = false;
-        for (int i = 0; i < 30; i++) {
-            FooterScreen.handle(key(KeyCode.DOWN), model, stack);
-            FooterScreen.handle(key(KeyCode.ENTER), model, stack);
-            if (stack.top() instanceof ScreenState.FileIndexes) {
-                drilled = true;
-                break;
-            }
-        }
-        assertThat(drilled).isTrue();
-        ScreenState.FileIndexes opened = (ScreenState.FileIndexes) stack.top();
-        // Enter drills further into the per-chunk view of the matching kind.
+        FooterScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.FileIndexes.class);
+        assertThat(((ScreenState.FileIndexes) stack.top()).kind())
+                .isEqualTo(ScreenState.FileIndexes.Kind.COLUMN);
+
         FileIndexesScreen.handle(key(KeyCode.ENTER), model, stack);
-        if (opened.kind() == ScreenState.FileIndexes.Kind.COLUMN) {
-            assertThat(stack.top()).isInstanceOf(ScreenState.ColumnIndexView.class);
-        }
-        else {
-            assertThat(stack.top()).isInstanceOf(ScreenState.OffsetIndexView.class);
-        }
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnIndexView.class);
+    }
+
+    @Test
+    void footerDownTogglesToOffsetAnchorThenEnterDrills() {
+        NavigationStack stack = rooted(ScreenState.Footer.initial());
+        FooterScreen.handle(key(KeyCode.DOWN), model, stack);
+
+        assertThat(((ScreenState.Footer) stack.top()).cursor())
+                .isEqualTo(ScreenState.Footer.Anchor.OFFSET);
+
+        FooterScreen.handle(key(KeyCode.ENTER), model, stack);
+        assertThat(stack.top()).isInstanceOf(ScreenState.FileIndexes.class);
+        assertThat(((ScreenState.FileIndexes) stack.top()).kind())
+                .isEqualTo(ScreenState.FileIndexes.Kind.OFFSET);
     }
 
     private NavigationStack rooted(ScreenState child) {

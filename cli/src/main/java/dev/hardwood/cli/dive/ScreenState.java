@@ -103,13 +103,16 @@ public sealed interface ScreenState {
     }
 
     /// Raw footer layout: file size, footer offset/length, aggregate index bytes.
-    /// `cursor` is the highlighted body line — used for the per-section drill
-    /// targets (Enter on "Column indexes" / "Offset indexes" opens the
-    /// file-wide list). The viewport scroll position is derived from cursor
-    /// at render time so the cursor stays visible.
-    record Footer(int cursor) implements ScreenState {
+    /// The cursor only lands on the two drillable anchors — `Anchor#COLUMN`
+    /// for the Column-indexes line, `Anchor#OFFSET` for the Offset-indexes
+    /// line — so ↑/↓ toggle between them and Enter always drills. Body
+    /// content is scrolled separately with `PgDn` / `PgUp`; `scroll` is the
+    /// line offset into the body content.
+    record Footer(Anchor cursor, int scroll) implements ScreenState {
+        public enum Anchor { COLUMN, OFFSET }
+
         public static Footer initial() {
-            return new Footer(0);
+            return new Footer(Anchor.COLUMN, 0);
         }
     }
 
