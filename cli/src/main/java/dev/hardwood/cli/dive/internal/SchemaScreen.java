@@ -167,31 +167,42 @@ public final class SchemaScreen {
 
         List<Line> lines = new ArrayList<>();
         boolean filtering = !state.filter().isEmpty();
-        // Pre-compute the longest "prefix" in the currently-visible row set so
-        // every row's type-info column lines up. Prefix = indent + marker + name
-        // in tree mode, just the path in filtered mode.
-        int maxPrefix = 0;
-        for (Row row : rows) {
+        // Pre-compute the longest width per aligned column so every row's
+        // type / logical / repetition fields line up vertically. Name column
+        // = indent + marker + name in tree mode, path in filtered mode.
+        int maxName = 0;
+        int maxType = 0;
+        int maxLogical = 0;
+        int maxRepetition = 0;
+        TypeParts[] parts = new TypeParts[rows.size()];
+        for (int i = 0; i < rows.size(); i++) {
+            Row row = rows.get(i);
             int w = filtering
                     ? row.path().length()
                     : row.depth() * 2 + 2 + row.node().name().length();
-            maxPrefix = Math.max(maxPrefix, w);
+            maxName = Math.max(maxName, w);
+            parts[i] = typeOf(row.node());
+            maxType = Math.max(maxType, parts[i].type().length());
+            maxLogical = Math.max(maxLogical, parts[i].logical().length());
+            maxRepetition = Math.max(maxRepetition, parts[i].repetition().length());
         }
         for (int i = 0; i < rows.size(); i++) {
             Row row = rows.get(i);
             boolean selected = i == state.selection();
             String cursor = selected ? "▸ " : "  ";
             Style nameStyle = selected ? Style.EMPTY.bold() : Style.EMPTY;
+            TypeParts p = parts[i];
+            String colSuffix = !row.isGroup() ? "[col " + row.columnIndex() + "]" : "";
             if (filtering) {
-                String typeInfo = typeOf(row.node());
-                String colSuffix = "  [col " + row.columnIndex() + "]";
-                String pad = " ".repeat(maxPrefix - row.path().length());
+                String pad = " ".repeat(maxName - row.path().length());
                 lines.add(Line.from(
                         Span.raw(cursor),
                         new Span(row.path(), nameStyle),
                         Span.raw(pad),
-                        new Span("  " + typeInfo, Style.EMPTY.fg(Theme.DIM)),
-                        new Span(colSuffix, Style.EMPTY.fg(Theme.DIM))));
+                        new Span("  " + padRight(p.type(), maxType), Style.EMPTY.fg(Theme.DIM)),
+                        new Span("  " + padRight(p.logical(), maxLogical), Style.EMPTY.fg(Theme.DIM)),
+                        new Span("  " + padRight(p.repetition(), maxRepetition), Style.EMPTY.fg(Theme.DIM)),
+                        new Span("  " + colSuffix, Style.EMPTY.fg(Theme.DIM))));
                 continue;
             }
             String indent = "  ".repeat(row.depth());
@@ -202,18 +213,18 @@ public final class SchemaScreen {
             else {
                 marker = "  ";
             }
-            String typeInfo = typeOf(row.node());
-            String colSuffix = !row.isGroup() ? "  [col " + row.columnIndex() + "]" : "";
-            int rowPrefix = row.depth() * 2 + 2 + row.node().name().length();
-            String pad = " ".repeat(maxPrefix - rowPrefix);
+            int rowName = row.depth() * 2 + 2 + row.node().name().length();
+            String pad = " ".repeat(maxName - rowName);
             lines.add(Line.from(
                     Span.raw(cursor),
                     Span.raw(indent),
                     new Span(marker, Style.EMPTY.fg(Theme.ACCENT)),
                     new Span(row.node().name(), nameStyle),
                     Span.raw(pad),
-                    new Span("  " + typeInfo, Style.EMPTY.fg(Theme.DIM)),
-                    new Span(colSuffix, Style.EMPTY.fg(Theme.DIM))));
+                    new Span("  " + padRight(p.type(), maxType), Style.EMPTY.fg(Theme.DIM)),
+                    new Span("  " + padRight(p.logical(), maxLogical), Style.EMPTY.fg(Theme.DIM)),
+                    new Span("  " + padRight(p.repetition(), maxRepetition), Style.EMPTY.fg(Theme.DIM)),
+                    new Span("  " + colSuffix, Style.EMPTY.fg(Theme.DIM))));
         }
         Block block = Block.builder()
                 .title(" Schema (" + Plurals.format(model.columnCount(), "leaf column", "leaf columns")
@@ -332,10 +343,16 @@ public final class SchemaScreen {
         return new ScreenState.Schema(selection, expanded, filter, searching);
     }
 
-    private static String typeOf(SchemaNode node) {
+    /// Decomposed type-info columns (physical type or group tag, optional
+    /// logical type, repetition). Each is padded to a per-column max so the
+    /// columns line up vertically across rows.
+    private record TypeParts(String type, String logical, String repetition) {
+    }
+
+    private static TypeParts typeOf(SchemaNode node) {
         if (node instanceof SchemaNode.PrimitiveNode p) {
-            String logical = p.logicalType() != null ? " " + p.logicalType().toString() : "";
-            return p.type().name() + logical + "  " + p.repetitionType().name();
+            String logical = p.logicalType() != null ? p.logicalType().toString() : "";
+            return new TypeParts(p.type().name(), logical, p.repetitionType().name());
         }
         SchemaNode.GroupNode g = (SchemaNode.GroupNode) node;
         String tag;
@@ -351,6 +368,13 @@ public final class SchemaScreen {
         else {
             tag = "(group)";
         }
-        return tag + "  " + g.repetitionType().name();
+        return new TypeParts(tag, "", g.repetitionType().name());
+    }
+
+    private static String padRight(String s, int width) {
+        if (s.length() >= width) {
+            return s;
+        }
+        return s + " ".repeat(width - s.length());
     }
 }
