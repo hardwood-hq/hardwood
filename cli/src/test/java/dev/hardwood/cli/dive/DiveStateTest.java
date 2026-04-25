@@ -8,6 +8,7 @@
 package dev.hardwood.cli.dive;
 
 import java.nio.file.Path;
+import java.util.List;
 
 import org.junit.jupiter.api.AfterEach;
 import org.junit.jupiter.api.BeforeEach;
@@ -326,6 +327,25 @@ class DiveStateTest {
             // means the field / leaf confusion is back.
             if (!state.rows().isEmpty()) {
                 assertThat(state.rows().get(0)).hasSize(topLevelFieldCount);
+            }
+        }
+    }
+
+    @Test
+    void dataPreviewRendersNestedValuesStructurally() throws Exception {
+        // Regression: PqList / PqStruct / PqMap / PqVariant fall through to
+        // the JVM default toString, producing "dev.hardwood.internal.reader.…".
+        // The formatter now renders them as JSON-like text.
+        Path nested = Path.of(getClass().getResource("/nested_struct_test.parquet").getPath());
+        try (ParquetModel nestedModel = ParquetModel.open(InputFile.of(nested), nested.toString())) {
+            ScreenState.DataPreview state = DataPreviewScreen.initialState(nestedModel, 5);
+            for (List<String> row : state.rows()) {
+                for (String cell : row) {
+                    assertThat(cell)
+                            .as("cell value should not be a JVM hashcode form")
+                            .doesNotStartWith("dev.hardwood.internal")
+                            .doesNotStartWith("[B@");
+                }
             }
         }
     }

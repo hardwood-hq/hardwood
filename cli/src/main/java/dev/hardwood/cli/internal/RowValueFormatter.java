@@ -19,6 +19,13 @@ import java.util.UUID;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqList;
+import dev.hardwood.row.PqMap;
+import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
+import dev.hardwood.row.PqVariantArray;
+import dev.hardwood.row.PqVariantObject;
+import dev.hardwood.row.VariantType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -51,8 +58,9 @@ public final class RowValueFormatter {
             return "null";
         }
         if (field instanceof SchemaNode.GroupNode) {
-            // Nested group — no per-field logical type to dispatch on.
-            return String.valueOf(reader.getValue(fieldIndex));
+            // Nested group — render structurally rather than letting the JVM's
+            // default `Object.toString()` print "dev.hardwood.internal...".
+            return formatNested(reader.getValue(fieldIndex), 0);
         }
         SchemaNode.PrimitiveNode prim = (SchemaNode.PrimitiveNode) field;
         LogicalType lt = prim.logicalType();
@@ -179,6 +187,179 @@ public final class RowValueFormatter {
         catch (java.nio.charset.CharacterCodingException e) {
             return "0x" + HexFormat.of().formatHex(raw);
         }
+    }
+
+    private static final int MAX_NESTED_ELEMENTS = 3;
+    private static final int MAX_NESTED_DEPTH = 3;
+
+    /// Renders a nested value (`PqList`, `PqStruct`, `PqMap`, `PqVariant`,
+    /// `byte[]`, or any other [Object]) as compact JSON-like text. Capped at
+    /// [#MAX_NESTED_ELEMENTS] visible entries per collection and
+    /// [#MAX_NESTED_DEPTH] levels of recursion — the screen further truncates
+    /// the result to the cell width budget.
+    private static String formatNested(Object value, int depth) {
+        if (value == null) {
+            return "null";
+        }
+        if (depth >= MAX_NESTED_DEPTH) {
+            return "…";
+        }
+        if (value instanceof PqList list) {
+            return formatList(list, depth);
+        }
+        if (value instanceof PqStruct struct) {
+            return formatStruct(struct, depth);
+        }
+        if (value instanceof PqMap map) {
+            return formatMap(map, depth);
+        }
+        if (value instanceof PqVariant variant) {
+            return formatVariant(variant, depth);
+        }
+        if (value instanceof byte[] bytes) {
+            return formatRawBytes(bytes);
+        }
+        return String.valueOf(value);
+    }
+
+    private static String formatList(PqList list, int depth) {
+        if (list.isEmpty()) {
+            return "[]";
+        }
+        StringBuilder sb = new StringBuilder("[");
+        int shown = 0;
+        for (Object element : list.values()) {
+            if (shown == MAX_NESTED_ELEMENTS) {
+                sb.append(", …+").append(list.size() - MAX_NESTED_ELEMENTS);
+                break;
+            }
+            if (shown > 0) {
+                sb.append(", ");
+            }
+            sb.append(formatNested(element, depth + 1));
+            shown++;
+        }
+        sb.append("]");
+        return sb.toString();
+    }
+
+    private static String formatStruct(PqStruct struct, int depth) {
+        int count = struct.getFieldCount();
+        if (count == 0) {
+            return "{}";
+        }
+        StringBuilder sb = new StringBuilder("{");
+        int shown = 0;
+        for (int i = 0; i < count; i++) {
+            if (shown == MAX_NESTED_ELEMENTS) {
+                sb.append(", …+").append(count - MAX_NESTED_ELEMENTS);
+                break;
+            }
+            if (shown > 0) {
+                sb.append(", ");
+            }
+            String fieldName = struct.getFieldName(i);
+            Object fieldValue = struct.isNull(fieldName) ? null : struct.getValue(fieldName);
+            sb.append(fieldName).append(": ").append(formatNested(fieldValue, depth + 1));
+            shown++;
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private static String formatMap(PqMap map, int depth) {
+        if (map.isEmpty()) {
+            return "{}";
+        }
+        StringBuilder sb = new StringBuilder("{");
+        int shown = 0;
+        java.util.List<PqMap.Entry> entries = map.getEntries();
+        for (PqMap.Entry entry : entries) {
+            if (shown == MAX_NESTED_ELEMENTS) {
+                sb.append(", …+").append(entries.size() - MAX_NESTED_ELEMENTS);
+                break;
+            }
+            if (shown > 0) {
+                sb.append(", ");
+            }
+            sb.append(formatNested(entry.getKey(), depth + 1))
+                    .append(": ")
+                    .append(formatNested(entry.isValueNull() ? null : entry.getValue(), depth + 1));
+            shown++;
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private static String formatVariant(PqVariant variant, int depth) {
+        VariantType type = variant.type();
+        return switch (type) {
+            case NULL -> "null";
+            case BOOLEAN_TRUE -> "true";
+            case BOOLEAN_FALSE -> "false";
+            case INT8, INT16, INT32 -> Integer.toString(variant.asInt());
+            case INT64 -> Long.toString(variant.asLong());
+            case FLOAT -> Float.toString(variant.asFloat());
+            case DOUBLE -> Double.toString(variant.asDouble());
+            case DECIMAL4, DECIMAL8, DECIMAL16 -> variant.asDecimal().toPlainString();
+            case DATE -> variant.asDate().toString();
+            case TIME_NTZ -> variant.asTime().toString();
+            case TIMESTAMP, TIMESTAMP_NANOS -> variant.asTimestamp().toString();
+            case TIMESTAMP_NTZ, TIMESTAMP_NTZ_NANOS -> {
+                String s = variant.asTimestamp().toString();
+                yield s.endsWith("Z") ? s.substring(0, s.length() - 1) : s;
+            }
+            case STRING -> variant.asString();
+            case BINARY -> formatRawBytes(variant.asBinary());
+            case UUID -> variant.asUuid().toString();
+            case OBJECT -> formatVariantObject(variant.asObject(), depth);
+            case ARRAY -> formatVariantArray(variant.asArray(), depth);
+        };
+    }
+
+    private static String formatVariantObject(PqVariantObject obj, int depth) {
+        int count = obj.getFieldCount();
+        if (count == 0) {
+            return "{}";
+        }
+        StringBuilder sb = new StringBuilder("{");
+        int shown = 0;
+        for (int i = 0; i < count; i++) {
+            if (shown == MAX_NESTED_ELEMENTS) {
+                sb.append(", …+").append(count - MAX_NESTED_ELEMENTS);
+                break;
+            }
+            if (shown > 0) {
+                sb.append(", ");
+            }
+            String name = obj.getFieldName(i);
+            sb.append(name).append(": ").append(formatNested(obj.getVariant(name), depth + 1));
+            shown++;
+        }
+        sb.append("}");
+        return sb.toString();
+    }
+
+    private static String formatVariantArray(PqVariantArray array, int depth) {
+        int size = array.size();
+        if (size == 0) {
+            return "[]";
+        }
+        StringBuilder sb = new StringBuilder("[");
+        int shown = 0;
+        for (int i = 0; i < size; i++) {
+            if (shown == MAX_NESTED_ELEMENTS) {
+                sb.append(", …+").append(size - MAX_NESTED_ELEMENTS);
+                break;
+            }
+            if (shown > 0) {
+                sb.append(", ");
+            }
+            sb.append(formatNested(array.get(i), depth + 1));
+            shown++;
+        }
+        sb.append("]");
+        return sb.toString();
     }
 
     private static String formatTimestamp(Instant instant, LogicalType.TimestampType type) {
