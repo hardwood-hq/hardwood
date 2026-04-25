@@ -112,7 +112,9 @@ public final class Chrome {
                 .render(area, buffer);
     }
 
-    private static String breadcrumbLabel(ScreenState state, ParquetModel model) {
+    /// Package-private for tests so they can assert breadcrumb labels
+    /// per state without driving the full chrome render path.
+    public static String breadcrumbLabel(ScreenState state, ParquetModel model) {
         return switch (state) {
             case ScreenState.Overview ignored -> "Overview";
             case ScreenState.Schema ignored -> "Schema";
