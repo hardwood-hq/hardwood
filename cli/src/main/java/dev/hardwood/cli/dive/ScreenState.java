@@ -82,14 +82,17 @@ public sealed interface ScreenState {
     /// search substring matched against each page's formatted min / max;
     /// `searching` toggles inline filter-edit mode via `/`. `logicalTypes`
     /// controls whether Min / Max render via logical type (default) or raw
-    /// physical-type form — toggled with `t`.
+    /// physical-type form — toggled with `t`. `modalOpen` is the
+    /// full-Min/Max modal that opens on Enter when the selected row's
+    /// rendering was truncated.
     record ColumnIndexView(
             int rowGroupIndex,
             int columnIndex,
             int selection,
             String filter,
             boolean searching,
-            boolean logicalTypes) implements ScreenState {
+            boolean logicalTypes,
+            boolean modalOpen) implements ScreenState {
     }
 
     /// Page-location view for one column chunk.

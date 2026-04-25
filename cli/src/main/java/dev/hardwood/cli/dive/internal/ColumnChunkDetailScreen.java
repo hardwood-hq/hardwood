@@ -86,7 +86,7 @@ public final class ColumnChunkDetailScreen {
                 case PAGES -> stack.push(new ScreenState.Pages(
                         state.rowGroupIndex(), state.columnIndex(), 0, false, true));
                 case COLUMN_INDEX -> stack.push(new ScreenState.ColumnIndexView(
-                        state.rowGroupIndex(), state.columnIndex(), 0, "", false, true));
+                        state.rowGroupIndex(), state.columnIndex(), 0, "", false, true, false));
                 case OFFSET_INDEX -> stack.push(new ScreenState.OffsetIndexView(
                         state.rowGroupIndex(), state.columnIndex(), 0));
                 case DICTIONARY -> stack.push(new ScreenState.DictionaryView(

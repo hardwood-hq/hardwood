@@ -588,7 +588,7 @@ class DiveStateTest {
 
     @Test
     void columnIndexSlashEntersSearchMode() {
-        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", false, true));
+        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", false, true, false));
 
         ColumnIndexScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '/'), model, stack);
@@ -598,7 +598,7 @@ class DiveStateTest {
 
     @Test
     void columnIndexSearchAppendsCharsToFilter() {
-        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", true, true));
+        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", true, true, false));
 
         ColumnIndexScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '5'), model, stack);
@@ -608,7 +608,7 @@ class DiveStateTest {
 
     @Test
     void columnIndexSearchEscClearsFilter() {
-        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "abc", true, true));
+        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "abc", true, true, false));
 
         ColumnIndexScreen.handle(key(KeyCode.ESCAPE), model, stack);
 

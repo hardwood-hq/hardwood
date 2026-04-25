@@ -52,6 +52,13 @@ public final class ColumnIndexScreen {
 
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.ColumnIndexView state = (ScreenState.ColumnIndexView) stack.top();
+        if (state.modalOpen()) {
+            if (event.isCancel() || event.isConfirm()) {
+                stack.replaceTop(withModal(state, false));
+                return true;
+            }
+            return false;
+        }
         if (state.searching()) {
             return handleSearching(event, state, stack);
         }
@@ -86,8 +93,21 @@ public final class ColumnIndexScreen {
                 && !event.hasCtrl() && !event.hasAlt()) {
             stack.replaceTop(new ScreenState.ColumnIndexView(
                     state.rowGroupIndex(), state.columnIndex(), state.selection(),
-                    state.filter(), false, !state.logicalTypes()));
+                    state.filter(), false, !state.logicalTypes(), false));
             return true;
+        }
+        // Open the full Min/Max modal on Enter when the selected row's rendering
+        // was truncated. If both Min and Max fit within the table cell budget,
+        // the modal would just echo the row, so suppress.
+        if (event.isConfirm() && !filtered.isEmpty()) {
+            int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            String min = formatStat(ci.minValues().get(idx), col, state.logicalTypes());
+            String max = formatStat(ci.maxValues().get(idx), col, state.logicalTypes());
+            if (min.endsWith("…") || min.endsWith("...")
+                    || max.endsWith("…") || max.endsWith("...")) {
+                stack.replaceTop(withModal(state, true));
+                return true;
+            }
         }
         return false;
     }
@@ -184,10 +204,44 @@ public final class ColumnIndexScreen {
             tableState.select(Math.min(state.selection(), filtered.size() - 1));
         }
         table.render(split.get(2), buffer, tableState);
+
+        if (state.modalOpen() && !filtered.isEmpty()) {
+            int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            renderMinMaxModal(buffer, area, idx,
+                    ci.minValues().get(idx), ci.maxValues().get(idx),
+                    col, state.logicalTypes());
+        }
+    }
+
+    private static void renderMinMaxModal(Buffer buffer, Rect screenArea, int pageIndex,
+                                          byte[] minBytes, byte[] maxBytes,
+                                          ColumnSchema col, boolean logical) {
+        String min = minBytes == null ? "—" : IndexValueFormatter.format(minBytes, col, logical);
+        String max = maxBytes == null ? "—" : IndexValueFormatter.format(maxBytes, col, logical);
+
+        int width = Math.min(100, screenArea.width() - 4);
+        int height = Math.min(screenArea.height() - 2, 8);
+        int x = screenArea.left() + (screenArea.width() - width) / 2;
+        int y = screenArea.top() + (screenArea.height() - height) / 2;
+        Rect modal = new Rect(x, y, width, height);
+        dev.tamboui.widgets.Clear.INSTANCE.render(modal, buffer);
+
+        List<Line> lines = new ArrayList<>();
+        lines.add(Line.from(new Span(" Min ", Style.EMPTY.bold()), Span.raw(min)));
+        lines.add(Line.from(new Span(" Max ", Style.EMPTY.bold()), Span.raw(max)));
+        lines.add(Line.empty());
+        lines.add(Line.from(new Span(" Press Esc or Enter to close", Style.EMPTY.fg(Theme.DIM))));
+        Block block = Block.builder()
+                .title(" Page #" + pageIndex + " min / max ")
+                .borders(Borders.ALL)
+                .borderType(BorderType.ROUNDED)
+                .borderColor(Theme.ACCENT)
+                .build();
+        Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(modal, buffer);
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [/] search  [t] logical types  [Esc] back";
+        return "[↑↓] move  [Enter] view min/max  [/] search  [t] logical types  [Esc] back";
     }
 
     private static List<Integer> filteredPages(ColumnIndex ci, ColumnSchema col, String filter) {
@@ -236,7 +290,12 @@ public final class ColumnIndexScreen {
                                                      int selection, String filter, boolean searching) {
         return new ScreenState.ColumnIndexView(
                 state.rowGroupIndex(), state.columnIndex(), selection, filter, searching,
-                state.logicalTypes());
+                state.logicalTypes(), state.modalOpen());
+    }
+
+    private static ScreenState.ColumnIndexView withModal(ScreenState.ColumnIndexView s, boolean modal) {
+        return new ScreenState.ColumnIndexView(s.rowGroupIndex(), s.columnIndex(), s.selection(),
+                s.filter(), s.searching(), s.logicalTypes(), modal);
     }
 
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical) {
