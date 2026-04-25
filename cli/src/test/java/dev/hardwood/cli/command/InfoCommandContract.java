@@ -25,7 +25,7 @@ interface InfoCommandContract {
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
                 Format Version:    2
-                Created By:        parquet-cpp-arrow version 22.0.0
+                Created By:        parquet-cpp-arrow version
                 Row Groups:        1
                 Total Rows:        3
                 Uncompressed Size: 174 B
