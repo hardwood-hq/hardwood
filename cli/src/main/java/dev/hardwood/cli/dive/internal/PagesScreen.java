@@ -222,8 +222,13 @@ public final class PagesScreen {
         widths.add(new Constraint.Length(10));  // Uncomp
         widths.add(new Constraint.Length(10));  // Nulls
         if (hasAnyStats) {
-            widths.add(new Constraint.Fill(1)); // Min
-            widths.add(new Constraint.Fill(1)); // Max
+            // Fixed Length(20) so the cell width is known at format time
+            // and our `…` truncation indicator (added by formatStat when
+            // the value exceeds TABLE_STAT_MAX) is always visible. With
+            // Fill(1) the cell could end up narrower than our cap, in
+            // which case tamboui clipped past the `…` and hid it.
+            widths.add(new Constraint.Length(20)); // Min
+            widths.add(new Constraint.Length(20)); // Max
         }
         Table table = Table.builder()
                 .header(header)
@@ -299,7 +304,7 @@ public final class PagesScreen {
     /// so cap the formatted string ourselves and append `…` to make
     /// truncation visible. The page-header modal calls the un-capped
     /// `IndexValueFormatter.format` directly.
-    private static final int TABLE_STAT_MAX = 16;
+    private static final int TABLE_STAT_MAX = 20;
 
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical) {
         if (bytes == null) {
