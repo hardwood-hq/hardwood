@@ -116,8 +116,10 @@ public final class FooterScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.Footer state) {
-        // Block borders + 2 rows for trailing scroll hint = 4 chrome rows.
-        Keys.observeViewport(area.height() - 4);
+        // Block borders only — the in-body scroll hint was dropped earlier
+        // in favor of the keybar carrying that information, so the body
+        // chrome is just 2 rows (top + bottom border).
+        Keys.observeViewport(area.height() - 2);
         FooterBody body = bodyAndAnchors(model);
         // On the first render after entering the screen, state.cursor() may
         // point to an anchor the file doesn't actually have (the initial
@@ -132,7 +134,7 @@ public final class FooterScreen {
             }
         }
         List<Line> all = body.lines();
-        int viewport = Math.max(1, area.height() - 4);
+        int viewport = Math.max(1, area.height() - 2);
         int total = all.size();
         int maxScroll = Math.max(0, total - viewport);
         int cursorLine = switch (effective) {
