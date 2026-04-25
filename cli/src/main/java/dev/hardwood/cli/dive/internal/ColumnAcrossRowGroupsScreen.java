@@ -42,28 +42,35 @@ public final class ColumnAcrossRowGroupsScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.ColumnAcrossRowGroups state = (ScreenState.ColumnAcrossRowGroups) stack.top();
         int count = model.rowGroupCount();
+        boolean logical = state.logicalTypes();
         if (event.isUp()) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
-                    state.columnIndex(), Math.max(0, state.selection() - 1)));
+                    state.columnIndex(), Math.max(0, state.selection() - 1), logical));
             return true;
         }
         if (event.isDown()) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
-                    state.columnIndex(), Math.min(count - 1, state.selection() + 1)));
+                    state.columnIndex(), Math.min(count - 1, state.selection() + 1), logical));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), 0));
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), 0, logical));
             return true;
         }
         if (Keys.isJumpBottom(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), count - 1));
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), count - 1, logical));
             return true;
         }
         if (event.isConfirm() && count > 0) {
             stack.push(new ScreenState.ColumnChunkDetail(
                     state.selection(), state.columnIndex(),
                     ScreenState.ColumnChunkDetail.Pane.MENU, 0));
+            return true;
+        }
+        if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
+                    state.columnIndex(), state.selection(), !logical));
             return true;
         }
         return false;
@@ -78,10 +85,10 @@ public final class ColumnAcrossRowGroupsScreen {
             ColumnMetaData cmd = cc.metaData();
             Statistics stats = cmd.statistics();
             String min = stats != null && stats.minValue() != null
-                    ? IndexValueFormatter.format(stats.minValue(), col)
+                    ? IndexValueFormatter.format(stats.minValue(), col, state.logicalTypes())
                     : "—";
             String max = stats != null && stats.maxValue() != null
-                    ? IndexValueFormatter.format(stats.maxValue(), col)
+                    ? IndexValueFormatter.format(stats.maxValue(), col, state.logicalTypes())
                     : "—";
             String nulls = stats != null && stats.nullCount() != null
                     ? String.format("%,d", stats.nullCount())
@@ -102,9 +109,11 @@ public final class ColumnAcrossRowGroupsScreen {
         }
         Row header = Row.from("RG", "Rows", "Comp", "Ratio", "Dict", "CI", "Nulls", "Min", "Max")
                 .style(Style.EMPTY.bold());
+        String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" " + truncateLeft(col.fieldPath().toString(), 40)
-                        + " across " + Plurals.format(model.rowGroupCount(), "RG", "RGs") + " ")
+                        + " across " + Plurals.format(model.rowGroupCount(), "RG", "RGs")
+                        + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)
@@ -132,7 +141,7 @@ public final class ColumnAcrossRowGroupsScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] chunk detail  [Esc] back";
+        return "[↑↓] move  [Enter] chunk detail  [t] logical types  [Esc] back";
     }
 
     private static String truncateLeft(String s, int maxWidth) {

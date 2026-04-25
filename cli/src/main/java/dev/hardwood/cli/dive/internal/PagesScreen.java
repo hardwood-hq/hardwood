@@ -50,10 +50,11 @@ public final class PagesScreen {
 
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.Pages state = (ScreenState.Pages) stack.top();
+        boolean logical = state.logicalTypes();
         if (state.modalOpen()) {
             if (event.isCancel() || event.isConfirm()) {
                 stack.replaceTop(new ScreenState.Pages(
-                        state.rowGroupIndex(), state.columnIndex(), state.selection(), false));
+                        state.rowGroupIndex(), state.columnIndex(), state.selection(), false, logical));
                 return true;
             }
             return false;
@@ -62,28 +63,34 @@ public final class PagesScreen {
         if (event.isUp()) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(),
-                    Math.max(0, state.selection() - 1), false));
+                    Math.max(0, state.selection() - 1), false, logical));
             return true;
         }
         if (event.isDown()) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(),
-                    Math.min(headers.size() - 1, state.selection() + 1), false));
+                    Math.min(headers.size() - 1, state.selection() + 1), false, logical));
             return true;
         }
         if (Keys.isJumpTop(event) && !headers.isEmpty()) {
             stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(), 0, false));
+                    state.rowGroupIndex(), state.columnIndex(), 0, false, logical));
             return true;
         }
         if (Keys.isJumpBottom(event) && !headers.isEmpty()) {
             stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(), headers.size() - 1, false));
+                    state.rowGroupIndex(), state.columnIndex(), headers.size() - 1, false, logical));
             return true;
         }
         if (event.isConfirm() && !headers.isEmpty()) {
             stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(), state.selection(), true));
+                    state.rowGroupIndex(), state.columnIndex(), state.selection(), true, logical));
+            return true;
+        }
+        if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(new ScreenState.Pages(
+                    state.rowGroupIndex(), state.columnIndex(), state.selection(), false, !logical));
             return true;
         }
         return false;
@@ -121,8 +128,8 @@ public final class PagesScreen {
                     firstRow = String.format("%,d", loc.firstRowIndex());
                 }
                 if (columnIndex != null && dataPageIdx < columnIndex.getPageCount()) {
-                    min = formatStat(columnIndex.minValues().get(dataPageIdx), col);
-                    max = formatStat(columnIndex.maxValues().get(dataPageIdx), col);
+                    min = formatStat(columnIndex.minValues().get(dataPageIdx), col, state.logicalTypes());
+                    max = formatStat(columnIndex.maxValues().get(dataPageIdx), col, state.logicalTypes());
                     if (columnIndex.nullCounts() != null
                             && dataPageIdx < columnIndex.nullCounts().size()) {
                         nulls = String.format("%,d", columnIndex.nullCounts().get(dataPageIdx));
@@ -131,8 +138,8 @@ public final class PagesScreen {
                 else {
                     Statistics inline = inlineStats(h);
                     if (inline != null) {
-                        min = formatStat(inline.minValue(), col);
-                        max = formatStat(inline.maxValue(), col);
+                        min = formatStat(inline.minValue(), col, state.logicalTypes());
+                        max = formatStat(inline.maxValue(), col, state.logicalTypes());
                         if (inline.nullCount() != null) {
                             nulls = String.format("%,d", inline.nullCount());
                         }
@@ -171,9 +178,10 @@ public final class PagesScreen {
                 : Row.from("#", "Type", "First row", "Values", "Encoding", "Comp", "Uncomp", "Nulls")
                         .style(Style.EMPTY.bold());
         String titleSuffix = hasAnyStats ? "" : " (no column index)";
+        String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" Pages (" + Plurals.format(headers.size(), "page", "pages") + ")"
-                        + titleSuffix + " ")
+                        + titleSuffix + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)
@@ -207,12 +215,13 @@ public final class PagesScreen {
         table.render(area, buffer, tableState);
 
         if (state.modalOpen() && !headers.isEmpty()) {
-            renderHeaderModal(buffer, area, headers.get(state.selection()), state.selection(), col);
+            renderHeaderModal(buffer, area, headers.get(state.selection()), state.selection(), col,
+                    state.logicalTypes());
         }
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] page header  [Esc] back";
+        return "[↑↓] move  [Enter] page header  [t] logical types  [Esc] back";
     }
 
     private static int dataValues(PageHeader h) {
@@ -238,14 +247,15 @@ public final class PagesScreen {
         return "—";
     }
 
-    private static String formatStat(byte[] bytes, ColumnSchema col) {
+    private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical) {
         if (bytes == null) {
             return "—";
         }
-        return IndexValueFormatter.format(bytes, col);
+        return IndexValueFormatter.format(bytes, col, logical);
     }
 
-    private static void renderHeaderModal(Buffer buffer, Rect screenArea, PageHeader header, int index, ColumnSchema col) {
+    private static void renderHeaderModal(Buffer buffer, Rect screenArea, PageHeader header,
+                                          int index, ColumnSchema col, boolean logical) {
         int width = Math.min(60, screenArea.width() - 4);
         int height = Math.min(20, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
@@ -287,8 +297,8 @@ public final class PagesScreen {
         if (inline != null) {
             lines.add(Line.empty());
             lines.add(Line.from(new Span(" Inline statistics ", Style.EMPTY.bold())));
-            lines.add(kv("  Min", formatStat(inline.minValue(), col)));
-            lines.add(kv("  Max", formatStat(inline.maxValue(), col)));
+            lines.add(kv("  Min", formatStat(inline.minValue(), col, logical)));
+            lines.add(kv("  Max", formatStat(inline.maxValue(), col, logical)));
             if (inline.nullCount() != null) {
                 lines.add(kv("  Nulls", String.format("%,d", inline.nullCount())));
             }

@@ -126,7 +126,7 @@ public final class SchemaScreen {
                 stack.replaceTop(with(state, state.selection(), next, state.filter(), false));
                 return true;
             }
-            stack.push(new ScreenState.ColumnAcrossRowGroups(current.columnIndex(), 0));
+            stack.push(new ScreenState.ColumnAcrossRowGroups(current.columnIndex(), 0, true));
             return true;
         }
         return false;

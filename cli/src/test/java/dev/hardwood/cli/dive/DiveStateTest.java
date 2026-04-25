@@ -230,7 +230,7 @@ class DiveStateTest {
 
     @Test
     void columnAcrossRowGroupsEnterDrillsIntoChunkDetail() {
-        NavigationStack stack = rooted(new ScreenState.ColumnAcrossRowGroups(0, 0));
+        NavigationStack stack = rooted(new ScreenState.ColumnAcrossRowGroups(0, 0, true));
 
         ColumnAcrossRowGroupsScreen.handle(key(KeyCode.ENTER), model, stack);
 
@@ -275,7 +275,7 @@ class DiveStateTest {
 
     @Test
     void pagesEnterOpensModalAndCancelCloses() {
-        NavigationStack stack = rooted(new ScreenState.Pages(0, 0, 0, false));
+        NavigationStack stack = rooted(new ScreenState.Pages(0, 0, 0, false, true));
 
         PagesScreen.handle(key(KeyCode.ENTER), model, stack);
         assertThat(((ScreenState.Pages) stack.top()).modalOpen()).isTrue();
@@ -588,7 +588,7 @@ class DiveStateTest {
 
     @Test
     void columnIndexSlashEntersSearchMode() {
-        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", false));
+        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", false, true));
 
         ColumnIndexScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '/'), model, stack);
@@ -598,7 +598,7 @@ class DiveStateTest {
 
     @Test
     void columnIndexSearchAppendsCharsToFilter() {
-        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", true));
+        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "", true, true));
 
         ColumnIndexScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '5'), model, stack);
@@ -608,7 +608,7 @@ class DiveStateTest {
 
     @Test
     void columnIndexSearchEscClearsFilter() {
-        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "abc", true));
+        NavigationStack stack = rooted(new ScreenState.ColumnIndexView(0, 0, 0, "abc", true, true));
 
         ColumnIndexScreen.handle(key(KeyCode.ESCAPE), model, stack);
 

@@ -71,19 +71,25 @@ public sealed interface ScreenState {
     }
 
     /// List of pages inside one column chunk; Enter opens a modal page-header view.
-    record Pages(int rowGroupIndex, int columnIndex, int selection, boolean modalOpen)
+    /// `logicalTypes` controls whether stats columns render via logical type
+    /// (default) or raw physical-type form — toggled with `t`.
+    record Pages(int rowGroupIndex, int columnIndex, int selection, boolean modalOpen,
+                 boolean logicalTypes)
             implements ScreenState {
     }
 
     /// Per-page statistics view for one column chunk. `filter` is the live
     /// search substring matched against each page's formatted min / max;
-    /// `searching` toggles inline filter-edit mode via `/`.
+    /// `searching` toggles inline filter-edit mode via `/`. `logicalTypes`
+    /// controls whether Min / Max render via logical type (default) or raw
+    /// physical-type form — toggled with `t`.
     record ColumnIndexView(
             int rowGroupIndex,
             int columnIndex,
             int selection,
             String filter,
-            boolean searching) implements ScreenState {
+            boolean searching,
+            boolean logicalTypes) implements ScreenState {
     }
 
     /// Page-location view for one column chunk.
@@ -96,7 +102,10 @@ public sealed interface ScreenState {
 
     /// Cross-row-group view of one leaf column. `selection` drills into
     /// [ColumnChunkDetail] for the corresponding `(rowGroup, column)`.
-    record ColumnAcrossRowGroups(int columnIndex, int selection) implements ScreenState {
+    /// `logicalTypes` controls whether Min / Max render via logical type
+    /// (default) or raw physical-type form — toggled with `t`.
+    record ColumnAcrossRowGroups(int columnIndex, int selection, boolean logicalTypes)
+            implements ScreenState {
     }
 
     /// Dictionary entries for one column chunk. `selection` is the position

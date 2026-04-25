@@ -82,6 +82,13 @@ public final class ColumnIndexScreen {
             stack.replaceTop(with(state, filtered.size() - 1, state.filter(), false));
             return true;
         }
+        if (event.code() == KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(new ScreenState.ColumnIndexView(
+                    state.rowGroupIndex(), state.columnIndex(), state.selection(),
+                    state.filter(), false, !state.logicalTypes()));
+            return true;
+        }
         return false;
     }
 
@@ -146,13 +153,15 @@ public final class ColumnIndexScreen {
                     String.valueOf(idx),
                     Boolean.TRUE.equals(ci.nullPages().get(idx)) ? "yes" : "no",
                     nulls,
-                    formatStat(ci.minValues().get(idx), col),
-                    formatStat(ci.maxValues().get(idx), col)));
+                    formatStat(ci.minValues().get(idx), col, state.logicalTypes()),
+                    formatStat(ci.maxValues().get(idx), col, state.logicalTypes())));
         }
         Row header = Row.from("#", "NullPg", "Nulls", "Min", "Max").style(Style.EMPTY.bold());
+        String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" Column index (" + Plurals.format(ci.getPageCount(), "page", "pages")
-                        + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching") + ") ")
+                        + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching")
+                        + typeMode + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)
@@ -178,7 +187,7 @@ public final class ColumnIndexScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [/] search  [Esc] back";
+        return "[↑↓] move  [/] search  [t] logical types  [Esc] back";
     }
 
     private static List<Integer> filteredPages(ColumnIndex ci, ColumnSchema col, String filter) {
@@ -192,8 +201,8 @@ public final class ColumnIndexScreen {
                 out.add(i);
                 continue;
             }
-            String min = formatStat(ci.minValues().get(i), col).toLowerCase();
-            String max = formatStat(ci.maxValues().get(i), col).toLowerCase();
+            String min = formatStat(ci.minValues().get(i), col, true).toLowerCase();
+            String max = formatStat(ci.maxValues().get(i), col, true).toLowerCase();
             if (min.contains(needle) || max.contains(needle)) {
                 out.add(i);
             }
@@ -226,14 +235,15 @@ public final class ColumnIndexScreen {
     private static ScreenState.ColumnIndexView with(ScreenState.ColumnIndexView state,
                                                      int selection, String filter, boolean searching) {
         return new ScreenState.ColumnIndexView(
-                state.rowGroupIndex(), state.columnIndex(), selection, filter, searching);
+                state.rowGroupIndex(), state.columnIndex(), selection, filter, searching,
+                state.logicalTypes());
     }
 
-    private static String formatStat(byte[] bytes, ColumnSchema col) {
+    private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical) {
         if (bytes == null) {
             return "—";
         }
-        return IndexValueFormatter.format(bytes, col);
+        return IndexValueFormatter.format(bytes, col, logical);
     }
 
     private static void renderEmpty(Buffer buffer, Rect area, String message) {
