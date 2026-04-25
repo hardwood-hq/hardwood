@@ -223,12 +223,24 @@ public final class DataPreviewScreen {
         int windowEnd = Math.min(columnCount, state.columnScroll() + VISIBLE_COLUMNS);
         List<String> visible = state.columnNames().subList(state.columnScroll(), windowEnd);
 
+        // Compute the per-column width tamboui will end up giving each
+        // Fill(1) cell so our `…` truncation indicator stays visible
+        // instead of being clipped past. Account for borders (2),
+        // highlight symbol "▶ " (2), and column-spacing of 2 between
+        // each visible column. Capped at VALUE_TRUNCATE so very wide
+        // terminals don't render unbounded values.
+        int gutter = 2 + 2 + Math.max(0, (visible.size() - 1) * 2);
+        int perColWidth = visible.isEmpty()
+                ? VALUE_TRUNCATE
+                : Math.max(8, Math.min(VALUE_TRUNCATE,
+                        (area.width() - gutter) / visible.size()));
+
         List<Row> rows = new ArrayList<>();
         for (List<String> row : state.rows()) {
             List<String> sliced = row.subList(state.columnScroll(), windowEnd);
             String[] truncated = new String[sliced.size()];
             for (int i = 0; i < sliced.size(); i++) {
-                truncated[i] = truncate(sliced.get(i), VALUE_TRUNCATE);
+                truncated[i] = truncate(sliced.get(i), perColWidth);
             }
             rows.add(Row.from(truncated));
         }
