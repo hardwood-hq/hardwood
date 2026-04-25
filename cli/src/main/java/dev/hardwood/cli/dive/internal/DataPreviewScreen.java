@@ -153,7 +153,11 @@ public final class DataPreviewScreen {
         List<Row> rows = new ArrayList<>();
         for (List<String> row : state.rows()) {
             List<String> sliced = row.subList(state.columnScroll(), windowEnd);
-            rows.add(Row.from(sliced.toArray(new String[0])));
+            String[] truncated = new String[sliced.size()];
+            for (int i = 0; i < sliced.size(); i++) {
+                truncated[i] = truncate(sliced.get(i), VALUE_TRUNCATE);
+            }
+            rows.add(Row.from(truncated));
         }
         Row header = Row.from(visible.toArray(new String[0])).style(Style.EMPTY.bold());
 
@@ -196,7 +200,10 @@ public final class DataPreviewScreen {
     private static void renderRecordModal(Buffer buffer, Rect screenArea, ScreenState.DataPreview state) {
         List<String> values = state.rows().get(state.modalRow());
         List<String> names = state.columnNames();
-        int width = Math.min(100, screenArea.width() - 4);
+        // Grow the modal to fill the available area (minus 2-cell margin) so
+        // long values get the full screen width instead of being clipped to
+        // the narrow window the table cells lived in.
+        int width = Math.max(40, screenArea.width() - 4);
         int contentLines = names.size();
         int height = Math.min(screenArea.height() - 2, contentLines + 4);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
@@ -208,6 +215,10 @@ public final class DataPreviewScreen {
         for (String name : names) {
             maxKeyWidth = Math.max(maxKeyWidth, name.length());
         }
+        // Each line is " name<pad> : value"; subtract the borders (2), the
+        // single leading space, the maxKeyWidth, the " : " separator, and a
+        // trailing space to get the value budget.
+        int valueBudget = Math.max(8, width - 2 - 1 - maxKeyWidth - 3 - 1);
 
         List<Line> lines = new ArrayList<>();
         for (int i = 0; i < names.size(); i++) {
@@ -216,7 +227,7 @@ public final class DataPreviewScreen {
             String pad = " ".repeat(maxKeyWidth - name.length());
             lines.add(Line.from(
                     new Span(" " + name + pad + " : ", Style.EMPTY.bold()),
-                    Span.raw(value)));
+                    Span.raw(truncate(value, valueBudget))));
         }
         lines.add(Line.empty());
         lines.add(Line.from(new Span(
@@ -304,8 +315,7 @@ public final class DataPreviewScreen {
             model.readPreviewPage(firstRow, pageSize, reader -> {
                 List<String> row = new ArrayList<>(fieldCount);
                 for (int c = 0; c < fieldCount; c++) {
-                    row.add(truncate(RowValueFormatter.format(reader, c, topLevel.get(c), logicalTypes),
-                            VALUE_TRUNCATE));
+                    row.add(RowValueFormatter.format(reader, c, topLevel.get(c), logicalTypes));
                 }
                 rows.add(row);
             });
