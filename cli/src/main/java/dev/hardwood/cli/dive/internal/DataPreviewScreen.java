@@ -438,10 +438,16 @@ public final class DataPreviewScreen {
         return out;
     }
 
-    public static String keybarKeys() {
+    public static String keybarKeys(ScreenState.DataPreview state) {
+        if (state.modalRow() >= 0) {
+            // Modal owns the keys — its own footer hint is the source of
+            // truth. Suppress the screen's table keys here so the global
+            // keybar doesn't duplicate (and contradict, when the toggle
+            // suppresses navigation/expand) what the modal already shows.
+            return "";
+        }
         return "[↑↓] row  [Enter] view record  [←→] columns  "
-                + "[PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [t] logical types  [Esc] back"
-                + " · in modal: [↑↓] navigate · [Enter] expand · [Esc] close";
+                + "[PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [t] logical types  [Esc] back";
     }
 
     private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,

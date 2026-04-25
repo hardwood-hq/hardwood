@@ -109,9 +109,16 @@ public final class ColumnAcrossRowGroupsScreen {
             double ratio = cmd.totalCompressedSize() == 0
                     ? 0.0
                     : (double) cmd.totalUncompressedSize() / cmd.totalCompressedSize();
+            // Page count from OffsetIndex if present; without OI we'd need
+            // to walk page headers, which the chunk-detail screen does
+            // already — render "—" here.
+            dev.hardwood.metadata.OffsetIndex oi = cc.offsetIndexOffset() != null
+                    ? model.offsetIndex(i, state.columnIndex()) : null;
+            String pages = oi != null ? String.format("%,d", oi.pageLocations().size()) : "—";
             rows.add(Row.from(
                     String.valueOf(i),
                     String.format("%,d", rg.numRows()),
+                    pages,
                     Sizes.format(cmd.totalCompressedSize()),
                     String.format("%.1f×", ratio),
                     cmd.dictionaryPageOffset() != null ? "yes" : "no",
@@ -120,7 +127,7 @@ public final class ColumnAcrossRowGroupsScreen {
                     min,
                     max));
         }
-        Row header = Row.from("RG", "Rows", "Comp", "Ratio", "Dict", "CI", "Nulls", "Min", "Max")
+        Row header = Row.from("RG", "Rows", "Pages", "Comp", "Ratio", "Dict", "CI", "Nulls", "Min", "Max")
                 .style(Style.EMPTY.bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
@@ -136,6 +143,7 @@ public final class ColumnAcrossRowGroupsScreen {
                 .rows(rows)
                 .widths(new Constraint.Length(4),
                         new Constraint.Length(12),
+                        new Constraint.Length(8),
                         new Constraint.Length(12),
                         new Constraint.Length(6),
                         new Constraint.Length(5),

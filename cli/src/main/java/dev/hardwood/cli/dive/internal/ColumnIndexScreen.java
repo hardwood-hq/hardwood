@@ -255,7 +255,10 @@ public final class ColumnIndexScreen {
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(modal, buffer);
     }
 
-    public static String keybarKeys() {
+    public static String keybarKeys(ScreenState.ColumnIndexView state) {
+        if (state.modalOpen()) {
+            return "";
+        }
         return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] view min/max  [/] search  [t] logical types  [Esc] back";
     }
 

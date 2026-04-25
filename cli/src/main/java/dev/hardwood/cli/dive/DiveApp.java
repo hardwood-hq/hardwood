@@ -177,20 +177,20 @@ public final class DiveApp {
 
     private String keybarForActive() {
         return switch (stack.top()) {
-            case ScreenState.Overview ignored -> OverviewScreen.keybarKeys();
+            case ScreenState.Overview s -> OverviewScreen.keybarKeys(s);
             case ScreenState.Schema ignored -> SchemaScreen.keybarKeys();
             case ScreenState.RowGroups ignored -> RowGroupsScreen.keybarKeys();
             case ScreenState.RowGroupDetail ignored -> RowGroupDetailScreen.keybarKeys();
             case ScreenState.RowGroupIndexes ignored -> RowGroupIndexesScreen.keybarKeys();
             case ScreenState.ColumnChunks ignored -> ColumnChunksScreen.keybarKeys();
             case ScreenState.ColumnChunkDetail ignored -> ColumnChunkDetailScreen.keybarKeys();
-            case ScreenState.Pages ignored -> PagesScreen.keybarKeys();
-            case ScreenState.ColumnIndexView ignored -> ColumnIndexScreen.keybarKeys();
+            case ScreenState.Pages s -> PagesScreen.keybarKeys(s);
+            case ScreenState.ColumnIndexView s -> ColumnIndexScreen.keybarKeys(s);
             case ScreenState.OffsetIndexView ignored -> OffsetIndexScreen.keybarKeys();
             case ScreenState.Footer ignored -> FooterScreen.keybarKeys();
             case ScreenState.ColumnAcrossRowGroups ignored -> ColumnAcrossRowGroupsScreen.keybarKeys();
             case ScreenState.DictionaryView ignored -> DictionaryScreen.keybarKeys();
-            case ScreenState.DataPreview ignored -> DataPreviewScreen.keybarKeys();
+            case ScreenState.DataPreview s -> DataPreviewScreen.keybarKeys(s);
             case ScreenState.FileIndexes ignored -> FileIndexesScreen.keybarKeys();
         };
     }

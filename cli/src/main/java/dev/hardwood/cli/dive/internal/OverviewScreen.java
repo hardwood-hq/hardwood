@@ -193,7 +193,11 @@ public final class OverviewScreen {
         }
     }
 
-    public static String keybarKeys() {
+    public static String keybarKeys(ScreenState.Overview state) {
+        if (state.kvModalOpen()) {
+            // KV modal owns the keys; its own hint is the source of truth.
+            return "";
+        }
         return "[Tab] pane  [↑↓] move  [Enter] view entry";
     }
 
@@ -294,14 +298,19 @@ public final class OverviewScreen {
 
     private static String menuHint(MenuItem item, ParquetModel model) {
         return switch (item) {
-            case SCHEMA -> Plurals.format(model.columnCount(), "column", "columns")
-                    + "   · browse by column";
-            case ROW_GROUPS -> Plurals.format(model.rowGroupCount(), "group", "groups")
-                    + "    · browse by row group";
+            case SCHEMA -> padRight(Plurals.format(model.columnCount(), "column", "columns"),
+                    AXIS_HINT_WIDTH) + " · browse by column";
+            case ROW_GROUPS -> padRight(Plurals.format(model.rowGroupCount(), "group", "groups"),
+                    AXIS_HINT_WIDTH) + " · browse by row group";
             case FOOTER -> Sizes.format(FooterScreen.footerAndIndexBytes(model));
             case DATA_PREVIEW -> Plurals.format(model.facts().totalRows(), "row", "rows");
         };
     }
+
+    /// Width to pad the count+noun fragment so the trailing
+    /// "· browse by ..." text lines up across the Schema and Row groups
+    /// menu rows regardless of count length.
+    private static final int AXIS_HINT_WIDTH = 14;
 
     private static Line factsLine(String key, String value) {
         return Line.from(

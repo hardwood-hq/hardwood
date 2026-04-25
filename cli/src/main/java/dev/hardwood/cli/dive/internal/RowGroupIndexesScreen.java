@@ -71,10 +71,35 @@ public final class RowGroupIndexesScreen {
             stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(), count - 1));
             return true;
         }
-        if (event.isConfirm() && count > 0) {
-            stack.push(new ScreenState.ColumnChunkDetail(
-                    state.rowGroupIndex(), state.selection(),
-                    ScreenState.ColumnChunkDetail.Pane.MENU, 0));
+        // Enter drills into the most useful index for this chunk —
+        // ColumnIndex if present (the predicate-pushdown table), else
+        // OffsetIndex if present (the page-location table). The chunk's
+        // full detail menu (Pages / Dictionary / etc.) is reachable via
+        // Row groups → Column chunks instead — that path is the right
+        // place when the user wants chunk metadata broadly. From the
+        // Indexes view we stay in indexes.
+        // `o` drills into OffsetIndex specifically when both are present.
+        ColumnChunk selectedChunk = count > 0
+                ? model.rowGroup(state.rowGroupIndex()).columns().get(state.selection())
+                : null;
+        if (event.isConfirm() && selectedChunk != null) {
+            if (selectedChunk.columnIndexOffset() != null) {
+                stack.push(new ScreenState.ColumnIndexView(
+                        state.rowGroupIndex(), state.selection(), 0, "", false, true, false));
+                return true;
+            }
+            if (selectedChunk.offsetIndexOffset() != null) {
+                stack.push(new ScreenState.OffsetIndexView(
+                        state.rowGroupIndex(), state.selection(), 0));
+                return true;
+            }
+            return false;
+        }
+        if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 'o'
+                && !event.hasCtrl() && !event.hasAlt()
+                && selectedChunk != null && selectedChunk.offsetIndexOffset() != null) {
+            stack.push(new ScreenState.OffsetIndexView(
+                    state.rowGroupIndex(), state.selection(), 0));
             return true;
         }
         return false;
@@ -120,6 +145,6 @@ public final class RowGroupIndexesScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] chunk detail  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] column index  [o] offset index  [Esc] back";
     }
 }

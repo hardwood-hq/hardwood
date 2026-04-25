@@ -163,18 +163,20 @@ public final class FooterScreen {
         styleAnchor(lines, all, scroll, body.dictionaryLine(),
                 effective == ScreenState.Footer.Anchor.DICTIONARY, body.dictionaryCount() > 0);
 
-        lines.add(Line.empty());
-        String hint;
+        // Status indicator only when the body actually overflows. Key
+        // bindings live in the keybar, not duplicated here.
         if (scroll + viewport < total) {
-            hint = " ↓ " + (total - end) + " more lines · ↑↓ pick anchor · Enter drill · PgDn/PgUp scroll · Esc back";
+            lines.add(Line.empty());
+            lines.add(Line.from(new Span(
+                    " ↓ " + (total - end) + " more lines below — PgDn to scroll",
+                    Style.EMPTY.fg(Theme.DIM))));
         }
         else if (scroll > 0) {
-            hint = " ↑ " + scroll + " lines above · ↑↓ pick anchor · Enter drill · PgDn/PgUp scroll · Esc back";
+            lines.add(Line.empty());
+            lines.add(Line.from(new Span(
+                    " ↑ " + scroll + " lines above — PgUp to scroll",
+                    Style.EMPTY.fg(Theme.DIM))));
         }
-        else {
-            hint = " ↑↓ pick Column / Offset · Enter drill · Esc back";
-        }
-        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
 
         Block block = Block.builder()
                 .title(" Footer & indexes ")
