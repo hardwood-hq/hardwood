@@ -141,15 +141,15 @@ public final class ColumnChunkDetailScreen {
                 .map(Enum::name)
                 .collect(Collectors.joining(", "))));
         lines.add(Line.empty());
-        lines.add(fact("Data offset", String.valueOf(cmd.dataPageOffset())));
+        lines.add(fact("Data offset", String.format("%,d", cmd.dataPageOffset())));
         lines.add(fact("Dict offset", cmd.dictionaryPageOffset() != null
-                ? cmd.dictionaryPageOffset().toString()
+                ? String.format("%,d", cmd.dictionaryPageOffset())
                 : "—"));
         lines.add(fact("Column index offset", chunk.columnIndexOffset() != null
-                ? chunk.columnIndexOffset().toString()
+                ? String.format("%,d", chunk.columnIndexOffset())
                 : "—"));
         lines.add(fact("Offset index offset", chunk.offsetIndexOffset() != null
-                ? chunk.offsetIndexOffset().toString()
+                ? String.format("%,d", chunk.offsetIndexOffset())
                 : "—"));
         lines.add(Line.empty());
         lines.add(fact("Values", String.format("%,d", cmd.numValues())));
