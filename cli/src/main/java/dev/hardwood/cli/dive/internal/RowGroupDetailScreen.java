@@ -170,7 +170,7 @@ public final class RowGroupDetailScreen {
             MenuItem item = items[i];
             boolean selected = focused && i == state.menuSelection();
             String cursor = selected ? "▶ " : "  ";
-            Style labelStyle = selected ? Style.EMPTY.bold() : Style.EMPTY;
+            Style labelStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
             lines.add(Line.from(
                     new Span(cursor, labelStyle),
                     new Span(item.label, labelStyle)));

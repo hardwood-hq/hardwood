@@ -211,7 +211,7 @@ public final class OverviewScreen {
                 Map.Entry<String, String> entry = kv.get(i);
                 boolean selected = focused && i == state.kvSelection();
                 String marker = selected ? "▶ " : "  ";
-                Style keyStyle = selected ? Style.EMPTY.bold() : Style.EMPTY;
+                Style keyStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
                 lines.add(Line.from(
                         new Span(marker, keyStyle),
                         new Span(padRight(entry.getKey(), 16), keyStyle),
@@ -277,7 +277,7 @@ public final class OverviewScreen {
             String hint = menuHint(item, model);
             Style labelStyle = !item.enabled
                     ? Style.EMPTY.fg(Theme.DIM)
-                    : selected ? Style.EMPTY.bold() : Style.EMPTY;
+                    : selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
             Style hintStyle = Style.EMPTY.fg(Theme.DIM);
             lines.add(Line.from(
                     new Span(cursor, labelStyle),

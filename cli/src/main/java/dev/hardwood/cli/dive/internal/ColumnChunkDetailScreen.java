@@ -69,12 +69,30 @@ public final class ColumnChunkDetailScreen {
             return false;
         }
         MenuItem[] items = MenuItem.values();
+        // Snap an out-of-place selection to the first enabled item — covers
+        // the initial entry where menuSelection is 0 (PAGES) and (in
+        // principle) any later state where the chunk shape has changed.
+        if (!itemEnabled(items[state.menuSelection()], model, state)) {
+            int first = firstEnabledIndex(items, model, state);
+            if (first >= 0 && first != state.menuSelection()) {
+                state = state(state, first);
+                stack.replaceTop(state);
+            }
+        }
         if (event.isUp()) {
-            stack.replaceTop(state(state, Math.max(0, state.menuSelection() - 1)));
+            int prev = previousEnabledIndex(items, model, state, state.menuSelection());
+            if (prev < 0) {
+                return false;
+            }
+            stack.replaceTop(state(state, prev));
             return true;
         }
         if (event.isDown()) {
-            stack.replaceTop(state(state, Math.min(items.length - 1, state.menuSelection() + 1)));
+            int next = nextEnabledIndex(items, model, state, state.menuSelection());
+            if (next < 0) {
+                return false;
+            }
+            stack.replaceTop(state(state, next));
             return true;
         }
         if (event.isConfirm()) {
@@ -112,6 +130,36 @@ public final class ColumnChunkDetailScreen {
     private static ScreenState.ColumnChunkDetail state(ScreenState.ColumnChunkDetail state, int selection) {
         return new ScreenState.ColumnChunkDetail(
                 state.rowGroupIndex(), state.columnIndex(), state.focus(), selection);
+    }
+
+    private static int firstEnabledIndex(MenuItem[] items, ParquetModel model,
+                                          ScreenState.ColumnChunkDetail state) {
+        for (int i = 0; i < items.length; i++) {
+            if (itemEnabled(items[i], model, state)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int nextEnabledIndex(MenuItem[] items, ParquetModel model,
+                                         ScreenState.ColumnChunkDetail state, int from) {
+        for (int i = from + 1; i < items.length; i++) {
+            if (itemEnabled(items[i], model, state)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int previousEnabledIndex(MenuItem[] items, ParquetModel model,
+                                             ScreenState.ColumnChunkDetail state, int from) {
+        for (int i = from - 1; i >= 0; i--) {
+            if (itemEnabled(items[i], model, state)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static boolean itemEnabled(MenuItem item, ParquetModel model, ScreenState.ColumnChunkDetail state) {
@@ -171,15 +219,26 @@ public final class ColumnChunkDetailScreen {
         Block block = paneBlock(" Drill into ", focused);
         List<Line> lines = new ArrayList<>();
         MenuItem[] items = MenuItem.values();
+        // First-render snap: if state.menuSelection() points at a disabled
+        // item, paint the cursor on the first enabled item so the user
+        // sees a usable affordance immediately. handle() persists the
+        // snap into state on the next event.
+        int effectiveSelection = state.menuSelection();
+        if (!itemEnabled(items[effectiveSelection], model, state)) {
+            int first = firstEnabledIndex(items, model, state);
+            if (first >= 0) {
+                effectiveSelection = first;
+            }
+        }
         for (int i = 0; i < items.length; i++) {
             MenuItem item = items[i];
             boolean enabled = itemEnabled(item, model, state);
-            boolean selected = focused && i == state.menuSelection();
+            boolean selected = focused && i == effectiveSelection && enabled;
             String cursor = selected ? "▶ " : "  ";
             String hint = menuHint(item, model, state);
             Style labelStyle = !enabled
                     ? Style.EMPTY.fg(Theme.DIM)
-                    : selected ? Style.EMPTY.bold() : Style.EMPTY;
+                    : selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
             Style hintStyle = Style.EMPTY.fg(Theme.DIM);
             lines.add(Line.from(
                     new Span(cursor, labelStyle),

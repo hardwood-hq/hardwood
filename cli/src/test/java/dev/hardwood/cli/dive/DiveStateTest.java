@@ -265,14 +265,18 @@ class DiveStateTest {
     }
 
     @Test
-    void columnChunkDetailEnterOnDictionaryIsNoop() {
+    void columnChunkDetailDisabledSelectionSnapsToFirstEnabled() {
+        // The fixture chunk has no dictionary, so opening the menu with
+        // DICTIONARY selected should snap to the first enabled item
+        // (PAGES) on the next event rather than firing a no-op drill.
         NavigationStack stack = rooted(new ScreenState.ColumnChunkDetail(
                 0, 0, ScreenState.ColumnChunkDetail.Pane.MENU,
                 ColumnChunkDetailScreen.MenuItem.DICTIONARY.ordinal()));
 
         ColumnChunkDetailScreen.handle(key(KeyCode.ENTER), model, stack);
 
-        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnChunkDetail.class);
+        // First event snaps to PAGES, then drills.
+        assertThat(stack.top()).isInstanceOf(ScreenState.Pages.class);
     }
 
     @Test
