@@ -81,7 +81,7 @@ public final class FileIndexesScreen {
                 case OFFSET -> stack.push(new ScreenState.OffsetIndexView(
                         e.rowGroupIndex(), e.columnIndex(), 0));
                 case DICTIONARY -> stack.push(new ScreenState.DictionaryView(
-                        e.rowGroupIndex(), e.columnIndex(), 0, false, "", false, false));
+                        e.rowGroupIndex(), e.columnIndex(), 0, false, "", false, false, true));
             }
             return true;
         }

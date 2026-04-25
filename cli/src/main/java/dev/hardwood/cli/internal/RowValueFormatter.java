@@ -288,7 +288,17 @@ public final class RowValueFormatter {
     /// logical type. `rawValue` must be one of: `Integer`, `Long`, `Float`,
     /// `Double`, `byte[]` — matching the five `Dictionary` subtypes.
     public static String formatDictionaryValue(Object rawValue, ColumnSchema col) {
-        LogicalType lt = col.logicalType();
+        return formatDictionaryValue(rawValue, col, true);
+    }
+
+    /// Logical-type-aware variant of [#formatDictionaryValue]. When
+    /// `useLogicalType=false` the column's logical type is bypassed —
+    /// timestamps render as raw long micros, decimals as raw byte hex,
+    /// etc. Useful for inspecting the storage form on the dictionary
+    /// screen.
+    public static String formatDictionaryValue(Object rawValue, ColumnSchema col,
+                                                boolean useLogicalType) {
+        LogicalType lt = useLogicalType ? col.logicalType() : null;
         return switch (rawValue) {
             case Integer i -> formatInt(i, lt);
             case Long l -> formatLong(l, lt);

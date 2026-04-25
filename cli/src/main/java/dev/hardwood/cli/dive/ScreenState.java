@@ -67,8 +67,11 @@ public sealed interface ScreenState {
     record ColumnChunks(int rowGroupIndex, int selection) implements ScreenState {}
 
     /// All metadata for one `(rowGroup, column)` chunk. `focus` chooses between
-    /// the facts pane and the drill-into menu (phase 2 onwards).
-    record ColumnChunkDetail(int rowGroupIndex, int columnIndex, Pane focus, int menuSelection)
+    /// the facts pane and the drill-into menu. `logicalTypes` controls whether
+    /// the chunk-level Min / Max in the facts pane render via the column's
+    /// logical type (default) or the raw physical-type form — toggled with `t`.
+    record ColumnChunkDetail(int rowGroupIndex, int columnIndex, Pane focus, int menuSelection,
+                              boolean logicalTypes)
             implements ScreenState {
         public enum Pane { FACTS, MENU }
     }
@@ -144,7 +147,8 @@ public sealed interface ScreenState {
             boolean modalOpen,
             String filter,
             boolean searching,
-            boolean loadConfirmed) implements ScreenState {
+            boolean loadConfirmed,
+            boolean logicalTypes) implements ScreenState {
     }
 
     /// Projected rows. `firstRow` is the 0-based absolute index of the first row

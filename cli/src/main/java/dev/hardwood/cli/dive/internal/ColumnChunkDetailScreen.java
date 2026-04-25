@@ -62,7 +62,17 @@ public final class ColumnChunkDetailScreen {
                     ? ScreenState.ColumnChunkDetail.Pane.MENU
                     : ScreenState.ColumnChunkDetail.Pane.FACTS;
             stack.replaceTop(new ScreenState.ColumnChunkDetail(
-                    state.rowGroupIndex(), state.columnIndex(), next, state.menuSelection()));
+                    state.rowGroupIndex(), state.columnIndex(), next, state.menuSelection(),
+                    state.logicalTypes()));
+            return true;
+        }
+        // `t` toggles logical-type rendering on the facts pane, regardless of
+        // which pane has focus. Wire before the MENU-only check.
+        if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(new ScreenState.ColumnChunkDetail(
+                    state.rowGroupIndex(), state.columnIndex(), state.focus(),
+                    state.menuSelection(), !state.logicalTypes()));
             return true;
         }
         if (state.focus() != ScreenState.ColumnChunkDetail.Pane.MENU) {
@@ -108,7 +118,7 @@ public final class ColumnChunkDetailScreen {
                 case OFFSET_INDEX -> stack.push(new ScreenState.OffsetIndexView(
                         state.rowGroupIndex(), state.columnIndex(), 0));
                 case DICTIONARY -> stack.push(new ScreenState.DictionaryView(
-                        state.rowGroupIndex(), state.columnIndex(), 0, false, "", false, false));
+                        state.rowGroupIndex(), state.columnIndex(), 0, false, "", false, false, true));
             }
             return true;
         }
@@ -136,17 +146,21 @@ public final class ColumnChunkDetailScreen {
                 }
             }
         }
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        boolean hasLogical = col.logicalType() != null;
         return new Keys.Hints()
                 .add(true, "[Tab] pane")
                 .add(onMenu && enabledCount > 1, "[↑↓] move")
                 .add(onMenu && currentEnabled, "[Enter] drill")
+                .add(hasLogical, "[t] logical types")
                 .add(true, "[Esc] back")
                 .build();
     }
 
     private static ScreenState.ColumnChunkDetail state(ScreenState.ColumnChunkDetail state, int selection) {
         return new ScreenState.ColumnChunkDetail(
-                state.rowGroupIndex(), state.columnIndex(), state.focus(), selection);
+                state.rowGroupIndex(), state.columnIndex(), state.focus(), selection,
+                state.logicalTypes());
     }
 
     private static int firstEnabledIndex(MenuItem[] items, ParquetModel model,
@@ -223,8 +237,8 @@ public final class ColumnChunkDetailScreen {
                 : "—"));
         lines.add(fact("Uncompressed", Sizes.format(cmd.totalUncompressedSize())));
         lines.add(fact("Compressed", Sizes.format(cmd.totalCompressedSize())));
-        lines.add(fact("Min", stats != null ? formatStatValue(stats.minValue(), col) : "—"));
-        lines.add(fact("Max", stats != null ? formatStatValue(stats.maxValue(), col) : "—"));
+        lines.add(fact("Min", stats != null ? formatStatValue(stats.minValue(), col, state.logicalTypes()) : "—"));
+        lines.add(fact("Max", stats != null ? formatStatValue(stats.maxValue(), col, state.logicalTypes()) : "—"));
 
         Block block = paneBlock(" " + truncateLeft(Sizes.columnPath(cmd), 40)
                 + " (RG #" + state.rowGroupIndex() + ") ", focused);
@@ -308,13 +322,13 @@ public final class ColumnChunkDetailScreen {
                 Line.from(new Span("   " + path, Style.EMPTY.bold())));
     }
 
-    private static String formatStatValue(byte[] bytes, ColumnSchema col) {
+    private static String formatStatValue(byte[] bytes, ColumnSchema col, boolean useLogicalType) {
         if (bytes == null) {
             return "—";
         }
         // Facts pane has plenty of horizontal room — render the full value
         // without IndexValueFormatter's per-string 20-char cap.
-        return IndexValueFormatter.format(bytes, col, true, false);
+        return IndexValueFormatter.format(bytes, col, useLogicalType, false);
     }
 
     private static String padRight(String s, int width) {
