@@ -85,6 +85,7 @@ public final class ColumnChunksScreen {
                     : (double) cmd.totalUncompressedSize() / cmd.totalCompressedSize();
             dev.hardwood.metadata.LogicalType logical = model.schema().getColumn(i).logicalType();
             rows.add(Row.from(
+                    String.valueOf(i),
                     Sizes.columnPath(cmd),
                     cmd.type().name(),
                     logical != null ? logical.toString() : "—",
@@ -93,7 +94,7 @@ public final class ColumnChunksScreen {
                     String.format("%.1f×", ratio),
                     cmd.dictionaryPageOffset() != null ? "yes" : "no"));
         }
-        Row header = Row.from("Column", "Type", "Logical", "Codec", "Compressed", "Ratio", "Dict")
+        Row header = Row.from("#", "Column", "Type", "Logical", "Codec", "Compressed", "Ratio", "Dict")
                 .style(Style.EMPTY.bold());
         Block block = Block.builder()
                 .title(" RG #" + state.rowGroupIndex() + " column chunks "
@@ -107,7 +108,8 @@ public final class ColumnChunksScreen {
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
-                .widths(new Constraint.Fill(3),
+                .widths(new Constraint.Length(4),
+                        new Constraint.Fill(3),
                         new Constraint.Length(16),
                         new Constraint.Length(18),
                         new Constraint.Length(10),
