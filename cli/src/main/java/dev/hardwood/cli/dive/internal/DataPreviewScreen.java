@@ -48,7 +48,7 @@ public final class DataPreviewScreen {
     /// Loads the first page of rows for the given page size; used when the screen
     /// is first pushed onto the navigation stack.
     public static ScreenState.DataPreview initialState(ParquetModel model, int pageSize) {
-        return loadPage(model, 0, pageSize, 0);
+        return loadPage(model, 0, pageSize, 0, true);
     }
 
     public static boolean handle(KeyEvent event, ParquetModel model, dev.hardwood.cli.dive.NavigationStack stack) {
@@ -89,7 +89,8 @@ public final class DataPreviewScreen {
             if (nextFirst >= total) {
                 return false;
             }
-            stack.replaceTop(loadPage(model, nextFirst, state.pageSize(), state.columnScroll()));
+            stack.replaceTop(loadPage(model, nextFirst, state.pageSize(), state.columnScroll(),
+                    state.logicalTypes()));
             return true;
         }
         if (event.code() == KeyCode.PAGE_UP || (event.hasShift() && event.isUp())) {
@@ -97,7 +98,8 @@ public final class DataPreviewScreen {
             if (prevFirst == state.firstRow()) {
                 return false;
             }
-            stack.replaceTop(loadPage(model, prevFirst, state.pageSize(), state.columnScroll()));
+            stack.replaceTop(loadPage(model, prevFirst, state.pageSize(), state.columnScroll(),
+                    state.logicalTypes()));
             return true;
         }
         if (event.isLeft()) {
@@ -119,7 +121,8 @@ public final class DataPreviewScreen {
             if (state.firstRow() == 0) {
                 return false;
             }
-            stack.replaceTop(loadPage(model, 0, state.pageSize(), state.columnScroll()));
+            stack.replaceTop(loadPage(model, 0, state.pageSize(), state.columnScroll(),
+                    state.logicalTypes()));
             return true;
         }
         if (Keys.isJumpBottom(event)) {
@@ -127,7 +130,16 @@ public final class DataPreviewScreen {
             if (state.firstRow() == lastPageFirst) {
                 return false;
             }
-            stack.replaceTop(loadPage(model, lastPageFirst, state.pageSize(), state.columnScroll()));
+            stack.replaceTop(loadPage(model, lastPageFirst, state.pageSize(), state.columnScroll(),
+                    state.logicalTypes()));
+            return true;
+        }
+        // Toggle logical-type rendering. Modifier-free `t` (avoid clobbering
+        // typed text in any future search-mode here).
+        if (event.code() == KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(loadPage(model, state.firstRow(), state.pageSize(),
+                    state.columnScroll(), !state.logicalTypes()));
             return true;
         }
         return false;
@@ -147,9 +159,10 @@ public final class DataPreviewScreen {
 
         long total = model.facts().totalRows();
         long lastRow = state.firstRow() + state.rows().size();
-        String title = String.format(" Data preview (rows %,d–%,d of %,d · cols %d–%d of %d) ",
+        String typeMode = state.logicalTypes() ? "" : " · physical";
+        String title = String.format(" Data preview (rows %,d–%,d of %,d · cols %d–%d of %d%s) ",
                 state.firstRow() + 1, lastRow, total,
-                state.columnScroll() + 1, windowEnd, columnCount);
+                state.columnScroll() + 1, windowEnd, columnCount, typeMode);
 
         Block block = Block.builder()
                 .title(title)
@@ -226,7 +239,7 @@ public final class DataPreviewScreen {
 
     public static String keybarKeys() {
         return "[↑↓] row  [Enter] view record  [←→] columns  "
-                + "[PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [Esc] back";
+                + "[PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [t] logical types  [Esc] back";
     }
 
     private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,
@@ -242,7 +255,7 @@ public final class DataPreviewScreen {
             int next = state.modalRow() - 1;
             stack.replaceTop(new ScreenState.DataPreview(
                     state.firstRow(), state.pageSize(), state.columnNames(), state.rows(),
-                    state.columnScroll(), next, next));
+                    state.columnScroll(), next, next, state.logicalTypes()));
             return true;
         }
         if (event.isDown()) {
@@ -253,7 +266,7 @@ public final class DataPreviewScreen {
             int next = state.modalRow() + 1;
             stack.replaceTop(new ScreenState.DataPreview(
                     state.firstRow(), state.pageSize(), state.columnNames(), state.rows(),
-                    state.columnScroll(), next, next));
+                    state.columnScroll(), next, next, state.logicalTypes()));
             return true;
         }
         return false;
@@ -261,20 +274,21 @@ public final class DataPreviewScreen {
 
     private static ScreenState.DataPreview withSelectedRow(ScreenState.DataPreview s, int sel) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
-                s.columnScroll(), sel, s.modalRow());
+                s.columnScroll(), sel, s.modalRow(), s.logicalTypes());
     }
 
     private static ScreenState.DataPreview withModalRow(ScreenState.DataPreview s, int modalRow) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
-                s.columnScroll(), s.selectedRow(), modalRow);
+                s.columnScroll(), s.selectedRow(), modalRow, s.logicalTypes());
     }
 
     private static ScreenState.DataPreview withColumnScroll(ScreenState.DataPreview s, int scroll) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
-                scroll, s.selectedRow(), s.modalRow());
+                scroll, s.selectedRow(), s.modalRow(), s.logicalTypes());
     }
 
-    private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize, int columnScroll) {
+    private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize,
+                                                    int columnScroll, boolean logicalTypes) {
         // `RowReader` indexes into the root message's top-level fields, not into
         // leaf columns. For a flat schema those counts coincide; for a schema
         // with lists / structs / maps / variants at the root they diverge, and
@@ -290,7 +304,8 @@ public final class DataPreviewScreen {
             model.readPreviewPage(firstRow, pageSize, reader -> {
                 List<String> row = new ArrayList<>(fieldCount);
                 for (int c = 0; c < fieldCount; c++) {
-                    row.add(truncate(RowValueFormatter.format(reader, c, topLevel.get(c)), VALUE_TRUNCATE));
+                    row.add(truncate(RowValueFormatter.format(reader, c, topLevel.get(c), logicalTypes),
+                            VALUE_TRUNCATE));
                 }
                 rows.add(row);
             });
@@ -298,7 +313,8 @@ public final class DataPreviewScreen {
         catch (java.io.IOException e) {
             throw new java.io.UncheckedIOException(e);
         }
-        return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, columnScroll, 0, -1);
+        return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, columnScroll, 0, -1,
+                logicalTypes);
     }
 
     private static String truncate(String s, int max) {

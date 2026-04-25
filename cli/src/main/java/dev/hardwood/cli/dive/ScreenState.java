@@ -121,7 +121,9 @@ public sealed interface ScreenState {
     /// duplicates the projection so renderers don't re-derive it.
     /// `selectedRow` is the page-relative cursor (0-based) used for the
     /// full-record modal; `modalRow` is the page-relative index whose record
-    /// modal is currently open (-1 when closed).
+    /// modal is currently open (-1 when closed). `logicalTypes` controls
+    /// whether values render via their logical type (default) or the raw
+    /// physical-type form — toggled with `t`.
     record DataPreview(
             long firstRow,
             int pageSize,
@@ -129,7 +131,8 @@ public sealed interface ScreenState {
             java.util.List<java.util.List<String>> rows,
             int columnScroll,
             int selectedRow,
-            int modalRow)
+            int modalRow,
+            boolean logicalTypes)
             implements ScreenState {
         public DataPreview {
             columnNames = java.util.List.copyOf(columnNames);

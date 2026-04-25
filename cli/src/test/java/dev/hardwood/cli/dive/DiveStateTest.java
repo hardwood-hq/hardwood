@@ -406,6 +406,23 @@ class DiveStateTest {
     }
 
     @Test
+    void dataPreviewTogglesLogicalTypeWithT() {
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 3);
+        NavigationStack stack = rooted(initial);
+        assertThat(initial.logicalTypes()).isTrue();
+
+        DataPreviewScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 't'), model, stack);
+
+        assertThat(((ScreenState.DataPreview) stack.top()).logicalTypes()).isFalse();
+
+        DataPreviewScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 't'), model, stack);
+
+        assertThat(((ScreenState.DataPreview) stack.top()).logicalTypes()).isTrue();
+    }
+
+    @Test
     void dataPreviewEnterOpensRecordModalForSelectedRow() {
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 5);
         NavigationStack stack = rooted(initial);

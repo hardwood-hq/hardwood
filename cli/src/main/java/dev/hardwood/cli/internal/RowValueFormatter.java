@@ -52,8 +52,19 @@ public final class RowValueFormatter {
 
     /// Data preview entry point. Uses the reader's typed accessors when the
     /// field carries a known logical type; otherwise falls back to the raw
-    /// `getValue` + `toString`.
+    /// `getValue` + `toString`. Equivalent to `format(reader, i, field, true)`.
     public static String format(RowReader reader, int fieldIndex, SchemaNode field) {
+        return format(reader, fieldIndex, field, true);
+    }
+
+    /// Data preview entry point with explicit logical-type dispatch toggle.
+    /// `useLogicalType=true` is the default UX — render timestamps, decimals,
+    /// UUIDs, etc. as their canonical logical form. `useLogicalType=false`
+    /// skips the logical-type dispatch and renders the underlying physical
+    /// value (e.g. `1735689600000000` instead of `2025-01-01T00:00:00Z`),
+    /// useful for confirming the raw storage form. Nested groups always
+    /// render structurally — the toggle only affects primitive leaves.
+    public static String format(RowReader reader, int fieldIndex, SchemaNode field, boolean useLogicalType) {
         if (reader.isNull(fieldIndex)) {
             return "null";
         }
@@ -63,6 +74,9 @@ public final class RowValueFormatter {
             return formatNested(reader.getValue(fieldIndex), 0);
         }
         SchemaNode.PrimitiveNode prim = (SchemaNode.PrimitiveNode) field;
+        if (!useLogicalType) {
+            return formatPhysical(reader, fieldIndex);
+        }
         LogicalType lt = prim.logicalType();
         if (lt instanceof LogicalType.TimestampType ts) {
             return formatTimestamp(reader.getTimestamp(fieldIndex), ts);
@@ -98,6 +112,18 @@ public final class RowValueFormatter {
         // `String.valueOf(byte[])` would emit the JVM's array-hashcode form
         // ([B@...). Render printable UTF-8 as text, else 0x-hex — mirrors how
         // IndexValueFormatter handles raw-byte stats.
+        Object raw = reader.getValue(fieldIndex);
+        if (raw instanceof byte[] bytes) {
+            return formatRawBytes(bytes);
+        }
+        return String.valueOf(raw);
+    }
+
+    /// Renders a value as its underlying physical-type text. Bypasses
+    /// logical-type dispatch — used when the user toggles logical rendering
+    /// off to inspect storage form. byte[]s still hex-render so cells aren't
+    /// "[B@" — that's not "physical" rendering, just sane fallback.
+    private static String formatPhysical(RowReader reader, int fieldIndex) {
         Object raw = reader.getValue(fieldIndex);
         if (raw instanceof byte[] bytes) {
             return formatRawBytes(bytes);
