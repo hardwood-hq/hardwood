@@ -106,7 +106,7 @@ public final class DataPreviewScreen {
         // the reader indexes into fields, not leaves, so leaf count would overshoot).
         int columnCount = state.columnNames().size();
         if (state.modalRow() >= 0) {
-            return handleModal(event, state, stack);
+            return handleModal(event, state, stack, model);
         }
         // Plain ↑/↓ moves the selected-row cursor inside the current page; Shift+↑/↓
         // pages (handled by the PgDn/PgUp branches below). Enter opens the
@@ -266,11 +266,12 @@ public final class DataPreviewScreen {
         }
         table.render(area, buffer, tableState);
         if (state.modalRow() >= 0 && state.modalRow() < state.rows().size()) {
-            renderRecordModal(buffer, area, state);
+            renderRecordModal(buffer, area, model, state);
         }
     }
 
-    private static void renderRecordModal(Buffer buffer, Rect screenArea, ScreenState.DataPreview state) {
+    private static void renderRecordModal(Buffer buffer, Rect screenArea, ParquetModel model,
+                                          ScreenState.DataPreview state) {
         List<String> values = state.rows().get(state.modalRow());
         List<String> expanded = state.expandedRows().get(state.modalRow());
         List<String> names = state.columnNames();
@@ -375,9 +376,18 @@ public final class DataPreviewScreen {
         // Hint is tiered: drop "↑↓ navigate" when navigation has no effect
         // (cursor is hidden because content fits AND nothing is expandable,
         // or content fits with only one line); drop "Enter expand" +
-        // "e/c all" when no field has a multi-line expanded form.
+        // "e/c all" when no field has a multi-line expanded form;
+        // include "t logical types" only when at least one column has a
+        // logical type.
         boolean canNavigate = showCursor && totalLines > 1;
         boolean canExpand = canExpandAny;
+        boolean anyLogical = false;
+        for (SchemaNode child : model.schema().getRootNode().children()) {
+            if (child instanceof SchemaNode.PrimitiveNode p && p.logicalType() != null) {
+                anyLogical = true;
+                break;
+            }
+        }
         List<String> segments = new ArrayList<>();
         if (scroll + viewport < totalLines) {
             segments.add(" ↓ " + (totalLines - end) + " more lines");
@@ -391,6 +401,9 @@ public final class DataPreviewScreen {
         if (canExpand) {
             segments.add("Enter expand");
             segments.add("e/c all");
+        }
+        if (anyLogical) {
+            segments.add("t logical types");
         }
         segments.add("Esc close");
         String hint = String.join(" · ", segments);
@@ -466,7 +479,8 @@ public final class DataPreviewScreen {
     }
 
     private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,
-                                       dev.hardwood.cli.dive.NavigationStack stack) {
+                                       dev.hardwood.cli.dive.NavigationStack stack,
+                                       ParquetModel model) {
         // Inside the modal, ↑/↓ navigate the modal's content one line at a
         // time (collapsed field = 1 line, expanded field = N lines), so a
         // long expansion can be scrolled and the next field below it
@@ -507,6 +521,22 @@ public final class DataPreviewScreen {
             int field = fieldForLine(state, state.modalCursorLine());
             int newCursor = firstLineForField(state, Set.of(), field);
             stack.replaceTop(withExpansion(state, Set.of(), newCursor));
+            return true;
+        }
+        // `t` toggles logical-type rendering. Re-loads the current page
+        // with the new flag and preserves the modal-state fields
+        // (selectedRow, modalRow, expandedColumns, cursorLine) so the
+        // user stays put.
+        if (event.code() == KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            boolean nextLogical = !state.logicalTypes();
+            ScreenState.DataPreview reloaded = loadPage(model, state.firstRow(),
+                    state.pageSize(), state.columnScroll(), nextLogical);
+            stack.replaceTop(new ScreenState.DataPreview(
+                    reloaded.firstRow(), reloaded.pageSize(), reloaded.columnNames(),
+                    reloaded.rows(), reloaded.expandedRows(), reloaded.columnScroll(),
+                    state.selectedRow(), state.modalRow(), nextLogical,
+                    state.expandedColumns(), state.modalCursorLine()));
             return true;
         }
         if (event.isUp()) {

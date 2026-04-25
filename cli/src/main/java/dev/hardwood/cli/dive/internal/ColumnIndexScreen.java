@@ -52,6 +52,17 @@ public final class ColumnIndexScreen {
 
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.ColumnIndexView state = (ScreenState.ColumnIndexView) stack.top();
+        // `t` toggles logical-type rendering at any time, including while
+        // the Min/Max modal is open. The modal renders its values via the
+        // same logical/physical flag, so the toggle has visible effect
+        // without needing to close first.
+        if (event.code() == KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(new ScreenState.ColumnIndexView(
+                    state.rowGroupIndex(), state.columnIndex(), state.selection(),
+                    state.filter(), false, !state.logicalTypes(), state.modalOpen()));
+            return true;
+        }
         if (state.modalOpen()) {
             if (event.isCancel() || event.isConfirm()) {
                 stack.replaceTop(withModal(state, false));
@@ -98,13 +109,6 @@ public final class ColumnIndexScreen {
         }
         if (Keys.isJumpBottom(event) && !filtered.isEmpty()) {
             stack.replaceTop(with(state, filtered.size() - 1, state.filter(), false));
-            return true;
-        }
-        if (event.code() == KeyCode.CHAR && event.character() == 't'
-                && !event.hasCtrl() && !event.hasAlt()) {
-            stack.replaceTop(new ScreenState.ColumnIndexView(
-                    state.rowGroupIndex(), state.columnIndex(), state.selection(),
-                    state.filter(), false, !state.logicalTypes(), false));
             return true;
         }
         // Open the full Min/Max modal on Enter only when at least one of the
@@ -248,7 +252,9 @@ public final class ColumnIndexScreen {
         lines.add(Line.from(new Span(" Min ", Style.EMPTY.bold()), Span.raw(min)));
         lines.add(Line.from(new Span(" Max ", Style.EMPTY.bold()), Span.raw(max)));
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Press Esc or Enter to close", Style.EMPTY.fg(Theme.DIM))));
+        boolean hasLogical = col.logicalType() != null;
+        String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
+        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
         Block block = Block.builder()
                 .title(" Page #" + pageIndex + " min / max ")
                 .borders(Borders.ALL)

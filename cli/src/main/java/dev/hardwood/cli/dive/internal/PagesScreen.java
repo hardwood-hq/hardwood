@@ -359,7 +359,9 @@ public final class PagesScreen {
             }
         }
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Press Esc or Enter to close", Style.EMPTY.fg(Theme.DIM))));
+        boolean hasLogical = col.logicalType() != null;
+        String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
+        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
 
         Block block = Block.builder()
                 .title(" Page #" + index + " header ")

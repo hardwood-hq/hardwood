@@ -77,6 +77,14 @@ public final class DictionaryScreen {
             }
             return false;
         }
+        // `t` toggles logical-type rendering at any time, including while
+        // the full-value modal is open. The modal value re-renders with
+        // the new flag.
+        if (event.code() == KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(withLogical(state, !state.logicalTypes()));
+            return true;
+        }
         if (state.modalOpen()) {
             if (event.isCancel() || event.isConfirm()) {
                 stack.replaceTop(with(state, state.selection(), false, state.filter(), false));
@@ -133,11 +141,6 @@ public final class DictionaryScreen {
                 return false;
             }
             stack.replaceTop(with(state, state.selection(), true, state.filter(), false));
-            return true;
-        }
-        if (event.code() == KeyCode.CHAR && event.character() == 't'
-                && !event.hasCtrl() && !event.hasAlt()) {
-            stack.replaceTop(withLogical(state, !state.logicalTypes()));
             return true;
         }
         return false;
@@ -405,7 +408,9 @@ public final class DictionaryScreen {
         lines.add(Line.empty());
         lines.add(Line.from(Span.raw(" " + full)));
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Press Esc or Enter to close", Style.EMPTY.fg(Theme.DIM))));
+        boolean hasLogical = col.logicalType() != null;
+        String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
+        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
 
         Block block = Block.builder()
                 .title(" Entry #" + index + " ")
