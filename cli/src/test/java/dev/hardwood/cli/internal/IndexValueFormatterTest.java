@@ -66,6 +66,40 @@ class IndexValueFormatterTest {
         assertThat(IndexValueFormatter.format(new byte[0], stringColumn())).isEqualTo("\"\"");
     }
 
+    @Test
+    void rendersTimestampMicrosLogically() {
+        ColumnSchema col = timestampColumn(true, LogicalType.TimeUnit.MICROS);
+        // 2025-01-01T00:00:00Z = 1735689600 seconds = 1735689600_000_000 micros, little-endian INT64
+        long micros = 1735689600_000_000L;
+        byte[] bytes = new byte[8];
+        for (int i = 0; i < 8; i++) {
+            bytes[i] = (byte) (micros >> (i * 8));
+        }
+        assertThat(IndexValueFormatter.format(bytes, col)).isEqualTo("2025-01-01T00:00:00Z");
+    }
+
+    @Test
+    void physicalModeRendersTimestampAsRawLong() {
+        ColumnSchema col = timestampColumn(true, LogicalType.TimeUnit.MICROS);
+        long micros = 1735689600_000_000L;
+        byte[] bytes = new byte[8];
+        for (int i = 0; i < 8; i++) {
+            bytes[i] = (byte) (micros >> (i * 8));
+        }
+        assertThat(IndexValueFormatter.format(bytes, col, false))
+                .isEqualTo(Long.toString(micros));
+    }
+
+    @Test
+    void rendersDateLogically() {
+        ColumnSchema col = new ColumnSchema(FieldPath.of("d"), PhysicalType.INT32,
+                RepetitionType.OPTIONAL, null, 0, 1, 0, new LogicalType.DateType());
+        // epoch day 20202 = 2025-04-24, little-endian INT32
+        int day = 20202;
+        byte[] bytes = new byte[]{(byte) day, (byte) (day >> 8), (byte) (day >> 16), (byte) (day >> 24)};
+        assertThat(IndexValueFormatter.format(bytes, col)).isEqualTo("2025-04-24");
+    }
+
     private static ColumnSchema stringColumn() {
         return new ColumnSchema(FieldPath.of("s"), PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
                 null, 0, 1, 0, new LogicalType.StringType());
@@ -74,5 +108,10 @@ class IndexValueFormatterTest {
     private static ColumnSchema intColumn() {
         return new ColumnSchema(FieldPath.of("i"), PhysicalType.INT32, RepetitionType.OPTIONAL,
                 null, 0, 1, 0, null);
+    }
+
+    private static ColumnSchema timestampColumn(boolean isUtc, LogicalType.TimeUnit unit) {
+        return new ColumnSchema(FieldPath.of("ts"), PhysicalType.INT64, RepetitionType.OPTIONAL,
+                null, 0, 1, 0, new LogicalType.TimestampType(isUtc, unit));
     }
 }

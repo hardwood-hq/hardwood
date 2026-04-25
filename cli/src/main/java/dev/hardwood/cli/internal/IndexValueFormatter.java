@@ -11,6 +11,9 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.time.LocalDate;
+import java.time.LocalTime;
 import java.util.HexFormat;
 import java.util.UUID;
 
@@ -31,13 +34,21 @@ public final class IndexValueFormatter {
     }
 
     public static String format(byte[] bytes, ColumnSchema col) {
+        return format(bytes, col, true);
+    }
+
+    /// Logical-type-aware variant. When `useLogicalType=false`, dispatch is on
+    /// physical type only — TIMESTAMP / DATE / TIME / DECIMAL / UUID columns
+    /// then render as raw int / long / hex form, useful for confirming the
+    /// underlying storage in the dive UI.
+    public static String format(byte[] bytes, ColumnSchema col, boolean useLogicalType) {
         if (bytes == null) {
             return "-";
         }
         if (bytes.length == 0) {
             return isStringLike(col) ? "\"\"" : "";
         }
-        LogicalType lt = col.logicalType();
+        LogicalType lt = useLogicalType ? col.logicalType() : null;
 
         if (lt instanceof LogicalType.DecimalType dt) {
             BigInteger unscaled = switch (col.type()) {
@@ -46,6 +57,36 @@ public final class IndexValueFormatter {
                 default -> new BigInteger(bytes);
             };
             return new BigDecimal(unscaled, dt.scale()).toPlainString();
+        }
+        if (lt instanceof LogicalType.TimestampType ts) {
+            long raw = col.type() == PhysicalType.INT32
+                    ? StatisticsDecoder.decodeInt(bytes)
+                    : StatisticsDecoder.decodeLong(bytes);
+            Instant instant = switch (ts.unit()) {
+                case MILLIS -> Instant.ofEpochMilli(raw);
+                case MICROS -> Instant.ofEpochSecond(
+                        Math.floorDiv(raw, 1_000_000L),
+                        Math.floorMod(raw, 1_000_000L) * 1_000L);
+                case NANOS -> Instant.ofEpochSecond(
+                        Math.floorDiv(raw, 1_000_000_000L),
+                        Math.floorMod(raw, 1_000_000_000L));
+            };
+            String s = instant.toString();
+            return ts.isAdjustedToUTC() ? s : (s.endsWith("Z") ? s.substring(0, s.length() - 1) : s);
+        }
+        if (lt instanceof LogicalType.DateType) {
+            return LocalDate.ofEpochDay(StatisticsDecoder.decodeInt(bytes)).toString();
+        }
+        if (lt instanceof LogicalType.TimeType t) {
+            long raw = col.type() == PhysicalType.INT32
+                    ? StatisticsDecoder.decodeInt(bytes)
+                    : StatisticsDecoder.decodeLong(bytes);
+            long nanosOfDay = switch (t.unit()) {
+                case MILLIS -> raw * 1_000_000L;
+                case MICROS -> raw * 1_000L;
+                case NANOS -> raw;
+            };
+            return LocalTime.ofNanoOfDay(nanosOfDay).toString();
         }
 
         return switch (col.type()) {
