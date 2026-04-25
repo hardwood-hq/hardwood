@@ -346,16 +346,17 @@ public final class FooterScreen {
                 enabledAnchors++;
             }
         }
-        boolean cursorEnabled = isEnabled(state.cursor(), body)
-                || (enabledAnchors > 0 && firstEnabledAnchor(body) == state.cursor());
-        // Body-overflow estimate using viewport stride (close enough; the
-        // exact body height only matters for visual scroll, not for
-        // whether scrolling is meaningful at all).
+        // The render path auto-snaps the visible cursor to the first enabled
+        // anchor when state.cursor() points at a disabled section, and so
+        // does handle() on the next event. The keybar should mirror that:
+        // [Enter] drill is available whenever ANY anchor is drillable, not
+        // only when state.cursor() (which may be the stale default COLUMN)
+        // happens to land on an enabled section.
         int total = body.lines().size();
         boolean overflows = total > Keys.viewportStride();
         return new Keys.Hints()
                 .add(enabledAnchors > 1, "[↑↓] pick anchor")
-                .add(cursorEnabled, "[Enter] drill")
+                .add(enabledAnchors > 0, "[Enter] drill")
                 .add(overflows, "[PgDn/PgUp or Shift+↓↑] scroll")
                 .add(overflows, "[g/G] top/bottom")
                 .add(true, "[Esc] back")
