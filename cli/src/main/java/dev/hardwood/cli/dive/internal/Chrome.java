@@ -118,17 +118,20 @@ public final class Chrome {
             case ScreenState.Schema ignored -> "Schema";
             case ScreenState.RowGroups ignored -> "Row groups";
             case ScreenState.RowGroupDetail d -> "RG #" + d.rowGroupIndex();
-            case ScreenState.RowGroupIndexes i -> "RG #" + i.rowGroupIndex() + " › Indexes";
-            case ScreenState.ColumnChunks cc -> "RG #" + cc.rowGroupIndex() + " › Column chunks";
-            // Use [col N] instead of the full path — the body of ColumnChunkDetail and
-            // ColumnAcrossRowGroups already displays the path; the chrome stops
-            // duplicating what the body shows and avoids overflow on deeply-nested paths.
-            case ScreenState.ColumnChunkDetail d -> "[col " + d.columnIndex() + "]";
+            // The previous frame (RowGroupDetail) already shows "RG #N";
+            // the indexes / column-chunks labels just say what the screen is.
+            case ScreenState.RowGroupIndexes ignored -> "Indexes";
+            case ScreenState.ColumnChunks ignored -> "Column chunks";
+            // Show the column's leaf name (last path segment); the body of
+            // ColumnChunkDetail / ColumnAcrossRowGroups also shows the full
+            // path, so the chrome label gives the friendly name and the
+            // body retains the disambiguation for nested fields.
+            case ScreenState.ColumnChunkDetail d -> columnLeafName(model, d.columnIndex());
             case ScreenState.Pages ignored -> "Pages";
             case ScreenState.ColumnIndexView ignored -> "Column index";
             case ScreenState.OffsetIndexView ignored -> "Offset index";
             case ScreenState.Footer ignored -> "Footer & indexes";
-            case ScreenState.ColumnAcrossRowGroups c -> "[col " + c.columnIndex() + "] across RGs";
+            case ScreenState.ColumnAcrossRowGroups c -> columnLeafName(model, c.columnIndex()) + " across RGs";
             case ScreenState.DictionaryView ignored -> "Dictionary";
             case ScreenState.DataPreview ignored -> "Data preview";
             case ScreenState.FileIndexes f -> switch (f.kind()) {
@@ -137,6 +140,20 @@ public final class Chrome {
                 case DICTIONARY -> "All dictionaries";
             };
         };
+    }
+
+    /// Leaf name of the column at the given leaf index — last segment of
+    /// the column path (e.g. `id`, `address.street.number → "number"`).
+    /// Long names are truncated from the left so the suffix stays
+    /// distinctive.
+    private static String columnLeafName(ParquetModel model, int columnIndex) {
+        String path = model.schema().getColumn(columnIndex).fieldPath().toString();
+        int dot = path.lastIndexOf('.');
+        String leaf = dot >= 0 ? path.substring(dot + 1) : path;
+        if (leaf.length() > 24) {
+            return "…" + leaf.substring(leaf.length() - 23);
+        }
+        return leaf;
     }
 
     /// Last path segment — for the top bar we want just the file name,
