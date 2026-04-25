@@ -444,6 +444,30 @@ class DiveStateTest {
     }
 
     @Test
+    void dataPreviewRowModalRightEnterOpensValueModal() {
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 5);
+        NavigationStack stack = rooted(initial);
+
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+        ScreenState.DataPreview opened = (ScreenState.DataPreview) stack.top();
+        assertThat(opened.modalRow()).isEqualTo(0);
+        assertThat(opened.modalColumn()).isEqualTo(0);
+        assertThat(opened.valueModalOpen()).isFalse();
+
+        DataPreviewScreen.handle(key(KeyCode.RIGHT), model, stack);
+        assertThat(((ScreenState.DataPreview) stack.top()).modalColumn()).isEqualTo(1);
+
+        DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
+        assertThat(((ScreenState.DataPreview) stack.top()).valueModalOpen()).isTrue();
+
+        // Esc inside the value modal returns to the row modal, not the table.
+        DataPreviewScreen.handle(key(KeyCode.ESCAPE), model, stack);
+        ScreenState.DataPreview back = (ScreenState.DataPreview) stack.top();
+        assertThat(back.valueModalOpen()).isFalse();
+        assertThat(back.modalRow()).isEqualTo(0);
+    }
+
+    @Test
     void dataPreviewRightScrollsColumnsOnlyWhenRoom() {
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 2);
         NavigationStack stack = rooted(initial);

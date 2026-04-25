@@ -138,7 +138,10 @@ public sealed interface ScreenState {
     /// full-record modal; `modalRow` is the page-relative index whose record
     /// modal is currently open (-1 when closed). `logicalTypes` controls
     /// whether values render via their logical type (default) or the raw
-    /// physical-type form — toggled with `t`.
+    /// physical-type form — toggled with `t`. `modalColumn` is the cursor
+    /// inside the record modal (which column is highlighted); pressing Enter
+    /// there opens the value modal — `valueModalOpen` is its visibility flag,
+    /// `valueModalScroll` its scroll position.
     record DataPreview(
             long firstRow,
             int pageSize,
@@ -147,7 +150,10 @@ public sealed interface ScreenState {
             int columnScroll,
             int selectedRow,
             int modalRow,
-            boolean logicalTypes)
+            boolean logicalTypes,
+            int modalColumn,
+            boolean valueModalOpen,
+            int valueModalScroll)
             implements ScreenState {
         public DataPreview {
             columnNames = java.util.List.copyOf(columnNames);
