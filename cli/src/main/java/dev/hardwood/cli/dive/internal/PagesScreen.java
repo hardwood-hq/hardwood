@@ -250,6 +250,7 @@ public final class PagesScreen {
         return new Keys.Hints()
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
                 .add(count > 0, "[Enter] page header")
                 .add(hasLogical, "[t] logical types")
                 .add(true, "[Esc] back")

@@ -263,6 +263,7 @@ public final class SchemaScreen {
         return new Keys.Hints()
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
                 .add(current != null, isGroup ? "[→/Enter] expand" : "[Enter] drill")
                 .add(expanded, "[←] collapse")
                 .add(hasGroups, "[e/c] all")

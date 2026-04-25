@@ -154,6 +154,7 @@ public final class RowGroupIndexesScreen {
         return new Keys.Hints()
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
                 .add(hasCi, "[Enter] column index")
                 .add(hasCi && hasOi, "[o] offset index")
                 .add(!hasCi && hasOi, "[Enter] offset index")

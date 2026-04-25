@@ -276,6 +276,7 @@ public final class ColumnIndexScreen {
         return new Keys.Hints()
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
                 .add(canExpand, "[Enter] view min/max")
                 .add(count > 0, "[/] search")
                 .add(hasLogical, "[t] logical types")

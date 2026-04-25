@@ -234,6 +234,7 @@ public final class DictionaryScreen {
         return new Keys.Hints()
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
                 .add(canExpand, "[Enter] full value")
                 .add(dict != null, "[/] search")
                 .add(true, "[Esc] back")
