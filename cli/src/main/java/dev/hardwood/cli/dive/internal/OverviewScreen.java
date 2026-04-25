@@ -64,11 +64,16 @@ public final class OverviewScreen {
                 return true;
             }
             int totalLines = kvModalLineCount(model, state);
-            // Plain ↑/↓ scroll one line; Shift+↑/↓ scroll a page. The Mac
-            // chord (no PgUp/PgDn dedicated keys) and the line variant share
-            // the same model — we don't know the modal viewport height here,
-            // so a "page" is approximated as 10 lines, matching the visible
-            // height the renderer settles on for modest terminals.
+            // Scroll is meaningful only when content overflows the modal
+            // viewport. Use Keys.viewportStride as a proxy for the modal's
+            // own viewport (the modal sizes to the screen body area).
+            // When content fits in full, ↑/↓ are no-ops — match the
+            // general "scroll enabled iff content > viewport" rule.
+            int viewport = Keys.viewportStride();
+            int maxScroll = Math.max(0, totalLines - viewport);
+            if (maxScroll == 0) {
+                return false;
+            }
             if (event.isUp() && !event.hasShift()) {
                 if (state.kvModalScroll() == 0) {
                     return false;
@@ -77,7 +82,7 @@ public final class OverviewScreen {
                 return true;
             }
             if (event.isDown() && !event.hasShift()) {
-                if (state.kvModalScroll() >= Math.max(0, totalLines - 1)) {
+                if (state.kvModalScroll() >= maxScroll) {
                     return false;
                 }
                 stack.replaceTop(withKvScroll(state, state.kvModalScroll() + 1));
@@ -88,8 +93,7 @@ public final class OverviewScreen {
                 return true;
             }
             if (event.isDown() && event.hasShift()) {
-                int max = Math.max(0, totalLines - 1);
-                stack.replaceTop(withKvScroll(state, Math.min(max, state.kvModalScroll() + 10)));
+                stack.replaceTop(withKvScroll(state, Math.min(maxScroll, state.kvModalScroll() + 10)));
                 return true;
             }
             return false;
@@ -242,7 +246,8 @@ public final class OverviewScreen {
         // Reserve 2 rows for borders + 2 rows for the close hint and a blank
         // separator. The remaining inner height is the content viewport.
         int viewport = Math.max(1, height - 4);
-        int scroll = Math.max(0, Math.min(state.kvModalScroll(), Math.max(0, all.length - 1)));
+        int maxScroll = Math.max(0, all.length - viewport);
+        int scroll = Math.max(0, Math.min(state.kvModalScroll(), maxScroll));
         int end = Math.min(all.length, scroll + viewport);
 
         List<Line> lines = new ArrayList<>();
