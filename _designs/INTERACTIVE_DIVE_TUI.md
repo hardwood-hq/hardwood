@@ -1074,20 +1074,20 @@ verbatim; decisions / clarifications resolved in subsequent commits.
 
 #### Bugs
 
-- [ ] **Schema view: vertical alignment regression on the second and later columns.**
+- [x] **Schema view: vertical alignment regression on the second and later columns.**
   The vertical-alignment work landed on the first column (physical type), but the
   later columns (logical type / repetition / `[col N]` suffix) drift again because
   the alignment helper only pads up to the type-info span; subsequent spans don't
   get a column-anchored start. Fix: pre-compute widths for every aligned span, not
   just the first.
-- [ ] **Data preview: binary columns render as `[B@50b8ae8d`.** `RowReader.getValue`
+- [x] **Data preview: binary columns render as `[B@50b8ae8d`.** `RowReader.getValue`
   for a `binary` column returns `byte[]`; `String.valueOf` on it produces the JVM
   default array hashcode form. The dispatch core in `RowValueFormatter` only
   reaches the typed accessor for known logical types — physical-only `BINARY`
   with no logical type falls through to the raw `byte[]`. Fix: hex-render
   unknown `byte[]` in the formatter (truncated with ellipsis to the preview
   budget, mirroring how `IndexValueFormatter` renders raw bytes for stats).
-- [ ] **Data preview: list / map / variant columns render as
+- [x] **Data preview: list / map / variant columns render as
   `dev.hardwood.internal.rea…` / `dev.hardwood.internal.variant.P…`.** The
   nested-schema fix falls back to `Object.toString()` on the
   `PqStruct` / `PqList` / `PqMap` / `PqVariant` wrappers, which (apparently) don't
@@ -1098,41 +1098,40 @@ verbatim; decisions / clarifications resolved in subsequent commits.
 
 #### Screen / UX polish
 
-- [ ] **Schema: switch the expand/collapse-all shortcut from `E`/`C` to `e`/`c`.**
+- [x] **Schema: switch the expand/collapse-all shortcut from `E`/`C` to `e`/`c`.**
   No conflict with leaf-node typing because Schema's filter mode is the only
   text-input on this screen and the gate already routes typed letters into the
   filter when `searching` is true. Lower-case is what users will reach for first.
-- [ ] **Overview keybar: `Open KV` is unclear.** Rename — needs one-word
-  decision (e.g. `View entry`, `Show full value`, or split into a labelled
-  pane-context hint). Question pending.
-- [ ] **Data preview: full-record modal.** Open Enter on a row to show every
-  column for that row vertically (key + value), letting users see content that
-  doesn't fit horizontally on the table view. Reuses the truncate / Clear
-  pattern from the KV modal. Question pending: scoping (same row only, or
-  with `j`/`k` to step through rows in the modal).
-- [ ] **Column index view: Min / Max clipped without expand.** Same shape as
+- [x] **Overview keybar: `Open KV` is unclear.** Renamed to `[Enter] view entry`,
+  dropping the redundant `drill` (FACTS pane has no drill — that's the MENU pane's
+  affordance).
+- [x] **Data preview: full-record modal.** Plain ↑/↓ moves the row cursor in
+  the page (Shift+↓/↑ keeps its existing pager role). Enter opens a centered
+  modal listing every column for that row in schema order; ↑/↓ inside the
+  modal step neighbouring rows of the loaded slice without closing,
+  Esc/Enter dismisses.
+- [x] **Column index view: Min / Max clipped without expand.** Same shape as
   the Dictionary modal — Enter on a selected row should open a modal with the
   full Min and Max values; gated on whether either field was actually
   truncated (mirroring the Dictionary gate). Affects
   `Overview › Row groups › RG #N › Indexes › [col M]`.
-- [ ] **Column chunk detail: `Data offset` / `Dict offset` need thousand
+- [x] **Column chunk detail: `Data offset` / `Dict offset` need thousand
   separators.** `String.format("%,d", offset)` instead of `Long.toString(offset)`
   in `ColumnChunkDetailScreen`. Same shape as the row counts on the chrome
   top bar.
-- [ ] **Data preview: shortcut to toggle logical-type rendering on/off.**
-  When ON (default), `RowValueFormatter` runs as today. When OFF, fall back
-  to physical-type rendering — useful when a user wants to confirm the raw
-  storage form. Question pending: keybinding choice.
-- [ ] **Column-across-RGs Min / Max use physical not logical type.** The
-  cross-RG view goes through `IndexValueFormatter`, which renders byte[]
-  stats but doesn't dispatch on logical type. Same fix applied to Data
-  preview / Dictionary in the Round-1 work needs to reach this screen.
-  Likely affects other index-stats render sites too — audit Pages and
-  Column-index views once a logical-type-aware variant of
-  `IndexValueFormatter` exists. Decision question coupled to the toggle
-  above: should this respect the toggle?
-- [ ] **Key/value metadata modal: still clipped.** The Round-1 KV modal
-  rendered through Block + Paragraph at fixed dimensions; long ARROW:schema
-  hex dumps and large JSON blobs overflow. Needs scroll inside the modal
-  (`PgUp`/`PgDn` while it's open) and width-from-area sizing. Likely also
-  needs the modal to grow vertically before clamping.
+- [x] **Data preview: shortcut to toggle logical-type rendering on/off.**
+  Modifier-free `t` flips between logical and physical rendering. The
+  title gains a `· physical` suffix while the toggle is off so the active
+  mode is visible without consulting the keybar.
+- [x] **Column-across-RGs Min / Max use physical not logical type.**
+  `IndexValueFormatter` now dispatches on TIMESTAMP / DATE / TIME (already
+  did DECIMAL / UUID / unsigned IntType) and exposes a `useLogicalType`
+  parameter. Per-screen `t` toggle wired on Column-across-RGs, Column
+  index view, and Pages — each carries its own `logicalTypes` flag so a
+  user can compare a logical view in one place against a physical view
+  in another mid-dive.
+- [x] **Key/value metadata modal: still clipped.** Modal now grows to fill
+  the available area (minus 2-cell margin); content scrolls internally
+  with `↑/↓` (one line) and `Shift+↑/↓` (one page of 10 lines). Hint at
+  the bottom shows `↓ N more lines` when content extends below and
+  `↑ N lines above` when scrolled past the top.
