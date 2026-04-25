@@ -57,6 +57,12 @@ hardwood print -f data.parquet
 
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
+
+# Show dictionary entries for a column (first 50 entries per row group by default)
+hardwood inspect dictionary -f data.parquet -c category
+
+# Show all dictionary entries for a column
+hardwood inspect dictionary -f data.parquet -c category --limit 0
 ```
 
 ## Reading Files from S3
