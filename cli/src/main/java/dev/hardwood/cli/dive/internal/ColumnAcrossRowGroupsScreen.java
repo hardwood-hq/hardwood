@@ -132,7 +132,9 @@ public final class ColumnAcrossRowGroupsScreen {
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" " + truncateLeft(col.fieldPath().toString(), 40)
-                        + " across " + Plurals.format(model.rowGroupCount(), "RG", "RGs")
+                        + " · RG "
+                        + Plurals.rangeOf(state.selection(), model.rowGroupCount(),
+                                Keys.viewportStride())
                         + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)

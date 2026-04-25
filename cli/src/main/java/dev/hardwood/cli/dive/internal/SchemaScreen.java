@@ -244,8 +244,14 @@ public final class SchemaScreen {
                     new Span("  " + colSuffix, Style.EMPTY.fg(Theme.DIM))));
         }
         Block block = Block.builder()
-                .title(" Schema (" + Plurals.format(model.columnCount(), "leaf column", "leaf columns")
-                        + (filtering ? "; " + rows.size() + " matching" : "") + ") ")
+                .title(" Schema "
+                        + Plurals.rangeOf(state.selection(), rows.size(), Keys.viewportStride())
+                        + (filtering
+                                ? " · "
+                                        + Plurals.format(model.columnCount(), "leaf column", "leaf columns")
+                                        + " total"
+                                : "")
+                        + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)

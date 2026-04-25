@@ -200,8 +200,8 @@ public final class PagesScreen {
         String titleSuffix = hasAnyStats ? "" : " (no column index)";
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
-                .title(" Pages (" + Plurals.format(headers.size(), "page", "pages") + ")"
-                        + titleSuffix + typeMode + " ")
+                .title(" Pages " + Plurals.rangeOf(state.selection(), headers.size(),
+                        Keys.viewportStride()) + titleSuffix + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)

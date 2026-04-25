@@ -107,7 +107,8 @@ public final class RowGroupsScreen {
         Row header = Row.from("#", "Rows", "Uncompressed", "Compressed", "Ratio", "CI", "OI")
                 .style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" Row groups (" + model.rowGroupCount() + ") ")
+                .title(" Row groups " + Plurals.rangeOf(state.selection(),
+                        model.rowGroupCount(), Keys.viewportStride()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)

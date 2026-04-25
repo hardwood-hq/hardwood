@@ -193,9 +193,12 @@ public final class ColumnIndexScreen {
         Row header = Row.from("#", "Null page", "Nulls", "Min", "Max").style(Style.EMPTY.bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
-                .title(" Column index (" + Plurals.format(ci.getPageCount(), "page", "pages")
-                        + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching")
-                        + typeMode + ") ")
+                .title(" Column index "
+                        + Plurals.rangeOf(state.selection(), filtered.size(), Keys.viewportStride())
+                        + (state.filter().isEmpty()
+                                ? ""
+                                : " · " + Plurals.format(ci.getPageCount(), "page", "pages") + " total")
+                        + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)

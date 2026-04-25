@@ -191,8 +191,12 @@ public final class DictionaryScreen {
         }
         Row header = Row.from("#", "Value").style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" Dictionary (" + Plurals.format(dict.size(), "entry", "entries")
-                        + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching") + ") ")
+                .title(" Dictionary "
+                        + Plurals.rangeOf(state.selection(), filtered.size(), Keys.viewportStride())
+                        + (state.filter().isEmpty()
+                                ? ""
+                                : " · " + Plurals.format(dict.size(), "entry", "entries") + " total")
+                        + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)

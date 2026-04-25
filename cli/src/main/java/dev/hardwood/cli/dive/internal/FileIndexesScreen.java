@@ -153,10 +153,11 @@ public final class FileIndexesScreen {
             }
             default -> throw new IllegalStateException("kind: " + state.kind());
         }
+        String range = Plurals.rangeOf(state.selection(), entries.size(), Keys.viewportStride());
         String title = switch (state.kind()) {
-            case COLUMN -> " All column indexes (" + Plurals.format(entries.size(), "chunk", "chunks") + ") ";
-            case OFFSET -> " All offset indexes (" + Plurals.format(entries.size(), "chunk", "chunks") + ") ";
-            case DICTIONARY -> " All dictionaries (" + Plurals.format(entries.size(), "chunk", "chunks") + ") ";
+            case COLUMN -> " All column indexes " + range + " ";
+            case OFFSET -> " All offset indexes " + range + " ";
+            case DICTIONARY -> " All dictionaries " + range + " ";
         };
         Block block = Block.builder()
                 .title(title)

@@ -121,7 +121,9 @@ public final class RowGroupIndexesScreen {
         Row header = Row.from("Column", "CI offset", "CI bytes", "OI offset", "OI bytes")
                 .style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" RG #" + state.rowGroupIndex() + " index regions ")
+                .title(" RG #" + state.rowGroupIndex() + " index regions "
+                        + Plurals.rangeOf(state.selection(), rg.columns().size(),
+                                Keys.viewportStride()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)

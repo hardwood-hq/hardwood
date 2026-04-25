@@ -96,7 +96,10 @@ public final class ColumnChunksScreen {
         Row header = Row.from("Column", "Type", "Logical", "Codec", "Compressed", "Ratio", "Dict")
                 .style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" RG #" + state.rowGroupIndex() + " column chunks ")
+                .title(" RG #" + state.rowGroupIndex() + " column chunks "
+                        + Plurals.rangeOf(state.selection(),
+                                model.rowGroup(state.rowGroupIndex()).columns().size(),
+                                Keys.viewportStride()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)
