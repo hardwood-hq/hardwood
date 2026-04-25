@@ -163,20 +163,6 @@ public final class FooterScreen {
         styleAnchor(lines, all, scroll, body.dictionaryLine(),
                 effective == ScreenState.Footer.Anchor.DICTIONARY, body.dictionaryCount() > 0);
 
-        // Status indicator only when the body actually overflows. Key
-        // bindings live in the keybar, not duplicated here.
-        if (scroll + viewport < total) {
-            lines.add(Line.empty());
-            lines.add(Line.from(new Span(
-                    " ↓ " + (total - end) + " more lines below — PgDn to scroll",
-                    Style.EMPTY.fg(Theme.DIM))));
-        }
-        else if (scroll > 0) {
-            lines.add(Line.empty());
-            lines.add(Line.from(new Span(
-                    " ↑ " + scroll + " lines above — PgUp to scroll",
-                    Style.EMPTY.fg(Theme.DIM))));
-        }
 
         Block block = Block.builder()
                 .title(" Footer & indexes ")
@@ -353,7 +339,7 @@ public final class FooterScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] pick anchor  [Enter] drill  [PgDn/PgUp] scroll  [g/G] top/bottom  [Esc] back";
+        return "[↑↓] pick anchor  [Enter] drill  [PgDn/PgUp or Shift+↓↑] scroll  [g/G] top/bottom  [Esc] back";
     }
 
     /// Total bytes occupied by the footer thrift + page indexes + trailer —

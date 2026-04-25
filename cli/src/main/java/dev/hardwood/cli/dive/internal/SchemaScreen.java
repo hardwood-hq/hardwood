@@ -254,7 +254,7 @@ public final class SchemaScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [→/Enter] expand · drill  [←] collapse  [e/c] all  [/] search  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [→/Enter] expand · drill  [←] collapse  [e/c] all  [/] search  [Esc] back";
     }
 
     private static void renderSearchBar(Buffer buffer, Rect area, ScreenState.Schema state,
