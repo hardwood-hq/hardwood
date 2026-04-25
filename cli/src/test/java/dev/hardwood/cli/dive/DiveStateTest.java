@@ -730,6 +730,16 @@ class DiveStateTest {
     }
 
     @Test
+    void pagesTogglesLogicalTypesWithT() {
+        NavigationStack stack = rooted(new ScreenState.Pages(0, 0, 0, false, true));
+
+        PagesScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 't'), model, stack);
+
+        assertThat(((ScreenState.Pages) stack.top()).logicalTypes()).isFalse();
+    }
+
+    @Test
     void footerDownSkipsDisabledDictionaryAnchor() {
         // The fixture has 0 chunks with dictionary, so ↓ from OFFSET should
         // not advance to DICTIONARY (it's disabled).

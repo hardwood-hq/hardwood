@@ -139,12 +139,15 @@ public final class DiveApp {
     private void render(Frame frame) {
         Rect area = frame.area();
         Buffer buffer = frame.buffer();
-        Chrome.Regions regions = Chrome.split(area);
+        String screenKeys = keybarForActive();
+        String globalKeys = " [?] help   [q] quit";
+        int kbHeight = Chrome.keybarHeight(screenKeys, globalKeys, area.width());
+        Chrome.Regions regions = Chrome.split(area, kbHeight);
 
         Chrome.renderTopBar(buffer, regions.topBar(), model);
         Chrome.renderBreadcrumb(buffer, regions.breadcrumb(), stack, model);
         renderBody(buffer, regions.body());
-        Chrome.renderKeybar(buffer, regions.keybar(), keybarForActive(), " [?] help   [q] quit");
+        Chrome.renderKeybar(buffer, regions.keybar(), screenKeys, globalKeys);
 
         if (helpOpen) {
             HelpOverlay.render(buffer, area);

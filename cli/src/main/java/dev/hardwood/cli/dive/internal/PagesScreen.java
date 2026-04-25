@@ -51,6 +51,17 @@ public final class PagesScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.Pages state = (ScreenState.Pages) stack.top();
         boolean logical = state.logicalTypes();
+        // `t` toggles the logical-type rendering at any time — including
+        // while the page-header modal is open, since the modal renders
+        // inline statistics that need to refresh too. Handled before the
+        // modal-open short-circuit so the toggle isn't swallowed.
+        if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(new ScreenState.Pages(
+                    state.rowGroupIndex(), state.columnIndex(),
+                    state.selection(), state.modalOpen(), !logical));
+            return true;
+        }
         if (state.modalOpen()) {
             if (event.isCancel() || event.isConfirm()) {
                 stack.replaceTop(new ScreenState.Pages(
@@ -99,12 +110,6 @@ public final class PagesScreen {
         if (event.isConfirm() && !headers.isEmpty()) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(), state.selection(), true, logical));
-            return true;
-        }
-        if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
-                && !event.hasCtrl() && !event.hasAlt()) {
-            stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(), state.selection(), false, !logical));
             return true;
         }
         return false;

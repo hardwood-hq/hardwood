@@ -39,15 +39,30 @@ public final class Chrome {
     public record Regions(Rect topBar, Rect breadcrumb, Rect body, Rect keybar) {
     }
 
-    public static Regions split(Rect area) {
+    public static Regions split(Rect area, int keybarHeight) {
+        int kb = Math.max(1, keybarHeight);
         List<Rect> rows = Layout.vertical()
                 .constraints(
                         new Constraint.Length(1),
                         new Constraint.Length(1),
                         new Constraint.Fill(1),
-                        new Constraint.Length(1))
+                        new Constraint.Length(kb))
                 .split(area);
         return new Regions(rows.get(0), rows.get(1), rows.get(2), rows.get(3));
+    }
+
+    /// Number of rows the keybar text needs at the given viewport width.
+    /// Matches Paragraph's `WRAP_WORD` behavior so the body never gets a
+    /// row that the keybar then steals back.
+    public static int keybarHeight(String screenKeys, String globalKeys, int width) {
+        if (width <= 0) {
+            return 1;
+        }
+        // " " + screenKeys + KEYBAR_SEP + globalKeys
+        int total = 1 + (screenKeys != null ? screenKeys.length() : 0)
+                + KEYBAR_SEP.length()
+                + (globalKeys != null ? globalKeys.length() : 0);
+        return Math.max(1, (total + width - 1) / width);
     }
 
     public static void renderTopBar(Buffer buffer, Rect area, ParquetModel model) {
@@ -57,7 +72,7 @@ public final class Chrome {
         Line line = Line.from(
                 new Span(" hardwood dive ", bold.fg(Theme.ACCENT)),
                 new Span("│ ", dim),
-                Span.raw(model.displayPath()),
+                Span.raw(basename(model.displayPath())),
                 new Span(" │ ", dim),
                 Span.raw(Sizes.format(model.fileSizeBytes())),
                 new Span(" │ ", dim),
@@ -89,7 +104,12 @@ public final class Chrome {
                 new Span(screenKeys, dim),
                 new Span(KEYBAR_SEP, dim),
                 new Span(globalKeys, dim));
-        Paragraph.builder().text(convert(line)).left().build().render(area, buffer);
+        Paragraph.builder()
+                .text(convert(line))
+                .left()
+                .overflow(dev.tamboui.style.Overflow.WRAP_WORD)
+                .build()
+                .render(area, buffer);
     }
 
     private static String breadcrumbLabel(ScreenState state, ParquetModel model) {
@@ -117,6 +137,22 @@ public final class Chrome {
                 case DICTIONARY -> "All dictionaries";
             };
         };
+    }
+
+    /// Last path segment — for the top bar we want just the file name,
+    /// not the full path (cwd / workspace prefixes are noise). Works for
+    /// both `/` and `\` separators (paths come from user-supplied
+    /// filesystem strings or S3 keys; both use `/`, but local Windows
+    /// paths use `\`). Falls back to the input on degenerate cases.
+    private static String basename(String path) {
+        if (path == null || path.isEmpty()) {
+            return path == null ? "" : path;
+        }
+        int lastSlash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        if (lastSlash < 0 || lastSlash == path.length() - 1) {
+            return path;
+        }
+        return path.substring(lastSlash + 1);
     }
 
     private static String formatRowCount(long rows) {
