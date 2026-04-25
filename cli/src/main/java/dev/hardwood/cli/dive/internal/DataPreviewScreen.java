@@ -321,7 +321,20 @@ public final class DataPreviewScreen {
 
         int totalLines = all.size();
         int cursorLine = Math.max(0, Math.min(state.modalCursorLine(), totalLines - 1));
-        if (cursorLine < all.size()) {
+        // Cursor is purely decorative when there's nothing to do with it:
+        // no field can expand AND content fits the viewport. In that case
+        // the modal becomes a static info display.
+        boolean canExpandAny = false;
+        for (String e : expanded) {
+            if (e.indexOf('\n') >= 0) {
+                canExpandAny = true;
+                break;
+            }
+        }
+        int viewportForCursor = Math.max(1, height - 4);
+        boolean overflows = totalLines > viewportForCursor;
+        boolean showCursor = canExpandAny || overflows;
+        if (showCursor && cursorLine < all.size()) {
             int fieldIdx = fieldForLine(state, cursorLine);
             int fieldFirstLine = ownership[fieldIdx];
             String name = names.get(fieldIdx);
@@ -359,19 +372,12 @@ public final class DataPreviewScreen {
 
         List<Line> lines = new ArrayList<>(all.subList(scroll, end));
         lines.add(Line.empty());
-        // Hint is tiered: drop "↑↓ navigate" when there's only one line
-        // (cursor can't go anywhere); drop "Enter expand" + "e/c all"
-        // when no field in this row has a multi-line expanded form
-        // (i.e. all-primitive rows where formatExpanded == format and
-        // expansion produces no extra lines visible to the user).
-        boolean canNavigate = totalLines > 1;
-        boolean canExpand = false;
-        for (String e : expanded) {
-            if (e.indexOf('\n') >= 0) {
-                canExpand = true;
-                break;
-            }
-        }
+        // Hint is tiered: drop "↑↓ navigate" when navigation has no effect
+        // (cursor is hidden because content fits AND nothing is expandable,
+        // or content fits with only one line); drop "Enter expand" +
+        // "e/c all" when no field has a multi-line expanded form.
+        boolean canNavigate = showCursor && totalLines > 1;
+        boolean canExpand = canExpandAny;
         List<String> segments = new ArrayList<>();
         if (scroll + viewport < totalLines) {
             segments.add(" ↓ " + (totalLines - end) + " more lines");
