@@ -87,6 +87,13 @@ public final class Keys {
         return observedViewportRows > 0;
     }
 
+    /// Test hook — clears the observed viewport so handler-only tests
+    /// that ran after a render-path test don't see a viewport seeded
+    /// by that render and trigger unwanted auto-resize.
+    public static void resetObservedViewport() {
+        observedViewportRows = -1;
+    }
+
     /// Conditional-keybar builder. Each `add(enabled, binding)` appends the
     /// binding to the keybar only when `enabled` — so the resulting string
     /// lists exactly the keys that have a meaningful effect in the current

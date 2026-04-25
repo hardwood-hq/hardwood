@@ -43,6 +43,11 @@ class DiveStateTest {
 
     @BeforeEach
     void openFixture() throws Exception {
+        // Clear any viewport observation a previous render-path test left
+        // behind. Data preview's auto-resize keys off Keys.viewportStride
+        // so a stale observation would force a re-load and break the
+        // explicit page-size assertions in this suite.
+        dev.hardwood.cli.dive.internal.Keys.resetObservedViewport();
         // 10 000 rows × 2 columns (id, value) in 1 RG / ~10 pages; has a Column Index.
         // Covers pagination, schema navigation, and column-index drills without
         // needing multiple fixtures.

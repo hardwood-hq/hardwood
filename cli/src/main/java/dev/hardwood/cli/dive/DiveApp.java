@@ -19,6 +19,7 @@ import dev.hardwood.cli.dive.internal.DictionaryScreen;
 import dev.hardwood.cli.dive.internal.FileIndexesScreen;
 import dev.hardwood.cli.dive.internal.FooterScreen;
 import dev.hardwood.cli.dive.internal.HelpOverlay;
+import dev.hardwood.cli.dive.internal.Keys;
 import dev.hardwood.cli.dive.internal.OffsetIndexScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
 import dev.hardwood.cli.dive.internal.PagesScreen;
@@ -139,6 +140,16 @@ public final class DiveApp {
     private void render(Frame frame) {
         Rect area = frame.area();
         Buffer buffer = frame.buffer();
+        // Pre-seed Keys.viewportStride before computing the keybar so the
+        // first frame after a screen change doesn't use the previous
+        // screen's observation (or PAGE_STRIDE=20 fallback) — that
+        // mismatch was making Footer's keybar advertise scroll keys for
+        // one frame even though the body fit. Estimate body height as
+        // area minus chrome (top bar + breadcrumb + 1-row keybar + 2
+        // body borders); the screen's own render() refines this on
+        // the same frame for the body itself, but the keybar is computed
+        // first so it needs the seed.
+        Keys.observeViewport(Math.max(1, area.height() - 5));
         String screenKeys = keybarForActive();
         String globalKeys = " [?] help   [q] quit";
         int kbHeight = Chrome.keybarHeight(screenKeys, globalKeys, area.width());
