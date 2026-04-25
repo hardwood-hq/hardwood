@@ -199,6 +199,7 @@ public final class ColumnIndexScreen {
         Block block = Block.builder()
                 .title(" Column index "
                         + Plurals.rangeOf(state.selection(), filtered.size(), Keys.viewportStride())
+                        + " · RG #" + state.rowGroupIndex() + " · " + col.fieldPath()
                         + (state.filter().isEmpty()
                                 ? ""
                                 : " · " + Plurals.format(ci.getPageCount(), "page", "pages") + " total")

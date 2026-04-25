@@ -110,10 +110,11 @@ public final class OffsetIndexScreen {
                     String.format("%,d", loc.firstRowIndex())));
         }
         Row header = Row.from("#", "Offset", "Size", "First row").style(Style.EMPTY.bold());
+        String columnPath = model.schema().getColumn(state.columnIndex()).fieldPath().toString();
         Block block = Block.builder()
                 .title(" Offset index "
                         + Plurals.rangeOf(state.selection(), locations.size(), Keys.viewportStride())
-                        + " ")
+                        + " · RG #" + state.rowGroupIndex() + " · " + columnPath + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)

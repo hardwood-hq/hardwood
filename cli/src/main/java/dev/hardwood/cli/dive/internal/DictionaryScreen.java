@@ -200,9 +200,11 @@ public final class DictionaryScreen {
         }
         Row header = Row.from("#", "Value").style(Style.EMPTY.bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
+        String columnPath = col.fieldPath().toString();
         Block block = Block.builder()
-                .title(" Dictionary "
+                .title(" Dictionary entries "
                         + Plurals.rangeOf(state.selection(), filtered.size(), Keys.viewportStride())
+                        + " · RG #" + state.rowGroupIndex() + " · " + columnPath
                         + (state.filter().isEmpty()
                                 ? ""
                                 : " · " + Plurals.format(dict.size(), "entry", "entries") + " total")
