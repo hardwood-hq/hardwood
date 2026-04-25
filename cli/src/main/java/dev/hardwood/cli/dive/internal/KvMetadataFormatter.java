@@ -74,7 +74,6 @@ public final class KvMetadataFormatter {
         if (decoded.length > limit) {
             sb.append("... (").append(decoded.length - limit).append(" more bytes)\n");
         }
-        sb.append("\nFull FlatBuffers decode requires the Arrow library and is out of scope.");
         return sb.toString();
     }
 

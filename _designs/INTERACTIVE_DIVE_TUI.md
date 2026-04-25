@@ -1135,3 +1135,26 @@ verbatim; decisions / clarifications resolved in subsequent commits.
   with `↑/↓` (one line) and `Shift+↑/↓` (one page of 10 lines). Hint at
   the bottom shows `↓ N more lines` when content extends below and
   `↑ N lines above` when scrolled past the top.
+- [ ] **`ARROW:schema` full FlatBuffers decode (no Arrow dependency).** The KV
+  modal currently shows `ARROW:schema` as a base64-decoded hex dump; the
+  blob is FlatBuffers-encoded `org.apache.arrow.flatbuf.Schema`
+  (`format/Schema.fbs` in apache/arrow). Plan to decode it ourselves so
+  users see the actual field list, types, and metadata without pulling
+  Arrow + Netty + arrow-memory into the CLI:
+    - Hand-written minimal FlatBuffers reader (root offset → vtable →
+      field-by-field accessors, length-prefixed vectors, length-prefixed
+      UTF-8 strings, tagged unions). Read-only, no codegen, ~300 LoC.
+    - Hand-written `Schema.fbs` accessors targeting just the tables and
+      union variants we need (Schema, Field, KeyValue, Type union with
+      Int / FloatingPoint / Utf8 / Binary / Date / Time / Timestamp /
+      Decimal / List / Struct / Map / Union / FixedSizeBinary /
+      FixedSizeList / Duration / Interval). ~500 LoC if hand-rolled;
+      `flatc --java Schema.fbs` generates ~3000 LoC if we'd rather pay
+      that disk cost than maintenance. Going hand-rolled keeps total
+      under ~1000 LoC.
+    - Pretty-printer that walks `Schema → Field*`, recursing on
+      `Field.children`, printing `name : type` lines with logical-type
+      arguments where present. ~150 LoC.
+  No new runtime dependency, no native-image regression risk
+  (FlatBuffers is reflection-free anyway). Schema.fbs is stable enough
+  that periodic revs are negligible maintenance.
