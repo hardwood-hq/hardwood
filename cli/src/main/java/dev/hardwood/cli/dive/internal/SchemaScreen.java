@@ -86,14 +86,17 @@ public final class SchemaScreen {
             stack.replaceTop(with(state, rows.size() - 1, state.expanded(), state.filter(), false));
             return true;
         }
-        // Expand / collapse all — uppercase E / C (shift-e / shift-c).
-        if (event.code() == KeyCode.CHAR && event.character() == 'E'
+        // Expand / collapse all — modifier-free e / c. Filter mode (handled
+        // earlier via handleSearching) intercepts typed letters first, so a
+        // typed lowercase letter only fires this branch when the user is
+        // navigating the tree, not editing the search filter.
+        if (event.code() == KeyCode.CHAR && event.character() == 'e'
                 && !event.hasCtrl() && !event.hasAlt()) {
             Set<String> all = allGroupPaths(model);
             stack.replaceTop(with(state, state.selection(), all, state.filter(), false));
             return true;
         }
-        if (event.code() == KeyCode.CHAR && event.character() == 'C'
+        if (event.code() == KeyCode.CHAR && event.character() == 'c'
                 && !event.hasCtrl() && !event.hasAlt()) {
             stack.replaceTop(with(state, 0, Set.of(), state.filter(), false));
             return true;
@@ -237,7 +240,7 @@ public final class SchemaScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [→/Enter] expand · drill  [←] collapse  [E/C] all  [/] search  [Esc] back";
+        return "[↑↓] move  [→/Enter] expand · drill  [←] collapse  [e/c] all  [/] search  [Esc] back";
     }
 
     private static void renderSearchBar(Buffer buffer, Rect area, ScreenState.Schema state,
