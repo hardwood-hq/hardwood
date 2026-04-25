@@ -434,9 +434,13 @@ class DiveStateTest {
         ScreenState.DataPreview opened = (ScreenState.DataPreview) stack.top();
         assertThat(opened.modalRow()).isEqualTo(2);
 
-        // ↑ inside the modal moves modalRow without closing.
-        DataPreviewScreen.handle(key(KeyCode.UP), model, stack);
-        assertThat(((ScreenState.DataPreview) stack.top()).modalRow()).isEqualTo(1);
+        // ↑/↓ inside the modal navigate the per-line cursor — the modalRow
+        // stays put (row stepping is intentionally not available inside the
+        // modal; users close it and pick another row from the table).
+        DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        ScreenState.DataPreview moved = (ScreenState.DataPreview) stack.top();
+        assertThat(moved.modalRow()).isEqualTo(2);
+        assertThat(moved.modalCursorLine()).isEqualTo(1);
 
         // Esc closes the modal.
         DataPreviewScreen.handle(key(KeyCode.ESCAPE), model, stack);
@@ -451,17 +455,18 @@ class DiveStateTest {
         DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
         ScreenState.DataPreview opened = (ScreenState.DataPreview) stack.top();
         assertThat(opened.modalRow()).isEqualTo(0);
-        assertThat(opened.modalColumn()).isEqualTo(0);
+        assertThat(opened.modalCursorLine()).isEqualTo(0);
         assertThat(opened.expandedColumn()).isEqualTo(-1);
 
-        DataPreviewScreen.handle(key(KeyCode.RIGHT), model, stack);
-        assertThat(((ScreenState.DataPreview) stack.top()).modalColumn()).isEqualTo(1);
+        // ↓ moves the per-line cursor within the modal.
+        DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        assertThat(((ScreenState.DataPreview) stack.top()).modalCursorLine()).isEqualTo(1);
 
-        // Enter expands column 1 inline.
+        // Enter expands the field at the cursor (column 1).
         DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
         assertThat(((ScreenState.DataPreview) stack.top()).expandedColumn()).isEqualTo(1);
 
-        // Enter again on the same column collapses it.
+        // Enter again on the same field collapses it.
         DataPreviewScreen.handle(key(KeyCode.ENTER), model, stack);
         assertThat(((ScreenState.DataPreview) stack.top()).expandedColumn()).isEqualTo(-1);
 

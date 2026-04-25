@@ -138,14 +138,13 @@ public sealed interface ScreenState {
     /// full-record modal; `modalRow` is the page-relative index whose record
     /// modal is currently open (-1 when closed). `logicalTypes` controls
     /// whether values render via their logical type (default) or the raw
-    /// physical-type form — toggled with `t`. `modalColumn` is the cursor
-    /// inside the record modal (which column is highlighted); pressing Enter
-    /// there toggles inline expansion for that column — `expandedColumn` is
-    /// -1 when nothing is expanded, otherwise the column index whose value
-    /// is rendered fully (multi-line, no element caps). `expandedRows` is
-    /// parallel to `rows` and holds the multi-line pretty-printed form of
-    /// each cell, populated by `RowValueFormatter.formatExpanded`.
-    /// `modalScroll` is the line offset inside the modal viewport.
+    /// physical-type form — toggled with `t`. Inside the record modal,
+    /// `modalCursorLine` is the per-line cursor (collapsed fields = 1 line,
+    /// expanded fields = N lines), `expandedColumn` is the field whose
+    /// pretty-printed value is rendered inline (-1 = nothing expanded).
+    /// `expandedRows` is parallel to `rows` and holds the multi-line
+    /// pretty-printed form of each cell, populated by
+    /// `RowValueFormatter.formatExpanded`.
     record DataPreview(
             long firstRow,
             int pageSize,
@@ -156,9 +155,8 @@ public sealed interface ScreenState {
             int selectedRow,
             int modalRow,
             boolean logicalTypes,
-            int modalColumn,
             int expandedColumn,
-            int modalScroll)
+            int modalCursorLine)
             implements ScreenState {
         public DataPreview {
             columnNames = java.util.List.copyOf(columnNames);

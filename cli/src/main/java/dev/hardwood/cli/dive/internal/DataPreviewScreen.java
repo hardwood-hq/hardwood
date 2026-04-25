@@ -201,9 +201,6 @@ public final class DataPreviewScreen {
         List<String> values = state.rows().get(state.modalRow());
         List<String> expanded = state.expandedRows().get(state.modalRow());
         List<String> names = state.columnNames();
-        // Grow the modal to fill the available area (minus 2-cell margin) so
-        // long values get the full screen width instead of being clipped to
-        // the narrow window the table cells lived in.
         int width = Math.max(40, screenArea.width() - 4);
         int height = Math.max(8, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
@@ -215,22 +212,18 @@ public final class DataPreviewScreen {
         for (String name : names) {
             maxKeyWidth = Math.max(maxKeyWidth, name.length());
         }
-        // " name<pad> : value" — borders + " " + name + " : " + trailing
         int valueBudget = Math.max(8, width - 2 - 1 - maxKeyWidth - 3 - 1);
-        // Continuation lines use the same indent as where the value started
-        // so wrapped multi-line values line up under the leading column.
         String continuationIndent = " ".repeat(1 + maxKeyWidth + 3);
 
-        // Build the full content list first, then slice by modalScroll into
-        // the viewport so expanded values can scroll past the visible area.
+        // Build the full body as a flat line list with each line tagged by
+        // the field index that owns it. The cursor moves over these lines;
+        // viewport is sliced from this list to keep the cursor visible.
+        List<int[]> ownership = new ArrayList<>();
         List<Line> all = new ArrayList<>();
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
             String pad = " ".repeat(maxKeyWidth - name.length());
-            boolean selected = i == state.modalColumn();
             boolean isExpanded = i == state.expandedColumn();
-            String cursor = selected ? "▶" : " ";
-            Style nameStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY.bold();
             String value = i < values.size() ? values.get(i) : "";
             if (isExpanded) {
                 String fullValue = i < expanded.size() ? expanded.get(i) : value;
@@ -238,38 +231,74 @@ public final class DataPreviewScreen {
                 if (wrapped.isEmpty()) {
                     wrapped.add("");
                 }
+                ownership.add(new int[]{i, all.size()});
                 all.add(Line.from(
-                        new Span(cursor + name + pad + " : ", nameStyle),
+                        new Span(" " + name + pad + " : ", Style.EMPTY.bold()),
                         Span.raw(wrapped.get(0))));
                 for (int k = 1; k < wrapped.size(); k++) {
                     all.add(Line.from(Span.raw(continuationIndent + wrapped.get(k))));
                 }
             }
             else {
+                ownership.add(new int[]{i, all.size()});
                 all.add(Line.from(
-                        new Span(cursor + name + pad + " : ", nameStyle),
+                        new Span(" " + name + pad + " : ", Style.EMPTY.bold()),
                         Span.raw(truncate(value, valueBudget))));
             }
         }
 
-        // Reserve 2 rows for borders + 2 rows for blank + hint.
-        int viewport = Math.max(1, height - 4);
         int totalLines = all.size();
-        int maxScroll = Math.max(0, totalLines - viewport);
-        int scroll = Math.max(0, Math.min(state.modalScroll(), maxScroll));
+        int cursorLine = Math.max(0, Math.min(state.modalCursorLine(), totalLines - 1));
+        // Re-style the cursor's line in-place: replace the bold key span with
+        // a bold-accent variant and drop a ▶ marker. For continuation lines
+        // (no key span) just colour the indent + content.
+        if (cursorLine < all.size()) {
+            int fieldIdx = fieldForLine(state, cursorLine);
+            int fieldFirstLine = ownership.get(fieldIdx)[1];
+            String name = names.get(fieldIdx);
+            String pad = " ".repeat(maxKeyWidth - name.length());
+            boolean isExpanded = fieldIdx == state.expandedColumn();
+            String value = fieldIdx < values.size() ? values.get(fieldIdx) : "";
+            Style accent = Style.EMPTY.bold().fg(Theme.ACCENT);
+            if (cursorLine == fieldFirstLine) {
+                String shown;
+                if (isExpanded) {
+                    String fullValue = fieldIdx < expanded.size() ? expanded.get(fieldIdx) : value;
+                    List<String> wrapped = wrapValue(fullValue, valueBudget);
+                    shown = wrapped.isEmpty() ? "" : wrapped.get(0);
+                }
+                else {
+                    shown = truncate(value, valueBudget);
+                }
+                all.set(cursorLine, Line.from(
+                        new Span("▶" + name + pad + " : ", accent),
+                        new Span(shown, accent)));
+            }
+            else if (isExpanded) {
+                String fullValue = fieldIdx < expanded.size() ? expanded.get(fieldIdx) : value;
+                List<String> wrapped = wrapValue(fullValue, valueBudget);
+                int contIdx = cursorLine - fieldFirstLine;
+                String text = contIdx < wrapped.size() ? wrapped.get(contIdx) : "";
+                all.set(cursorLine, Line.from(new Span(continuationIndent + text, accent)));
+            }
+        }
+
+        int viewport = Math.max(1, height - 4);
+        int scroll = Math.max(0, Math.min(totalLines - viewport,
+                Math.max(0, cursorLine - viewport / 2)));
         int end = Math.min(totalLines, scroll + viewport);
 
         List<Line> lines = new ArrayList<>(all.subList(scroll, end));
         lines.add(Line.empty());
         String hint;
         if (scroll + viewport < totalLines) {
-            hint = " ↓ " + (totalLines - end) + " more lines · ↑↓ row · ←/→ column · Enter expand · Shift+↑↓ scroll · Esc close";
+            hint = " ↓ " + (totalLines - end) + " more lines · ↑↓ navigate · Enter expand · Esc close";
         }
         else if (scroll > 0) {
-            hint = " ↑ " + scroll + " lines above · ↑↓ row · ←/→ column · Enter expand · Shift+↑↓ scroll · Esc close";
+            hint = " ↑ " + scroll + " lines above · ↑↓ navigate · Enter expand · Esc close";
         }
         else {
-            hint = " ↑↓ row · ←/→ column · Enter expand · Shift+↑↓ scroll · Esc close";
+            hint = " ↑↓ navigate · Enter expand · Esc close";
         }
         lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
 
@@ -314,110 +343,136 @@ public final class DataPreviewScreen {
 
     public static String keybarKeys() {
         return "[↑↓] row  [Enter] view record  [←→] columns  "
-                + "[PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [t] logical types  [Esc] back";
+                + "[PgDn/PgUp or Shift+↓↑] page  [g/G] start/end  [t] logical types  [Esc] back"
+                + " · in modal: [↑↓] navigate · [Enter] expand · [Esc] close";
     }
 
     private static boolean handleModal(KeyEvent event, ScreenState.DataPreview state,
                                        dev.hardwood.cli.dive.NavigationStack stack) {
-        // Esc closes the row modal; Enter toggles inline expansion for the
-        // currently highlighted column. ↑/↓ row-step (collapsing on row
-        // change since expansion is per-column-in-current-row);
-        // Shift+↑/↓ scroll the modal viewport vertically.
+        // Inside the modal, ↑/↓ navigate the modal's content one line at a
+        // time (collapsed field = 1 line, expanded field = N lines), so a
+        // long expansion can be scrolled and the next field below it
+        // reached without closing. Enter toggles expansion for the field
+        // owning the current line; Esc closes the modal. Row stepping is
+        // intentionally absent — the user picks another row from the
+        // table after closing.
         if (event.isCancel()) {
             stack.replaceTop(withModalRow(state, -1));
             return true;
         }
+        int totalLines = totalModalLines(state);
         if (event.isConfirm()) {
-            int newExpanded = state.expandedColumn() == state.modalColumn()
-                    ? -1 : state.modalColumn();
-            stack.replaceTop(withExpandedColumn(state, newExpanded));
-            return true;
-        }
-        if (event.isUp() && !event.hasShift()) {
-            if (state.modalRow() == 0) {
-                return false;
-            }
-            int next = state.modalRow() - 1;
-            stack.replaceTop(rebuild(state, state.firstRow(), state.pageSize(),
-                    state.columnNames(), state.rows(), state.expandedRows(),
-                    state.columnScroll(), next, next, state.logicalTypes(),
-                    state.modalColumn(), -1, 0));
-            return true;
-        }
-        if (event.isDown() && !event.hasShift()) {
-            int last = state.rows().size() - 1;
-            if (state.modalRow() >= last) {
-                return false;
-            }
-            int next = state.modalRow() + 1;
-            stack.replaceTop(rebuild(state, state.firstRow(), state.pageSize(),
-                    state.columnNames(), state.rows(), state.expandedRows(),
-                    state.columnScroll(), next, next, state.logicalTypes(),
-                    state.modalColumn(), -1, 0));
-            return true;
-        }
-        if (event.isUp() && event.hasShift()) {
-            stack.replaceTop(withModalScroll(state, Math.max(0, state.modalScroll() - 10)));
-            return true;
-        }
-        if (event.isDown() && event.hasShift()) {
-            stack.replaceTop(withModalScroll(state, state.modalScroll() + 10));
-            return true;
-        }
-        if (event.isLeft()) {
-            if (state.modalColumn() == 0) {
-                return false;
-            }
+            int field = fieldForLine(state, state.modalCursorLine());
+            int newExpanded = state.expandedColumn() == field ? -1 : field;
+            // Keep the cursor on the same field after toggling so the user
+            // doesn't lose their place.
+            int newCursor = firstLineForField(state, newExpanded, field);
             stack.replaceTop(rebuild(state, state.firstRow(), state.pageSize(),
                     state.columnNames(), state.rows(), state.expandedRows(),
                     state.columnScroll(), state.selectedRow(), state.modalRow(),
-                    state.logicalTypes(), state.modalColumn() - 1, -1, 0));
+                    state.logicalTypes(), newExpanded, newCursor));
             return true;
         }
-        if (event.isRight()) {
-            int last = state.columnNames().size() - 1;
-            if (state.modalColumn() >= last) {
+        if (event.isUp()) {
+            if (state.modalCursorLine() == 0) {
                 return false;
             }
-            stack.replaceTop(rebuild(state, state.firstRow(), state.pageSize(),
-                    state.columnNames(), state.rows(), state.expandedRows(),
-                    state.columnScroll(), state.selectedRow(), state.modalRow(),
-                    state.logicalTypes(), state.modalColumn() + 1, -1, 0));
+            stack.replaceTop(withCursorLine(state, state.modalCursorLine() - 1));
+            return true;
+        }
+        if (event.isDown()) {
+            if (state.modalCursorLine() >= totalLines - 1) {
+                return false;
+            }
+            stack.replaceTop(withCursorLine(state, state.modalCursorLine() + 1));
             return true;
         }
         return false;
     }
 
+    /// Total displayable lines in the modal body — one per field for
+    /// collapsed fields, plus the wrapped line count for the expanded one
+    /// (if any).
+    private static int totalModalLines(ScreenState.DataPreview state) {
+        int total = state.columnNames().size();
+        if (state.expandedColumn() < 0 || state.expandedColumn() >= state.expandedRows()
+                .get(state.modalRow()).size()) {
+            return total;
+        }
+        // Count wrapped continuation lines for the expanded field. We don't
+        // know the modal width at handle-time, so use a wide budget that
+        // matches what the renderer settles on for typical terminals — the
+        // exact number isn't critical for navigation, only that ↓ keeps
+        // moving while there are more lines.
+        String expanded = state.expandedRows().get(state.modalRow()).get(state.expandedColumn());
+        int continuationLines = 0;
+        for (String line : expanded.split("\n", -1)) {
+            // Each source line maps to at least one display line; very long
+            // lines wrap, but here we approximate one source line = one
+            // display line for cursor accounting.
+            continuationLines++;
+        }
+        // Subtract 1 because the field's own key line counts once already.
+        return total + Math.max(0, continuationLines - 1);
+    }
+
+    /// Field index that owns the given cursor line in the flattened modal
+    /// body. Continuation lines of an expanded field map to that field.
+    private static int fieldForLine(ScreenState.DataPreview state, int line) {
+        int names = state.columnNames().size();
+        if (names == 0) {
+            return 0;
+        }
+        if (state.expandedColumn() < 0) {
+            return Math.min(line, names - 1);
+        }
+        if (line <= state.expandedColumn()) {
+            return line;
+        }
+        // Expansion lines belong to expandedColumn until we exhaust them.
+        String expanded = state.expandedRows().get(state.modalRow()).get(state.expandedColumn());
+        int extraLines = Math.max(0, expanded.split("\n", -1).length - 1);
+        int afterExpansion = state.expandedColumn() + 1 + extraLines;
+        if (line < afterExpansion) {
+            return state.expandedColumn();
+        }
+        return Math.min(state.expandedColumn() + 1 + (line - afterExpansion), names - 1);
+    }
+
+    /// Line index of the key line for `field` given that `expandedColumn`
+    /// is the (now) expanded field.
+    private static int firstLineForField(ScreenState.DataPreview state, int expandedColumn, int field) {
+        if (expandedColumn < 0 || field <= expandedColumn) {
+            return field;
+        }
+        String expanded = state.expandedRows().get(state.modalRow()).get(expandedColumn);
+        int extraLines = Math.max(0, expanded.split("\n", -1).length - 1);
+        return field + extraLines;
+    }
+
     private static ScreenState.DataPreview withSelectedRow(ScreenState.DataPreview s, int sel) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), s.columnScroll(), sel, s.modalRow(), s.logicalTypes(),
-                s.modalColumn(), s.expandedColumn(), s.modalScroll());
+                s.expandedColumn(), s.modalCursorLine());
     }
 
     private static ScreenState.DataPreview withModalRow(ScreenState.DataPreview s, int modalRow) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), s.columnScroll(), s.selectedRow(), modalRow, s.logicalTypes(),
-                modalRow < 0 ? 0 : s.modalColumn(),
                 modalRow < 0 ? -1 : s.expandedColumn(),
-                modalRow < 0 ? 0 : s.modalScroll());
+                modalRow < 0 ? 0 : s.modalCursorLine());
     }
 
     private static ScreenState.DataPreview withColumnScroll(ScreenState.DataPreview s, int scroll) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), scroll, s.selectedRow(), s.modalRow(), s.logicalTypes(),
-                s.modalColumn(), s.expandedColumn(), s.modalScroll());
+                s.expandedColumn(), s.modalCursorLine());
     }
 
-    private static ScreenState.DataPreview withExpandedColumn(ScreenState.DataPreview s, int col) {
+    private static ScreenState.DataPreview withCursorLine(ScreenState.DataPreview s, int line) {
         return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
                 s.expandedRows(), s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
-                s.modalColumn(), col, 0);
-    }
-
-    private static ScreenState.DataPreview withModalScroll(ScreenState.DataPreview s, int scroll) {
-        return new ScreenState.DataPreview(s.firstRow(), s.pageSize(), s.columnNames(), s.rows(),
-                s.expandedRows(), s.columnScroll(), s.selectedRow(), s.modalRow(), s.logicalTypes(),
-                s.modalColumn(), s.expandedColumn(), scroll);
+                s.expandedColumn(), line);
     }
 
     private static ScreenState.DataPreview rebuild(ScreenState.DataPreview s,
@@ -427,11 +482,9 @@ public final class DataPreviewScreen {
                                                    List<List<String>> expandedRows,
                                                    int columnScroll, int selectedRow,
                                                    int modalRow, boolean logicalTypes,
-                                                   int modalColumn, int expandedColumn,
-                                                   int modalScroll) {
+                                                   int expandedColumn, int modalCursorLine) {
         return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, expandedRows,
-                columnScroll, selectedRow, modalRow, logicalTypes, modalColumn, expandedColumn,
-                modalScroll);
+                columnScroll, selectedRow, modalRow, logicalTypes, expandedColumn, modalCursorLine);
     }
 
     private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize,
@@ -465,7 +518,7 @@ public final class DataPreviewScreen {
             throw new java.io.UncheckedIOException(e);
         }
         return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, expandedRows,
-                columnScroll, 0, -1, logicalTypes, 0, -1, 0);
+                columnScroll, 0, -1, logicalTypes, -1, 0);
     }
 
     private static String truncate(String s, int max) {
