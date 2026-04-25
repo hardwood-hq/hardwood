@@ -208,7 +208,6 @@ public final class PagesScreen {
         Block block = Block.builder()
                 .title(" Pages "
                         + Plurals.rangeOf(state.selection(), headers.size(), Keys.viewportStride())
-                        + " · RG #" + state.rowGroupIndex() + " · " + col.fieldPath()
                         + titleSuffix + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)

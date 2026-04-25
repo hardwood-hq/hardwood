@@ -86,15 +86,73 @@ public final class Chrome {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
         List<ScreenState> frames = stack.frames();
+        // Context-bearing frames upstream tell us whether the leaf
+        // already has (RG, col) context to inherit from the path. If
+        // not (e.g., reached via Footer → FileIndexes), we enrich the
+        // leaf's label so the breadcrumb still says which chunk the
+        // current screen belongs to.
+        boolean haveRgInPath = false;
+        boolean haveColInPath = false;
+        for (int i = 0; i < frames.size() - 1; i++) {
+            ScreenState f = frames.get(i);
+            if (f instanceof ScreenState.RowGroupDetail
+                    || f instanceof ScreenState.RowGroupIndexes
+                    || f instanceof ScreenState.ColumnChunks) {
+                haveRgInPath = true;
+            }
+            if (f instanceof ScreenState.ColumnChunkDetail
+                    || f instanceof ScreenState.ColumnAcrossRowGroups) {
+                haveColInPath = true;
+                haveRgInPath = true;
+            }
+        }
         for (int i = 0; i < frames.size(); i++) {
             if (i > 0) {
                 spans.add(new Span(" › ", Style.EMPTY.fg(Theme.DIM)));
             }
             boolean last = i == frames.size() - 1;
             Style style = last ? Style.EMPTY.bold() : Style.EMPTY.fg(Theme.DIM);
-            spans.add(new Span(breadcrumbLabel(frames.get(i), model), style));
+            String label = breadcrumbLabel(frames.get(i), model);
+            if (last) {
+                label += leafContextSuffix(frames.get(i), model, haveRgInPath, haveColInPath);
+            }
+            spans.add(new Span(label, style));
         }
         Paragraph.builder().text(convert(Line.from(spans))).left().build().render(area, buffer);
+    }
+
+    /// For per-chunk leaf screens (Pages, ColumnIndex, OffsetIndex,
+    /// Dictionary), append "(RG #N · col)" when the earlier frames
+    /// don't already establish that context — typically the
+    /// Footer → FileIndexes drill path.
+    private static String leafContextSuffix(ScreenState state, ParquetModel model,
+                                            boolean haveRg, boolean haveCol) {
+        int rg;
+        int col;
+        switch (state) {
+            case ScreenState.Pages s -> { rg = s.rowGroupIndex(); col = s.columnIndex(); }
+            case ScreenState.ColumnIndexView s -> { rg = s.rowGroupIndex(); col = s.columnIndex(); }
+            case ScreenState.OffsetIndexView s -> { rg = s.rowGroupIndex(); col = s.columnIndex(); }
+            case ScreenState.DictionaryView s -> { rg = s.rowGroupIndex(); col = s.columnIndex(); }
+            default -> { return ""; }
+        }
+        if (haveRg && haveCol) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(" (");
+        boolean first = true;
+        if (!haveRg) {
+            sb.append("RG #").append(rg);
+            first = false;
+        }
+        if (!haveCol) {
+            if (!first) {
+                sb.append(" · ");
+            }
+            sb.append(model.schema().getColumn(col).fieldPath());
+        }
+        sb.append(")");
+        return sb.toString();
     }
 
     public static void renderKeybar(Buffer buffer, Rect area, String screenKeys, String globalKeys) {
