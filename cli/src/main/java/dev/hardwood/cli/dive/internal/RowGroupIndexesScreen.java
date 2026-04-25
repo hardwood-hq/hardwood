@@ -53,6 +53,16 @@ public final class RowGroupIndexesScreen {
                     state.rowGroupIndex(), Math.min(count - 1, state.selection() + 1)));
             return true;
         }
+        if (Keys.isPageDown(event) && count > 0) {
+            stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(),
+                    Math.min(count - 1, state.selection() + Keys.PAGE_STRIDE)));
+            return true;
+        }
+        if (Keys.isPageUp(event) && count > 0) {
+            stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(),
+                    Math.max(0, state.selection() - Keys.PAGE_STRIDE)));
+            return true;
+        }
         if (Keys.isJumpTop(event) && count > 0) {
             stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(), 0));
             return true;
@@ -109,6 +119,6 @@ public final class RowGroupIndexesScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] chunk detail  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] chunk detail  [Esc] back";
     }
 }

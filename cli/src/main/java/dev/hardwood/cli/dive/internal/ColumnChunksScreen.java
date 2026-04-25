@@ -47,6 +47,16 @@ public final class ColumnChunksScreen {
             stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), Math.min(count - 1, state.selection() + 1)));
             return true;
         }
+        if (Keys.isPageDown(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(),
+                    Math.min(count - 1, state.selection() + Keys.PAGE_STRIDE)));
+            return true;
+        }
+        if (Keys.isPageUp(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(),
+                    Math.max(0, state.selection() - Keys.PAGE_STRIDE)));
+            return true;
+        }
         if (Keys.isJumpTop(event) && count > 0) {
             stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), 0));
             return true;
@@ -111,6 +121,6 @@ public final class ColumnChunksScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] inspect chunk  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] inspect chunk  [Esc] back";
     }
 }

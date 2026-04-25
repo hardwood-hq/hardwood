@@ -55,6 +55,18 @@ public final class OffsetIndexScreen {
                     Math.min(count - 1, state.selection() + 1)));
             return true;
         }
+        if (Keys.isPageDown(event) && count > 0) {
+            stack.replaceTop(new ScreenState.OffsetIndexView(
+                    state.rowGroupIndex(), state.columnIndex(),
+                    Math.min(count - 1, state.selection() + Keys.PAGE_STRIDE)));
+            return true;
+        }
+        if (Keys.isPageUp(event) && count > 0) {
+            stack.replaceTop(new ScreenState.OffsetIndexView(
+                    state.rowGroupIndex(), state.columnIndex(),
+                    Math.max(0, state.selection() - Keys.PAGE_STRIDE)));
+            return true;
+        }
         if (Keys.isJumpTop(event) && count > 0) {
             stack.replaceTop(new ScreenState.OffsetIndexView(
                     state.rowGroupIndex(), state.columnIndex(), 0));
@@ -123,6 +135,6 @@ public final class OffsetIndexScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Esc] back";
     }
 }

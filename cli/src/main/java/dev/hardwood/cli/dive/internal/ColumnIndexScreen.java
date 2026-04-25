@@ -72,15 +72,14 @@ public final class ColumnIndexScreen {
         }
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         List<Integer> filtered = filteredPages(ci, col, state.filter());
-        int pageStride = 20;
-        if (event.code() == KeyCode.PAGE_DOWN || (event.hasShift() && event.isDown())) {
+        if (Keys.isPageDown(event)) {
             int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
-            stack.replaceTop(with(state, Math.min(max, state.selection() + pageStride),
+            stack.replaceTop(with(state, Math.min(max, state.selection() + Keys.PAGE_STRIDE),
                     state.filter(), false));
             return true;
         }
-        if (event.code() == KeyCode.PAGE_UP || (event.hasShift() && event.isUp())) {
-            stack.replaceTop(with(state, Math.max(0, state.selection() - pageStride),
+        if (Keys.isPageUp(event)) {
+            stack.replaceTop(with(state, Math.max(0, state.selection() - Keys.PAGE_STRIDE),
                     state.filter(), false));
             return true;
         }

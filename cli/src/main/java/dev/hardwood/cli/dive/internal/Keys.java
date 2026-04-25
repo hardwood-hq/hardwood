@@ -31,4 +31,21 @@ public final class Keys {
                 && !event.hasCtrl()
                 && !event.hasAlt();
     }
+
+    /// PgDn or Shift+↓ — page-stride forward navigation. The Shift+↓ alias is
+    /// the macOS-laptop chord since most don't have a dedicated PgDn key.
+    public static boolean isPageDown(KeyEvent event) {
+        return event.code() == KeyCode.PAGE_DOWN
+                || (event.hasShift() && event.isDown());
+    }
+
+    /// PgUp or Shift+↑ — page-stride backward navigation. Shift+↑ alias as for
+    /// `isPageDown`.
+    public static boolean isPageUp(KeyEvent event) {
+        return event.code() == KeyCode.PAGE_UP
+                || (event.hasShift() && event.isUp());
+    }
+
+    /// Recommended stride for PgDn/PgUp on list-shaped screens.
+    public static final int PAGE_STRIDE = 20;
 }

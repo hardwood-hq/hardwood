@@ -47,6 +47,16 @@ public final class RowGroupsScreen {
             stack.replaceTop(new ScreenState.RowGroups(Math.min(count - 1, state.selection() + 1)));
             return true;
         }
+        if (Keys.isPageDown(event) && count > 0) {
+            stack.replaceTop(new ScreenState.RowGroups(
+                    Math.min(count - 1, state.selection() + Keys.PAGE_STRIDE)));
+            return true;
+        }
+        if (Keys.isPageUp(event) && count > 0) {
+            stack.replaceTop(new ScreenState.RowGroups(
+                    Math.max(0, state.selection() - Keys.PAGE_STRIDE)));
+            return true;
+        }
         if (Keys.isJumpTop(event) && count > 0) {
             stack.replaceTop(new ScreenState.RowGroups(0));
             return true;
@@ -122,7 +132,7 @@ public final class RowGroupsScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] drill  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] drill  [Esc] back";
     }
 
     private static String formatLong(long v) {

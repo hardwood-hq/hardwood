@@ -72,6 +72,20 @@ public final class PagesScreen {
                     Math.min(headers.size() - 1, state.selection() + 1), false, logical));
             return true;
         }
+        if (Keys.isPageDown(event) && !headers.isEmpty()) {
+            stack.replaceTop(new ScreenState.Pages(
+                    state.rowGroupIndex(), state.columnIndex(),
+                    Math.min(headers.size() - 1, state.selection() + Keys.PAGE_STRIDE),
+                    false, logical));
+            return true;
+        }
+        if (Keys.isPageUp(event) && !headers.isEmpty()) {
+            stack.replaceTop(new ScreenState.Pages(
+                    state.rowGroupIndex(), state.columnIndex(),
+                    Math.max(0, state.selection() - Keys.PAGE_STRIDE),
+                    false, logical));
+            return true;
+        }
         if (Keys.isJumpTop(event) && !headers.isEmpty()) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(), 0, false, logical));
@@ -221,7 +235,7 @@ public final class PagesScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] page header  [t] logical types  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] page header  [t] logical types  [Esc] back";
     }
 
     private static int dataValues(PageHeader h) {
@@ -247,7 +261,25 @@ public final class PagesScreen {
         return "—";
     }
 
+    /// Used by the table cells, where two Min/Max columns share whatever's
+    /// left after the fixed-width columns. tamboui's Table clips silently,
+    /// so cap the formatted string ourselves and append `…` to make
+    /// truncation visible. The page-header modal calls the un-capped
+    /// `IndexValueFormatter.format` directly.
+    private static final int TABLE_STAT_MAX = 16;
+
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical) {
+        if (bytes == null) {
+            return "—";
+        }
+        String full = IndexValueFormatter.format(bytes, col, logical);
+        if (full.length() <= TABLE_STAT_MAX) {
+            return full;
+        }
+        return full.substring(0, TABLE_STAT_MAX - 1) + "…";
+    }
+
+    private static String formatStatFull(byte[] bytes, ColumnSchema col, boolean logical) {
         if (bytes == null) {
             return "—";
         }
@@ -256,8 +288,11 @@ public final class PagesScreen {
 
     private static void renderHeaderModal(Buffer buffer, Rect screenArea, PageHeader header,
                                           int index, ColumnSchema col, boolean logical) {
-        int width = Math.min(60, screenArea.width() - 4);
-        int height = Math.min(20, screenArea.height() - 2);
+        // Grow the modal to fill the available area so long inline-stats
+        // values aren't clipped at a fixed 60-cell width (the previous cap
+        // hid the bulk of any UTF-8 string min/max past ~50 chars).
+        int width = Math.max(40, screenArea.width() - 4);
+        int height = Math.max(8, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
@@ -297,8 +332,8 @@ public final class PagesScreen {
         if (inline != null) {
             lines.add(Line.empty());
             lines.add(Line.from(new Span(" Inline statistics ", Style.EMPTY.bold())));
-            lines.add(kv("  Min", formatStat(inline.minValue(), col, logical)));
-            lines.add(kv("  Max", formatStat(inline.maxValue(), col, logical)));
+            lines.add(kv("  Min", formatStatFull(inline.minValue(), col, logical)));
+            lines.add(kv("  Max", formatStatFull(inline.maxValue(), col, logical)));
             if (inline.nullCount() != null) {
                 lines.add(kv("  Nulls", String.format("%,d", inline.nullCount())));
             }

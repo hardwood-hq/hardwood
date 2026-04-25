@@ -53,6 +53,18 @@ public final class ColumnAcrossRowGroupsScreen {
                     state.columnIndex(), Math.min(count - 1, state.selection() + 1), logical));
             return true;
         }
+        if (Keys.isPageDown(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
+                    state.columnIndex(),
+                    Math.min(count - 1, state.selection() + Keys.PAGE_STRIDE), logical));
+            return true;
+        }
+        if (Keys.isPageUp(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
+                    state.columnIndex(),
+                    Math.max(0, state.selection() - Keys.PAGE_STRIDE), logical));
+            return true;
+        }
         if (Keys.isJumpTop(event) && count > 0) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), 0, logical));
             return true;
@@ -141,7 +153,7 @@ public final class ColumnAcrossRowGroupsScreen {
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] chunk detail  [t] logical types  [Esc] back";
+        return "[↑↓] move  [PgDn/PgUp or Shift+↓↑] page  [Enter] chunk detail  [t] logical types  [Esc] back";
     }
 
     private static String truncateLeft(String s, int maxWidth) {

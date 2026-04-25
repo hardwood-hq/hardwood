@@ -78,6 +78,18 @@ public final class SchemaScreen {
                     Math.min(rows.size() - 1, state.selection() + 1), state.expanded(), state.filter(), false));
             return true;
         }
+        if (Keys.isPageDown(event)) {
+            stack.replaceTop(with(state,
+                    Math.min(rows.size() - 1, state.selection() + Keys.PAGE_STRIDE),
+                    state.expanded(), state.filter(), false));
+            return true;
+        }
+        if (Keys.isPageUp(event)) {
+            stack.replaceTop(with(state,
+                    Math.max(0, state.selection() - Keys.PAGE_STRIDE),
+                    state.expanded(), state.filter(), false));
+            return true;
+        }
         if (Keys.isJumpTop(event)) {
             stack.replaceTop(with(state, 0, state.expanded(), state.filter(), false));
             return true;
