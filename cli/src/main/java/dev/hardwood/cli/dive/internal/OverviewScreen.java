@@ -144,7 +144,7 @@ public final class OverviewScreen {
     }
 
     public static String keybarKeys() {
-        return "[Tab] pane  [↑↓] move  [Enter] drill · open KV";
+        return "[Tab] pane  [↑↓] move  [Enter] view entry";
     }
 
     private static void renderFactsPane(Buffer buffer, Rect area, ParquetModel model, ScreenState.Overview state) {
