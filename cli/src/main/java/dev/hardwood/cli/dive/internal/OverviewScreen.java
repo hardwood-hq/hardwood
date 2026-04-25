@@ -293,7 +293,7 @@ public final class OverviewScreen {
                     + "   · browse by column";
             case ROW_GROUPS -> Plurals.format(model.rowGroupCount(), "group", "groups")
                     + "    · browse by row group";
-            case FOOTER -> Sizes.format(model.fileSizeBytes());
+            case FOOTER -> Sizes.format(FooterScreen.footerAndIndexBytes(model));
             case DATA_PREVIEW -> Plurals.format(model.facts().totalRows(), "row", "rows");
         };
     }
