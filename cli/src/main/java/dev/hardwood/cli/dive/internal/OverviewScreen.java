@@ -63,6 +63,35 @@ public final class OverviewScreen {
                 stack.replaceTop(withKvModal(state, false));
                 return true;
             }
+            int totalLines = kvModalLineCount(model, state);
+            // Plain ↑/↓ scroll one line; Shift+↑/↓ scroll a page. The Mac
+            // chord (no PgUp/PgDn dedicated keys) and the line variant share
+            // the same model — we don't know the modal viewport height here,
+            // so a "page" is approximated as 10 lines, matching the visible
+            // height the renderer settles on for modest terminals.
+            if (event.isUp() && !event.hasShift()) {
+                if (state.kvModalScroll() == 0) {
+                    return false;
+                }
+                stack.replaceTop(withKvScroll(state, state.kvModalScroll() - 1));
+                return true;
+            }
+            if (event.isDown() && !event.hasShift()) {
+                if (state.kvModalScroll() >= Math.max(0, totalLines - 1)) {
+                    return false;
+                }
+                stack.replaceTop(withKvScroll(state, state.kvModalScroll() + 1));
+                return true;
+            }
+            if (event.isUp() && event.hasShift()) {
+                stack.replaceTop(withKvScroll(state, Math.max(0, state.kvModalScroll() - 10)));
+                return true;
+            }
+            if (event.isDown() && event.hasShift()) {
+                int max = Math.max(0, totalLines - 1);
+                stack.replaceTop(withKvScroll(state, Math.min(max, state.kvModalScroll() + 10)));
+                return true;
+            }
             return false;
         }
         if (event.isFocusNext() || event.isFocusPrevious()) {
@@ -117,19 +146,37 @@ public final class OverviewScreen {
     }
 
     private static ScreenState.Overview withFocus(ScreenState.Overview s, ScreenState.Overview.Pane next) {
-        return new ScreenState.Overview(next, s.menuSelection(), s.kvSelection(), s.kvModalOpen());
+        return new ScreenState.Overview(next, s.menuSelection(), s.kvSelection(),
+                s.kvModalOpen(), s.kvModalScroll());
     }
 
     private static ScreenState.Overview withMenuSelection(ScreenState.Overview s, int sel) {
-        return new ScreenState.Overview(s.focus(), sel, s.kvSelection(), s.kvModalOpen());
+        return new ScreenState.Overview(s.focus(), sel, s.kvSelection(),
+                s.kvModalOpen(), s.kvModalScroll());
     }
 
     private static ScreenState.Overview withKvSelection(ScreenState.Overview s, int sel) {
-        return new ScreenState.Overview(s.focus(), s.menuSelection(), sel, s.kvModalOpen());
+        return new ScreenState.Overview(s.focus(), s.menuSelection(), sel,
+                s.kvModalOpen(), 0);
     }
 
     private static ScreenState.Overview withKvModal(ScreenState.Overview s, boolean open) {
-        return new ScreenState.Overview(s.focus(), s.menuSelection(), s.kvSelection(), open);
+        return new ScreenState.Overview(s.focus(), s.menuSelection(), s.kvSelection(), open, 0);
+    }
+
+    private static ScreenState.Overview withKvScroll(ScreenState.Overview s, int scroll) {
+        return new ScreenState.Overview(s.focus(), s.menuSelection(), s.kvSelection(),
+                s.kvModalOpen(), scroll);
+    }
+
+    private static int kvModalLineCount(ParquetModel model, ScreenState.Overview state) {
+        java.util.List<java.util.Map.Entry<String, String>> kv = model.facts().keyValueMetadata();
+        if (kv.isEmpty()) {
+            return 0;
+        }
+        int idx = Math.min(state.kvSelection(), kv.size() - 1);
+        java.util.Map.Entry<String, String> entry = kv.get(idx);
+        return KvMetadataFormatter.format(entry.getKey(), entry.getValue()).split("\n", -1).length;
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.Overview state) {
@@ -182,19 +229,34 @@ public final class OverviewScreen {
         }
         int idx = Math.min(state.kvSelection(), kv.size() - 1);
         Map.Entry<String, String> entry = kv.get(idx);
-        int width = Math.min(100, screenArea.width() - 4);
-        int height = Math.min(30, screenArea.height() - 2);
+        // Grow the modal to fill the available area (leaving a 2-cell margin),
+        // not a fixed 30 lines — for ARROW:schema the formatted hex dump can
+        // be hundreds of lines and needs the room.
+        int width = Math.min(120, screenArea.width() - 4);
+        int height = Math.max(8, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
         dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
 
+        String[] all = KvMetadataFormatter.format(entry.getKey(), entry.getValue()).split("\n", -1);
+        // Reserve 2 rows for borders + 2 rows for the close hint and a blank
+        // separator. The remaining inner height is the content viewport.
+        int viewport = Math.max(1, height - 4);
+        int scroll = Math.max(0, Math.min(state.kvModalScroll(), Math.max(0, all.length - 1)));
+        int end = Math.min(all.length, scroll + viewport);
+
         List<Line> lines = new ArrayList<>();
-        for (String s : KvMetadataFormatter.format(entry.getKey(), entry.getValue()).split("\n", -1)) {
-            lines.add(Line.from(Span.raw(" " + s)));
+        for (int i = scroll; i < end; i++) {
+            lines.add(Line.from(Span.raw(" " + all[i])));
         }
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Press Esc or Enter to close", Style.EMPTY.fg(Theme.DIM))));
+        String hint = scroll + viewport < all.length
+                ? " ↓ " + (all.length - end) + " more lines · Esc / Enter close · ↑↓ scroll · Shift+↑↓ page"
+                : (scroll > 0
+                        ? " ↑ " + scroll + " lines above · Esc / Enter close · ↑↓ scroll · Shift+↑↓ page"
+                        : " Press Esc or Enter to close");
+        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
         Block block = Block.builder()
                 .title(" " + entry.getKey() + " ")
                 .borders(Borders.ALL)

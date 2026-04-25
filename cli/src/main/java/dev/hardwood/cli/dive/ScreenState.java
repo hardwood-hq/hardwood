@@ -17,14 +17,17 @@ public sealed interface ScreenState {
     /// Landing screen. Two panes: file-facts (left) and drill-into menu (right).
     /// `kvSelection` is the row index within the key/value metadata list in the
     /// facts pane (0 = first KV entry); `kvModalOpen` is true when the
-    /// full-value modal is showing for the selected KV entry.
-    record Overview(Pane focus, int menuSelection, int kvSelection, boolean kvModalOpen)
+    /// full-value modal is showing for the selected KV entry. `kvModalScroll`
+    /// is the line offset into the modal contents — used when the formatted
+    /// value (e.g. an Arrow hex dump) overflows the modal viewport.
+    record Overview(Pane focus, int menuSelection, int kvSelection,
+                    boolean kvModalOpen, int kvModalScroll)
             implements ScreenState {
         public enum Pane { FACTS, MENU }
 
         /// Default state: menu pane focused, selection at 0, no KV interaction.
         public static Overview initial() {
-            return new Overview(Pane.MENU, 0, 0, false);
+            return new Overview(Pane.MENU, 0, 0, false, 0);
         }
     }
 

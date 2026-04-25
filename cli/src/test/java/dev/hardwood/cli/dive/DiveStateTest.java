@@ -56,18 +56,18 @@ class DiveStateTest {
     @Test
     void overviewDownMovesMenuSelection() {
         NavigationStack stack = new NavigationStack(
-                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false));
+                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false, 0));
 
         OverviewScreen.handle(key(KeyCode.DOWN), model, stack);
 
         assertThat(stack.top()).isEqualTo(
-                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 1, 0, false));
+                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 1, 0, false, 0));
     }
 
     @Test
     void overviewUpAtTopClampsToZero() {
         NavigationStack stack = new NavigationStack(
-                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false));
+                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false, 0));
 
         OverviewScreen.handle(key(KeyCode.UP), model, stack);
 
@@ -77,7 +77,7 @@ class DiveStateTest {
     @Test
     void overviewTabSwitchesFocus() {
         NavigationStack stack = new NavigationStack(
-                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false));
+                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false, 0));
 
         OverviewScreen.handle(key(KeyCode.TAB), model, stack);
 
@@ -89,7 +89,7 @@ class DiveStateTest {
     void overviewEnterOnRowGroupsPushesRowGroupsScreen() {
         NavigationStack stack = new NavigationStack(
                 new ScreenState.Overview(ScreenState.Overview.Pane.MENU,
-                        OverviewScreen.MenuItem.ROW_GROUPS.ordinal(), 0, false));
+                        OverviewScreen.MenuItem.ROW_GROUPS.ordinal(), 0, false, 0));
 
         OverviewScreen.handle(key(KeyCode.ENTER), model, stack);
 
@@ -101,7 +101,7 @@ class DiveStateTest {
     void overviewEnterOnSchemaPushesSchemaScreen() {
         NavigationStack stack = new NavigationStack(
                 new ScreenState.Overview(ScreenState.Overview.Pane.MENU,
-                        OverviewScreen.MenuItem.SCHEMA.ordinal(), 0, false));
+                        OverviewScreen.MenuItem.SCHEMA.ordinal(), 0, false, 0));
 
         OverviewScreen.handle(key(KeyCode.ENTER), model, stack);
 
@@ -112,7 +112,7 @@ class DiveStateTest {
     void overviewEnterOnFooterPushesFooterScreen() {
         NavigationStack stack = new NavigationStack(
                 new ScreenState.Overview(ScreenState.Overview.Pane.MENU,
-                        OverviewScreen.MenuItem.FOOTER.ordinal(), 0, false));
+                        OverviewScreen.MenuItem.FOOTER.ordinal(), 0, false, 0));
 
         OverviewScreen.handle(key(KeyCode.ENTER), model, stack);
 
@@ -193,7 +193,7 @@ class DiveStateTest {
     @Test
     void navigationStackCannotPopRoot() {
         NavigationStack stack = new NavigationStack(
-                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false));
+                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false, 0));
 
         stack.pop();
         stack.pop();
@@ -204,7 +204,7 @@ class DiveStateTest {
     @Test
     void navigationStackClearToRootCollapsesPath() {
         NavigationStack stack = new NavigationStack(
-                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false));
+                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false, 0));
         stack.push(new ScreenState.RowGroups(0));
         stack.push(new ScreenState.ColumnChunks(0, 2));
         stack.push(new ScreenState.ColumnChunkDetail(0, 2,
@@ -290,7 +290,7 @@ class DiveStateTest {
     void overviewEnterOnDataPreviewPushesDataPreview() {
         NavigationStack stack = new NavigationStack(
                 new ScreenState.Overview(ScreenState.Overview.Pane.MENU,
-                        OverviewScreen.MenuItem.DATA_PREVIEW.ordinal(), 0, false));
+                        OverviewScreen.MenuItem.DATA_PREVIEW.ordinal(), 0, false, 0));
 
         OverviewScreen.handle(key(KeyCode.ENTER), model, stack);
 
@@ -647,7 +647,7 @@ class DiveStateTest {
 
     private NavigationStack rooted(ScreenState child) {
         NavigationStack stack = new NavigationStack(
-                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false));
+                new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false, 0));
         stack.push(child);
         return stack;
     }
