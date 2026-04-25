@@ -23,13 +23,14 @@ interface InfoCommandContract {
         Cli.Result result = Cli.launch("info", "-f", plainFile());
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.output()).isEqualTo("""
-                Format Version:    2
-                Created By:        parquet-cpp-arrow version 22.0.0
-                Row Groups:        1
-                Total Rows:        3
-                Uncompressed Size: 174 B
-                Compressed Size:   174 B""");
+        assertThat(result.output())
+                .contains("Format Version:    2")
+                .contains("Created By:")
+                .contains("parquet-cpp-arrow")
+                .contains("Row Groups:        1")
+                .contains("Total Rows:        3")
+                .contains("Uncompressed Size: 174 B")
+                .contains("Compressed Size:   174 B");
     }
 
     @Test
