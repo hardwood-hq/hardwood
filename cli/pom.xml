@@ -89,6 +89,46 @@
       <artifactId>ascii-table</artifactId>
     </dependency>
 
+    <!-- TamboUI (TUI library for the `dive` subcommand) -->
+    <dependency>
+      <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-core</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-widgets</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-tui</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>dev.tamboui</groupId>
+      <artifactId>tamboui-jline3-backend</artifactId>
+      <scope>runtime</scope>
+      <exclusions>
+        <!-- jline:jline is a fat bundle that also ships the JNA / Jansi / FFM
+             terminal providers. Their factory methods reference com.sun.jna.Platform
+             and org.fusesource.jansi.internal.Kernel32, which we don't depend on,
+             which breaks native-image static analysis. We swap it below for the
+             JNI-only sub-modules so those classes aren't reachable. -->
+        <exclusion>
+          <groupId>org.jline</groupId>
+          <artifactId>jline</artifactId>
+        </exclusion>
+      </exclusions>
+    </dependency>
+    <dependency>
+      <groupId>org.jline</groupId>
+      <artifactId>jline-terminal</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.jline</groupId>
+      <artifactId>jline-terminal-jni</artifactId>
+      <scope>runtime</scope>
+    </dependency>
+
     <!-- Optional compression libraries -->
     <dependency>
       <groupId>org.xerial.snappy</groupId>

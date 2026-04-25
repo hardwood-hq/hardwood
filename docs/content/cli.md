@@ -35,6 +35,7 @@ Pre-built native binaries for Linux, macOS, and Windows are available from the [
 | `hardwood inspect dictionary` | Print dictionary entries for a column |
 | `hardwood inspect columns` | Show compressed and uncompressed byte sizes per column, ranked |
 | `hardwood inspect rowgroups` | Display per-row-group column chunk metadata (sizes, codec) |
+| `hardwood dive` | Interactively explore a file's structure in a TUI |
 | `hardwood help` | Display help information about a command |
 
 ## Examples
@@ -58,6 +59,86 @@ hardwood print -f data.parquet
 # Convert to CSV
 hardwood convert --format csv -f data.parquet
 ```
+
+## Interactive exploration (`dive`)
+
+`hardwood dive` launches a terminal UI for navigating a Parquet file's structure
+without re-invoking the CLI for each slice:
+
+```shell
+hardwood dive -f data.parquet
+```
+
+From the Overview landing screen, drill into **Schema** or **Row groups**,
+then into column chunks and per-chunk metadata.
+
+| Key | Action |
+|-----|--------|
+| `↑` / `↓` | Move selection |
+| `g` / `G` | Jump to first / last row |
+| `Enter` | Drill into the selected item |
+| `Esc` / `Backspace` | Go back one level |
+| `Tab` / `Shift-Tab` | Switch focused pane |
+| `o` | Jump back to Overview |
+| `?` | Toggle help overlay |
+| `q` / `Ctrl-C` | Quit |
+
+Available screens: Overview, Schema (expandable tree of groups + leaves),
+Row groups, Column chunks, Column chunk detail (facts + drill menu), Pages
+(with a page-header modal on Enter), Column index, Offset index, Footer &
+indexes, Column-across-row-groups (from the Schema screen), Dictionary (with
+full-value modal on Enter and `/` inline search), and Data preview (row
+values via `RowReader`; `←/→` scrolls the visible column window,
+`PgDn/PgUp` flips pages).
+
+The `--rows N` flag sets the Data preview page size (default: 20).
+
+### Layout
+
+Every screen shares a four-region layout — a top bar with file identity, a
+breadcrumb showing the navigation stack, the active screen body, and a keybar:
+
+```
+ hardwood dive │ /data/lineitem.parquet │ 1.4 GB │ 3 RGs │ 12.4 M rows
+ Overview › Row groups › RG #1 › Column chunks › l_address.street
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│                         (active screen body)                           │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+ [↑↓] move  [Enter] drill  [Esc] back                [?] help   [q] quit
+```
+
+### Typical drill path
+
+1. **Overview** → pick *Row groups* from the drill menu.
+2. **Row groups** → select a row, *Enter* — opens its column chunks.
+3. **Column chunks** → select a column, *Enter* — opens the chunk detail.
+4. **Column chunk detail** (facts pane + drill menu) → pick *Pages*, *Column
+   index*, *Offset index*, or *Dictionary*.
+5. Drill sub-screens (*Pages*, *Column index*, etc.) support *Esc* back up to
+   the previous level; in *Pages* and *Dictionary*, *Enter* opens a modal with
+   the full header / value.
+
+Alternative entry: from **Overview → Schema**, navigate the tree of group and
+primitive nodes with `→` / `←`; `Enter` on a leaf drills into a
+*Column-across-row-groups* view — one row per row group showing that column's
+sizes, encoding, stats — and from there into the chunk detail.
+
+### Inline search
+
+The **Schema**, **Column index**, and **Dictionary** screens support inline
+search. Press `/` to enter search-edit mode:
+
+- **Schema** — filters leaf columns whose field path contains the query.
+  While the filter is active, the tree collapses to a flat list of matches.
+- **Column index** — filters pages whose formatted min or max value
+  contains the query.
+- **Dictionary** — filters entries whose value contains the query.
+
+In all three cases: typed characters extend the filter; *Backspace* trims;
+*Esc* clears the filter and exits edit mode; *Enter* commits (keeps the
+filter applied but exits edit mode). The table re-filters live as you type.
 
 ## Reading Files from S3
 

@@ -461,6 +461,14 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [ ] Parallel writing support
 - [ ] **Validate**: Full compatibility with parquet-java and PyArrow
 
+### Interactive CLI (`hardwood dive`)
+TUI for exploring Parquet file structure. See `_designs/INTERACTIVE_DIVE_TUI.md`.
+- [x] Phase 1: skeleton + Overview / Schema (flat) / Row groups / Column chunks / Column chunk detail / Help overlay (#324)
+- [x] Phase 2: Pages + page-header modal / Column index / Offset index / Footer / Column-across-row-groups / Chunk-detail drill menu (#324)
+- [x] Phase 3: Dictionary / Data preview (#324)
+- [x] Phase 4: Schema tree expansion, Dictionary inline search, docs expanded (#324)
+- [ ] Follow-ups: async I/O (profiling-dependent); search on Schema / Column index; "jump to chunk" from Footer; screenshots in docs
+
 ## Testing
 
 ### Test Data Sources
