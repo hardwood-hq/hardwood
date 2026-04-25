@@ -244,9 +244,17 @@ public final class PagesScreen {
         if (state.modalOpen()) {
             return "";
         }
-        int count = model.pageHeaders(state.rowGroupIndex(), state.columnIndex()).size();
+        java.util.List<PageHeader> headers = model.pageHeaders(state.rowGroupIndex(), state.columnIndex());
+        int count = headers.size();
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
-        boolean hasLogical = col.logicalType() != null;
+        // `t` toggles logical-type rendering of inline-stats Min / Max,
+        // but those values only exist on data pages — not on dictionary
+        // pages. Hide the affordance when the cursor is on a
+        // DICTIONARY_PAGE row.
+        boolean onDataPage = count > 0
+                && state.selection() < count
+                && headers.get(state.selection()).type() != PageHeader.PageType.DICTIONARY_PAGE;
+        boolean hasLogical = col.logicalType() != null && onDataPage;
         return new Keys.Hints()
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
@@ -359,7 +367,10 @@ public final class PagesScreen {
             }
         }
         lines.add(Line.empty());
-        boolean hasLogical = col.logicalType() != null;
+        // Dictionary pages have no inline stats — `t` is a no-op even
+        // when the column carries a logical type, so suppress the hint.
+        boolean onDataPage = header.type() != PageHeader.PageType.DICTIONARY_PAGE;
+        boolean hasLogical = col.logicalType() != null && onDataPage;
         String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
         lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
 
