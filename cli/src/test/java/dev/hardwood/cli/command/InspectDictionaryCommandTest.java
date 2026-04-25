@@ -36,6 +36,15 @@ class InspectDictionaryCommandTest implements InspectDictionaryCommandContract {
     }
 
     @Test
+    void rejectsNegativeLimit() {
+        Cli.Result result = Cli.launch("inspect", "dictionary", "-f", dictFile(), "--column", "category",
+                "--limit", "-1");
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).contains("--limit must be greater than or equal to 0");
+    }
+
+    @Test
     void rejectsRemoteUri() {
         Cli.Result result = Cli.launch("inspect", "dictionary", "-f", "gs://bucket/data.parquet",
                 "--column", "id");
