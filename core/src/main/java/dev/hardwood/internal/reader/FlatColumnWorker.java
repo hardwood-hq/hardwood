@@ -45,12 +45,28 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     @Override
     void assemblePage(Page page, PageRowMask mask) {
-        int pageSize = page.size();
-        int pagePosition = 0;
+        if (mask.isAll()) {
+            copyPageRange(page, 0, page.size());
+            return;
+        }
+        int intervalCount = mask.intervalCount();
+        for (int i = 0; i < intervalCount; i++) {
+            if (done) {
+                return;
+            }
+            copyPageRange(page, mask.start(i), mask.end(i));
+        }
+    }
 
-        while (pagePosition < pageSize) {
+    /// Copies values at page-relative offsets `[rangeStart, rangeEnd)` into
+    /// the current batch, publishing and rolling over as the batch fills and
+    /// stopping early when `maxRows` is reached.
+    private void copyPageRange(Page page, int rangeStart, int rangeEnd) {
+        int pagePosition = rangeStart;
+
+        while (pagePosition < rangeEnd) {
             int spaceInBatch = batchCapacity - rowsInCurrentBatch;
-            int toCopy = Math.min(spaceInBatch, pageSize - pagePosition);
+            int toCopy = Math.min(spaceInBatch, rangeEnd - pagePosition);
 
             // Respect maxRows: limit the copy to remaining budget
             if (maxRows > 0) {
