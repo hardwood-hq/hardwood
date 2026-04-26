@@ -248,7 +248,7 @@ public final class DictionaryScreen {
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
                 .add(count > 1, "[g/G] first/last")
-                .add(canExpand, "[Enter] full value")
+                .add(canExpand, "[Enter] view full value")
                 .add(dict != null, "[/] search")
                 .add(hasLogical, "[t] logical types")
                 .add(true, "[Esc] back")

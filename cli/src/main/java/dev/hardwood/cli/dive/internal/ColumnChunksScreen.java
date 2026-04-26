@@ -132,7 +132,7 @@ public final class ColumnChunksScreen {
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
                 .add(count > 1, "[g/G] first/last")
-                .add(count > 0, "[Enter] inspect chunk")
+                .add(count > 0, "[Enter] open")
                 .add(true, "[Esc] back")
                 .build();
     }
