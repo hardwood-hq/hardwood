@@ -72,40 +72,55 @@ public final class DiveApp {
         if (!(event instanceof KeyEvent ke)) {
             return false;
         }
-        if (ke.isCtrlC()) {
+        Action action = dispatchKey(ke);
+        if (action == Action.QUIT) {
             runner.quit();
             return false;
+        }
+        return action == Action.HANDLED;
+    }
+
+    /// Outcome of a key dispatch — returned by [#dispatchKey] so the
+    /// runtime loop can act on `QUIT` (`runner.quit()`) and the test
+    /// harness can assert behavior without driving a real TuiRunner.
+    public enum Action { HANDLED, IGNORED, QUIT }
+
+    /// Visible for testing: the same key-dispatch logic the runtime loop
+    /// uses, minus the TuiRunner coupling. Returns [Action#QUIT] for
+    /// `Ctrl-C` and (when not in text-input mode) `q`.
+    public Action dispatchKey(KeyEvent ke) {
+        if (ke.isCtrlC()) {
+            return Action.QUIT;
         }
         boolean textInput = isTopInInputMode();
         if (!textInput && ke.isQuit()) {
-            runner.quit();
-            return false;
+            return Action.QUIT;
         }
         if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == '?') {
             helpOpen = !helpOpen;
-            return true;
+            return Action.HANDLED;
         }
         if (helpOpen) {
             if (ke.isCancel()) {
                 helpOpen = false;
-                return true;
+                return Action.HANDLED;
             }
-            return false;
+            return Action.IGNORED;
         }
         if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == 'o' && !ke.hasCtrl() && !ke.hasAlt()) {
             stack.clearToRoot();
-            return true;
+            return Action.HANDLED;
         }
         // Screen gets first crack at the event so it can claim keys like Esc (filter-cancel)
         // before the global back-navigation intercept kicks in.
         if (dispatchToScreen(ke)) {
-            return true;
+            return Action.HANDLED;
         }
         if (ke.isCancel() && stack.depth() > 1) {
             stack.pop();
-            return true;
+            return Action.HANDLED;
         }
-        return false;
+        return Action.IGNORED;
     }
 
     private boolean isTopInInputMode() {
