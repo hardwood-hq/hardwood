@@ -12,8 +12,10 @@ import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -35,6 +37,7 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 /// Snapshot of a Parquet file exposed to the dive screens.
 ///
@@ -51,6 +54,10 @@ public final class ParquetModel implements AutoCloseable {
     private final FileMetaData metadata;
     private final FileSchema schema;
     private final Facts facts;
+    /// Cached set of all group node paths in the schema; computed once on
+    /// first call to [#allGroupPaths]. Schema is immutable per session, so
+    /// the result is safe to memoise.
+    private Set<String> allGroupPathsCache;
     private int dictionaryReadCapBytes = DEFAULT_DICTIONARY_READ_CAP_BYTES;
     // Forward-read cursor for Data preview pagination. Reusing the same
     // RowReader across forward page flips avoids re-iterating from row 0 on
@@ -128,6 +135,32 @@ public final class ParquetModel implements AutoCloseable {
 
     public FileSchema schema() {
         return schema;
+    }
+
+    /// Set of every group node's dotted path in the schema. Cached on first
+    /// access — the schema is fixed for the session, but the SchemaScreen
+    /// keybar consults this on every frame so a one-shot memoise saves a
+    /// recursive walk per render.
+    public Set<String> allGroupPaths() {
+        if (allGroupPathsCache == null) {
+            Set<String> out = new HashSet<>();
+            SchemaNode.GroupNode root = schema.getRootNode();
+            for (SchemaNode child : root.children()) {
+                collectGroupPaths(child, "", out);
+            }
+            allGroupPathsCache = Set.copyOf(out);
+        }
+        return allGroupPathsCache;
+    }
+
+    private static void collectGroupPaths(SchemaNode node, String parentPath, Set<String> out) {
+        if (node instanceof SchemaNode.GroupNode g) {
+            String path = parentPath.isEmpty() ? g.name() : parentPath + "." + g.name();
+            out.add(path);
+            for (SchemaNode child : g.children()) {
+                collectGroupPaths(child, path, out);
+            }
+        }
     }
 
     public Facts facts() {

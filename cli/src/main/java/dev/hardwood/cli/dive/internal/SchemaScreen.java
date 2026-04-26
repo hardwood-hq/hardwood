@@ -104,7 +104,7 @@ public final class SchemaScreen {
         // navigating the tree, not editing the search filter.
         if (event.code() == KeyCode.CHAR && event.character() == 'e'
                 && !event.hasCtrl() && !event.hasAlt()) {
-            Set<String> all = allGroupPaths(model);
+            Set<String> all = model.allGroupPaths();
             stack.replaceTop(with(state, state.selection(), all, state.filter(), false));
             return true;
         }
@@ -265,7 +265,7 @@ public final class SchemaScreen {
         Row current = count > 0 ? rows.get(Math.min(state.selection(), count - 1)) : null;
         boolean isGroup = current != null && current.isGroup();
         boolean expanded = isGroup && state.expanded().contains(current.path());
-        boolean hasGroups = !allGroupPaths(model).isEmpty();
+        boolean hasGroups = !model.allGroupPaths().isEmpty();
         return new Keys.Hints()
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
@@ -342,25 +342,6 @@ public final class SchemaScreen {
             }
         }
         return Collections.unmodifiableList(matched);
-    }
-
-    private static Set<String> allGroupPaths(ParquetModel model) {
-        Set<String> out = new HashSet<>();
-        SchemaNode.GroupNode root = model.schema().getRootNode();
-        for (SchemaNode child : root.children()) {
-            collectGroupPaths(child, "", out);
-        }
-        return out;
-    }
-
-    private static void collectGroupPaths(SchemaNode node, String parentPath, Set<String> out) {
-        if (node instanceof SchemaNode.GroupNode g) {
-            String path = parentPath.isEmpty() ? g.name() : parentPath + "." + g.name();
-            out.add(path);
-            for (SchemaNode child : g.children()) {
-                collectGroupPaths(child, path, out);
-            }
-        }
     }
 
     private static void collectAllLeaves(SchemaNode node, String parentPath, List<Row> out) {
