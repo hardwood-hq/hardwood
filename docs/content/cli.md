@@ -85,8 +85,11 @@ then into column chunks and per-chunk metadata.
 Available screens: Overview, Schema (flat leaf-column list), Row groups,
 Column chunks, Column chunk detail, Pages (with a page-header modal on Enter),
 Column index, Offset index, Footer & indexes, Column-across-row-groups (from
-the Schema screen). Dictionary and data preview land in phase 3; the
-expandable schema tree ships in phase 4.
+the Schema screen), Dictionary (with full-value modal on Enter), and Data
+preview (row values via `RowReader`; `←/→` scrolls the visible column
+window, `PgDn/PgUp` flips pages). The expandable schema tree ships in phase 4.
+
+The `--rows N` flag sets the Data preview page size (default: 20).
 
 ## Reading Files from S3
 

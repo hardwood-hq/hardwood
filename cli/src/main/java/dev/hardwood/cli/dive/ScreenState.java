@@ -57,4 +57,27 @@ public sealed interface ScreenState {
     /// [ColumnChunkDetail] for the corresponding `(rowGroup, column)`.
     record ColumnAcrossRowGroups(int columnIndex, int selection) implements ScreenState {
     }
+
+    /// Dictionary entries for one column chunk. `selection` is the entry index;
+    /// `modalOpen` flags the full-value modal that opens on Enter.
+    record DictionaryView(int rowGroupIndex, int columnIndex, int selection, boolean modalOpen)
+            implements ScreenState {
+    }
+
+    /// Projected rows. `firstRow` is the 0-based absolute index of the first row
+    /// currently displayed; `pageSize` controls how many rows fit on a page; the
+    /// loaded `rows` are pre-formatted strings per column. `columnNames`
+    /// duplicates the projection so renderers don't re-derive it.
+    record DataPreview(
+            long firstRow,
+            int pageSize,
+            java.util.List<String> columnNames,
+            java.util.List<java.util.List<String>> rows,
+            int columnScroll)
+            implements ScreenState {
+        public DataPreview {
+            columnNames = java.util.List.copyOf(columnNames);
+            rows = java.util.List.copyOf(rows);
+        }
+    }
 }

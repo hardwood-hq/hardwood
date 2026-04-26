@@ -14,6 +14,8 @@ import dev.hardwood.cli.dive.internal.ColumnAcrossRowGroupsScreen;
 import dev.hardwood.cli.dive.internal.ColumnChunkDetailScreen;
 import dev.hardwood.cli.dive.internal.ColumnChunksScreen;
 import dev.hardwood.cli.dive.internal.ColumnIndexScreen;
+import dev.hardwood.cli.dive.internal.DataPreviewScreen;
+import dev.hardwood.cli.dive.internal.DictionaryScreen;
 import dev.hardwood.cli.dive.internal.FooterScreen;
 import dev.hardwood.cli.dive.internal.HelpOverlay;
 import dev.hardwood.cli.dive.internal.OffsetIndexScreen;
@@ -104,6 +106,8 @@ public final class DiveApp {
             case ScreenState.OffsetIndexView ignored -> OffsetIndexScreen.handle(ke, model, stack);
             case ScreenState.Footer ignored -> FooterScreen.handle(ke, model, stack);
             case ScreenState.ColumnAcrossRowGroups ignored -> ColumnAcrossRowGroupsScreen.handle(ke, model, stack);
+            case ScreenState.DictionaryView ignored -> DictionaryScreen.handle(ke, model, stack);
+            case ScreenState.DataPreview ignored -> DataPreviewScreen.handle(ke, model, stack);
         };
     }
 
@@ -135,6 +139,8 @@ public final class DiveApp {
             case ScreenState.OffsetIndexView s -> OffsetIndexScreen.render(buffer, area, model, s);
             case ScreenState.Footer ignored -> FooterScreen.render(buffer, area, model);
             case ScreenState.ColumnAcrossRowGroups s -> ColumnAcrossRowGroupsScreen.render(buffer, area, model, s);
+            case ScreenState.DictionaryView s -> DictionaryScreen.render(buffer, area, model, s);
+            case ScreenState.DataPreview s -> DataPreviewScreen.render(buffer, area, model, s);
         }
     }
 
@@ -150,6 +156,8 @@ public final class DiveApp {
             case ScreenState.OffsetIndexView ignored -> OffsetIndexScreen.keybarKeys();
             case ScreenState.Footer ignored -> FooterScreen.keybarKeys();
             case ScreenState.ColumnAcrossRowGroups ignored -> ColumnAcrossRowGroupsScreen.keybarKeys();
+            case ScreenState.DictionaryView ignored -> DictionaryScreen.keybarKeys();
+            case ScreenState.DataPreview ignored -> DataPreviewScreen.keybarKeys();
         };
     }
 

@@ -89,7 +89,8 @@ public final class ColumnChunkDetailScreen {
                         state.rowGroupIndex(), state.columnIndex(), 0));
                 case OFFSET_INDEX -> stack.push(new ScreenState.OffsetIndexView(
                         state.rowGroupIndex(), state.columnIndex(), 0));
-                default -> { }
+                case DICTIONARY -> stack.push(new ScreenState.DictionaryView(
+                        state.rowGroupIndex(), state.columnIndex(), 0, false));
             }
             return true;
         }
@@ -119,7 +120,7 @@ public final class ColumnChunkDetailScreen {
             case PAGES -> true;
             case COLUMN_INDEX -> chunk.columnIndexOffset() != null && chunk.columnIndexLength() != null;
             case OFFSET_INDEX -> chunk.offsetIndexOffset() != null && chunk.offsetIndexLength() != null;
-            case DICTIONARY -> false;
+            case DICTIONARY -> chunk.metaData().dictionaryPageOffset() != null;
         };
     }
 
@@ -196,7 +197,7 @@ public final class ColumnChunkDetailScreen {
             }
             case COLUMN_INDEX -> chunk.columnIndexOffset() != null ? "present" : "n/a";
             case OFFSET_INDEX -> chunk.offsetIndexOffset() != null ? "present" : "n/a";
-            case DICTIONARY -> "(phase 3)";
+            case DICTIONARY -> chunk.metaData().dictionaryPageOffset() != null ? "present" : "n/a";
         };
     }
 

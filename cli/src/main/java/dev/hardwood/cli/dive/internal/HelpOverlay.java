@@ -47,9 +47,9 @@ public final class HelpOverlay {
                 kv("?", "toggle this help"),
                 kv("q / Ctrl-C", "quit"),
                 Line.empty(),
-                Line.from(new Span("Phase 1 status", Style.EMPTY.bold())),
-                Line.from(Span.raw(" Pages / indexes / dictionary")),
-                Line.from(Span.raw(" / data preview: phase 2-3")),
+                Line.from(new Span("Modals", Style.EMPTY.bold())),
+                kv("Enter", "open (Pages / Dictionary)"),
+                kv("Esc / Enter", "close modal"),
                 Line.empty(),
                 Line.from(new Span("Press ? or Esc to close", Style.EMPTY.fg(Color.GRAY))));
 
