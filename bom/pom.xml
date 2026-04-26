@@ -50,6 +50,28 @@
 
   <dependencyManagement>
     <dependencies>
+      <!-- TamboUI (TUI library; the upstream tamboui-bom omits widgets/tui, pin directly) -->
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-core</artifactId>
+        <version>0.2.0</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-widgets</artifactId>
+        <version>0.2.0</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-tui</artifactId>
+        <version>0.2.0</version>
+      </dependency>
+      <dependency>
+        <groupId>dev.tamboui</groupId>
+        <artifactId>tamboui-jline3-backend</artifactId>
+        <version>0.2.0</version>
+      </dependency>
+
       <!-- Hardwood modules -->
       <dependency>
         <groupId>dev.hardwood</groupId>

@@ -23,7 +23,8 @@ import picocli.CommandLine.IVersionProvider;
         ConvertCommand.class,
         FooterCommand.class,
         InspectCommand.class,
-        PrintCommand.class
+        PrintCommand.class,
+        DiveCommand.class
 }, description = "A command-line interface for hardwood"
 
 )
