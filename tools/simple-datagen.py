@@ -12,7 +12,7 @@ from datetime import datetime, date, time, timezone
 from decimal import Decimal
 import uuid
 
-from parquet_annotators import annotate_column_as_bson, annotate_group_as_variant
+from parquet_annotators import annotate_column_as_bson, annotate_group_as_variant, annotate_column_as_interval
 
 # Plain encoding with no compression (for Milestone 1)
 # Create a simple table with NO nulls first, explicitly marking fields as non-nullable

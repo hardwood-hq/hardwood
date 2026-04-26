@@ -6,6 +6,22 @@
 #  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
 #
 
+"""
+Post-processes a Parquet file to stamp logical type annotations into the Thrift
+footer. PyArrow cannot emit certain logical types natively, so these helpers
+read the compact-Thrift footer, patch the target SchemaElement, and rewrite the
+file. The rest of the file (data pages, row groups, statistics, etc.) is
+preserved byte-for-byte.
+
+Supported annotations:
+- BSON       — `annotate_column_as_bson`
+- INTERVAL   — `annotate_column_as_interval`
+- VARIANT    — `annotate_group_as_variant`
+
+Only the subset of parquet.thrift that PyArrow emits, plus the LogicalType
+union, is modelled in the embedded IDL.
+"""
+
 import io
 import struct
 
@@ -42,7 +58,6 @@ struct TimeType { 1: required bool isAdjustedToUTC; 2: required TimeUnit unit; }
 struct IntType { 1: required byte bitWidth; 2: required bool isSigned; }
 struct JsonType {}
 struct BsonType {}
-struct BsonType2 {}
 struct VariantType { 1: optional byte specification_version; }
 struct GeometryType {}
 struct GeographyType {}
@@ -184,7 +199,7 @@ struct FileMetaData {
 }
 """
 
-_parquet = thriftpy2.load_fp(io.StringIO(_PARQUET_IDL), module_name="_parquet_bson_patch_thrift")
+_parquet = thriftpy2.load_fp(io.StringIO(_PARQUET_IDL), module_name="_parquet_patch_thrift")
 
 def _read_parquet_footer(path: str):
     """Read and parse a Parquet file's Thrift footer.
