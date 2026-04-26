@@ -20,10 +20,14 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
+import dev.tamboui.text.Line;
+import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
+import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
@@ -44,7 +48,12 @@ public final class RowGroupIndexesScreen {
 
         long size() {
             Integer len = kind == Kind.COLUMN ? chunk.columnIndexLength() : chunk.offsetIndexLength();
-            return len != null ? len.longValue() : 0L;
+            if (len == null) {
+                throw new IllegalStateException(
+                        kind + " index for column " + Sizes.columnPath(chunk.metaData())
+                                + " has an offset but no length");
+            }
+            return len.longValue();
         }
 
         String typeLabel() {
@@ -104,6 +113,23 @@ public final class RowGroupIndexesScreen {
         Keys.observeViewport(area.height() - 3);
         RowGroup rg = model.rowGroup(state.rowGroupIndex());
         List<Entry> entries = entries(rg);
+        if (entries.isEmpty()) {
+            Block emptyBlock = Block.builder()
+                    .title(" RG #" + state.rowGroupIndex() + " index regions ")
+                    .borders(Borders.ALL)
+                    .borderType(BorderType.ROUNDED)
+                    .borderColor(Theme.DIM)
+                    .build();
+            Paragraph.builder()
+                    .block(emptyBlock)
+                    .text(Text.from(Line.from(
+                            new Span(" This row group has no column or offset indexes.",
+                                    Style.EMPTY.fg(Theme.DIM)))))
+                    .left()
+                    .build()
+                    .render(area, buffer);
+            return;
+        }
         List<Row> rows = new ArrayList<>();
         for (Entry e : entries) {
             rows.add(Row.from(

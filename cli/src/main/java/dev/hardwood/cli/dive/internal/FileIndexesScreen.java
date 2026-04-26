@@ -21,10 +21,14 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
+import dev.tamboui.text.Line;
+import dev.tamboui.text.Span;
+import dev.tamboui.text.Text;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
 import dev.tamboui.widgets.block.Borders;
+import dev.tamboui.widgets.paragraph.Paragraph;
 import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
@@ -91,6 +95,32 @@ public final class FileIndexesScreen {
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.FileIndexes state) {
         Keys.observeViewport(area.height() - 3);
         List<Entry> entries = entries(model, state.kind());
+        if (entries.isEmpty()) {
+            String title = switch (state.kind()) {
+                case COLUMN -> " All column indexes ";
+                case OFFSET -> " All offset indexes ";
+                case DICTIONARY -> " All dictionaries ";
+            };
+            String message = switch (state.kind()) {
+                case COLUMN -> "No column indexes in this file.";
+                case OFFSET -> "No offset indexes in this file.";
+                case DICTIONARY -> "No dictionary-encoded chunks in this file.";
+            };
+            Block emptyBlock = Block.builder()
+                    .title(title)
+                    .borders(Borders.ALL)
+                    .borderType(BorderType.ROUNDED)
+                    .borderColor(Theme.DIM)
+                    .build();
+            Paragraph.builder()
+                    .block(emptyBlock)
+                    .text(Text.from(Line.from(
+                            new Span(" " + message, Style.EMPTY.fg(Theme.DIM)))))
+                    .left()
+                    .build()
+                    .render(area, buffer);
+            return;
+        }
         List<Row> rows = new ArrayList<>();
         for (Entry e : entries) {
             ColumnChunk cc = e.chunk();
@@ -120,39 +150,25 @@ public final class FileIndexesScreen {
                 }
             }
         }
-        Row header;
-        List<Constraint> widths;
-        switch (state.kind()) {
-            case COLUMN -> {
-                header = Row.from("RG", "Column", "CI offset", "CI bytes")
-                        .style(Style.EMPTY.bold());
-                widths = List.of(
-                        new Constraint.Length(4),
-                        new Constraint.Fill(3),
-                        new Constraint.Length(16),
-                        new Constraint.Length(10));
-            }
-            case OFFSET -> {
-                header = Row.from("RG", "Column", "OI offset", "OI bytes")
-                        .style(Style.EMPTY.bold());
-                widths = List.of(
-                        new Constraint.Length(4),
-                        new Constraint.Fill(3),
-                        new Constraint.Length(16),
-                        new Constraint.Length(10));
-            }
-            case DICTIONARY -> {
-                header = Row.from("RG", "Column", "Dict offset", "Data offset", "Dict span")
-                        .style(Style.EMPTY.bold());
-                widths = List.of(
-                        new Constraint.Length(4),
-                        new Constraint.Fill(3),
-                        new Constraint.Length(14),
-                        new Constraint.Length(14),
-                        new Constraint.Length(10));
-            }
-            default -> throw new IllegalStateException("kind: " + state.kind());
-        }
+        Row header = switch (state.kind()) {
+            case COLUMN -> Row.from("RG", "Column", "CI offset", "CI bytes").style(Style.EMPTY.bold());
+            case OFFSET -> Row.from("RG", "Column", "OI offset", "OI bytes").style(Style.EMPTY.bold());
+            case DICTIONARY -> Row.from("RG", "Column", "Dict offset", "Data offset", "Dict span")
+                    .style(Style.EMPTY.bold());
+        };
+        List<Constraint> widths = switch (state.kind()) {
+            case COLUMN, OFFSET -> List.of(
+                    new Constraint.Length(4),
+                    new Constraint.Fill(3),
+                    new Constraint.Length(16),
+                    new Constraint.Length(10));
+            case DICTIONARY -> List.of(
+                    new Constraint.Length(4),
+                    new Constraint.Fill(3),
+                    new Constraint.Length(14),
+                    new Constraint.Length(14),
+                    new Constraint.Length(10));
+        };
         String range = Plurals.rangeOf(state.selection(), entries.size(), Keys.viewportStride());
         String title = switch (state.kind()) {
             case COLUMN -> " All column indexes " + range + " ";

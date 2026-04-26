@@ -30,24 +30,20 @@ import dev.tamboui.widgets.block.Borders;
 import dev.tamboui.widgets.paragraph.Paragraph;
 
 /// The root screen of `hardwood dive`. Two panes: file facts (left, read-only) and
-/// a drill-into menu (right, selectable). Phase 1 only implements Schema and Row
-/// groups drills — Footer and Data preview entries are shown disabled.
+/// a drill-into menu (right, selectable).
 public final class OverviewScreen {
 
-    /// Menu entries in display order. Enabled items drill into their screen when
-    /// the user presses Enter; disabled items are rendered dimmed and ignored.
+    /// Menu entries in display order. Enter drills into the selected item's screen.
     public enum MenuItem {
-        SCHEMA("Schema", true),
-        ROW_GROUPS("Row groups", true),
-        FOOTER("Footer & indexes", true),
-        DATA_PREVIEW("Data preview", true);
+        SCHEMA("Schema"),
+        ROW_GROUPS("Row groups"),
+        FOOTER("Footer & indexes"),
+        DATA_PREVIEW("Data preview");
 
         final String label;
-        final boolean enabled;
 
-        MenuItem(String label, boolean enabled) {
+        MenuItem(String label) {
             this.label = label;
-            this.enabled = enabled;
         }
     }
 
@@ -134,9 +130,6 @@ public final class OverviewScreen {
         }
         if (event.isConfirm()) {
             MenuItem item = MenuItem.values()[state.menuSelection()];
-            if (!item.enabled) {
-                return false;
-            }
             switch (item) {
                 case SCHEMA -> stack.push(ScreenState.Schema.initial());
                 case ROW_GROUPS -> stack.push(new ScreenState.RowGroups(0));
@@ -204,7 +197,7 @@ public final class OverviewScreen {
                 .add(factsHasKv, "[Tab] pane")
                 .add(onFacts ? kvCount > 1 : MENU_SIZE > 1, "[↑↓] move")
                 .add(onFacts && factsHasKv, "[Enter] view entry")
-                .add(!onFacts, "[Enter] drill")
+                .add(!onFacts, "[Enter] open")
                 .build();
     }
 
@@ -291,9 +284,7 @@ public final class OverviewScreen {
             boolean selected = focused && i == state.menuSelection();
             String cursor = selected ? "▶ " : "  ";
             String hint = menuHint(item, model);
-            Style labelStyle = !item.enabled
-                    ? Style.EMPTY.fg(Theme.DIM)
-                    : selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
+            Style labelStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
             Style hintStyle = Style.EMPTY.fg(Theme.DIM);
             lines.add(Line.from(
                     new Span(cursor, labelStyle),
@@ -344,10 +335,7 @@ public final class OverviewScreen {
     }
 
     private static String padRight(String s, int width) {
-        if (s.length() >= width) {
-            return s;
-        }
-        return s + " ".repeat(width - s.length());
+        return Strings.padRight(s, width);
     }
 
     private static String trim(String s, int max) {
