@@ -79,12 +79,35 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             }
         }
 
+        boolean maskAll = mask.isAll();
+        int intervalCount = maskAll ? 0 : mask.intervalCount();
+        int intervalCursor = 0;
+        int recordIndex = -1;
+
         for (int i = 0; i < pageSize; i++) {
             int repLevel = pageRepLevels != null ? pageRepLevels[i] : 0;
+            boolean atRecordStart = repLevel == 0;
 
-            // repLevel == 0 starts a new top-level record (except at the very first value
-            // of the very first page, where we also start record 0)
-            if (repLevel == 0 && (nestedValueCount > 0 || rowsInCurrentBatch > 0)) {
+            if (atRecordStart) {
+                recordIndex++;
+                if (!maskAll) {
+                    while (intervalCursor < intervalCount
+                            && recordIndex >= mask.end(intervalCursor)) {
+                        intervalCursor++;
+                    }
+                }
+            }
+
+            if (!maskAll && (intervalCursor >= intervalCount
+                    || recordIndex < mask.start(intervalCursor))) {
+                continue;
+            }
+
+            // A record start (repLevel = 0) closes the previous top-level record and
+            // opens a new one — except at the first kept value of the stream, where
+            // we also start record 0. Masked-out records are already filtered by the
+            // `continue` above, so they never reach this branch.
+            if (atRecordStart && (nestedValueCount > 0 || rowsInCurrentBatch > 0)) {
                 // Previous record is complete — check if batch is full
                 if (rowsInCurrentBatch >= batchCapacity) {
                     publishCurrentBatch();
@@ -112,7 +135,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                 totalRowsAssembled++;
             }
             else if (nestedValueCount == 0 && rowsInCurrentBatch == 0) {
-                // Very first value of the stream — start record 0
+                // First kept value of the stream — start record 0. May not be the
+                // first value of the first page if the mask skipped earlier records.
                 nestedRecordOffsets[0] = 0;
                 rowsInCurrentBatch = 1;
                 totalRowsAssembled++;
