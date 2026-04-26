@@ -93,6 +93,67 @@ class DiveRenderTest {
     }
 
     @Test
+    void breadcrumbEnrichesLeafWithRowGroupAndColumnFromFooterPath() {
+        // Footer → FileIndexes(COLUMN) → ColumnIndexView. None of the
+        // context-bearing frames (RowGroupDetail / ColumnChunks /
+        // ColumnChunkDetail / ColumnAcrossRowGroups) appear upstream, so
+        // Chrome.renderBreadcrumb must append "(RG #N · column)" to the
+        // leaf label so the user still sees which chunk they're in.
+        NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+        stack.push(ScreenState.Footer.initial());
+        stack.push(new ScreenState.FileIndexes(ScreenState.FileIndexes.Kind.COLUMN, 0));
+        stack.push(new ScreenState.ColumnIndexView(0, 0, 0, "", false, true, false));
+
+        Rect breadcrumbArea = new Rect(0, 0, 200, 1);
+        dev.tamboui.buffer.Buffer buffer = dev.tamboui.buffer.Buffer.empty(breadcrumbArea);
+        dev.hardwood.cli.dive.internal.Chrome.renderBreadcrumb(buffer, breadcrumbArea, stack, model);
+
+        StringBuilder sb = new StringBuilder();
+        for (int x = 0; x < breadcrumbArea.width(); x++) {
+            String sym = buffer.get(x, 0).symbol();
+            sb.append(sym == null || sym.isEmpty() ? ' ' : sym);
+        }
+        String breadcrumb = sb.toString().stripTrailing();
+
+        assertThat(breadcrumb).contains("Overview");
+        assertThat(breadcrumb).contains("Footer & indexes");
+        assertThat(breadcrumb).contains("All column indexes");
+        assertThat(breadcrumb).contains("Column index");
+        // The enrichment: leaf "Column index" gets "(RG #0 · id)" suffix
+        // because no upstream frame establishes (RG, column) context.
+        String columnPath = model.schema().getColumn(0).fieldPath().toString();
+        assertThat(breadcrumb).contains("(RG #0 · " + columnPath + ")");
+    }
+
+    @Test
+    void breadcrumbDoesNotEnrichLeafWhenContextAlreadyOnPath() {
+        // Pages reached via Overview → RowGroups → RowGroupDetail →
+        // ColumnChunks → ColumnChunkDetail → Pages. Both RG and column
+        // context are already on the path, so no "(RG #N · …)" suffix.
+        NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+        stack.push(new ScreenState.RowGroups(0));
+        stack.push(new ScreenState.RowGroupDetail(0, ScreenState.RowGroupDetail.Pane.MENU, 0));
+        stack.push(new ScreenState.ColumnChunks(0, 0));
+        stack.push(new ScreenState.ColumnChunkDetail(0, 0,
+                ScreenState.ColumnChunkDetail.Pane.MENU, 0, true));
+        stack.push(new ScreenState.Pages(0, 0, 0, false, true));
+
+        Rect breadcrumbArea = new Rect(0, 0, 200, 1);
+        dev.tamboui.buffer.Buffer buffer = dev.tamboui.buffer.Buffer.empty(breadcrumbArea);
+        dev.hardwood.cli.dive.internal.Chrome.renderBreadcrumb(buffer, breadcrumbArea, stack, model);
+
+        StringBuilder sb = new StringBuilder();
+        for (int x = 0; x < breadcrumbArea.width(); x++) {
+            String sym = buffer.get(x, 0).symbol();
+            sb.append(sym == null || sym.isEmpty() ? ' ' : sym);
+        }
+        String breadcrumb = sb.toString().stripTrailing();
+
+        // Leaf is just "Pages" — no parenthetical enrichment.
+        assertThat(breadcrumb).endsWith("Pages");
+    }
+
+    @Test
     void pagesMinMaxCellEndsInEllipsisWhenValueTruncated() {
         // The fixture has an `id` column with INT64 values 0..9999. After
         // toggling logical types off the formatter renders the raw long;
