@@ -62,7 +62,10 @@ public final class ParquetModel implements AutoCloseable {
     // Forward-read cursor for Data preview pagination. Reusing the same
     // RowReader across forward page flips avoids re-iterating from row 0 on
     // every PgDn. Closed + recreated on backward moves (PgUp, g jump-to-top)
-    // and at session end.
+    // and at session end. See `DataPreviewScreen.PageKey` for the
+    // cache-vs-cursor invariant — DataPreviewScreen.PAGE_CACHE is keyed on
+    // `(firstRow, pageSize, logicalTypes)`, this cursor is keyed on file
+    // position only; the two never share state directly.
     private RowReader previewCursor;
     private long previewCursorPosition;
     private static final int DICTIONARY_CACHE_CAPACITY = 4;

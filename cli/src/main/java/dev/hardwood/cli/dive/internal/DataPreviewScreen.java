@@ -50,6 +50,20 @@ public final class DataPreviewScreen {
     /// stepping back through pages with PgUp doesn't re-walk the parquet
     /// reader from row 0 each time. Scoped to one ParquetModel — clearing
     /// whenever a different model first calls `initialState`.
+    ///
+    /// **Invariant — cache vs. cursor.** [PAGE_CACHE] and
+    /// [ParquetModel#previewCursor] are keyed independently: the cache by
+    /// `(firstRow, pageSize, logicalTypes)`, the cursor by file position
+    /// only. A cache hit returns pre-formatted rows without touching the
+    /// cursor; the next *uncached* fetch then continues from wherever
+    /// the cursor was last left and seeks forward (or closes + recreates
+    /// the cursor on a backward move). This works only because cached
+    /// pages are read-only views — they never advance the cursor — and
+    /// uncached fetches always do their own seek logic. If a future
+    /// change populates the cache as a side effect of a cursor advance
+    /// without a matching cache invalidation, or starts using the cursor
+    /// to satisfy cache hits, the two can diverge silently. Keep the two
+    /// stores' update paths separate.
     private record PageKey(long firstRow, int pageSize, boolean logicalTypes) {
     }
 
