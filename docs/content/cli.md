@@ -75,18 +75,29 @@ then into column chunks and per-chunk metadata.
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Move selection |
+| `PgDn` / `PgUp` (or `Shift-↓` / `Shift-↑`) | Page down / up |
 | `g` / `G` | Jump to first / last row |
 | `Enter` | Drill into the selected item |
 | `Esc` / `Backspace` | Go back one level |
 | `Tab` / `Shift-Tab` | Switch focused pane |
+| `/` | Inline search (Schema, Column index, Dictionary) |
+| `t` | Toggle logical / physical value rendering (screen-specific: Pages, Column index, Dictionary, Data preview, Column chunk detail) |
+| `e` / `c` | Expand / collapse all (Schema tree; Data preview row modal) |
 | `o` | Jump back to Overview |
 | `?` | Toggle help overlay |
 | `q` / `Ctrl-C` | Quit |
 
+The keybar at the bottom of every screen lists the keys that are
+actually meaningful in the current context — so the menus above show the
+full vocabulary, but the keybar tells you which subset is live right
+now.
+
 Available screens: Overview, Schema (expandable tree of groups + leaves),
 Row groups, Column chunks, Column chunk detail (facts + drill menu), Pages
 (with a page-header modal on Enter), Column index, Offset index, Footer &
-indexes, Column-across-row-groups (from the Schema screen), Dictionary (with
+indexes (which also drills into a file-wide list of every chunk's column
+index, offset index, or dictionary region),
+Column-across-row-groups (from the Schema screen), Dictionary (with
 full-value modal on Enter and `/` inline search), and Data preview (row
 values via `RowReader`; `←/→` scrolls the visible column window,
 `PgDn/PgUp` flips pages).
