@@ -24,14 +24,27 @@ public final class KvMetadataFormatter {
         if (value == null) {
             return "null";
         }
-        if ("ARROW:schema".equalsIgnoreCase(key) || looksLikeArrowBase64(value)) {
-            return renderArrow(value);
+        // The display path must never crash the dive session for any input,
+        // so the formatters wrap a final RuntimeException catch. Each
+        // detector is best-effort — pretty-printers don't validate — but
+        // a future change to e.g. `prettyJson` could introduce an
+        // index out-of-bounds on truncated input. The fallback is the
+        // raw value with a marker, which is still readable.
+        try {
+            if ("ARROW:schema".equalsIgnoreCase(key) || looksLikeArrowBase64(value)) {
+                return renderArrow(value);
+            }
+            String trimmed = value.strip();
+            if (looksLikeJson(trimmed)) {
+                return prettyJson(trimmed);
+            }
+            return value;
         }
-        String trimmed = value.strip();
-        if (looksLikeJson(trimmed)) {
-            return prettyJson(trimmed);
+        catch (RuntimeException e) {
+            return "[format failed: " + e.getClass().getSimpleName()
+                    + (e.getMessage() != null ? ": " + e.getMessage() : "")
+                    + "]\n\n" + value;
         }
-        return value;
     }
 
     private static boolean looksLikeArrowBase64(String value) {

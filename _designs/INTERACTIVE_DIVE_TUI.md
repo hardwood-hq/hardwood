@@ -407,7 +407,6 @@ Tracked as GitHub issues; this section is a pointer index, not a backlog.
 - [ ] Diff mode (`--compare a.parquet b.parquet`) — #337
 - [ ] Dictionary screen: windowed row materialisation — #338
 - [ ] Bundle process-static state into a `DiveSession` — #339
-- [ ] `KvMetadataFormatter.prettyJson` malformed-input handling — #340
 - [ ] Cache `SchemaScreen.allGroupPaths` on `ParquetModel` — #341
 - [ ] Surface `IOException` in `DataPreviewScreen.loadPage` as an error overlay — #342
 - [ ] Replace per-screen `withX` factory fan with a builder — #343

@@ -52,4 +52,41 @@ class KvMetadataFormatterTest {
 
         assertThat(out).isEqualTo(plain);
     }
+
+    @Test
+    void malformedJsonDoesNotThrow() {
+        // Looks like JSON (starts with { ends with }) but has unbalanced
+        // braces and an unterminated string. The pretty-printer is best-
+        // effort and must not crash the dive session for any input.
+        String malformed = "{\"truncated\": \"oops}";
+
+        String out = KvMetadataFormatter.format("k", malformed);
+
+        // Either pretty-printed best-effort or the format-failed fallback
+        // — both acceptable; what matters is no exception escaped.
+        assertThat(out).isNotNull();
+        assertThat(out).isNotEmpty();
+    }
+
+    @Test
+    void deeplyNestedJsonDoesNotThrow() {
+        // A pathologically nested input — the formatter walks once and
+        // doesn't recurse, but lock the no-throw contract here.
+        StringBuilder sb = new StringBuilder();
+        for (int i = 0; i < 1000; i++) {
+            sb.append("[");
+        }
+        for (int i = 0; i < 1000; i++) {
+            sb.append("]");
+        }
+
+        String out = KvMetadataFormatter.format("k", sb.toString());
+
+        assertThat(out).isNotNull();
+    }
+
+    @Test
+    void nullValueRendersNull() {
+        assertThat(KvMetadataFormatter.format("k", null)).isEqualTo("null");
+    }
 }
