@@ -59,6 +59,7 @@ public final class ParquetModel implements AutoCloseable {
     private RowReader previewCursor;
     private long previewCursorPosition;
     private static final int DICTIONARY_CACHE_CAPACITY = 4;
+    private static final int PAGE_HEADER_CACHE_CAPACITY = 8;
     /// Default maximum chunk-size for a Dictionary load. Larger chunks need the
     /// user to opt in via the Dictionary-screen confirm prompt (or via
     /// `--max-dict-bytes` to raise this default). 16 MiB covers typical
@@ -68,7 +69,16 @@ public final class ParquetModel implements AutoCloseable {
 
     private final Map<ChunkKey, ColumnIndex> columnIndexCache = new HashMap<>();
     private final Map<ChunkKey, OffsetIndex> offsetIndexCache = new HashMap<>();
-    private final Map<ChunkKey, List<PageHeader>> pageHeaderCache = new HashMap<>();
+    /// Bounded LRU: page headers are decoded once per chunk-visit and a wide
+    /// table can have hundreds of chunks. Capping prevents the cache from
+    /// growing unboundedly across a long dive session.
+    private final java.util.LinkedHashMap<ChunkKey, List<PageHeader>> pageHeaderCache =
+            new java.util.LinkedHashMap<>(PAGE_HEADER_CACHE_CAPACITY, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<ChunkKey, List<PageHeader>> eldest) {
+                    return size() > PAGE_HEADER_CACHE_CAPACITY;
+                }
+            };
     // Per-row-group index-region prefetch. Populated lazily the first time any
     // chunk in that RG is asked for its index; subsequent column-index /
     // offset-index calls for chunks in the same RG hit this cache instead of
