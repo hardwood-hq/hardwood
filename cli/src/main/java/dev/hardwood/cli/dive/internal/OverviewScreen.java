@@ -83,7 +83,7 @@ public final class OverviewScreen {
                     return false;
                 }
                 switch (item) {
-                    case SCHEMA -> stack.push(new ScreenState.Schema(0));
+                    case SCHEMA -> stack.push(ScreenState.Schema.initial());
                     case ROW_GROUPS -> stack.push(new ScreenState.RowGroups(0));
                     case FOOTER -> stack.push(new ScreenState.Footer());
                     case DATA_PREVIEW -> stack.push(

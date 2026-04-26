@@ -144,7 +144,7 @@ class DiveStateTest {
 
     @Test
     void schemaDownMovesSelection() {
-        NavigationStack stack = rooted(new ScreenState.Schema(0));
+        NavigationStack stack = rooted(ScreenState.Schema.initial());
 
         SchemaScreen.handle(key(KeyCode.DOWN), model, stack);
 
@@ -192,7 +192,7 @@ class DiveStateTest {
 
     @Test
     void schemaEnterDrillsIntoColumnAcrossRowGroups() {
-        NavigationStack stack = rooted(new ScreenState.Schema(0));
+        NavigationStack stack = rooted(ScreenState.Schema.initial());
 
         SchemaScreen.handle(key(KeyCode.ENTER), model, stack);
 
@@ -329,13 +329,84 @@ class DiveStateTest {
         }
     }
 
+    // --- Phase 4 ---
+
+    @Test
+    void schemaInitialIsCollapsed() {
+        ScreenState.Schema initial = ScreenState.Schema.initial();
+
+        assertThat(initial.selection()).isZero();
+        assertThat(initial.expanded()).isEmpty();
+    }
+
+    @Test
+    void dictionarySlashEntersSearchMode() {
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "", false));
+
+        DictionaryScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, '/'), model, stack);
+
+        ScreenState.DictionaryView top = (ScreenState.DictionaryView) stack.top();
+        assertThat(top.searching()).isTrue();
+    }
+
+    @Test
+    void dictionarySearchAppendsCharToFilter() {
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "", true));
+
+        DictionaryScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'a'), model, stack);
+
+        assertThat(((ScreenState.DictionaryView) stack.top()).filter()).isEqualTo("a");
+    }
+
+    @Test
+    void dictionarySearchEscClearsFilter() {
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "abc", true));
+
+        DictionaryScreen.handle(key(KeyCode.ESCAPE), model, stack);
+
+        ScreenState.DictionaryView top = (ScreenState.DictionaryView) stack.top();
+        assertThat(top.searching()).isFalse();
+        assertThat(top.filter()).isEmpty();
+    }
+
+    @Test
+    void dictionarySearchEnterKeepsFilter() {
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "abc", true));
+
+        DictionaryScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        ScreenState.DictionaryView top = (ScreenState.DictionaryView) stack.top();
+        assertThat(top.searching()).isFalse();
+        assertThat(top.filter()).isEqualTo("abc");
+    }
+
+    @Test
+    void dictionaryBackspaceTrimsFilter() {
+        NavigationStack stack = rooted(new ScreenState.DictionaryView(0, 0, 0, false, "abc", true));
+
+        DictionaryScreen.handle(key(KeyCode.BACKSPACE), model, stack);
+
+        assertThat(((ScreenState.DictionaryView) stack.top()).filter()).isEqualTo("ab");
+    }
+
+    @Test
+    void schemaRightOnPrimitiveIsNoop() {
+        NavigationStack stack = rooted(ScreenState.Schema.initial());
+
+        SchemaScreen.handle(key(KeyCode.RIGHT), model, stack);
+
+        assertThat(((ScreenState.Schema) stack.top()).expanded()).isEmpty();
+    }
+
     @Test
     void dictionaryEnterOpensModalAndCancelCloses() {
         // Find a chunk with a dictionary to test against.
         for (int rg = 0; rg < model.rowGroupCount(); rg++) {
             for (int c = 0; c < model.rowGroup(rg).columns().size(); c++) {
                 if (model.chunk(rg, c).metaData().dictionaryPageOffset() != null) {
-                    NavigationStack stack = rooted(new ScreenState.DictionaryView(rg, c, 0, false));
+                    NavigationStack stack = rooted(new ScreenState.DictionaryView(rg, c, 0, false, "", false));
 
                     DictionaryScreen.handle(key(KeyCode.ENTER), model, stack);
                     assertThat(((ScreenState.DictionaryView) stack.top()).modalOpen()).isTrue();

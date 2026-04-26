@@ -19,9 +19,17 @@ public sealed interface ScreenState {
         public enum Pane { FACTS, MENU }
     }
 
-    /// Flat list of leaf columns. Enter drills into [ColumnAcrossRowGroups] for
-    /// the selected column. Tree expansion ships in phase 4.
-    record Schema(int selection) implements ScreenState {}
+    /// Expandable tree of schema nodes. `selection` is the visible-row index;
+    /// `expanded` tracks which group paths are currently expanded.
+    record Schema(int selection, java.util.Set<String> expanded) implements ScreenState {
+        public Schema {
+            expanded = java.util.Set.copyOf(expanded);
+        }
+
+        public static Schema initial() {
+            return new Schema(0, java.util.Set.of());
+        }
+    }
 
     /// Row groups in the file, one row per group.
     record RowGroups(int selection) implements ScreenState {}
@@ -58,10 +66,17 @@ public sealed interface ScreenState {
     record ColumnAcrossRowGroups(int columnIndex, int selection) implements ScreenState {
     }
 
-    /// Dictionary entries for one column chunk. `selection` is the entry index;
-    /// `modalOpen` flags the full-value modal that opens on Enter.
-    record DictionaryView(int rowGroupIndex, int columnIndex, int selection, boolean modalOpen)
-            implements ScreenState {
+    /// Dictionary entries for one column chunk. `selection` is the position
+    /// within the currently-filtered view; `modalOpen` is the full-value modal
+    /// that opens on Enter; `filter` is the live search substring (empty = no
+    /// filter); `searching` is the inline search-edit mode toggled with `/`.
+    record DictionaryView(
+            int rowGroupIndex,
+            int columnIndex,
+            int selection,
+            boolean modalOpen,
+            String filter,
+            boolean searching) implements ScreenState {
     }
 
     /// Projected rows. `firstRow` is the 0-based absolute index of the first row

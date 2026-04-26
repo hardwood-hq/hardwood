@@ -82,14 +82,54 @@ then into column chunks and per-chunk metadata.
 | `?` | Toggle help overlay |
 | `q` / `Ctrl-C` | Quit |
 
-Available screens: Overview, Schema (flat leaf-column list), Row groups,
-Column chunks, Column chunk detail, Pages (with a page-header modal on Enter),
-Column index, Offset index, Footer & indexes, Column-across-row-groups (from
-the Schema screen), Dictionary (with full-value modal on Enter), and Data
-preview (row values via `RowReader`; `←/→` scrolls the visible column
-window, `PgDn/PgUp` flips pages). The expandable schema tree ships in phase 4.
+Available screens: Overview, Schema (expandable tree of groups + leaves),
+Row groups, Column chunks, Column chunk detail (facts + drill menu), Pages
+(with a page-header modal on Enter), Column index, Offset index, Footer &
+indexes, Column-across-row-groups (from the Schema screen), Dictionary (with
+full-value modal on Enter and `/` inline search), and Data preview (row
+values via `RowReader`; `←/→` scrolls the visible column window,
+`PgDn/PgUp` flips pages).
 
 The `--rows N` flag sets the Data preview page size (default: 20).
+
+### Layout
+
+Every screen shares a four-region layout — a top bar with file identity, a
+breadcrumb showing the navigation stack, the active screen body, and a keybar:
+
+```
+ hardwood dive │ /data/lineitem.parquet │ 1.4 GB │ 3 RGs │ 12.4 M rows
+ Overview › Row groups › RG #1 › Column chunks › l_address.street
+┌────────────────────────────────────────────────────────────────────────┐
+│                                                                        │
+│                         (active screen body)                           │
+│                                                                        │
+└────────────────────────────────────────────────────────────────────────┘
+ [↑↓] move  [Enter] drill  [Esc] back                [?] help   [q] quit
+```
+
+### Typical drill path
+
+1. **Overview** → pick *Row groups* from the drill menu.
+2. **Row groups** → select a row, *Enter* — opens its column chunks.
+3. **Column chunks** → select a column, *Enter* — opens the chunk detail.
+4. **Column chunk detail** (facts pane + drill menu) → pick *Pages*, *Column
+   index*, *Offset index*, or *Dictionary*.
+5. Drill sub-screens (*Pages*, *Column index*, etc.) support *Esc* back up to
+   the previous level; in *Pages* and *Dictionary*, *Enter* opens a modal with
+   the full header / value.
+
+Alternative entry: from **Overview → Schema**, navigate the tree of group and
+primitive nodes with `→` / `←`; `Enter` on a leaf drills into a
+*Column-across-row-groups* view — one row per row group showing that column's
+sizes, encoding, stats — and from there into the chunk detail.
+
+### Searching dictionaries
+
+Open the **Dictionary** screen, then press `/` to enter inline search mode.
+Typed characters extend the filter; *Backspace* trims it; *Esc* clears the
+filter; *Enter* commits it (keeps the filter applied but exits edit mode).
+The table re-filters live as you type.
 
 ## Reading Files from S3
 

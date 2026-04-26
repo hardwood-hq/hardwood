@@ -68,11 +68,16 @@ public final class DiveApp {
         if (!(event instanceof KeyEvent ke)) {
             return false;
         }
-        if (ke.isQuit()) {
+        if (ke.isCtrlC()) {
             runner.quit();
             return false;
         }
-        if (ke.code() == KeyCode.CHAR && ke.character() == '?') {
+        boolean textInput = isTopInInputMode();
+        if (!textInput && ke.isQuit()) {
+            runner.quit();
+            return false;
+        }
+        if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == '?') {
             helpOpen = !helpOpen;
             return true;
         }
@@ -83,15 +88,25 @@ public final class DiveApp {
             }
             return false;
         }
-        if (ke.code() == KeyCode.CHAR && ke.character() == 'g' && !ke.hasCtrl() && !ke.hasAlt()) {
+        if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == 'g' && !ke.hasCtrl() && !ke.hasAlt()) {
             stack.clearToRoot();
+            return true;
+        }
+        // Screen gets first crack at the event so it can claim keys like Esc (filter-cancel)
+        // before the global back-navigation intercept kicks in.
+        if (dispatchToScreen(ke)) {
             return true;
         }
         if (ke.isCancel() && stack.depth() > 1) {
             stack.pop();
             return true;
         }
-        return dispatchToScreen(ke);
+        return false;
+    }
+
+    private boolean isTopInInputMode() {
+        return stack.top() instanceof ScreenState.DictionaryView d
+                && DictionaryScreen.isInInputMode(d);
     }
 
     private boolean dispatchToScreen(KeyEvent ke) {

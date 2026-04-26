@@ -17,12 +17,14 @@ import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
+import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
+import dev.tamboui.tui.event.KeyCode;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
@@ -32,8 +34,12 @@ import dev.tamboui.widgets.table.Row;
 import dev.tamboui.widgets.table.Table;
 import dev.tamboui.widgets.table.TableState;
 
-/// Dictionary entries for one column chunk. Enter opens a modal with the full
-/// un-truncated value (useful for long BYTE_ARRAY payloads).
+/// Dictionary entries for one column chunk. Supports:
+///
+/// - Enter: open a modal with the full un-truncated value.
+/// - `/`: enter inline search mode. Typed characters extend the filter,
+///   Backspace trims, Enter commits (keep filter), Esc clears filter.
+/// - Up/Down: move selection within the filtered view.
 public final class DictionaryScreen {
 
     private static final int VALUE_PREVIEW_MAX = 60;
@@ -41,34 +47,67 @@ public final class DictionaryScreen {
     private DictionaryScreen() {
     }
 
+    /// Used by [DiveApp] to decide whether the screen should receive printable
+    /// chars instead of the global keymap (e.g. `g`, `q`).
+    public static boolean isInInputMode(ScreenState.DictionaryView state) {
+        return state.searching();
+    }
+
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.DictionaryView state = (ScreenState.DictionaryView) stack.top();
+        if (state.searching()) {
+            return handleSearching(event, state, stack);
+        }
         if (state.modalOpen()) {
             if (event.isCancel() || event.isConfirm()) {
-                stack.replaceTop(new ScreenState.DictionaryView(
-                        state.rowGroupIndex(), state.columnIndex(), state.selection(), false));
+                stack.replaceTop(with(state, state.selection(), false, state.filter(), false));
                 return true;
             }
             return false;
         }
+        if (event.code() == KeyCode.CHAR && event.character() == '/') {
+            stack.replaceTop(with(state, 0, false, state.filter(), true));
+            return true;
+        }
         Dictionary dict = model.dictionary(state.rowGroupIndex(), state.columnIndex());
-        int count = dict != null ? dict.size() : 0;
+        List<Integer> filtered = filteredIndices(dict, state.filter());
         if (event.isUp()) {
-            stack.replaceTop(new ScreenState.DictionaryView(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.max(0, state.selection() - 1), false));
+            stack.replaceTop(with(state, Math.max(0, state.selection() - 1), false, state.filter(), false));
             return true;
         }
         if (event.isDown()) {
-            stack.replaceTop(new ScreenState.DictionaryView(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.min(count - 1, state.selection() + 1), false));
+            int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
+            stack.replaceTop(with(state, Math.min(max, state.selection() + 1), false, state.filter(), false));
             return true;
         }
-        if (event.isConfirm() && count > 0) {
-            stack.replaceTop(new ScreenState.DictionaryView(
-                    state.rowGroupIndex(), state.columnIndex(), state.selection(), true));
+        if (event.isConfirm() && !filtered.isEmpty()) {
+            stack.replaceTop(with(state, state.selection(), true, state.filter(), false));
             return true;
+        }
+        return false;
+    }
+
+    private static boolean handleSearching(KeyEvent event, ScreenState.DictionaryView state, NavigationStack stack) {
+        if (event.isCancel()) {
+            stack.replaceTop(with(state, 0, false, "", false));
+            return true;
+        }
+        if (event.isConfirm()) {
+            stack.replaceTop(with(state, 0, false, state.filter(), false));
+            return true;
+        }
+        if (event.isDeleteBackward()) {
+            String f = state.filter();
+            String next = f.isEmpty() ? f : f.substring(0, f.length() - 1);
+            stack.replaceTop(with(state, 0, false, next, true));
+            return true;
+        }
+        if (event.code() == KeyCode.CHAR) {
+            char c = event.character();
+            if (c >= ' ' && c != 127) {
+                stack.replaceTop(with(state, 0, false, state.filter() + c, true));
+                return true;
+            }
         }
         return false;
     }
@@ -80,16 +119,23 @@ public final class DictionaryScreen {
             return;
         }
 
+        List<Integer> filtered = filteredIndices(dict, state.filter());
+        List<Rect> split = Layout.vertical()
+                .constraints(new Constraint.Length(1), new Constraint.Fill(1))
+                .split(area);
+
+        renderSearchBar(buffer, split.get(0), state, dict.size(), filtered.size());
+
         List<Row> rows = new ArrayList<>();
-        int size = dict.size();
-        for (int i = 0; i < size; i++) {
+        for (int idx : filtered) {
             rows.add(Row.from(
-                    "[" + i + "]",
-                    formatValue(dict, i, VALUE_PREVIEW_MAX)));
+                    "[" + idx + "]",
+                    formatValue(dict, idx, VALUE_PREVIEW_MAX)));
         }
         Row header = Row.from("#", "Value").style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" Dictionary (" + size + " entries) ")
+                .title(" Dictionary (" + dict.size() + " entries"
+                        + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching") + ") ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Color.CYAN)
@@ -104,18 +150,58 @@ public final class DictionaryScreen {
                 .highlightStyle(Style.EMPTY.bold())
                 .build();
         TableState tableState = new TableState();
-        if (size > 0) {
-            tableState.select(state.selection());
+        if (!filtered.isEmpty()) {
+            tableState.select(Math.min(state.selection(), filtered.size() - 1));
         }
-        table.render(area, buffer, tableState);
+        table.render(split.get(1), buffer, tableState);
 
-        if (state.modalOpen() && size > 0) {
-            renderValueModal(buffer, area, dict, state.selection());
+        if (state.modalOpen() && !filtered.isEmpty()) {
+            int dictIdx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            renderValueModal(buffer, area, dict, dictIdx);
         }
     }
 
     public static String keybarKeys() {
-        return "[↑↓] move  [Enter] full value  [Esc] back";
+        return "[↑↓] move  [Enter] full value  [/] search  [Esc] back";
+    }
+
+    private static void renderSearchBar(Buffer buffer, Rect area, ScreenState.DictionaryView state,
+                                        int totalSize, int filteredSize) {
+        if (!state.searching() && state.filter().isEmpty()) {
+            Paragraph.builder()
+                    .text(Text.from(Line.from(new Span(
+                            " " + totalSize + " entries. Press / to filter.", Style.EMPTY.fg(Color.GRAY)))))
+                    .left()
+                    .build()
+                    .render(area, buffer);
+            return;
+        }
+        String cursor = state.searching() ? "█" : "";
+        Line line = Line.from(
+                new Span(" / ", Style.EMPTY.fg(Color.CYAN).bold()),
+                new Span(state.filter() + cursor, Style.EMPTY.bold()),
+                new Span("  (" + filteredSize + " / " + totalSize + ")", Style.EMPTY.fg(Color.GRAY)));
+        Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
+    }
+
+    private static List<Integer> filteredIndices(Dictionary dict, String filter) {
+        List<Integer> out = new ArrayList<>();
+        if (dict == null) {
+            return out;
+        }
+        String needle = filter.toLowerCase();
+        for (int i = 0; i < dict.size(); i++) {
+            if (needle.isEmpty() || fullValue(dict, i).toLowerCase().contains(needle)) {
+                out.add(i);
+            }
+        }
+        return out;
+    }
+
+    private static ScreenState.DictionaryView with(ScreenState.DictionaryView state,
+                                                    int selection, boolean modalOpen, String filter, boolean searching) {
+        return new ScreenState.DictionaryView(
+                state.rowGroupIndex(), state.columnIndex(), selection, modalOpen, filter, searching);
     }
 
     private static String formatValue(Dictionary dict, int index, int max) {
