@@ -771,6 +771,55 @@ class DiveStateTest {
                 .isEqualTo(ScreenState.FileIndexes.Kind.OFFSET);
     }
 
+    @Test
+    void dictionaryConfirmPromptShownWhenChunkExceedsCap() throws Exception {
+        // Force the cap below the chunk size so the screen lands on the
+        // confirm prompt instead of auto-loading. dictionary_with_crc
+        // has an actual dictionary on column 1; the test column doesn't
+        // matter for the gating logic — only its compressed-bytes size
+        // vs. the cap.
+        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            long chunkBytes = m.dictionaryChunkBytes(0, 1);
+            assertThat(chunkBytes).isPositive();
+            m.setDictionaryReadCapBytes(1);  // smaller than any real chunk
+
+            NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+            stack.push(new ScreenState.DictionaryView(0, 1, 0, false, "", false, false, true));
+
+            // Before opt-in, ↓ is ignored — the screen is on the prompt,
+            // not the table.
+            boolean handledDown = DictionaryScreen.handle(key(KeyCode.DOWN), m, stack);
+            assertThat(handledDown).isFalse();
+            assertThat(((ScreenState.DictionaryView) stack.top()).loadConfirmed()).isFalse();
+
+            // Enter opts in; loadConfirmed flips and subsequent rendering
+            // would call dictionaryForced.
+            boolean handledEnter = DictionaryScreen.handle(key(KeyCode.ENTER), m, stack);
+            assertThat(handledEnter).isTrue();
+            assertThat(((ScreenState.DictionaryView) stack.top()).loadConfirmed()).isTrue();
+        }
+    }
+
+    @Test
+    void dictionaryConfirmPromptSkippedWhenChunkUnderCap() throws Exception {
+        // Default cap (16 MiB) is well above the fixture chunk; the screen
+        // proceeds straight to the table without prompting.
+        Path file = Path.of(getClass().getResource("/dictionary_with_crc.parquet").getPath());
+        try (ParquetModel m = ParquetModel.open(InputFile.of(file), file.toString())) {
+            NavigationStack stack = new NavigationStack(ScreenState.Overview.initial());
+            stack.push(new ScreenState.DictionaryView(0, 1, 0, false, "", false, false, true));
+
+            // ↓ is claimed by the table handler (loadConfirmed stays false
+            // because the cap was never exceeded — the screen never
+            // entered prompt mode in the first place).
+            boolean handled = DictionaryScreen.handle(key(KeyCode.DOWN), m, stack);
+
+            assertThat(handled).isTrue();
+            assertThat(((ScreenState.DictionaryView) stack.top()).loadConfirmed()).isFalse();
+        }
+    }
+
     private NavigationStack rooted(ScreenState child) {
         NavigationStack stack = new NavigationStack(
                 new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0, 0, false, 0));

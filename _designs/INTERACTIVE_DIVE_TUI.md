@@ -409,5 +409,4 @@ Tracked as GitHub issues; this section is a pointer index, not a backlog.
 - [ ] Bundle process-static state into a `DiveSession` — #339
 - [ ] Surface `IOException` in `DataPreviewScreen.loadPage` as an error overlay — #342
 - [ ] Replace per-screen `withX` factory fan with a builder — #343
-- [ ] Test for Dictionary `--max-dict-bytes` load-confirmation — #344
 - [ ] Document the cache-vs-cursor invariant in `DataPreviewScreen.PAGE_CACHE` — #345
