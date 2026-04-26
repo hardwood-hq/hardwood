@@ -29,7 +29,7 @@ import dev.hardwood.schema.ColumnSchema;
 /// until the iterator is first advanced — no I/O happens at plan time.
 final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
 
-    private final List<PageLocation> neededPages;
+    private final List<RowGroupIterator.NeededPage> neededPages;
     private final List<RowGroupIterator.PageGroup> pageGroups;
     private List<ChunkHandle> chunkHandles;
     private final long firstDataPageOffset; // from OffsetIndex (not necessarily first needed page)
@@ -39,7 +39,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     private final int rowGroupIndex;
     private final String fileName;
 
-    private IndexedFetchPlan(List<PageLocation> neededPages,
+    private IndexedFetchPlan(List<RowGroupIterator.NeededPage> neededPages,
                               List<RowGroupIterator.PageGroup> pageGroups,
                               List<ChunkHandle> chunkHandles,
                               long firstDataPageOffset,
@@ -124,12 +124,13 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
 
     /// Builds an [IndexedFetchPlan]. No I/O occurs — the plan is pure metadata.
     ///
-    /// @param neededPages needed page locations (filter + maxRows applied)
+    /// @param neededPages needed pages paired with their per-page row masks
+    ///        (filter + maxRows applied)
     /// @param pageGroups coalesced page groups within this column
     /// @param chunkHandles one ChunkHandle per page group, linked for pre-fetch
     /// @param firstDataPageOffset absolute offset of the first data page in the
     ///        OffsetIndex (may differ from `neededPages.get(0)` when filtering)
-    static IndexedFetchPlan build(List<PageLocation> neededPages,
+    static IndexedFetchPlan build(List<RowGroupIterator.NeededPage> neededPages,
                                    List<RowGroupIterator.PageGroup> pageGroups,
                                    List<ChunkHandle> chunkHandles,
                                    long firstDataPageOffset,
@@ -182,10 +183,12 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 }
             }
 
-            PageLocation loc = neededPages.get(index++);
+            RowGroupIterator.NeededPage needed = neededPages.get(index++);
+            PageLocation loc = needed.location();
             ChunkHandle handle = chunkHandles.get(currentGroupIndex);
             ByteBuffer pageData = handle.slice(loc.offset(), loc.compressedPageSize());
-            PageInfo page = new PageInfo(pageData, columnSchema, columnChunk.metaData(), dictionary);
+            PageInfo page = new PageInfo(pageData, columnSchema, columnChunk.metaData(),
+                    dictionary, needed.mask());
 
             if (!eventEmitted && !hasNext()) {
                 emitEvent();
