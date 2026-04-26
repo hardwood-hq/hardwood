@@ -20,6 +20,7 @@ import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
@@ -177,6 +178,11 @@ public interface RowReader extends StructAccessor, AutoCloseable {
     ///
     /// @return the map, or null if the field is null
     PqMap getMap(int fieldIndex);
+
+    /// Get an Interval field value by field index.
+    ///
+    /// @return the interval, or null if the field is null
+    PqInterval getInterval(int fieldIndex);
 
     /// Get a field value by field index without type conversion.
     ///

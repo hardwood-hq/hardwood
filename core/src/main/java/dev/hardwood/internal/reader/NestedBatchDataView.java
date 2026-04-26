@@ -23,6 +23,7 @@ import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
@@ -319,6 +320,10 @@ public final class NestedBatchDataView {
         return readLogicalType(lookupPrimitive(name), LogicalType.UuidType.class, UUID.class);
     }
 
+    public PqInterval getInterval(String name) {
+        return readLogicalType(lookupPrimitive(name), LogicalType.IntervalType.class, PqInterval.class);
+    }
+
     // ==================== Object Type Accessors (by index) ====================
 
     public String getString(int projectedIndex) {
@@ -358,6 +363,10 @@ public final class NestedBatchDataView {
 
     public UUID getUuid(int projectedIndex) {
         return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.UuidType.class, UUID.class);
+    }
+
+    public PqInterval getInterval(int projectedIndex) {
+        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.IntervalType.class, PqInterval.class);
     }
 
     // ==================== Nested Type Accessors (by name) ====================

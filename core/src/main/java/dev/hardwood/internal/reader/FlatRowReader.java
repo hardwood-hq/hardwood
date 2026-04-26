@@ -24,6 +24,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
@@ -400,6 +401,24 @@ public final class FlatRowReader implements RowReader {
     public UUID getUuid(String name) {
         return getUuid(resolveIndex(name));
     }
+
+    @Override
+    public PqInterval getInterval(int columnIndex) {
+      if (isNull(columnIndex)) {
+          return null;
+      }
+
+      try {
+          return LogicalTypeConverter.convertToInterval(
+                  ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
+                  physicalTypes[columnIndex]);
+      } catch(RuntimeException e) {
+          throw ExceptionContext.addFileContext(currentFileName, e);
+      }
+    }
+
+    @Override
+    public PqInterval getInterval(String name) { return getInterval(resolveIndex(name)); }
 
     // ==================== Generic Value ====================
 

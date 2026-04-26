@@ -15,14 +15,12 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
-import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
-import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Primitive;
-import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.Struct;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
@@ -176,6 +174,11 @@ final class PqStructImpl implements PqStruct {
     @Override
     public UUID getUuid(String name) {
         return readLogicalType(name, LogicalType.UuidType.class, UUID.class);
+    }
+
+    @Override
+    public PqInterval getInterval(String name) {
+        return readLogicalType(name, LogicalType.IntervalType.class, PqInterval.class);
     }
 
     // ==================== Nested Types ====================

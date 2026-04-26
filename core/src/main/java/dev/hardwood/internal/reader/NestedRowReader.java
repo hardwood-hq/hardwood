@@ -18,6 +18,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
@@ -233,6 +234,9 @@ public final class NestedRowReader implements RowReader {
     @Override public BigDecimal getDecimal(String name) { return dataView.getDecimal(name); }
     @Override public UUID getUuid(int i) { return dataView.getUuid(i); }
     @Override public UUID getUuid(String name) { return dataView.getUuid(name); }
+
+    @Override public PqInterval getInterval(int i) { return dataView.getInterval(i); }
+    @Override public PqInterval getInterval(String name) { return dataView.getInterval(name); }
 
     @Override public Object getValue(int i) { return dataView.getValue(i); }
     @Override public Object getValue(String name) { return dataView.getValue(name); }

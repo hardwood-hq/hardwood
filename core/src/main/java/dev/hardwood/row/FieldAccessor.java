@@ -116,6 +116,12 @@ public interface FieldAccessor {
     /// @throws IllegalArgumentException if the field type is not UUID
     UUID getUuid(String name);
 
+    /// Get an Interval field value by name.
+    ///
+    /// @param name the field name
+    /// @return the Interval value, or null if the field is null
+    /// @throws IllegalArgumentException if the field type is not Interval
+    PqInterval getInterval(String name);
     // ==================== Variant ====================
 
     /// Get a VARIANT field value by name. Works both for a Parquet group annotated

@@ -147,6 +147,7 @@ All accessor methods are available in two forms:
 | `getTimestamp` | INT64, or legacy INT96 | TIMESTAMP | `Instant` |
 | `getDecimal` | INT32, INT64, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
 | `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
+| `getInterval` | FIXED_LEN_BYTE_ARRAY(12) | INTERVAL | `PqInterval` |
 | `getStruct` | | | `PqStruct` |
 | `getList` | | LIST | `PqList` |
 | `getMap` | | MAP | `PqMap` |
@@ -154,6 +155,8 @@ All accessor methods are available in two forms:
 | `isNull` | Any | Any | `boolean` |
 
 All methods are available as both `method(name)` and `method(index)`, except `getStruct`, `getList`, `getMap`, and `getVariant` which are name-based only.
+
+**INTERVAL columns:** `PqInterval` is a plain record with three int properties — `months()`, `days()`, and `milliseconds()`. If unsigned semantics are required, use `Integer.toUnsignedLong(interval.months())`.
 
 **Bare `BYTE_ARRAY` columns:** `BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
 
@@ -175,7 +178,7 @@ while (rowReader.hasNext()) {
 }
 ```
 
-**Null handling:** Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
+**Null handling:** Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
 
 **Type validation:** The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
 

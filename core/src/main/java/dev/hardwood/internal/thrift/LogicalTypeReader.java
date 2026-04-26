@@ -53,6 +53,10 @@ public class LogicalTypeReader {
                     }
                     case 7 -> readTimeType(reader);
                     case 8 -> readTimestampType(reader);
+                    case 9 -> { // INTERVAL
+                        reader.skipField(header.type()); // Empty struct
+                        yield new LogicalType.IntervalType();
+                    }
                     case 10 -> readIntType(reader);
                     case 12 -> { // JSON
                         reader.skipField(header.type()); // Empty struct

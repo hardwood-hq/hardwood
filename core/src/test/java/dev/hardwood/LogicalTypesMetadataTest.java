@@ -139,4 +139,15 @@ public class LogicalTypesMetadataTest {
             assertThat(bigUintType.isSigned()).isFalse();
         }
     }
+
+    @Test
+    void testIntervalLogicalTypeMetadata() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/interval_logical_type_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            var schema = fileReader.getFileSchema();
+            assertThat(schema.getColumn("duration").logicalType()).isInstanceOf(
+                    LogicalType.IntervalType.class);
+        }
+    }
 }

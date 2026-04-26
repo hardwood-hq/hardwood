@@ -18,6 +18,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
@@ -89,6 +90,8 @@ public final class FilteredRowReader implements RowReader {
     @Override public BigDecimal getDecimal(String name) { return delegate.getDecimal(name); }
     @Override public UUID getUuid(int i) { return delegate.getUuid(i); }
     @Override public UUID getUuid(String name) { return delegate.getUuid(name); }
+    @Override public PqInterval getInterval(int i) { return delegate.getInterval(i); }
+    @Override public PqInterval getInterval(String name) { return delegate.getInterval(name); }
     @Override public boolean isNull(int i) { return delegate.isNull(i); }
     @Override public boolean isNull(String name) { return delegate.isNull(name); }
     @Override public Object getValue(int i) { return delegate.getValue(i); }

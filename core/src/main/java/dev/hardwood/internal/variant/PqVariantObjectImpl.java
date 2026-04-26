@@ -14,6 +14,7 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.internal.variant.VariantValueDecoder.ObjectLayout;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
@@ -187,6 +188,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
             return null;
         }
         return VariantValueDecoder.asUuid(valueBuf, off);
+    }
+
+    @Override
+    public PqInterval getInterval(String name) {
+        throw new UnsupportedOperationException("INTERVAL is not a Variant-encoded type");
     }
 
     @Override

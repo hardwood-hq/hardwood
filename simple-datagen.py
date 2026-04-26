@@ -12,7 +12,10 @@ from datetime import datetime, date, time, timezone
 from decimal import Decimal
 import uuid
 
+import struct
+
 from parquet_bson_annotation import annotate_column_as_bson
+from parquet_interval_annotation import annotate_column_as_interval
 from parquet_variant_annotation import annotate_group_as_variant
 
 # Plain encoding with no compression (for Milestone 1)
@@ -2138,3 +2141,36 @@ annotate_group_as_variant('core/src/test/resources/variant_attributes_example.pa
 print("\nGenerated variant_attributes_example.parquet:")
 print("  - EAV table (id, name, value) backing the docs/tweet Variant snippet")
 print("  - 3 rows: INT64(age=42), STRING(email), OBJECT(preferences)")
+
+# INTERVAL logical type test
+# PyArrow writes pa.binary(12) as FIXED_LEN_BYTE_ARRAY(12); the annotation script then
+# writes LogicalType.IntervalType (field 9 in the LogicalType union) into the footer.
+def _interval_bytes(months, days, millis):
+    return struct.pack('<III', months, days, millis)
+
+interval_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('duration', pa.binary(12), True),
+])
+
+interval_table = pa.table({
+    'id': [1, 2, 3],
+    'duration': [
+        _interval_bytes(1, 15, 3_600_000),   # 1 month, 15 days, 1 hour in millis
+        _interval_bytes(0, 30, 0),            # 30 days
+        None,                                 # null
+    ],
+}, schema=interval_schema)
+
+pq.write_table(
+    interval_table,
+    'core/src/test/resources/interval_logical_type_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+annotate_column_as_interval('core/src/test/resources/interval_logical_type_test.parquet', 'duration')
+
+print("\nGenerated interval_logical_type_test.parquet:")
+print("  - Schema: id INT32, duration FIXED_LEN_BYTE_ARRAY(12) annotated INTERVAL")
+print("  - 3 rows: (1mo,15d,1h), (0mo,30d,0ms), null")

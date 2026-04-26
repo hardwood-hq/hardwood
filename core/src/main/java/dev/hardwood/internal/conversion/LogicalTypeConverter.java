@@ -19,6 +19,7 @@ import java.util.UUID;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.row.PqInterval;
 
 /// Converts physical values to their logical type representations.
 public class LogicalTypeConverter {
@@ -40,7 +41,8 @@ public class LogicalTypeConverter {
             case LogicalType.UuidType t -> convertToUuid(physicalValue, physicalType);
             case LogicalType.JsonType t -> convertToString(physicalValue, physicalType);
             case LogicalType.BsonType t -> convertToBson(physicalValue, physicalType);
-            // EnumType and IntervalType: pass through as-is (no conversion needed or not supported)
+            case LogicalType.IntervalType t -> convertToInterval(physicalValue, physicalType);
+            // EnumType: pass through as-is (no conversion needed or not supported)
             // ListType and MapType are structural types handled by RecordAssembler, not primitive conversions
             default -> physicalValue;
         };
@@ -82,6 +84,21 @@ public class LogicalTypeConverter {
             case MICROS -> Instant.ofEpochSecond(rawValue / 1_000_000, (rawValue % 1_000_000) * 1000);
             case NANOS -> Instant.ofEpochSecond(rawValue / 1_000_000_000, rawValue % 1_000_000_000);
         };
+    }
+
+    public static PqInterval convertToInterval(Object value, PhysicalType physicalType) {
+        if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            throw new IllegalArgumentException(
+                    "INTERVAL logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
+        }
+
+        byte[] bytes = (byte[]) value;
+        if (bytes.length != 12) {
+            throw new IllegalArgumentException(
+                    "INTERVAL requires exactly 12 bytes, got " + bytes.length);
+        }
+        ByteBuffer buffer = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        return new PqInterval(buffer.getInt(0), buffer.getInt(4), buffer.getInt(8));
     }
 
     /// Julian day number of the Unix epoch (1970-01-01).

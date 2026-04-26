@@ -27,6 +27,7 @@ import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
@@ -409,6 +410,7 @@ class RecordFilterEvaluatorTest {
             @Override public Instant getTimestamp(String name) { throw new UnsupportedOperationException(); }
             @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
             @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(); }
+            @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(); }
             @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(); }
             @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(); }
             @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(); }
@@ -449,6 +451,7 @@ class RecordFilterEvaluatorTest {
         @Override public Instant getTimestamp(String name) { throw new UnsupportedOperationException(); }
         @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
         @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(); }
+        @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(); }
         @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(); }
         @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(); }
         @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(); }
