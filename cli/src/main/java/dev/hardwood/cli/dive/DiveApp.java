@@ -16,11 +16,15 @@ import dev.hardwood.cli.dive.internal.ColumnChunksScreen;
 import dev.hardwood.cli.dive.internal.ColumnIndexScreen;
 import dev.hardwood.cli.dive.internal.DataPreviewScreen;
 import dev.hardwood.cli.dive.internal.DictionaryScreen;
+import dev.hardwood.cli.dive.internal.FileIndexesScreen;
 import dev.hardwood.cli.dive.internal.FooterScreen;
 import dev.hardwood.cli.dive.internal.HelpOverlay;
+import dev.hardwood.cli.dive.internal.Keys;
 import dev.hardwood.cli.dive.internal.OffsetIndexScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
 import dev.hardwood.cli.dive.internal.PagesScreen;
+import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
+import dev.hardwood.cli.dive.internal.RowGroupIndexesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupsScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
 import dev.tamboui.buffer.Buffer;
@@ -43,7 +47,7 @@ public final class DiveApp {
 
     public DiveApp(ParquetModel model) {
         this.model = model;
-        this.stack = new NavigationStack(new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0));
+        this.stack = new NavigationStack(ScreenState.Overview.initial());
         this.helpOpen = false;
     }
 
@@ -68,45 +72,64 @@ public final class DiveApp {
         if (!(event instanceof KeyEvent ke)) {
             return false;
         }
-        if (ke.isCtrlC()) {
+        Action action = dispatchKey(ke);
+        if (action == Action.QUIT) {
             runner.quit();
             return false;
+        }
+        return action == Action.HANDLED;
+    }
+
+    /// Outcome of a key dispatch — returned by [#dispatchKey] so the
+    /// runtime loop can act on `QUIT` (`runner.quit()`) and the test
+    /// harness can assert behavior without driving a real TuiRunner.
+    public enum Action { HANDLED, IGNORED, QUIT }
+
+    /// Visible for testing: the same key-dispatch logic the runtime loop
+    /// uses, minus the TuiRunner coupling. Returns [Action#QUIT] for
+    /// `Ctrl-C` and (when not in text-input mode) `q`.
+    public Action dispatchKey(KeyEvent ke) {
+        if (ke.isCtrlC()) {
+            return Action.QUIT;
         }
         boolean textInput = isTopInInputMode();
         if (!textInput && ke.isQuit()) {
-            runner.quit();
-            return false;
+            return Action.QUIT;
         }
         if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == '?') {
             helpOpen = !helpOpen;
-            return true;
+            return Action.HANDLED;
         }
         if (helpOpen) {
             if (ke.isCancel()) {
                 helpOpen = false;
-                return true;
+                return Action.HANDLED;
             }
-            return false;
+            return Action.IGNORED;
         }
-        if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == 'g' && !ke.hasCtrl() && !ke.hasAlt()) {
+        if (!textInput && ke.code() == KeyCode.CHAR && ke.character() == 'o' && !ke.hasCtrl() && !ke.hasAlt()) {
             stack.clearToRoot();
-            return true;
+            return Action.HANDLED;
         }
         // Screen gets first crack at the event so it can claim keys like Esc (filter-cancel)
         // before the global back-navigation intercept kicks in.
         if (dispatchToScreen(ke)) {
-            return true;
+            return Action.HANDLED;
         }
         if (ke.isCancel() && stack.depth() > 1) {
             stack.pop();
-            return true;
+            return Action.HANDLED;
         }
-        return false;
+        return Action.IGNORED;
     }
 
     private boolean isTopInInputMode() {
-        return stack.top() instanceof ScreenState.DictionaryView d
-                && DictionaryScreen.isInInputMode(d);
+        return switch (stack.top()) {
+            case ScreenState.DictionaryView d -> DictionaryScreen.isInInputMode(d);
+            case ScreenState.Schema s -> SchemaScreen.isInInputMode(s);
+            case ScreenState.ColumnIndexView c -> ColumnIndexScreen.isInInputMode(c);
+            default -> false;
+        };
     }
 
     private boolean dispatchToScreen(KeyEvent ke) {
@@ -114,6 +137,8 @@ public final class DiveApp {
             case ScreenState.Overview ignored -> OverviewScreen.handle(ke, model, stack);
             case ScreenState.Schema ignored -> SchemaScreen.handle(ke, model, stack);
             case ScreenState.RowGroups ignored -> RowGroupsScreen.handle(ke, model, stack);
+            case ScreenState.RowGroupDetail ignored -> RowGroupDetailScreen.handle(ke, model, stack);
+            case ScreenState.RowGroupIndexes ignored -> RowGroupIndexesScreen.handle(ke, model, stack);
             case ScreenState.ColumnChunks ignored -> ColumnChunksScreen.handle(ke, model, stack);
             case ScreenState.ColumnChunkDetail ignored -> ColumnChunkDetailScreen.handle(ke, model, stack);
             case ScreenState.Pages ignored -> PagesScreen.handle(ke, model, stack);
@@ -123,18 +148,32 @@ public final class DiveApp {
             case ScreenState.ColumnAcrossRowGroups ignored -> ColumnAcrossRowGroupsScreen.handle(ke, model, stack);
             case ScreenState.DictionaryView ignored -> DictionaryScreen.handle(ke, model, stack);
             case ScreenState.DataPreview ignored -> DataPreviewScreen.handle(ke, model, stack);
+            case ScreenState.FileIndexes ignored -> FileIndexesScreen.handle(ke, model, stack);
         };
     }
 
     private void render(Frame frame) {
         Rect area = frame.area();
         Buffer buffer = frame.buffer();
-        Chrome.Regions regions = Chrome.split(area);
+        // Pre-seed Keys.viewportStride before computing the keybar so the
+        // first frame after a screen change doesn't use the previous
+        // screen's observation (or PAGE_STRIDE=20 fallback) — that
+        // mismatch was making Footer's keybar advertise scroll keys for
+        // one frame even though the body fit. Estimate body height as
+        // area minus chrome (top bar + breadcrumb + 1-row keybar + 2
+        // body borders); the screen's own render() refines this on
+        // the same frame for the body itself, but the keybar is computed
+        // first so it needs the seed.
+        Keys.observeViewport(Math.max(1, area.height() - 5));
+        String screenKeys = keybarForActive();
+        String globalKeys = " [?] help   [q] quit";
+        int kbHeight = Chrome.keybarHeight(screenKeys, globalKeys, area.width());
+        Chrome.Regions regions = Chrome.split(area, kbHeight);
 
         Chrome.renderTopBar(buffer, regions.topBar(), model);
         Chrome.renderBreadcrumb(buffer, regions.breadcrumb(), stack, model);
         renderBody(buffer, regions.body());
-        Chrome.renderKeybar(buffer, regions.keybar(), keybarForActive(), " [?] help   [q] quit");
+        Chrome.renderKeybar(buffer, regions.keybar(), screenKeys, globalKeys);
 
         if (helpOpen) {
             HelpOverlay.render(buffer, area);
@@ -147,32 +186,38 @@ public final class DiveApp {
             case ScreenState.Overview s -> OverviewScreen.render(buffer, area, model, s);
             case ScreenState.Schema s -> SchemaScreen.render(buffer, area, model, s);
             case ScreenState.RowGroups s -> RowGroupsScreen.render(buffer, area, model, s);
+            case ScreenState.RowGroupDetail s -> RowGroupDetailScreen.render(buffer, area, model, s);
+            case ScreenState.RowGroupIndexes s -> RowGroupIndexesScreen.render(buffer, area, model, s);
             case ScreenState.ColumnChunks s -> ColumnChunksScreen.render(buffer, area, model, s);
             case ScreenState.ColumnChunkDetail s -> ColumnChunkDetailScreen.render(buffer, area, model, s);
             case ScreenState.Pages s -> PagesScreen.render(buffer, area, model, s);
             case ScreenState.ColumnIndexView s -> ColumnIndexScreen.render(buffer, area, model, s);
             case ScreenState.OffsetIndexView s -> OffsetIndexScreen.render(buffer, area, model, s);
-            case ScreenState.Footer ignored -> FooterScreen.render(buffer, area, model);
+            case ScreenState.Footer s -> FooterScreen.render(buffer, area, model, s);
             case ScreenState.ColumnAcrossRowGroups s -> ColumnAcrossRowGroupsScreen.render(buffer, area, model, s);
             case ScreenState.DictionaryView s -> DictionaryScreen.render(buffer, area, model, s);
             case ScreenState.DataPreview s -> DataPreviewScreen.render(buffer, area, model, s);
+            case ScreenState.FileIndexes s -> FileIndexesScreen.render(buffer, area, model, s);
         }
     }
 
     private String keybarForActive() {
         return switch (stack.top()) {
-            case ScreenState.Overview ignored -> OverviewScreen.keybarKeys();
-            case ScreenState.Schema ignored -> SchemaScreen.keybarKeys();
-            case ScreenState.RowGroups ignored -> RowGroupsScreen.keybarKeys();
-            case ScreenState.ColumnChunks ignored -> ColumnChunksScreen.keybarKeys();
-            case ScreenState.ColumnChunkDetail ignored -> ColumnChunkDetailScreen.keybarKeys();
-            case ScreenState.Pages ignored -> PagesScreen.keybarKeys();
-            case ScreenState.ColumnIndexView ignored -> ColumnIndexScreen.keybarKeys();
-            case ScreenState.OffsetIndexView ignored -> OffsetIndexScreen.keybarKeys();
-            case ScreenState.Footer ignored -> FooterScreen.keybarKeys();
-            case ScreenState.ColumnAcrossRowGroups ignored -> ColumnAcrossRowGroupsScreen.keybarKeys();
-            case ScreenState.DictionaryView ignored -> DictionaryScreen.keybarKeys();
-            case ScreenState.DataPreview ignored -> DataPreviewScreen.keybarKeys();
+            case ScreenState.Overview s -> OverviewScreen.keybarKeys(s, model);
+            case ScreenState.Schema s -> SchemaScreen.keybarKeys(s, model);
+            case ScreenState.RowGroups s -> RowGroupsScreen.keybarKeys(s, model);
+            case ScreenState.RowGroupDetail s -> RowGroupDetailScreen.keybarKeys(s);
+            case ScreenState.RowGroupIndexes s -> RowGroupIndexesScreen.keybarKeys(s, model);
+            case ScreenState.ColumnChunks s -> ColumnChunksScreen.keybarKeys(s, model);
+            case ScreenState.ColumnChunkDetail s -> ColumnChunkDetailScreen.keybarKeys(s, model);
+            case ScreenState.Pages s -> PagesScreen.keybarKeys(s, model);
+            case ScreenState.ColumnIndexView s -> ColumnIndexScreen.keybarKeys(s, model);
+            case ScreenState.OffsetIndexView s -> OffsetIndexScreen.keybarKeys(s, model);
+            case ScreenState.Footer s -> FooterScreen.keybarKeys(s, model);
+            case ScreenState.ColumnAcrossRowGroups s -> ColumnAcrossRowGroupsScreen.keybarKeys(s, model);
+            case ScreenState.DictionaryView s -> DictionaryScreen.keybarKeys(s, model);
+            case ScreenState.DataPreview s -> DataPreviewScreen.keybarKeys(s, model);
+            case ScreenState.FileIndexes s -> FileIndexesScreen.keybarKeys(s, model);
         };
     }
 

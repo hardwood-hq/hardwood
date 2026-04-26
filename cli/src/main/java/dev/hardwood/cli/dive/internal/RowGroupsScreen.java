@@ -20,7 +20,6 @@ import dev.hardwood.metadata.RowGroup;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
@@ -40,31 +39,60 @@ public final class RowGroupsScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.RowGroups state = (ScreenState.RowGroups) stack.top();
         int count = model.rowGroupCount();
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.RowGroups(Math.max(0, state.selection() - 1)));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.RowGroups(Math.min(count - 1, state.selection() + 1)));
             return true;
         }
+        if (Keys.isPageDown(event) && count > 0) {
+            stack.replaceTop(new ScreenState.RowGroups(
+                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
+            return true;
+        }
+        if (Keys.isPageUp(event) && count > 0) {
+            stack.replaceTop(new ScreenState.RowGroups(
+                    Math.max(0, state.selection() - Keys.viewportStride())));
+            return true;
+        }
+        if (Keys.isJumpTop(event) && count > 0) {
+            stack.replaceTop(new ScreenState.RowGroups(0));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && count > 0) {
+            stack.replaceTop(new ScreenState.RowGroups(count - 1));
+            return true;
+        }
         if (event.isConfirm() && count > 0) {
-            stack.push(new ScreenState.ColumnChunks(state.selection(), 0));
+            stack.push(new ScreenState.RowGroupDetail(
+                    state.selection(), ScreenState.RowGroupDetail.Pane.MENU, 0));
             return true;
         }
         return false;
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.RowGroups state) {
+        Keys.observeViewport(area.height() - 3);
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < model.rowGroupCount(); i++) {
             RowGroup rg = model.rowGroup(i);
             long compressed = 0;
             long uncompressed = 0;
+            int ciCount = 0;
+            int oiCount = 0;
+            int chunkCount = rg.columns().size();
             for (ColumnChunk cc : rg.columns()) {
                 ColumnMetaData cmd = cc.metaData();
                 compressed += cmd.totalCompressedSize();
                 uncompressed += cmd.totalUncompressedSize();
+                if (cc.columnIndexOffset() != null) {
+                    ciCount++;
+                }
+                if (cc.offsetIndexOffset() != null) {
+                    oiCount++;
+                }
             }
             double ratio = compressed == 0 ? 0.0 : (double) uncompressed / compressed;
             rows.add(Row.from(
@@ -72,14 +100,18 @@ public final class RowGroupsScreen {
                     formatLong(rg.numRows()),
                     Sizes.format(uncompressed),
                     Sizes.format(compressed),
-                    String.format("%.1f×", ratio)));
+                    String.format("%.1f×", ratio),
+                    ciCount + "/" + chunkCount,
+                    oiCount + "/" + chunkCount));
         }
-        Row header = Row.from("#", "Rows", "Uncompressed", "Compressed", "Ratio").style(Style.EMPTY.bold());
+        Row header = Row.from("#", "Rows", "Uncompressed", "Compressed", "Ratio", "CI", "OI")
+                .style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" Row groups (" + model.rowGroupCount() + ") ")
+                .title(" Row groups " + Plurals.rangeOf(state.selection(),
+                        model.rowGroupCount(), Keys.viewportStride()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -88,6 +120,8 @@ public final class RowGroupsScreen {
                         new Constraint.Length(14),
                         new Constraint.Length(14),
                         new Constraint.Length(14),
+                        new Constraint.Length(8),
+                        new Constraint.Length(8),
                         new Constraint.Length(8))
                 .columnSpacing(2)
                 .block(block)
@@ -99,8 +133,15 @@ public final class RowGroupsScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [Enter] drill  [Esc] back";
+    public static String keybarKeys(ScreenState.RowGroups state, ParquetModel model) {
+        int count = model.rowGroupCount();
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
+                .add(count > 0, "[Enter] open")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static String formatLong(long v) {

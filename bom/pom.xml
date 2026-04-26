@@ -72,6 +72,19 @@
         <version>0.2.0</version>
       </dependency>
 
+      <!-- JLine — sub-modules (not the fat bundle) so native-image doesn't try to
+           parse the JNA / Jansi provider factories that reference libs we don't ship. -->
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline-terminal</artifactId>
+        <version>3.25.1</version>
+      </dependency>
+      <dependency>
+        <groupId>org.jline</groupId>
+        <artifactId>jline-terminal-jni</artifactId>
+        <version>3.25.1</version>
+      </dependency>
+
       <!-- Hardwood modules -->
       <dependency>
         <groupId>dev.hardwood</groupId>

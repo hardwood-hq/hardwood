@@ -19,7 +19,6 @@ import dev.hardwood.metadata.PageLocation;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -44,34 +43,57 @@ public final class OffsetIndexScreen {
         ScreenState.OffsetIndexView state = (ScreenState.OffsetIndexView) stack.top();
         OffsetIndex oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
         int count = oi != null ? oi.pageLocations().size() : 0;
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.OffsetIndexView(
                     state.rowGroupIndex(), state.columnIndex(),
                     Math.max(0, state.selection() - 1)));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.OffsetIndexView(
                     state.rowGroupIndex(), state.columnIndex(),
                     Math.min(count - 1, state.selection() + 1)));
+            return true;
+        }
+        if (Keys.isPageDown(event) && count > 0) {
+            stack.replaceTop(new ScreenState.OffsetIndexView(
+                    state.rowGroupIndex(), state.columnIndex(),
+                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
+            return true;
+        }
+        if (Keys.isPageUp(event) && count > 0) {
+            stack.replaceTop(new ScreenState.OffsetIndexView(
+                    state.rowGroupIndex(), state.columnIndex(),
+                    Math.max(0, state.selection() - Keys.viewportStride())));
+            return true;
+        }
+        if (Keys.isJumpTop(event) && count > 0) {
+            stack.replaceTop(new ScreenState.OffsetIndexView(
+                    state.rowGroupIndex(), state.columnIndex(), 0));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && count > 0) {
+            stack.replaceTop(new ScreenState.OffsetIndexView(
+                    state.rowGroupIndex(), state.columnIndex(), count - 1));
             return true;
         }
         return false;
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.OffsetIndexView state) {
+        Keys.observeViewport(area.height() - 3);
         OffsetIndex oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
         if (oi == null) {
             Block emptyBlock = Block.builder()
                     .title(" Offset index ")
                     .borders(Borders.ALL)
                     .borderType(BorderType.ROUNDED)
-                    .borderColor(Color.GRAY)
+                    .borderColor(Theme.DIM)
                     .build();
             Paragraph.builder()
                     .block(emptyBlock)
                     .text(Text.from(Line.from(
-                            new Span(" No offset index for this chunk.", Style.EMPTY.fg(Color.GRAY)))))
+                            new Span(" No offset index for this chunk.", Style.EMPTY.fg(Theme.DIM)))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -89,10 +111,12 @@ public final class OffsetIndexScreen {
         }
         Row header = Row.from("#", "Offset", "Size", "First row").style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" Offset index (" + locations.size() + " pages) ")
+                .title(" Offset index "
+                        + Plurals.rangeOf(state.selection(), locations.size(), Keys.viewportStride())
+                        + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -113,7 +137,14 @@ public final class OffsetIndexScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [Esc] back";
+    public static String keybarKeys(ScreenState.OffsetIndexView state, ParquetModel model) {
+        OffsetIndex oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
+        int count = oi != null ? oi.pageLocations().size() : 0;
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
+                .add(true, "[Esc] back")
+                .build();
     }
 }

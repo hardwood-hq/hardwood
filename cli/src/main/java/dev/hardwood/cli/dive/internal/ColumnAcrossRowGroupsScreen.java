@@ -23,7 +23,6 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
@@ -43,26 +42,54 @@ public final class ColumnAcrossRowGroupsScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.ColumnAcrossRowGroups state = (ScreenState.ColumnAcrossRowGroups) stack.top();
         int count = model.rowGroupCount();
-        if (event.isUp()) {
+        boolean logical = state.logicalTypes();
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
-                    state.columnIndex(), Math.max(0, state.selection() - 1)));
+                    state.columnIndex(), Math.max(0, state.selection() - 1), logical));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
-                    state.columnIndex(), Math.min(count - 1, state.selection() + 1)));
+                    state.columnIndex(), Math.min(count - 1, state.selection() + 1), logical));
+            return true;
+        }
+        if (Keys.isPageDown(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
+                    state.columnIndex(),
+                    Math.min(count - 1, state.selection() + Keys.viewportStride()), logical));
+            return true;
+        }
+        if (Keys.isPageUp(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
+                    state.columnIndex(),
+                    Math.max(0, state.selection() - Keys.viewportStride()), logical));
+            return true;
+        }
+        if (Keys.isJumpTop(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), 0, logical));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), count - 1, logical));
             return true;
         }
         if (event.isConfirm() && count > 0) {
             stack.push(new ScreenState.ColumnChunkDetail(
                     state.selection(), state.columnIndex(),
-                    ScreenState.ColumnChunkDetail.Pane.MENU, 0));
+                    ScreenState.ColumnChunkDetail.Pane.MENU, 0, state.logicalTypes()));
+            return true;
+        }
+        if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
+                    state.columnIndex(), state.selection(), !logical));
             return true;
         }
         return false;
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnAcrossRowGroups state) {
+        Keys.observeViewport(area.height() - 3);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         List<Row> rows = new ArrayList<>();
         for (int i = 0; i < model.rowGroupCount(); i++) {
@@ -71,10 +98,10 @@ public final class ColumnAcrossRowGroupsScreen {
             ColumnMetaData cmd = cc.metaData();
             Statistics stats = cmd.statistics();
             String min = stats != null && stats.minValue() != null
-                    ? IndexValueFormatter.format(stats.minValue(), col)
+                    ? IndexValueFormatter.format(stats.minValue(), col, state.logicalTypes())
                     : "—";
             String max = stats != null && stats.maxValue() != null
-                    ? IndexValueFormatter.format(stats.maxValue(), col)
+                    ? IndexValueFormatter.format(stats.maxValue(), col, state.logicalTypes())
                     : "—";
             String nulls = stats != null && stats.nullCount() != null
                     ? String.format("%,d", stats.nullCount())
@@ -82,9 +109,16 @@ public final class ColumnAcrossRowGroupsScreen {
             double ratio = cmd.totalCompressedSize() == 0
                     ? 0.0
                     : (double) cmd.totalUncompressedSize() / cmd.totalCompressedSize();
+            // Page count from OffsetIndex if present; without OI we'd need
+            // to walk page headers, which the chunk-detail screen does
+            // already — render "—" here.
+            dev.hardwood.metadata.OffsetIndex oi = cc.offsetIndexOffset() != null
+                    ? model.offsetIndex(i, state.columnIndex()) : null;
+            String pages = oi != null ? String.format("%,d", oi.pageLocations().size()) : "—";
             rows.add(Row.from(
                     String.valueOf(i),
                     String.format("%,d", rg.numRows()),
+                    pages,
                     Sizes.format(cmd.totalCompressedSize()),
                     String.format("%.1f×", ratio),
                     cmd.dictionaryPageOffset() != null ? "yes" : "no",
@@ -93,19 +127,25 @@ public final class ColumnAcrossRowGroupsScreen {
                     min,
                     max));
         }
-        Row header = Row.from("RG", "Rows", "Comp", "Ratio", "Dict", "CI", "Nulls", "Min", "Max")
+        Row header = Row.from("RG", "Rows", "Pages", "Comp", "Ratio", "Dict", "CI", "Nulls", "Min", "Max")
                 .style(Style.EMPTY.bold());
+        String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
-                .title(" " + col.fieldPath() + " across " + model.rowGroupCount() + " RGs ")
+                .title(" " + truncateLeft(col.fieldPath().toString(), 40)
+                        + " · RG "
+                        + Plurals.rangeOf(state.selection(), model.rowGroupCount(),
+                                Keys.viewportStride())
+                        + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
                 .widths(new Constraint.Length(4),
                         new Constraint.Length(12),
+                        new Constraint.Length(8),
                         new Constraint.Length(12),
                         new Constraint.Length(6),
                         new Constraint.Length(5),
@@ -123,7 +163,21 @@ public final class ColumnAcrossRowGroupsScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [Enter] chunk detail  [Esc] back";
+    public static String keybarKeys(ScreenState.ColumnAcrossRowGroups state, ParquetModel model) {
+        int count = model.rowGroupCount();
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        boolean hasLogical = col.logicalType() != null;
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
+                .add(count > 0, "[Enter] open")
+                .add(hasLogical, "[t] logical types")
+                .add(true, "[Esc] back")
+                .build();
+    }
+
+    private static String truncateLeft(String s, int maxWidth) {
+        return Strings.truncateLeft(s, maxWidth);
     }
 }

@@ -20,7 +20,6 @@ import dev.hardwood.metadata.RowGroup;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
@@ -40,51 +39,79 @@ public final class ColumnChunksScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.ColumnChunks state = (ScreenState.ColumnChunks) stack.top();
         int count = model.rowGroup(state.rowGroupIndex()).columns().size();
-        if (event.isUp()) {
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), Math.max(0, state.selection() - 1)));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), Math.min(count - 1, state.selection() + 1)));
+            return true;
+        }
+        if (Keys.isPageDown(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(),
+                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
+            return true;
+        }
+        if (Keys.isPageUp(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(),
+                    Math.max(0, state.selection() - Keys.viewportStride())));
+            return true;
+        }
+        if (Keys.isJumpTop(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), 0));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && count > 0) {
+            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), count - 1));
             return true;
         }
         if (event.isConfirm() && count > 0) {
             stack.push(new ScreenState.ColumnChunkDetail(state.rowGroupIndex(), state.selection(),
-                    ScreenState.ColumnChunkDetail.Pane.MENU, 0));
+                    ScreenState.ColumnChunkDetail.Pane.MENU, 0, true));
             return true;
         }
         return false;
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnChunks state) {
+        Keys.observeViewport(area.height() - 3);
         RowGroup rg = model.rowGroup(state.rowGroupIndex());
         List<Row> rows = new ArrayList<>();
-        for (ColumnChunk cc : rg.columns()) {
+        for (int i = 0; i < rg.columns().size(); i++) {
+            ColumnChunk cc = rg.columns().get(i);
             ColumnMetaData cmd = cc.metaData();
             double ratio = cmd.totalCompressedSize() == 0
                     ? 0.0
                     : (double) cmd.totalUncompressedSize() / cmd.totalCompressedSize();
+            dev.hardwood.metadata.LogicalType logical = model.schema().getColumn(i).logicalType();
             rows.add(Row.from(
+                    String.valueOf(i),
                     Sizes.columnPath(cmd),
                     cmd.type().name(),
+                    logical != null ? logical.toString() : "—",
                     cmd.codec().name(),
                     Sizes.format(cmd.totalCompressedSize()),
                     String.format("%.1f×", ratio),
                     cmd.dictionaryPageOffset() != null ? "yes" : "no"));
         }
-        Row header = Row.from("Column", "Type", "Codec", "Compressed", "Ratio", "Dict")
+        Row header = Row.from("#", "Column", "Type", "Logical", "Codec", "Compressed", "Ratio", "Dict")
                 .style(Style.EMPTY.bold());
         Block block = Block.builder()
-                .title(" RG #" + state.rowGroupIndex() + " column chunks ")
+                .title(" RG #" + state.rowGroupIndex() + " column chunks "
+                        + Plurals.rangeOf(state.selection(),
+                                model.rowGroup(state.rowGroupIndex()).columns().size(),
+                                Keys.viewportStride()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
                 .rows(rows)
-                .widths(new Constraint.Fill(3),
+                .widths(new Constraint.Length(4),
+                        new Constraint.Fill(3),
                         new Constraint.Length(16),
+                        new Constraint.Length(18),
                         new Constraint.Length(10),
                         new Constraint.Length(12),
                         new Constraint.Length(8),
@@ -99,7 +126,14 @@ public final class ColumnChunksScreen {
         table.render(area, buffer, tableState);
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [Enter] inspect chunk  [Esc] back";
+    public static String keybarKeys(ScreenState.ColumnChunks state, ParquetModel model) {
+        int count = model.rowGroup(state.rowGroupIndex()).columns().size();
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
+                .add(count > 0, "[Enter] open")
+                .add(true, "[Esc] back")
+                .build();
     }
 }

@@ -19,7 +19,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -31,24 +30,20 @@ import dev.tamboui.widgets.block.Borders;
 import dev.tamboui.widgets.paragraph.Paragraph;
 
 /// The root screen of `hardwood dive`. Two panes: file facts (left, read-only) and
-/// a drill-into menu (right, selectable). Phase 1 only implements Schema and Row
-/// groups drills — Footer and Data preview entries are shown disabled.
+/// a drill-into menu (right, selectable).
 public final class OverviewScreen {
 
-    /// Menu entries in display order. Enabled items drill into their screen when
-    /// the user presses Enter; disabled items are rendered dimmed and ignored.
+    /// Menu entries in display order. Enter drills into the selected item's screen.
     public enum MenuItem {
-        SCHEMA("Schema", true),
-        ROW_GROUPS("Row groups", true),
-        FOOTER("Footer & indexes", true),
-        DATA_PREVIEW("Data preview", true);
+        SCHEMA("Schema"),
+        ROW_GROUPS("Row groups"),
+        FOOTER("Footer & indexes"),
+        DATA_PREVIEW("Data preview");
 
         final String label;
-        final boolean enabled;
 
-        MenuItem(String label, boolean enabled) {
+        MenuItem(String label) {
             this.label = label;
-            this.enabled = enabled;
         }
     }
 
@@ -59,55 +54,155 @@ public final class OverviewScreen {
 
     public static boolean handle(KeyEvent event, ParquetModel model, NavigationStack stack) {
         ScreenState.Overview state = (ScreenState.Overview) stack.top();
+        if (state.kvModalOpen()) {
+            if (event.isCancel() || event.isConfirm()) {
+                stack.replaceTop(withKvModal(state, false));
+                return true;
+            }
+            int totalLines = kvModalLineCount(model, state);
+            // Scroll is meaningful only when content overflows the modal
+            // viewport. Use Keys.viewportStride as a proxy for the modal's
+            // own viewport (the modal sizes to the screen body area).
+            // When content fits in full, ↑/↓ are no-ops — match the
+            // general "scroll enabled iff content > viewport" rule.
+            int viewport = Keys.viewportStride();
+            int maxScroll = Math.max(0, totalLines - viewport);
+            if (maxScroll == 0) {
+                return false;
+            }
+            if (event.isUp() && !event.hasShift()) {
+                if (state.kvModalScroll() == 0) {
+                    return false;
+                }
+                stack.replaceTop(withKvScroll(state, state.kvModalScroll() - 1));
+                return true;
+            }
+            if (event.isDown() && !event.hasShift()) {
+                if (state.kvModalScroll() >= maxScroll) {
+                    return false;
+                }
+                stack.replaceTop(withKvScroll(state, state.kvModalScroll() + 1));
+                return true;
+            }
+            if (event.isUp() && event.hasShift()) {
+                stack.replaceTop(withKvScroll(state, Math.max(0, state.kvModalScroll() - 10)));
+                return true;
+            }
+            if (event.isDown() && event.hasShift()) {
+                stack.replaceTop(withKvScroll(state, Math.min(maxScroll, state.kvModalScroll() + 10)));
+                return true;
+            }
+            return false;
+        }
         if (event.isFocusNext() || event.isFocusPrevious()) {
             ScreenState.Overview.Pane next = state.focus() == ScreenState.Overview.Pane.FACTS
                     ? ScreenState.Overview.Pane.MENU
                     : ScreenState.Overview.Pane.FACTS;
-            stack.replaceTop(new ScreenState.Overview(next, state.menuSelection()));
+            stack.replaceTop(withFocus(state, next));
             return true;
         }
-        if (state.focus() == ScreenState.Overview.Pane.MENU) {
+        if (state.focus() == ScreenState.Overview.Pane.FACTS) {
+            int kvCount = model.facts().keyValueMetadata().size();
+            if (kvCount == 0) {
+                return false;
+            }
             if (event.isUp()) {
-                stack.replaceTop(new ScreenState.Overview(state.focus(),
-                        Math.max(0, state.menuSelection() - 1)));
+                stack.replaceTop(withKvSelection(state, Math.max(0, state.kvSelection() - 1)));
                 return true;
             }
             if (event.isDown()) {
-                stack.replaceTop(new ScreenState.Overview(state.focus(),
-                        Math.min(MENU_SIZE - 1, state.menuSelection() + 1)));
+                stack.replaceTop(withKvSelection(state, Math.min(kvCount - 1, state.kvSelection() + 1)));
                 return true;
             }
             if (event.isConfirm()) {
-                MenuItem item = MenuItem.values()[state.menuSelection()];
-                if (!item.enabled) {
-                    return false;
-                }
-                switch (item) {
-                    case SCHEMA -> stack.push(ScreenState.Schema.initial());
-                    case ROW_GROUPS -> stack.push(new ScreenState.RowGroups(0));
-                    case FOOTER -> stack.push(new ScreenState.Footer());
-                    case DATA_PREVIEW -> stack.push(
-                            DataPreviewScreen.initialState(model, model.previewPageSize()));
-                }
+                stack.replaceTop(withKvModal(state, true));
                 return true;
             }
+            return false;
+        }
+        if (event.isUp()) {
+            stack.replaceTop(withMenuSelection(state, Math.max(0, state.menuSelection() - 1)));
+            return true;
+        }
+        if (event.isDown()) {
+            stack.replaceTop(withMenuSelection(state, Math.min(MENU_SIZE - 1, state.menuSelection() + 1)));
+            return true;
+        }
+        if (event.isConfirm()) {
+            MenuItem item = MenuItem.values()[state.menuSelection()];
+            switch (item) {
+                case SCHEMA -> stack.push(ScreenState.Schema.initial());
+                case ROW_GROUPS -> stack.push(new ScreenState.RowGroups(0));
+                case FOOTER -> stack.push(ScreenState.Footer.initial());
+                case DATA_PREVIEW -> stack.push(DataPreviewScreen.initialState(model));
+            }
+            return true;
         }
         return false;
+    }
+
+    private static ScreenState.Overview withFocus(ScreenState.Overview s, ScreenState.Overview.Pane next) {
+        return new ScreenState.Overview(next, s.menuSelection(), s.kvSelection(),
+                s.kvModalOpen(), s.kvModalScroll());
+    }
+
+    private static ScreenState.Overview withMenuSelection(ScreenState.Overview s, int sel) {
+        return new ScreenState.Overview(s.focus(), sel, s.kvSelection(),
+                s.kvModalOpen(), s.kvModalScroll());
+    }
+
+    private static ScreenState.Overview withKvSelection(ScreenState.Overview s, int sel) {
+        return new ScreenState.Overview(s.focus(), s.menuSelection(), sel,
+                s.kvModalOpen(), 0);
+    }
+
+    private static ScreenState.Overview withKvModal(ScreenState.Overview s, boolean open) {
+        return new ScreenState.Overview(s.focus(), s.menuSelection(), s.kvSelection(), open, 0);
+    }
+
+    private static ScreenState.Overview withKvScroll(ScreenState.Overview s, int scroll) {
+        return new ScreenState.Overview(s.focus(), s.menuSelection(), s.kvSelection(),
+                s.kvModalOpen(), scroll);
+    }
+
+    private static int kvModalLineCount(ParquetModel model, ScreenState.Overview state) {
+        java.util.List<java.util.Map.Entry<String, String>> kv = model.facts().keyValueMetadata();
+        if (kv.isEmpty()) {
+            return 0;
+        }
+        int idx = Math.min(state.kvSelection(), kv.size() - 1);
+        java.util.Map.Entry<String, String> entry = kv.get(idx);
+        return KvMetadataFormatter.format(entry.getKey(), entry.getValue()).split("\n", -1).length;
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.Overview state) {
         List<Rect> cols = Layout.horizontal()
                 .constraints(new Constraint.Percentage(50), new Constraint.Percentage(50))
                 .split(area);
-        renderFactsPane(buffer, cols.get(0), model, state.focus() == ScreenState.Overview.Pane.FACTS);
+        renderFactsPane(buffer, cols.get(0), model, state);
         renderMenuPane(buffer, cols.get(1), model, state);
+        if (state.kvModalOpen()) {
+            renderKvModal(buffer, area, model, state);
+        }
     }
 
-    public static String keybarKeys() {
-        return "[Tab] pane  [↑↓] move  [Enter] drill";
+    public static String keybarKeys(ScreenState.Overview state, ParquetModel model) {
+        if (state.kvModalOpen()) {
+            return "";
+        }
+        boolean onFacts = state.focus() == ScreenState.Overview.Pane.FACTS;
+        int kvCount = model.facts().keyValueMetadata().size();
+        boolean factsHasKv = kvCount > 0;
+        return new Keys.Hints()
+                .add(factsHasKv, "[Tab] pane")
+                .add(onFacts ? kvCount > 1 : MENU_SIZE > 1, "[↑↓] move")
+                .add(onFacts && factsHasKv, "[Enter] view entry")
+                .add(!onFacts, "[Enter] open")
+                .build();
     }
 
-    private static void renderFactsPane(Buffer buffer, Rect area, ParquetModel model, boolean focused) {
+    private static void renderFactsPane(Buffer buffer, Rect area, ParquetModel model, ScreenState.Overview state) {
+        boolean focused = state.focus() == ScreenState.Overview.Pane.FACTS;
         Block block = paneBlock("File facts", focused);
         ParquetModel.Facts f = model.facts();
         List<Line> lines = new ArrayList<>();
@@ -120,11 +215,63 @@ public final class OverviewScreen {
         if (!kv.isEmpty()) {
             lines.add(Line.empty());
             lines.add(Line.from(new Span("key/value meta (" + kv.size() + ")", Style.EMPTY.bold())));
-            for (Map.Entry<String, String> entry : kv) {
-                lines.add(factsLine("  " + entry.getKey(), trim(entry.getValue(), 32)));
+            for (int i = 0; i < kv.size(); i++) {
+                Map.Entry<String, String> entry = kv.get(i);
+                boolean selected = focused && i == state.kvSelection();
+                String marker = selected ? "▶ " : "  ";
+                Style keyStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
+                lines.add(Line.from(
+                        new Span(marker, keyStyle),
+                        new Span(padRight(entry.getKey(), 16), keyStyle),
+                        new Span(trim(entry.getValue(), 32), keyStyle)));
             }
         }
         renderParagraph(buffer, area, block, Text.from(lines));
+    }
+
+    private static void renderKvModal(Buffer buffer, Rect screenArea, ParquetModel model, ScreenState.Overview state) {
+        List<Map.Entry<String, String>> kv = model.facts().keyValueMetadata();
+        if (kv.isEmpty()) {
+            return;
+        }
+        int idx = Math.min(state.kvSelection(), kv.size() - 1);
+        Map.Entry<String, String> entry = kv.get(idx);
+        // Grow the modal to fill the available area (leaving a 2-cell margin),
+        // not a fixed 30 lines — for ARROW:schema the formatted hex dump can
+        // be hundreds of lines and needs the room.
+        int width = Math.min(120, screenArea.width() - 4);
+        int height = Math.max(8, screenArea.height() - 2);
+        int x = screenArea.left() + (screenArea.width() - width) / 2;
+        int y = screenArea.top() + (screenArea.height() - height) / 2;
+        Rect area = new Rect(x, y, width, height);
+        dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
+
+        String[] all = KvMetadataFormatter.format(entry.getKey(), entry.getValue()).split("\n", -1);
+        // Reserve 2 rows for borders + 2 rows for the close hint and a blank
+        // separator. The remaining inner height is the content viewport.
+        int viewport = Math.max(1, height - 4);
+        int maxScroll = Math.max(0, all.length - viewport);
+        int scroll = Math.max(0, Math.min(state.kvModalScroll(), maxScroll));
+        int end = Math.min(all.length, scroll + viewport);
+
+        List<Line> lines = new ArrayList<>();
+        for (int i = scroll; i < end; i++) {
+            lines.add(Line.from(Span.raw(" " + all[i])));
+        }
+        lines.add(Line.empty());
+        String hint = scroll + viewport < all.length
+                ? " ↓ " + (all.length - end) + " more lines · Esc / Enter close · ↑↓ scroll · Shift+↑↓ page"
+                : (scroll > 0
+                        ? " ↑ " + scroll + " lines above · Esc / Enter close · ↑↓ scroll · Shift+↑↓ page"
+                        : " Press Esc or Enter to close");
+        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
+        Block block = Block.builder()
+                .title(" " + entry.getKey() + " ")
+                .borders(Borders.ALL)
+                .borderType(BorderType.ROUNDED)
+                .borderColor(Theme.ACCENT)
+                .build();
+        Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
 
     private static void renderMenuPane(Buffer buffer, Rect area, ParquetModel model, ScreenState.Overview state) {
@@ -137,10 +284,8 @@ public final class OverviewScreen {
             boolean selected = focused && i == state.menuSelection();
             String cursor = selected ? "▶ " : "  ";
             String hint = menuHint(item, model);
-            Style labelStyle = !item.enabled
-                    ? Style.EMPTY.fg(Color.GRAY)
-                    : selected ? Style.EMPTY.bold() : Style.EMPTY;
-            Style hintStyle = Style.EMPTY.fg(Color.GRAY);
+            Style labelStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
+            Style hintStyle = Style.EMPTY.fg(Theme.DIM);
             lines.add(Line.from(
                     new Span(cursor, labelStyle),
                     new Span(padRight(item.label, 20), labelStyle),
@@ -151,12 +296,19 @@ public final class OverviewScreen {
 
     private static String menuHint(MenuItem item, ParquetModel model) {
         return switch (item) {
-            case SCHEMA -> model.columnCount() + " cols";
-            case ROW_GROUPS -> model.rowGroupCount() + " RGs";
-            case FOOTER -> Sizes.format(model.fileSizeBytes());
-            case DATA_PREVIEW -> String.format("%,d rows", model.facts().totalRows());
+            case SCHEMA -> padRight(Plurals.format(model.columnCount(), "column", "columns"),
+                    AXIS_HINT_WIDTH) + " · browse by column";
+            case ROW_GROUPS -> padRight(Plurals.format(model.rowGroupCount(), "group", "groups"),
+                    AXIS_HINT_WIDTH) + " · browse by row group";
+            case FOOTER -> Sizes.format(FooterScreen.footerAndIndexBytes(model));
+            case DATA_PREVIEW -> Plurals.format(model.facts().totalRows(), "row", "rows");
         };
     }
+
+    /// Width to pad the count+noun fragment so the trailing
+    /// "· browse by ..." text lines up across the Schema and Row groups
+    /// menu rows regardless of count length.
+    private static final int AXIS_HINT_WIDTH = 14;
 
     private static Line factsLine(String key, String value) {
         return Line.from(
@@ -170,10 +322,10 @@ public final class OverviewScreen {
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED);
         if (focused) {
-            b.borderColor(Color.CYAN);
+            b.borderColor(Theme.ACCENT);
         }
         else {
-            b.borderColor(Color.GRAY);
+            b.borderColor(Theme.DIM);
         }
         return b.build();
     }
@@ -183,10 +335,7 @@ public final class OverviewScreen {
     }
 
     private static String padRight(String s, int width) {
-        if (s.length() >= width) {
-            return s;
-        }
-        return s + " ".repeat(width - s.length());
+        return Strings.padRight(s, width);
     }
 
     private static String trim(String s, int max) {

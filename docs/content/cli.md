@@ -72,20 +72,65 @@ hardwood dive -f data.parquet
 From the Overview landing screen, drill into **Schema** or **Row groups**,
 then into column chunks and per-chunk metadata.
 
+### What you can do with it
+
+`dive` composes the slices that the batch subcommands (`info`, `schema`,
+`footer`, `inspect`, `print`) each surface separately into a single
+navigable session. Typical things to reach for it for:
+
+- **Find a column quickly** in a wide schema — Schema screen, `/` to
+  filter the tree to leaves matching a substring.
+- **Spot the heavy column chunks** in a row group — Row groups → Column
+  chunks ranks by compressed size with the codec and dictionary flag
+  alongside.
+- **Check page-level statistics and indexes** — drill from a chunk into
+  Pages, Column index, or Offset index; `Enter` on a page opens the
+  full thrift header, including inline statistics when no Column Index
+  is present.
+- **Inspect dictionary entries** for a column — Dictionary screen with
+  `/` substring filter; `Enter` reveals the full untruncated value of
+  the highlighted entry.
+- **Preview a few rows** without exporting — Data preview paginates with
+  `PgDn`/`PgUp` (`g`/`G` for first/last); `Enter` opens a per-row modal
+  where each field can be expanded inline.
+- **Decode key/value metadata** — Spark JSON schemas pretty-print, Arrow
+  IPC schemas decode to a hex dump.
+- **Compare a column across row groups** — from Schema, `Enter` on a
+  leaf jumps to a one-row-per-RG view of that column's sizes,
+  encodings, and stats.
+- **Read raw file layout** — Footer & indexes shows file size, footer
+  offset, encoding/codec histograms, page-index coverage, and aggregate
+  byte breakdowns; from there you can drill into a file-wide list of
+  every chunk's column index, offset index, or dictionary region.
+
+### Keys
+
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Move selection |
+| `PgDn` / `PgUp` (or `Shift-↓` / `Shift-↑`) | Page down / up |
+| `g` / `G` | Jump to first / last row |
 | `Enter` | Drill into the selected item |
 | `Esc` / `Backspace` | Go back one level |
 | `Tab` / `Shift-Tab` | Switch focused pane |
-| `g` | Jump back to Overview |
+| `/` | Inline search (Schema, Column index, Dictionary) |
+| `t` | Toggle logical / physical value rendering (screen-specific: Pages, Column index, Dictionary, Data preview, Column chunk detail) |
+| `e` / `c` | Expand / collapse all (Schema tree; Data preview row modal) |
+| `o` | Jump back to Overview |
 | `?` | Toggle help overlay |
 | `q` / `Ctrl-C` | Quit |
+
+The keybar at the bottom of every screen lists the keys that are
+actually meaningful in the current context — so the menus above show the
+full vocabulary, but the keybar tells you which subset is live right
+now.
 
 Available screens: Overview, Schema (expandable tree of groups + leaves),
 Row groups, Column chunks, Column chunk detail (facts + drill menu), Pages
 (with a page-header modal on Enter), Column index, Offset index, Footer &
-indexes, Column-across-row-groups (from the Schema screen), Dictionary (with
+indexes (which also drills into a file-wide list of every chunk's column
+index, offset index, or dictionary region),
+Column-across-row-groups (from the Schema screen), Dictionary (with
 full-value modal on Enter and `/` inline search), and Data preview (row
 values via `RowReader`; `←/→` scrolls the visible column window,
 `PgDn/PgUp` flips pages).
@@ -124,12 +169,20 @@ primitive nodes with `→` / `←`; `Enter` on a leaf drills into a
 *Column-across-row-groups* view — one row per row group showing that column's
 sizes, encoding, stats — and from there into the chunk detail.
 
-### Searching dictionaries
+### Inline search
 
-Open the **Dictionary** screen, then press `/` to enter inline search mode.
-Typed characters extend the filter; *Backspace* trims it; *Esc* clears the
-filter; *Enter* commits it (keeps the filter applied but exits edit mode).
-The table re-filters live as you type.
+The **Schema**, **Column index**, and **Dictionary** screens support inline
+search. Press `/` to enter search-edit mode:
+
+- **Schema** — filters leaf columns whose field path contains the query.
+  While the filter is active, the tree collapses to a flat list of matches.
+- **Column index** — filters pages whose formatted min or max value
+  contains the query.
+- **Dictionary** — filters entries whose value contains the query.
+
+In all three cases: typed characters extend the filter; *Backspace* trims;
+*Esc* clears the filter and exits edit mode; *Enter* commits (keeps the
+filter applied but exits edit mode). The table re-filters live as you type.
 
 ## Reading Files from S3
 

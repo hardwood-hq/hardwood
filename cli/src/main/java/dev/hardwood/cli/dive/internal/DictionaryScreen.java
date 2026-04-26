@@ -7,19 +7,19 @@
  */
 package dev.hardwood.cli.dive.internal;
 
-import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.RowValueFormatter;
 import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -44,6 +44,16 @@ public final class DictionaryScreen {
 
     private static final int VALUE_PREVIEW_MAX = 60;
 
+    /// One-slot memoisation for filteredIndices. A dictionary with hundreds of
+    /// thousands of entries re-filters twice per navigation keystroke (once in
+    /// handle, once in render); caching the most recent (dict, filter) result
+    /// turns navigation into O(1) lookups while still invalidating when the
+    /// user types / deletes a character.
+    private static Dictionary cachedDict;
+    private static String cachedFilter;
+    private static boolean cachedLogical;
+    private static List<Integer> cachedFiltered;
+
     private DictionaryScreen() {
     }
 
@@ -58,6 +68,23 @@ public final class DictionaryScreen {
         if (state.searching()) {
             return handleSearching(event, state, stack);
         }
+        if (needsConfirmation(model, state)) {
+            // Confirm-to-load prompt: Enter opts in, Esc falls through to the
+            // default DiveApp.Esc-pops-back behaviour.
+            if (event.isConfirm()) {
+                stack.replaceTop(withConfirmed(state, true));
+                return true;
+            }
+            return false;
+        }
+        // `t` toggles logical-type rendering at any time, including while
+        // the full-value modal is open. The modal value re-renders with
+        // the new flag.
+        if (event.code() == KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(withLogical(state, !state.logicalTypes()));
+            return true;
+        }
         if (state.modalOpen()) {
             if (event.isCancel() || event.isConfirm()) {
                 stack.replaceTop(with(state, state.selection(), false, state.filter(), false));
@@ -69,18 +96,50 @@ public final class DictionaryScreen {
             stack.replaceTop(with(state, 0, false, state.filter(), true));
             return true;
         }
-        Dictionary dict = model.dictionary(state.rowGroupIndex(), state.columnIndex());
-        List<Integer> filtered = filteredIndices(dict, state.filter());
-        if (event.isUp()) {
+        Dictionary dict = loadDictionary(model, state);
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        List<Integer> filtered = filteredIndices(dict, col, state.filter(), state.logicalTypes());
+        // Plain Up/Down step one entry; PgDn/PgUp (and the Shift+↓/↑ Mac
+        // chord since most macOS laptops have no dedicated PgDn/PgUp keys)
+        // move Keys.viewportStride() entries via the shared helper.
+        if (Keys.isPageDown(event)) {
+            int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
+            stack.replaceTop(with(state, Math.min(max, state.selection() + Keys.viewportStride()),
+                    false, state.filter(), false));
+            return true;
+        }
+        if (Keys.isPageUp(event)) {
+            stack.replaceTop(with(state, Math.max(0, state.selection() - Keys.viewportStride()),
+                    false, state.filter(), false));
+            return true;
+        }
+        if (Keys.isStepUp(event)) {
             stack.replaceTop(with(state, Math.max(0, state.selection() - 1), false, state.filter(), false));
             return true;
         }
-        if (event.isDown()) {
+        if (Keys.isStepDown(event)) {
             int max = filtered.isEmpty() ? 0 : filtered.size() - 1;
             stack.replaceTop(with(state, Math.min(max, state.selection() + 1), false, state.filter(), false));
             return true;
         }
+        if (Keys.isJumpTop(event) && !filtered.isEmpty()) {
+            stack.replaceTop(with(state, 0, false, state.filter(), false));
+            return true;
+        }
+        if (Keys.isJumpBottom(event) && !filtered.isEmpty()) {
+            stack.replaceTop(with(state, filtered.size() - 1, false, state.filter(), false));
+            return true;
+        }
         if (event.isConfirm() && !filtered.isEmpty()) {
+            // Only open the modal if the displayed value was actually truncated.
+            // For numeric dictionaries like VendorID=1, the row already shows the
+            // full value, so a modal would just redraw the same character in a
+            // bigger frame.
+            int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            String full = fullValue(dict, idx, col, state.logicalTypes());
+            if (full.length() <= VALUE_PREVIEW_MAX) {
+                return false;
+            }
             stack.replaceTop(with(state, state.selection(), true, state.filter(), false));
             return true;
         }
@@ -113,13 +172,20 @@ public final class DictionaryScreen {
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.DictionaryView state) {
-        Dictionary dict = model.dictionary(state.rowGroupIndex(), state.columnIndex());
+        // Search bar + block borders + header = 4 chrome rows.
+        Keys.observeViewport(area.height() - 4);
+        if (needsConfirmation(model, state)) {
+            renderConfirmPrompt(buffer, area, model, state);
+            return;
+        }
+        Dictionary dict = loadDictionary(model, state);
         if (dict == null) {
             renderEmpty(buffer, area);
             return;
         }
 
-        List<Integer> filtered = filteredIndices(dict, state.filter());
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        List<Integer> filtered = filteredIndices(dict, col, state.filter(), state.logicalTypes());
         List<Rect> split = Layout.vertical()
                 .constraints(new Constraint.Length(1), new Constraint.Fill(1))
                 .split(area);
@@ -130,15 +196,20 @@ public final class DictionaryScreen {
         for (int idx : filtered) {
             rows.add(Row.from(
                     "[" + idx + "]",
-                    formatValue(dict, idx, VALUE_PREVIEW_MAX)));
+                    formatValue(dict, idx, col, VALUE_PREVIEW_MAX, state.logicalTypes())));
         }
         Row header = Row.from("#", "Value").style(Style.EMPTY.bold());
+        String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
-                .title(" Dictionary (" + dict.size() + " entries"
-                        + (state.filter().isEmpty() ? "" : "; " + filtered.size() + " matching") + ") ")
+                .title(" Dictionary entries "
+                        + Plurals.rangeOf(state.selection(), filtered.size(), Keys.viewportStride())
+                        + (state.filter().isEmpty()
+                                ? ""
+                                : " · " + Plurals.format(dict.size(), "entry", "entries") + " total")
+                        + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -157,12 +228,31 @@ public final class DictionaryScreen {
 
         if (state.modalOpen() && !filtered.isEmpty()) {
             int dictIdx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
-            renderValueModal(buffer, area, dict, dictIdx);
+            renderValueModal(buffer, area, dict, col, dictIdx, state.logicalTypes());
         }
     }
 
-    public static String keybarKeys() {
-        return "[↑↓] move  [Enter] full value  [/] search  [Esc] back";
+    public static String keybarKeys(ScreenState.DictionaryView state, ParquetModel model) {
+        Dictionary dict = needsConfirmation(model, state) ? null : loadDictionary(model, state);
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        java.util.List<Integer> filtered = dict == null ? java.util.List.of()
+                : filteredIndices(dict, col, state.filter(), state.logicalTypes());
+        int count = filtered.size();
+        boolean canExpand = false;
+        if (dict != null && count > 0) {
+            int idx = filtered.get(Math.min(state.selection(), count - 1));
+            canExpand = fullValue(dict, idx, col, state.logicalTypes()).length() > VALUE_PREVIEW_MAX;
+        }
+        boolean hasLogical = col.logicalType() != null;
+        return new Keys.Hints()
+                .add(count > 1, "[↑↓] move")
+                .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
+                .add(count > 1, "[g/G] first/last")
+                .add(canExpand, "[Enter] view full value")
+                .add(dict != null, "[/] search")
+                .add(hasLogical, "[t] logical types")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static void renderSearchBar(Buffer buffer, Rect area, ScreenState.DictionaryView state,
@@ -170,7 +260,8 @@ public final class DictionaryScreen {
         if (!state.searching() && state.filter().isEmpty()) {
             Paragraph.builder()
                     .text(Text.from(Line.from(new Span(
-                            " " + totalSize + " entries. Press / to filter.", Style.EMPTY.fg(Color.GRAY)))))
+                            " " + Plurals.format(totalSize, "entry", "entries") + ". Press / to filter.",
+                            Style.EMPTY.fg(Theme.DIM)))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -178,55 +269,112 @@ public final class DictionaryScreen {
         }
         String cursor = state.searching() ? "█" : "";
         Line line = Line.from(
-                new Span(" / ", Style.EMPTY.fg(Color.CYAN).bold()),
+                new Span(" / ", Style.EMPTY.fg(Theme.ACCENT).bold()),
                 new Span(state.filter() + cursor, Style.EMPTY.bold()),
-                new Span("  (" + filteredSize + " / " + totalSize + ")", Style.EMPTY.fg(Color.GRAY)));
+                new Span("  (" + String.format("%,d", filteredSize) + " / "
+                        + Plurals.format(totalSize, "entry", "entries") + ")", Style.EMPTY.fg(Theme.DIM)));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 
-    private static List<Integer> filteredIndices(Dictionary dict, String filter) {
-        List<Integer> out = new ArrayList<>();
+    private static List<Integer> filteredIndices(Dictionary dict, ColumnSchema col, String filter,
+                                                  boolean useLogicalType) {
         if (dict == null) {
-            return out;
+            return List.of();
         }
+        if (dict == cachedDict && filter.equals(cachedFilter) && useLogicalType == cachedLogical) {
+            return cachedFiltered;
+        }
+        List<Integer> out = new ArrayList<>();
         String needle = filter.toLowerCase();
         for (int i = 0; i < dict.size(); i++) {
-            if (needle.isEmpty() || fullValue(dict, i).toLowerCase().contains(needle)) {
+            if (needle.isEmpty() || fullValue(dict, i, col, useLogicalType).toLowerCase().contains(needle)) {
                 out.add(i);
             }
         }
-        return out;
+        List<Integer> result = List.copyOf(out);
+        cachedDict = dict;
+        cachedFilter = filter;
+        cachedLogical = useLogicalType;
+        cachedFiltered = result;
+        return result;
     }
 
     private static ScreenState.DictionaryView with(ScreenState.DictionaryView state,
                                                     int selection, boolean modalOpen, String filter, boolean searching) {
         return new ScreenState.DictionaryView(
-                state.rowGroupIndex(), state.columnIndex(), selection, modalOpen, filter, searching);
+                state.rowGroupIndex(), state.columnIndex(), selection, modalOpen, filter, searching,
+                state.loadConfirmed(), state.logicalTypes());
     }
 
-    private static String formatValue(Dictionary dict, int index, int max) {
-        String full = fullValue(dict, index);
+    private static ScreenState.DictionaryView withConfirmed(ScreenState.DictionaryView state, boolean confirmed) {
+        return new ScreenState.DictionaryView(
+                state.rowGroupIndex(), state.columnIndex(), state.selection(), state.modalOpen(),
+                state.filter(), state.searching(), confirmed, state.logicalTypes());
+    }
+
+    private static ScreenState.DictionaryView withLogical(ScreenState.DictionaryView state, boolean logical) {
+        return new ScreenState.DictionaryView(
+                state.rowGroupIndex(), state.columnIndex(), state.selection(), state.modalOpen(),
+                state.filter(), state.searching(), state.loadConfirmed(), logical);
+    }
+
+    private static boolean needsConfirmation(ParquetModel model, ScreenState.DictionaryView state) {
+        return !state.loadConfirmed()
+                && model.dictionaryChunkBytes(state.rowGroupIndex(), state.columnIndex())
+                > model.dictionaryReadCapBytes();
+    }
+
+    private static Dictionary loadDictionary(ParquetModel model, ScreenState.DictionaryView state) {
+        return state.loadConfirmed()
+                ? model.dictionaryForced(state.rowGroupIndex(), state.columnIndex())
+                : model.dictionary(state.rowGroupIndex(), state.columnIndex());
+    }
+
+    private static String formatValue(Dictionary dict, int index, ColumnSchema col, int max,
+                                      boolean useLogicalType) {
+        String full = fullValue(dict, index, col, useLogicalType);
         if (full.length() <= max) {
             return full;
         }
         return full.substring(0, max - 1) + "…";
     }
 
-    private static String fullValue(Dictionary dict, int index) {
-        return switch (dict) {
-            case Dictionary.IntDictionary d -> Integer.toString(d.values()[index]);
-            case Dictionary.LongDictionary d -> Long.toString(d.values()[index]);
-            case Dictionary.FloatDictionary d -> Float.toString(d.values()[index]);
-            case Dictionary.DoubleDictionary d -> Double.toString(d.values()[index]);
-            case Dictionary.ByteArrayDictionary d -> formatBytes(d.values()[index]);
+    private static String fullValue(Dictionary dict, int index, ColumnSchema col,
+                                    boolean useLogicalType) {
+        Object raw = switch (dict) {
+            case Dictionary.IntDictionary d -> d.values()[index];
+            case Dictionary.LongDictionary d -> d.values()[index];
+            case Dictionary.FloatDictionary d -> d.values()[index];
+            case Dictionary.DoubleDictionary d -> d.values()[index];
+            case Dictionary.ByteArrayDictionary d -> d.values()[index];
         };
+        return RowValueFormatter.formatDictionaryValue(raw, col, useLogicalType);
     }
 
-    private static String formatBytes(byte[] bytes) {
-        if (bytes == null) {
-            return "null";
-        }
-        return new String(bytes, StandardCharsets.UTF_8);
+    private static void renderConfirmPrompt(Buffer buffer, Rect area, ParquetModel model,
+                                            ScreenState.DictionaryView state) {
+        long chunkBytes = model.dictionaryChunkBytes(state.rowGroupIndex(), state.columnIndex());
+        int capBytes = model.dictionaryReadCapBytes();
+        List<Line> lines = new ArrayList<>();
+        lines.add(Line.empty());
+        lines.add(Line.from(Span.raw(" This chunk would need to load "
+                + dev.hardwood.cli.internal.Sizes.format(chunkBytes)
+                + " of dictionary bytes,")));
+        lines.add(Line.from(Span.raw(" exceeding the current "
+                + dev.hardwood.cli.internal.Sizes.format(capBytes) + " cap.")));
+        lines.add(Line.empty());
+        lines.add(Line.from(Span.raw(" Press Enter to load anyway,  Esc to cancel.")));
+        lines.add(Line.empty());
+        lines.add(Line.from(new Span(
+                " (raise the cap with --max-dict-bytes on the next launch)",
+                Style.EMPTY.fg(Theme.DIM))));
+        Block block = Block.builder()
+                .title(" Dictionary — load confirmation ")
+                .borders(Borders.ALL)
+                .borderType(BorderType.ROUNDED)
+                .borderColor(Theme.ACCENT)
+                .build();
+        Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
 
     private static void renderEmpty(Buffer buffer, Rect area) {
@@ -234,37 +382,41 @@ public final class DictionaryScreen {
                 .title(" Dictionary ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.GRAY)
+                .borderColor(Theme.DIM)
                 .build();
         Paragraph.builder()
                 .block(block)
                 .text(Text.from(Line.from(new Span(
                         " This chunk is not dictionary-encoded.",
-                        Style.EMPTY.fg(Color.GRAY)))))
+                        Style.EMPTY.fg(Theme.DIM)))))
                 .left()
                 .build()
                 .render(area, buffer);
     }
 
-    private static void renderValueModal(Buffer buffer, Rect screenArea, Dictionary dict, int index) {
+    private static void renderValueModal(Buffer buffer, Rect screenArea, Dictionary dict, ColumnSchema col,
+                                         int index, boolean useLogicalType) {
         int width = Math.min(80, screenArea.width() - 4);
         int height = Math.min(16, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
+        dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
 
-        String full = fullValue(dict, index);
+        String full = fullValue(dict, index, col, useLogicalType);
         List<Line> lines = new ArrayList<>();
         lines.add(Line.empty());
         lines.add(Line.from(Span.raw(" " + full)));
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Press Esc or Enter to close", Style.EMPTY.fg(Color.GRAY))));
+        boolean hasLogical = col.logicalType() != null;
+        String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
+        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
 
         Block block = Block.builder()
                 .title(" Entry #" + index + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }

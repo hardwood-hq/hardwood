@@ -11,7 +11,6 @@ import java.util.List;
 
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -34,21 +33,26 @@ public final class HelpOverlay {
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
+        // Wipe the area so the underlying screen doesn't bleed through cells
+        // that the Paragraph doesn't paint.
+        dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
 
         List<Line> lines = List.of(
                 Line.from(new Span("Navigation", Style.EMPTY.bold())),
                 kv("↑ / ↓", "move selection"),
+                kv("g / G", "jump to first / last row"),
                 kv("Enter", "drill into selected item"),
                 kv("Esc / Backspace", "go back one level"),
                 kv("Tab / Shift-Tab", "switch focused pane"),
-                kv("g", "return to Overview"),
+                kv("o", "return to Overview"),
                 Line.empty(),
                 Line.from(new Span("Schema tree", Style.EMPTY.bold())),
                 kv("→ / Enter", "expand group · drill leaf"),
                 kv("←", "collapse group"),
+                kv("e / c", "expand / collapse all groups"),
                 Line.empty(),
-                Line.from(new Span("Dictionary search", Style.EMPTY.bold())),
-                kv("/", "enter filter mode"),
+                Line.from(new Span("Inline search", Style.EMPTY.bold())),
+                kv("/", "enter filter mode (Schema, Column index, Dictionary)"),
                 kv("Enter", "commit filter"),
                 kv("Esc", "clear filter"),
                 Line.empty(),
@@ -56,13 +60,18 @@ public final class HelpOverlay {
                 kv("?", "toggle this help"),
                 kv("q / Ctrl-C", "quit"),
                 Line.empty(),
-                Line.from(new Span("Press ? or Esc to close", Style.EMPTY.fg(Color.GRAY))));
+                Line.from(new Span("Data preview", Style.EMPTY.bold())),
+                kv("PgDn / PgUp", "page forward / back (Shift+↓/↑ on macOS)"),
+                kv("← / →", "scroll visible columns"),
+                kv("g / G", "jump to first / last row of file"),
+                Line.empty(),
+                Line.from(new Span("Press ? or Esc to close", Style.EMPTY.fg(Theme.DIM))));
 
         Block block = Block.builder()
                 .title(" hardwood dive — help ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Color.CYAN)
+                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
@@ -70,14 +79,11 @@ public final class HelpOverlay {
     private static Line kv(String key, String description) {
         return Line.from(
                 Span.raw("  "),
-                new Span(padRight(key, 18), Style.EMPTY.fg(Color.CYAN)),
+                new Span(padRight(key, 18), Style.EMPTY.fg(Theme.ACCENT)),
                 new Span(description, Style.EMPTY));
     }
 
     private static String padRight(String s, int width) {
-        if (s.length() >= width) {
-            return s;
-        }
-        return s + " ".repeat(width - s.length());
+        return Strings.padRight(s, width);
     }
 }

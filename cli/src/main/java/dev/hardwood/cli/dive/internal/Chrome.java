@@ -18,7 +18,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -40,29 +39,44 @@ public final class Chrome {
     public record Regions(Rect topBar, Rect breadcrumb, Rect body, Rect keybar) {
     }
 
-    public static Regions split(Rect area) {
+    public static Regions split(Rect area, int keybarHeight) {
+        int kb = Math.max(1, keybarHeight);
         List<Rect> rows = Layout.vertical()
                 .constraints(
                         new Constraint.Length(1),
                         new Constraint.Length(1),
                         new Constraint.Fill(1),
-                        new Constraint.Length(1))
+                        new Constraint.Length(kb))
                 .split(area);
         return new Regions(rows.get(0), rows.get(1), rows.get(2), rows.get(3));
     }
 
+    /// Number of rows the keybar text needs at the given viewport width.
+    /// Matches Paragraph's `WRAP_WORD` behavior so the body never gets a
+    /// row that the keybar then steals back.
+    public static int keybarHeight(String screenKeys, String globalKeys, int width) {
+        if (width <= 0) {
+            return 1;
+        }
+        // " " + screenKeys + KEYBAR_SEP + globalKeys
+        int total = 1 + (screenKeys != null ? screenKeys.length() : 0)
+                + KEYBAR_SEP.length()
+                + (globalKeys != null ? globalKeys.length() : 0);
+        return Math.max(1, (total + width - 1) / width);
+    }
+
     public static void renderTopBar(Buffer buffer, Rect area, ParquetModel model) {
         Style bold = Style.EMPTY.bold();
-        Style dim = Style.EMPTY.fg(Color.GRAY);
+        Style dim = Style.EMPTY.fg(Theme.DIM);
         ParquetModel.Facts f = model.facts();
         Line line = Line.from(
-                new Span(" hardwood dive ", bold.fg(Color.CYAN)),
+                new Span(" hardwood dive ", bold.fg(Theme.ACCENT)),
                 new Span("│ ", dim),
-                Span.raw(model.displayPath()),
+                Span.raw(basename(model.displayPath())),
                 new Span(" │ ", dim),
                 Span.raw(Sizes.format(model.fileSizeBytes())),
                 new Span(" │ ", dim),
-                Span.raw(f.rowGroupCount() + " RGs"),
+                Span.raw(Plurals.format(f.rowGroupCount(), "RG", "RGs")),
                 new Span(" │ ", dim),
                 Span.raw(formatRowCount(f.totalRows()) + " rows"));
         Paragraph.builder().text(convert(line)).left().build().render(area, buffer);
@@ -72,44 +86,150 @@ public final class Chrome {
         List<Span> spans = new ArrayList<>();
         spans.add(Span.raw(" "));
         List<ScreenState> frames = stack.frames();
+        // Context-bearing frames upstream tell us whether the leaf
+        // already has (RG, col) context to inherit from the path. If
+        // not (e.g., reached via Footer → FileIndexes), we enrich the
+        // leaf's label so the breadcrumb still says which chunk the
+        // current screen belongs to.
+        boolean haveRgInPath = false;
+        boolean haveColInPath = false;
+        for (int i = 0; i < frames.size() - 1; i++) {
+            ScreenState f = frames.get(i);
+            if (f instanceof ScreenState.RowGroupDetail
+                    || f instanceof ScreenState.RowGroupIndexes
+                    || f instanceof ScreenState.ColumnChunks) {
+                haveRgInPath = true;
+            }
+            if (f instanceof ScreenState.ColumnChunkDetail
+                    || f instanceof ScreenState.ColumnAcrossRowGroups) {
+                haveColInPath = true;
+                haveRgInPath = true;
+            }
+        }
         for (int i = 0; i < frames.size(); i++) {
             if (i > 0) {
-                spans.add(new Span(" › ", Style.EMPTY.fg(Color.GRAY)));
+                spans.add(new Span(" › ", Style.EMPTY.fg(Theme.DIM)));
             }
             boolean last = i == frames.size() - 1;
-            Style style = last ? Style.EMPTY.bold() : Style.EMPTY.fg(Color.GRAY);
-            spans.add(new Span(breadcrumbLabel(frames.get(i), model), style));
+            Style style = last ? Style.EMPTY.bold() : Style.EMPTY.fg(Theme.DIM);
+            String label = breadcrumbLabel(frames.get(i), model);
+            if (last) {
+                label += leafContextSuffix(frames.get(i), model, haveRgInPath, haveColInPath);
+            }
+            spans.add(new Span(label, style));
         }
         Paragraph.builder().text(convert(Line.from(spans))).left().build().render(area, buffer);
     }
 
+    /// For per-chunk leaf screens (Pages, ColumnIndex, OffsetIndex,
+    /// Dictionary), append "(RG #N · col)" when the earlier frames
+    /// don't already establish that context — typically the
+    /// Footer → FileIndexes drill path.
+    private static String leafContextSuffix(ScreenState state, ParquetModel model,
+                                            boolean haveRg, boolean haveCol) {
+        int rg;
+        int col;
+        switch (state) {
+            case ScreenState.Pages s -> { rg = s.rowGroupIndex(); col = s.columnIndex(); }
+            case ScreenState.ColumnIndexView s -> { rg = s.rowGroupIndex(); col = s.columnIndex(); }
+            case ScreenState.OffsetIndexView s -> { rg = s.rowGroupIndex(); col = s.columnIndex(); }
+            case ScreenState.DictionaryView s -> { rg = s.rowGroupIndex(); col = s.columnIndex(); }
+            default -> { return ""; }
+        }
+        if (haveRg && haveCol) {
+            return "";
+        }
+        StringBuilder sb = new StringBuilder(" (");
+        boolean first = true;
+        if (!haveRg) {
+            sb.append("RG #").append(rg);
+            first = false;
+        }
+        if (!haveCol) {
+            if (!first) {
+                sb.append(" · ");
+            }
+            sb.append(model.schema().getColumn(col).fieldPath());
+        }
+        sb.append(")");
+        return sb.toString();
+    }
+
     public static void renderKeybar(Buffer buffer, Rect area, String screenKeys, String globalKeys) {
-        Style dim = Style.EMPTY.fg(Color.GRAY);
+        Style dim = Style.EMPTY.fg(Theme.DIM);
         Line line = Line.from(
                 Span.raw(" "),
                 new Span(screenKeys, dim),
                 new Span(KEYBAR_SEP, dim),
                 new Span(globalKeys, dim));
-        Paragraph.builder().text(convert(line)).left().build().render(area, buffer);
+        Paragraph.builder()
+                .text(convert(line))
+                .left()
+                .overflow(dev.tamboui.style.Overflow.WRAP_WORD)
+                .build()
+                .render(area, buffer);
     }
 
-    private static String breadcrumbLabel(ScreenState state, ParquetModel model) {
+    /// Package-private for tests so they can assert breadcrumb labels
+    /// per state without driving the full chrome render path.
+    public static String breadcrumbLabel(ScreenState state, ParquetModel model) {
         return switch (state) {
             case ScreenState.Overview ignored -> "Overview";
             case ScreenState.Schema ignored -> "Schema";
             case ScreenState.RowGroups ignored -> "Row groups";
-            case ScreenState.ColumnChunks cc -> "RG #" + cc.rowGroupIndex() + " › Column chunks";
-            case ScreenState.ColumnChunkDetail d ->
-                    model.schema().getColumn(d.columnIndex()).fieldPath().toString();
+            case ScreenState.RowGroupDetail d -> "RG #" + d.rowGroupIndex();
+            // The previous frame (RowGroupDetail) already shows "RG #N";
+            // the indexes / column-chunks labels just say what the screen is.
+            case ScreenState.RowGroupIndexes ignored -> "Indexes";
+            case ScreenState.ColumnChunks ignored -> "Column chunks";
+            // Show the column's leaf name (last path segment); the body of
+            // ColumnChunkDetail / ColumnAcrossRowGroups also shows the full
+            // path, so the chrome label gives the friendly name and the
+            // body retains the disambiguation for nested fields.
+            case ScreenState.ColumnChunkDetail d -> columnLeafName(model, d.columnIndex());
             case ScreenState.Pages ignored -> "Pages";
             case ScreenState.ColumnIndexView ignored -> "Column index";
             case ScreenState.OffsetIndexView ignored -> "Offset index";
             case ScreenState.Footer ignored -> "Footer & indexes";
-            case ScreenState.ColumnAcrossRowGroups c ->
-                    model.schema().getColumn(c.columnIndex()).fieldPath() + " across RGs";
+            case ScreenState.ColumnAcrossRowGroups c -> columnLeafName(model, c.columnIndex()) + " across RGs";
             case ScreenState.DictionaryView ignored -> "Dictionary";
             case ScreenState.DataPreview ignored -> "Data preview";
+            case ScreenState.FileIndexes f -> switch (f.kind()) {
+                case COLUMN -> "All column indexes";
+                case OFFSET -> "All offset indexes";
+                case DICTIONARY -> "All dictionaries";
+            };
         };
+    }
+
+    /// Leaf name of the column at the given leaf index — last segment of
+    /// the column path (e.g. `id`, `address.street.number → "number"`).
+    /// Long names are truncated from the left so the suffix stays
+    /// distinctive.
+    private static String columnLeafName(ParquetModel model, int columnIndex) {
+        String path = model.schema().getColumn(columnIndex).fieldPath().toString();
+        int dot = path.lastIndexOf('.');
+        String leaf = dot >= 0 ? path.substring(dot + 1) : path;
+        if (leaf.length() > 24) {
+            return "…" + leaf.substring(leaf.length() - 23);
+        }
+        return leaf;
+    }
+
+    /// Last path segment — for the top bar we want just the file name,
+    /// not the full path (cwd / workspace prefixes are noise). Works for
+    /// both `/` and `\` separators (paths come from user-supplied
+    /// filesystem strings or S3 keys; both use `/`, but local Windows
+    /// paths use `\`). Falls back to the input on degenerate cases.
+    private static String basename(String path) {
+        if (path == null || path.isEmpty()) {
+            return path == null ? "" : path;
+        }
+        int lastSlash = Math.max(path.lastIndexOf('/'), path.lastIndexOf('\\'));
+        if (lastSlash < 0 || lastSlash == path.length() - 1) {
+            return path;
+        }
+        return path.substring(lastSlash + 1);
     }
 
     private static String formatRowCount(long rows) {

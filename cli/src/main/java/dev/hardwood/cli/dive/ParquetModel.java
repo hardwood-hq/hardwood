@@ -17,9 +17,11 @@ import java.util.Map;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.reader.ColumnIndexBuffers;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.DictionaryParser;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
@@ -31,6 +33,7 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.FileSchema;
 
 /// Snapshot of a Parquet file exposed to the dive screens.
@@ -48,13 +51,40 @@ public final class ParquetModel implements AutoCloseable {
     private final FileMetaData metadata;
     private final FileSchema schema;
     private final Facts facts;
-    private int previewPageSize = 20;
+    private int dictionaryReadCapBytes = DEFAULT_DICTIONARY_READ_CAP_BYTES;
+    // Forward-read cursor for Data preview pagination. Reusing the same
+    // RowReader across forward page flips avoids re-iterating from row 0 on
+    // every PgDn. Closed + recreated on backward moves (PgUp, g jump-to-top)
+    // and at session end.
+    private RowReader previewCursor;
+    private long previewCursorPosition;
     private static final int DICTIONARY_CACHE_CAPACITY = 4;
-    private static final int DICTIONARY_READ_CAP_BYTES = 4 * 1024 * 1024;
+    private static final int PAGE_HEADER_CACHE_CAPACITY = 8;
+    /// Default maximum chunk-size for a Dictionary load. Larger chunks need the
+    /// user to opt in via the Dictionary-screen confirm prompt (or via
+    /// `--max-dict-bytes` to raise this default). 16 MiB covers typical
+    /// numeric and short-string dictionaries without accidentally loading
+    /// hundreds of MB of BYTE_ARRAY values.
+    private static final int DEFAULT_DICTIONARY_READ_CAP_BYTES = 16 * 1024 * 1024;
 
     private final Map<ChunkKey, ColumnIndex> columnIndexCache = new HashMap<>();
     private final Map<ChunkKey, OffsetIndex> offsetIndexCache = new HashMap<>();
-    private final Map<ChunkKey, List<PageHeader>> pageHeaderCache = new HashMap<>();
+    /// Bounded LRU: page headers are decoded once per chunk-visit and a wide
+    /// table can have hundreds of chunks. Capping prevents the cache from
+    /// growing unboundedly across a long dive session.
+    private final java.util.LinkedHashMap<ChunkKey, List<PageHeader>> pageHeaderCache =
+            new java.util.LinkedHashMap<>(PAGE_HEADER_CACHE_CAPACITY, 0.75f, true) {
+                @Override
+                protected boolean removeEldestEntry(Map.Entry<ChunkKey, List<PageHeader>> eldest) {
+                    return size() > PAGE_HEADER_CACHE_CAPACITY;
+                }
+            };
+    // Per-row-group index-region prefetch. Populated lazily the first time any
+    // chunk in that RG is asked for its index; subsequent column-index /
+    // offset-index calls for chunks in the same RG hit this cache instead of
+    // issuing their own readRange (one HTTP round-trip per RG on S3 instead of
+    // one per chunk). See `_designs/COALESCED_OFFSET_INDEX_READS.md`.
+    private final Map<Integer, RowGroupIndexBuffers> indexBuffersCache = new HashMap<>();
     private final java.util.LinkedHashMap<ChunkKey, Dictionary> dictionaryCache =
             new java.util.LinkedHashMap<>(DICTIONARY_CACHE_CAPACITY, 0.75f, true) {
                 @Override
@@ -127,14 +157,11 @@ public final class ParquetModel implements AutoCloseable {
         if (columnIndexCache.containsKey(key)) {
             return columnIndexCache.get(key);
         }
-        ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
-        Long offset = cc.columnIndexOffset();
-        Integer length = cc.columnIndexLength();
+        ColumnIndexBuffers buffers = indexBuffersFor(rowGroupIndex).forColumn(columnIndex);
         ColumnIndex result = null;
-        if (offset != null && length != null && length > 0) {
+        if (buffers != null && buffers.columnIndex() != null) {
             try {
-                ByteBuffer buffer = inputFile.readRange(offset, length);
-                result = ColumnIndexReader.read(new ThriftCompactReader(buffer));
+                result = ColumnIndexReader.read(new ThriftCompactReader(buffers.columnIndex()));
             }
             catch (IOException e) {
                 throw new UncheckedIOException(e);
@@ -151,14 +178,11 @@ public final class ParquetModel implements AutoCloseable {
         if (offsetIndexCache.containsKey(key)) {
             return offsetIndexCache.get(key);
         }
-        ColumnChunk cc = chunk(rowGroupIndex, columnIndex);
-        Long offset = cc.offsetIndexOffset();
-        Integer length = cc.offsetIndexLength();
+        ColumnIndexBuffers buffers = indexBuffersFor(rowGroupIndex).forColumn(columnIndex);
         OffsetIndex result = null;
-        if (offset != null && length != null && length > 0) {
+        if (buffers != null && buffers.offsetIndex() != null) {
             try {
-                ByteBuffer buffer = inputFile.readRange(offset, length);
-                result = OffsetIndexReader.read(new ThriftCompactReader(buffer));
+                result = OffsetIndexReader.read(new ThriftCompactReader(buffers.offsetIndex()));
             }
             catch (IOException e) {
                 throw new UncheckedIOException(e);
@@ -166,6 +190,22 @@ public final class ParquetModel implements AutoCloseable {
         }
         offsetIndexCache.put(key, result);
         return result;
+    }
+
+    /// Lazy per-RG fetch of the contiguous offset+column index region. One
+    /// `readRange` per row group instead of N per chunk — the index entries
+    /// are stored contiguously in the Parquet footer, so there's no advantage
+    /// to fetching them one at a time, and on remote storage a single
+    /// round-trip is much cheaper than N small ones.
+    private RowGroupIndexBuffers indexBuffersFor(int rowGroupIndex) {
+        return indexBuffersCache.computeIfAbsent(rowGroupIndex, rg -> {
+            try {
+                return RowGroupIndexBuffers.fetch(inputFile, rowGroup(rg));
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(e);
+            }
+        });
     }
 
     /// Walks a column chunk's byte range and returns its page headers (dictionary
@@ -201,10 +241,42 @@ public final class ParquetModel implements AutoCloseable {
         return result;
     }
 
-    /// Loads the dictionary for a column chunk, caching the most recent entries to
-    /// bound memory for wide BYTE_ARRAY dictionaries. Returns `null` if the chunk
-    /// is not dictionary-encoded.
+    /// Loads the dictionary for a column chunk when the chunk is within the
+    /// `dictionaryReadCapBytes` size limit. Returns `null` if the chunk is not
+    /// dictionary-encoded **or** if the chunk size would exceed the cap; in
+    /// the latter case, call [#dictionaryForced] to bypass and load anyway.
     public Dictionary dictionary(int rowGroupIndex, int columnIndex) {
+        if (dictionaryChunkBytes(rowGroupIndex, columnIndex) > dictionaryReadCapBytes) {
+            return null;
+        }
+        return loadDictionary(rowGroupIndex, columnIndex);
+    }
+
+    /// Bypasses the size cap. Used by the Dictionary screen's confirm-load
+    /// path after the user explicitly opts into reading an oversize chunk.
+    public Dictionary dictionaryForced(int rowGroupIndex, int columnIndex) {
+        return loadDictionary(rowGroupIndex, columnIndex);
+    }
+
+    /// The total compressed byte size of a column chunk — used by the
+    /// Dictionary screen to decide whether to show a confirm-load prompt
+    /// before calling [#dictionaryForced].
+    public long dictionaryChunkBytes(int rowGroupIndex, int columnIndex) {
+        return chunk(rowGroupIndex, columnIndex).metaData().totalCompressedSize();
+    }
+
+    public int dictionaryReadCapBytes() {
+        return dictionaryReadCapBytes;
+    }
+
+    public void setDictionaryReadCapBytes(int capBytes) {
+        if (capBytes <= 0) {
+            throw new IllegalArgumentException("dictionary read cap must be positive: " + capBytes);
+        }
+        this.dictionaryReadCapBytes = capBytes;
+    }
+
+    private Dictionary loadDictionary(int rowGroupIndex, int columnIndex) {
         ChunkKey key = new ChunkKey(rowGroupIndex, columnIndex);
         Dictionary cached = dictionaryCache.get(key);
         if (cached != null) {
@@ -214,7 +286,7 @@ public final class ParquetModel implements AutoCloseable {
         ColumnMetaData cmd = cc.metaData();
         Long dictOffset = cmd.dictionaryPageOffset();
         long chunkStart = dictOffset != null && dictOffset > 0 ? dictOffset : cmd.dataPageOffset();
-        int readSize = Math.toIntExact(Math.min(cmd.totalCompressedSize(), DICTIONARY_READ_CAP_BYTES));
+        int readSize = Math.toIntExact(cmd.totalCompressedSize());
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
             ByteBuffer region = inputFile.readRange(chunkStart, readSize);
             Dictionary dict = DictionaryParser.parse(region, schema.getColumn(columnIndex), cmd, context);
@@ -236,19 +308,46 @@ public final class ParquetModel implements AutoCloseable {
         return reader;
     }
 
-    public int previewPageSize() {
-        return previewPageSize;
+    /// Reads a page of rows starting at `firstRow`. The `consumer` is called
+    /// once per row with a [RowReader] already positioned on that row. Reuses
+    /// a forward-only cursor across calls: moving forward skips ahead without
+    /// reopening, moving backwards closes and recreates the reader.
+    public void readPreviewPage(long firstRow, int pageSize, java.util.function.Consumer<RowReader> consumer)
+            throws IOException {
+        if (previewCursor == null || firstRow < previewCursorPosition) {
+            closePreviewCursor();
+            previewCursor = reader.createRowReader();
+            previewCursorPosition = 0;
+        }
+        while (previewCursorPosition < firstRow && previewCursor.hasNext()) {
+            previewCursor.next();
+            previewCursorPosition++;
+        }
+        int read = 0;
+        while (read < pageSize && previewCursor.hasNext()) {
+            previewCursor.next();
+            previewCursorPosition++;
+            consumer.accept(previewCursor);
+            read++;
+        }
     }
 
-    public void setPreviewPageSize(int pageSize) {
-        if (pageSize <= 0) {
-            throw new IllegalArgumentException("preview page size must be positive: " + pageSize);
+    private void closePreviewCursor() {
+        if (previewCursor != null) {
+            try {
+                previewCursor.close();
+            }
+            catch (RuntimeException ignored) {
+                // Best-effort close; the outer model close still needs to run.
+            }
+            previewCursor = null;
+            previewCursorPosition = 0;
         }
-        this.previewPageSize = pageSize;
     }
 
     @Override
     public void close() throws IOException {
+        closePreviewCursor();
         reader.close();
     }
 

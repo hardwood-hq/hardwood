@@ -23,6 +23,7 @@ Design documents describe the intended end state. Do not include references to t
 Every new or modified public API (factory method, record, enum, configuration option, etc.) must have a corresponding update to the usage documentation under `docs/content/` before the change is considered complete.
 Minimize the surface of the public API, only make user-facing what needs to be user-facing. Keep anything else in an `internal` package.
 Similarly, only expose configuration options truly needed in the CLI.
+The public / internal split is for external library users; modules within this repository (e.g. `hardwood-cli`, `hardwood-avro`) may depend on `dev.hardwood.internal.*` packages directly. Don't promote internal APIs to public or duplicate them in a sibling module just to avoid the `internal` import.
 
 # Coding
 

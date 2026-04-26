@@ -24,7 +24,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Color;
 import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
@@ -63,19 +62,47 @@ public final class ColumnChunkDetailScreen {
                     ? ScreenState.ColumnChunkDetail.Pane.MENU
                     : ScreenState.ColumnChunkDetail.Pane.FACTS;
             stack.replaceTop(new ScreenState.ColumnChunkDetail(
-                    state.rowGroupIndex(), state.columnIndex(), next, state.menuSelection()));
+                    state.rowGroupIndex(), state.columnIndex(), next, state.menuSelection(),
+                    state.logicalTypes()));
+            return true;
+        }
+        // `t` toggles logical-type rendering on the facts pane, regardless of
+        // which pane has focus. Wire before the MENU-only check.
+        if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
+                && !event.hasCtrl() && !event.hasAlt()) {
+            stack.replaceTop(new ScreenState.ColumnChunkDetail(
+                    state.rowGroupIndex(), state.columnIndex(), state.focus(),
+                    state.menuSelection(), !state.logicalTypes()));
             return true;
         }
         if (state.focus() != ScreenState.ColumnChunkDetail.Pane.MENU) {
             return false;
         }
         MenuItem[] items = MenuItem.values();
+        // Snap an out-of-place selection to the first enabled item — covers
+        // the initial entry where menuSelection is 0 (PAGES) and (in
+        // principle) any later state where the chunk shape has changed.
+        if (!itemEnabled(items[state.menuSelection()], model, state)) {
+            int first = firstEnabledIndex(items, model, state);
+            if (first >= 0 && first != state.menuSelection()) {
+                state = state(state, first);
+                stack.replaceTop(state);
+            }
+        }
         if (event.isUp()) {
-            stack.replaceTop(state(state, Math.max(0, state.menuSelection() - 1)));
+            int prev = previousEnabledIndex(items, model, state, state.menuSelection());
+            if (prev < 0) {
+                return false;
+            }
+            stack.replaceTop(state(state, prev));
             return true;
         }
         if (event.isDown()) {
-            stack.replaceTop(state(state, Math.min(items.length - 1, state.menuSelection() + 1)));
+            int next = nextEnabledIndex(items, model, state, state.menuSelection());
+            if (next < 0) {
+                return false;
+            }
+            stack.replaceTop(state(state, next));
             return true;
         }
         if (event.isConfirm()) {
@@ -84,13 +111,14 @@ public final class ColumnChunkDetailScreen {
                 return false;
             }
             switch (item) {
-                case PAGES -> stack.push(new ScreenState.Pages(state.rowGroupIndex(), state.columnIndex(), 0, false));
+                case PAGES -> stack.push(new ScreenState.Pages(
+                        state.rowGroupIndex(), state.columnIndex(), 0, false, true));
                 case COLUMN_INDEX -> stack.push(new ScreenState.ColumnIndexView(
-                        state.rowGroupIndex(), state.columnIndex(), 0));
+                        state.rowGroupIndex(), state.columnIndex(), 0, "", false, true, false));
                 case OFFSET_INDEX -> stack.push(new ScreenState.OffsetIndexView(
                         state.rowGroupIndex(), state.columnIndex(), 0));
                 case DICTIONARY -> stack.push(new ScreenState.DictionaryView(
-                        state.rowGroupIndex(), state.columnIndex(), 0, false, "", false));
+                        state.rowGroupIndex(), state.columnIndex(), 0, false, "", false, false, true));
             }
             return true;
         }
@@ -105,13 +133,64 @@ public final class ColumnChunkDetailScreen {
         renderMenuPane(buffer, cols.get(1), model, state);
     }
 
-    public static String keybarKeys() {
-        return "[Tab] pane  [↑↓] move  [Enter] drill  [Esc] back";
+    public static String keybarKeys(ScreenState.ColumnChunkDetail state, ParquetModel model) {
+        boolean onMenu = state.focus() == ScreenState.ColumnChunkDetail.Pane.MENU;
+        MenuItem[] items = MenuItem.values();
+        int enabledCount = 0;
+        boolean currentEnabled = false;
+        for (int i = 0; i < items.length; i++) {
+            if (itemEnabled(items[i], model, state)) {
+                enabledCount++;
+                if (i == state.menuSelection()) {
+                    currentEnabled = true;
+                }
+            }
+        }
+        ColumnSchema col = model.schema().getColumn(state.columnIndex());
+        boolean hasLogical = col.logicalType() != null;
+        return new Keys.Hints()
+                .add(true, "[Tab] pane")
+                .add(onMenu && enabledCount > 1, "[↑↓] move")
+                .add(onMenu && currentEnabled, "[Enter] open")
+                .add(hasLogical, "[t] logical types")
+                .add(true, "[Esc] back")
+                .build();
     }
 
     private static ScreenState.ColumnChunkDetail state(ScreenState.ColumnChunkDetail state, int selection) {
         return new ScreenState.ColumnChunkDetail(
-                state.rowGroupIndex(), state.columnIndex(), state.focus(), selection);
+                state.rowGroupIndex(), state.columnIndex(), state.focus(), selection,
+                state.logicalTypes());
+    }
+
+    private static int firstEnabledIndex(MenuItem[] items, ParquetModel model,
+                                          ScreenState.ColumnChunkDetail state) {
+        for (int i = 0; i < items.length; i++) {
+            if (itemEnabled(items[i], model, state)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int nextEnabledIndex(MenuItem[] items, ParquetModel model,
+                                         ScreenState.ColumnChunkDetail state, int from) {
+        for (int i = from + 1; i < items.length; i++) {
+            if (itemEnabled(items[i], model, state)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private static int previousEnabledIndex(MenuItem[] items, ParquetModel model,
+                                             ScreenState.ColumnChunkDetail state, int from) {
+        for (int i = from - 1; i >= 0; i--) {
+            if (itemEnabled(items[i], model, state)) {
+                return i;
+            }
+        }
+        return -1;
     }
 
     private static boolean itemEnabled(MenuItem item, ParquetModel model, ScreenState.ColumnChunkDetail state) {
@@ -132,7 +211,7 @@ public final class ColumnChunkDetailScreen {
         boolean focused = state.focus() == ScreenState.ColumnChunkDetail.Pane.FACTS;
 
         List<Line> lines = new ArrayList<>();
-        lines.add(fact("Path", Sizes.columnPath(cmd)));
+        lines.addAll(pathLines(Sizes.columnPath(cmd)));
         lines.add(fact("Column idx", String.valueOf(col.columnIndex())));
         lines.add(fact("Physical", cmd.type().name()));
         lines.add(fact("Logical", col.logicalType() != null ? col.logicalType().toString() : "—"));
@@ -141,15 +220,15 @@ public final class ColumnChunkDetailScreen {
                 .map(Enum::name)
                 .collect(Collectors.joining(", "))));
         lines.add(Line.empty());
-        lines.add(fact("Data offset", String.valueOf(cmd.dataPageOffset())));
+        lines.add(fact("Data offset", String.format("%,d", cmd.dataPageOffset())));
         lines.add(fact("Dict offset", cmd.dictionaryPageOffset() != null
-                ? cmd.dictionaryPageOffset().toString()
+                ? String.format("%,d", cmd.dictionaryPageOffset())
                 : "—"));
         lines.add(fact("Column index offset", chunk.columnIndexOffset() != null
-                ? chunk.columnIndexOffset().toString()
+                ? String.format("%,d", chunk.columnIndexOffset())
                 : "—"));
         lines.add(fact("Offset index offset", chunk.offsetIndexOffset() != null
-                ? chunk.offsetIndexOffset().toString()
+                ? String.format("%,d", chunk.offsetIndexOffset())
                 : "—"));
         lines.add(Line.empty());
         lines.add(fact("Values", String.format("%,d", cmd.numValues())));
@@ -158,10 +237,11 @@ public final class ColumnChunkDetailScreen {
                 : "—"));
         lines.add(fact("Uncompressed", Sizes.format(cmd.totalUncompressedSize())));
         lines.add(fact("Compressed", Sizes.format(cmd.totalCompressedSize())));
-        lines.add(fact("Min", stats != null ? formatStatValue(stats.minValue(), col) : "—"));
-        lines.add(fact("Max", stats != null ? formatStatValue(stats.maxValue(), col) : "—"));
+        lines.add(fact("Min", stats != null ? formatStatValue(stats.minValue(), col, state.logicalTypes()) : "—"));
+        lines.add(fact("Max", stats != null ? formatStatValue(stats.maxValue(), col, state.logicalTypes()) : "—"));
 
-        Block block = paneBlock(" " + Sizes.columnPath(cmd) + " (RG #" + state.rowGroupIndex() + ") ", focused);
+        Block block = paneBlock(" " + truncateLeft(Sizes.columnPath(cmd), 40)
+                + " (RG #" + state.rowGroupIndex() + ") ", focused);
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
 
@@ -170,16 +250,27 @@ public final class ColumnChunkDetailScreen {
         Block block = paneBlock(" Drill into ", focused);
         List<Line> lines = new ArrayList<>();
         MenuItem[] items = MenuItem.values();
+        // First-render snap: if state.menuSelection() points at a disabled
+        // item, paint the cursor on the first enabled item so the user
+        // sees a usable affordance immediately. handle() persists the
+        // snap into state on the next event.
+        int effectiveSelection = state.menuSelection();
+        if (!itemEnabled(items[effectiveSelection], model, state)) {
+            int first = firstEnabledIndex(items, model, state);
+            if (first >= 0) {
+                effectiveSelection = first;
+            }
+        }
         for (int i = 0; i < items.length; i++) {
             MenuItem item = items[i];
             boolean enabled = itemEnabled(item, model, state);
-            boolean selected = focused && i == state.menuSelection();
+            boolean selected = focused && i == effectiveSelection && enabled;
             String cursor = selected ? "▶ " : "  ";
             String hint = menuHint(item, model, state);
             Style labelStyle = !enabled
-                    ? Style.EMPTY.fg(Color.GRAY)
-                    : selected ? Style.EMPTY.bold() : Style.EMPTY;
-            Style hintStyle = Style.EMPTY.fg(Color.GRAY);
+                    ? Style.EMPTY.fg(Theme.DIM)
+                    : selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
+            Style hintStyle = Style.EMPTY.fg(Theme.DIM);
             lines.add(Line.from(
                     new Span(cursor, labelStyle),
                     new Span(padRight(item.label, 16), labelStyle),
@@ -192,8 +283,9 @@ public final class ColumnChunkDetailScreen {
         ColumnChunk chunk = model.chunk(state.rowGroupIndex(), state.columnIndex());
         return switch (item) {
             case PAGES -> {
-                var oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
-                yield oi != null ? oi.pageLocations().size() + " pages" : "…";
+                dev.hardwood.metadata.OffsetIndex oi =
+                        model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
+                yield oi != null ? Plurals.format(oi.pageLocations().size(), "page", "pages") : "—";
             }
             case COLUMN_INDEX -> chunk.columnIndexOffset() != null ? "present" : "n/a";
             case OFFSET_INDEX -> chunk.offsetIndexOffset() != null ? "present" : "n/a";
@@ -206,7 +298,7 @@ public final class ColumnChunkDetailScreen {
                 .title(title)
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(focused ? Color.CYAN : Color.GRAY)
+                .borderColor(focused ? Theme.ACCENT : Theme.DIM)
                 .build();
     }
 
@@ -216,17 +308,34 @@ public final class ColumnChunkDetailScreen {
                 new Span(value, Style.EMPTY.bold()));
     }
 
-    private static String formatStatValue(byte[] bytes, ColumnSchema col) {
+    /// Special-case the Path row: when the path is short, a single "Path  value"
+    /// line is fine; for a deeply-nested path the value would overflow the pane,
+    /// so split it over two lines — key on its own line, path value indented below.
+    private static List<Line> pathLines(String path) {
+        // 22 is the key-padding width used by `fact`, plus 1 leading space.
+        int inlineBudget = 50 - 23;
+        if (path.length() <= inlineBudget) {
+            return List.of(fact("Path", path));
+        }
+        return List.of(
+                Line.from(new Span(" " + padRight("Path", 22), Style.EMPTY)),
+                Line.from(new Span("   " + path, Style.EMPTY.bold())));
+    }
+
+    private static String formatStatValue(byte[] bytes, ColumnSchema col, boolean useLogicalType) {
         if (bytes == null) {
             return "—";
         }
-        return IndexValueFormatter.format(bytes, col);
+        // Facts pane has plenty of horizontal room — render the full value
+        // without IndexValueFormatter's per-string 20-char cap.
+        return IndexValueFormatter.format(bytes, col, useLogicalType, false);
     }
 
     private static String padRight(String s, int width) {
-        if (s.length() >= width) {
-            return s;
-        }
-        return s + " ".repeat(width - s.length());
+        return Strings.padRight(s, width);
+    }
+
+    private static String truncateLeft(String s, int maxWidth) {
+        return Strings.truncateLeft(s, maxWidth);
     }
 }
