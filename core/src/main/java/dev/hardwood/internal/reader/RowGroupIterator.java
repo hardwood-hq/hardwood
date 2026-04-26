@@ -357,8 +357,10 @@ public class RowGroupIterator {
                         new ThriftCompactReader(colBuffers.offsetIndex()));
                 List<PageLocation> allPages = offsetIndex.pageLocations();
 
-                // Determine needed pages (filter + maxRows)
-                List<PageLocation> neededPages = computeNeededPages(
+                // Determine needed pages (filter + maxRows). Each entry pairs a
+                // PageLocation with its PageRowMask so the assembler can keep only
+                // the records inside the matching ranges.
+                List<NeededPage> neededPages = computeNeededPages(
                         allPages, matchingRows, rowGroup.numRows());
 
                 if (neededPages.isEmpty()) {
@@ -402,9 +404,15 @@ public class RowGroupIterator {
     /// A contiguous byte range covering one or more pages within a column.
     record PageGroup(long offset, int length, int firstPageIndex, int pageCount) {}
 
+    /// A page needed for the current read paired with the [PageRowMask] selecting
+    /// which records within the page the assembler should keep. The mask is
+    /// [PageRowMask#ALL] when no filter is active or when the page falls
+    /// entirely inside the matching ranges.
+    record NeededPage(PageLocation location, PageRowMask mask) {}
+
     /// Coalesces needed pages within a column into page groups with gap tolerance.
     /// Includes the dictionary prefix in the first group if present.
-    private static List<PageGroup> coalescePages(List<PageLocation> neededPages,
+    private static List<PageGroup> coalescePages(List<NeededPage> neededPages,
                                                   ColumnChunk columnChunk,
                                                   long firstDataPageOffset) {
         // Determine dictionary prefix (explicit or implicit)
@@ -422,8 +430,9 @@ public class RowGroupIterator {
         }
 
         List<PageGroup> groups = new ArrayList<>();
-        long groupStart = neededPages.get(0).offset();
-        long groupEnd = groupStart + neededPages.get(0).compressedPageSize();
+        PageLocation firstPage = neededPages.get(0).location();
+        long groupStart = firstPage.offset();
+        long groupEnd = groupStart + firstPage.compressedPageSize();
         int groupFirstPage = 0;
         int groupPageCount = 1;
 
@@ -433,7 +442,7 @@ public class RowGroupIterator {
         }
 
         for (int i = 1; i < neededPages.size(); i++) {
-            PageLocation page = neededPages.get(i);
+            PageLocation page = neededPages.get(i).location();
             long gap = page.offset() - groupEnd;
             long newGroupSize = page.offset() + page.compressedPageSize() - groupStart;
 
@@ -459,31 +468,38 @@ public class RowGroupIterator {
         return groups;
     }
 
-    /// Determines which pages are needed based on the filter's matching row ranges.
-    private static List<PageLocation> computeNeededPages(List<PageLocation> allPages,
-                                                          RowRanges matchingRows,
-                                                          long rowGroupRowCount) {
+    /// Determines which pages are needed based on the filter's matching row ranges,
+    /// pairing each kept page with the [PageRowMask] that selects which of its
+    /// records the assembler should keep.
+    private static List<NeededPage> computeNeededPages(List<PageLocation> allPages,
+                                                       RowRanges matchingRows,
+                                                       long rowGroupRowCount) {
         if (matchingRows.isAll()) {
-            return allPages;
+            List<NeededPage> needed = new ArrayList<>(allPages.size());
+            for (PageLocation page : allPages) {
+                needed.add(new NeededPage(page, PageRowMask.ALL));
+            }
+            return needed;
         }
-        List<PageLocation> needed = new ArrayList<>();
+        List<NeededPage> needed = new ArrayList<>();
         for (int i = 0; i < allPages.size(); i++) {
             long pageFirstRow = allPages.get(i).firstRowIndex();
             long pageLastRow = (i + 1 < allPages.size())
                     ? allPages.get(i + 1).firstRowIndex()
                     : rowGroupRowCount;
-            if (matchingRows.overlapsPage(pageFirstRow, pageLastRow)) {
-                needed.add(allPages.get(i));
+            PageRowMask mask = matchingRows.maskForPage(pageFirstRow, pageLastRow);
+            if (mask != null) {
+                needed.add(new NeededPage(allPages.get(i), mask));
             }
         }
         return needed;
     }
 
     /// Truncates a page list to cover at most `maxRows` rows.
-    private static List<PageLocation> truncateToMaxRows(List<PageLocation> pages, long maxRows) {
-        List<PageLocation> truncated = new ArrayList<>();
-        for (PageLocation page : pages) {
-            if (page.firstRowIndex() >= maxRows) {
+    private static List<NeededPage> truncateToMaxRows(List<NeededPage> pages, long maxRows) {
+        List<NeededPage> truncated = new ArrayList<>();
+        for (NeededPage page : pages) {
+            if (page.location().firstRowIndex() >= maxRows) {
                 break;
             }
             truncated.add(page);
