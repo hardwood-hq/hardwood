@@ -100,7 +100,7 @@ public final class RowGroupDetailScreen {
         return new Keys.Hints()
                 .add(true, "[Tab] pane")
                 .add(onMenu && MenuItem.values().length > 1, "[↑↓] move")
-                .add(onMenu, "[Enter] drill")
+                .add(onMenu, "[Enter] open")
                 .add(true, "[Esc] back")
                 .build();
     }
@@ -209,9 +209,6 @@ public final class RowGroupDetailScreen {
     }
 
     private static String padRight(String s, int width) {
-        if (s.length() >= width) {
-            return s;
-        }
-        return s + " ".repeat(width - s.length());
+        return Strings.padRight(s, width);
     }
 }

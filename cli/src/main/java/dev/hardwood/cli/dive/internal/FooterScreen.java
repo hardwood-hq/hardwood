@@ -351,14 +351,14 @@ public final class FooterScreen {
         // The render path auto-snaps the visible cursor to the first enabled
         // anchor when state.cursor() points at a disabled section, and so
         // does handle() on the next event. The keybar should mirror that:
-        // [Enter] drill is available whenever ANY anchor is drillable, not
+        // [Enter] open is available whenever ANY anchor is drillable, not
         // only when state.cursor() (which may be the stale default COLUMN)
         // happens to land on an enabled section.
         int total = body.lines().size();
         boolean overflows = total > Keys.viewportStride();
         return new Keys.Hints()
                 .add(enabledAnchors > 1, "[↑↓] pick anchor")
-                .add(enabledAnchors > 0, "[Enter] drill")
+                .add(enabledAnchors > 0, "[Enter] open")
                 .add(overflows, "[PgDn/PgUp or Shift+↓↑] scroll")
                 .add(overflows, "[g/G] top/bottom")
                 .add(true, "[Esc] back")
@@ -477,9 +477,6 @@ public final class FooterScreen {
     }
 
     private static String padRight(String s, int width) {
-        if (s.length() >= width) {
-            return s;
-        }
-        return s + " ".repeat(width - s.length());
+        return Strings.padRight(s, width);
     }
 }

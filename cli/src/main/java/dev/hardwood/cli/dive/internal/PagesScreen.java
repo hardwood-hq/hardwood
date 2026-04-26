@@ -271,7 +271,7 @@ public final class PagesScreen {
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
                 .add(count > 1, "[g/G] first/last")
-                .add(count > 0, "[Enter] page header")
+                .add(count > 0, "[Enter] view page header")
                 .add(hasLogical, "[t] logical types")
                 .add(true, "[Esc] back")
                 .build();
@@ -415,9 +415,6 @@ public final class PagesScreen {
     }
 
     private static String padRight(String s, int width) {
-        if (s.length() >= width) {
-            return s;
-        }
-        return s + " ".repeat(width - s.length());
+        return Strings.padRight(s, width);
     }
 }

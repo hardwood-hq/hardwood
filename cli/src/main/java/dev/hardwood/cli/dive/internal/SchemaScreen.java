@@ -270,7 +270,7 @@ public final class SchemaScreen {
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
                 .add(count > 1, "[g/G] first/last")
-                .add(current != null, isGroup ? "[→/Enter] expand" : "[Enter] drill")
+                .add(current != null, isGroup ? "[→/Enter] expand" : "[Enter] open")
                 .add(expanded, "[←] collapse")
                 .add(hasGroups, "[e/c] all")
                 .add(true, "[/] search")
@@ -410,9 +410,6 @@ public final class SchemaScreen {
     }
 
     private static String padRight(String s, int width) {
-        if (s.length() >= width) {
-            return s;
-        }
-        return s + " ".repeat(width - s.length());
+        return Strings.padRight(s, width);
     }
 }

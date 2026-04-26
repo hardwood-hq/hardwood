@@ -151,7 +151,7 @@ public final class ColumnChunkDetailScreen {
         return new Keys.Hints()
                 .add(true, "[Tab] pane")
                 .add(onMenu && enabledCount > 1, "[↑↓] move")
-                .add(onMenu && currentEnabled, "[Enter] drill")
+                .add(onMenu && currentEnabled, "[Enter] open")
                 .add(hasLogical, "[t] logical types")
                 .add(true, "[Esc] back")
                 .build();
@@ -332,16 +332,10 @@ public final class ColumnChunkDetailScreen {
     }
 
     private static String padRight(String s, int width) {
-        if (s.length() >= width) {
-            return s;
-        }
-        return s + " ".repeat(width - s.length());
+        return Strings.padRight(s, width);
     }
 
     private static String truncateLeft(String s, int maxWidth) {
-        if (s.length() <= maxWidth) {
-            return s;
-        }
-        return "…" + s.substring(s.length() - maxWidth + 1);
+        return Strings.truncateLeft(s, maxWidth);
     }
 }

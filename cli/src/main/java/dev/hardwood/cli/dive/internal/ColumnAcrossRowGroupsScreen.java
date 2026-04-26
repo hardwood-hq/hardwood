@@ -171,16 +171,13 @@ public final class ColumnAcrossRowGroupsScreen {
                 .add(count > 1, "[↑↓] move")
                 .add(count > Keys.viewportStride(), "[PgDn/PgUp or Shift+↓↑] page")
                 .add(count > 1, "[g/G] first/last")
-                .add(count > 0, "[Enter] chunk detail")
+                .add(count > 0, "[Enter] open")
                 .add(hasLogical, "[t] logical types")
                 .add(true, "[Esc] back")
                 .build();
     }
 
     private static String truncateLeft(String s, int maxWidth) {
-        if (s.length() <= maxWidth) {
-            return s;
-        }
-        return "…" + s.substring(s.length() - maxWidth + 1);
+        return Strings.truncateLeft(s, maxWidth);
     }
 }
