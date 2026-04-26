@@ -10,10 +10,15 @@ package dev.hardwood.cli.dive;
 import java.time.Duration;
 
 import dev.hardwood.cli.dive.internal.Chrome;
+import dev.hardwood.cli.dive.internal.ColumnAcrossRowGroupsScreen;
 import dev.hardwood.cli.dive.internal.ColumnChunkDetailScreen;
 import dev.hardwood.cli.dive.internal.ColumnChunksScreen;
+import dev.hardwood.cli.dive.internal.ColumnIndexScreen;
+import dev.hardwood.cli.dive.internal.FooterScreen;
 import dev.hardwood.cli.dive.internal.HelpOverlay;
+import dev.hardwood.cli.dive.internal.OffsetIndexScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
+import dev.hardwood.cli.dive.internal.PagesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupsScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
 import dev.tamboui.buffer.Buffer;
@@ -94,6 +99,11 @@ public final class DiveApp {
             case ScreenState.RowGroups ignored -> RowGroupsScreen.handle(ke, model, stack);
             case ScreenState.ColumnChunks ignored -> ColumnChunksScreen.handle(ke, model, stack);
             case ScreenState.ColumnChunkDetail ignored -> ColumnChunkDetailScreen.handle(ke, model, stack);
+            case ScreenState.Pages ignored -> PagesScreen.handle(ke, model, stack);
+            case ScreenState.ColumnIndexView ignored -> ColumnIndexScreen.handle(ke, model, stack);
+            case ScreenState.OffsetIndexView ignored -> OffsetIndexScreen.handle(ke, model, stack);
+            case ScreenState.Footer ignored -> FooterScreen.handle(ke, model, stack);
+            case ScreenState.ColumnAcrossRowGroups ignored -> ColumnAcrossRowGroupsScreen.handle(ke, model, stack);
         };
     }
 
@@ -120,6 +130,11 @@ public final class DiveApp {
             case ScreenState.RowGroups s -> RowGroupsScreen.render(buffer, area, model, s);
             case ScreenState.ColumnChunks s -> ColumnChunksScreen.render(buffer, area, model, s);
             case ScreenState.ColumnChunkDetail s -> ColumnChunkDetailScreen.render(buffer, area, model, s);
+            case ScreenState.Pages s -> PagesScreen.render(buffer, area, model, s);
+            case ScreenState.ColumnIndexView s -> ColumnIndexScreen.render(buffer, area, model, s);
+            case ScreenState.OffsetIndexView s -> OffsetIndexScreen.render(buffer, area, model, s);
+            case ScreenState.Footer ignored -> FooterScreen.render(buffer, area, model);
+            case ScreenState.ColumnAcrossRowGroups s -> ColumnAcrossRowGroupsScreen.render(buffer, area, model, s);
         }
     }
 
@@ -130,6 +145,11 @@ public final class DiveApp {
             case ScreenState.RowGroups ignored -> RowGroupsScreen.keybarKeys();
             case ScreenState.ColumnChunks ignored -> ColumnChunksScreen.keybarKeys();
             case ScreenState.ColumnChunkDetail ignored -> ColumnChunkDetailScreen.keybarKeys();
+            case ScreenState.Pages ignored -> PagesScreen.keybarKeys();
+            case ScreenState.ColumnIndexView ignored -> ColumnIndexScreen.keybarKeys();
+            case ScreenState.OffsetIndexView ignored -> OffsetIndexScreen.keybarKeys();
+            case ScreenState.Footer ignored -> FooterScreen.keybarKeys();
+            case ScreenState.ColumnAcrossRowGroups ignored -> ColumnAcrossRowGroupsScreen.keybarKeys();
         };
     }
 

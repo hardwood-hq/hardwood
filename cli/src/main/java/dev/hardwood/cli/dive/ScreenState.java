@@ -19,8 +19,8 @@ public sealed interface ScreenState {
         public enum Pane { FACTS, MENU }
     }
 
-    /// Flat list of leaf columns. Selecting one drills into a cross-row-group view
-    /// (phase 2); in phase 1 [Enter] is a no-op and the screen is explorational only.
+    /// Flat list of leaf columns. Enter drills into [ColumnAcrossRowGroups] for
+    /// the selected column. Tree expansion ships in phase 4.
     record Schema(int selection) implements ScreenState {}
 
     /// Row groups in the file, one row per group.
@@ -29,6 +29,32 @@ public sealed interface ScreenState {
     /// Column chunks within one row group.
     record ColumnChunks(int rowGroupIndex, int selection) implements ScreenState {}
 
-    /// All metadata for one `(rowGroup, column)` chunk.
-    record ColumnChunkDetail(int rowGroupIndex, int columnIndex) implements ScreenState {}
+    /// All metadata for one `(rowGroup, column)` chunk. `focus` chooses between
+    /// the facts pane and the drill-into menu (phase 2 onwards).
+    record ColumnChunkDetail(int rowGroupIndex, int columnIndex, Pane focus, int menuSelection)
+            implements ScreenState {
+        public enum Pane { FACTS, MENU }
+    }
+
+    /// List of pages inside one column chunk; Enter opens a modal page-header view.
+    record Pages(int rowGroupIndex, int columnIndex, int selection, boolean modalOpen)
+            implements ScreenState {
+    }
+
+    /// Per-page statistics view for one column chunk.
+    record ColumnIndexView(int rowGroupIndex, int columnIndex, int selection) implements ScreenState {
+    }
+
+    /// Page-location view for one column chunk.
+    record OffsetIndexView(int rowGroupIndex, int columnIndex, int selection) implements ScreenState {
+    }
+
+    /// Raw footer layout: file size, footer offset/length, aggregate index bytes.
+    record Footer() implements ScreenState {
+    }
+
+    /// Cross-row-group view of one leaf column. `selection` drills into
+    /// [ColumnChunkDetail] for the corresponding `(rowGroup, column)`.
+    record ColumnAcrossRowGroups(int columnIndex, int selection) implements ScreenState {
+    }
 }

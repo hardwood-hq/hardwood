@@ -14,8 +14,11 @@ import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.dive.internal.ColumnAcrossRowGroupsScreen;
+import dev.hardwood.cli.dive.internal.ColumnChunkDetailScreen;
 import dev.hardwood.cli.dive.internal.ColumnChunksScreen;
 import dev.hardwood.cli.dive.internal.OverviewScreen;
+import dev.hardwood.cli.dive.internal.PagesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupsScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
 import dev.tamboui.tui.event.KeyCode;
@@ -101,11 +104,22 @@ class DiveStateTest {
     void overviewEnterOnDisabledItemDoesNothing() {
         NavigationStack stack = new NavigationStack(
                 new ScreenState.Overview(ScreenState.Overview.Pane.MENU,
-                        OverviewScreen.MenuItem.FOOTER.ordinal()));
+                        OverviewScreen.MenuItem.DATA_PREVIEW.ordinal()));
 
         OverviewScreen.handle(key(KeyCode.ENTER), model, stack);
 
         assertThat(stack.depth()).isEqualTo(1);
+    }
+
+    @Test
+    void overviewEnterOnFooterPushesFooterScreen() {
+        NavigationStack stack = new NavigationStack(
+                new ScreenState.Overview(ScreenState.Overview.Pane.MENU,
+                        OverviewScreen.MenuItem.FOOTER.ordinal()));
+
+        OverviewScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.Footer.class);
     }
 
     @Test
@@ -174,12 +188,81 @@ class DiveStateTest {
                 new ScreenState.Overview(ScreenState.Overview.Pane.MENU, 0));
         stack.push(new ScreenState.RowGroups(0));
         stack.push(new ScreenState.ColumnChunks(0, 2));
-        stack.push(new ScreenState.ColumnChunkDetail(0, 2));
+        stack.push(new ScreenState.ColumnChunkDetail(0, 2,
+                ScreenState.ColumnChunkDetail.Pane.MENU, 0));
 
         stack.clearToRoot();
 
         assertThat(stack.depth()).isEqualTo(1);
         assertThat(stack.top()).isInstanceOf(ScreenState.Overview.class);
+    }
+
+    // --- Phase 2 ---
+
+    @Test
+    void schemaEnterDrillsIntoColumnAcrossRowGroups() {
+        NavigationStack stack = rooted(new ScreenState.Schema(0));
+
+        SchemaScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnAcrossRowGroups.class);
+        assertThat(((ScreenState.ColumnAcrossRowGroups) stack.top()).columnIndex()).isZero();
+    }
+
+    @Test
+    void columnAcrossRowGroupsEnterDrillsIntoChunkDetail() {
+        NavigationStack stack = rooted(new ScreenState.ColumnAcrossRowGroups(0, 0));
+
+        ColumnAcrossRowGroupsScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnChunkDetail.class);
+        ScreenState.ColumnChunkDetail top = (ScreenState.ColumnChunkDetail) stack.top();
+        assertThat(top.rowGroupIndex()).isZero();
+        assertThat(top.columnIndex()).isZero();
+    }
+
+    @Test
+    void columnChunkDetailTabSwitchesPaneBetweenFactsAndMenu() {
+        NavigationStack stack = rooted(new ScreenState.ColumnChunkDetail(
+                0, 0, ScreenState.ColumnChunkDetail.Pane.MENU, 0));
+
+        ColumnChunkDetailScreen.handle(key(KeyCode.TAB), model, stack);
+
+        assertThat(((ScreenState.ColumnChunkDetail) stack.top()).focus())
+                .isEqualTo(ScreenState.ColumnChunkDetail.Pane.FACTS);
+    }
+
+    @Test
+    void columnChunkDetailEnterOnPagesPushesPagesScreen() {
+        NavigationStack stack = rooted(new ScreenState.ColumnChunkDetail(
+                0, 0, ScreenState.ColumnChunkDetail.Pane.MENU,
+                ColumnChunkDetailScreen.MenuItem.PAGES.ordinal()));
+
+        ColumnChunkDetailScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.Pages.class);
+    }
+
+    @Test
+    void columnChunkDetailEnterOnDictionaryIsNoop() {
+        NavigationStack stack = rooted(new ScreenState.ColumnChunkDetail(
+                0, 0, ScreenState.ColumnChunkDetail.Pane.MENU,
+                ColumnChunkDetailScreen.MenuItem.DICTIONARY.ordinal()));
+
+        ColumnChunkDetailScreen.handle(key(KeyCode.ENTER), model, stack);
+
+        assertThat(stack.top()).isInstanceOf(ScreenState.ColumnChunkDetail.class);
+    }
+
+    @Test
+    void pagesEnterOpensModalAndCancelCloses() {
+        NavigationStack stack = rooted(new ScreenState.Pages(0, 0, 0, false));
+
+        PagesScreen.handle(key(KeyCode.ENTER), model, stack);
+        assertThat(((ScreenState.Pages) stack.top()).modalOpen()).isTrue();
+
+        PagesScreen.handle(key(KeyCode.ESCAPE), model, stack);
+        assertThat(((ScreenState.Pages) stack.top()).modalOpen()).isFalse();
     }
 
     private NavigationStack rooted(ScreenState child) {

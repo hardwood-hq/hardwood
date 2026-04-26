@@ -49,7 +49,8 @@ public final class ColumnChunksScreen {
             return true;
         }
         if (event.isConfirm() && count > 0) {
-            stack.push(new ScreenState.ColumnChunkDetail(state.rowGroupIndex(), state.selection()));
+            stack.push(new ScreenState.ColumnChunkDetail(state.rowGroupIndex(), state.selection(),
+                    ScreenState.ColumnChunkDetail.Pane.MENU, 0));
             return true;
         }
         return false;

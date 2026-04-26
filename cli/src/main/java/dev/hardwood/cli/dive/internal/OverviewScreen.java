@@ -40,7 +40,7 @@ public final class OverviewScreen {
     public enum MenuItem {
         SCHEMA("Schema", true),
         ROW_GROUPS("Row groups", true),
-        FOOTER("Footer & indexes", false),
+        FOOTER("Footer & indexes", true),
         DATA_PREVIEW("Data preview", false);
 
         final String label;
@@ -85,6 +85,7 @@ public final class OverviewScreen {
                 switch (item) {
                     case SCHEMA -> stack.push(new ScreenState.Schema(0));
                     case ROW_GROUPS -> stack.push(new ScreenState.RowGroups(0));
+                    case FOOTER -> stack.push(new ScreenState.Footer());
                     default -> { }
                 }
                 return true;
@@ -151,7 +152,7 @@ public final class OverviewScreen {
         return switch (item) {
             case SCHEMA -> model.columnCount() + " cols";
             case ROW_GROUPS -> model.rowGroupCount() + " RGs";
-            case FOOTER -> "(phase 2)";
+            case FOOTER -> Sizes.format(model.fileSizeBytes());
             case DATA_PREVIEW -> "(phase 3)";
         };
     }

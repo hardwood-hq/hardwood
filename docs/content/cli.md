@@ -82,9 +82,11 @@ then into column chunks and per-chunk metadata.
 | `?` | Toggle help overlay |
 | `q` / `Ctrl-C` | Quit |
 
-Phase 1 supports navigation through Schema, Row groups, Column chunks, and
-Column chunk detail. Pages, indexes, dictionary, and data preview land in
-later phases.
+Available screens: Overview, Schema (flat leaf-column list), Row groups,
+Column chunks, Column chunk detail, Pages (with a page-header modal on Enter),
+Column index, Offset index, Footer & indexes, Column-across-row-groups (from
+the Schema screen). Dictionary and data preview land in phase 3; the
+expandable schema tree ships in phase 4.
 
 ## Reading Files from S3
 
