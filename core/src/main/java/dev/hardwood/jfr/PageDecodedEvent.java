@@ -40,4 +40,8 @@ public class PageDecodedEvent extends Event {
     @Description("Uncompressed size of the page data (bytes)")
     @DataAmount
     public int uncompressedSize;
+
+    @Label("Native Fast Path")
+    @Description("Whether the FFM zero-copy decode path was used")
+    public boolean nativeFastPath;
 }

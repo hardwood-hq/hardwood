@@ -2304,3 +2304,78 @@ strip_converted_type(_map_ann_base, 'core/src/test/resources/map_annotation_mode
 
 print("\nGenerated map_annotation_both/modern_only_test.parquet:")
 print("  - Schema: id INT32, attrs MAP<STRING, INT32>")
+
+# ============================================================================
+# Large-file test fixture (> 2 GB) for MappedInputFile int-overflow regression
+#
+# Uses BYTE_STREAM_SPLIT encoding on floats so the file stays physically large
+# while compressing poorly (the codec is UNCOMPRESSED), guaranteeing the file
+# exceeds 2 GB without requiring enormous row counts.
+#
+# Characteristics:
+#   - 3 columns: id (INT64 REQUIRED), value (FLOAT REQUIRED), marker (INT32 REQUIRED)
+#   - ~75 million rows × 20 bytes/row ≈ 1.5 GB per column chunk → file > 2 GB
+#   - Single row group so that column-chunk offsets exceed 2 GB for later columns
+#   - UNCOMPRESSED + BYTE_STREAM_SPLIT to defeat compression and keep bytes physical
+#   - Known sentinel values at the very first and very last rows for test assertions
+#   - File written to core/src/test/resources/large_file_test.parquet
+# ============================================================================
+import os
+import numpy as np
+
+_LARGE_FILE_PATH = 'core/src/test/resources/large_file_test.parquet'
+
+# Only regenerate if the file is absent or smaller than 2 GB
+_REGEN_LARGE = not os.path.exists(_LARGE_FILE_PATH) or os.path.getsize(_LARGE_FILE_PATH) < 2 * 1024 * 1024 * 1024
+
+if _REGEN_LARGE:
+    # ~75 M rows × (8 + 4 + 4) bytes = ~1.2 GB raw; with 3 columns laid out
+    # sequentially in one row group the third column starts after 2 GB.
+    _ROWS = 75_000_000
+
+    # Sentinel values embedded at known row indices for assertion in the test
+    _FIRST_ID    = 1_000_000_001
+    _LAST_ID     = 1_000_000_001 + _ROWS - 1
+    _FIRST_VALUE = 3.14
+    _LAST_VALUE  = 2.71
+
+    ids    = np.arange(_FIRST_ID, _FIRST_ID + _ROWS, dtype=np.int64)
+    values = np.full(_ROWS, 1.0, dtype=np.float32)
+    values[0]         = _FIRST_VALUE
+    values[_ROWS - 1] = _LAST_VALUE
+    markers = np.arange(_ROWS, dtype=np.int32)
+
+    large_schema = pa.schema([
+        pa.field('id',     pa.int64(),   nullable=False),
+        pa.field('value',  pa.float32(), nullable=False),
+        pa.field('marker', pa.int32(),   nullable=False),
+    ])
+
+    large_table = pa.table({
+        'id':     pa.array(ids,     type=pa.int64()),
+        'value':  pa.array(values,  type=pa.float32()),
+        'marker': pa.array(markers, type=pa.int32()),
+    }, schema=large_schema)
+
+    pq.write_table(
+        large_table,
+        _LARGE_FILE_PATH,
+        use_dictionary=False,
+        compression='NONE',
+        data_page_version='1.0',
+        row_group_size=_ROWS,           # single row group
+        column_encoding={
+            'id':     'DELTA_BINARY_PACKED',
+            'value':  'BYTE_STREAM_SPLIT',
+            'marker': 'DELTA_BINARY_PACKED',
+        },
+    )
+    print(f"\nGenerated {_LARGE_FILE_PATH}:")
+    print(f"  - {_ROWS:,} rows in a single row group")
+    print(f"  - Columns: id (INT64 DELTA), value (FLOAT32 BYTE_STREAM_SPLIT), marker (INT32 DELTA)")
+    print(f"  - Sentinel first row: id={_FIRST_ID}, value={_FIRST_VALUE}")
+    print(f"  - Sentinel last row:  id={_LAST_ID},  value={_LAST_VALUE}")
+    print(f"  - File size: {os.path.getsize(_LARGE_FILE_PATH) / (1024**3):.2f} GB")
+else:
+    print(f"\nSkipped large_file_test.parquet — already present ({os.path.getsize(_LARGE_FILE_PATH) / (1024**3):.2f} GB)")
+

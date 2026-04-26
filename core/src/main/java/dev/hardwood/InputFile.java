@@ -47,11 +47,14 @@ public interface InputFile extends Closeable {
     ///
     /// @param offset the byte offset to start reading from
     /// @param length the number of bytes to read
-    /// @return a [ByteBuffer] containing the requested data
+    /// @return a [ByteBuffer] containing the requested data; the buffer is
+    ///         **read-only** and may be a zero-copy slice of an underlying mapping
     /// @throws IOException if the read fails
     /// @throws IllegalStateException if [#open()] has not been called
     /// @throws IndexOutOfBoundsException if offset or length is out of range
     ByteBuffer readRange(long offset, int length) throws IOException;
+
+
 
     /// Returns the total size of the file in bytes.
     ///

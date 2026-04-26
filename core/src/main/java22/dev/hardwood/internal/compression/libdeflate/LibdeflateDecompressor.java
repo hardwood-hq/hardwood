@@ -94,6 +94,71 @@ public final class LibdeflateDecompressor implements Decompressor {
         }
     }
 
+    /// Decompresses GZIP data from a [MemorySegment] and returns the result as a
+    /// [MemorySegment] slice of the thread-local native output buffer — **no heap copy**.
+    ///
+    /// Compared to [#decompress(ByteBuffer, int)], this method skips the final
+    /// `MemorySegment.copy(native → byte[])` step, saving one `~uncompressedSize`
+    /// byte copy per page. Callers must consume or copy the returned segment before
+    /// any subsequent call to this method on the same thread (thread-local reuse).
+    ///
+    /// @param input the compressed data segment (or a slice thereof)
+    /// @param compressedSize number of bytes to read from `input`
+    /// @param uncompressedSize expected decompressed size
+    /// @return a read-only slice of the thread-local native output buffer
+    /// @throws IOException if decompression fails
+    public MemorySegment decompressToSegment(MemorySegment input, long compressedSize,
+                                              int uncompressedSize) throws IOException {
+        LibdeflatePool.DecompressorHandle decompressor = pool.acquire();
+        try {
+            LibdeflateBindings bindings = LibdeflateBindings.get();
+
+            MemorySegment output = borrowNativeOutput(uncompressedSize);
+            MemorySegment actualInSizePtr = borrowSizePtr(IN_SIZE_PTR);
+            MemorySegment actualOutSizePtr = borrowSizePtr(OUT_SIZE_PTR);
+
+            long inputOffset = 0;
+            long outputOffset = 0;
+
+            while (outputOffset < uncompressedSize && inputOffset < compressedSize) {
+                int result;
+                try {
+                    result = (int) bindings.gzipDecompressEx.invokeExact(
+                            decompressor.handle(),
+                            input.asSlice(inputOffset),
+                            compressedSize - inputOffset,
+                            output.asSlice(outputOffset),
+                            (long) uncompressedSize - outputOffset,
+                            actualInSizePtr,
+                            actualOutSizePtr);
+                }
+                catch (Throwable t) {
+                    throw new IOException("libdeflate invocation failed", t);
+                }
+
+                if (result != LibdeflateBindings.LIBDEFLATE_SUCCESS) {
+                    throw new IOException("libdeflate decompression failed: " +
+                            LibdeflateBindings.errorMessage(result));
+                }
+
+                inputOffset += actualInSizePtr.get(ValueLayout.JAVA_LONG, 0);
+                outputOffset += actualOutSizePtr.get(ValueLayout.JAVA_LONG, 0);
+            }
+
+            if (outputOffset != uncompressedSize) {
+                throw new IOException(String.format(
+                        "Decompressed size mismatch: expected %d, got %d",
+                        uncompressedSize, outputOffset));
+            }
+
+            // Return a read-only slice — caller sees exactly uncompressedSize bytes.
+            return output.asSlice(0, uncompressedSize).asReadOnly();
+        }
+        finally {
+            pool.release(decompressor);
+        }
+    }
+
     private static MemorySegment borrowNativeOutput(int minSize) {
         MemorySegment seg = NATIVE_OUTPUT.get();
         if (seg == null || seg.byteSize() < minSize) {

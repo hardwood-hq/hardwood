@@ -167,18 +167,33 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         LockSupport.unpark(retrieverThread);
         LockSupport.unpark(drainThread);
 
+        // Join the retriever and drain VThreads. If the calling thread is interrupted
+        // during join(), we must NOT re-assert the interrupt flag until after draining
+        // all in-flight decode tasks. CompletableFuture.allOf().join() returns
+        // immediately when the calling thread's interrupt flag is already set, which
+        // would leave decode tasks still running and violate the close() contract
+        // (safe resource release requires all tasks to have finished first).
+        boolean interrupted = false;
         try {
             retrieverThread.join();
+        }
+        catch (InterruptedException e) {
+            interrupted = true;
+        }
+        try {
             drainThread.join();
         }
         catch (InterruptedException e) {
-            Thread.currentThread().interrupt();
+            interrupted = true;
         }
 
         // The retriever has exited, so no new decode tasks will be submitted.
         // Drain any that are still running. Tasks that hadn't yet started early-return
         // via the `done` check in decode(), so this typically waits only on the small
         // number that were mid-execution when `done` was set.
+        //
+        // NOTE: The interrupt flag must be clear here so that allOf().join() actually
+        // waits. We restore it unconditionally after the join.
         CompletableFuture<?>[] pending = inFlightDecodes.toArray(new CompletableFuture<?>[0]);
         if (pending.length > 0) {
             try {
@@ -187,6 +202,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             catch (Exception ignored) {
                 // decode tasks call signalError on failure; nothing to re-raise here
             }
+        }
+
+        // Restore interrupt status now that all tasks have drained.
+        if (interrupted) {
+            Thread.currentThread().interrupt();
         }
     }
 

@@ -8,6 +8,8 @@
 package dev.hardwood.internal.reader;
 
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -316,19 +318,30 @@ class ColumnWorkerTest {
             AtomicInteger decodesEntered = new AtomicInteger();
             AtomicInteger decodesFinished = new AtomicInteger();
 
-            Executor stalledExecutor = command -> Thread.ofVirtual().start(() -> {
-                decodesEntered.incrementAndGet();
-                firstSubmitted.countDown();
-                try {
-                    release.await();
-                }
-                catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-                command.run();
-                decodesFinished.incrementAndGet();
-            });
+            // Track the virtual threads started by the stalled executor so we can join
+            // them after close() returns. This is necessary because decodesFinished++ runs
+            // AFTER command.run() in the virtual thread — i.e. after the CompletableFuture
+            // that ColumnWorker tracks has already completed. Without joining the threads
+            // here, the assertion would have a race between close() returning and the
+            // virtual threads incrementing decodesFinished.
+            List<Thread> executorThreads = new CopyOnWriteArrayList<>();
+
+            Executor stalledExecutor = command -> {
+                Thread t = Thread.ofVirtual().start(() -> {
+                    decodesEntered.incrementAndGet();
+                    firstSubmitted.countDown();
+                    try {
+                        release.await();
+                    }
+                    catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    command.run();
+                    decodesFinished.incrementAndGet();
+                });
+                executorThreads.add(t);
+            };
 
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
@@ -365,11 +378,21 @@ class ColumnWorkerTest {
             assertThat(worker.drainThread.isAlive())
                     .as("drain thread must have exited")
                     .isFalse();
+
+            // Join all executor virtual threads so that decodesFinished++ has run in
+            // every thread before we assert. The decode tasks themselves are guaranteed
+            // done by close(), but the per-thread bookkeeping after command.run() needs
+            // its own synchronisation point.
+            for (Thread t : executorThreads) {
+                t.join(TimeUnit.SECONDS.toMillis(5));
+            }
+
             assertThat(decodesFinished.get())
                     .as("every submitted decode task should have finished")
                     .isEqualTo(decodesEntered.get());
         }
     }
+
 
     /// Regression test for #300. When the exchange is stopped during the
     /// publish/take handshake, `publishCurrentBatch` must set `done = true`
