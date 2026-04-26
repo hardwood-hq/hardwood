@@ -249,7 +249,7 @@ public class AvroParquetReader {
 
 ### Test file generation
 
-Extend `simple-datagen.py` to produce Avro-specific test files, or reuse existing
+Extend `tools/simple-datagen.py` to produce Avro-specific test files, or reuse existing
 test files (the Parquet format is the same regardless of how data was written).
 
 ### Test cases

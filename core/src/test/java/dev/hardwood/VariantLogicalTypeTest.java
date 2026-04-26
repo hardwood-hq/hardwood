@@ -30,7 +30,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// - [PqVariant] surfaces the canonical `metadata` / `value` bytes for each
 ///   row and decodes them to the expected payload.
 ///
-/// The fixture is produced by `simple-datagen.py` + `parquet_variant_annotation.py`
+/// The fixture is produced by `tools/simple-datagen.py` + `tools/parquet_annotators.py`
 /// (PyArrow writes the `{metadata, value}` struct; the post-processor stamps
 /// the `VARIANT(1)` annotation on the footer).
 class VariantLogicalTypeTest {

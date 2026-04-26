@@ -6,17 +6,6 @@
 #  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
 #
 
-"""
-Post-processes a Parquet file to tag a chosen FIXED_LEN_BYTE_ARRAY(12) column with the
-INTERVAL logical type in the Thrift footer. PyArrow does not write INTERVAL annotations
-natively, so this helper reads the compact-Thrift footer, rewrites the target column's
-SchemaElement with both ConvertedType.INTERVAL and LogicalType.IntervalType (field 9),
-and rewrites the file. The rest of the file is preserved byte-for-byte.
-
-The IDL is a superset of parquet_bson_annotation.py — it adds IntervalType and field 9
-to the LogicalType union.
-"""
-
 import io
 import struct
 
@@ -53,7 +42,8 @@ struct TimeType { 1: required bool isAdjustedToUTC; 2: required TimeUnit unit; }
 struct IntType { 1: required byte bitWidth; 2: required bool isSigned; }
 struct JsonType {}
 struct BsonType {}
-struct VariantType {}
+struct BsonType2 {}
+struct VariantType { 1: optional byte specification_version; }
 struct GeometryType {}
 struct GeographyType {}
 union LogicalType {
@@ -97,6 +87,7 @@ enum CompressionCodec {
   UNCOMPRESSED=0, SNAPPY=1, GZIP=2, LZO=3, BROTLI=4, LZ4=5, ZSTD=6, LZ4_RAW=7
 }
 enum PageType { DATA_PAGE=0, INDEX_PAGE=1, DICTIONARY_PAGE=2, DATA_PAGE_V2=3 }
+enum BoundaryOrder { UNORDERED=0, ASCENDING=1, DESCENDING=2 }
 struct Statistics {
   1: optional binary max;
   2: optional binary min;
@@ -113,6 +104,19 @@ struct SizeStatistics {
   3: optional list<i64> definition_level_histogram;
 }
 struct EncodingStats { 1: required PageType page_type; 2: required Encoding encoding; 3: required i32 count; }
+struct PageEncodingStats { 1: required PageType page_type; 2: required Encoding encoding; 3: required i32 count; }
+struct SplitBlockAlgorithm {}
+union BloomFilterAlgorithm { 1: SplitBlockAlgorithm BLOCK; }
+struct XxHash {}
+union BloomFilterHash { 1: XxHash XXHASH; }
+struct Uncompressed {}
+union BloomFilterCompression { 1: Uncompressed UNCOMPRESSED; }
+struct BloomFilterHeader {
+  1: required i32 numBytes;
+  2: required BloomFilterAlgorithm algorithm;
+  3: required BloomFilterHash hash;
+  4: required BloomFilterCompression compression;
+}
 struct BoundingBox {
   1: required double xmin; 2: required double xmax;
   3: required double ymin; 4: required double ymax;
@@ -180,7 +184,82 @@ struct FileMetaData {
 }
 """
 
-_parquet = thriftpy2.load_fp(io.StringIO(_PARQUET_IDL), module_name="_parquet_interval_patch_thrift")
+_parquet = thriftpy2.load_fp(io.StringIO(_PARQUET_IDL), module_name="_parquet_bson_patch_thrift")
+
+def _read_parquet_footer(path: str):
+    """Read and parse a Parquet file's Thrift footer.
+
+    Returns a `(data_before_footer, file_metadata)` tuple where
+    `data_before_footer` is the raw bytes preceding the footer and
+    `file_metadata` is the parsed `FileMetaData`.
+    """
+    with open(path, 'rb') as f:
+        raw = f.read()
+
+    if raw[-4:] != b'PAR1':
+        raise ValueError(f"{path} is not a Parquet file (missing PAR1 magic)")
+    footer_len = struct.unpack('<I', raw[-8:-4])[0]
+    footer_start = len(raw) - 8 - footer_len
+    footer_bytes = raw[footer_start:-8]
+
+    proto = TCompactProtocolFactory().get_protocol(TMemoryBuffer(footer_bytes))
+    file_metadata = _parquet.FileMetaData()
+    file_metadata.read(proto)
+
+    return raw[:footer_start], file_metadata
+
+
+def _write_parquet_footer(path: str, data_before_footer: bytes, file_metadata) -> None:
+    """Re-serialize `file_metadata` and write the Parquet file back to `path`."""
+    out = TMemoryBuffer()
+    file_metadata.write(TCompactProtocolFactory().get_protocol(out))
+    new_footer = out.getvalue()
+
+    with open(path, 'wb') as f:
+        f.write(data_before_footer)
+        f.write(new_footer)
+        f.write(struct.pack('<I', len(new_footer)))
+        f.write(b'PAR1')
+
+
+def annotate_column_as_bson(path: str, column_name: str) -> None:
+    """Rewrite `path` so that the named column carries the BSON logical type."""
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    matched = False
+    for el in file_metadata.schema:
+        if el.name == column_name:
+            el.converted_type = _parquet.ConvertedType.BSON
+            el.logicalType = _parquet.LogicalType(BSON=_parquet.BsonType())
+            matched = True
+            break
+    if not matched:
+        raise ValueError(f"Column {column_name!r} not found in {path}")
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def annotate_group_as_variant(path: str, group_name: str, spec_version: int = 1) -> None:
+    """Rewrite `path` so that the named *group* SchemaElement carries the
+    Variant logical type annotation (`LogicalType.VARIANT(specification_version=spec_version)`).
+
+    The group must already exist in the schema with the expected children
+    (`metadata`, `value`, and optionally `typed_value`); this helper only
+    stamps the annotation — it does not restructure the schema.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    matched = False
+    for el in file_metadata.schema:
+        if el.name == group_name and el.num_children is not None:
+            el.logicalType = _parquet.LogicalType(
+                VARIANT=_parquet.VariantType(specification_version=spec_version))
+            matched = True
+            break
+    if not matched:
+        raise ValueError(f"Group {group_name!r} not found in {path}")
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
 def annotate_column_as_interval(path: str, column_name: str, *, legacy_only: bool = False) -> None:
@@ -191,22 +270,10 @@ def annotate_column_as_interval(path: str, column_name: str, *, legacy_only: boo
     and clears any modern `logicalType` — simulating files from older writers
     (parquet-mr, Spark, Hive) that predate the LogicalType union.
     """
-    with open(path, 'rb') as f:
-        raw = f.read()
-
-    if raw[-4:] != b'PAR1':
-        raise ValueError(f"{path} is not a Parquet file (missing PAR1 magic)")
-    footer_len = struct.unpack('<I', raw[-8:-4])[0]
-    footer_start = len(raw) - 8 - footer_len
-    footer_bytes = raw[footer_start:-8]
-    data_before_footer = raw[:footer_start]
-
-    proto = TCompactProtocolFactory().get_protocol(TMemoryBuffer(footer_bytes))
-    md = _parquet.FileMetaData()
-    md.read(proto)
+    data_before_footer, file_metadata = _read_parquet_footer(path)
 
     matched = False
-    for el in md.schema:
+    for el in file_metadata.schema:
         if el.name == column_name:
             if legacy_only:
                 el.logicalType = None
@@ -218,12 +285,4 @@ def annotate_column_as_interval(path: str, column_name: str, *, legacy_only: boo
     if not matched:
         raise ValueError(f"Column {column_name!r} not found in {path}")
 
-    out = TMemoryBuffer()
-    md.write(TCompactProtocolFactory().get_protocol(out))
-    new_footer = out.getvalue()
-
-    with open(path, 'wb') as f:
-        f.write(data_before_footer)
-        f.write(new_footer)
-        f.write(struct.pack('<I', len(new_footer)))
-        f.write(b'PAR1')
+    _write_parquet_footer(path, data_before_footer, file_metadata)

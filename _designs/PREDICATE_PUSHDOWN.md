@@ -252,7 +252,7 @@ Parses fields 6 (column_index_offset) and 7 (column_index_length).
 - OR filter selecting multiple row groups
 
 ### Generate test data
-Extended `simple-datagen.py` to create four multi-row-group files with known statistics:
+Extended `tools/simple-datagen.py` to create four multi-row-group files with known statistics:
 - `filter_pushdown_int.parquet` — 3 row groups, INT64 id/value 1-100, 101-200, 201-300
 - `filter_pushdown_mixed.parquet` — 3 row groups, mixed types (int32, float64, float32, string, bool)
 - `filter_pushdown_list.parquet` — 3 row groups, list\<int32\> column
@@ -262,13 +262,13 @@ Extended `simple-datagen.py` to create four multi-row-group files with known sta
 - `core/src/test/java/dev/hardwood/StatisticsTest.java` (new)
 - `core/src/test/java/dev/hardwood/FilterPredicateTest.java` (new)
 - `core/src/test/java/dev/hardwood/PredicatePushDownTest.java` (new)
-- `simple-datagen.py` (modify — add test data generation)
+- `tools/simple-datagen.py` (modify — add test data generation)
 
 ---
 
 ## Verification
 
-1. `source .docker-venv/bin/activate && python simple-datagen.py` — generate test Parquet files
+1. `source .docker-venv/bin/activate && python tools/simple-datagen.py` — generate test Parquet files
 2. `./mvnw verify -pl core` (with 180s timeout) — run all tests including new ones
 3. Verify existing tests still pass (no regressions from Statistics field addition to ColumnMetaData)
 4. Verify with a multi-row-group file that row groups are actually skipped (visible in DEBUG logs or JFR events)

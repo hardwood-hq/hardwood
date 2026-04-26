@@ -52,7 +52,7 @@ Key rules for `///` Markdown JavaDoc:
 
 # Testing
 
-To generate test Parquet files, extend simple-datagen.py and run: `source .docker-venv/bin/activate && python simple-datagen.py`
+To generate test Parquet files, extend tools/simple-datagen.py and run: `source .docker-venv/bin/activate && python tools/simple-datagen.py`
 When running Python, use _.docker-venv_ as the venv directory.
 
 # Contributions

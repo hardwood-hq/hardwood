@@ -62,7 +62,7 @@ class BsonLogicalTypeTest {
     }
 
     static Stream<Arguments> bsonRows() {
-        // Hex mirrors the three BSON documents produced by simple-datagen.py. Rows 1 and 2
+        // Hex mirrors the three BSON documents produced by tools/simple-datagen.py. Rows 1 and 2
         // contain bytes above 0x7F, which would be mangled if BSON fell through a String decode.
         return Stream.of(
                 Arguments.of(0, "0500000000"),

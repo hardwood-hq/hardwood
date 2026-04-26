@@ -76,7 +76,7 @@ Both strategy methods are package-private so tests can call them directly. The s
 
 ### Step 6: Test data generation
 
-**`simple-datagen.py`** — add a section generating a Parquet file **with page index enabled**:
+**`tools/simple-datagen.py`** — add a section generating a Parquet file **with page index enabled**:
 ```python
 pq.write_table(table, 'core/src/test/resources/page_index_test.parquet',
                write_page_index=True, ...)
@@ -122,13 +122,13 @@ Full end-to-end performance comparison reading files with and without offset ind
 | `performance-testing/.../PageScanBenchmark.java` | **New** — JMH benchmark |
 | `performance-testing/.../PageScanPerformanceTest.java` | **New** — end-to-end perf test |
 | `performance-testing/generate_benchmark_data.py` | **New** — benchmark data generator |
-| `simple-datagen.py` | **Modify** — generate test file with page index |
+| `tools/simple-datagen.py` | **Modify** — generate test file with page index |
 
 ## Verification
 
 ```bash
 # Generate test data
-source .docker-venv/bin/activate && python simple-datagen.py
+source .docker-venv/bin/activate && python tools/simple-datagen.py
 
 # Build and run all tests (180s timeout to detect deadlocks)
 timeout 180 ./mvnw verify

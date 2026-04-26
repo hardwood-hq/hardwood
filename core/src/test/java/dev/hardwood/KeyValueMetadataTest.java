@@ -56,7 +56,7 @@ class KeyValueMetadataTest {
         // app.version=1.2.3, writer.tool=hardwood-test, empty.value=''
         Path parquetFile = Paths.get("src/test/resources/kv_metadata_test.parquet");
         if (!parquetFile.toFile().exists()) {
-            // File must be generated via simple-datagen.py; skip if not available
+            // File must be generated via tools/simple-datagen.py; skip if not available
             return;
         }
 

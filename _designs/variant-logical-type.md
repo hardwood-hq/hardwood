@@ -361,8 +361,8 @@ the compat shim does not expose Variant directly.
   `primitive_int8.value` decodes as `INT8`) and against `data_dictionary.json` where
   applicable.
 - `VariantLogicalTypeTest` — mirrors `JsonLogicalTypeTest`: reads the generated
-  `variant_test.parquet` (produced by `simple-datagen.py` + the
-  `parquet_variant_annotation.py` footer-rewrite helper), asserts the column
+  `variant_test.parquet` (produced by `tools/simple-datagen.py` + the
+  `tools/parquet_annotators.py` footer-rewrite helper), asserts the column
   schema reports `LogicalType.VariantType`, and iterates the rows calling
   `asBoolean` / `asInt` / `asString` via `getVariant()`.
 - `FieldAccessorSplitTest` — assert `PqStruct` and `RowReader` still implement
@@ -372,7 +372,7 @@ the compat shim does not expose Variant directly.
   schema construction, and that malformed Variant groups (missing `metadata` or
   `value`) throw at schema build time.
 
-Generation: `simple-datagen.py` gains a `--variant` mode. PyArrow 21+ supports
+Generation: `tools/simple-datagen.py` gains a `--variant` mode. PyArrow 21+ supports
 writing Variant via `pa.variant()` with no post-processing required.
 
 ## Phase 2 — Shredded Variant reassembly (#286)
@@ -560,7 +560,7 @@ Internal-only (no public API):
 | `core/src/test/.../VariantValueDecoderTest.java` | New |
 | `core/src/test/.../VariantLogicalTypeTest.java` | New |
 | `core/src/test/.../FieldAccessorSplitTest.java` | New |
-| `simple-datagen.py` / `parquet_variant_annotation.py` | Emit `variant_test.parquet` + footer-stamp VARIANT logical type |
+| `tools/simple-datagen.py` / `tools/parquet_annotators.py` | Emit `variant_test.parquet` + footer-stamp VARIANT logical type |
 | `docs/content/usage.md` | Add Variant section + logical-type table row |
 
 ### Phase 2
