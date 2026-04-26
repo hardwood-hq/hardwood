@@ -2379,3 +2379,74 @@ if _REGEN_LARGE:
 else:
     print(f"\nSkipped large_file_test.parquet — already present ({os.path.getsize(_LARGE_FILE_PATH) / (1024**3):.2f} GB)")
 
+
+# ============================================================================
+# FFM Zero-Copy Pipeline Coverage Test Files
+# ============================================================================
+
+ffm_schema = pa.schema([
+    ('i32_plain', pa.int32(), False),
+    ('i32_plain_opt', pa.int32(), True),
+    ('i64_plain', pa.int64(), False),
+    ('i64_plain_opt', pa.int64(), True),
+    ('f32_plain', pa.float32(), False),
+    ('f32_plain_opt', pa.float32(), True),
+    ('f64_plain', pa.float64(), False),
+    ('f64_plain_opt', pa.float64(), True),
+
+    ('i32_bss', pa.int32(), False),
+    ('i32_bss_opt', pa.int32(), True),
+    ('i64_bss', pa.int64(), False),
+    ('i64_bss_opt', pa.int64(), True),
+    ('f32_bss', pa.float32(), False),
+    ('f32_bss_opt', pa.float32(), True),
+    ('f64_bss', pa.float64(), False),
+    ('f64_bss_opt', pa.float64(), True),
+])
+
+ffm_rows = 1000
+ffm_data = {
+    'i32_plain': [i for i in range(ffm_rows)],
+    'i32_plain_opt': [i if i % 2 == 0 else None for i in range(ffm_rows)],
+    'i64_plain': [i * 10 for i in range(ffm_rows)],
+    'i64_plain_opt': [i * 10 if i % 2 == 0 else None for i in range(ffm_rows)],
+    'f32_plain': [float(i) * 1.5 for i in range(ffm_rows)],
+    'f32_plain_opt': [float(i) * 1.5 if i % 2 == 0 else None for i in range(ffm_rows)],
+    'f64_plain': [float(i) * 3.14 for i in range(ffm_rows)],
+    'f64_plain_opt': [float(i) * 3.14 if i % 2 == 0 else None for i in range(ffm_rows)],
+
+    'i32_bss': [i for i in range(ffm_rows)],
+    'i32_bss_opt': [i if i % 2 == 0 else None for i in range(ffm_rows)],
+    'i64_bss': [i * 10 for i in range(ffm_rows)],
+    'i64_bss_opt': [i * 10 if i % 2 == 0 else None for i in range(ffm_rows)],
+    'f32_bss': [float(i) * 1.5 for i in range(ffm_rows)],
+    'f32_bss_opt': [float(i) * 1.5 if i % 2 == 0 else None for i in range(ffm_rows)],
+    'f64_bss': [float(i) * 3.14 for i in range(ffm_rows)],
+    'f64_bss_opt': [float(i) * 3.14 if i % 2 == 0 else None for i in range(ffm_rows)],
+}
+
+ffm_table = pa.table(ffm_data, schema=ffm_schema)
+
+pq.write_table(
+    ffm_table,
+    'core/src/test/resources/ffm_coverage_test.parquet',
+    use_dictionary=False,
+    compression='gzip', # GZIP enables the FFM routing path in PageDecoder
+    data_page_version='2.0', # V2 is required for FFM routing path
+    column_encoding={
+        'i32_plain': 'PLAIN', 'i32_plain_opt': 'PLAIN',
+        'i64_plain': 'PLAIN', 'i64_plain_opt': 'PLAIN',
+        'f32_plain': 'PLAIN', 'f32_plain_opt': 'PLAIN',
+        'f64_plain': 'PLAIN', 'f64_plain_opt': 'PLAIN',
+
+        'i32_bss': 'BYTE_STREAM_SPLIT', 'i32_bss_opt': 'BYTE_STREAM_SPLIT',
+        'i64_bss': 'BYTE_STREAM_SPLIT', 'i64_bss_opt': 'BYTE_STREAM_SPLIT',
+        'f32_bss': 'BYTE_STREAM_SPLIT', 'f32_bss_opt': 'BYTE_STREAM_SPLIT',
+        'f64_bss': 'BYTE_STREAM_SPLIT', 'f64_bss_opt': 'BYTE_STREAM_SPLIT',
+    }
+)
+print("\nGenerated ffm_coverage_test.parquet:")
+print("  - V2 Pages, GZIP Compression (Enables FFM Fast Path)")
+print("  - All FFM-supported types (INT32, INT64, FLOAT, DOUBLE) in PLAIN and BSS, with and without nulls")
+
+
