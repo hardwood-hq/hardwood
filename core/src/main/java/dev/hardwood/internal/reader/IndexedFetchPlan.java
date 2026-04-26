@@ -38,6 +38,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     private final HardwoodContextImpl context;
     private final int rowGroupIndex;
     private final String fileName;
+    private final ColumnDecryptor columnDecryptor;
 
     private IndexedFetchPlan(List<RowGroupIterator.NeededPage> neededPages,
                               List<RowGroupIterator.PageGroup> pageGroups,
@@ -45,7 +46,8 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                               long firstDataPageOffset,
                               ColumnSchema columnSchema, ColumnChunk columnChunk,
                               HardwoodContextImpl context,
-                              int rowGroupIndex, String fileName) {
+                              int rowGroupIndex, String fileName,
+                              ColumnDecryptor columnDecryptor) {
         this.neededPages = neededPages;
         this.pageGroups = pageGroups;
         this.chunkHandles = chunkHandles;
@@ -55,6 +57,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
         this.context = context;
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
+        this.columnDecryptor = columnDecryptor;
     }
 
     @Override
@@ -130,16 +133,18 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     /// @param chunkHandles one ChunkHandle per page group, linked for pre-fetch
     /// @param firstDataPageOffset absolute offset of the first data page in the
     ///        OffsetIndex (may differ from `neededPages.get(0)` when filtering)
+    /// @param columnDecryptor decryptor for a single column chunk's pages
     static IndexedFetchPlan build(List<RowGroupIterator.NeededPage> neededPages,
                                    List<RowGroupIterator.PageGroup> pageGroups,
                                    List<ChunkHandle> chunkHandles,
                                    long firstDataPageOffset,
                                    ColumnSchema columnSchema, ColumnChunk columnChunk,
                                    HardwoodContextImpl context,
-                                   int rowGroupIndex, String fileName) {
+                                   int rowGroupIndex, String fileName,
+                                   ColumnDecryptor columnDecryptor) {
         return new IndexedFetchPlan(neededPages, pageGroups, chunkHandles,
                 firstDataPageOffset, columnSchema, columnChunk, context,
-                rowGroupIndex, fileName);
+                rowGroupIndex, fileName, columnDecryptor);
     }
 
     /// Iterator that lazily parses the dictionary on first access and yields
@@ -186,9 +191,22 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             RowGroupIterator.NeededPage needed = neededPages.get(index++);
             PageLocation loc = needed.location();
             ChunkHandle handle = chunkHandles.get(currentGroupIndex);
-            ByteBuffer pageData = handle.slice(loc.offset(), loc.compressedPageSize());
+            ByteBuffer pageData;
+            if (columnDecryptor != null) {
+                ByteBuffer headerLengthBytes = handle.slice(loc.offset(), 4);
+                headerLengthBytes.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                int headerBlobSize = 4 + headerLengthBytes.getInt(0); // 4-byte length prefix + payload
+                // data blob length prefix sits immediately after the header blob
+                ByteBuffer dataLengthBytes = handle.slice(loc.offset() + headerBlobSize, 4);
+                dataLengthBytes.order(java.nio.ByteOrder.LITTLE_ENDIAN);
+                int dataBlobSize = 4 + dataLengthBytes.getInt(0);
+                int totalSize = headerBlobSize + dataBlobSize;
+                pageData = handle.slice(loc.offset(), totalSize);
+            } else {
+                pageData = handle.slice(loc.offset(), loc.compressedPageSize());
+            }
             PageInfo page = new PageInfo(pageData, columnSchema, columnChunk.metaData(),
-                    dictionary, needed.mask());
+                    dictionary, needed.mask(), columnDecryptor);
 
             if (!eventEmitted && !hasNext()) {
                 emitEvent();
@@ -220,6 +238,11 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             ByteBuffer dictRegion = chunkHandles.get(0).slice(dictAreaStart, dictRegionSize);
 
             try {
+                if (columnDecryptor != null) {
+                    ByteBuffer plaintextHeader = columnDecryptor.decryptDictPageHeader(dictRegion);
+                    ByteBuffer plaintextData = columnDecryptor.decryptDictPageData(dictRegion);
+                    return DictionaryParser.parse(plaintextHeader, plaintextData, columnSchema, metaData, context);
+                }
                 return DictionaryParser.parse(dictRegion, columnSchema, metaData, context);
             }
             catch (IOException e) {

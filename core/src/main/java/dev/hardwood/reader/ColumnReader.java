@@ -23,6 +23,7 @@ import dev.hardwood.internal.reader.NestedColumnWorker;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageSource;
 import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -452,9 +453,9 @@ public class ColumnReader implements AutoCloseable {
     /// Create a ColumnReader for a named column, scanning pages across all row groups.
     static ColumnReader create(String columnName, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context) {
+                               HardwoodContextImpl context, FileMetaData fileMetaData) {
         ColumnSchema columnSchema = schema.getColumn(columnName);
-        return create(columnSchema, schema, inputFile, rowGroups, context, null);
+        return create(columnSchema, schema, inputFile, rowGroups, context, null, fileMetaData);
     }
 
     /// Create a ColumnReader for a named column with page-level filtering.
@@ -462,17 +463,17 @@ public class ColumnReader implements AutoCloseable {
     /// @param filter resolved predicate, or `null` for no filtering.
     static ColumnReader create(String columnName, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context, ResolvedPredicate filter) {
+                               HardwoodContextImpl context, ResolvedPredicate filter, FileMetaData fileMetaData) {
         ColumnSchema columnSchema = schema.getColumn(columnName);
-        return create(columnSchema, schema, inputFile, rowGroups, context, filter);
+        return create(columnSchema, schema, inputFile, rowGroups, context, filter, fileMetaData);
     }
 
     /// Create a ColumnReader for a column by index, scanning pages across all row groups.
     static ColumnReader create(int columnIndex, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context) {
+                               HardwoodContextImpl context, FileMetaData fileMetaData) {
         ColumnSchema columnSchema = schema.getColumn(columnIndex);
-        return create(columnSchema, schema, inputFile, rowGroups, context, null);
+        return create(columnSchema, schema, inputFile, rowGroups, context, null, fileMetaData);
     }
 
     /// Create a ColumnReader for a column by index with page-level filtering.
@@ -480,23 +481,24 @@ public class ColumnReader implements AutoCloseable {
     /// @param filter resolved predicate, or `null` for no filtering.
     static ColumnReader create(int columnIndex, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context, ResolvedPredicate filter) {
+                               HardwoodContextImpl context, ResolvedPredicate filter, FileMetaData fileMetaData) {
         ColumnSchema columnSchema = schema.getColumn(columnIndex);
-        return create(columnSchema, schema, inputFile, rowGroups, context, filter);
+        return create(columnSchema, schema, inputFile, rowGroups, context, filter, fileMetaData);
     }
 
     /// Create a ColumnReader for a given ColumnSchema using the v3 pipeline.
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        InputFile inputFile, List<RowGroup> rowGroups,
-                                       HardwoodContextImpl context, ResolvedPredicate filter) {
+                                       HardwoodContextImpl context, ResolvedPredicate filter,
+                                       FileMetaData fileMetaData) {
         // Create a single-column projection using the full field path
         // to avoid ambiguity with duplicate leaf names in nested schemas.
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema,
                 dev.hardwood.schema.ColumnProjection.columns(columnSchema.fieldPath().toString()));
 
         RowGroupIterator rowGroupIterator = new RowGroupIterator(
-                List.of(inputFile), context, 0);
-        rowGroupIterator.setFirstFile(schema, rowGroups);
+                List.of(inputFile), context, 0, 0, null, null);
+        rowGroupIterator.setFirstFile(schema, fileMetaData, rowGroups);
         rowGroupIterator.initialize(projectedSchema, filter);
 
         return createFromIterator(columnSchema, schema, rowGroupIterator, context, 0, rowGroupIterator);

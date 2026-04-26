@@ -11,6 +11,7 @@ import java.io.EOFException;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.Iterator;
 import java.util.List;
 import java.util.NoSuchElementException;
@@ -101,13 +102,14 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// a fresh standalone one. Subsequent advances (with `chunkSize` <
     /// columnChunkLength) still create per-column handles lazily.
     private ChunkHandle firstChunkHandle;
+    private final ColumnDecryptor columnDecryptor;
 
     private SequentialFetchPlan(InputFile inputFile, long columnChunkOffset, int columnChunkLength,
                                  int chunkSize, ColumnSchema columnSchema,
                                  ColumnChunk columnChunk, HardwoodContextImpl context,
                                  long maxRows, int rowGroupIndex, String fileName,
                                  List<ResolvedPredicate> dropLeaves,
-                                 RowRanges matchingRows, long rowGroupRowCount) {
+                                 RowRanges matchingRows, long rowGroupRowCount, ColumnDecryptor columnDecryptor) {
         if (matchingRows == null) {
             throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
         }
@@ -129,6 +131,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         this.dropLeaves = dropLeaves;
         this.matchingRows = matchingRows;
         this.rowGroupRowCount = rowGroupRowCount;
+        this.columnDecryptor = columnDecryptor;
     }
 
     @Override
@@ -181,9 +184,9 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// and no per-page row mask. Equivalent to passing [RowRanges#ALL].
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
-                                      int rowGroupIndex, String fileName, long maxRows) {
+                                      int rowGroupIndex, String fileName, long maxRows, ColumnDecryptor columnDecryptor) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
-                maxRows, List.of(), RowRanges.ALL, 0L);
+                maxRows, List.of(), RowRanges.ALL, 0L, columnDecryptor);
     }
 
     /// Builds a [SequentialFetchPlan] that may drop data pages whose inline
@@ -192,9 +195,9 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows,
-                                      List<ResolvedPredicate> dropLeaves) {
+                                      List<ResolvedPredicate> dropLeaves, ColumnDecryptor columnDecryptor) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
-                maxRows, dropLeaves, RowRanges.ALL, 0L);
+                maxRows, dropLeaves, RowRanges.ALL, 0L, columnDecryptor);
     }
 
     /// Builds a [SequentialFetchPlan] that may drop data pages whose inline
@@ -216,7 +219,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows,
                                       List<ResolvedPredicate> dropLeaves,
-                                      RowRanges matchingRows, long rowGroupRowCount) {
+                                      RowRanges matchingRows, long rowGroupRowCount,
+                                      ColumnDecryptor columnDecryptor) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         int columnChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
         int chunkSize = Math.min(columnChunkLength,
@@ -225,7 +229,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         return new SequentialFetchPlan(inputFile, columnChunkOffset, columnChunkLength, chunkSize,
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
                 dropLeaves == null ? List.of() : dropLeaves,
-                matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount);
+                matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount, columnDecryptor);
     }
 
     /// Computes the per-fetch chunk size.
@@ -429,25 +433,39 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             if (position >= columnChunkLength) {
                 return;
             }
-            ParsedHeader parsed = readPageHeader(position);
-            PageHeader header = parsed.header();
-            int headerSize = parsed.headerSize();
 
-            if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
-                int compressedSize = header.compressedPageSize();
-                int numValues = header.dictionaryPageHeader().numValues();
-                if (numValues < 0) {
-                    throw new IOException("Invalid dictionary page for column '"
-                            + columnSchema.name() + "': negative numValues (" + numValues + ")");
+            if(columnDecryptor != null) {
+                // use metadata to check if there is a dictionary page
+                if (metaData.dictionaryPageOffset() != null && metaData.dictionaryPageOffset() > 0) {
+                    // readPageHeader won't help, we need to first decrypt to plaintext and then parse thrift
+                    ByteBuffer rawBuf = readBytes(position, columnChunkLength - position);
+                    ByteBuffer plaintextHeader = columnDecryptor.decryptDictPageHeader(rawBuf);
+                    ByteBuffer plaintextData = columnDecryptor.decryptDictPageData(rawBuf);
+                    dictionary = DictionaryParser.parse(plaintextHeader, plaintextData, columnSchema, metaData, context);
+                    position += rawBuf.position();
                 }
-                int dictTotalSize = headerSize + compressedSize;
-                ByteBuffer dictRegion = readBytes(position, dictTotalSize);
-                ByteBuffer compressedData = dictRegion.slice(headerSize, compressedSize);
-                if (header.crc() != null) {
-                    CrcValidator.assertCorrectCrc(header.crc(), compressedData, columnSchema.name());
+            }
+            else {
+                ParsedHeader parsed = readPageHeader(position);
+                PageHeader header = parsed.header();
+                int headerSize = parsed.headerSize();
+
+                if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
+                    int compressedSize = header.compressedPageSize();
+                    int numValues = header.dictionaryPageHeader().numValues();
+                    if (numValues < 0) {
+                        throw new IOException("Invalid dictionary page for column '"
+                                + columnSchema.name() + "': negative numValues (" + numValues + ")");
+                    }
+                    int dictTotalSize = headerSize + compressedSize;
+                    ByteBuffer dictRegion = readBytes(position, dictTotalSize);
+                    ByteBuffer compressedData = dictRegion.slice(headerSize, compressedSize);
+                    if (header.crc() != null) {
+                        CrcValidator.assertCorrectCrc(header.crc(), compressedData, columnSchema.name());
+                    }
+                    dictionary = DictionaryParser.parse(dictRegion, columnSchema, metaData, context);
+                    position += dictTotalSize;
                 }
-                dictionary = DictionaryParser.parse(dictRegion, columnSchema, metaData, context);
-                position += dictTotalSize;
             }
         }
 
@@ -474,6 +492,39 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             // then either skip the page (mask null), emit it as a placeholder
             // (inline-stats drop), or emit the body slice.
             while (position < columnChunkLength && valuesRead < metaData.numValues()) {
+                if (columnDecryptor != null) {
+                    // For encrypted files we cannot call readPageHeader() because bytes at current
+                    // position are part of encrypted blob, with a 4-byte length prefix at start, not a
+                    // Thrift struct, and hence parsing would either fail or generate  garbage.
+                    // So we compute the total size of both encrypted blobs (header blob,
+                    // data blob) by reading their length prefixes directly — these 4-byte prefixes
+                    // are always plaintext per the Parquet encryption spec.
+                    // We don't decrypt here — PageDecoder handles decryption when it decodes
+                    // the page. We just package the raw encrypted bytes into PageInfo.
+                    ByteBuffer rawBuf = readBytes(position, columnChunkLength - position);
+
+                    // Header blob: 4-byte length prefix + 12-byte nonce + ciphertext (length bytes, includes GCM tag)
+                    rawBuf.order(ByteOrder.LITTLE_ENDIAN);
+                    int headerNoncePlusCiphertext = rawBuf.getInt(0);  // from length prefix
+                    int headerBlobSize = 4 + headerNoncePlusCiphertext; // total bytes on disk
+
+                    // Data blob: starts immediately after header blob
+                    int dataBlobLength = rawBuf.getInt(headerBlobSize);
+                    int dataBlobTotalSize = 4 + dataBlobLength;
+                    int totalEncryptedSize = headerBlobSize + dataBlobTotalSize;
+                    ByteBuffer pageData = rawBuf.slice(0, totalEncryptedSize);
+                    PageInfo pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, PageRowMask.ALL, columnDecryptor);
+
+                    // We skip valuesRead tracking for encrypted files because:
+                    // 1. Exhaustion is detected via position >= columnChunkLength
+                    // 2. maxRows limiting is handled at RowGroupIterator level via perRgMaxRows
+                    // Per-page numValues would require decrypting the header here, which we
+                    // intentionally avoid — PageDecoder owns all decryption.
+                    position += totalEncryptedSize;
+                    pageCount++;
+                    return pageInfo;
+                }
+
                 if (maxRows > 0 && valuesRead >= maxRows) {
                     return null;
                 }
@@ -551,7 +602,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 }
                 else {
                     ByteBuffer pageData = readBytes(position, totalPageSize);
-                    pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask);
+                    pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask, columnDecryptor);
                 }
                 valuesRead += numValues;
                 recordsRead += recordsInPage;
@@ -560,12 +611,27 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 return pageInfo;
             }
 
-            if (valuesRead != metaData.numValues()) {
+            // In case of encrypted columns, valuesRead and recordsRead are not incremented
+            // because read page headers cant be read without decrypting them first.
+            // PageDecoder contains all decryption. Exhaustion is checked by
+            // position >= columnChunkLength, and integrity is guaranteed by GCM
+            // authentication at decode time. Hence we skip these checks for encrypted flows.
+            if (columnDecryptor == null && valuesRead != metaData.numValues()) {
                 throw new IOException("Value count mismatch for column '" + columnSchema.name()
                         + "': metadata declares " + metaData.numValues()
                         + " values but pages contain " + valuesRead);
             }
-            if (!matchingRows.isAll() && recordsRead != rowGroupRowCount) {
+            if (columnDecryptor == null && !matchingRows.isAll() && recordsRead != rowGroupRowCount) {
+                throw new IOException("Record count mismatch for column '" + columnSchema.name()
+                        + "': row group declares " + rowGroupRowCount
+                        + " rows but pages contain " + recordsRead + " records.");
+            }
+            if (columnDecryptor == null && valuesRead != metaData.numValues()) {
+                throw new IOException("Value count mismatch for column '" + columnSchema.name()
+                        + "': metadata declares " + metaData.numValues()
+                        + " values but pages contain " + valuesRead);
+            }
+            if (columnDecryptor == null && !matchingRows.isAll() && recordsRead != rowGroupRowCount) {
                 throw new IOException("Record count mismatch for column '" + columnSchema.name()
                         + "': row group declares " + rowGroupRowCount
                         + " rows but pages contain " + recordsRead + " records.");

@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.Comparator;
 import java.util.List;
@@ -19,6 +20,8 @@ import java.util.concurrent.CompletionException;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.atomic.AtomicIntegerArray;
 
+import dev.hardwood.AadPrefixProvider;
+import dev.hardwood.DecryptionKeyProvider;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
@@ -110,6 +113,10 @@ public class RowGroupIterator {
     // where ChunkHandle.data is heap-allocated rather than an mmap slice).
     private AtomicIntegerArray workItemRefCounts;
 
+    // crypto information
+    private final DecryptionKeyProvider keyProvider;
+    private final AadPrefixProvider aadPrefixProvider;
+
     /// A single unit of work: one row group in one file.
     ///
     /// `rowsConsumedBefore` is the cumulative row count of all work items
@@ -121,6 +128,7 @@ public class RowGroupIterator {
             InputFile inputFile,
             RowGroup rowGroup,
             FileSchema fileSchema,
+            FileMetaData fileMetaData,
             int fileIndex,
             int rowGroupIndex,
             int workItemIndex,
@@ -155,7 +163,7 @@ public class RowGroupIterator {
     /// @param context the Hardwood context
     /// @param maxRows maximum rows to read (0 = unlimited)
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context, long maxRows) {
-        this(inputFiles, context, maxRows, 0);
+        this(inputFiles, context, maxRows, 0, null, null);
     }
 
     /// Creates a RowGroupIterator with a tail-skip budget applied to the first
@@ -170,7 +178,7 @@ public class RowGroupIterator {
     ///        columns would emit unmaskable rows from offset 0 and break
     ///        cross-column alignment.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
-                            long maxRows, long tailSkip) {
+                            long maxRows, long tailSkip, DecryptionKeyProvider keyProvider, AadPrefixProvider aadPrefixProvider) {
         if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
@@ -181,6 +189,8 @@ public class RowGroupIterator {
         this.context = context;
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
+        this.keyProvider = keyProvider;
+        this.aadPrefixProvider = aadPrefixProvider;
     }
 
     /// Returns the maximum rows limit (0 = unlimited).
@@ -193,11 +203,12 @@ public class RowGroupIterator {
     /// (e.g., by [dev.hardwood.reader.ParquetFileReader]).
     ///
     /// @param schema the file schema from the first file
+    /// @param fileMetaData file metadata
     /// @param rowGroups the (already filtered) row groups from the first file
-    public void setFirstFile(FileSchema schema, List<RowGroup> rowGroups) {
+    public void setFirstFile(FileSchema schema, FileMetaData fileMetaData, List<RowGroup> rowGroups) {
         this.referenceSchema = schema;
         InputFile first = inputFiles.get(0);
-        PreparedFile prepared = new PreparedFile(first, null, schema, rowGroups);
+        PreparedFile prepared = new PreparedFile(first, fileMetaData, schema, rowGroups);
         fileFutures.put(0, CompletableFuture.completedFuture(prepared));
     }
 
@@ -459,6 +470,21 @@ public class RowGroupIterator {
             ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
             ColumnSchema columnSchema = workItem.fileSchema().getColumn(originalIndex);
             ColumnIndexBuffers colBuffers = shared.indexBuffers().forColumn(originalIndex);
+            ColumnDecryptor columnDecryptor;
+
+            try {
+                columnDecryptor = ColumnDecryptor.forColumnChunk(
+                        workItem.fileMetaData(),
+                        columnChunk,
+                        workItem.rowGroupIndex(),
+                        originalIndex,
+                        keyProvider,
+                        aadPrefixProvider);
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException("Failed to create column decryptor for column "
+                        + originalIndex + " in row group " + workItem.rowGroupIndex(), e);
+            }
 
             if (colBuffers == null || colBuffers.offsetIndex() == null) {
                 // No OffsetIndex — sequential lazy fetching. Per-page drops via
@@ -468,13 +494,20 @@ public class RowGroupIterator {
                 plans[projCol] = SequentialFetchPlan.build(
                         inputFile, columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(),
-                        perRgMaxRows, leaves, matchingRows, rowGroup.numRows());
+                        perRgMaxRows, leaves, matchingRows, rowGroup.numRows(), columnDecryptor);
                 continue;
             }
 
             try {
+                // Decrypt offset index if column is encrypted — offset indexes are encrypted
+                // per spec using OFFSET_INDEX module type to prevent index tampering or swapping
+                // between columns/row groups.
+                ByteBuffer offsetIndexBuf = colBuffers.offsetIndex();
+                if (columnDecryptor != null) {
+                    offsetIndexBuf = columnDecryptor.decryptOffsetIndex(offsetIndexBuf.duplicate());
+                }
                 OffsetIndex offsetIndex = OffsetIndexReader.read(
-                        new ThriftCompactReader(colBuffers.offsetIndex()));
+                        new ThriftCompactReader(offsetIndexBuf));
                 List<PageLocation> allPages = offsetIndex.pageLocations();
 
                 // Determine needed pages (filter + maxRows). Each entry pairs a
@@ -515,7 +548,7 @@ public class RowGroupIterator {
                         neededPages, groups, handles,
                         allPages.get(0).offset(),
                         columnSchema, columnChunk,
-                        context, workItem.rowGroupIndex(), inputFile.name());
+                        context, workItem.rowGroupIndex(), inputFile.name(), columnDecryptor);
             }
             catch (IOException e) {
                 throw new UncheckedIOException("Failed to compute fetch plan for column "
@@ -866,6 +899,7 @@ public class RowGroupIterator {
                         prepared.inputFile,
                         rg,
                         prepared.schema,
+                        prepared.metaData,
                         fileIndex,
                         rgIndex,
                         workItems.size(),
@@ -948,7 +982,7 @@ public class RowGroupIterator {
         event.begin();
 
         try {
-            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile);
+            FileMetaData metaData = ParquetMetadataReader.readMetadata(inputFile, keyProvider, aadPrefixProvider);
             FileSchema schema = FileSchema.fromSchemaElements(metaData.schema());
 
             event.file = inputFile.name();

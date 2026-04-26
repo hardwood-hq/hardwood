@@ -223,6 +223,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
             long t0;
             PageInfo pageInfo;
+            int pageOrdinal = 0;
             while (!done) {
                 // Pull next page from source
                 t0 = System.nanoTime();
@@ -233,11 +234,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 }
 
                 // Create/update PageDecoder when column metadata changes (file transitions)
-                if (pageDecoder == null || !pageDecoder.isCompatibleWith(pageInfo.columnMetaData())) {
+                if (pageDecoder == null || !pageDecoder.isCompatibleWith(pageInfo.columnMetaData(), pageInfo.columnDecryptor())) {
                     pageDecoder = new PageDecoder(
                             pageInfo.columnMetaData(),
                             pageInfo.columnSchema(),
-                            decompressorFactory);
+                            decompressorFactory, pageInfo.columnDecryptor());
+                    pageOrdinal = 0;  // reset for new column chunk
                 }
 
                 // Throttle: park while too many pages are in flight
@@ -258,8 +260,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 fileNameBuffer[slot] = pageSource.getCurrentFileName();
                 PageInfo pi = pageInfo;
                 PageDecoder rdr = pageDecoder;
+                int currentPageOrdinal = pageOrdinal++;
                 CompletableFuture<Void> f = CompletableFuture.runAsync(
-                        () -> decode(slot, pi, rdr), decodeExecutor);
+                        () -> decode(slot, pi, rdr, currentPageOrdinal), decodeExecutor);
                 inFlightDecodes.add(f);
                 f.whenComplete((v, t) -> inFlightDecodes.remove(f));
             }
@@ -290,15 +293,16 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     }
 
     /// Decode task: decodes one page, stores result in reorder buffer, unparks drain.
-    private void decode(int slot, PageInfo pageInfo, PageDecoder pageDecoder) {
+    private void decode(int slot, PageInfo pageInfo, PageDecoder pageDecoder, int pageOrdinal) {
         if (done || error.get() != null) {
             return;
         }
         try {
             Page page = pageInfo.isNullPlaceholder()
                     ? pageDecoder.nullPage(pageInfo.placeholderNumValues())
-                    : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
+                    : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(), pageOrdinal);
             reorderBuffer.set(slot, new DecodedPage(page, pageInfo.mask()));
+
         }
         catch (Throwable t) {
             signalError(enrichWithFileName(t, fileNameBuffer[slot]));

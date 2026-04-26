@@ -39,16 +39,20 @@ public class PageDecoder {
     private final ColumnMetaData columnMetaData;
     private final ColumnSchema column;
     private final DecompressorFactory decompressorFactory;
+    private final ColumnDecryptor columnDecryptor;
 
     /// Constructor for page decoding.
     ///
     /// @param columnMetaData metadata for the column
     /// @param column column schema
     /// @param decompressorFactory factory for creating decompressors
-    public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
+    /// @param columnDecryptor decryptor for encrypted column
+    public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory,
+                       ColumnDecryptor columnDecryptor) {
         this.columnMetaData = columnMetaData;
         this.column = column;
         this.decompressorFactory = decompressorFactory;
+        this.columnDecryptor = columnDecryptor;
     }
 
     /// Checks if this PageDecoder is compatible with the given column metadata.
@@ -56,8 +60,9 @@ public class PageDecoder {
     ///
     /// @param otherMetaData the column metadata to check against
     /// @return true if compatible (same codec), false otherwise
-    public boolean isCompatibleWith(ColumnMetaData otherMetaData) {
-        return columnMetaData.codec() == otherMetaData.codec();
+    public boolean isCompatibleWith(ColumnMetaData otherMetaData, ColumnDecryptor otherDecryptor) {
+        return columnMetaData.codec() == otherMetaData.codec()
+                && columnDecryptor == otherDecryptor;
     }
 
     /// Gets the decompressor factory used by this PageDecoder.
@@ -102,21 +107,45 @@ public class PageDecoder {
     ///
     /// @param pageBuffer buffer containing just this page (header + data)
     /// @param dictionary dictionary for this page, or null if not dictionary-encoded
+    /// @param pageOrdinal sequential index of a data page within a specific column chunk
     /// @return decoded page
-    public Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary) throws IOException {
+    public Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary, int pageOrdinal) throws IOException {
         PageDecodedEvent event = new PageDecodedEvent();
         event.begin();
 
-        // Parse page header directly from buffer
-        ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
+        ByteBuffer headerBuf;
+        ByteBuffer dataBuffer;
+
+        if (columnDecryptor != null) {
+            // decrypt header blob first — advances pageBuffer.position()
+            headerBuf = columnDecryptor.decryptPageHeader(pageBuffer, pageOrdinal);
+            // decrypt data blob from current position
+            dataBuffer = columnDecryptor.decryptPageData(pageBuffer, pageOrdinal);
+        }
+        else {
+            headerBuf = pageBuffer;
+            dataBuffer = null; // will slice from pageBuffer after parsing header
+        }
+
+        // parse header from headerBuf for both encrypted and plaintext
+        ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf, 0);
         PageHeader pageHeader = PageHeaderReader.read(headerReader);
         int headerSize = headerReader.getBytesRead();
-
-        // Slice the page data (avoids copying)
         int compressedSize = pageHeader.compressedPageSize();
-        ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
 
-        if (pageHeader.crc() != null) {
+        // get page data
+        ByteBuffer pageData;
+        if (columnDecryptor != null) {
+            pageData = dataBuffer; // already decrypted
+        }
+        else {
+            pageData = pageBuffer.slice(headerSize, compressedSize); // plaintext slice
+        }
+
+        // CRC check only for plaintext pages. In case of encrypted file, GCM authentication
+        // already guarantees integrity. Writers differ from each other on whether CRC is computed over
+        // plaintext or ciphertext, so we skip it to avoid false failures.
+        if (pageHeader.crc() != null && columnDecryptor == null) {
             CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData, column.name());
         }
 

@@ -68,7 +68,7 @@ public class PageScannerTest {
                 // Build sequential plan (bypasses OffsetIndex)
                 SequentialFetchPlan sequentialPlan = SequentialFetchPlan.build(
                         inputFile, columnSchema, columnChunk,
-                        context, 0, inputFile.name(), 0);
+                        context, 0, inputFile.name(), 0, null);
 
                 // Collect pages from both plans
                 List<PageInfo> indexedPages = collectPages(indexedPlan.pages());
@@ -84,13 +84,13 @@ public class PageScannerTest {
 
                     PageDecoder idxDecoder = new PageDecoder(
                             idxInfo.columnMetaData(), idxInfo.columnSchema(),
-                            context.decompressorFactory());
+                            context.decompressorFactory(), null);
                     PageDecoder seqDecoder = new PageDecoder(
                             seqInfo.columnMetaData(), seqInfo.columnSchema(),
-                            context.decompressorFactory());
+                            context.decompressorFactory(), null);
 
-                    Page idxPage = idxDecoder.decodePage(idxInfo.pageData(), idxInfo.dictionary());
-                    Page seqPage = seqDecoder.decodePage(seqInfo.pageData(), seqInfo.dictionary());
+                    Page idxPage = idxDecoder.decodePage(idxInfo.pageData(), idxInfo.dictionary(), 0);
+                    Page seqPage = seqDecoder.decodePage(seqInfo.pageData(), seqInfo.dictionary(), 0);
 
                     assertThat(idxPage.size())
                             .as("Page %d size for column '%s'", p, columnSchema.name())
@@ -131,7 +131,7 @@ public class PageScannerTest {
 
             SequentialFetchPlan plan = SequentialFetchPlan.build(
                     inputFile, columnSchema, columnChunk,
-                    context, 0, inputFile.name(), 0);
+                    context, 0, inputFile.name(), 0, null);
 
             List<PageInfo> pages = collectPages(plan.pages());
             assertThat(pages).isNotEmpty();
@@ -161,12 +161,12 @@ public class PageScannerTest {
 
             List<PageInfo> fullPages = collectPages(SequentialFetchPlan.build(
                     inputFile, columnSchema, columnChunk,
-                    context, 0, inputFile.name(), 0).pages());
+                    context, 0, inputFile.name(), 0, null).pages());
 
             // Requesting a single row must not scan past the first data page.
             List<PageInfo> limitedPages = collectPages(SequentialFetchPlan.build(
                     inputFile, columnSchema, columnChunk,
-                    context, 0, inputFile.name(), 1).pages());
+                    context, 0, inputFile.name(), 1, null).pages());
 
             assertThat(limitedPages).hasSize(1);
             assertThat(limitedPages.size()).isLessThanOrEqualTo(fullPages.size());
@@ -177,8 +177,8 @@ public class PageScannerTest {
                                                     FileMetaData metaData,
                                                     HardwoodContextImpl context) {
         RowGroupIterator iterator = new RowGroupIterator(
-                List.of(inputFile), context, 0);
-        iterator.setFirstFile(schema, metaData.rowGroups());
+                List.of(inputFile), context, 0, 0, null, null);
+        iterator.setFirstFile(schema, metaData, metaData.rowGroups());
         iterator.initialize(
                 ProjectedSchema.create(schema, ColumnProjection.all()), null);
         return iterator;

@@ -13,6 +13,9 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import dev.hardwood.DecryptionKeyProvider;
+import dev.hardwood.ParquetEncryptionException;
+import dev.hardwood.metadata.EncryptionAlgorithm;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.SchemaElement;
@@ -20,7 +23,9 @@ import dev.hardwood.metadata.SchemaElement;
 /// Reader for FileMetaData from Thrift Compact Protocol.
 public class FileMetaDataReader {
 
-    public static FileMetaData read(ThriftCompactReader reader) throws IOException {
+    public static FileMetaData read(ThriftCompactReader reader,
+                                    DecryptionKeyProvider keyProvider,
+                                    EncryptionAlgorithm cryptoEncryptionAlgorithm) throws IOException {
         reader.resetLastFieldId();
 
         int version = 0;
@@ -29,6 +34,8 @@ public class FileMetaDataReader {
         List<RowGroup> rowGroups = new ArrayList<>();
         Map<String, String> keyValueMetadata = Collections.emptyMap();
         String createdBy = null;
+        EncryptionAlgorithm encryptionAlgorithm = null;
+        byte[] footerSigningKeyMetadata = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -68,7 +75,7 @@ public class FileMetaDataReader {
                     if (header.type() == 0x09) {
                         ThriftCompactReader.CollectionHeader listHeader = reader.readListHeader();
                         for (int i = 0; i < listHeader.size(); i++) {
-                            rowGroups.add(RowGroupReader.read(reader));
+                            rowGroups.add(RowGroupReader.read(reader, i, keyProvider, cryptoEncryptionAlgorithm));
                         }
                     }
                     else {
@@ -91,12 +98,38 @@ public class FileMetaDataReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 8: // encryption_algorithm
+                    if (header.type() == 0x0C) {
+                        encryptionAlgorithm = EncryptionAlgorithmReader.read(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
+                case 9: // footer_signing_key_metadata
+                    if (header.type() == 0x08) {
+                        footerSigningKeyMetadata = reader.readBinary();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 default:
                     reader.skipField(header.type());
                     break;
             }
         }
 
-        return new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata, createdBy);
+        if (cryptoEncryptionAlgorithm == null) {
+            // PAR1 — encryptionAlgorithm and footerSigningKeyMetadata must both be present or both absent
+            if ((encryptionAlgorithm == null) != (footerSigningKeyMetadata == null)) {
+                throw new ParquetEncryptionException(
+                        "Inconsistent encryption state in FileMetaData: " +
+                                "encryptionAlgorithm and footerSigningKeyMetadata must both be present or both absent");
+            }
+        }
+
+        return new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata, createdBy,
+                encryptionAlgorithm, footerSigningKeyMetadata);
     }
 }

@@ -18,6 +18,10 @@ import java.util.Map;
 /// @param rowGroups metadata for each row group in the file
 /// @param keyValueMetadata application-defined key-value metadata, or an empty map if absent
 /// @param createdBy identifier of the library that wrote the file, or `null` if absent
+/// @param encryptionAlgorithm encryption algorithm, set only in encrypted files with plaintext footer,
+///             Files with encrypted footer store algorithm id in FileCryptoMetaData structure
+/// @param footerSigningKeyMetadata retrieval metadata of key used for signing the footer, used only in encrypted files
+///        with plaintext footer
 /// @see <a href="https://parquet.apache.org/docs/file-format/metadata/#file-metadata">File Format – File Metadata</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public record FileMetaData(
@@ -26,5 +30,13 @@ public record FileMetaData(
         long numRows,
         List<RowGroup> rowGroups,
         Map<String, String> keyValueMetadata,
-        String createdBy) {
+        String createdBy,
+        EncryptionAlgorithm encryptionAlgorithm,
+        byte[] footerSigningKeyMetadata) {
+
+    public FileMetaData withCrypto(EncryptionAlgorithm algo, byte[] footerSigningKeyMetadata) {
+        return new FileMetaData(this.version, this.schema, this.numRows,
+                this.rowGroups, this.keyValueMetadata, this.createdBy,
+                algo, footerSigningKeyMetadata);
+    }
 }

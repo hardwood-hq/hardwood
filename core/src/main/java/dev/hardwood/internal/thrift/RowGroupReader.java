@@ -11,23 +11,29 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.DecryptionKeyProvider;
 import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.EncryptionAlgorithm;
 import dev.hardwood.metadata.RowGroup;
 
 /// Reader for RowGroup from Thrift Compact Protocol.
 public class RowGroupReader {
 
-    public static RowGroup read(ThriftCompactReader reader) throws IOException {
+    public static RowGroup read(ThriftCompactReader reader, int rowGroupOrdinal,
+                                DecryptionKeyProvider keyProvider,
+                                EncryptionAlgorithm encryptionAlgorithm) throws IOException {
         short saved = reader.pushFieldIdContext();
         try {
-            return readInternal(reader);
+            return readInternal(reader, rowGroupOrdinal, keyProvider, encryptionAlgorithm);
         }
         finally {
             reader.popFieldIdContext(saved);
         }
     }
 
-    private static RowGroup readInternal(ThriftCompactReader reader) throws IOException {
+    private static RowGroup readInternal(ThriftCompactReader reader, int rowGroupOrdinal,
+                                         DecryptionKeyProvider keyProvider,
+                                         EncryptionAlgorithm encryptionAlgorithm) throws IOException {
         List<ColumnChunk> columns = new ArrayList<>();
         long totalByteSize = 0;
         long numRows = 0;
@@ -37,15 +43,15 @@ public class RowGroupReader {
             if (header == null) {
                 break;
             }
-
             switch (header.fieldId()) {
                 case 1: // columns
                     if (header.type() == 0x09) { // LIST
                         ThriftCompactReader.CollectionHeader listHeader = reader.readListHeader();
                         for (int i = 0; i < listHeader.size(); i++) {
-                            columns.add(ColumnChunkReader.read(reader));
+                            columns.add(ColumnChunkReader.read(reader, keyProvider, encryptionAlgorithm, rowGroupOrdinal, i));
                         }
                     }
+
                     else {
                         reader.skipField(header.type());
                     }

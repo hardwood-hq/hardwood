@@ -52,7 +52,7 @@ class NestedV1NoIndexFallbackTest {
     void testFixtureLacksOffsetIndex() throws Exception {
         try (InputFile file = InputFile.of(FIXTURE)) {
             file.open();
-            FileMetaData meta = ParquetMetadataReader.readMetadata(file);
+            FileMetaData meta = ParquetMetadataReader.readMetadata(file, null, null);
             RowGroup rg = meta.rowGroups().get(0);
             for (int c = 0; c < rg.columns().size(); c++) {
                 assertThat(rg.columns().get(c).offsetIndexOffset())
@@ -66,7 +66,7 @@ class NestedV1NoIndexFallbackTest {
     void testMaskGateClosesForV1NestedColumn() throws Exception {
         try (InputFile file = InputFile.of(FIXTURE)) {
             file.open();
-            FileMetaData meta = ParquetMetadataReader.readMetadata(file);
+            FileMetaData meta = ParquetMetadataReader.readMetadata(file, null, null);
             RowGroup rg = meta.rowGroups().get(0);
 
             FileSchema schema = FileSchema.fromSchemaElements(meta.schema());

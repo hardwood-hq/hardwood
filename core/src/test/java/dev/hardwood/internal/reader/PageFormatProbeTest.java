@@ -38,7 +38,7 @@ class PageFormatProbeTest {
     void testProbeReturnsDataPageForV1Fixture() throws Exception {
         try (InputFile file = InputFile.of(V1_FIXTURE)) {
             file.open();
-            FileMetaData meta = ParquetMetadataReader.readMetadata(file);
+            FileMetaData meta = ParquetMetadataReader.readMetadata(file, null, null);
             RowGroup rg = meta.rowGroups().get(0);
             for (int c = 0; c < rg.columns().size(); c++) {
                 PageHeader.PageType type =
@@ -54,7 +54,7 @@ class PageFormatProbeTest {
     void testProbeReturnsDataPageV2ForV2Fixture() throws Exception {
         try (InputFile file = InputFile.of(V2_FIXTURE)) {
             file.open();
-            FileMetaData meta = ParquetMetadataReader.readMetadata(file);
+            FileMetaData meta = ParquetMetadataReader.readMetadata(file, null, null);
             RowGroup rg = meta.rowGroups().get(0);
             for (int c = 0; c < rg.columns().size(); c++) {
                 PageHeader.PageType type =
