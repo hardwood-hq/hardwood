@@ -72,6 +72,39 @@ hardwood dive -f data.parquet
 From the Overview landing screen, drill into **Schema** or **Row groups**,
 then into column chunks and per-chunk metadata.
 
+### What you can do with it
+
+`dive` composes the slices that the batch subcommands (`info`, `schema`,
+`footer`, `inspect`, `print`) each surface separately into a single
+navigable session. Typical things to reach for it for:
+
+- **Find a column quickly** in a wide schema — Schema screen, `/` to
+  filter the tree to leaves matching a substring.
+- **Spot the heavy column chunks** in a row group — Row groups → Column
+  chunks ranks by compressed size with the codec and dictionary flag
+  alongside.
+- **Check page-level statistics and indexes** — drill from a chunk into
+  Pages, Column index, or Offset index; `Enter` on a page opens the
+  full thrift header, including inline statistics when no Column Index
+  is present.
+- **Inspect dictionary entries** for a column — Dictionary screen with
+  `/` substring filter; `Enter` reveals the full untruncated value of
+  the highlighted entry.
+- **Preview a few rows** without exporting — Data preview paginates with
+  `PgDn`/`PgUp` (`g`/`G` for first/last); `Enter` opens a per-row modal
+  where each field can be expanded inline.
+- **Decode key/value metadata** — Spark JSON schemas pretty-print, Arrow
+  IPC schemas decode to a hex dump.
+- **Compare a column across row groups** — from Schema, `Enter` on a
+  leaf jumps to a one-row-per-RG view of that column's sizes,
+  encodings, and stats.
+- **Read raw file layout** — Footer & indexes shows file size, footer
+  offset, encoding/codec histograms, page-index coverage, and aggregate
+  byte breakdowns; from there you can drill into a file-wide list of
+  every chunk's column index, offset index, or dictionary region.
+
+### Keys
+
 | Key | Action |
 |-----|--------|
 | `↑` / `↓` | Move selection |
