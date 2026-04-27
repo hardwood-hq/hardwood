@@ -26,11 +26,14 @@ interface InspectDictionaryCommandContract {
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
-                Row Group 0 / category
-                  Dictionary size: 3 entries
-                  [   0] A
-                  [   1] B
-                  [   2] C""");
+                category
+                +----+-------+--------+-------+
+                | RG | Index | Length | Value |
+                +----+-------+--------+-------+
+                |  0 |     0 |      1 |     A |
+                |    |     1 |      1 |     B |
+                |    |     2 |      1 |     C |
+                +----+-------+--------+-------+""");
     }
 
     @Test
@@ -39,8 +42,35 @@ interface InspectDictionaryCommandContract {
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
-                Row Group 0 / id
-                  No dictionary (column is not dictionary-encoded)""");
+                id
+                Row Group 0: no dictionary (column is not dictionary-encoded)""");
+    }
+
+    @Test
+    default void limitsDictionaryEntries() {
+        Cli.Result result = Cli.launch("inspect", "dictionary", "-f", dictFile(), "--column", "category",
+                "--limit", "2");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                category
+                Row Group 0 - dictionary has 3 entries (showing first 2)
+                +----+-------+--------+-------+
+                | RG | Index | Length | Value |
+                +----+-------+--------+-------+
+                |  0 |     0 |      1 |     A |
+                |    |     1 |      1 |     B |
+                +----+-------+--------+-------+""");
+    }
+
+    @Test
+    default void zeroLimitPrintsAllDictionaryEntries() {
+        Cli.Result result = Cli.launch("inspect", "dictionary", "-f", dictFile(), "--column", "category",
+                "--limit", "0");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).doesNotContain("showing first")
+                .contains("|    |     2 |      1 |     C |");
     }
 
     @Test

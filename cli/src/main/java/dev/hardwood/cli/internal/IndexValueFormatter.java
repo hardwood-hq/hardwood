@@ -17,6 +17,7 @@ import java.time.LocalTime;
 import java.util.HexFormat;
 import java.util.UUID;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -109,20 +110,81 @@ public final class IndexValueFormatter {
         };
     }
 
+    /// Formats an already-decoded physical value, such as a dictionary entry,
+    /// using the same display rules as raw page-index values.
+    ///
+    /// Expected value types are determined by [ColumnSchema#type()]:
+    ///
+    /// - `BOOLEAN`: [Boolean]
+    /// - `INT32`: [Integer]
+    /// - `INT64`: [Long]
+    /// - `FLOAT`: [Float]
+    /// - `DOUBLE`: [Double]
+    /// - `INT96`, `BYTE_ARRAY`, `FIXED_LEN_BYTE_ARRAY`: `byte[]`
+    ///
+    /// @throws IllegalArgumentException when `value` does not match the column's
+    /// physical type.
+    public static String formatDecoded(Object value, ColumnSchema col) {
+        if (value == null) {
+            return "-";
+        }
+        LogicalType lt = col.logicalType();
+        return switch (col.type()) {
+            case BOOLEAN -> Boolean.toString(requireType(value, col, Boolean.class));
+            case INT32 -> formatDecodedInt(requireType(value, col, Integer.class), col, lt);
+            case INT64 -> formatDecodedLong(requireType(value, col, Long.class), col, lt);
+            case FLOAT -> Float.toString(requireType(value, col, Float.class));
+            case DOUBLE -> Double.toString(requireType(value, col, Double.class));
+            case INT96, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> format(requireType(value, col, byte[].class), col);
+        };
+    }
+
+    private static <T> T requireType(Object value, ColumnSchema col, Class<T> expected) {
+        if (expected.isInstance(value)) {
+            return expected.cast(value);
+        }
+        throw new IllegalArgumentException("Expected decoded " + expected.getSimpleName() + " value for " + col.type()
+                + " column '" + col.name() + "', got " + value.getClass().getName());
+    }
+
     private static String formatInt32(byte[] bytes, LogicalType lt) {
-        int v = StatisticsDecoder.decodeInt(bytes);
+        return formatInt32Value(StatisticsDecoder.decodeInt(bytes), lt);
+    }
+
+    private static String formatInt32Value(int v, LogicalType lt) {
         if (lt instanceof LogicalType.IntType it && !it.isSigned()) {
             return Long.toString(Integer.toUnsignedLong(v));
         }
         return Integer.toString(v);
     }
 
+    private static String formatDecodedInt(int value, ColumnSchema col, LogicalType lt) {
+        if (lt instanceof LogicalType.DecimalType
+                || lt instanceof LogicalType.DateType
+                || lt instanceof LogicalType.TimeType) {
+            return String.valueOf(LogicalTypeConverter.convert(value, col.type(), lt));
+        }
+        return formatInt32Value(value, lt);
+    }
+
     private static String formatInt64(byte[] bytes, LogicalType lt) {
-        long v = StatisticsDecoder.decodeLong(bytes);
+        return formatInt64Value(StatisticsDecoder.decodeLong(bytes), lt);
+    }
+
+    private static String formatInt64Value(long v, LogicalType lt) {
         if (lt instanceof LogicalType.IntType it && !it.isSigned()) {
             return Long.toUnsignedString(v);
         }
         return Long.toString(v);
+    }
+
+    private static String formatDecodedLong(long value, ColumnSchema col, LogicalType lt) {
+        if (lt instanceof LogicalType.DecimalType
+                || lt instanceof LogicalType.TimeType
+                || lt instanceof LogicalType.TimestampType) {
+            return String.valueOf(LogicalTypeConverter.convert(value, col.type(), lt));
+        }
+        return formatInt64Value(value, lt);
     }
 
     private static String formatBinary(byte[] bytes, LogicalType lt, PhysicalType pt, boolean truncate) {

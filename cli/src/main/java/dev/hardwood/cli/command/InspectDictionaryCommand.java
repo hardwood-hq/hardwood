@@ -9,17 +9,21 @@ package dev.hardwood.cli.command;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
+import java.util.function.IntFunction;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
+import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.DictionaryParser;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -37,14 +41,21 @@ public class InspectDictionaryCommand implements Callable<Integer> {
     @CommandLine.Mixin
     FileMixin fileMixin;
     @Spec
-     CommandSpec spec;
+    CommandSpec spec;
     @CommandLine.Option(names = {"-c", "--column"}, required = true, paramLabel = "COLUMN", description = "Column name to inspect.")
     String column;
+    @CommandLine.Option(names = "--limit", defaultValue = "50", paramLabel = "N",
+            description = "Maximum dictionary entries per row group to print (0 = unlimited).")
+    int limit;
 
     @Override
     public Integer call() {
         if (fileMixin.toInputFile() == null) {
             return CommandLine.ExitCode.SOFTWARE;
+        }
+        if (limit < 0) {
+            spec.commandLine().getErr().println("--limit must be greater than or equal to 0");
+            return CommandLine.ExitCode.USAGE;
         }
 
         FileMetaData metadata;
@@ -92,6 +103,13 @@ public class InspectDictionaryCommand implements Callable<Integer> {
                                    HardwoodContextImpl context, InputFile inputFile)
             throws IOException {
         List<RowGroup> rowGroups = metadata.rowGroups();
+        List<String[]> rows = new ArrayList<>();
+        List<Integer> separatorsBefore = new ArrayList<>();
+        List<String> messages = new ArrayList<>();
+        String columnLabel = rowGroups.isEmpty()
+                ? columnSchema.name()
+                : Sizes.columnPath(rowGroups.getFirst().columns().get(columnSchema.columnIndex()).metaData());
+        boolean includeLength = hasVariableWidthDictionaryValues(columnSchema);
 
         for (int rgIdx = 0; rgIdx < rowGroups.size(); rgIdx++) {
             RowGroup rg = rowGroups.get(rgIdx);
@@ -110,67 +128,94 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             Dictionary dictionary = DictionaryParser.parse(
                     dictRegion, columnSchema, chunk.metaData(), context);
 
-            spec.commandLine().getOut().printf("Row Group %d / %s%n", rgIdx, Sizes.columnPath(chunk.metaData()));
-
             if (dictionary == null) {
-                spec.commandLine().getOut().println("  No dictionary (column is not dictionary-encoded)");
+                messages.add("Row Group " + rgIdx + ": no dictionary (column is not dictionary-encoded)");
             }
             else {
-                printDictionary(dictionary);
+                if (!rows.isEmpty()) {
+                    separatorsBefore.add(rows.size());
+                }
+                int displayed = displayedEntryCount(dictionary);
+                if (displayed < dictionary.size()) {
+                    messages.add("Row Group " + rgIdx + " - dictionary has " + dictionary.size()
+                            + " entries (showing first " + displayed + ")");
+                }
+                addDictionaryRows(rows, rgIdx, dictionary, columnSchema, displayed);
             }
-            spec.commandLine().getOut().println();
+        }
+
+        spec.commandLine().getOut().println(columnLabel);
+        for (String message : messages) {
+            spec.commandLine().getOut().println(message);
+        }
+        if (!rows.isEmpty()) {
+            String[] headers = includeLength
+                    ? new String[]{"RG", "Index", "Length", "Value"}
+                    : new String[]{"RG", "Index", "Value"};
+            spec.commandLine().getOut().println(RowTable.renderTable(headers, rows, separatorsBefore, List.of()));
         }
     }
 
-    private void printDictionary(Dictionary dictionary) {
-        spec.commandLine().getOut().printf("  Dictionary size: %d entries%n", dictionary.size());
+    private static void addDictionaryRows(List<String[]> rows, int rgIdx, Dictionary dictionary,
+                                          ColumnSchema columnSchema, int displayed) {
         switch (dictionary) {
-            case Dictionary.IntDictionary d -> printInts(d.values());
-            case Dictionary.LongDictionary d -> printLongs(d.values());
-            case Dictionary.FloatDictionary d -> printFloats(d.values());
-            case Dictionary.DoubleDictionary d -> printDoubles(d.values());
-            case Dictionary.ByteArrayDictionary d -> printByteArrays(d.values());
+            case Dictionary.IntDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
+                    i -> d.values()[i]);
+            case Dictionary.LongDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
+                    i -> d.values()[i]);
+            case Dictionary.FloatDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
+                    i -> d.values()[i]);
+            case Dictionary.DoubleDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
+                    i -> d.values()[i]);
+            case Dictionary.ByteArrayDictionary d -> addByteArrayRows(rows, rgIdx, d.values(), columnSchema,
+                    displayed);
         }
     }
 
-    private void printInts(int[] values) {
-        for (int i = 0; i < values.length; i++) {
-            spec.commandLine().getOut().printf("  [%4d] %d%n", i, values[i]);
+    private static void addValueRows(List<String[]> rows, int rgIdx, ColumnSchema columnSchema,
+                                     int displayed, IntFunction<Object> valueAt) {
+        for (int i = 0; i < displayed; i++) {
+            rows.add(new String[]{
+                    rgCell(i, rgIdx),
+                    String.valueOf(i),
+                    IndexValueFormatter.formatDecoded(valueAt.apply(i), columnSchema)
+            });
         }
     }
 
-    private void printLongs(long[] values) {
-        for (int i = 0; i < values.length; i++) {
-            spec.commandLine().getOut().printf("  [%4d] %d%n", i, values[i]);
+    private static void addByteArrayRows(List<String[]> rows, int rgIdx, byte[][] values,
+                                         ColumnSchema columnSchema, int displayed) {
+        boolean includeLength = hasVariableWidthDictionaryValues(columnSchema);
+        for (int i = 0; i < displayed; i++) {
+            byte[] value = values[i];
+            if (includeLength) {
+                rows.add(new String[]{
+                        rgCell(i, rgIdx),
+                        String.valueOf(i),
+                        value != null ? String.valueOf(value.length) : "-",
+                        IndexValueFormatter.formatDecoded(value, columnSchema)
+                });
+            }
+            else {
+                rows.add(new String[]{
+                        rgCell(i, rgIdx),
+                        String.valueOf(i),
+                        IndexValueFormatter.formatDecoded(value, columnSchema)
+                });
+            }
         }
     }
 
-    private void printFloats(float[] values) {
-        for (int i = 0; i < values.length; i++) {
-            spec.commandLine().getOut().printf("  [%4d] %f%n", i, values[i]);
-        }
+    private static boolean hasVariableWidthDictionaryValues(ColumnSchema columnSchema) {
+        return columnSchema.type() == PhysicalType.BYTE_ARRAY
+                || columnSchema.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY;
     }
 
-    private void printDoubles(double[] values) {
-        for (int i = 0; i < values.length; i++) {
-            spec.commandLine().getOut().printf("  [%4d] %f%n", i, values[i]);
-        }
+    private int displayedEntryCount(Dictionary dictionary) {
+        return limit == 0 ? dictionary.size() : Math.min(limit, dictionary.size());
     }
 
-    private void printByteArrays(byte[][] values) {
-        for (int i = 0; i < values.length; i++) {
-            spec.commandLine().getOut().printf("  [%4d] %s%n", i, formatBytes(values[i]));
-        }
-    }
-
-    private static String formatBytes(byte[] bytes) {
-        if (bytes == null) {
-            return "null";
-        }
-        String text = new String(bytes, StandardCharsets.UTF_8);
-        if (text.length() > 60) {
-            return text.substring(0, 60) + "...";
-        }
-        return text;
+    private static String rgCell(int entryIndex, int rgIdx) {
+        return entryIndex == 0 ? String.valueOf(rgIdx) : "";
     }
 }
