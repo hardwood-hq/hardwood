@@ -587,7 +587,7 @@ public class Utils {
             }
 
             String colName = colSchema.name();
-            try (ColumnReader columnReader = readerFactory.createColumnReader(colIdx)) {
+            try (ColumnReader columnReader = readerFactory.columnReader(colIdx)) {
                 compareColumnReader(colName, columnReader, referenceRows);
             }
         }
@@ -635,7 +635,7 @@ public class Utils {
     /// Functional interface for creating column readers (abstracts single-file vs multi-file).
     @FunctionalInterface
     interface ColumnReaderFactory {
-        ColumnReader createColumnReader(int columnIndex) throws IOException;
+        ColumnReader columnReader(int columnIndex) throws IOException;
     }
 
     /// Get reference value for a flat column from a GenericRecord.

@@ -19,9 +19,8 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
-import dev.hardwood.reader.MultiFileColumnReaders;
-import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -49,7 +48,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
-            try (ColumnReader idReader = reader.createColumnReader("id", filter)) {
+            try (ColumnReader idReader = reader.buildColumnReader("id").filter(filter).build()) {
                 int totalRows = 0;
                 while (idReader.nextBatch()) {
                     long[] values = idReader.getLongs();
@@ -70,7 +69,7 @@ class PredicatePushDownTest {
             FilterPredicate filter = FilterPredicate.lt("id", 101L);
 
             // Column 0 is "id"
-            try (ColumnReader idReader = reader.createColumnReader(0, filter)) {
+            try (ColumnReader idReader = reader.buildColumnReader(0).filter(filter).build()) {
                 int totalRows = 0;
                 while (idReader.nextBatch()) {
                     totalRows += idReader.getRecordCount();
@@ -86,7 +85,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("id", 0L);
 
-            try (ColumnReader idReader = reader.createColumnReader("id", filter)) {
+            try (ColumnReader idReader = reader.buildColumnReader("id").filter(filter).build()) {
                 int totalRows = 0;
                 while (idReader.nextBatch()) {
                     totalRows += idReader.getRecordCount();
@@ -102,7 +101,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("id", 300L);
 
-            try (ColumnReader idReader = reader.createColumnReader("id", filter)) {
+            try (ColumnReader idReader = reader.buildColumnReader("id").filter(filter).build()) {
                 assertThat(idReader.nextBatch()).isFalse();
             }
         }
@@ -117,7 +116,7 @@ class PredicatePushDownTest {
                     FilterPredicate.ltEq("id", 200L)
             );
 
-            try (ColumnReader idReader = reader.createColumnReader("id", filter)) {
+            try (ColumnReader idReader = reader.buildColumnReader("id").filter(filter).build()) {
                 int totalRows = 0;
                 while (idReader.nextBatch()) {
                     long[] values = idReader.getLongs();
@@ -139,7 +138,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -157,7 +156,7 @@ class PredicatePushDownTest {
             FilterPredicate filter = FilterPredicate.lt("id", 101L);
             ColumnProjection projection = ColumnProjection.columns("id", "label");
 
-            try (RowReader rows = reader.createRowReader(projection, filter)) {
+            try (RowReader rows = reader.buildRowReader().projection(projection).filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -175,7 +174,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
             FilterPredicate filter = FilterPredicate.eq("id", 999L);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 assertThat(rows.hasNext()).isFalse();
             }
         }
@@ -189,7 +188,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("id", 10);
 
-            try (ColumnReader idReader = reader.createColumnReader("id", filter)) {
+            try (ColumnReader idReader = reader.buildColumnReader("id").filter(filter).build()) {
                 int totalRows = 0;
                 while (idReader.nextBatch()) {
                     int[] values = idReader.getInts();
@@ -210,7 +209,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
             FilterPredicate filter = FilterPredicate.ltEq("price", 50.0);
 
-            try (ColumnReader priceReader = reader.createColumnReader("price", filter)) {
+            try (ColumnReader priceReader = reader.buildColumnReader("price").filter(filter).build()) {
                 int totalRows = 0;
                 while (priceReader.nextBatch()) {
                     double[] values = priceReader.getDoubles();
@@ -231,7 +230,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("rating", 5.5f);
 
-            try (ColumnReader ratingReader = reader.createColumnReader("rating", filter)) {
+            try (ColumnReader ratingReader = reader.buildColumnReader("rating").filter(filter).build()) {
                 int totalRows = 0;
                 while (ratingReader.nextBatch()) {
                     totalRows += ratingReader.getRecordCount();
@@ -249,7 +248,7 @@ class PredicatePushDownTest {
             // Filter for names >= "kiwi" -> should only read RG2
             FilterPredicate filter = FilterPredicate.gtEq("name", "kiwi");
 
-            try (ColumnReader nameReader = reader.createColumnReader("name", filter)) {
+            try (ColumnReader nameReader = reader.buildColumnReader("name").filter(filter).build()) {
                 int totalRows = 0;
                 while (nameReader.nextBatch()) {
                     totalRows += nameReader.getRecordCount();
@@ -266,7 +265,7 @@ class PredicatePushDownTest {
             // Filter for active == false -> skip RG0 (all true)
             FilterPredicate filter = FilterPredicate.eq("active", false);
 
-            try (ColumnReader activeReader = reader.createColumnReader("active", filter)) {
+            try (ColumnReader activeReader = reader.buildColumnReader("active").filter(filter).build()) {
                 int totalRows = 0;
                 while (activeReader.nextBatch()) {
                     totalRows += activeReader.getRecordCount();
@@ -288,7 +287,7 @@ class PredicatePushDownTest {
                     FilterPredicate.gt("id", 200L)
             );
 
-            try (ColumnReader idReader = reader.createColumnReader("id", filter)) {
+            try (ColumnReader idReader = reader.buildColumnReader("id").filter(filter).build()) {
                 int totalRows = 0;
                 while (idReader.nextBatch()) {
                     totalRows += idReader.getRecordCount();
@@ -307,7 +306,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LIST_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("scores", 200);
 
-            assertThatThrownBy(() -> reader.createRowReader(filter))
+            assertThatThrownBy(() -> reader.buildRowReader().filter(filter).build())
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("repeated");
         }
@@ -320,7 +319,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LIST_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("id", 6);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -341,7 +340,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("address.zip", 82000);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -360,7 +359,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
             FilterPredicate filter = FilterPredicate.gtEq("address.city", "Gary");
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -377,7 +376,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("address.zip", 92000);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 assertThat(rows.hasNext()).isFalse();
             }
         }
@@ -393,7 +392,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
             FilterPredicate filter = FilterPredicate.eq("id", 5);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -414,7 +413,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
             FilterPredicate filter = FilterPredicate.eq("address.zip", 81000);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -453,7 +452,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_TS_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("event.ts", cutoff);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 assertThat(rows.hasNext()).isFalse();
             }
         }
@@ -480,7 +479,7 @@ class PredicatePushDownTest {
             FilterPredicate filter = FilterPredicate.in("id", 50L, 250L);
 
             List<Long> ids = new ArrayList<>();
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 while (rows.hasNext()) {
                     rows.next();
                     ids.add(rows.getLong("id"));
@@ -497,7 +496,7 @@ class PredicatePushDownTest {
             FilterPredicate filter = FilterPredicate.inStrings("label", "rg1_1", "rg3_300");
 
             List<String> labels = new ArrayList<>();
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 while (rows.hasNext()) {
                     rows.next();
                     labels.add(rows.getString("label"));
@@ -517,7 +516,7 @@ class PredicatePushDownTest {
             FilterPredicate filter = FilterPredicate.not(FilterPredicate.in("id", 50L, 150L, 250L));
 
             List<Long> ids = new ArrayList<>();
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 while (rows.hasNext()) {
                     rows.next();
                     ids.add(rows.getLong("id"));
@@ -536,7 +535,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
-            try (ColumnReader valueReader = reader.createColumnReader("value", filter)) {
+            try (ColumnReader valueReader = reader.buildColumnReader("value").filter(filter).build()) {
                 int totalRows = 0;
                 while (valueReader.nextBatch()) {
                     long[] values = valueReader.getLongs();
@@ -561,8 +560,8 @@ class PredicatePushDownTest {
         FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
-             RowReader rows = parquet.createRowReader(filter)) {
+             ParquetFileReader parquet = hardwood.openAll(files);
+             RowReader rows = parquet.buildRowReader().filter(filter).build()) {
 
             int totalRows = 0;
             while (rows.hasNext()) {
@@ -581,8 +580,8 @@ class PredicatePushDownTest {
         ColumnProjection projection = ColumnProjection.columns("id", "label");
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
-             RowReader rows = parquet.createRowReader(projection, filter)) {
+             ParquetFileReader parquet = hardwood.openAll(files);
+             RowReader rows = parquet.buildRowReader().projection(projection).filter(filter).build()) {
 
             int totalRows = 0;
             while (rows.hasNext()) {
@@ -601,8 +600,8 @@ class PredicatePushDownTest {
         FilterPredicate filter = FilterPredicate.gt("id", 300L);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
-             RowReader rows = parquet.createRowReader(filter)) {
+             ParquetFileReader parquet = hardwood.openAll(files);
+             RowReader rows = parquet.buildRowReader().filter(filter).build()) {
 
             assertThat(rows.hasNext()).isFalse();
         }
@@ -674,7 +673,7 @@ class PredicatePushDownTest {
     private <T> List<T> readFiltered(Path file, FilterPredicate filter, RowValueExtractor<T> extractor) throws Exception {
         List<T> values = new ArrayList<>();
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
-                RowReader rows = reader.createRowReader(filter)) {
+                RowReader rows = reader.buildRowReader().filter(filter).build()) {
             while (rows.hasNext()) {
                 rows.next();
                 values.add(extractor.extract(rows));
@@ -694,7 +693,7 @@ class PredicatePushDownTest {
     void intPredicateOnStringColumnThrowsAtReaderCreation() throws Exception {
         // "name" is a STRING (BYTE_ARRAY) column; applying an int predicate must fail immediately
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
-            assertThatThrownBy(() -> reader.createRowReader(FilterPredicate.eq("name", 42)))
+            assertThatThrownBy(() -> reader.buildRowReader().filter(FilterPredicate.eq("name", 42)).build())
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Column 'name' has physical type BYTE_ARRAY"
                             + "; given filter predicate type INT32 is incompatible");
@@ -705,7 +704,7 @@ class PredicatePushDownTest {
     void stringPredicateOnIntColumnThrowsAtReaderCreation() throws Exception {
         // "id" is an INT32 column; applying a string predicate must fail immediately
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
-            assertThatThrownBy(() -> reader.createRowReader(FilterPredicate.eq("id", "hello")))
+            assertThatThrownBy(() -> reader.buildRowReader().filter(FilterPredicate.eq("id", "hello")).build())
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Column 'id' has physical type INT32"
                             + "; given filter predicate type BYTE_ARRAY is incompatible");
@@ -716,7 +715,7 @@ class PredicatePushDownTest {
     void longPredicateOnDoubleColumnThrowsAtReaderCreation() throws Exception {
         // "price" is a DOUBLE column; applying a long predicate must fail immediately
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
-            assertThatThrownBy(() -> reader.createColumnReader("price", FilterPredicate.gt("price", 100L)))
+            assertThatThrownBy(() -> reader.buildColumnReader("price").filter(FilterPredicate.gt("price", 100L)).build())
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Column 'price' has physical type DOUBLE"
                             + "; given filter predicate type INT64 is incompatible");
@@ -735,7 +734,7 @@ class PredicatePushDownTest {
             // value column is nullable (optional), so its pages can be skipped.
             FilterPredicate filter = FilterPredicate.lt("value", 2000L);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -756,7 +755,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE))) {
             // value range is [1000, 10999]; this matches nothing — every page is droppable.
             FilterPredicate filter = FilterPredicate.gtEq("value", 100000L);
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 assertThat(rows.hasNext()).isFalse();
             }
         }
@@ -767,7 +766,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE))) {
             // Every page satisfies the filter — no skips, all rows read normally.
             FilterPredicate filter = FilterPredicate.gtEq("value", 0L);
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -787,7 +786,7 @@ class PredicatePushDownTest {
                     FilterPredicate.lt("value", 1500L),
                     FilterPredicate.gt("value", 10500L));
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -804,15 +803,14 @@ class PredicatePushDownTest {
     // ==================== Multi-file ColumnReaders with Filter ====================
 
     @Test
-    void testMultiFileColumnReadersWithFilter() throws Exception {
+    void testColumnReadersWithFilter() throws Exception {
         // Filter: id > 200 -> RG2 from each file = 200 rows
         List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
         FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
-             MultiFileColumnReaders columns = parquet.createColumnReaders(
-                     ColumnProjection.columns("id", "value"), filter)) {
+             ParquetFileReader parquet = hardwood.openAll(files);
+             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value")).filter(filter).build()) {
 
             ColumnReader idReader = columns.getColumnReader("id");
             ColumnReader valueReader = columns.getColumnReader("value");
@@ -833,14 +831,13 @@ class PredicatePushDownTest {
     }
 
     @Test
-    void testMultiFileColumnReadersFilterMatchesNoRowGroups() throws Exception {
+    void testColumnReadersFilterMatchesNoRowGroups() throws Exception {
         List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
         FilterPredicate filter = FilterPredicate.eq("id", 999L);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
-             MultiFileColumnReaders columns = parquet.createColumnReaders(
-                     ColumnProjection.columns("id"), filter)) {
+             ParquetFileReader parquet = hardwood.openAll(files);
+             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id")).filter(filter).build()) {
 
             ColumnReader idReader = columns.getColumnReader("id");
             assertThat(idReader.nextBatch()).isFalse();
@@ -848,15 +845,14 @@ class PredicatePushDownTest {
     }
 
     @Test
-    void testMultiFileColumnReadersFilterOnDifferentColumn() throws Exception {
+    void testColumnReadersFilterOnDifferentColumn() throws Exception {
         // Filter on "id" but read "value" and "label"
         List<InputFile> files = InputFile.ofPaths(List.of(INT_FILE, INT_FILE));
         FilterPredicate filter = FilterPredicate.gt("id", 200L);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
-             MultiFileColumnReaders columns = parquet.createColumnReaders(
-                     ColumnProjection.columns("value", "label"), filter)) {
+             ParquetFileReader parquet = hardwood.openAll(files);
+             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("value", "label")).filter(filter).build()) {
 
             ColumnReader valueReader = columns.getColumnReader("value");
             ColumnReader labelReader = columns.getColumnReader("label");
@@ -885,7 +881,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
             FilterPredicate filter = FilterPredicate.eq("id", 150L);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -905,7 +901,7 @@ class PredicatePushDownTest {
                     FilterPredicate.gt("id", 90L),
                     FilterPredicate.ltEq("id", 100L));
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -924,7 +920,7 @@ class PredicatePushDownTest {
             FilterPredicate filter = FilterPredicate.eq("id", 250L);
             ColumnProjection projection = ColumnProjection.columns("id", "value", "label");
 
-            try (RowReader rows = reader.createRowReader(projection, filter)) {
+            try (RowReader rows = reader.buildRowReader().projection(projection).filter(filter).build()) {
                 assertThat(rows.hasNext()).isTrue();
                 rows.next();
                 assertThat(rows.getLong("id")).isEqualTo(250L);
@@ -943,8 +939,8 @@ class PredicatePushDownTest {
         FilterPredicate filter = FilterPredicate.eq("id", 50L);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(files);
-             RowReader rows = parquet.createRowReader(filter)) {
+             ParquetFileReader parquet = hardwood.openAll(files);
+             RowReader rows = parquet.buildRowReader().filter(filter).build()) {
 
             int totalRows = 0;
             while (rows.hasNext()) {
@@ -963,7 +959,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
             FilterPredicate filter = FilterPredicate.eq("id", 999L);
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 assertThat(rows.hasNext()).isFalse();
             }
         }
@@ -980,7 +976,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NULLS_FILE))) {
             FilterPredicate filter = FilterPredicate.isNull("name");
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -1000,7 +996,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NULLS_FILE))) {
             FilterPredicate filter = FilterPredicate.isNotNull("name");
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 List<Long> ids = new ArrayList<>();
                 List<String> names = new ArrayList<>();
                 while (rows.hasNext()) {
@@ -1020,7 +1016,7 @@ class PredicatePushDownTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NULLS_FILE))) {
             FilterPredicate filter = FilterPredicate.isNotNull("id");
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -1039,7 +1035,7 @@ class PredicatePushDownTest {
                     FilterPredicate.isNull("name"),
                     FilterPredicate.gt("id", 1L));
 
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 int totalRows = 0;
                 while (rows.hasNext()) {
                     rows.next();

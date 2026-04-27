@@ -34,7 +34,7 @@ class ByteBufferInputFileTest {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(3);
             assertThat(reader.getFileSchema().getColumnCount()).isEqualTo(2);
 
-            try (RowReader rowReader = reader.createRowReader()) {
+            try (RowReader rowReader = reader.rowReader()) {
                 assertThat(rowReader.hasNext()).isTrue();
                 rowReader.next();
                 assertThat(rowReader.getLong("id")).isEqualTo(1L);

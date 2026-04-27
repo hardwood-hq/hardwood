@@ -42,7 +42,7 @@ class JsonLogicalTypeTest {
     @BeforeAll
     void readAllRows() throws IOException {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             while (rowReader.hasNext()) {
                 rowReader.next();
                 values.add(rowReader.getString(COLUMN));

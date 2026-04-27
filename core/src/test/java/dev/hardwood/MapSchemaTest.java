@@ -64,7 +64,7 @@ public class MapSchemaTest {
         Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            try (RowReader rowReader = fileReader.createRowReader()) {
+            try (RowReader rowReader = fileReader.rowReader()) {
                 int rowCount = 0;
 
                 // Row 0: Alice with 3 attributes
@@ -149,7 +149,7 @@ public class MapSchemaTest {
         Path parquetFile = Paths.get("src/test/resources/map_of_maps_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            try (RowReader rowReader = fileReader.createRowReader()) {
+            try (RowReader rowReader = fileReader.rowReader()) {
                 int rowCount = 0;
 
                 // Row 0: Department A with two teams
@@ -204,7 +204,7 @@ public class MapSchemaTest {
         Path parquetFile = Paths.get("src/test/resources/list_of_maps_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            try (RowReader rowReader = fileReader.createRowReader()) {
+            try (RowReader rowReader = fileReader.rowReader()) {
                 int rowCount = 0;
 
                 // Row 0: List with 3 maps
@@ -255,7 +255,7 @@ public class MapSchemaTest {
         Path parquetFile = Paths.get("src/test/resources/map_struct_value_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            try (RowReader rowReader = fileReader.createRowReader()) {
+            try (RowReader rowReader = fileReader.rowReader()) {
                 int rowCount = 0;
 
                 // Row 0: Two employees
@@ -298,7 +298,7 @@ public class MapSchemaTest {
         Path parquetFile = Paths.get("src/test/resources/map_with_list_value_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: entries={a: {scores=[10,20]}}
             rowReader.next();
@@ -368,7 +368,7 @@ public class MapSchemaTest {
         Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            try (RowReader rowReader = fileReader.createRowReader()) {
+            try (RowReader rowReader = fileReader.rowReader()) {
                 rowReader.next();
 
                 // Find the attributes column index

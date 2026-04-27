@@ -38,7 +38,7 @@ class PageRangeAllMatchTest {
 
         long unfilteredCount;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE));
-             RowReader rows = reader.createRowReader(ColumnProjection.all())) {
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.all()).build()) {
             unfilteredCount = 0;
             while (rows.hasNext()) {
                 rows.next();
@@ -48,7 +48,7 @@ class PageRangeAllMatchTest {
 
         long filteredCount;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE));
-             RowReader rows = reader.createRowReader(ColumnProjection.all(), filter)) {
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.all()).filter(filter).build()) {
             filteredCount = 0;
             while (rows.hasNext()) {
                 rows.next();

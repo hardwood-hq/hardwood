@@ -39,7 +39,7 @@ class GzipDecompressionTest {
             assertThat(fileReader.getFileSchema().getColumnCount()).isEqualTo(3);
             assertThat(fileReader.getFileMetaData().numRows()).isEqualTo(5);
 
-            try (RowReader rowReader = fileReader.createRowReader()) {
+            try (RowReader rowReader = fileReader.rowReader()) {
                 // Row 0
                 assertThat(rowReader.hasNext()).isTrue();
                 rowReader.next();

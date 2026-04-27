@@ -131,8 +131,8 @@ class PageFilterBenchmarkTest {
         double sum = 0.0;
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             ColumnReader idCol = reader.createColumnReader("id");
-             ColumnReader valCol = reader.createColumnReader("value")) {
+             ColumnReader idCol = reader.columnReader("id");
+             ColumnReader valCol = reader.columnReader("value")) {
 
             while (idCol.nextBatch() & valCol.nextBatch()) {
                 int count = idCol.getRecordCount();
@@ -156,8 +156,8 @@ class PageFilterBenchmarkTest {
         FilterPredicate filter = FilterPredicate.lt("id", (long) (TOTAL_ROWS / 10));
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             ColumnReader idCol = reader.createColumnReader("id", filter);
-             ColumnReader valCol = reader.createColumnReader("value", filter)) {
+             ColumnReader idCol = reader.buildColumnReader("id").filter(filter).build();
+             ColumnReader valCol = reader.buildColumnReader("value").filter(filter).build()) {
 
             while (idCol.nextBatch() & valCol.nextBatch()) {
                 int count = idCol.getRecordCount();

@@ -178,7 +178,7 @@ class NestedPerformanceTest {
 
             System.out.println("\n=== Sample Rows (first 5 with nested data) ===\n");
 
-            try (RowReader rowReader = reader.createRowReader()) {
+            try (RowReader rowReader = reader.rowReader()) {
                 int printed = 0;
                 int scanned = 0;
                 while (rowReader.hasNext() && printed < 5) {
@@ -426,7 +426,7 @@ class NestedPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create();
              ParquetFileReader reader = hardwood.open(InputFile.of(DATA_FILE));
-             RowReader rowReader = reader.createRowReader()) {
+             RowReader rowReader = reader.rowReader()) {
 
             while (rowReader.hasNext()) {
                 rowReader.next();
@@ -529,7 +529,7 @@ class NestedPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create();
              ParquetFileReader reader = hardwood.open(InputFile.of(DATA_FILE));
-             RowReader rowReader = reader.createRowReader()) {
+             RowReader rowReader = reader.rowReader()) {
 
             // Resolve top-level field indices once (RowReader supports int-based access)
             SchemaNode.GroupNode root = reader.getFileSchema().getRootNode();
@@ -658,8 +658,8 @@ class NestedPerformanceTest {
             int namesPrimaryColIdx = ((SchemaNode.PrimitiveNode) findChild(namesNode, "primary")).columnIndex();
 
             // Read flat primitives: version and confidence
-            try (ColumnReader versionCol = reader.createColumnReader(versionColIdx);
-                 ColumnReader confidenceCol = reader.createColumnReader(confidenceColIdx)) {
+            try (ColumnReader versionCol = reader.columnReader(versionColIdx);
+                 ColumnReader confidenceCol = reader.columnReader(confidenceColIdx)) {
                 while (versionCol.nextBatch() & confidenceCol.nextBatch()) {
                     int count = versionCol.getRecordCount();
                     int[] versions = versionCol.getInts();
@@ -682,8 +682,8 @@ class NestedPerformanceTest {
             }
 
             // Read bbox leaf columns
-            try (ColumnReader xminCol = reader.createColumnReader(bboxXminColIdx);
-                 ColumnReader xmaxCol = reader.createColumnReader(bboxXmaxColIdx)) {
+            try (ColumnReader xminCol = reader.columnReader(bboxXminColIdx);
+                 ColumnReader xmaxCol = reader.columnReader(bboxXmaxColIdx)) {
                 while (xminCol.nextBatch() & xmaxCol.nextBatch()) {
                     int count = xminCol.getRecordCount();
                     double[] xmins = xminCol.getDoubles();
@@ -722,7 +722,7 @@ class NestedPerformanceTest {
             maxNameEntries = (int) commonSizes[1];
 
             // names.primary: find max string length
-            try (ColumnReader primaryCol = reader.createColumnReader(namesPrimaryColIdx)) {
+            try (ColumnReader primaryCol = reader.columnReader(namesPrimaryColIdx)) {
                 while (primaryCol.nextBatch()) {
                     int count = primaryCol.getRecordCount();
                     byte[][] values = primaryCol.getBinaries();
@@ -752,7 +752,7 @@ class NestedPerformanceTest {
         long totalCount = 0;
         int maxCount = 0;
 
-        try (ColumnReader col = reader.createColumnReader(colIdx)) {
+        try (ColumnReader col = reader.columnReader(colIdx)) {
             while (col.nextBatch()) {
                 int recordCount = col.getRecordCount();
                 int valueCount = col.getValueCount();

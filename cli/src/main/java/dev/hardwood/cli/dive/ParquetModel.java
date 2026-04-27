@@ -352,7 +352,7 @@ public final class ParquetModel implements AutoCloseable {
             throws IOException {
         if (previewCursor == null || firstRow < previewCursorPosition) {
             closePreviewCursor();
-            previewCursor = reader.createRowReader();
+            previewCursor = reader.rowReader();
             previewCursorPosition = 0;
         }
         while (previewCursorPosition < firstRow && previewCursor.hasNext()) {

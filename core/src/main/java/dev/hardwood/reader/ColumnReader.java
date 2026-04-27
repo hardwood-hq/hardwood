@@ -35,7 +35,7 @@ import dev.hardwood.schema.ProjectedSchema;
 ///
 /// **Flat column usage:**
 /// ```java
-/// try (ColumnReader reader = fileReader.createColumnReader("fare_amount")) {
+/// try (ColumnReader reader = fileReader.columnReader("fare_amount")) {
 ///     while (reader.nextBatch()) {
 ///         int count = reader.getRecordCount();
 ///         double[] values = reader.getDoubles();
@@ -49,7 +49,7 @@ import dev.hardwood.schema.ProjectedSchema;
 ///
 /// **Simple list usage (nestingDepth=1):**
 /// ```java
-/// try (ColumnReader reader = fileReader.createColumnReader("fare_components")) {
+/// try (ColumnReader reader = fileReader.columnReader("fare_components")) {
 ///     while (reader.nextBatch()) {
 ///         int recordCount = reader.getRecordCount();
 ///         int valueCount = reader.getValueCount();

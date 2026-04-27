@@ -67,7 +67,7 @@ public class ConvertCommand implements Callable<Integer> {
             List<SchemaNode> fields = projectedFields(fileSchema, projection);
 
             PrintWriter out = openOutput();
-            try (RowReader rowReader = reader.createRowReader(projection)) {
+            try (RowReader rowReader = reader.buildRowReader().projection(projection).build()) {
                 switch (format) {
                     case CSV -> writeCsv(out, fields, rowReader);
                     case JSON -> writeJson(out, fields, rowReader);

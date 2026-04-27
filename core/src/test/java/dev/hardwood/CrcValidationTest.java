@@ -31,7 +31,7 @@ class CrcValidationTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(3);
 
-            try (ColumnReader idReader = reader.createColumnReader("id")) {
+            try (ColumnReader idReader = reader.columnReader("id")) {
                 assertThat(idReader.nextBatch()).isTrue();
                 long[] values = idReader.getLongs();
                 assertThat(values[0]).isEqualTo(1L);
@@ -40,7 +40,7 @@ class CrcValidationTest {
                 assertThat(idReader.nextBatch()).isFalse();
             }
 
-            try (ColumnReader valueReader = reader.createColumnReader("value")) {
+            try (ColumnReader valueReader = reader.columnReader("value")) {
                 assertThat(valueReader.nextBatch()).isTrue();
                 long[] values = valueReader.getLongs();
                 assertThat(values[0]).isEqualTo(100L);
@@ -69,7 +69,7 @@ class CrcValidationTest {
         ByteBuffer corrupted = ByteBuffer.wrap(bytes);
         assertThatThrownBy(() -> {
             try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted))) {
-                try (ColumnReader colReader = reader.createColumnReader("id")) {
+                try (ColumnReader colReader = reader.columnReader("id")) {
                     colReader.nextBatch();
                 }
             }
@@ -84,7 +84,7 @@ class CrcValidationTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(5);
 
-            try (ColumnReader categoryReader = reader.createColumnReader("category")) {
+            try (ColumnReader categoryReader = reader.columnReader("category")) {
                 assertThat(categoryReader.nextBatch()).isTrue();
                 String[] values = categoryReader.getStrings();
                 assertThat(values[0]).isEqualTo("A");
@@ -115,7 +115,7 @@ class CrcValidationTest {
         ByteBuffer corrupted = ByteBuffer.wrap(bytes);
         assertThatThrownBy(() -> {
             try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted))) {
-                try (ColumnReader colReader = reader.createColumnReader("category")) {
+                try (ColumnReader colReader = reader.columnReader("category")) {
                     colReader.nextBatch();
                 }
             }
@@ -130,7 +130,7 @@ class CrcValidationTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(3);
 
-            try (ColumnReader idReader = reader.createColumnReader("id")) {
+            try (ColumnReader idReader = reader.columnReader("id")) {
                 assertThat(idReader.nextBatch()).isTrue();
                 long[] values = idReader.getLongs();
                 assertThat(values[0]).isEqualTo(1L);

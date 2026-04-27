@@ -63,7 +63,7 @@ class DeltaByteArrayTest {
             };
 
             int rowIndex = 0;
-            try (RowReader rowReader = reader.createRowReader()) {
+            try (RowReader rowReader = reader.rowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
 

@@ -12,7 +12,7 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.reader.SchemaIncompatibleException;
 
@@ -30,8 +30,8 @@ class SchemaCompatibilityTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> {
-                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(micros, millis));
-                     RowReader reader = parquet.createRowReader()) {
+                try (ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(micros, millis));
+                     RowReader reader = parquet.rowReader()) {
                     while (reader.hasNext()) {
                         reader.next();
                     }
@@ -50,8 +50,8 @@ class SchemaCompatibilityTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> {
-                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(dec10_2, dec10_4));
-                     RowReader reader = parquet.createRowReader()) {
+                try (ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(dec10_2, dec10_4));
+                     RowReader reader = parquet.rowReader()) {
                     while (reader.hasNext()) {
                         reader.next();
                     }
@@ -70,8 +70,8 @@ class SchemaCompatibilityTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> {
-                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(required, optional));
-                     RowReader reader = parquet.createRowReader()) {
+                try (ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(required, optional));
+                     RowReader reader = parquet.rowReader()) {
                     while (reader.hasNext()) {
                         reader.next();
                     }
@@ -89,8 +89,8 @@ class SchemaCompatibilityTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             assertThatThrownBy(() -> {
-                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(tsMicros, plainInt));
-                     RowReader reader = parquet.createRowReader()) {
+                try (ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(tsMicros, plainInt));
+                     RowReader reader = parquet.rowReader()) {
                     while (reader.hasNext()) {
                         reader.next();
                     }
@@ -107,8 +107,8 @@ class SchemaCompatibilityTest {
         Path micros = Paths.get("src/test/resources/compat_ts_micros.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(micros, micros));
-             RowReader reader = parquet.createRowReader()) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(micros, micros));
+             RowReader reader = parquet.rowReader()) {
 
             int count = 0;
             while (reader.hasNext()) {

@@ -161,7 +161,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
-            try (RowReader rows = reader.createRowReader()) {
+            try (RowReader rows = reader.rowReader()) {
                 while (rows.hasNext()) {
                     rows.next();
                     lastC0 = rows.getLong("c0");
@@ -195,8 +195,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", PAGE_INDEX_FILE))) {
 
-            try (RowReader rows = reader.createRowReader(
-                    ColumnProjection.columns("id", "value"))) {
+            try (RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id", "value")).build()) {
                 while (rows.hasNext()) {
                     rows.next();
                 }
@@ -242,7 +241,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", FILTER_PUSHDOWN_FILE))) {
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 while (rows.hasNext()) {
                     rows.next();
                 }
@@ -275,7 +274,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", FILTER_PUSHDOWN_FILE))) {
-            try (RowReader rows = reader.createRowReader(filter)) {
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
                 while (rows.hasNext()) {
                     rows.next();
                 }
@@ -306,7 +305,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
-            try (RowReader rows = reader.createRowReader(ColumnProjection.all(), null, 10L)) {
+            try (RowReader rows = reader.buildRowReader().projection(ColumnProjection.all()).head(10L).build()) {
                 int count = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -366,7 +365,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
         int count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_ROWGROUP_FILE))) {
-            try (RowReader rows = reader.createRowReader(ColumnProjection.all(), null, -10L)) {
+            try (RowReader rows = reader.buildRowReader().projection(ColumnProjection.all()).tail(10L).build()) {
                 while (rows.hasNext()) {
                     rows.next();
                     long c0 = rows.getLong("c0");
@@ -428,7 +427,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_PAGE_FILE))) {
-            try (RowReader rows = reader.createRowReader()) {
+            try (RowReader rows = reader.rowReader()) {
                 int count = 0;
                 while (rows.hasNext() && count < 10) {
                     rows.next();
@@ -486,7 +485,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LARGE_RG_FILE))) {
-            try (RowReader rows = reader.createRowReader()) {
+            try (RowReader rows = reader.rowReader()) {
                 int count = 0;
                 while (rows.hasNext() && count < 10) {
                     rows.next();
@@ -526,7 +525,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
         // Reading a single batch from one column should not scan all 20 row groups.
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_ROWGROUP_FILE));
-             ColumnReader col = reader.createColumnReader("c0")) {
+             ColumnReader col = reader.columnReader("c0")) {
             assertThat(col.nextBatch()).isTrue();
             // Consume one batch and close — don't read further
         }
@@ -559,8 +558,8 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", file))) {
             try (RowReader rows = filter != null
-                    ? reader.createRowReader(projection, filter)
-                    : reader.createRowReader(projection)) {
+                    ? reader.buildRowReader().projection(projection).filter(filter).build()
+                    : reader.buildRowReader().projection(projection).build()) {
                 while (rows.hasNext()) {
                     rows.next();
                 }

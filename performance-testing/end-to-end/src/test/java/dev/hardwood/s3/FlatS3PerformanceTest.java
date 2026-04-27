@@ -27,7 +27,6 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
 import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -155,7 +154,7 @@ class FlatS3PerformanceTest {
                 result.fareAmount(), duration, result.rowCount());
     }
 
-    /// Row-oriented reader opened via [MultiFileParquetReader#openAll] with
+    /// Row-oriented reader opened via [ParquetFileReader#openAll] with
     /// projection and indexed field access, reading from S3.
     ///
     /// Groups files by schema compatibility (passenger_count type varies across
@@ -174,8 +173,8 @@ class FlatS3PerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
-                try (MultiFileParquetReader parquet = hardwood.openAll(group.files());
-                     RowReader rowReader = parquet.createRowReader(projection)) {
+                try (ParquetFileReader parquet = hardwood.openAll(group.files());
+                     RowReader rowReader = parquet.buildRowReader().projection(projection).build()) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
                     while (rowReader.hasNext()) {

@@ -36,7 +36,7 @@ import dev.hardwood.schema.ProjectedSchema;
 ///
 /// Usage example:
 /// ```java
-/// try (RowReader rowReader = fileReader.createRowReader()) {
+/// try (RowReader rowReader = fileReader.rowReader()) {
 ///     while (rowReader.hasNext()) {
 ///         rowReader.next();
 ///         long id = rowReader.getLong("id");

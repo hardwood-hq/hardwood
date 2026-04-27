@@ -31,7 +31,7 @@ public class YellowTripDataTest {
             assertThat(fileReader.getFileSchema().getColumnCount()).isEqualTo(20);
             assertThat(fileReader.getFileMetaData().numRows()).isEqualTo(5);
 
-            try (RowReader rowReader = fileReader.createRowReader()) {
+            try (RowReader rowReader = fileReader.rowReader()) {
                 int rowCount = 0;
 
                 // Row 0: VendorID=1, pickup=2025-01-01T00:18:38, dropoff=2025-01-01T00:26:59

@@ -49,8 +49,8 @@ public class ParquetReader<T> implements AutoCloseable {
             dev.hardwood.reader.FilterPredicate filter) throws IOException {
         this.hardwoodReader = ParquetFileReader.open(inputFile);
         this.rowReader = filter != null
-                ? hardwoodReader.createRowReader(filter)
-                : hardwoodReader.createRowReader();
+                ? hardwoodReader.buildRowReader().filter(filter).build()
+                : hardwoodReader.rowReader();
         this.messageType = SchemaConverter.toMessageType(hardwoodReader.getFileSchema());
     }
 

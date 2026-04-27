@@ -25,6 +25,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.cli.internal.table.StreamedTable;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetFileReader.RowReaderBuilder;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
@@ -83,9 +84,7 @@ public class PrintCommand implements Callable<Integer> {
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema fileSchema = reader.getFileSchema();
-            try (RowReader rowReader = rowLimit != 0
-                    ? reader.createRowReader(projection, null, rowLimit)
-                    : reader.createRowReader(projection)) {
+            try (RowReader rowReader = buildRowReader(reader, projection, rowLimit)) {
                 String[] headers = RowTable.topLevelFieldNames(fileSchema, projection);
                 List<SchemaNode> fields = projectedFields(fileSchema, projection);
                 AtomicLong rowIndex = addRowIndex ? new AtomicLong() : null;
@@ -132,6 +131,17 @@ public class PrintCommand implements Callable<Integer> {
                 maxWidth,
                 truncate,
                 rowDelimiter);
+    }
+
+    private static RowReader buildRowReader(ParquetFileReader reader, ColumnProjection projection, int rowLimit) {
+        RowReaderBuilder builder = reader.buildRowReader().projection(projection);
+        if (rowLimit > 0) {
+            builder.head(rowLimit);
+        }
+        else if (rowLimit < 0) {
+            builder.tail(-rowLimit);
+        }
+        return builder.build();
     }
 
     private int parseRowLimit() {

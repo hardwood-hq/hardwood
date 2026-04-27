@@ -44,7 +44,7 @@ class IntervalLogicalTypeTest {
     @BeforeAll
     void readAll() throws IOException {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             durationColumn = fileReader.getFileSchema().getColumn("duration");
             durationIdx = durationColumn.columnIndex();
             rowReader.next();
@@ -78,7 +78,7 @@ class IntervalLogicalTypeTest {
     @Test
     void testGetIntervalByIndexReturnsSameValue() throws IOException {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
             assertThat(rowReader.getInterval(durationIdx)).isEqualTo(row0);
         }
@@ -113,7 +113,7 @@ class IntervalLogicalTypeTest {
     void testLegacyConvertedTypeIsPromotedToIntervalLogicalType() throws IOException {
         Path legacyFile = Paths.get("src/test/resources/interval_legacy_converted_type_test.parquet");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(legacyFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             ColumnSchema column = fileReader.getFileSchema().getColumn("duration");
             assertThat(column.logicalType()).isInstanceOf(LogicalType.IntervalType.class);
 

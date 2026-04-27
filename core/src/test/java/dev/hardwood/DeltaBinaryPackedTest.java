@@ -40,7 +40,7 @@ class DeltaBinaryPackedTest {
             }
 
             int rowIndex = 0;
-            try (RowReader rowReader = reader.createRowReader()) {
+            try (RowReader rowReader = reader.rowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
                     rowIndex++;
@@ -81,7 +81,7 @@ class DeltaBinaryPackedTest {
 
             int rowIndex = 0;
             int nullCount = 0;
-            try (RowReader rowReader = reader.createRowReader()) {
+            try (RowReader rowReader = reader.rowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
                     rowIndex++;
@@ -127,7 +127,7 @@ class DeltaBinaryPackedTest {
             String[] expectedDescriptions = { "Short", "A bit longer text", "Medium length", "Tiny", "Another string value" };
 
             int rowIndex = 0;
-            try (RowReader rowReader = reader.createRowReader()) {
+            try (RowReader rowReader = reader.rowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
 

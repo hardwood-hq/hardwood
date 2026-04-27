@@ -11,7 +11,6 @@ import java.io.IOException;
 import java.util.List;
 
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.ParquetFileReader;
 
 /// Entry point for reading Parquet files with a shared thread pool.
@@ -39,28 +38,21 @@ public class Hardwood implements AutoCloseable {
         return new Hardwood(HardwoodContextImpl.create());
     }
 
-    /// Open a Parquet file from an [InputFile] for reading.
-    ///
-    /// The file will be opened and closed automatically; closing the
-    /// returned reader closes the file.
+    /// Open a single Parquet file. The file is opened immediately and
+    /// closed when the returned reader is closed.
     public ParquetFileReader open(InputFile inputFile) throws IOException {
         return ParquetFileReader.open(inputFile, context);
     }
 
     /// Open multiple Parquet files for reading with cross-file prefetching.
-    ///
-    /// Returns a [MultiFileParquetReader] that reads the schema from the first file
-    /// and provides factory methods for row-oriented
-    /// ([MultiFileParquetReader#createRowReader()]) or column-oriented
-    /// ([MultiFileParquetReader#createColumnReaders(dev.hardwood.schema.ColumnProjection)]) access.
-    /// The files will be opened automatically as needed.
+    /// The schema is read from the first file. Files are opened on demand
+    /// by the iterator and closed when the returned reader is closed.
     ///
     /// @param inputFiles the input files to read (must not be empty)
-    /// @return a MultiFileParquetReader for the given files
     /// @throws IOException if the first file cannot be opened or read
     /// @throws IllegalArgumentException if the list is empty
-    public MultiFileParquetReader openAll(List<InputFile> inputFiles) throws IOException {
-        return new MultiFileParquetReader(inputFiles, context);
+    public ParquetFileReader openAll(List<InputFile> inputFiles) throws IOException {
+        return ParquetFileReader.openAll(inputFiles, context);
     }
 
     @Override

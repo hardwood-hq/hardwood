@@ -160,7 +160,7 @@ class ParquetTestingRepoTest {
                     System.out.println("Column " + colIdx + ": " + column.name() + " (" + column.type() + ")");
                 }
 
-                try (ColumnReader columnReader = reader.createColumnReader(colIdx)) {
+                try (ColumnReader columnReader = reader.columnReader(colIdx)) {
                     int columnValues = 0;
                     while (columnReader.nextBatch()) {
                         columnValues += columnReader.getRecordCount();

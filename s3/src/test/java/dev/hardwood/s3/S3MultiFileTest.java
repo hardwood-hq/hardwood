@@ -18,7 +18,7 @@ import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
 
 import dev.hardwood.Hardwood;
-import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -54,11 +54,11 @@ class S3MultiFileTest {
     @Test
     void readMultipleFiles() throws Exception {
         try (Hardwood hardwood = Hardwood.create();
-                MultiFileParquetReader reader = hardwood.openAll(
+                ParquetFileReader reader = hardwood.openAll(
                         source.inputFilesInBucket("test-bucket",
                                 "plain_uncompressed.parquet",
                                 "plain_uncompressed.parquet"))) {
-            try (RowReader rows = reader.createRowReader()) {
+            try (RowReader rows = reader.rowReader()) {
                 int count = 0;
                 while (rows.hasNext()) {
                     rows.next();

@@ -29,7 +29,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-    RowReader rowReader = fileReader.createRowReader()) {
+    RowReader rowReader = fileReader.rowReader()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();
@@ -49,7 +49,7 @@ See [Getting Started](getting-started.md) for installation and setup.
 This is Alpha quality software, under active development.
 
 Currently, individual Parquet files must be **at most 2 GB**.
-Larger datasets should be split across multiple files and read via `MultiFileParquetReader`.
+Larger datasets should be split across multiple files and read by passing a list of `InputFile`s to `Hardwood.openAll(...)` or `ParquetFileReader.openAll(...)`.
 
 ## Package Structure
 

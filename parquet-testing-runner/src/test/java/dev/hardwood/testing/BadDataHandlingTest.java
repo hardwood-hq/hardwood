@@ -18,7 +18,6 @@ import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
@@ -28,7 +27,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// Verifies how Hardwood handles corrupted and intentionally-malformed Parquet files from
 /// the `apache/parquet-testing` suite (the `bad_data/` directory plus a handful of files
 /// in `data/` with corrupted CRCs). Covers both the single-file [ParquetFileReader] and
-/// the [MultiFileParquetReader] paths, including failures that appear mid-sequence. These
+/// the [ParquetFileReader] paths, including failures that appear mid-sequence. These
 /// tests do not compare against parquet-java — they assert Hardwood's own reject/accept
 /// behavior — so they live here rather than in [ParquetComparisonTest].
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
@@ -121,7 +120,7 @@ class BadDataHandlingTest {
         Path testFile = repoDir.resolve("bad_data/ARROW-GH-43605.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             int count = 0;
             while (rowReader.hasNext()) {
                 rowReader.next();
@@ -168,7 +167,7 @@ class BadDataHandlingTest {
 
         assertThatThrownBy(() -> {
             try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile));
-                 RowReader rowReader = fileReader.createRowReader()) {
+                 RowReader rowReader = fileReader.rowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
                 }
@@ -182,7 +181,7 @@ class BadDataHandlingTest {
         Path testFile = repoDir.resolve("bad_data/" + fileName);
         return () -> {
             try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile));
-                 RowReader rowReader = fileReader.createRowReader()) {
+                 RowReader rowReader = fileReader.rowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
                 }
@@ -201,9 +200,9 @@ class BadDataHandlingTest {
     private ThrowableAssert.ThrowingCallable multiFileReadAction(Path good, Path bad) {
         return () -> {
             try (HardwoodContextImpl context = HardwoodContextImpl.create();
-                 MultiFileParquetReader mfReader = new MultiFileParquetReader(
+                 ParquetFileReader mfReader = ParquetFileReader.openAll(
                          List.of(InputFile.of(good), InputFile.of(bad)), context);
-                 RowReader rowReader = mfReader.createRowReader()) {
+                 RowReader rowReader = mfReader.rowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
                 }

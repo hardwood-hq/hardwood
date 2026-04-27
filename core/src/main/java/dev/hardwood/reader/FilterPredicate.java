@@ -35,7 +35,7 @@ import java.util.UUID;
 /// );
 ///
 /// // Use with reader
-/// try (ColumnReader reader = fileReader.createColumnReader("salary", filter)) {
+/// try (ColumnReader reader = fileReader.buildColumnReader("salary").filter(filter).build()) {
 ///     while (reader.nextBatch()) { ... }
 /// }
 /// ```

@@ -41,7 +41,7 @@ class Int96TimestampTest {
     void readAllRows() throws IOException {
         Path file = ParquetTestingRepoCloner.getTestFile("data/int96_from_spark.parquet");
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
-             RowReader rowReader = reader.createRowReader()) {
+             RowReader rowReader = reader.rowReader()) {
 
             assertThat(reader.getFileSchema().getColumn(0).type()).isEqualTo(PhysicalType.INT96);
             assertThat(reader.getFileSchema().getColumn(0).logicalType()).isNull();

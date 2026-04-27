@@ -16,15 +16,17 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/// Holds multiple [ColumnReader] instances backed by a shared [RowGroupIterator]
-/// for cross-file prefetching across multiple Parquet files.
+/// Holds multiple [ColumnReader] instances backed by a shared
+/// [RowGroupIterator] for batch-oriented projection reads. Works for both
+/// single- and multi-file [ParquetFileReader] inputs; the iterator
+/// transparently handles cross-file prefetching when more than one file is
+/// involved.
 ///
-/// Usage:
 /// ```java
-/// try (Hardwood hardwood = Hardwood.create();
-///      MultiFileParquetReader parquet = hardwood.openAll(files);
-///      MultiFileColumnReaders columns = parquet.createColumnReaders(
-///          ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
+/// try (ParquetFileReader parquet = ParquetFileReader.openAll(files);
+///      ColumnReaders columns = parquet.columnReaders(
+///              ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))
+///              .build()) {
 ///
 ///     ColumnReader col0 = columns.getColumnReader("passenger_count");
 ///     ColumnReader col1 = columns.getColumnReader("trip_distance");
@@ -37,15 +39,15 @@ import dev.hardwood.schema.ProjectedSchema;
 ///     }
 /// }
 /// ```
-public class MultiFileColumnReaders implements AutoCloseable {
+public class ColumnReaders implements AutoCloseable {
 
     private final Map<String, ColumnReader> readersByName;
     private final ColumnReader[] readersByIndex;
 
-    MultiFileColumnReaders(HardwoodContextImpl context,
-                           RowGroupIterator rowGroupIterator,
-                           FileSchema schema,
-                           ProjectedSchema projectedSchema) {
+    ColumnReaders(HardwoodContextImpl context,
+                  RowGroupIterator rowGroupIterator,
+                  FileSchema schema,
+                  ProjectedSchema projectedSchema) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         this.readersByName = new LinkedHashMap<>(projectedColumnCount);
         this.readersByIndex = new ColumnReader[projectedColumnCount];

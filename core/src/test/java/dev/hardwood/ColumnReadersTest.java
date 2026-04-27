@@ -15,24 +15,23 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.reader.ColumnReader;
-import dev.hardwood.reader.MultiFileColumnReaders;
-import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// Tests for [MultiFileColumnReaders] and cross-file column-oriented prefetching.
-class MultiFileColumnReadersTest {
+/// Tests for [ColumnReaders] and cross-file column-oriented prefetching.
+class ColumnReadersTest {
 
     @Test
     void testReadSingleFile() throws Exception {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id", "value"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id", "value"))) {
 
             ColumnReader idReader = columns.getColumnReader("id");
             ColumnReader valueReader = columns.getColumnReader("value");
@@ -65,8 +64,8 @@ class MultiFileColumnReadersTest {
         long rowCount = 0;
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id", "value"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id", "value"))) {
 
             ColumnReader idReader = columns.getColumnReader("id");
             ColumnReader valueReader = columns.getColumnReader("value");
@@ -97,8 +96,8 @@ class MultiFileColumnReadersTest {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id", "value"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id", "value"))) {
 
             assertThat(columns.getColumnReader(0).getColumnSchema().name()).isEqualTo("id");
             assertThat(columns.getColumnReader(1).getColumnSchema().name()).isEqualTo("value");
@@ -110,8 +109,8 @@ class MultiFileColumnReadersTest {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
 
             assertThatThrownBy(() -> columns.getColumnReader("nonexistent"))
                     .isInstanceOf(IllegalArgumentException.class)
@@ -125,8 +124,8 @@ class MultiFileColumnReadersTest {
         List<Path> files = List.of(filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id", "name"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id", "name"))) {
 
             ColumnReader idReader = columns.getColumnReader("id");
             ColumnReader nameReader = columns.getColumnReader("name");
@@ -160,8 +159,8 @@ class MultiFileColumnReadersTest {
         List<Path> files = List.of(filePath, filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id", "value"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id", "value"))) {
 
             ColumnReader idReader = columns.getColumnReader("id");
             ColumnReader valueReader = columns.getColumnReader("value");
@@ -193,11 +192,11 @@ class MultiFileColumnReadersTest {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
         List<Path> files = List.of(filePath, filePath);
 
-        // Count rows using MultiFileColumnReaders
+        // Count rows using ColumnReaders
         long multiFileCount = 0;
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
             ColumnReader reader = columns.getColumnReader("id");
             while (reader.nextBatch()) {
                 multiFileCount += reader.getRecordCount();
@@ -209,7 +208,7 @@ class MultiFileColumnReadersTest {
         try (Hardwood hardwood = Hardwood.create()) {
             for (Path file : files) {
                 try (ParquetFileReader fileReader = hardwood.open(InputFile.of(file));
-                     ColumnReader reader = fileReader.createColumnReader("id")) {
+                     ColumnReader reader = fileReader.columnReader("id")) {
                     while (reader.nextBatch()) {
                         singleFileCount += reader.getRecordCount();
                     }
@@ -226,9 +225,8 @@ class MultiFileColumnReadersTest {
         List<Path> files = List.of(filePath, filePath);
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(
-                     ColumnProjection.columns("int_col", "long_col", "float_col", "double_col", "bool_col", "string_col"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("int_col", "long_col", "float_col", "double_col", "bool_col", "string_col"))) {
 
             ColumnReader intReader = columns.getColumnReader("int_col");
             ColumnReader longReader = columns.getColumnReader("long_col");
@@ -289,8 +287,8 @@ class MultiFileColumnReadersTest {
         int rowCount = 0;
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("name"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("name"))) {
 
             ColumnReader nameReader = columns.getColumnReader("name");
 
@@ -321,8 +319,8 @@ class MultiFileColumnReadersTest {
         long rowCount = 0;
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(files));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
 
             ColumnReader idReader = columns.getColumnReader("id");
 
@@ -347,8 +345,8 @@ class MultiFileColumnReadersTest {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id"))) {
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
 
             ColumnReader reader = columns.getColumnReader("id");
             assertThat(reader.getNestingDepth()).isEqualTo(0);

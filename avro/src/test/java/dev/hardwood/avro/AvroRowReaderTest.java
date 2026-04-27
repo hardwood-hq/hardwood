@@ -37,7 +37,7 @@ class AvroRowReaderTest {
         // plain_uncompressed.parquet: id INT64, value INT64 — 3 rows
         try (ParquetFileReader fileReader = ParquetFileReader.open(
                 InputFile.of(TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
-             AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
 
             Schema schema = reader.getSchema();
             assertThat(schema.getType()).isEqualTo(Schema.Type.RECORD);
@@ -58,7 +58,7 @@ class AvroRowReaderTest {
         // plain_uncompressed_with_nulls.parquet: id INT64, name STRING (optional)
         try (ParquetFileReader fileReader = ParquetFileReader.open(
                 InputFile.of(TEST_RESOURCES.resolve("plain_uncompressed_with_nulls.parquet")));
-             AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
 
             List<GenericRecord> records = readAll(reader);
             assertThat(records).hasSize(3);
@@ -80,7 +80,7 @@ class AvroRowReaderTest {
         // nested_struct_test.parquet: id INT32, address { street STRING, city STRING, zip INT32 }
         try (ParquetFileReader fileReader = ParquetFileReader.open(
                 InputFile.of(TEST_RESOURCES.resolve("nested_struct_test.parquet")));
-             AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
 
             List<GenericRecord> records = readAll(reader);
             assertThat(records).isNotEmpty();
@@ -103,7 +103,7 @@ class AvroRowReaderTest {
         // list_basic_test.parquet: id INT32, tags list<string>, scores list<int>
         try (ParquetFileReader fileReader = ParquetFileReader.open(
                 InputFile.of(TEST_RESOURCES.resolve("list_basic_test.parquet")));
-             AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
 
             List<GenericRecord> records = readAll(reader);
             assertThat(records).isNotEmpty();
@@ -125,7 +125,7 @@ class AvroRowReaderTest {
         // simple_map_test.parquet: id INT32, attributes map<string, string>
         try (ParquetFileReader fileReader = ParquetFileReader.open(
                 InputFile.of(TEST_RESOURCES.resolve("simple_map_test.parquet")));
-             AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
 
             List<GenericRecord> records = readAll(reader);
             assertThat(records).isNotEmpty();
@@ -145,8 +145,8 @@ class AvroRowReaderTest {
         // filter_pushdown_int.parquet: 3 row groups, id 1-100, 101-200, 201-300
         try (ParquetFileReader fileReader = ParquetFileReader.open(
                 InputFile.of(TEST_RESOURCES.resolve("filter_pushdown_int.parquet")));
-             AvroRowReader reader = AvroReaders.createRowReader(fileReader,
-                     FilterPredicate.gt("id", 200L))) {
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .filter(FilterPredicate.gt("id", 200L)).build()) {
 
             List<GenericRecord> records = readAll(reader);
             assertThat(records).hasSize(100);
@@ -188,7 +188,7 @@ class AvroRowReaderTest {
                 .resolve("../core/src/test/resources/variant_shredded_test.parquet").normalize();
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture));
-             AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
 
             Schema schema = reader.getSchema();
             Schema.Field varField = schema.getField("var");
@@ -240,7 +240,7 @@ class AvroRowReaderTest {
                 .resolve("../core/src/test/resources/variant_shredded_test.parquet").normalize();
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(fixture));
-                RowReader rowReader = fileReader.createRowReader()) {
+                RowReader rowReader = fileReader.rowReader()) {
 
             // Row 1: shredded INT64(42).
             rowReader.next();

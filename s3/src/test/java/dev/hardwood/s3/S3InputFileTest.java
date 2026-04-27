@@ -75,7 +75,7 @@ class S3InputFileTest {
     void readRows() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", "plain_uncompressed.parquet"))) {
-            try (RowReader rows = reader.createRowReader()) {
+            try (RowReader rows = reader.rowReader()) {
                 int count = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -90,7 +90,7 @@ class S3InputFileTest {
     void readRowValues() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", "plain_uncompressed.parquet"))) {
-            try (RowReader rows = reader.createRowReader()) {
+            try (RowReader rows = reader.rowReader()) {
                 assertThat(rows.hasNext()).isTrue();
                 rows.next();
                 assertThat(rows.getLong("id")).isEqualTo(1L);
@@ -115,7 +115,7 @@ class S3InputFileTest {
     void readWithNulls() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", "plain_uncompressed_with_nulls.parquet"))) {
-            try (RowReader rows = reader.createRowReader()) {
+            try (RowReader rows = reader.rowReader()) {
                 int count = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -145,7 +145,7 @@ class S3InputFileTest {
                 source.inputFile("test-bucket", "column_index_pushdown.parquet"));
         long unfilteredCount = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(unfilteredFile);
-             ColumnReader col = reader.createColumnReader("id")) {
+             ColumnReader col = reader.columnReader("id")) {
             while (col.nextBatch()) {
                 unfilteredCount += col.getRecordCount();
             }
@@ -155,7 +155,7 @@ class S3InputFileTest {
                 source.inputFile("test-bucket", "column_index_pushdown.parquet"));
         long filteredCount = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(filteredFile);
-             ColumnReader col = reader.createColumnReader("id", filter)) {
+             ColumnReader col = reader.buildColumnReader("id").filter(filter).build()) {
             while (col.nextBatch()) {
                 filteredCount += col.getRecordCount();
             }
@@ -217,7 +217,7 @@ class S3InputFileTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", "column_index_pushdown.parquet"));
-             RowReader rows = reader.createRowReader(filter)) {
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
 
             int totalRows = 0;
             while (rows.hasNext()) {

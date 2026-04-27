@@ -28,73 +28,120 @@ import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
-/// Reader for individual Parquet files.
+/// Reader for one or more Parquet files.
 ///
-/// For single-file usage:
+/// A reader opened over a list of files exposes the schema of the first file
+/// and reads rows / column batches across all files in order, with
+/// cross-file prefetching handled by the underlying iterator.
+///
 /// ```java
+/// // Single file
 /// try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
-///     RowReader rows = reader.createRowReader();
+///     RowReader rows = reader.rowReader();
 ///     // ...
+/// }
+///
+/// // Multiple files (use Hardwood for a shared thread pool)
+/// try (Hardwood hardwood = Hardwood.create();
+///      ParquetFileReader reader = hardwood.openAll(files)) {
+///     try (ColumnReaders cols = reader.columnReaders(
+///                 ColumnProjection.columns("a", "b"))) {
+///         // ...
+///     }
 /// }
 /// ```
 ///
-/// For multi-file usage with shared thread pool, use [dev.hardwood.Hardwood].
-///
 /// **Limitation:** When using the default memory-mapped [InputFile],
 /// individual files must be at most 2 GB ([Integer#MAX_VALUE] bytes).
-/// Larger datasets should be split across multiple files and read via
-/// [MultiFileParquetReader].
+/// Larger datasets should be split across multiple files.
 public class ParquetFileReader implements AutoCloseable {
 
-    private final InputFile inputFile;
-    private final FileMetaData fileMetaData;
+    private final List<InputFile> inputFiles;
+    /// Metadata of the first file. For single-file readers this is the
+    /// file's metadata; for multi-file readers callers wanting per-file
+    /// metadata must open each file individually.
+    private final FileMetaData firstFileMetaData;
+    private final FileSchema schema;
     private final HardwoodContextImpl context;
     private final boolean ownsContext;
-    private final boolean ownsInputFile;
+    private final boolean ownsInputFiles;
     private final List<RowGroupIterator> rowGroupIterators = new ArrayList<>();
 
-    private ParquetFileReader(InputFile inputFile, FileMetaData fileMetaData,
-                              HardwoodContextImpl context, boolean ownsContext, boolean ownsInputFile) {
-        this.inputFile = inputFile;
-        this.fileMetaData = fileMetaData;
+    private ParquetFileReader(List<InputFile> inputFiles, FileMetaData firstFileMetaData,
+                              FileSchema schema, HardwoodContextImpl context,
+                              boolean ownsContext, boolean ownsInputFiles) {
+        this.inputFiles = inputFiles;
+        this.firstFileMetaData = firstFileMetaData;
+        this.schema = schema;
         this.context = context;
         this.ownsContext = ownsContext;
-        this.ownsInputFile = ownsInputFile;
+        this.ownsInputFiles = ownsInputFiles;
     }
 
-    /// Open a Parquet file from an [InputFile] with a dedicated context.
+    /// Open a single Parquet file with a dedicated context.
     ///
-    /// This method calls [InputFile#open()] and takes ownership of the file;
-    /// it will be closed when this reader is closed.
+    /// Calls [InputFile#open()] and takes ownership of the file; it is
+    /// closed when this reader is closed.
     public static ParquetFileReader open(InputFile inputFile) throws IOException {
-        inputFile.open();
-        try {
-            return openInternal(inputFile, HardwoodContextImpl.create(), true, true);
-        }
-        catch (Exception e) {
-            try {
-                inputFile.close();
-            }
-            catch (IOException closeException) {
-                e.addSuppressed(closeException);
-            }
-            throw e;
-        }
+        return openAll(List.of(inputFile));
     }
 
-    /// Open a Parquet file from an [InputFile] with a shared context.
+    /// Open a single Parquet file with a shared context.
     ///
-    /// This method calls [InputFile#open()] and takes ownership of the file;
-    /// it will be closed when this reader is closed. The caller retains ownership
-    /// of the context.
+    /// Calls [InputFile#open()] and takes ownership of the file; it is
+    /// closed when this reader is closed. The caller retains ownership of
+    /// the context.
     public static ParquetFileReader open(InputFile inputFile, HardwoodContext context) throws IOException {
-        inputFile.open();
+        return openAll(List.of(inputFile), context);
+    }
+
+    /// Open multiple Parquet files with a dedicated context. The schema
+    /// is read from the first file and is assumed to be common across all
+    /// files. Files are opened on demand by the iterator; the first file is
+    /// opened eagerly so any I/O or metadata error surfaces immediately.
+    public static ParquetFileReader openAll(List<InputFile> inputFiles) throws IOException {
+        return openInternal(inputFiles, HardwoodContextImpl.create(), true);
+    }
+
+    /// Open multiple Parquet files with a shared context.
+    public static ParquetFileReader openAll(List<InputFile> inputFiles, HardwoodContext context) throws IOException {
+        return openInternal(inputFiles, (HardwoodContextImpl) context, false);
+    }
+
+    private static ParquetFileReader openInternal(List<InputFile> inputFiles, HardwoodContextImpl context,
+                                                   boolean ownsContext) throws IOException {
+        if (inputFiles == null || inputFiles.isEmpty()) {
+            throw new IllegalArgumentException("At least one file must be provided");
+        }
+        List<InputFile> files = List.copyOf(inputFiles);
+        InputFile first = files.get(0);
+        first.open();
         try {
-            return openInternal(inputFile, (HardwoodContextImpl) context, false, true);
+            FileMetaData firstFileMetaData;
+            try {
+                firstFileMetaData = ParquetMetadataReader.readMetadata(first);
+            }
+            catch (RuntimeException e) {
+                // Thrift parsing throws RuntimeExceptions (e.g. ThriftEnumLookup for
+                // corrupt enum values) that escape the IOException-only contract of
+                // readMetadata — enrich them with file context so they're attributable.
+                throw ExceptionContext.addFileContext(first.name(), e);
+            }
+            FileSchema schema = FileSchema.fromSchemaElements(firstFileMetaData.schema());
+
+            FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
+            fileOpenedEvent.begin();
+            fileOpenedEvent.file = first.name();
+            fileOpenedEvent.fileSize = first.length();
+            fileOpenedEvent.rowGroupCount = firstFileMetaData.rowGroups().size();
+            fileOpenedEvent.columnCount = schema.getColumnCount();
+            fileOpenedEvent.commit();
+
+            return new ParquetFileReader(files, firstFileMetaData, schema, context, ownsContext, true);
         }
         catch (Exception e) {
             try {
-                inputFile.close();
+                first.close();
             }
             catch (IOException closeException) {
                 e.addSuppressed(closeException);
@@ -103,140 +150,103 @@ public class ParquetFileReader implements AutoCloseable {
         }
     }
 
-    private static ParquetFileReader openInternal(InputFile inputFile, HardwoodContextImpl context,
-                                                   boolean ownsContext, boolean ownsInputFile) throws IOException {
-        FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
-        fileOpenedEvent.begin();
-
-        FileMetaData fileMetaData;
-        try {
-            fileMetaData = ParquetMetadataReader.readMetadata(inputFile);
-        }
-        catch (RuntimeException e) {
-            // Thrift parsing throws RuntimeExceptions (e.g. ThriftEnumLookup for
-            // corrupt enum values) that escape the IOException-only contract of
-            // readMetadata — enrich them with file context so they're attributable.
-            throw ExceptionContext.addFileContext(inputFile.name(), e);
-        }
-        FileSchema fileSchema = FileSchema.fromSchemaElements(fileMetaData.schema());
-
-        fileOpenedEvent.file = inputFile.name();
-        fileOpenedEvent.fileSize = inputFile.length();
-        fileOpenedEvent.rowGroupCount = fileMetaData.rowGroups().size();
-        fileOpenedEvent.columnCount = fileSchema.getColumnCount();
-        fileOpenedEvent.commit();
-
-        return new ParquetFileReader(inputFile, fileMetaData, context, ownsContext, ownsInputFile);
-    }
-
+    /// File metadata of the first input file. For multi-file readers,
+    /// per-file metadata for files beyond the first is not exposed; open
+    /// those files individually to inspect their metadata.
     public FileMetaData getFileMetaData() {
-        return fileMetaData;
+        return firstFileMetaData;
     }
 
     public FileSchema getFileSchema() {
-        return FileSchema.fromSchemaElements(fileMetaData.schema());
+        return schema;
     }
 
-    /// Create a ColumnReader for a named column, spanning all row groups.
-    public ColumnReader createColumnReader(String columnName) {
-        FileSchema schema = getFileSchema();
-        return ColumnReader.create(columnName, schema, inputFile, fileMetaData.rowGroups(), context);
+    /// `true` when this reader was opened over more than one input file.
+    public boolean isMultiFile() {
+        return inputFiles.size() > 1;
     }
 
-    /// Create a ColumnReader for a named column, spanning only row groups that match the filter.
-    ///
-    /// @param columnName the column to read
-    /// @param filter predicate for row group filtering based on statistics
-    public ColumnReader createColumnReader(String columnName, FilterPredicate filter) {
-        FileSchema schema = getFileSchema();
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return ColumnReader.create(columnName, schema, inputFile, filterRowGroups(resolved), context, resolved);
+    // ============================================================
+    // RowReader
+    // ============================================================
+
+    /// Shortcut for [#buildRowReader()].build() — read every row of every
+    /// column with no filter.
+    public RowReader rowReader() {
+        return buildRowReader().build();
     }
 
-    /// Create a ColumnReader for a column by index, spanning all row groups.
-    public ColumnReader createColumnReader(int columnIndex) {
-        FileSchema schema = getFileSchema();
-        return ColumnReader.create(columnIndex, schema, inputFile, fileMetaData.rowGroups(), context);
+    /// Begin configuring a [RowReader] with optional projection, filter,
+    /// and head/tail limit.
+    public RowReaderBuilder buildRowReader() {
+        return new RowReaderBuilder(this);
     }
 
-    /// Create a ColumnReader for a column by index, spanning only row groups that match the filter.
-    ///
-    /// @param columnIndex the column index to read
-    /// @param filter predicate for row group filtering based on statistics
-    public ColumnReader createColumnReader(int columnIndex, FilterPredicate filter) {
-        FileSchema schema = getFileSchema();
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return ColumnReader.create(columnIndex, schema, inputFile, filterRowGroups(resolved), context, resolved);
+    // ============================================================
+    // ColumnReader (single column, single-file)
+    // ============================================================
+
+    /// Shortcut for [#buildColumnReader(String)].build() — read every row
+    /// group of the named column with no filter. Single-file only.
+    public ColumnReader columnReader(String columnName) {
+        return buildColumnReader(columnName).build();
     }
 
-    /// Create a RowReader that iterates over all rows in all row groups.
-    public RowReader createRowReader() {
-        return createRowReader(ColumnProjection.all());
+    /// Shortcut for [#buildColumnReader(int)].build() — read every row
+    /// group of the column at the given index with no filter. Single-file
+    /// only.
+    public ColumnReader columnReader(int columnIndex) {
+        return buildColumnReader(columnIndex).build();
     }
 
-    /// Create a RowReader with a filter, iterating over all columns but only matching row groups.
-    ///
-    /// @param filter predicate for row group filtering based on statistics
-    public RowReader createRowReader(FilterPredicate filter) {
-        return createRowReader(ColumnProjection.all(), filter);
+    /// Begin configuring a single-column [ColumnReader]. Single-file only.
+    public ColumnReaderBuilder buildColumnReader(String columnName) {
+        return new ColumnReaderBuilder(this, columnName);
     }
 
-    /// Create a RowReader that iterates over selected columns in all row groups.
-    ///
-    /// @param projection specifies which columns to read
-    /// @return a RowReader for the selected columns
-    public RowReader createRowReader(ColumnProjection projection) {
-        return createRowReaderInternal(projection, null, 0, fileMetaData.rowGroups());
+    /// Begin configuring a single-column [ColumnReader] by column index.
+    /// Single-file only.
+    public ColumnReaderBuilder buildColumnReader(int columnIndex) {
+        return new ColumnReaderBuilder(this, columnIndex);
     }
 
-    /// Create a RowReader that iterates over selected columns in only matching row groups.
-    ///
-    /// @param projection specifies which columns to read
-    /// @param filter predicate for row group filtering based on statistics
-    public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter) {
-        return createRowReaderInternal(projection, filter, 0, fileMetaData.rowGroups());
+    // ============================================================
+    // ColumnReaders (projection)
+    // ============================================================
+
+    /// Shortcut for [#buildColumnReaders(ColumnProjection)].build() —
+    /// every row group, no filter. Works for single- and multi-file.
+    public ColumnReaders columnReaders(ColumnProjection projection) {
+        return buildColumnReaders(projection).build();
     }
 
-    /// Create a RowReader that returns at most `|maxRows|` rows.
-    ///
-    /// The sign of `maxRows` selects the end of the file to read from:
-    ///
-    /// - `maxRows > 0` — **head**: return the first `maxRows` rows.
-    /// - `maxRows < 0` — **tail**: return the last `-maxRows` rows. Row groups
-    ///   that do not overlap the tail are skipped entirely, so pages for
-    ///   earlier row groups are never fetched or decoded (useful on remote
-    ///   backends like S3).
-    ///
-    /// Tail mode cannot currently be combined with a filter: the set of
-    /// matching rows is not known from row-group statistics alone, so the
-    /// reader cannot determine which row groups cover the last `-maxRows`
-    /// **matching** rows without scanning the whole file.
-    ///
-    /// @param projection specifies which columns to read
-    /// @param filter predicate for row group filtering based on statistics (must be `null` when `maxRows < 0`)
-    /// @param maxRows row count with direction (must be non-zero)
-    public RowReader createRowReader(ColumnProjection projection, FilterPredicate filter, long maxRows) {
-        if (maxRows == 0) {
-            throw new IllegalArgumentException("maxRows must be non-zero");
+    /// Begin configuring a [ColumnReaders] collection for batch-oriented
+    /// access to a column projection. Works for single- and multi-file.
+    public ColumnReadersBuilder buildColumnReaders(ColumnProjection projection) {
+        return new ColumnReadersBuilder(this, projection);
+    }
+
+    // ============================================================
+    // Internal builder bridges
+    // ============================================================
+
+    RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter, long maxRows) {
+        return buildRowReader(projection, filter, maxRows, firstFileMetaData.rowGroups());
+    }
+
+    RowReader buildTailRowReader(ColumnProjection projection, long tailRows) {
+        if (isMultiFile()) {
+            throw new UnsupportedOperationException(
+                    "Tail reading is not yet supported for multi-file readers");
         }
-        if (maxRows < 0) {
-            if (filter != null) {
-                throw new IllegalArgumentException("Tail reading (negative maxRows) cannot be combined with a filter");
-            }
-            return createTailRowReader(projection, -maxRows);
-        }
-        return createRowReaderInternal(projection, filter, maxRows, fileMetaData.rowGroups());
-    }
-
-    private RowReader createTailRowReader(ColumnProjection projection, long tailRows) {
-        List<RowGroup> subset = tailRowGroups(fileMetaData.rowGroups(), tailRows);
+        List<RowGroup> subset = tailRowGroups(firstFileMetaData.rowGroups(), tailRows);
         long rowsInSubset = 0;
         for (RowGroup rg : subset) {
             rowsInSubset += rg.numRows();
         }
         long skip = Math.max(0, rowsInSubset - tailRows);
 
-        RowReader reader = createRowReaderInternal(projection, null, 0, subset);
+        RowReader reader = buildRowReader(projection, null, 0, subset);
         for (long i = 0; i < skip; i++) {
             if (!reader.hasNext()) {
                 break;
@@ -246,20 +256,57 @@ public class ParquetFileReader implements AutoCloseable {
         return reader;
     }
 
-    private RowReader createRowReaderInternal(ColumnProjection projection, FilterPredicate filter, long maxRows, List<RowGroup> rowGroups) {
-        FileSchema schema = getFileSchema();
+    private RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
+                                     long maxRows, List<RowGroup> firstFileRowGroups) {
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
 
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
 
-        RowGroupIterator rowGroupIterator = new RowGroupIterator(
-                List.of(inputFile), context, maxRows);
-        rowGroupIterator.setFirstFile(schema, rowGroups);
-        rowGroupIterator.initialize(projectedSchema, resolved);
-        rowGroupIterators.add(rowGroupIterator);
+        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, maxRows);
+        iterator.setFirstFile(schema, firstFileRowGroups);
+        iterator.initialize(projectedSchema, resolved);
+        rowGroupIterators.add(iterator);
 
-        return RowReader.create(rowGroupIterator, schema, projectedSchema, context, resolved, maxRows);
+        return RowReader.create(iterator, schema, projectedSchema, context, resolved, maxRows);
+    }
+
+    ColumnReader buildColumnReader(String columnName, FilterPredicate filter) {
+        ensureSingleFile("columnReader(String)");
+        InputFile inputFile = inputFiles.get(0);
+        if (filter == null) {
+            return ColumnReader.create(columnName, schema, inputFile, firstFileMetaData.rowGroups(), context);
+        }
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        return ColumnReader.create(columnName, schema, inputFile, filterRowGroups(resolved), context, resolved);
+    }
+
+    ColumnReader buildColumnReader(int columnIndex, FilterPredicate filter) {
+        ensureSingleFile("columnReader(int)");
+        InputFile inputFile = inputFiles.get(0);
+        if (filter == null) {
+            return ColumnReader.create(columnIndex, schema, inputFile, firstFileMetaData.rowGroups(), context);
+        }
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        return ColumnReader.create(columnIndex, schema, inputFile, filterRowGroups(resolved), context, resolved);
+    }
+
+    ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) {
+        ResolvedPredicate resolved = filter != null
+                ? FilterPredicateResolver.resolve(filter, schema) : null;
+
+        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0);
+        iterator.setFirstFile(schema, firstFileMetaData.rowGroups());
+        ProjectedSchema projected = iterator.initialize(projection, resolved);
+        rowGroupIterators.add(iterator);
+        return new ColumnReaders(context, iterator, schema, projected);
+    }
+
+    private void ensureSingleFile(String op) {
+        if (isMultiFile()) {
+            throw new UnsupportedOperationException(
+                    op + " is single-file only; use columnReaders(projection) for multi-file readers");
+        }
     }
 
     private static List<RowGroup> tailRowGroups(List<RowGroup> rowGroups, long tailRows) {
@@ -276,19 +323,192 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     private List<RowGroup> filterRowGroups(ResolvedPredicate filter) {
-        List<RowGroup> allRowGroups = fileMetaData.rowGroups();
-        List<RowGroup> filtered = allRowGroups.stream()
+        List<RowGroup> all = firstFileMetaData.rowGroups();
+        List<RowGroup> kept = all.stream()
                 .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filter, rg))
                 .toList();
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();
-        event.file = inputFile.name();
-        event.totalRowGroups = allRowGroups.size();
-        event.rowGroupsKept = filtered.size();
-        event.rowGroupsSkipped = allRowGroups.size() - filtered.size();
+        event.file = inputFiles.get(0).name();
+        event.totalRowGroups = all.size();
+        event.rowGroupsKept = kept.size();
+        event.rowGroupsSkipped = all.size() - kept.size();
         event.commit();
 
-        return filtered;
+        return kept;
+    }
+
+    // ============================================================
+    // Nested builders
+    // ============================================================
+
+    /// Builds a [RowReader] with optional projection, filter, and head/tail
+    /// row limit.
+    ///
+    /// Obtained from [ParquetFileReader#buildRowReader()]. Each setter returns
+    /// the builder for chaining; [#build()] consumes the configuration and
+    /// creates the reader. The builder is not reusable after `build()`.
+    ///
+    /// ```java
+    /// RowReader reader = file.buildRowReader()
+    ///         .projection(ColumnProjection.columns("id", "name"))
+    ///         .filter(FilterPredicate.eq("status", "active"))
+    ///         .head(1000)
+    ///         .build();
+    /// ```
+    public static final class RowReaderBuilder {
+
+        private final ParquetFileReader fileReader;
+        private ColumnProjection projection = ColumnProjection.all();
+        private FilterPredicate filter;
+        /// Positive: return at most `headRows` rows from the start.
+        /// Zero (default): no limit.
+        private long headRows;
+        /// Positive: return at most `tailRows` rows from the end.
+        /// Zero (default): no limit. Mutually exclusive with `headRows`.
+        private long tailRows;
+
+        private RowReaderBuilder(ParquetFileReader fileReader) {
+            this.fileReader = fileReader;
+        }
+
+        /// Restrict reading to the given columns. Default: all columns.
+        public RowReaderBuilder projection(ColumnProjection projection) {
+            if (projection == null) {
+                throw new IllegalArgumentException("projection must not be null");
+            }
+            this.projection = projection;
+            return this;
+        }
+
+        /// Apply a row-group / record-level filter predicate. Default: no filter.
+        public RowReaderBuilder filter(FilterPredicate filter) {
+            this.filter = filter;
+            return this;
+        }
+
+        /// Limit to the first `maxRows` rows. Mutually exclusive with [#tail].
+        public RowReaderBuilder head(long maxRows) {
+            if (maxRows <= 0) {
+                throw new IllegalArgumentException("head row count must be positive: " + maxRows);
+            }
+            this.headRows = maxRows;
+            return this;
+        }
+
+        /// Limit to the last `tailRows` rows. Row groups that do not overlap
+        /// the tail are skipped entirely, so pages for earlier row groups are
+        /// never fetched or decoded — useful on remote backends. Mutually
+        /// exclusive with [#head] and [#filter]. Single-file only.
+        public RowReaderBuilder tail(long tailRows) {
+            if (tailRows <= 0) {
+                throw new IllegalArgumentException("tail row count must be positive: " + tailRows);
+            }
+            this.tailRows = tailRows;
+            return this;
+        }
+
+        public RowReader build() {
+            if (headRows > 0 && tailRows > 0) {
+                throw new IllegalArgumentException("head and tail are mutually exclusive");
+            }
+            if (tailRows > 0 && filter != null) {
+                throw new IllegalArgumentException("tail cannot be combined with a filter: "
+                        + "the set of matching rows is not known from row-group statistics alone");
+            }
+            if (tailRows > 0) {
+                return fileReader.buildTailRowReader(projection, tailRows);
+            }
+            return fileReader.buildRowReader(projection, filter, headRows);
+        }
+    }
+
+    /// Builds a single-column [ColumnReader] with an optional filter.
+    ///
+    /// Obtained from [ParquetFileReader#buildColumnReader(String)] or
+    /// [ParquetFileReader#buildColumnReader(int)]. Single-file only —
+    /// multi-file readers must use [ParquetFileReader#buildColumnReaders]
+    /// with a projection.
+    ///
+    /// ```java
+    /// ColumnReader col = file.buildColumnReader("id")
+    ///         .filter(FilterPredicate.lt("id", 1000L))
+    ///         .build();
+    /// ```
+    public static final class ColumnReaderBuilder {
+
+        private final ParquetFileReader fileReader;
+        private final String columnName;
+        private final int columnIndex;
+        private final boolean byName;
+        private FilterPredicate filter;
+
+        private ColumnReaderBuilder(ParquetFileReader fileReader, String columnName) {
+            this.fileReader = fileReader;
+            this.columnName = columnName;
+            this.columnIndex = -1;
+            this.byName = true;
+        }
+
+        private ColumnReaderBuilder(ParquetFileReader fileReader, int columnIndex) {
+            this.fileReader = fileReader;
+            this.columnName = null;
+            this.columnIndex = columnIndex;
+            this.byName = false;
+        }
+
+        /// Apply a row-group / page-level filter predicate. Default: no filter.
+        public ColumnReaderBuilder filter(FilterPredicate filter) {
+            this.filter = filter;
+            return this;
+        }
+
+        public ColumnReader build() {
+            if (byName) {
+                return fileReader.buildColumnReader(columnName, filter);
+            }
+            return fileReader.buildColumnReader(columnIndex, filter);
+        }
+    }
+
+    /// Builds a [ColumnReaders] collection for batch-oriented access to a
+    /// projection of columns.
+    ///
+    /// Obtained from [ParquetFileReader#buildColumnReaders(ColumnProjection)].
+    /// Works for both single- and multi-file readers; the underlying iterator
+    /// handles cross-file prefetch transparently.
+    ///
+    /// ```java
+    /// try (ColumnReaders cols = file.buildColumnReaders(ColumnProjection.columns("a", "b"))
+    ///         .filter(FilterPredicate.eq("a", 7))
+    ///         .build()) {
+    ///     ColumnReader a = cols.getColumnReader("a");
+    ///     // ...
+    /// }
+    /// ```
+    public static final class ColumnReadersBuilder {
+
+        private final ParquetFileReader fileReader;
+        private final ColumnProjection projection;
+        private FilterPredicate filter;
+
+        private ColumnReadersBuilder(ParquetFileReader fileReader, ColumnProjection projection) {
+            if (projection == null) {
+                throw new IllegalArgumentException("projection must not be null");
+            }
+            this.fileReader = fileReader;
+            this.projection = projection;
+        }
+
+        /// Apply a row-group statistics filter. Default: no filter.
+        public ColumnReadersBuilder filter(FilterPredicate filter) {
+            this.filter = filter;
+            return this;
+        }
+
+        public ColumnReaders build() {
+            return fileReader.buildColumnReaders(projection, filter);
+        }
     }
 
     @Override
@@ -298,16 +518,28 @@ public class ParquetFileReader implements AutoCloseable {
         }
         rowGroupIterators.clear();
 
-        // Only close context if we created it
-        // When opened via Hardwood, the context is closed when Hardwood is closed
         if (ownsContext) {
             context.close();
         }
 
-        // Only close InputFile if we own it
-        if (ownsInputFile) {
-            inputFile.close();
+        if (ownsInputFiles) {
+            IOException firstFailure = null;
+            for (InputFile file : inputFiles) {
+                try {
+                    file.close();
+                }
+                catch (IOException e) {
+                    if (firstFailure == null) {
+                        firstFailure = e;
+                    }
+                    else {
+                        firstFailure.addSuppressed(e);
+                    }
+                }
+            }
+            if (firstFailure != null) {
+                throw firstFailure;
+            }
         }
     }
-
 }

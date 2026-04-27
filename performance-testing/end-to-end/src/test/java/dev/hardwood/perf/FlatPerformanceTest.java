@@ -44,8 +44,7 @@ import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ColumnReader;
-import dev.hardwood.reader.MultiFileColumnReaders;
-import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -262,7 +261,7 @@ class FlatPerformanceTest {
                 result.fareAmount(), duration, result.rowCount());
     }
 
-    /// Row-oriented reader opened via [MultiFileParquetReader#openAll] with
+    /// Row-oriented reader opened via [ParquetFileReader#openAll] with
     /// projection and indexed field access.
     ///
     /// Groups files by schema compatibility (passenger_count type varies across files)
@@ -281,8 +280,8 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
-                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
-                     RowReader rowReader = parquet.createRowReader(projection)) {
+                try (ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
+                     RowReader rowReader = parquet.buildRowReader().projection(projection).build()) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
                     while (rowReader.hasNext()) {
@@ -329,8 +328,8 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
-                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
-                     RowReader rowReader = parquet.createRowReader(projection)) {
+                try (ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
+                     RowReader rowReader = parquet.buildRowReader().projection(projection).build()) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
                     while (rowReader.hasNext()) {
@@ -365,7 +364,7 @@ class FlatPerformanceTest {
 
     /// Row-oriented reader opened one file at a time via [ParquetFileReader],
     /// with projection and indexed field access. Exists to quantify the
-    /// cross-file prefetching benefit of [MultiFileParquetReader#openAll].
+    /// cross-file prefetching benefit of [ParquetFileReader#openAll].
     private Result runHardwoodRowReaderIndexedFileByFile(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
@@ -378,7 +377,7 @@ class FlatPerformanceTest {
         try (Hardwood hardwood = Hardwood.create()) {
             for (Path file : files) {
                 try (ParquetFileReader reader = hardwood.open(InputFile.of(file));
-                        RowReader rowReader = reader.createRowReader(projection)) {
+                        RowReader rowReader = reader.buildRowReader().projection(projection).build()) {
 
                     SchemaNode pcNode = reader.getFileSchema().getField("passenger_count");
                     boolean pcIsLong = pcNode instanceof SchemaNode.PrimitiveNode pn
@@ -413,7 +412,7 @@ class FlatPerformanceTest {
         return new Result(passengerCount, tripDistance, fareAmount, 0, rowCount);
     }
 
-    /// Row-oriented reader opened via [MultiFileParquetReader#openAll] that
+    /// Row-oriented reader opened via [ParquetFileReader#openAll] that
     /// projects **all** columns, with indexed field access for the three sum
     /// columns. Indices are resolved once per schema group (all files in a
     /// group share the same fingerprint, so leaf-column positions are stable).
@@ -437,8 +436,8 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groups) {
-                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
-                     RowReader rowReader = parquet.createRowReader()) {
+                try (ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
+                     RowReader rowReader = parquet.rowReader()) {
                     boolean pcIsLong = group.passengerCountIsLong();
 
                     int passengerCountIndex = parquet.getFileSchema().getColumn("passenger_count").columnIndex();
@@ -510,7 +509,7 @@ class FlatPerformanceTest {
     }
 
     /// Column-oriented reader with cross-file prefetching via shared FileManager.
-    /// Uses MultiFileColumnReaders to share a single FileManager across columns.
+    /// Uses ColumnReaders to share a single FileManager across columns.
     private Result runHardwoodColumnReader(List<Path> files) {
         long passengerCount = 0;
         double tripDistance = 0.0;
@@ -519,9 +518,8 @@ class FlatPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create()) {
             for (SchemaGroup group : groupFilesBySchema(files)) {
-                try (MultiFileParquetReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
-                     MultiFileColumnReaders columns = parquet.createColumnReaders(
-                        ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
+                try (ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
+                     ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
 
                     ColumnReader col0 = columns.getColumnReader("passenger_count");
                     ColumnReader col1 = columns.getColumnReader("trip_distance");

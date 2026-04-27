@@ -117,7 +117,7 @@ class RecordFilterBenchmarkTest {
     private long runNoFilter() throws Exception {
         long count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             RowReader rows = reader.createRowReader()) {
+             RowReader rows = reader.rowReader()) {
             while (rows.hasNext()) {
                 rows.next();
                 count++;
@@ -131,7 +131,7 @@ class RecordFilterBenchmarkTest {
         FilterPredicate filter = FilterPredicate.gtEq("id", 0L);
         long count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             RowReader rows = reader.createRowReader(filter)) {
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
             while (rows.hasNext()) {
                 rows.next();
                 count++;
@@ -145,7 +145,7 @@ class RecordFilterBenchmarkTest {
         FilterPredicate filter = FilterPredicate.lt("id", (long) (TOTAL_ROWS / 100));
         long count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             RowReader rows = reader.createRowReader(filter)) {
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
             while (rows.hasNext()) {
                 rows.next();
                 count++;

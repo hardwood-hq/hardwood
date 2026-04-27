@@ -18,9 +18,8 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
-import dev.hardwood.reader.MultiFileColumnReaders;
-import dev.hardwood.reader.MultiFileParquetReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -56,8 +55,8 @@ class PageRangeIoTest {
         inputFile.open();
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             ColumnReader col = (filter != null)
-                    ? reader.createColumnReader("id", filter)
-                    : reader.createColumnReader("id");
+                    ? reader.buildColumnReader("id").filter(filter).build()
+                    : reader.columnReader("id");
             try (col) {
                 while (col.nextBatch()) {
                     col.getRecordCount(); // consume the batch
@@ -85,8 +84,8 @@ class PageRangeIoTest {
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             ColumnProjection projection = ColumnProjection.columns("id", "value");
             RowReader rows = (filter != null)
-                    ? reader.createRowReader(projection, filter)
-                    : reader.createRowReader(projection);
+                    ? reader.buildRowReader().projection(projection).filter(filter).build()
+                    : reader.buildRowReader().projection(projection).build();
             try (rows) {
                 while (rows.hasNext()) {
                     rows.next();
@@ -96,7 +95,7 @@ class PageRangeIoTest {
         return inputFile.bytesRead();
     }
 
-    // FileManager path (multi-file, via MultiFileParquetReader)
+    // FileManager path (multi-file, via ParquetFileReader)
 
     @Test
     void testMultiFileReaderPageRangeIoReducesBytes() throws Exception {
@@ -112,11 +111,11 @@ class PageRangeIoTest {
         ByteCountingInputFile inputFile = new ByteCountingInputFile(InputFile.of(TEST_FILE));
         inputFile.open();
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(List.of(inputFile))) {
+             ParquetFileReader parquet = hardwood.openAll(List.of(inputFile))) {
             ColumnProjection projection = ColumnProjection.columns("id", "value");
-            MultiFileColumnReaders columns = (filter != null)
-                    ? parquet.createColumnReaders(projection, filter)
-                    : parquet.createColumnReaders(projection);
+            ColumnReaders columns = (filter != null)
+                    ? parquet.buildColumnReaders(projection).filter(filter).build()
+                    : parquet.columnReaders(projection);
             try (columns) {
                 ColumnReader col0 = columns.getColumnReader("id");
                 ColumnReader col1 = columns.getColumnReader("value");
@@ -140,7 +139,7 @@ class PageRangeIoTest {
         unfilteredFile.open();
         long unfilteredRows = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(unfilteredFile);
-             ColumnReader col = reader.createColumnReader("category")) {
+             ColumnReader col = reader.columnReader("category")) {
             while (col.nextBatch()) {
                 unfilteredRows += col.getRecordCount();
             }
@@ -150,7 +149,7 @@ class PageRangeIoTest {
         filteredFile.open();
         long filteredRows = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(filteredFile);
-             ColumnReader col = reader.createColumnReader("category", SELECTIVE_FILTER)) {
+             ColumnReader col = reader.buildColumnReader("category").filter(SELECTIVE_FILTER).build()) {
             while (col.nextBatch()) {
                 filteredRows += col.getRecordCount();
                 // Verify we can actually read the string values (requires dictionary)

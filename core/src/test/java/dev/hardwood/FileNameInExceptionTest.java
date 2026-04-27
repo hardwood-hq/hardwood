@@ -16,8 +16,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.reader.ColumnReader;
-import dev.hardwood.reader.MultiFileColumnReaders;
-import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -37,7 +36,7 @@ class FileNameInExceptionTest {
     @Test
     void rowReaderTypeMismatchIncludesFileName() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_FILE));
-             RowReader reader = fileReader.createRowReader()) {
+             RowReader reader = fileReader.rowReader()) {
 
             assertThat(reader.hasNext()).isTrue();
             reader.next();
@@ -52,7 +51,7 @@ class FileNameInExceptionTest {
     @Test
     void rowReaderMissingColumnIncludesFileName() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_FILE));
-             RowReader reader = fileReader.createRowReader()) {
+             RowReader reader = fileReader.rowReader()) {
 
             assertThat(reader.hasNext()).isTrue();
             reader.next();
@@ -79,9 +78,9 @@ class FileNameInExceptionTest {
         String secondFileError = "[second_file.parquet] Field 'id' has physical type INT64, expected INT32";
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(
+             ParquetFileReader parquet = hardwood.openAll(
                      InputFile.ofPaths(List.of(TEST_FILE, secondFile)));
-             RowReader reader = parquet.createRowReader()) {
+             RowReader reader = parquet.rowReader()) {
 
             // Rows 0–2 come from TEST_FILE
             for (int i = 0; i < 3; i++) {
@@ -110,7 +109,7 @@ class FileNameInExceptionTest {
     @Test
     void columnReaderTypeMismatchIncludesFileName() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_FILE));
-             ColumnReader reader = fileReader.createColumnReader("id")) {
+             ColumnReader reader = fileReader.columnReader("id")) {
 
             assertThat(reader.nextBatch()).isTrue();
 
@@ -124,7 +123,7 @@ class FileNameInExceptionTest {
     @Test
     void columnReaderNoBatchHasNoFileName() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_FILE));
-             ColumnReader reader = fileReader.createColumnReader("id")) {
+             ColumnReader reader = fileReader.columnReader("id")) {
 
             // No nextBatch() called — no batch loaded, so no file name is available.
             // The message has no `[fileName]` prefix.
@@ -145,9 +144,9 @@ class FileNameInExceptionTest {
         String secondFileError = "[second_file.parquet] Column 'id' is INT64, not int";
 
         try (Hardwood hardwood = Hardwood.create();
-             MultiFileParquetReader parquet = hardwood.openAll(
+             ParquetFileReader parquet = hardwood.openAll(
                      InputFile.ofPaths(List.of(TEST_FILE, secondFile)));
-             MultiFileColumnReaders columns = parquet.createColumnReaders(ColumnProjection.columns("id"))) {
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
 
             ColumnReader idReader = columns.getColumnReader("id");
 

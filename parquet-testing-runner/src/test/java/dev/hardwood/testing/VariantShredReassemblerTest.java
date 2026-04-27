@@ -92,7 +92,7 @@ class VariantShredReassemblerTest {
     private void verifyFile(Path parquetFile) throws IOException {
         String base = parquetFile.getFileName().toString().replaceFirst("\\.parquet$", "");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-                RowReader rowReader = fileReader.createRowReader()) {
+                RowReader rowReader = fileReader.rowReader()) {
             int rowIndex = 0;
             while (rowReader.hasNext()) {
                 rowReader.next();

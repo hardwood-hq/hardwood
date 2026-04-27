@@ -30,7 +30,7 @@ import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericRecord;
 
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
+     AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
 
     Schema avroSchema = reader.getSchema();
 
@@ -58,17 +58,20 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 ```java
 // With filter
-AvroRowReader reader = AvroReaders.createRowReader(fileReader,
-    FilterPredicate.gt("id", 1000L));
+AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+    .filter(FilterPredicate.gt("id", 1000L))
+    .build();
 
 // With projection
-AvroRowReader reader = AvroReaders.createRowReader(fileReader,
-    ColumnProjection.columns("id", "name"));
+AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+    .projection(ColumnProjection.columns("id", "name"))
+    .build();
 
 // With both
-AvroRowReader reader = AvroReaders.createRowReader(fileReader,
-    ColumnProjection.columns("id", "name"),
-    FilterPredicate.gt("id", 1000L));
+AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+    .projection(ColumnProjection.columns("id", "name"))
+    .filter(FilterPredicate.gt("id", 1000L))
+    .build();
 ```
 
 Values are stored in Avro's standard representations: timestamps as `Long` (millis/micros since epoch), dates as `Integer` (days since epoch), decimals as `ByteBuffer`, binary data as `ByteBuffer`. This matches the behavior of parquet-java's `AvroReadSupport`.

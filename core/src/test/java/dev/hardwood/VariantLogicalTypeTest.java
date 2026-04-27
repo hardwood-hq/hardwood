@@ -53,7 +53,7 @@ class VariantLogicalTypeTest {
     @Test
     void rowReaderSurfacesVariantBytes() throws IOException {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE));
-                RowReader rowReader = fileReader.createRowReader()) {
+                RowReader rowReader = fileReader.rowReader()) {
             // Row 0: BOOLEAN_TRUE
             rowReader.next();
             PqVariant v0 = rowReader.getVariant("var");

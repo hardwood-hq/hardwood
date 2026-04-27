@@ -27,8 +27,7 @@ import com.sun.management.HotSpotDiagnosticMXBean.ThreadDumpFormat;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.reader.ColumnReader;
-import dev.hardwood.reader.MultiFileColumnReaders;
-import dev.hardwood.reader.MultiFileParquetReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
@@ -40,10 +39,10 @@ import static org.junit.jupiter.api.Assumptions.assumeFalse;
 
 /// Comparison tests that validate Hardwood's output against the reference parquet-java
 /// implementation by comparing parsed results row-by-row, field-by-field. Exercises both
-/// the single-file [ParquetFileReader] and the [MultiFileParquetReader]; after the
+/// the single-file [ParquetFileReader] and the [ParquetFileReader]; after the
 /// reader-unification in #225 the two paths share implementation, so the multi-file
 /// coverage here is limited to scenarios the single-file reader cannot express
-/// (concatenation, singleton equivalence, and the [MultiFileColumnReaders] public API).
+/// (concatenation, singleton equivalence, and the [ColumnReaders] public API).
 /// Bad-file rejection tests live in [BadDataHandlingTest].
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class ParquetComparisonTest {
@@ -104,8 +103,8 @@ class ParquetComparisonTest {
 
         int rowIndex = 0;
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             MultiFileParquetReader mfReader = new MultiFileParquetReader(inputs, context);
-             RowReader rowReader = mfReader.createRowReader()) {
+             ParquetFileReader mfReader = ParquetFileReader.openAll(inputs, context);
+             RowReader rowReader = mfReader.rowReader()) {
 
             FileSchema schema = mfReader.getFileSchema();
             while (rowReader.hasNext()) {
@@ -126,9 +125,9 @@ class ParquetComparisonTest {
 
         int rowIndex = 0;
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             MultiFileParquetReader mfReader = new MultiFileParquetReader(
+             ParquetFileReader mfReader = ParquetFileReader.openAll(
                      List.of(InputFile.of(file)), context);
-             RowReader rowReader = mfReader.createRowReader()) {
+             RowReader rowReader = mfReader.rowReader()) {
 
             FileSchema schema = mfReader.getFileSchema();
             while (rowReader.hasNext()) {
@@ -143,7 +142,7 @@ class ParquetComparisonTest {
 
     @Test
     void multiFileColumnReadersMatchReference() throws IOException {
-        // Spot-check the MultiFileColumnReaders public API. After reader unification
+        // Spot-check the ColumnReaders public API. After reader unification
         // (#225) the parameterized column sweep already exercises the underlying
         // implementation; this keeps coverage of the dedicated multi-file column API.
         Path file = repoDir.resolve("data/alltypes_plain.parquet");
@@ -151,9 +150,9 @@ class ParquetComparisonTest {
         List<GenericRecord> reference = Utils.readWithParquetJava(file);
 
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             MultiFileParquetReader mfReader = new MultiFileParquetReader(
+             ParquetFileReader mfReader = ParquetFileReader.openAll(
                      List.of(InputFile.of(file)), context);
-             MultiFileColumnReaders columns = mfReader.createColumnReaders(ColumnProjection.all())) {
+             ColumnReaders columns = mfReader.columnReaders(ColumnProjection.all())) {
 
             FileSchema schema = mfReader.getFileSchema();
             for (int colIdx = 0; colIdx < schema.getColumnCount(); colIdx++) {
@@ -246,7 +245,7 @@ class ParquetComparisonTest {
         List<GenericRecord> referenceRows = Utils.readWithParquetJava(testFile);
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile))) {
-            Utils.compareColumns(fileReader.getFileSchema(), fileReader::createColumnReader, referenceRows);
+            Utils.compareColumns(fileReader.getFileSchema(), fileReader::columnReader, referenceRows);
         }
 
         System.out.println("  Column comparison passed!");
@@ -278,7 +277,7 @@ class ParquetComparisonTest {
         int rowIndex = 0;
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             FileSchema schema = fileReader.getFileSchema();
             while (rowReader.hasNext()) {
                 rowReader.next();

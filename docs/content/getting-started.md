@@ -148,7 +148,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-    RowReader rowReader = fileReader.createRowReader()) {
+    RowReader rowReader = fileReader.rowReader()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();

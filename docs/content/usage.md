@@ -20,7 +20,7 @@ Hardwood provides two reader APIs:
 - **`RowReader`** — row-oriented access with typed getters, including nested structs, lists, and maps. Best for general-purpose reading where you process one row at a time.
 - **`ColumnReader`** — batch-oriented columnar access with typed primitive arrays. Best for analytical workloads where you process columns independently (e.g. summing a column, computing statistics).
 
-Both support column projection and predicate pushdown. For reading multiple files as a single dataset, use `MultiFileRowReader` or `MultiFileColumnReaders` via the `Hardwood` class.
+Both support column projection and predicate pushdown. For default reads, use the no-arg shortcuts (`reader.rowReader()`, `reader.columnReader("id")`, `reader.columnReaders(projection)`); for filtered or limited reads, use the builder forms (`reader.buildRowReader().…build()`, `reader.buildColumnReader("id").…build()`, `reader.buildColumnReaders(projection).…build()`). For reading multiple files as a single dataset with cross-file prefetching, open the `ParquetFileReader` with a list of `InputFile`s via the `Hardwood` class.
 
 ## Row-Oriented Reading
 
@@ -41,7 +41,7 @@ import java.math.BigDecimal;
 import java.util.UUID;
 
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-    RowReader rowReader = fileReader.createRowReader()) {
+    RowReader rowReader = fileReader.rowReader()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();
@@ -187,7 +187,7 @@ while (rowReader.hasNext()) {
 A Parquet column annotated with the `VARIANT` logical type carries semi-structured, JSON-like data in a self-describing binary encoding. Physically it is a group of two required `BYTE_ARRAY` children, `metadata` and `value`, whose bytes together define a Variant value with its own type tag (object, array, string, int, etc.). `getVariant` reads both children and surfaces them through the [`PqVariant`](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) API.
 
 ```java
-try (RowReader rowReader = fileReader.createRowReader()) {
+try (RowReader rowReader = fileReader.rowReader()) {
     while (rowReader.hasNext()) {
         rowReader.next();
         PqVariant v = rowReader.getVariant("event");
@@ -228,7 +228,7 @@ The `PqVariantObject` view exposes the same primitive getters as a Parquet struc
 
 ## Predicate Pushdown (Filter)
 
-Filter predicates enable three levels of predicate pushdown. At the row-group level, entire row groups whose statistics prove no rows can match are skipped. Within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, reducing network I/O. Finally, record-level filtering evaluates the predicate against each decoded row, so `createRowReader(filter)` returns only rows that actually match.
+Filter predicates enable three levels of predicate pushdown. At the row-group level, entire row groups whose statistics prove no rows can match are skipped. Within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, reducing network I/O. Finally, record-level filtering evaluates the predicate against each decoded row, so `buildRowReader().filter(filter).build()` returns only rows that actually match.
 
 ```java
 import dev.hardwood.reader.FilterPredicate;
@@ -251,7 +251,7 @@ FilterPredicate filter = FilterPredicate.isNull("middle_name");
 FilterPredicate filter = FilterPredicate.isNotNull("email");
 
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.createRowReader(filter)) {
+     RowReader rowReader = fileReader.buildRowReader().filter(filter).build()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();
@@ -340,7 +340,7 @@ A row limit instructs the reader to stop after the specified number of rows, avo
 ```java
 // Read at most 100 rows
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.createRowReader(ColumnProjection.all(), null, 100)) {
+     RowReader rowReader = fileReader.buildRowReader().head(100).build()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();
@@ -353,10 +353,11 @@ The row limit can be combined with column projection and filters:
 
 ```java
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.createRowReader(
-         ColumnProjection.columns("id", "name"),
-         FilterPredicate.gt("age", 21),
-         100)) {
+     RowReader rowReader = fileReader.buildRowReader()
+             .projection(ColumnProjection.columns("id", "name"))
+             .filter(FilterPredicate.gt("age", 21))
+             .head(100)
+             .build()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();
@@ -367,16 +368,14 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 When combined with a filter, the limit applies to the number of **matching** rows, not the total number of scanned rows.
 
-To read without a row limit, use the `createRowReader` overloads without `maxRows`.
-
 ### Reading the Tail of a File
 
-Passing a **negative** `maxRows` reads the trailing rows of the file instead of the leading ones. Row groups that do not overlap the tail are skipped entirely, so pages for earlier row groups are never fetched or decoded — especially useful on remote backends like S3, where unneeded row groups avoid HTTP range requests altogether.
+The `tail(N)` builder method reads the trailing rows of the file instead of the leading ones. Row groups that do not overlap the tail are skipped entirely, so pages for earlier row groups are never fetched or decoded — especially useful on remote backends like S3, where unneeded row groups avoid HTTP range requests altogether.
 
 ```java
 // Read the last 10 rows; earlier row groups are skipped.
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.createRowReader(ColumnProjection.all(), null, -10)) {
+     RowReader rowReader = fileReader.buildRowReader().tail(10).build()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();
@@ -398,8 +397,9 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.createRowReader(
-         ColumnProjection.columns("id", "name", "created_at"))) {
+     RowReader rowReader = fileReader.buildRowReader()
+             .projection(ColumnProjection.columns("id", "name", "created_at"))
+             .build()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();
@@ -428,9 +428,10 @@ Column projection and predicate pushdown can be used together:
 
 ```java
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.createRowReader(
-         ColumnProjection.columns("id", "name", "salary"),
-         FilterPredicate.gtEq("salary", 50000L))) {
+     RowReader rowReader = fileReader.buildRowReader()
+             .projection(ColumnProjection.columns("id", "name", "salary"))
+             .filter(FilterPredicate.gtEq("salary", 50000L))
+             .build()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();
@@ -449,13 +450,13 @@ When processing multiple Parquet files, use the `Hardwood` class to share a thre
 
 ### Unified Multi-File Reader
 
-For reading multiple files as a single logical dataset, use `openAll()` which returns a `MultiFileParquetReader`. From there, create a row reader or column readers:
+`Hardwood.open(List<InputFile>)` returns a `ParquetFileReader` over many files. The same `RowReader`, `ColumnReader`, and `ColumnReaders` APIs apply — there is no separate multi-file class.
 
 ```java
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
-import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileRowReader;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
 
 List<InputFile> files = InputFile.ofPaths(
     Path.of("data_2024_01.parquet"),
@@ -464,19 +465,19 @@ List<InputFile> files = InputFile.ofPaths(
 );
 
 try (Hardwood hardwood = Hardwood.create();
-     MultiFileParquetReader parquet = hardwood.openAll(files);
-     MultiFileRowReader reader = parquet.createRowReader()) {
+     ParquetFileReader parquet = hardwood.openAll(files);
+     RowReader reader = parquet.rowReader()) {
 
     while (reader.hasNext()) {
         reader.next();
-        // Access data using the same API as single-file RowReader
+        // Access data using the same API as a single-file RowReader
         long id = reader.getLong("id");
         String name = reader.getString("name");
     }
 }
 ```
 
-The `MultiFileRowReader` provides cross-file prefetching: when pages from file N are running low, pages from file N+1 are already being prefetched. This eliminates I/O stalls at file boundaries.
+Cross-file prefetching is automatic: when pages from file N are running low, pages from file N+1 are already being prefetched. This eliminates I/O stalls at file boundaries.
 
 By default, `Hardwood.create()` sizes the thread pool to the number of available processors. For custom thread pool sizing, use `HardwoodContext` directly:
 
@@ -485,7 +486,7 @@ import dev.hardwood.HardwoodContext;
 
 try (HardwoodContext context = HardwoodContext.create(4);  // 4 threads
      ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path), context);
-     RowReader rowReader = reader.createRowReader()) {
+     RowReader rowReader = reader.rowReader()) {
     // ...
 }
 ```
@@ -494,9 +495,10 @@ try (HardwoodContext context = HardwoodContext.create(4);  // 4 threads
 
 ```java
 try (Hardwood hardwood = Hardwood.create();
-     MultiFileParquetReader parquet = hardwood.openAll(files);
-     MultiFileRowReader reader = parquet.createRowReader(
-         ColumnProjection.columns("id", "name", "amount"))) {
+     ParquetFileReader parquet = hardwood.openAll(files);
+     RowReader reader = parquet.buildRowReader()
+             .projection(ColumnProjection.columns("id", "name", "amount"))
+             .build()) {
 
     while (reader.hasNext()) {
         reader.next();
@@ -518,7 +520,7 @@ import dev.hardwood.reader.ColumnReader;
 
 try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     // Create a column reader by name (spans all row groups automatically)
-    try (ColumnReader fare = reader.createColumnReader("fare_amount")) {
+    try (ColumnReader fare = reader.columnReader("fare_amount")) {
         double sum = 0;
         while (fare.nextBatch()) {
             int count = fare.getRecordCount();
@@ -535,23 +537,24 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 }
 ```
 
-Typed accessors are available for each physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`, `getBinaries()`, and `getStrings()`. Column readers can also be created by index via `createColumnReader(int columnIndex)`.
+Typed accessors are available for each physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`, `getBinaries()`, and `getStrings()`. Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter, use the builder form: `reader.buildColumnReader("id").filter(predicate).build()`.
 
-### Multi-File Column Reading
+### Multi-Column / Multi-File Reading
 
-For reading columns across multiple files with cross-file prefetching, use `MultiFileColumnReaders`:
+For reading multiple columns together (especially across multiple files with cross-file prefetching), use `columnReaders(projection)` which returns a `ColumnReaders` collection:
 
 ```java
 import dev.hardwood.Hardwood;
-import dev.hardwood.reader.MultiFileParquetReader;
-import dev.hardwood.reader.MultiFileColumnReaders;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.schema.ColumnProjection;
 
 try (Hardwood hardwood = Hardwood.create();
-     MultiFileParquetReader parquet = hardwood.openAll(files);
-     MultiFileColumnReaders columns = parquet.createColumnReaders(
-         ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
+     ParquetFileReader parquet = hardwood.openAll(files);
+     ColumnReaders columns = parquet.columnReaders(
+             ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))
+             .build()) {
 
     ColumnReader col0 = columns.getColumnReader("passenger_count");
     ColumnReader col1 = columns.getColumnReader("trip_distance");
@@ -580,7 +583,7 @@ try (Hardwood hardwood = Hardwood.create();
 For nested columns (lists, maps), `ColumnReader` provides multi-level offsets and per-level null bitmaps:
 
 ```java
-try (ColumnReader reader = fileReader.createColumnReader("tags")) {
+try (ColumnReader reader = fileReader.columnReader("tags")) {
     while (reader.nextBatch()) {
         int recordCount = reader.getRecordCount();
         int valueCount = reader.getValueCount();

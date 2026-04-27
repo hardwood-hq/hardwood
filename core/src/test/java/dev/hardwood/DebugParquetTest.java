@@ -62,7 +62,7 @@ public class DebugParquetTest {
             System.out.println(separator);
 
             // Print rows
-            try (RowReader rowReader = reader.createRowReader()) {
+            try (RowReader rowReader = reader.rowReader()) {
                 int rowNum = 0;
                 while (rowReader.hasNext() && rowNum < 5) {
                     rowReader.next();

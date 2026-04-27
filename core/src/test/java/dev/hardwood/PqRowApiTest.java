@@ -38,7 +38,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-            RowReader rowReader = fileReader.createRowReader()) {
+            RowReader rowReader = fileReader.rowReader()) {
 
             // Test first row
             assertThat(rowReader.hasNext()).isTrue();
@@ -72,7 +72,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: id=1, birth_date=1990-01-15, created_at_millis=2025-01-01T10:30:00Z
             assertThat(rowReader.hasNext()).isTrue();
@@ -100,7 +100,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Skip rows 0 and 1
             rowReader.next();
@@ -122,7 +122,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: id=1, address={street="123 Main St", city="New York", zip=10001}
             assertThat(rowReader.hasNext()).isTrue();
@@ -151,7 +151,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: id=1, tags=["a","b","c"], scores=[10,20,30]
             rowReader.next();
@@ -215,7 +215,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/list_struct_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: id=1, items=[{name="apple",quantity=5},{name="banana",quantity=10}]
             rowReader.next();
@@ -266,7 +266,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nested_list_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: id=1, matrix=[[1,2],[3,4,5],[6]]
             rowReader.next();
@@ -347,7 +347,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/address_book_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Record 1: Julien Le Dem
             rowReader.next();
@@ -403,7 +403,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
             // name is a STRING field, not INT32
             assertThatThrownBy(() -> rowReader.getInt("name"))
@@ -417,7 +417,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
             // address is a struct, not a list
             assertThatThrownBy(() -> rowReader.getList("address"))
@@ -431,7 +431,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/deep_nested_struct_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: Alice with full nested structure
             rowReader.next();
@@ -491,7 +491,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
 
             // Test field count and names
@@ -515,7 +515,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed_with_nulls.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: id=1, name="alice"
             rowReader.next();
@@ -544,7 +544,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/plain_snappy.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             rowReader.next();
             assertThat(rowReader.getLong("id")).isEqualTo(1L);
@@ -567,7 +567,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: Alice - comprehensive logical type test
             rowReader.next();
@@ -631,7 +631,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nested_list_struct_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Book 0: "Parquet Guide" with 2 chapters
             rowReader.next();
@@ -721,7 +721,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/triple_nested_list_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: id=1, cube=[[[1,2],[3,4]], [[5,6],[7,8]]]
             rowReader.next();
@@ -823,7 +823,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nested_list_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: timestamp_matrix=[[2025-01-01T10:00:00Z, 2025-01-01T11:00:00Z], [2025-01-02T12:00:00Z]]
             rowReader.next();
@@ -862,7 +862,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nested_list_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: string_matrix=[["a","b"],["c"]]
             rowReader.next();
@@ -934,7 +934,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/dictionary_uncompressed.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Verify id column (PLAIN encoded) and category column (DICTIONARY encoded)
             rowReader.next();
@@ -967,7 +967,7 @@ public class PqRowApiTest {
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // First iteration
-            try (RowReader rowReader1 = fileReader.createRowReader()) {
+            try (RowReader rowReader1 = fileReader.rowReader()) {
                 int count1 = 0;
                 while (rowReader1.hasNext()) {
                     rowReader1.next();
@@ -977,7 +977,7 @@ public class PqRowApiTest {
             }
 
             // Second iteration (new reader)
-            try (RowReader rowReader2 = fileReader.createRowReader()) {
+            try (RowReader rowReader2 = fileReader.rowReader()) {
                 int count2 = 0;
                 while (rowReader2.hasNext()) {
                     rowReader2.next();
@@ -995,7 +995,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0
             rowReader.next();
@@ -1036,7 +1036,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             rowReader.next();
 
@@ -1053,7 +1053,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             rowReader.next();
 
@@ -1088,7 +1088,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed_with_nulls.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: name is not null
             rowReader.next();
@@ -1109,7 +1109,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             rowReader.next();
 
@@ -1131,7 +1131,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             rowReader.next();
 
@@ -1146,7 +1146,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/primitive_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             while (rowReader.hasNext()) {
                 rowReader.next();
@@ -1175,7 +1175,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/primitive_lists_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: long_list=[100, 200, 300]
             rowReader.next();
@@ -1212,7 +1212,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/primitive_lists_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: double_list=[1.1, 2.2, 3.3]
             rowReader.next();
@@ -1253,7 +1253,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: id=1, address={street="123 Main St", city="New York", zip=10001}
             rowReader.next();
@@ -1281,7 +1281,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/list_basic_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: id=1, tags=["a","b","c"], scores=[10,20,30]
             rowReader.next();
@@ -1318,7 +1318,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/primitive_lists_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0
             rowReader.next();
@@ -1361,7 +1361,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nullable_primitives_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: all non-null
             rowReader.next();
@@ -1397,7 +1397,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/nullable_primitives_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: all non-null
             rowReader.next();
@@ -1434,7 +1434,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/list_of_list_of_struct_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             // Row 0: matrix=[[{a00,10},{a01,11}], [{a10,20},{a11,21},{a12,22}]]
             rowReader.next();
@@ -1535,7 +1535,7 @@ public class PqRowApiTest {
         Path parquetFile = Paths.get("src/test/resources/old_list_structure_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
 
             rowReader.next();
 

@@ -59,7 +59,7 @@ class ParquetReaderTest {
             assertThat(valueColumn.repetitionType()).isEqualTo(RepetitionType.REQUIRED);
 
             // Read and verify 'id' column using batch API
-            try (ColumnReader idReader = reader.createColumnReader("id")) {
+            try (ColumnReader idReader = reader.columnReader("id")) {
                 assertThat(idReader.nextBatch()).isTrue();
                 assertThat(idReader.getRecordCount()).isEqualTo(3);
                 assertThat(idReader.getValueCount()).isEqualTo(3);
@@ -79,7 +79,7 @@ class ParquetReaderTest {
             }
 
             // Read and verify 'value' column using batch API
-            try (ColumnReader valueReader = reader.createColumnReader("value")) {
+            try (ColumnReader valueReader = reader.columnReader("value")) {
                 assertThat(valueReader.nextBatch()).isTrue();
                 assertThat(valueReader.getRecordCount()).isEqualTo(3);
 
@@ -122,7 +122,7 @@ class ParquetReaderTest {
             assertThat(nameColumn.repetitionType()).isEqualTo(RepetitionType.OPTIONAL);
 
             // Read and verify 'id' column (all non-null)
-            try (ColumnReader idReader = reader.createColumnReader("id")) {
+            try (ColumnReader idReader = reader.columnReader("id")) {
                 assertThat(idReader.nextBatch()).isTrue();
                 assertThat(idReader.getRecordCount()).isEqualTo(3);
 
@@ -135,7 +135,7 @@ class ParquetReaderTest {
             }
 
             // Read and verify 'name' column (with one null)
-            try (ColumnReader nameReader = reader.createColumnReader("name")) {
+            try (ColumnReader nameReader = reader.columnReader("name")) {
                 assertThat(nameReader.nextBatch()).isTrue();
                 assertThat(nameReader.getRecordCount()).isEqualTo(3);
 
@@ -176,7 +176,7 @@ class ParquetReaderTest {
             assertThat(metadata.rowGroups().get(0).columns().get(0).metaData().codec())
                     .isEqualTo(CompressionCodec.SNAPPY);
 
-            try (ColumnReader idReader = reader.createColumnReader("id")) {
+            try (ColumnReader idReader = reader.columnReader("id")) {
                 assertThat(idReader.nextBatch()).isTrue();
                 assertThat(idReader.getRecordCount()).isEqualTo(3);
 
@@ -192,7 +192,7 @@ class ParquetReaderTest {
             assertThat(metadata.rowGroups().get(0).columns().get(1).metaData().codec())
                     .isEqualTo(CompressionCodec.SNAPPY);
 
-            try (ColumnReader valueReader = reader.createColumnReader("value")) {
+            try (ColumnReader valueReader = reader.columnReader("value")) {
                 assertThat(valueReader.nextBatch()).isTrue();
                 assertThat(valueReader.getRecordCount()).isEqualTo(3);
 
@@ -212,7 +212,7 @@ class ParquetReaderTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Read column by index
-            try (ColumnReader idReader = reader.createColumnReader(0)) {
+            try (ColumnReader idReader = reader.columnReader(0)) {
                 assertThat(idReader.getColumnSchema().name()).isEqualTo("id");
                 assertThat(idReader.nextBatch()).isTrue();
                 assertThat(idReader.getRecordCount()).isEqualTo(3);
@@ -261,7 +261,7 @@ class ParquetReaderTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Read nested column by dot-path name
             // Data: address=[{street: "123 Main St", zip: 10001}, {street: "456 Oak Ave", zip: 90001}, null]
-            try (ColumnReader zipReader = reader.createColumnReader("address.zip")) {
+            try (ColumnReader zipReader = reader.columnReader("address.zip")) {
                 assertThat(zipReader.getColumnSchema().name()).isEqualTo("zip");
                 assertThat(zipReader.nextBatch()).isTrue();
                 assertThat(zipReader.getRecordCount()).isEqualTo(3);
@@ -313,8 +313,7 @@ class ParquetReaderTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Tail of 10 fits inside RG2 so the reader must skip RG0 and RG1
             // entirely and yield exactly ids 291..300.
-            try (RowReader rows = reader.createRowReader(
-                    ColumnProjection.columns("id"), null, -10L)) {
+            try (RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id")).tail(10L).build()) {
                 long firstId = Long.MAX_VALUE;
                 long lastId = Long.MIN_VALUE;
                 long count = 0;
@@ -339,8 +338,7 @@ class ParquetReaderTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             // Tail of 150 crosses the RG1/RG2 boundary: reader must include RG1
             // and RG2 but skip RG0, and trim the 50 leading rows of RG1.
-            try (RowReader rows = reader.createRowReader(
-                    ColumnProjection.columns("id"), null, -150L)) {
+            try (RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id")).tail(150L).build()) {
                 long firstId = Long.MAX_VALUE;
                 long lastId = Long.MIN_VALUE;
                 long count = 0;
@@ -363,8 +361,7 @@ class ParquetReaderTest {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            try (RowReader rows = reader.createRowReader(
-                    ColumnProjection.columns("id"), null, -10_000L)) {
+            try (RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id")).tail(10_000L).build()) {
                 long count = 0;
                 while (rows.hasNext()) {
                     rows.next();
@@ -380,7 +377,7 @@ class ParquetReaderTest {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            assertThatThrownBy(() -> reader.createRowReader(ColumnProjection.all(), null, 0L))
+            assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.all()).head(0L).build())
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }
@@ -390,10 +387,7 @@ class ParquetReaderTest {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            assertThatThrownBy(() -> reader.createRowReader(
-                    ColumnProjection.all(),
-                    dev.hardwood.reader.FilterPredicate.gt("id", 0L),
-                    -10L))
+            assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.all()).filter(dev.hardwood.reader.FilterPredicate.gt("id", 0L)).tail(10L).build())
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }

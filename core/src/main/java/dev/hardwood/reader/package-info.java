@@ -8,12 +8,13 @@
 
 /// Parquet file readers with row-oriented and column-oriented APIs.
 ///
-/// [ParquetFileReader] opens a single file and provides access to metadata and
-/// schema. From there, create a [RowReader] for row-at-a-time access with typed
-/// getters, or a [ColumnReader] for batch-oriented columnar access with
-/// primitive arrays. [FilterPredicate] enables predicate pushdown at both the
-/// row-group and page level.
+/// [ParquetFileReader] opens one or more files and provides access to metadata
+/// and schema. From there, create a [RowReader] for row-at-a-time access with
+/// typed getters, a [ColumnReader] for single-column batch-oriented access, or
+/// a [ColumnReaders] for multi-column projection access. [FilterPredicate]
+/// enables predicate pushdown at both the row-group and page level.
 ///
-/// For reading multiple files as a single dataset, use [MultiFileParquetReader]
-/// via [dev.hardwood.Hardwood].
+/// For reading multiple files as a single dataset with cross-file
+/// prefetching, use [dev.hardwood.Hardwood] to share a thread pool across
+/// readers.
 package dev.hardwood.reader;

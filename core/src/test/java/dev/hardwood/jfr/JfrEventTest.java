@@ -43,7 +43,7 @@ public class JfrEventTest extends AbstractJfrRecorderTest {
     @Test
     void shouldEmitAllEventsWhenReadingRows() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE));
-             RowReader rowReader = reader.createRowReader()) {
+             RowReader rowReader = reader.rowReader()) {
 
             int count = 0;
             while (rowReader.hasNext()) {

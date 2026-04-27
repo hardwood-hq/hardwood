@@ -106,7 +106,7 @@ class NullFilterSemanticsComparisonTest {
     private List<Integer> readWithHardwood(FilterPredicate filter) throws IOException {
         List<Integer> result = new ArrayList<>();
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rowReader = fileReader.createRowReader(filter)) {
+             RowReader rowReader = fileReader.buildRowReader().filter(filter).build()) {
             while (rowReader.hasNext()) {
                 rowReader.next();
                 result.add(rowReader.isNull("age") ? null : rowReader.getInt("age"));

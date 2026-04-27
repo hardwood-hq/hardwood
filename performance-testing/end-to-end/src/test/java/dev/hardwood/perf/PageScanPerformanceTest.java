@@ -171,9 +171,9 @@ class PageScanPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create();
              ParquetFileReader reader = hardwood.open(InputFile.of(file));
-             ColumnReader col0 = reader.createColumnReader("passenger_count");
-             ColumnReader col1 = reader.createColumnReader("trip_distance");
-             ColumnReader col2 = reader.createColumnReader("fare_amount")) {
+             ColumnReader col0 = reader.columnReader("passenger_count");
+             ColumnReader col1 = reader.columnReader("trip_distance");
+             ColumnReader col2 = reader.columnReader("fare_amount")) {
 
             while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
                 int count = col0.getRecordCount();
