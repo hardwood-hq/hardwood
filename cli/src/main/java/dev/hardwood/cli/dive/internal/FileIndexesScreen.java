@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -130,12 +131,12 @@ public final class FileIndexesScreen {
                 case COLUMN -> rows.add(Row.from(
                         String.valueOf(e.rowGroupIndex()),
                         columnPath,
-                        String.format("%,d", cc.columnIndexOffset()),
+                        Fmt.fmt("%,d", cc.columnIndexOffset()),
                         Sizes.format(cc.columnIndexLength())));
                 case OFFSET -> rows.add(Row.from(
                         String.valueOf(e.rowGroupIndex()),
                         columnPath,
-                        String.format("%,d", cc.offsetIndexOffset()),
+                        Fmt.fmt("%,d", cc.offsetIndexOffset()),
                         Sizes.format(cc.offsetIndexLength())));
                 case DICTIONARY -> {
                     long dictOffset = cmd.dictionaryPageOffset();
@@ -144,8 +145,8 @@ public final class FileIndexesScreen {
                     rows.add(Row.from(
                             String.valueOf(e.rowGroupIndex()),
                             columnPath,
-                            String.format("%,d", dictOffset),
-                            String.format("%,d", dataOffset),
+                            Fmt.fmt("%,d", dictOffset),
+                            Fmt.fmt("%,d", dataOffset),
                             Sizes.format(dictSpan)));
                 }
             }

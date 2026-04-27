@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.internal.metadata.DataPageHeader;
@@ -151,14 +152,14 @@ public final class PagesScreen {
                 values = dataValues(h);
                 if (offsetIndex != null && dataPageIdx < offsetIndex.pageLocations().size()) {
                     PageLocation loc = offsetIndex.pageLocations().get(dataPageIdx);
-                    firstRow = String.format("%,d", loc.firstRowIndex());
+                    firstRow = Fmt.fmt("%,d", loc.firstRowIndex());
                 }
                 if (columnIndex != null && dataPageIdx < columnIndex.getPageCount()) {
                     min = formatStat(columnIndex.minValues().get(dataPageIdx), col, state.logicalTypes());
                     max = formatStat(columnIndex.maxValues().get(dataPageIdx), col, state.logicalTypes());
                     if (columnIndex.nullCounts() != null
                             && dataPageIdx < columnIndex.nullCounts().size()) {
-                        nulls = String.format("%,d", columnIndex.nullCounts().get(dataPageIdx));
+                        nulls = Fmt.fmt("%,d", columnIndex.nullCounts().get(dataPageIdx));
                     }
                 }
                 else {
@@ -167,7 +168,7 @@ public final class PagesScreen {
                         min = formatStat(inline.minValue(), col, state.logicalTypes());
                         max = formatStat(inline.maxValue(), col, state.logicalTypes());
                         if (inline.nullCount() != null) {
-                            nulls = String.format("%,d", inline.nullCount());
+                            nulls = Fmt.fmt("%,d", inline.nullCount());
                         }
                     }
                 }
@@ -178,7 +179,7 @@ public final class PagesScreen {
                         String.valueOf(i),
                         h.type().name(),
                         firstRow,
-                        String.format("%,d", values),
+                        Fmt.fmt("%,d", values),
                         dataEncoding(h),
                         Sizes.format(h.compressedPageSize()),
                         uncompressed,
@@ -191,7 +192,7 @@ public final class PagesScreen {
                         String.valueOf(i),
                         h.type().name(),
                         firstRow,
-                        String.format("%,d", values),
+                        Fmt.fmt("%,d", values),
                         dataEncoding(h),
                         Sizes.format(h.compressedPageSize()),
                         uncompressed,
@@ -350,22 +351,22 @@ public final class PagesScreen {
         DataPageHeaderV2 dphv2 = header.dataPageHeaderV2();
         DictionaryPageHeader dictHeader = header.dictionaryPageHeader();
         if (dph != null) {
-            lines.add(kv("Num values", String.format("%,d", dph.numValues())));
+            lines.add(kv("Num values", Fmt.fmt("%,d", dph.numValues())));
             lines.add(kv("Encoding", dph.encoding().name()));
             lines.add(kv("Def-level encoding", dph.definitionLevelEncoding().name()));
             lines.add(kv("Rep-level encoding", dph.repetitionLevelEncoding().name()));
         }
         if (dphv2 != null) {
-            lines.add(kv("Num values", String.format("%,d", dphv2.numValues())));
-            lines.add(kv("Num nulls", String.format("%,d", dphv2.numNulls())));
-            lines.add(kv("Num rows", String.format("%,d", dphv2.numRows())));
+            lines.add(kv("Num values", Fmt.fmt("%,d", dphv2.numValues())));
+            lines.add(kv("Num nulls", Fmt.fmt("%,d", dphv2.numNulls())));
+            lines.add(kv("Num rows", Fmt.fmt("%,d", dphv2.numRows())));
             lines.add(kv("Encoding", dphv2.encoding().name()));
             lines.add(kv("Def-level bytes", String.valueOf(dphv2.definitionLevelsByteLength())));
             lines.add(kv("Rep-level bytes", String.valueOf(dphv2.repetitionLevelsByteLength())));
             lines.add(kv("Is compressed", String.valueOf(dphv2.isCompressed())));
         }
         if (dictHeader != null) {
-            lines.add(kv("Num values", String.format("%,d", dictHeader.numValues())));
+            lines.add(kv("Num values", Fmt.fmt("%,d", dictHeader.numValues())));
             lines.add(kv("Encoding", dictHeader.encoding().name()));
         }
         Statistics inline = inlineStats(header);
@@ -375,7 +376,7 @@ public final class PagesScreen {
             lines.add(kv("  Min", formatStatFull(inline.minValue(), col, logical)));
             lines.add(kv("  Max", formatStatFull(inline.maxValue(), col, logical)));
             if (inline.nullCount() != null) {
-                lines.add(kv("  Nulls", String.format("%,d", inline.nullCount())));
+                lines.add(kv("  Nulls", Fmt.fmt("%,d", inline.nullCount())));
             }
         }
         lines.add(Line.empty());

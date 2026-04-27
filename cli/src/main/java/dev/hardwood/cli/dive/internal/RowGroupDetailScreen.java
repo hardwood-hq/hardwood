@@ -16,6 +16,7 @@ import java.util.stream.Collectors;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -143,14 +144,14 @@ public final class RowGroupDetailScreen {
 
         List<Line> lines = new ArrayList<>();
         lines.add(fact("Row group index", String.valueOf(state.rowGroupIndex())));
-        lines.add(fact("Rows", String.format("%,d", rg.numRows())));
+        lines.add(fact("Rows", Fmt.fmt("%,d", rg.numRows())));
         lines.add(fact("Column chunks", String.valueOf(chunkCount)));
         lines.add(fact("Total byte size", Sizes.dualFormat(rg.totalByteSize())));
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Compression ", Style.EMPTY.bold())));
         lines.add(fact("  Compressed", Sizes.dualFormat(compressed)));
         lines.add(fact("  Uncompressed", Sizes.dualFormat(uncompressed)));
-        lines.add(fact("  Ratio", String.format("%.2f×", ratio)));
+        lines.add(fact("  Ratio", Fmt.fmt("%.2f×", ratio)));
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Encoding mix ", Style.EMPTY.bold())));
         lines.add(fact("  Encodings", mix(encodingCounts)));

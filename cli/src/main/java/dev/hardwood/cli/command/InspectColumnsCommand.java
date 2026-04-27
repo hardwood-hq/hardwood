@@ -17,6 +17,7 @@ import java.util.Map;
 import java.util.concurrent.Callable;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
@@ -126,7 +127,7 @@ public class InspectColumnsCommand implements Callable<Integer> {
                     s.type(),
                     Sizes.format(s.compressed()),
                     Sizes.format(s.uncompressed()),
-                    String.format("%.1f%%", ratio),
+                    Fmt.fmt("%.1f%%", ratio),
                     s.pageCountAvailable() ? String.valueOf(s.pageCount()) : "-"
             });
         }

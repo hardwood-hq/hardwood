@@ -9,6 +9,8 @@ package dev.hardwood.cli.dive.internal;
 
 import java.util.Base64;
 
+import dev.hardwood.cli.internal.Fmt;
+
 /// Best-effort pretty-printing of key/value metadata values on the Overview
 /// modal. Most Parquet writers shove structured content into these strings:
 /// Spark writes JSON schemas under `org.apache.spark.sql.parquet.row.metadata`,
@@ -68,10 +70,10 @@ public final class KvMetadataFormatter {
         sb.append(decoded.length > 256 ? "Hex dump (first 256 bytes):\n" : "Hex dump:\n");
         int limit = Math.min(decoded.length, 256);
         for (int i = 0; i < limit; i += 16) {
-            sb.append(String.format("%04x  ", i));
+            sb.append(Fmt.fmt("%04x  ", i));
             for (int j = 0; j < 16; j++) {
                 if (i + j < limit) {
-                    sb.append(String.format("%02x ", decoded[i + j] & 0xff));
+                    sb.append(Fmt.fmt("%02x ", decoded[i + j] & 0xff));
                 }
                 else {
                     sb.append("   ");

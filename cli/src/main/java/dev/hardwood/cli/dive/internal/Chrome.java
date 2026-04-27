@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
@@ -236,7 +237,7 @@ public final class Chrome {
         if (rows < 1_000_000) {
             return rows + "";
         }
-        return String.format("%.1f M", rows / 1_000_000.0);
+        return Fmt.fmt("%.1f M", rows / 1_000_000.0);
     }
 
     private static dev.tamboui.text.Text convert(Line line) {
