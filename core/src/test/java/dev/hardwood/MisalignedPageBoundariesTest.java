@@ -26,6 +26,7 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -46,6 +47,11 @@ class MisalignedPageBoundariesTest {
 
     private static final Path MISALIGNED_FILE =
             Paths.get("src/test/resources/misaligned_pages.parquet");
+    /// Fixture without ColumnIndex/OffsetIndex; tail-mode must fall back to the
+    /// existing decode-and-discard path because per-page masking is only honoured
+    /// by IndexedFetchPlan.
+    private static final Path INLINE_STATS_FILE =
+            Paths.get("src/test/resources/inline_page_stats.parquet");
     private static final int TOTAL_ROWS = 10_000;
 
     @Test
@@ -109,6 +115,64 @@ class MisalignedPageBoundariesTest {
             assertThat(count)
                     .as("row count for range [%d, %d)", lo, hi)
                     .isEqualTo(hi - lo);
+        }
+    }
+
+    @Test
+    void tailReadReturnsAlignedRowsViaPerPageMaskFastPath() throws Exception {
+        // Read the last 3000 rows; misaligned per-column page boundaries mean
+        // narrow's first kept page starts at a different global row from wide's,
+        // so the tail-read fast path must apply per-page leading-skip on each
+        // column independently to keep them aligned.
+        int tailRows = 3000;
+        int firstExpectedRow = TOTAL_ROWS - tailRows;
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MISALIGNED_FILE));
+             RowReader rows = reader.createRowReader(ColumnProjection.all(), null, -tailRows)) {
+            int expected = firstExpectedRow;
+            while (rows.hasNext()) {
+                rows.next();
+                int narrow = rows.getInt("narrow");
+                byte[] wide = rows.getBinary("wide");
+                assertThat(narrow).as("row offset %d narrow", expected - firstExpectedRow)
+                        .isEqualTo(expected);
+
+                String expectedPrefix = String.format("row=%08d-", expected);
+                String actualPrefix = new String(wide, 0, 13, StandardCharsets.UTF_8);
+                assertThat(actualPrefix).as("row offset %d wide", expected - firstExpectedRow)
+                        .isEqualTo(expectedPrefix);
+                expected++;
+            }
+            assertThat(expected - firstExpectedRow)
+                    .as("tail row count")
+                    .isEqualTo(tailRows);
+        }
+    }
+
+    @Test
+    void tailReadFallsBackWhenColumnsLackOffsetIndex() throws Exception {
+        // inline_page_stats.parquet has no OffsetIndex, so tail-mode cannot use
+        // the per-page mask fast path and must fall back to decode-and-discard.
+        // Correctness must be preserved either way.
+        int tailRows = 1500;
+        int firstExpectedRow = TOTAL_ROWS - tailRows;
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE));
+             RowReader rows = reader.createRowReader(ColumnProjection.all(), null, -tailRows)) {
+            int expected = firstExpectedRow;
+            while (rows.hasNext()) {
+                rows.next();
+                long id = rows.getLong("id");
+                long value = rows.getLong("value");
+                assertThat(id).as("row offset %d id", expected - firstExpectedRow)
+                        .isEqualTo(expected);
+                assertThat(value).as("row offset %d value", expected - firstExpectedRow)
+                        .isEqualTo(expected + 1000L);
+                expected++;
+            }
+            assertThat(expected - firstExpectedRow)
+                    .as("tail row count")
+                    .isEqualTo(tailRows);
         }
     }
 
