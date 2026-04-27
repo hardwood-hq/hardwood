@@ -13,6 +13,11 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for the full changelog.
 
+## 1.0.0.Beta2
+
+- Memory-mapped file I/O support for files larger than 2 GB ([#75](https://github.com/hardwood-hq/hardwood/issues/75))
+- Zero-copy native memory decoding pipeline (FFM) on Java 22+
+
 ## 1.0.0.Beta1
 
 [Announcement blog post](https://www.morling.dev/blog/hardwood-reaches-beta-s3-predicate-push-down-cli/)

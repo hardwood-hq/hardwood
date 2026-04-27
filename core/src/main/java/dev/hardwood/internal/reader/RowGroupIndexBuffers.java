@@ -69,7 +69,13 @@ public class RowGroupIndexBuffers {
             return new RowGroupIndexBuffers(result);
         }
 
-        ByteBuffer indexRegion = inputFile.readRange(minOffset, Math.toIntExact(maxEnd - minOffset));
+        long indexRegionSize = maxEnd - minOffset;
+        if (indexRegionSize > Integer.MAX_VALUE) {
+            throw new IOException("Row-group index region too large (" + indexRegionSize
+                    + " bytes) in file " + inputFile.name()
+                    + " — consider splitting the file into smaller row groups");
+        }
+        ByteBuffer indexRegion = inputFile.readRange(minOffset, (int) indexRegionSize);
 
         for (int i = 0; i < allColumns.size(); i++) {
             ColumnChunk col = allColumns.get(i);

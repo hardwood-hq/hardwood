@@ -48,9 +48,6 @@ See [Getting Started](getting-started.md) for installation and setup.
 
 This is Alpha quality software, under active development.
 
-Currently, individual Parquet files must be **at most 2 GB**.
-Larger datasets should be split across multiple files and read via `MultiFileParquetReader`.
-
 ## Package Structure
 
 Hardwood is organized into public API packages and internal implementation packages:
