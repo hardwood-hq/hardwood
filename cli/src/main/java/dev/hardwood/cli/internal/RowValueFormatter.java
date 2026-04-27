@@ -10,6 +10,7 @@ package dev.hardwood.cli.internal;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -19,6 +20,7 @@ import java.util.UUID;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
@@ -106,6 +108,9 @@ public final class RowValueFormatter {
                 default -> ((Number) reader.getValue(fieldIndex)).longValue();
             };
             return Long.toUnsignedString(raw);
+        }
+        if (lt instanceof LogicalType.IntervalType) {
+            return formatInterval(reader.getInterval(fieldIndex));
         }
         // BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY / INT96 with no string-like logical
         // type fall through here. `getValue` returns the raw byte[]; the default
@@ -350,7 +355,44 @@ public final class RowValueFormatter {
             ByteBuffer bb = ByteBuffer.wrap(raw);
             return new UUID(bb.getLong(), bb.getLong()).toString();
         }
+        if (lt instanceof LogicalType.IntervalType && raw.length == 12) {
+            ByteBuffer bb = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
+            return formatInterval(bb.getInt(0), bb.getInt(4), bb.getInt(8));
+        }
         return formatRawBytes(raw);
+    }
+
+    public static String formatInterval(PqInterval interval) {
+        if (interval == null) {
+            return "null";
+        }
+        return formatInterval(interval.months(), interval.days(), interval.milliseconds());
+    }
+
+    public static String formatInterval(int months, int days, int milliseconds) {
+        long m = Integer.toUnsignedLong(months);
+        long d = Integer.toUnsignedLong(days);
+        long ms = Integer.toUnsignedLong(milliseconds);
+        if (m == 0 && d == 0 && ms == 0) {
+            return "0ms";
+        }
+        StringBuilder sb = new StringBuilder();
+        if (m != 0) {
+            sb.append(m).append("mo");
+        }
+        if (d != 0) {
+            if (!sb.isEmpty()) {
+                sb.append(' ');
+            }
+            sb.append(d).append('d');
+        }
+        if (ms != 0) {
+            if (!sb.isEmpty()) {
+                sb.append(' ');
+            }
+            sb.append(ms).append("ms");
+        }
+        return sb.toString();
     }
 
     /// Renders a raw byte array as either UTF-8 text (when the bytes are

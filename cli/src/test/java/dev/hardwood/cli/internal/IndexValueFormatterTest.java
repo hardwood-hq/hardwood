@@ -7,6 +7,8 @@
  */
 package dev.hardwood.cli.internal;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
 import org.junit.jupiter.api.Test;
@@ -98,6 +100,32 @@ class IndexValueFormatterTest {
         int day = 20202;
         byte[] bytes = new byte[]{(byte) day, (byte) (day >> 8), (byte) (day >> 16), (byte) (day >> 24)};
         assertThat(IndexValueFormatter.format(bytes, col)).isEqualTo("2025-04-24");
+    }
+
+    @Test
+    void rendersIntervalLogically() {
+        ColumnSchema col = new ColumnSchema(FieldPath.of("iv"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                RepetitionType.OPTIONAL, null, 0, 1, 0, new LogicalType.IntervalType());
+        // 1 month, 15 days, 3_600_000 ms — little-endian unsigned 32-bit
+        byte[] bytes = new byte[12];
+        ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        bb.putInt(1);
+        bb.putInt(15);
+        bb.putInt(3_600_000);
+        assertThat(IndexValueFormatter.format(bytes, col)).isEqualTo("1mo 15d 3600000ms");
+    }
+
+    @Test
+    void intervalPhysicalModeRendersAsHex() {
+        ColumnSchema col = new ColumnSchema(FieldPath.of("iv"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                RepetitionType.OPTIONAL, null, 0, 1, 0, new LogicalType.IntervalType());
+        byte[] bytes = new byte[12];
+        ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        bb.putInt(1);
+        bb.putInt(15);
+        bb.putInt(3_600_000);
+        assertThat(IndexValueFormatter.format(bytes, col, false, false))
+                .isEqualTo(java.util.HexFormat.of().formatHex(bytes));
     }
 
     private static ColumnSchema stringColumn() {

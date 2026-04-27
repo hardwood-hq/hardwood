@@ -10,6 +10,7 @@ package dev.hardwood.cli.internal;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -185,6 +186,10 @@ public final class IndexValueFormatter {
         if (lt instanceof LogicalType.UuidType && bytes.length == 16) {
             ByteBuffer bb = ByteBuffer.wrap(bytes);
             return new UUID(bb.getLong(), bb.getLong()).toString();
+        }
+        if (lt instanceof LogicalType.IntervalType && bytes.length == 12) {
+            ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+            return RowValueFormatter.formatInterval(bb.getInt(0), bb.getInt(4), bb.getInt(8));
         }
         String hex = HexFormat.of().formatHex(bytes);
         return truncate ? truncate(hex) : hex;

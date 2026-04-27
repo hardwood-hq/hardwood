@@ -7,12 +7,16 @@
  */
 package dev.hardwood.cli.internal;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.schema.ColumnSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -96,6 +100,45 @@ class RowValueFormatterTest {
         byte[] bytes = "hello".getBytes(java.nio.charset.StandardCharsets.UTF_8);
         assertThat(RowValueFormatter.formatDictionaryValue(bytes, col))
                 .isEqualTo("hello");
+    }
+
+    @Test
+    void intervalRendersAsReadableComponents() {
+        // Row 0 from interval_logical_type_test.parquet: 1 month, 15 days, 1 hour (3_600_000 ms)
+        assertThat(RowValueFormatter.formatInterval(new PqInterval(1, 15, 3_600_000)))
+                .isEqualTo("1mo 15d 3600000ms");
+    }
+
+    @Test
+    void intervalWithZeroComponentsOmitsThem() {
+        assertThat(RowValueFormatter.formatInterval(new PqInterval(0, 30, 0)))
+                .isEqualTo("30d");
+    }
+
+    @Test
+    void intervalAllZeroRendersAsZeroMs() {
+        assertThat(RowValueFormatter.formatInterval(new PqInterval(0, 0, 0)))
+                .isEqualTo("0ms");
+    }
+
+    @Test
+    void intervalAboveMaxValueUsesUnsignedRendering() {
+        // 0xFFFFFFFF = 4294967295 as unsigned, -1 as signed int
+        assertThat(RowValueFormatter.formatInterval(new PqInterval(-1, -1, -1)))
+                .isEqualTo("4294967295mo 4294967295d 4294967295ms");
+    }
+
+    @Test
+    void intervalDictionaryBytesRenderAsComponents() {
+        ColumnSchema col = column(PhysicalType.FIXED_LEN_BYTE_ARRAY, new LogicalType.IntervalType());
+        // 1 month, 15 days, 3_600_000 ms — little-endian unsigned 32-bit
+        byte[] bytes = new byte[12];
+        ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        bb.putInt(1);
+        bb.putInt(15);
+        bb.putInt(3_600_000);
+        assertThat(RowValueFormatter.formatDictionaryValue(bytes, col))
+                .isEqualTo("1mo 15d 3600000ms");
     }
 
     private static ColumnSchema column(PhysicalType type, LogicalType logical) {
