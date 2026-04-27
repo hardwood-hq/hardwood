@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
@@ -105,9 +106,9 @@ public final class OffsetIndexScreen {
             PageLocation loc = locations.get(i);
             rows.add(Row.from(
                     String.valueOf(i),
-                    String.format("%,d", loc.offset()),
+                    Fmt.fmt("%,d", loc.offset()),
                     Sizes.format(loc.compressedPageSize()),
-                    String.format("%,d", loc.firstRowIndex())));
+                    Fmt.fmt("%,d", loc.firstRowIndex())));
         }
         Row header = Row.from("#", "Offset", "Size", "First row").style(Style.EMPTY.bold());
         Block block = Block.builder()

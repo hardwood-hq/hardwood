@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -100,7 +101,7 @@ public final class RowGroupsScreen {
                     formatLong(rg.numRows()),
                     Sizes.format(uncompressed),
                     Sizes.format(compressed),
-                    String.format("%.1f×", ratio),
+                    Fmt.fmt("%.1f×", ratio),
                     ciCount + "/" + chunkCount,
                     oiCount + "/" + chunkCount));
         }
@@ -148,6 +149,6 @@ public final class RowGroupsScreen {
         if (v < 1000) {
             return Long.toString(v);
         }
-        return String.format("%,d", v);
+        return Fmt.fmt("%,d", v);
     }
 }

@@ -7,6 +7,8 @@
  */
 package dev.hardwood.cli.dive.internal;
 
+import dev.hardwood.cli.internal.Fmt;
+
 /// Renders `count + noun` strings consistently across the `dive` TUI: picks
 /// singular vs plural form based on the count, and formats the number with
 /// the locale-independent grouping separator (comma). Handles irregular
@@ -18,7 +20,7 @@ public final class Plurals {
     }
 
     public static String format(long count, String singular, String plural) {
-        return String.format("%,d", count) + " " + (count == 1 ? singular : plural);
+        return Fmt.fmt("%,d", count) + " " + (count == 1 ? singular : plural);
     }
 
     /// Renders an approximate "X-Y of Z" range string for a list-shaped
@@ -37,11 +39,11 @@ public final class Plurals {
         int v = Math.max(1, viewport);
         if (total <= v) {
             return total == 1 ? "1 of 1"
-                    : "1-" + String.format("%,d", total) + " of " + String.format("%,d", total);
+                    : "1-" + Fmt.fmt("%,d", total) + " of " + Fmt.fmt("%,d", total);
         }
         int sel = Math.max(0, Math.min(selection, total - 1));
         int end = Math.min(total, Math.max(v, sel + 1));
         int start = Math.max(1, end - v + 1);
-        return String.format("%,d-%,d of %,d", start, end, total);
+        return Fmt.fmt("%,d-%,d of %,d", start, end, total);
     }
 }

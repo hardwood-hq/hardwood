@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
@@ -135,7 +136,7 @@ public final class RowGroupIndexesScreen {
             rows.add(Row.from(
                     Sizes.columnPath(e.chunk().metaData()),
                     e.typeLabel(),
-                    String.format("%,d", e.offset()),
+                    Fmt.fmt("%,d", e.offset()),
                     Sizes.format(e.size())));
         }
         Row header = Row.from("Column", "Index type", "Offset", "Size")

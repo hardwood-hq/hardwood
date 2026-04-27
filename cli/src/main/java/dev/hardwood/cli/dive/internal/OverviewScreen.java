@@ -14,6 +14,7 @@ import java.util.Map;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
@@ -210,7 +211,7 @@ public final class OverviewScreen {
         lines.add(factsLine("Created by", f.createdBy() != null ? f.createdBy() : "unknown"));
         lines.add(factsLine("Uncompressed", Sizes.format(f.uncompressedBytes())));
         lines.add(factsLine("Compressed", Sizes.format(f.compressedBytes())));
-        lines.add(factsLine("Ratio", String.format("%.1f×", f.compressionRatio())));
+        lines.add(factsLine("Ratio", Fmt.fmt("%.1f×", f.compressionRatio())));
         List<Map.Entry<String, String>> kv = f.keyValueMetadata();
         if (!kv.isEmpty()) {
             lines.add(Line.empty());

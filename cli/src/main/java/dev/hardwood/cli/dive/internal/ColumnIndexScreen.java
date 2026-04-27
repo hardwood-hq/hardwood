@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.schema.ColumnSchema;
@@ -185,7 +186,7 @@ public final class ColumnIndexScreen {
         List<Row> rows = new ArrayList<>();
         for (int idx : filtered) {
             String nulls = ci.nullCounts() != null && idx < ci.nullCounts().size()
-                    ? String.format("%,d", ci.nullCounts().get(idx))
+                    ? Fmt.fmt("%,d", ci.nullCounts().get(idx))
                     : "—";
             rows.add(Row.from(
                     String.valueOf(idx),
@@ -330,7 +331,7 @@ public final class ColumnIndexScreen {
         Line line = Line.from(
                 new Span(" / ", Style.EMPTY.fg(Theme.ACCENT).bold()),
                 new Span(state.filter() + cursor, Style.EMPTY.bold()),
-                new Span("  (" + String.format("%,d", matchCount) + " / "
+                new Span("  (" + Fmt.fmt("%,d", matchCount) + " / "
                         + Plurals.format(totalPages, "page", "pages") + ")", Style.EMPTY.fg(Theme.DIM)));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }

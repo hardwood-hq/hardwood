@@ -14,6 +14,7 @@ import java.util.Set;
 
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.schema.SchemaNode;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
@@ -226,7 +227,7 @@ public final class DataPreviewScreen {
         long total = model.facts().totalRows();
         long lastRow = state.firstRow() + state.rows().size();
         String typeMode = state.logicalTypes() ? "" : " · physical";
-        String title = String.format(" Data preview (rows %,d–%,d of %,d · cols %d–%d of %d%s) ",
+        String title = Fmt.fmt(" Data preview (rows %,d–%,d of %,d · cols %d–%d of %d%s) ",
                 state.firstRow() + 1, lastRow, total,
                 state.columnScroll() + 1, windowEnd, columnCount, typeMode);
 
@@ -403,7 +404,7 @@ public final class DataPreviewScreen {
 
         long absRow = state.firstRow() + state.modalRow();
         Block block = Block.builder()
-                .title(String.format(" Row %,d ", absRow + 1))
+                .title(Fmt.fmt(" Row %,d ", absRow + 1))
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
                 .borderColor(Theme.ACCENT)

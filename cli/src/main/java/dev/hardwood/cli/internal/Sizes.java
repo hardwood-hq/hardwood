@@ -23,12 +23,12 @@ public class Sizes {
             return bytes + " B";
         }
         if (bytes < 1_024 * 1_024) {
-            return String.format("%.1f KB", bytes / 1_024.0);
+            return Fmt.fmt("%.1f KB", bytes / 1_024.0);
         }
         if (bytes < 1_024L * 1_024 * 1_024) {
-            return String.format("%.1f MB", bytes / (1_024.0 * 1_024));
+            return Fmt.fmt("%.1f MB", bytes / (1_024.0 * 1_024));
         }
-        return String.format("%.1f GB", bytes / (1_024.0 * 1_024 * 1_024));
+        return Fmt.fmt("%.1f GB", bytes / (1_024.0 * 1_024 * 1_024));
     }
 
     /// Renders bytes as a human-readable form plus the raw byte count in
@@ -39,6 +39,6 @@ public class Sizes {
         if (bytes < 1_024) {
             return format(bytes);
         }
-        return format(bytes) + "  (" + String.format("%,d", bytes) + " B)";
+        return format(bytes) + "  (" + Fmt.fmt("%,d", bytes) + " B)";
     }
 }

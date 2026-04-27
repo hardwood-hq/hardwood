@@ -16,6 +16,7 @@ import java.util.TreeMap;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -290,11 +291,11 @@ public final class FooterScreen {
         lines.add(fact("  Format version", String.valueOf(model.metadata().version())));
         lines.add(fact("  Created by",
                 model.facts().createdBy() != null ? model.facts().createdBy() : "unknown"));
-        lines.add(fact("  Footer trailer offset", String.format("%,d", footerTrailerOffset)));
+        lines.add(fact("  Footer trailer offset", Fmt.fmt("%,d", footerTrailerOffset)));
         lines.add(fact("  Trailer bytes", String.valueOf(FOOTER_TRAILER_BYTES)));
         if (stats.minDataOffset() < Long.MAX_VALUE) {
             lines.add(fact("  Data region",
-                    String.format("%,d .. %,d  (%s)",
+                    Fmt.fmt("%,d .. %,d  (%s)",
                             stats.minDataOffset(), stats.maxDataEnd(),
                             Sizes.format(stats.maxDataEnd() - stats.minDataOffset()))));
             lines.add(fact("  Footer + indexes",
@@ -336,7 +337,7 @@ public final class FooterScreen {
         lines.add(fact("  Compressed data", Sizes.dualFormat(model.facts().compressedBytes())));
         lines.add(fact("  Uncompressed data", Sizes.dualFormat(model.facts().uncompressedBytes())));
         lines.add(fact("  Compression ratio",
-                String.format("%.2f×", model.facts().compressionRatio())));
+                Fmt.fmt("%.2f×", model.facts().compressionRatio())));
         return lines;
     }
 
@@ -467,7 +468,7 @@ public final class FooterScreen {
             return "0/0";
         }
         int pct = (int) Math.round(100.0 * count / total);
-        return String.format("%,d/%,d chunks  (%d%%)", count, total, pct);
+        return Fmt.fmt("%,d/%,d chunks  (%d%%)", count, total, pct);
     }
 
     private static Line fact(String key, String value) {

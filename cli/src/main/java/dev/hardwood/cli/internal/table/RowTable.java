@@ -21,6 +21,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.RowValueFormatter;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
@@ -284,7 +285,7 @@ public final class RowTable {
                 case '\f' -> sb.append("\\f");
                 default -> {
                     if (c < 0x20) {
-                        sb.append(String.format("\\u%04x", (int) c));
+                        sb.append(Fmt.fmt("\\u%04x", (int) c));
                     }
                     else {
                         sb.append(c);

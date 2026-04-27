@@ -14,6 +14,7 @@ import java.util.stream.Collectors;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
@@ -220,20 +221,20 @@ public final class ColumnChunkDetailScreen {
                 .map(Enum::name)
                 .collect(Collectors.joining(", "))));
         lines.add(Line.empty());
-        lines.add(fact("Data offset", String.format("%,d", cmd.dataPageOffset())));
+        lines.add(fact("Data offset", Fmt.fmt("%,d", cmd.dataPageOffset())));
         lines.add(fact("Dict offset", cmd.dictionaryPageOffset() != null
-                ? String.format("%,d", cmd.dictionaryPageOffset())
+                ? Fmt.fmt("%,d", cmd.dictionaryPageOffset())
                 : "—"));
         lines.add(fact("Column index offset", chunk.columnIndexOffset() != null
-                ? String.format("%,d", chunk.columnIndexOffset())
+                ? Fmt.fmt("%,d", chunk.columnIndexOffset())
                 : "—"));
         lines.add(fact("Offset index offset", chunk.offsetIndexOffset() != null
-                ? String.format("%,d", chunk.offsetIndexOffset())
+                ? Fmt.fmt("%,d", chunk.offsetIndexOffset())
                 : "—"));
         lines.add(Line.empty());
-        lines.add(fact("Values", String.format("%,d", cmd.numValues())));
+        lines.add(fact("Values", Fmt.fmt("%,d", cmd.numValues())));
         lines.add(fact("Nulls", stats != null && stats.nullCount() != null
-                ? String.format("%,d", stats.nullCount())
+                ? Fmt.fmt("%,d", stats.nullCount())
                 : "—"));
         lines.add(fact("Uncompressed", Sizes.format(cmd.totalUncompressedSize())));
         lines.add(fact("Compressed", Sizes.format(cmd.totalCompressedSize())));

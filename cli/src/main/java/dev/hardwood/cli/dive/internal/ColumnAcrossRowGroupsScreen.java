@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.metadata.ColumnChunk;
@@ -104,7 +105,7 @@ public final class ColumnAcrossRowGroupsScreen {
                     ? IndexValueFormatter.format(stats.maxValue(), col, state.logicalTypes())
                     : "—";
             String nulls = stats != null && stats.nullCount() != null
-                    ? String.format("%,d", stats.nullCount())
+                    ? Fmt.fmt("%,d", stats.nullCount())
                     : "—";
             double ratio = cmd.totalCompressedSize() == 0
                     ? 0.0
@@ -114,13 +115,13 @@ public final class ColumnAcrossRowGroupsScreen {
             // already — render "—" here.
             dev.hardwood.metadata.OffsetIndex oi = cc.offsetIndexOffset() != null
                     ? model.offsetIndex(i, state.columnIndex()) : null;
-            String pages = oi != null ? String.format("%,d", oi.pageLocations().size()) : "—";
+            String pages = oi != null ? Fmt.fmt("%,d", oi.pageLocations().size()) : "—";
             rows.add(Row.from(
                     String.valueOf(i),
-                    String.format("%,d", rg.numRows()),
+                    Fmt.fmt("%,d", rg.numRows()),
                     pages,
                     Sizes.format(cmd.totalCompressedSize()),
-                    String.format("%.1f×", ratio),
+                    Fmt.fmt("%.1f×", ratio),
                     cmd.dictionaryPageOffset() != null ? "yes" : "no",
                     cc.columnIndexOffset() != null ? "yes" : "no",
                     nulls,

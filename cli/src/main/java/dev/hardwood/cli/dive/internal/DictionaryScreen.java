@@ -13,6 +13,7 @@ import java.util.List;
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
+import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.RowValueFormatter;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.schema.ColumnSchema;
@@ -271,7 +272,7 @@ public final class DictionaryScreen {
         Line line = Line.from(
                 new Span(" / ", Style.EMPTY.fg(Theme.ACCENT).bold()),
                 new Span(state.filter() + cursor, Style.EMPTY.bold()),
-                new Span("  (" + String.format("%,d", filteredSize) + " / "
+                new Span("  (" + Fmt.fmt("%,d", filteredSize) + " / "
                         + Plurals.format(totalSize, "entry", "entries") + ")", Style.EMPTY.fg(Theme.DIM)));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
