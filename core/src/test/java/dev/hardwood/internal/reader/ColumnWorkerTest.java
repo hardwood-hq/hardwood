@@ -42,7 +42,7 @@ class ColumnWorkerTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void flatPipelineDeliversAllRows() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
 
             FileSchema schema = reader.getFileSchema();
             long expectedRows = reader.getFileMetaData().rowGroups().stream()
@@ -77,7 +77,7 @@ class ColumnWorkerTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void flatBatchesHaveCorrectCapacity() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
 
             FileSchema schema = reader.getFileSchema();
             RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
@@ -121,7 +121,7 @@ class ColumnWorkerTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void flatPipelineTracksNulls() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(WITH_NULLS))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(WITH_NULLS))) {
 
             FileSchema schema = reader.getFileSchema();
             RowGroupIterator iterator = createIterator(WITH_NULLS, schema, context);
@@ -174,7 +174,7 @@ class ColumnWorkerTest {
         long maxRows = 100;
 
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
 
             FileSchema schema = reader.getFileSchema();
             RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
@@ -235,7 +235,7 @@ class ColumnWorkerTest {
         Path nestedFile = Path.of("src/test/resources/list_basic_test.parquet");
 
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile))) {
 
             FileSchema schema = reader.getFileSchema();
             long expectedRows = reader.getFileMetaData().rowGroups().stream()
@@ -306,7 +306,7 @@ class ColumnWorkerTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void closeJoinsThreadsAndAwaitsInFlightDecodes() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
 
             FileSchema schema = reader.getFileSchema();
             RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
@@ -332,8 +332,7 @@ class ColumnWorkerTest {
                     firstSubmitted.countDown();
                     try {
                         release.await();
-                    }
-                    catch (InterruptedException e) {
+                    } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         return;
                     }
@@ -389,6 +388,115 @@ class ColumnWorkerTest {
 
             assertThat(decodesFinished.get())
                     .as("every submitted decode task should have finished")
+                    .isEqualTo(decodesEntered.get());
+        }
+    }
+
+    /// Regression test for the interrupt-flag bug in [ColumnWorker#close()].
+    ///
+    /// **Scenario**: the thread that calls `close()` is interrupted while it is
+    /// blocked in `retrieverThread.join()`. Before the fix, `close()` re-asserted
+    /// `Thread.currentThread().interrupt()` immediately after catching the
+    /// exception,
+    /// so the subsequent `CompletableFuture.allOf().join()` saw the flag and
+    /// returned
+    /// at once — leaving decode tasks still executing. Any `InputFile` released in
+    /// its
+    /// own `close()` (mapped buffers, HTTP connections, etc.) could therefore free
+    /// memory a decode task was still reading from.
+    ///
+    /// **After the fix**: the flag is saved into a local boolean and restored only
+    /// *after* `allOf().join()` has drained every in-flight task.
+    ///
+    /// Assertions:
+    /// 1. All decode tasks finish (`decodesFinished == decodesEntered`).
+    /// 2. The interrupt flag is re-asserted on the closer thread when it returns.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void closeCompletesDecodesDespiteCallerInterrupt() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+            int batchCapacity = 64;
+
+            // Latch that holds every decode task parked until we release it.
+            CountDownLatch release = new CountDownLatch(1);
+            // Signals the moment the first task has been submitted to the executor.
+            CountDownLatch firstSubmitted = new CountDownLatch(1);
+
+            AtomicInteger decodesEntered = new AtomicInteger();
+            AtomicInteger decodesFinished = new AtomicInteger();
+            List<Thread> executorThreads = new CopyOnWriteArrayList<>();
+
+            Executor stalledExecutor = command -> {
+                Thread t = Thread.ofVirtual().start(() -> {
+                    decodesEntered.incrementAndGet();
+                    firstSubmitted.countDown();
+                    try {
+                        release.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    command.run();
+                    decodesFinished.incrementAndGet();
+                });
+                executorThreads.add(t);
+            };
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, batchCapacity,
+                    context.decompressorFactory(), stalledExecutor, 0);
+            worker.start();
+
+            // Wait until at least one decode task is in flight.
+            assertThat(firstSubmitted.await(5, TimeUnit.SECONDS))
+                    .as("retriever should have submitted at least one decode task")
+                    .isTrue();
+
+            // Start close() on a separate virtual thread, then interrupt it while it
+            // is blocked inside retrieverThread.join() / drainThread.join().
+            Thread closer = Thread.ofVirtual().start(worker::close);
+            Thread.sleep(100); // give close() time to enter join()
+            closer.interrupt();
+
+            // close() is now interrupted but must NOT return until we release the
+            // decode tasks. Give it a moment to (incorrectly) short-circuit if buggy.
+            Thread.sleep(200);
+            assertThat(closer.isAlive())
+                    .as("close() must not return early after an interrupt — decode tasks are still running")
+                    .isTrue();
+
+            // Release all stalled decode tasks so close() can drain them.
+            release.countDown();
+            closer.join(TimeUnit.SECONDS.toMillis(10));
+
+            assertThat(closer.isAlive())
+                    .as("close() should have returned after decodes drained")
+                    .isFalse();
+
+            // The interrupt flag must be restored on the closer thread after close()
+            // returns.
+            assertThat(closer.isInterrupted())
+                    .as("close() must restore the interrupt flag after draining")
+                    .isTrue();
+
+            // Join executor threads so decodesFinished++ is visible before we assert.
+            for (Thread t : executorThreads) {
+                t.join(TimeUnit.SECONDS.toMillis(5));
+            }
+
+            assertThat(decodesFinished.get())
+                    .as("all decode tasks must have completed despite the interrupt")
                     .isEqualTo(decodesEntered.get());
         }
     }
@@ -480,10 +588,10 @@ class ColumnWorkerTest {
         }
     }
 
-    // ==================== Helpers ====================
+    // Helpers
 
     private static RowGroupIterator createIterator(Path file, FileSchema schema,
-                                                    HardwoodContextImpl context) throws Exception {
+            HardwoodContextImpl context) throws Exception {
         InputFile inputFile = InputFile.of(file);
         inputFile.open();
 
