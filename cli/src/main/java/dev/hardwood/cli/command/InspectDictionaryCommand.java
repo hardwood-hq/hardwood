@@ -12,7 +12,6 @@ import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.Callable;
-import java.util.function.IntFunction;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.IndexValueFormatter;
@@ -140,7 +139,7 @@ public class InspectDictionaryCommand implements Callable<Integer> {
                     messages.add("Row Group " + rgIdx + " - dictionary has " + dictionary.size()
                             + " entries (showing first " + displayed + ")");
                 }
-                addDictionaryRows(rows, rgIdx, dictionary, columnSchema, displayed);
+                addDictionaryRows(rows, rgIdx, dictionary, columnSchema, displayed, includeLength);
             }
         }
 
@@ -157,53 +156,61 @@ public class InspectDictionaryCommand implements Callable<Integer> {
     }
 
     private static void addDictionaryRows(List<String[]> rows, int rgIdx, Dictionary dictionary,
-                                          ColumnSchema columnSchema, int displayed) {
+                                          ColumnSchema columnSchema, int displayed, boolean includeLength) {
         switch (dictionary) {
-            case Dictionary.IntDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
-                    i -> d.values()[i]);
-            case Dictionary.LongDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
-                    i -> d.values()[i]);
-            case Dictionary.FloatDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
-                    i -> d.values()[i]);
-            case Dictionary.DoubleDictionary d -> addValueRows(rows, rgIdx, columnSchema, displayed,
-                    i -> d.values()[i]);
-            case Dictionary.ByteArrayDictionary d -> addByteArrayRows(rows, rgIdx, d.values(), columnSchema,
-                    displayed);
-        }
-    }
-
-    private static void addValueRows(List<String[]> rows, int rgIdx, ColumnSchema columnSchema,
-                                     int displayed, IntFunction<Object> valueAt) {
-        for (int i = 0; i < displayed; i++) {
-            rows.add(new String[]{
-                    rgCell(i, rgIdx),
-                    String.valueOf(i),
-                    IndexValueFormatter.formatDecoded(valueAt.apply(i), columnSchema)
-            });
+            case Dictionary.IntDictionary d -> {
+                int[] vs = d.values();
+                for (int i = 0; i < displayed; i++) {
+                    addRow(rows, rgIdx, i, IndexValueFormatter.formatDecoded(vs[i], columnSchema));
+                }
+            }
+            case Dictionary.LongDictionary d -> {
+                long[] vs = d.values();
+                for (int i = 0; i < displayed; i++) {
+                    addRow(rows, rgIdx, i, IndexValueFormatter.formatDecoded(vs[i], columnSchema));
+                }
+            }
+            case Dictionary.FloatDictionary d -> {
+                float[] vs = d.values();
+                for (int i = 0; i < displayed; i++) {
+                    addRow(rows, rgIdx, i, IndexValueFormatter.formatDecoded(vs[i]));
+                }
+            }
+            case Dictionary.DoubleDictionary d -> {
+                double[] vs = d.values();
+                for (int i = 0; i < displayed; i++) {
+                    addRow(rows, rgIdx, i, IndexValueFormatter.formatDecoded(vs[i]));
+                }
+            }
+            case Dictionary.ByteArrayDictionary d -> addByteArrayRows(
+                    rows, rgIdx, d.values(), columnSchema, displayed, includeLength);
         }
     }
 
     private static void addByteArrayRows(List<String[]> rows, int rgIdx, byte[][] values,
-                                         ColumnSchema columnSchema, int displayed) {
-        boolean includeLength = hasVariableWidthDictionaryValues(columnSchema);
+                                         ColumnSchema columnSchema, int displayed, boolean includeLength) {
         for (int i = 0; i < displayed; i++) {
             byte[] value = values[i];
+            String formatted = IndexValueFormatter.formatDecoded(value, columnSchema);
             if (includeLength) {
                 rows.add(new String[]{
                         rgCell(i, rgIdx),
                         String.valueOf(i),
                         value != null ? String.valueOf(value.length) : "-",
-                        IndexValueFormatter.formatDecoded(value, columnSchema)
+                        formatted
                 });
             }
             else {
-                rows.add(new String[]{
-                        rgCell(i, rgIdx),
-                        String.valueOf(i),
-                        IndexValueFormatter.formatDecoded(value, columnSchema)
-                });
+                // INT96 dictionaries also flow through ByteArrayDictionary but
+                // store a fixed 12-byte payload, so the Length column is
+                // suppressed (the header omits it for non-BYTE_ARRAY columns).
+                addRow(rows, rgIdx, i, formatted);
             }
         }
+    }
+
+    private static void addRow(List<String[]> rows, int rgIdx, int entryIndex, String value) {
+        rows.add(new String[]{rgCell(entryIndex, rgIdx), String.valueOf(entryIndex), value});
     }
 
     private static boolean hasVariableWidthDictionaryValues(ColumnSchema columnSchema) {
