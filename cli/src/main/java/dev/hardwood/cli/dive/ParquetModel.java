@@ -36,6 +36,7 @@ import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.s3.S3InputFile;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -338,6 +339,19 @@ public final class ParquetModel implements AutoCloseable {
 
     public InputFile inputFile() {
         return inputFile;
+    }
+
+    /// Network usage of the underlying [InputFile] for this session.
+    /// Returns `null` for local files; for [S3InputFile] returns a live
+    /// snapshot of request count and bytes fetched since `open()`.
+    public NetStats netStats() {
+        if (inputFile instanceof S3InputFile s3) {
+            return new NetStats(s3.networkRequestCount(), s3.networkBytesFetched());
+        }
+        return null;
+    }
+
+    public record NetStats(long requestCount, long bytesFetched) {
     }
 
     public ParquetFileReader reader() {

@@ -230,6 +230,31 @@ class S3InputFileTest {
     }
 
     @Test
+    void networkStatsCountOpenAndReadRangeButNotTailCacheHits() throws Exception {
+        // column_index_pushdown.parquet is large enough that the column data
+        // sits outside the 64 KB tail cache, so readRange must hit the
+        // network — proving the counters increase past the open() baseline.
+        // (A tiny fixture would fit entirely inside the tail cache and the
+        // counters would correctly stay at 1.)
+        S3InputFile file = source.inputFile("test-bucket", "column_index_pushdown.parquet");
+        try (ParquetFileReader reader = ParquetFileReader.open(file)) {
+            long openRequests = file.networkRequestCount();
+            long openBytes = file.networkBytesFetched();
+            assertThat(openRequests).isPositive();
+            assertThat(openBytes).isPositive();
+
+            try (ColumnReader col = reader.createColumnReader("id")) {
+                while (col.nextBatch()) {
+                    // drain
+                }
+            }
+
+            assertThat(file.networkRequestCount()).isGreaterThan(openRequests);
+            assertThat(file.networkBytesFetched()).isGreaterThan(openBytes);
+        }
+    }
+
+    @Test
     void name() {
         S3InputFile file = source.inputFile("test-bucket", "data/file.parquet");
         assertThat(file.name()).isEqualTo("s3://test-bucket/data/file.parquet");

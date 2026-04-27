@@ -69,17 +69,23 @@ public final class Chrome {
         Style bold = Style.EMPTY.bold();
         Style dim = Style.EMPTY.fg(Theme.DIM);
         ParquetModel.Facts f = model.facts();
-        Line line = Line.from(
-                new Span(" hardwood dive ", bold.fg(Theme.ACCENT)),
-                new Span("│ ", dim),
-                Span.raw(basename(model.displayPath())),
-                new Span(" │ ", dim),
-                Span.raw(Sizes.format(model.fileSizeBytes())),
-                new Span(" │ ", dim),
-                Span.raw(Plurals.format(f.rowGroupCount(), "RG", "RGs")),
-                new Span(" │ ", dim),
-                Span.raw(formatRowCount(f.totalRows()) + " rows"));
-        Paragraph.builder().text(convert(line)).left().build().render(area, buffer);
+        List<Span> spans = new ArrayList<>();
+        spans.add(new Span(" hardwood dive ", bold.fg(Theme.ACCENT)));
+        spans.add(new Span("│ ", dim));
+        spans.add(Span.raw(basename(model.displayPath())));
+        spans.add(new Span(" │ ", dim));
+        spans.add(Span.raw(Sizes.format(model.fileSizeBytes())));
+        spans.add(new Span(" │ ", dim));
+        spans.add(Span.raw(Plurals.format(f.rowGroupCount(), "RG", "RGs")));
+        spans.add(new Span(" │ ", dim));
+        spans.add(Span.raw(formatRowCount(f.totalRows()) + " rows"));
+        ParquetModel.NetStats net = model.netStats();
+        if (net != null) {
+            spans.add(new Span(" │ ", dim));
+            spans.add(Span.raw(Plurals.format(net.requestCount(), "req", "reqs")
+                    + " · " + Sizes.format(net.bytesFetched())));
+        }
+        Paragraph.builder().text(convert(Line.from(spans))).left().build().render(area, buffer);
     }
 
     public static void renderBreadcrumb(Buffer buffer, Rect area, NavigationStack stack, ParquetModel model) {

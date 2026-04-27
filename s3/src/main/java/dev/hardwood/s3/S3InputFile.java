@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
+import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.s3.internal.S3Api;
@@ -41,6 +42,8 @@ public class S3InputFile implements InputFile {
     private long fileLength = -1;
     private ByteBuffer tailCache;
     private long tailCacheOffset;
+    private final AtomicLong networkRequestCount = new AtomicLong();
+    private final AtomicLong networkBytesFetched = new AtomicLong();
 
     S3InputFile(S3Source source, String bucket, String key) {
         this.api = source.api();
@@ -62,6 +65,8 @@ public class S3InputFile implements InputFile {
         }
         fileLength = parseFileLength(response);
         byte[] tail = response.body();
+        networkRequestCount.incrementAndGet();
+        networkBytesFetched.addAndGet(tail.length);
         // Use a direct buffer so slices are usable from FFM-based decompressors
         // (e.g. libdeflate), which require native MemorySegments.
         tailCache = ByteBuffer.allocateDirect(tail.length);
@@ -88,6 +93,8 @@ public class S3InputFile implements InputFile {
         LOG.log(System.Logger.Level.DEBUG,
                 "[{0}] readRange offset={1} length={2} (network fetch)",
                 name(), offset, length);
+        networkRequestCount.incrementAndGet();
+        networkBytesFetched.addAndGet(length);
         String range = "bytes=" + offset + "-" + (offset + length - 1);
         HttpResponse<InputStream> response = api.getStream(bucket, key, range);
         int status = response.statusCode();
@@ -133,6 +140,21 @@ public class S3InputFile implements InputFile {
     @Override
     public void close() {
         // S3Source owns the HttpClient — nothing to close here
+    }
+
+    /// Number of HTTP requests issued against the object since [#open()].
+    /// Counts the suffix-range tail fetch from `open` plus every
+    /// network-fetch [#readRange] call. Tail-cache hits do not count.
+    public long networkRequestCount() {
+        return networkRequestCount.get();
+    }
+
+    /// Number of bytes fetched from the network since [#open()]. The tail
+    /// fetch from `open` contributes its actual response size; each
+    /// network-fetch [#readRange] contributes the requested length.
+    /// Tail-cache hits do not count.
+    public long networkBytesFetched() {
+        return networkBytesFetched.get();
     }
 
     /// Extracts the total file length from the HTTP response.
