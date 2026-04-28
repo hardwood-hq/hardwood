@@ -60,22 +60,6 @@ public final class ParquetModel implements AutoCloseable {
     /// the result is safe to memoise.
     private Set<String> allGroupPathsCache;
     private int dictionaryReadCapBytes = DEFAULT_DICTIONARY_READ_CAP_BYTES;
-    // Forward-read cursor for Data preview pagination. Reusing the same
-    // RowReader across forward page flips avoids re-iterating from row 0 on
-    // every PgDn. Closed + recreated on backward moves (PgUp, g jump-to-top)
-    // and at session end. See `DataPreviewScreen.PageKey` for the
-    // cache-vs-cursor invariant — DataPreviewScreen.PAGE_CACHE is keyed on
-    // `(firstRow, pageSize, logicalTypes)`, this cursor is keyed on file
-    // position only; the two never share state directly.
-    private RowReader previewCursor;
-    private long previewCursorPosition;
-    /// Row group the preview cursor is currently iterating in. -1 when no
-    /// cursor is open. Used by [#readPreviewPage] to decide whether a
-    /// requested `firstRow` can reuse the cursor — only same-RG forward
-    /// moves reuse; cross-RG jumps and backward moves rebuild via
-    /// `firstRow(N)` so the new cursor is scoped to the target RG and
-    /// doesn't fetch bytes from intervening row groups.
-    private int previewCursorRowGroup = -1;
     private static final int DICTIONARY_CACHE_CAPACITY = 4;
     private static final int PAGE_HEADER_CACHE_CAPACITY = 8;
     /// Default maximum chunk-size for a Dictionary load. Larger chunks need the
@@ -387,67 +371,34 @@ public final class ParquetModel implements AutoCloseable {
     /// called once per row with a [RowReader] already positioned on that
     /// row.
     ///
-    /// Reuses a forward-only cursor across calls when the next call
-    /// moves forward and the existing cursor still has rows left to
-    /// yield. Otherwise closes the cursor and opens a new one via
-    /// `buildRowReader().firstRow(firstRow).build()`, which seeks
-    /// directly to the row group containing `firstRow` instead of
-    /// walking from row 0 — the headline win for jump-to-end on remote
-    /// files.
+    /// Each call builds a *fresh* cursor bounded by `head(pageSize)` and
+    /// closes it before returning. The bound matters: without it, the
+    /// per-column workers in the v2 pipeline race many row groups ahead
+    /// of what the consumer asks for (#370), so the bytes they queue
+    /// eventually get fetched — surfacing as "phantom" S3 fetches long
+    /// after the user moved on. `head(pageSize)` caps the workers to
+    /// exactly the rows we need; the eager close releases the
+    /// iterator's metadata cache and any retained chunk-handle bytes
+    /// before the next call (the dive viewport window absorbs all
+    /// within-buffer navigation, so cursor reuse across calls would buy
+    /// nothing).
     public void readPreviewPage(long firstRow, int pageSize, java.util.function.Consumer<RowReader> consumer)
             throws IOException {
-        int targetRg = rowGroupContaining(firstRow);
-        // Reuse only when staying in the same row group AND moving forward.
-        // Cross-RG jumps must rebuild via firstRow(N) so the new cursor is
-        // scoped to the target RG — without this, a forward-skip via next()
-        // through intervening RGs would fetch every byte in between (which
-        // is exactly what `firstRow(N)` exists to avoid).
-        boolean canReuse = previewCursor != null
-                && previewCursorRowGroup == targetRg
-                && previewCursorPosition <= firstRow
-                && previewCursor.hasNext();
-        if (!canReuse) {
-            closePreviewCursor();
-            previewCursor = reader.buildRowReader().firstRow(firstRow).build();
-            previewCursorPosition = firstRow;
-            previewCursorRowGroup = targetRg;
-        }
-        while (previewCursorPosition < firstRow && previewCursor.hasNext()) {
-            previewCursor.next();
-            previewCursorPosition++;
-        }
-        int read = 0;
-        while (read < pageSize && previewCursor.hasNext()) {
-            previewCursor.next();
-            previewCursorPosition++;
-            consumer.accept(previewCursor);
-            read++;
-        }
-        // Forward iteration may cross row-group boundaries (cursor wasn't
-        // bounded). Update the tracked RG so the next call's same-RG check
-        // is accurate.
-        if (previewCursorPosition > 0) {
-            previewCursorRowGroup = rowGroupContaining(previewCursorPosition - 1);
-        }
-    }
-
-    private void closePreviewCursor() {
-        if (previewCursor != null) {
-            try {
-                previewCursor.close();
+        try (RowReader cursor = reader.buildRowReader()
+                .firstRow(firstRow)
+                .head(pageSize)
+                .build()) {
+            int read = 0;
+            while (read < pageSize && cursor.hasNext()) {
+                cursor.next();
+                consumer.accept(cursor);
+                read++;
             }
-            catch (RuntimeException ignored) {
-                // Best-effort close; the outer model close still needs to run.
-            }
-            previewCursor = null;
-            previewCursorPosition = 0;
-            previewCursorRowGroup = -1;
         }
     }
 
     @Override
     public void close() throws IOException {
-        closePreviewCursor();
         reader.close();
     }
 

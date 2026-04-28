@@ -14,7 +14,6 @@ import java.util.Set;
 
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
-import dev.hardwood.cli.internal.RowValueFormatter;
 import dev.hardwood.schema.SchemaNode;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
@@ -43,43 +42,11 @@ public final class DataPreviewScreen {
 
     private static final int VISIBLE_COLUMNS = 5;
     private static final int VALUE_TRUNCATE = 32;
-    private static final int PAGE_CACHE_CAP = 5;
 
-
-    /// Memoises recent (firstRow, pageSize, logicalTypes) lookups so that
-    /// stepping back through pages with PgUp doesn't re-walk the parquet
-    /// reader from row 0 each time. Scoped to one ParquetModel — clearing
-    /// whenever a different model first calls `initialState`.
-    ///
-    /// **Invariant — cache vs. cursor.** [PAGE_CACHE] and
-    /// [ParquetModel#previewCursor] are keyed independently: the cache by
-    /// `(firstRow, pageSize, logicalTypes)`, the cursor by file position
-    /// only. A cache hit returns pre-formatted rows without touching the
-    /// cursor; the next *uncached* fetch then continues from wherever
-    /// the cursor was last left and seeks forward (or closes + recreates
-    /// the cursor on a backward move). This works only because cached
-    /// pages are read-only views — they never advance the cursor — and
-    /// uncached fetches always do their own seek logic. If a future
-    /// change populates the cache as a side effect of a cursor advance
-    /// without a matching cache invalidation, or starts using the cursor
-    /// to satisfy cache hits, the two can diverge silently. Keep the two
-    /// stores' update paths separate.
-    private record PageKey(long firstRow, int pageSize, boolean logicalTypes) {
-    }
-
-    private record CachedPage(List<List<String>> rows, List<List<String>> expandedRows,
-                              List<String> columnNames) {
-    }
-
-    private static final java.util.LinkedHashMap<PageKey, CachedPage> PAGE_CACHE =
-            new java.util.LinkedHashMap<>(PAGE_CACHE_CAP, 0.75f, true) {
-                @Override
-                protected boolean removeEldestEntry(java.util.Map.Entry<PageKey, CachedPage> e) {
-                    return size() > PAGE_CACHE_CAP;
-                }
-            };
-
-    private static ParquetModel cachedFor;
+    /// A sliding ±10×viewport row window of pre-formatted Data preview
+    /// rows. Within-window navigation (PgUp/PgDn that stays inside the
+    /// horizon) is served from the buffer with no I/O. See [PreviewWindow].
+    private static final PreviewWindow WINDOW = new PreviewWindow();
 
     private DataPreviewScreen() {
     }
@@ -96,10 +63,6 @@ public final class DataPreviewScreen {
     /// deterministic page-boundary assertions. Production code uses the
     /// viewport-derived overload.
     public static ScreenState.DataPreview initialState(ParquetModel model, int pageSize) {
-        if (cachedFor != model) {
-            PAGE_CACHE.clear();
-            cachedFor = model;
-        }
         return loadPage(model, 0, pageSize, 0, true);
     }
 
@@ -669,48 +632,10 @@ public final class DataPreviewScreen {
 
     private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize,
                                                     int columnScroll, boolean logicalTypes) {
-        if (cachedFor != model) {
-            PAGE_CACHE.clear();
-            cachedFor = model;
-        }
-        PageKey key = new PageKey(firstRow, pageSize, logicalTypes);
-        CachedPage cached = PAGE_CACHE.get(key);
-        if (cached != null) {
-            return new ScreenState.DataPreview(firstRow, pageSize, cached.columnNames(),
-                    cached.rows(), cached.expandedRows(), columnScroll, 0, -1,
-                    logicalTypes, Set.of(), 0);
-        }
-        // `RowReader` indexes into the root message's top-level fields, not into
-        // leaf columns. For a flat schema those counts coincide; for a schema
-        // with lists / structs / maps / variants at the root they diverge, and
-        // iterating to model.columnCount() (leaf count) overruns the reader.
-        List<SchemaNode> topLevel = model.schema().getRootNode().children();
-        List<String> columnNames = new ArrayList<>(topLevel.size());
-        for (SchemaNode node : topLevel) {
-            columnNames.add(node.name());
-        }
-        int fieldCount = columnNames.size();
-        List<List<String>> rows = new ArrayList<>();
-        List<List<String>> expandedRows = new ArrayList<>();
-        try {
-            model.readPreviewPage(firstRow, pageSize, reader -> {
-                List<String> row = new ArrayList<>(fieldCount);
-                List<String> expanded = new ArrayList<>(fieldCount);
-                for (int c = 0; c < fieldCount; c++) {
-                    SchemaNode field = topLevel.get(c);
-                    row.add(RowValueFormatter.format(reader, c, field, logicalTypes));
-                    expanded.add(RowValueFormatter.formatExpanded(reader, c, field, logicalTypes));
-                }
-                rows.add(row);
-                expandedRows.add(expanded);
-            });
-        }
-        catch (java.io.IOException e) {
-            throw new java.io.UncheckedIOException(e);
-        }
-        PAGE_CACHE.put(key, new CachedPage(rows, expandedRows, columnNames));
-        return new ScreenState.DataPreview(firstRow, pageSize, columnNames, rows, expandedRows,
-                columnScroll, 0, -1, logicalTypes, Set.of(), 0);
+        PreviewWindow.Slice slice = WINDOW.slice(model, firstRow, pageSize, logicalTypes);
+        return new ScreenState.DataPreview(firstRow, pageSize, slice.columnNames(),
+                slice.rows(), slice.expandedRows(), columnScroll, 0, -1,
+                logicalTypes, Set.of(), 0);
     }
 
     private static String truncate(String s, int max) {
