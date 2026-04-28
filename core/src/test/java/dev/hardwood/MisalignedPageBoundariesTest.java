@@ -26,7 +26,6 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -91,7 +90,7 @@ class MisalignedPageBoundariesTest {
                 FilterPredicate.lt("narrow", hi));
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MISALIGNED_FILE));
-             RowReader rows = reader.createRowReader(filter)) {
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
             int count = 0;
             while (rows.hasNext()) {
                 rows.next();
@@ -128,7 +127,7 @@ class MisalignedPageBoundariesTest {
         int firstExpectedRow = TOTAL_ROWS - tailRows;
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MISALIGNED_FILE));
-             RowReader rows = reader.createRowReader(ColumnProjection.all(), null, -tailRows)) {
+             RowReader rows = reader.buildRowReader().tail(tailRows).build()) {
             int expected = firstExpectedRow;
             while (rows.hasNext()) {
                 rows.next();
@@ -158,7 +157,7 @@ class MisalignedPageBoundariesTest {
         int firstExpectedRow = TOTAL_ROWS - tailRows;
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE));
-             RowReader rows = reader.createRowReader(ColumnProjection.all(), null, -tailRows)) {
+             RowReader rows = reader.buildRowReader().tail(tailRows).build()) {
             int expected = firstExpectedRow;
             while (rows.hasNext()) {
                 rows.next();
@@ -179,7 +178,7 @@ class MisalignedPageBoundariesTest {
     @Test
     void fullScanStillPairsColumnsCorrectly() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MISALIGNED_FILE));
-             RowReader rows = reader.createRowReader()) {
+             RowReader rows = reader.rowReader()) {
             int expected = 0;
             while (rows.hasNext()) {
                 rows.next();

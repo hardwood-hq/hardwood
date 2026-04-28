@@ -34,6 +34,10 @@ public final class PageRowMask {
     /// Constructs a mask from an interleaved `[start0, end0, start1, end1, ...]`
     /// array. The array is taken as-is (no defensive copy) — callers must not
     /// mutate it. Validates sortedness, non-overlap, and `start < end` per pair.
+    ///
+    /// Adjacent intervals (`start_i == end_{i-1}`) are accepted as-is and are
+    /// **not** merged. In practice masks built via [RowRanges#maskForPage] never
+    /// contain adjacencies because [RowRanges] merges them at construction time.
     public static PageRowMask of(int[] intervals) {
         if (intervals == null) {
             throw new IllegalArgumentException("intervals must not be null; use PageRowMask.ALL");

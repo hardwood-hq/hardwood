@@ -19,7 +19,7 @@ import dev.hardwood.reader.RowReader;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Benchmark for the tail-read path (`createRowReader(.., negative maxRows)`).
+/// Benchmark for the tail-read path ([ParquetFileReader.RowReaderBuilder#tail]).
 ///
 /// On the slow path (`main` / no OffsetIndex / pre-#277 fast path), the reader
 /// decodes every leading row of the first kept row group and discards them via
@@ -80,8 +80,7 @@ class TailReadBenchmarkTest {
     private long runTail() throws Exception {
         long count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             RowReader rows = reader.createRowReader(
-                     dev.hardwood.schema.ColumnProjection.all(), null, -TAIL_ROWS)) {
+             RowReader rows = reader.buildRowReader().tail(TAIL_ROWS).build()) {
             while (rows.hasNext()) {
                 rows.next();
                 count++;
