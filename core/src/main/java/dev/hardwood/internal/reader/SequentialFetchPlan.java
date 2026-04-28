@@ -319,7 +319,8 @@ public final class SequentialFetchPlan implements FetchPlan {
             else {
                 int remaining = columnChunkLength - relPos;
                 int handleLength = Math.min(remaining, chunkSize);
-                currentHandle = new ChunkHandle(inputFile, columnChunkOffset + relPos, handleLength);
+                currentHandle = new ChunkHandle(inputFile, columnChunkOffset + relPos, handleLength,
+                        chunkPurpose(relPos));
                 handleStart = relPos;
             }
             handleEnd = handleStart + currentHandle.length();
@@ -330,8 +331,14 @@ public final class SequentialFetchPlan implements FetchPlan {
                 int nextRemaining = columnChunkLength - nextStart;
                 int nextLength = Math.min(nextRemaining, chunkSize);
                 currentHandle.setNextChunk(
-                        new ChunkHandle(inputFile, columnChunkOffset + nextStart, nextLength));
+                        new ChunkHandle(inputFile, columnChunkOffset + nextStart, nextLength,
+                                chunkPurpose(nextStart)));
             }
+        }
+
+        private String chunkPurpose(int relPos) {
+            return "rg=" + rowGroupIndex + " col='" + columnSchema.name()
+                    + "' seqChunk@" + relPos;
         }
 
         /// Scans past the dictionary page (if present) on first access.

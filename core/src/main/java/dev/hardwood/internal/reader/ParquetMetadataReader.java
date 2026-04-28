@@ -15,6 +15,7 @@ import java.util.Arrays;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.FileMetaData;
@@ -46,7 +47,10 @@ public final class ParquetMetadataReader {
         }
 
         // Validate magic number at start
-        ByteBuffer startMagicBuf = inputFile.readRange(0, MAGIC_SIZE);
+        ByteBuffer startMagicBuf;
+        try (FetchReason.Scope ignored = FetchReason.set("footer-magic-start")) {
+            startMagicBuf = inputFile.readRange(0, MAGIC_SIZE);
+        }
         byte[] startMagic = new byte[MAGIC_SIZE];
         startMagicBuf.get(startMagic);
         if (!Arrays.equals(startMagic, MAGIC)) {
@@ -56,7 +60,10 @@ public final class ParquetMetadataReader {
 
         // Read footer size and magic number at end
         long footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
-        ByteBuffer footerInfoBuf = inputFile.readRange(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
+        ByteBuffer footerInfoBuf;
+        try (FetchReason.Scope ignored = FetchReason.set("footer-info")) {
+            footerInfoBuf = inputFile.readRange(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
+        }
         footerInfoBuf.order(ByteOrder.LITTLE_ENDIAN);
         int footerLength = footerInfoBuf.getInt();
         byte[] endMagic = new byte[MAGIC_SIZE];
@@ -73,7 +80,10 @@ public final class ParquetMetadataReader {
         }
 
         // Parse file metadata
-        ByteBuffer footerBuffer = inputFile.readRange(footerStart, footerLength);
+        ByteBuffer footerBuffer;
+        try (FetchReason.Scope ignored = FetchReason.set("footer-body")) {
+            footerBuffer = inputFile.readRange(footerStart, footerLength);
+        }
         ThriftCompactReader reader = new ThriftCompactReader(footerBuffer);
         return FileMetaDataReader.read(reader);
     }

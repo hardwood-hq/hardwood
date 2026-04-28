@@ -48,6 +48,10 @@ docs/hooks/__pycache__/
 out/
 release-output.log
 
+# `hardwood dive --log-file` defaults
+dive.log
+dive.log.lck
+
 # Extracted CLI distribution artifacts
 hardwood-cli-early-access-*/
 

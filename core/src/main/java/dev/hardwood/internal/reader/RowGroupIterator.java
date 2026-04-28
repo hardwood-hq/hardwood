@@ -20,6 +20,7 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -236,7 +237,8 @@ public class RowGroupIterator {
     /// @return shared metadata (index buffers and matching row ranges)
     public SharedRowGroupMetadata getSharedMetadata(WorkItem workItem) {
         return metadataCache.computeIfAbsent(workItem.workItemIndex(), idx -> {
-            try {
+            try (FetchReason.Scope ignored = FetchReason.set(
+                    "rg=" + workItem.rowGroupIndex() + " indexes")) {
                 RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(
                         workItem.inputFile(), workItem.rowGroup());
 
@@ -304,14 +306,17 @@ public class RowGroupIterator {
         }
         WorkItem nextWorkItem = workItems.get(nextIndex);
         CompletableFuture.runAsync(() -> {
-            FetchPlan[] nextPlans = fetchPlanCache.computeIfAbsent(
-                    nextWorkItem.workItemIndex(),
-                    idx -> computeFetchPlans(nextWorkItem));
-            // Pre-fetch the first non-empty plan's chunk
-            for (FetchPlan plan : nextPlans) {
-                if (!plan.isEmpty()) {
-                    plan.prefetch();
-                    break;
+            try (FetchReason.Scope ignored = FetchReason.set(
+                    "prefetch rg=" + nextWorkItem.rowGroupIndex())) {
+                FetchPlan[] nextPlans = fetchPlanCache.computeIfAbsent(
+                        nextWorkItem.workItemIndex(),
+                        idx -> computeFetchPlans(nextWorkItem));
+                // Pre-fetch the first non-empty plan's chunk
+                for (FetchPlan plan : nextPlans) {
+                    if (!plan.isEmpty()) {
+                        plan.prefetch();
+                        break;
+                    }
                 }
             }
         });
@@ -377,8 +382,13 @@ public class RowGroupIterator {
 
                 // Create ChunkHandles for each page group, linked for pre-fetch
                 List<ChunkHandle> handles = new ArrayList<>(groups.size());
-                for (PageGroup group : groups) {
-                    handles.add(new ChunkHandle(inputFile, group.offset, group.length));
+                int groupCount = groups.size();
+                for (int g = 0; g < groupCount; g++) {
+                    PageGroup group = groups.get(g);
+                    String purpose = "rg=" + workItem.rowGroupIndex()
+                            + " col=" + originalIndex
+                            + " pageGroup=" + (g + 1) + "/" + groupCount;
+                    handles.add(new ChunkHandle(inputFile, group.offset, group.length, purpose));
                 }
                 for (int i = 0; i < handles.size() - 1; i++) {
                     handles.get(i).setNextChunk(handles.get(i + 1));

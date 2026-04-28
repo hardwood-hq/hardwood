@@ -14,6 +14,7 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.FetchReason;
 import dev.hardwood.s3.internal.S3Api;
 
 /// [InputFile] backed by an object in Amazon S3 (or an S3-compatible service).
@@ -65,17 +66,15 @@ public class S3InputFile implements InputFile {
         }
         fileLength = parseFileLength(response);
         byte[] tail = response.body();
-        networkRequestCount.incrementAndGet();
-        networkBytesFetched.addAndGet(tail.length);
+        long requestNo = networkRequestCount.incrementAndGet();
+        long totalBytes = networkBytesFetched.addAndGet(tail.length);
         // Use a direct buffer so slices are usable from FFM-based decompressors
         // (e.g. libdeflate), which require native MemorySegments.
         tailCache = ByteBuffer.allocateDirect(tail.length);
         tailCache.put(tail);
         tailCache.flip();
         tailCacheOffset = fileLength - tail.length;
-        LOG.log(System.Logger.Level.DEBUG,
-                "[{0}] open: fetched {1} byte tail (offset={2}, fileLength={3})",
-                name(), tail.length, tailCacheOffset, fileLength);
+        logFetch("open-tail", tailCacheOffset, tail.length, requestNo, totalBytes);
     }
 
     @Override
@@ -85,16 +84,14 @@ public class S3InputFile implements InputFile {
                 && offset + length <= tailCacheOffset + tailCache.capacity()) {
             int relOffset = Math.toIntExact(offset - tailCacheOffset);
             LOG.log(System.Logger.Level.DEBUG,
-                    "[{0}] readRange offset={1} length={2} (tail cache hit)",
-                    name(), offset, length);
+                    "[{0}] readRange offset={1} length={2} reason={3} (tail cache hit)",
+                    name(), offset, length, FetchReason.current());
             return tailCache.slice(relOffset, length);
         }
 
-        LOG.log(System.Logger.Level.DEBUG,
-                "[{0}] readRange offset={1} length={2} (network fetch)",
-                name(), offset, length);
-        networkRequestCount.incrementAndGet();
-        networkBytesFetched.addAndGet(length);
+        long requestNo = networkRequestCount.incrementAndGet();
+        long totalBytes = networkBytesFetched.addAndGet(length);
+        logFetch(FetchReason.current(), offset, length, requestNo, totalBytes);
         String range = "bytes=" + offset + "-" + (offset + length - 1);
         HttpResponse<InputStream> response = api.getStream(bucket, key, range);
         int status = response.statusCode();
@@ -155,6 +152,16 @@ public class S3InputFile implements InputFile {
     /// Tail-cache hits do not count.
     public long networkBytesFetched() {
         return networkBytesFetched.get();
+    }
+
+    /// Emits a single FINE log line per network fetch carrying the byte
+    /// range, the [FetchReason] tag attributed to the caller, and the
+    /// running per-file totals. Designed to be greppable: one line per
+    /// fetch, no nested structure.
+    private void logFetch(String reason, long offset, int length, long requestNo, long totalBytes) {
+        LOG.log(System.Logger.Level.DEBUG,
+                "[{0}] fetch #{1} reason={2} offset={3} length={4} range=[{3},{5}) totalBytes={6}",
+                name(), requestNo, reason, offset, length, offset + length, totalBytes);
     }
 
     /// Extracts the total file length from the HTTP response.

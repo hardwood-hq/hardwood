@@ -14,6 +14,7 @@ import java.util.concurrent.CompletableFuture;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.FetchReason;
 
 /// Lazy fetch handle for a contiguous byte range in a Parquet file.
 ///
@@ -31,6 +32,7 @@ public class ChunkHandle {
     private final InputFile inputFile;
     private final long fileOffset;
     private final int length;
+    private final String purpose;
     private volatile ChunkHandle nextChunk;
     private volatile ByteBuffer data;
 
@@ -39,10 +41,20 @@ public class ChunkHandle {
     /// @param inputFile the file to read from
     /// @param fileOffset absolute file offset of the first byte
     /// @param length number of bytes in this chunk
-    public ChunkHandle(InputFile inputFile, long fileOffset, int length) {
+    /// @param purpose human-readable [FetchReason] tag attached to the underlying
+    ///        `readRange` so fetch logs can attribute bytes to a specific
+    ///        row-group / column / page-group
+    public ChunkHandle(InputFile inputFile, long fileOffset, int length, String purpose) {
         this.inputFile = inputFile;
         this.fileOffset = fileOffset;
         this.length = length;
+        this.purpose = purpose;
+    }
+
+    /// Convenience overload for callers that haven't been wired with a purpose
+    /// tag yet. Tagged as `unattributed` in fetch logs.
+    public ChunkHandle(InputFile inputFile, long fileOffset, int length) {
+        this(inputFile, fileOffset, length, "unattributed");
     }
 
     /// Returns the absolute file offset of this chunk.
@@ -81,7 +93,9 @@ public class ChunkHandle {
         // does not trigger further pre-fetches)
         ChunkHandle next = nextChunk;
         if (next != null) {
-            CompletableFuture.runAsync(next::fetchData)
+            // Carry the caller's FetchReason across the thread handoff;
+            // otherwise the next-chunk readRange would log as `unattributed`.
+            CompletableFuture.runAsync(FetchReason.bind(next::fetchData))
                     .exceptionally(t -> {
                         // The demand-path fetch will re-attempt and surface a
                         // fresh exception if the error is sustained, so we log
@@ -108,7 +122,11 @@ public class ChunkHandle {
             if (data != null) {
                 return;
             }
-            try {
+            // If the caller set an outer scope (e.g. "prefetch rg=2"), prepend it
+            // so the log line shows both the calling context and the chunk identity.
+            String outer = FetchReason.current();
+            String composed = "unattributed".equals(outer) ? purpose : outer + " | " + purpose;
+            try (FetchReason.Scope ignored = FetchReason.set(composed)) {
                 data = inputFile.readRange(fileOffset, length);
             }
             catch (IOException e) {

@@ -8,7 +8,13 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
+import java.nio.file.Path;
 import java.util.concurrent.Callable;
+import java.util.logging.FileHandler;
+import java.util.logging.Level;
+import java.util.logging.LogRecord;
+import java.util.logging.Logger;
+import java.util.logging.SimpleFormatter;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.dive.DiveApp;
@@ -21,6 +27,14 @@ import picocli.CommandLine.Spec;
 
 /// Launches the interactive `hardwood dive` TUI for exploring a Parquet file's
 /// structure. See `_designs/INTERACTIVE_DIVE_TUI.md`.
+///
+/// **Logging.** Quarkus pins JBoss LogManager as the runtime
+/// `System.LoggerFinder` (via the transitive `jboss-logmanager`
+/// dependency, which Quarkus's bootstrap references directly and cannot
+/// be excluded). JBoss LogManager is JUL-API-compatible, so this command
+/// configures dive's optional `--log-file` via `java.util.logging` —
+/// records emitted via `System.Logger` from `dev.hardwood.*` flow through
+/// JBoss LogManager and into the [FileHandler] attached here.
 @CommandLine.Command(
         name = "dive",
         description = "Interactively explore a Parquet file's structure.")
@@ -48,6 +62,13 @@ public class DiveCommand implements Callable<Integer> {
             hidden = true)
     boolean smokeRender;
 
+    @CommandLine.Option(
+            names = "--log-file",
+            description = "Write FINE-level dev.hardwood logs (including per-fetch entries from S3InputFile) "
+                    + "to the given path. The file is truncated on each invocation. Off by default.",
+            paramLabel = "<path>")
+    Path logFile;
+
     @Override
     public Integer call() {
         InputFile inputFile = fileMixin.toInputFile();
@@ -55,6 +76,7 @@ public class DiveCommand implements Callable<Integer> {
             return CommandLine.ExitCode.SOFTWARE;
         }
 
+        FileHandler logHandler = installLogFileHandler();
         try (ParquetModel model = ParquetModel.open(inputFile, fileMixin.file)) {
             model.setDictionaryReadCapBytes(maxDictBytes);
             DiveApp app = new DiveApp(model);
@@ -73,6 +95,48 @@ public class DiveCommand implements Callable<Integer> {
         catch (Exception e) {
             spec.commandLine().getErr().println("Error running dive TUI: " + e.getMessage());
             return CommandLine.ExitCode.SOFTWARE;
+        }
+        finally {
+            if (logHandler != null) {
+                logHandler.close();
+            }
+        }
+    }
+
+    /// Configures JUL logging for an interactive dive session.
+    ///
+    /// Always detaches the `dev.hardwood` logger from parent handlers so
+    /// nothing leaks to stdout/stderr while the TUI owns the terminal —
+    /// otherwise log records would garble the rendered frames.
+    ///
+    /// When `--log-file` is set, also attaches a [FileHandler] writing
+    /// one record per line to the given path, truncated per session.
+    /// Returns the handler so it can be closed at shutdown, or `null`
+    /// when no log file is requested.
+    private FileHandler installLogFileHandler() {
+        Logger logger = Logger.getLogger("dev.hardwood");
+        logger.setUseParentHandlers(false);
+        if (logFile == null) {
+            return null;
+        }
+        try {
+            FileHandler handler = new FileHandler(logFile.toString(), false);
+            handler.setLevel(Level.FINE);
+            handler.setFormatter(new SimpleFormatter() {
+                @Override
+                public String format(LogRecord record) {
+                    return String.format("%1$tFT%1$tT.%1$tL %2$s [%3$s] %4$s%n",
+                            record.getMillis(), record.getLevel(), record.getLoggerName(),
+                            formatMessage(record));
+                }
+            });
+            logger.setLevel(Level.FINE);
+            logger.addHandler(handler);
+            return handler;
+        }
+        catch (IOException e) {
+            spec.commandLine().getErr().println("Failed to open log file " + logFile + ": " + e.getMessage());
+            return null;
         }
     }
 }

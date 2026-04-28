@@ -243,7 +243,7 @@ class S3InputFileTest {
             assertThat(openRequests).isPositive();
             assertThat(openBytes).isPositive();
 
-            try (ColumnReader col = reader.createColumnReader("id")) {
+            try (ColumnReader col = reader.columnReader("id")) {
                 while (col.nextBatch()) {
                     // drain
                 }

@@ -15,6 +15,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.CompletableFuture;
 
+import dev.hardwood.internal.FetchReason;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -64,7 +65,10 @@ final class IndexedFetchPlan implements FetchPlan {
     @Override
     public void prefetch() {
         if (!chunkHandles.isEmpty()) {
-            CompletableFuture.runAsync(chunkHandles.get(0)::ensureFetched);
+            // FetchReason.bind carries the caller's reason (e.g.
+            // "prefetch rg=2") to the worker thread; otherwise the
+            // underlying readRange would log as `unattributed`.
+            CompletableFuture.runAsync(FetchReason.bind(chunkHandles.get(0)::ensureFetched));
         }
     }
 

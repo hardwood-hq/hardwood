@@ -147,7 +147,18 @@
       <artifactId>brotli4j</artifactId>
     </dependency>
 
-    <!-- Quarkus -->
+    <!-- Quarkus.
+
+         quarkus-core pulls in jboss-logmanager, which (a) is referenced
+         directly by Quarkus's bootstrap (QuarkusEntryPoint) so it
+         can't be excluded, and (b) ships a System.LoggerFinder service
+         provider. That makes JBoss LogManager the de-facto LoggerFinder
+         for the CLI runtime; there's no way to swap it without
+         breaking Quarkus startup. Since JBoss LogManager is
+         JUL-API-compatible, dive's log-file flag configures logging via
+         java.util.logging; records emitted via System.Logger from
+         S3InputFile and friends flow through JBoss LogManager and into
+         the JUL FileHandler we attach. -->
     <dependency>
       <groupId>io.quarkus</groupId>
       <artifactId>quarkus-picocli</artifactId>
