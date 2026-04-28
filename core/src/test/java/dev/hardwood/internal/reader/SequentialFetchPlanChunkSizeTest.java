@@ -61,6 +61,25 @@ class SequentialFetchPlanChunkSizeTest {
     }
 
     @Test
+    void dynamicEstimateLandsBetweenFloorAndCeiling() {
+        // Above the 4 MB short-circuit, `computeChunkSize` derives the
+        // size from `bytesPerValue × maxRows × safetyFactor`. For a
+        // 50 MB column with 100 values (500 KB / value) and head(10),
+        // the estimate is 10 × 500 KB × 2 = 10 MB — comfortably above
+        // the 1 MB floor and below the 128 MB ceiling. Pins the
+        // dynamic path so a regression that breaks the interpolation
+        // is observable.
+        int columnLength = 50 * ONE_MIB;
+        int chunk = SequentialFetchPlan.computeChunkSize(
+                columnLength, fakeMetaData(columnLength, 100), 10);
+
+        assertThat(chunk)
+                .as("dynamic estimate should land between floor and ceiling")
+                .isGreaterThan(ONE_MIB)
+                .isLessThan(columnLength);
+    }
+
+    @Test
     void noMaxRowsReturnsDefaultCeiling() {
         // Without head(N), behavior is unchanged: full chunk size up to
         // the configured ceiling.

@@ -74,7 +74,12 @@ class DataPreviewIoTest {
     }
 
     @Test
-    void forwardWithinSameRowGroupReusesCursor() throws IOException {
+    void forwardWithinSameRowGroupBoundedByPageSize() throws IOException {
+        // ParquetModel.readPreviewPage builds a fresh head(pageSize)
+        // cursor every call (no cross-call reuse — the dive viewport
+        // window cache absorbs that). Bytes for a forward intra-RG
+        // step should therefore stay bounded by the per-page bytes,
+        // not blow up to a full re-fetch of the row group prefix.
         ByteCountingInputFile counting = new ByteCountingInputFile(InputFile.of(fixture()));
 
         try (ParquetModel model = ParquetModel.open(counting, "filter_pushdown_int.parquet")) {
@@ -82,9 +87,9 @@ class DataPreviewIoTest {
             model.readPreviewPage(0, 10, reader -> { });
             long after1 = counting.bytesRead();
 
-            // Continue forward within the same RG. The cursor is reused
-            // (no firstRow-rebuild); whatever extra bytes are read are
-            // page-by-page top-ups, not a fresh RG fetch.
+            // Forward step within the same RG. The new cursor is
+            // bounded by head(10), so the additional bytes should be
+            // far smaller than the initial RG-opening fetch.
             model.readPreviewPage(50, 10, reader -> { });
             long after2 = counting.bytesRead();
 

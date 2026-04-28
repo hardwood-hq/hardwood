@@ -384,7 +384,40 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-Tail mode cannot currently be combined with a filter predicate — the set of matching rows is not known from row-group statistics alone, so the reader cannot identify which row groups cover the last N matching rows without scanning the whole file.
+Tail mode cannot currently be combined with a filter predicate — the set of matching rows is not known from row-group statistics alone, so the reader cannot identify which row groups cover the last N matching rows without scanning the whole file. It is also mutually exclusive with `firstRow(long)`.
+
+### Seeking to an Absolute Row
+
+The `firstRow(long)` builder method begins iteration at an arbitrary absolute row index. Earlier row groups are not opened — their pages are not fetched or decoded — making this an O(1 row group) seek on remote backends, in contrast to walking `next()` from row 0.
+
+```java
+// Read rows starting at row 1,000,000 — earlier row groups are skipped.
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     RowReader rowReader = fileReader.buildRowReader().firstRow(1_000_000).build()) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+        // ...
+    }
+}
+```
+
+Compose with `head(N)` for a bounded `[firstRow, firstRow + N)` window:
+
+```java
+// Read rows [1_000_000, 1_000_050).
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     RowReader rowReader = fileReader.buildRowReader()
+             .firstRow(1_000_000)
+             .head(50)
+             .build()) {
+    // ...
+}
+```
+
+`firstRow == 0` is the no-op default. `firstRow == totalRows` produces an empty reader; `firstRow > totalRows` throws `IllegalArgumentException`. For multi-file readers, `firstRow` indexes into the *first* file's rows only — cross-file `firstRow` is out of scope. Mutually exclusive with `tail(N)`.
+
+Within the target row group, the reader still decodes the leading residue rows and discards them via `next()`. Page-level skip via the OffsetIndex is tracked separately.
 
 ## Column Projection
 

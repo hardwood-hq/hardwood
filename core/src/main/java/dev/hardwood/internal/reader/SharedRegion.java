@@ -64,10 +64,20 @@ public final class SharedRegion {
     }
 
     /// Returns a zero-copy slice covering `[absoluteOffset,
-    /// absoluteOffset + sliceLength)`. The slice must lie entirely
-    /// within this region's range; the caller is responsible for
-    /// upholding that invariant.
+    /// absoluteOffset + sliceLength)`. Throws [IllegalArgumentException]
+    /// when the slice falls outside this region — coalescer bugs would
+    /// otherwise surface as a generic [IndexOutOfBoundsException] from
+    /// the underlying buffer with no context about which region or
+    /// handle was misaligned.
     public ByteBuffer slice(long absoluteOffset, int sliceLength) {
+        if (absoluteOffset < fileOffset
+                || sliceLength < 0
+                || absoluteOffset + sliceLength > (long) fileOffset + length) {
+            throw new IllegalArgumentException(
+                    "slice [" + absoluteOffset + ", " + (absoluteOffset + sliceLength)
+                    + ") falls outside region [" + fileOffset + ", " + (fileOffset + length)
+                    + ") (" + purpose + ")");
+        }
         ByteBuffer buf = ensureFetched();
         int rel = Math.toIntExact(absoluteOffset - fileOffset);
         return buf.slice(rel, sliceLength);

@@ -178,24 +178,6 @@ public final class ParquetModel implements AutoCloseable {
         return rowGroup(rowGroupIndex).columns().get(columnIndex);
     }
 
-    /// Index of the row group containing the given absolute row, by
-    /// cumulative `RowGroup.numRows()`. Linear in the row-group count.
-    /// Returns the last row group when `row` equals total row count.
-    public int rowGroupContaining(long row) {
-        if (row < 0) {
-            throw new IllegalArgumentException("row must be non-negative: " + row);
-        }
-        long cumulative = 0;
-        List<RowGroup> rowGroups = metadata.rowGroups();
-        for (int i = 0; i < rowGroups.size(); i++) {
-            cumulative += rowGroups.get(i).numRows();
-            if (row < cumulative) {
-                return i;
-            }
-        }
-        return Math.max(0, rowGroups.size() - 1);
-    }
-
     /// Reads the column index for a chunk, caching the result for the session.
     /// Returns `null` when the chunk has no column index.
     public ColumnIndex columnIndex(int rowGroupIndex, int columnIndex) {

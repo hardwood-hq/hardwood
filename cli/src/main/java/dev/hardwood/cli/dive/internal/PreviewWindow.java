@@ -37,6 +37,11 @@ import dev.hardwood.schema.SchemaNode;
 /// no fetch, no decode. The cost is ~4× the per-cell string memory
 /// (a few extra MB for typical Overture-shape schemas), bounded by
 /// the window size and far cheaper than re-fetching on every toggle.
+///
+/// **Threading.** Not thread-safe. Dive runs all UI work on a single
+/// event-loop thread; the static `DataPreviewScreen.WINDOW` instance
+/// relies on that. Sharing across threads would require external
+/// synchronisation around `slice` / `refill` and the four row lists.
 final class PreviewWindow {
 
     /// Number of `pageSize`-strides kept on each side of the requested

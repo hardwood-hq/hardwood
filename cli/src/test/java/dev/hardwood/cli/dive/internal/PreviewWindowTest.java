@@ -18,6 +18,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.dive.ParquetModel;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Asserts that the `PreviewWindow` behaves as a sliding cache around
 /// the current viewport — within-window navigation triggers no I/O,
@@ -152,6 +153,80 @@ class PreviewWindowTest {
             // requested page = [295, 300), only 5 rows actually exist past row 295.
             PreviewWindow.Slice slice = window.slice(model, 295, 10, true);
             assertThat(slice.rows()).hasSize(5);
+        }
+    }
+
+    @Test
+    void refillIoExceptionDoesNotLeaveStaleBuffer() throws IOException {
+        // refill() resets `start = end = newStart` *before* fetching,
+        // so a fetch failure leaves the buffer empty. The next slice
+        // call must trigger a fresh refill (not return stale rows
+        // from before the failed refill). Pins that retry behaviour.
+        FailingInputFile failing = new FailingInputFile(InputFile.of(fixture()));
+
+        try (ParquetModel model = ParquetModel.open(failing, "filter_pushdown_int.parquet")) {
+            PreviewWindow window = new PreviewWindow();
+
+            // First slice: rows 0..9 → ids 1..10. Succeeds.
+            PreviewWindow.Slice initial = window.slice(model, 0, 10, true);
+            assertThat(initial.rows().get(0).get(0)).isEqualTo("1");
+
+            // Arm the failure for the *next* refill.
+            failing.failOnNextReadRange();
+
+            // Far jump → forces a refill. The wrapped readRange throws,
+            // surfaces as UncheckedIOException.
+            assertThatThrownBy(() -> window.slice(model, 200, 10, true))
+                    .isInstanceOf(java.io.UncheckedIOException.class);
+
+            // Retry. The failure was one-shot, so this refill succeeds
+            // and must yield rows 200..209 → ids 201..210, not stale
+            // 1..10 from the pre-failure buffer.
+            PreviewWindow.Slice retry = window.slice(model, 200, 10, true);
+            assertThat(retry.rows()).hasSize(10);
+            assertThat(retry.rows().get(0).get(0)).isEqualTo("201");
+        }
+    }
+
+    private static final class FailingInputFile implements InputFile {
+        private final InputFile delegate;
+        private boolean failNext;
+
+        FailingInputFile(InputFile delegate) {
+            this.delegate = delegate;
+        }
+
+        void failOnNextReadRange() {
+            this.failNext = true;
+        }
+
+        @Override
+        public void open() throws IOException {
+            delegate.open();
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            if (failNext) {
+                failNext = false;
+                throw new IOException("simulated transient failure");
+            }
+            return delegate.readRange(offset, length);
+        }
+
+        @Override
+        public long length() throws IOException {
+            return delegate.length();
+        }
+
+        @Override
+        public String name() {
+            return delegate.name();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
         }
     }
 

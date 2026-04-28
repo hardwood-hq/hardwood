@@ -120,7 +120,8 @@
       "Bash(git fetch *)",
       "Bash(gh label *)",
       "Bash(git tag *)",
-      "Bash(git apply *)"
+      "Bash(git apply *)",
+      "Bash(gh run *)"
     ]
   }
 }

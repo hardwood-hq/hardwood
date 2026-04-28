@@ -243,8 +243,14 @@ public class ParquetFileReader implements AutoCloseable {
         // RowGroup.numRows(). For multi-file readers this indexes into the
         // first file only — cross-file firstRow is out of scope.
         List<RowGroup> all = firstFileMetaData.rowGroups();
+        long totalRows = firstFileMetaData.numRows();
+        if (firstRow > totalRows) {
+            throw new IllegalArgumentException(
+                    "firstRow " + firstRow + " exceeds the file's total row count "
+                    + totalRows);
+        }
         long cumulative = 0L;
-        int targetRg = all.size(); // sentinel: past-the-end yields empty reader
+        int targetRg = all.size(); // sentinel: at-the-end yields empty reader
         long withinRg = 0L;
         for (int i = 0; i < all.size(); i++) {
             long rgRows = all.get(i).numRows();
@@ -256,7 +262,7 @@ public class ParquetFileReader implements AutoCloseable {
             cumulative += rgRows;
         }
         if (targetRg >= all.size()) {
-            // firstRow at or past end of file — return an empty reader.
+            // firstRow == totalRows — empty reader.
             return buildRowReader(projection, filter, maxRows, List.<RowGroup>of());
         }
         List<RowGroup> rowGroups = targetRg == 0
@@ -267,6 +273,9 @@ public class ParquetFileReader implements AutoCloseable {
         // rows; the residue rows we discard via next() count too.
         long maxRowsAdjusted = maxRows == 0 ? 0 : maxRows + withinRg;
         RowReader reader = buildRowReader(projection, filter, maxRowsAdjusted, rowGroups);
+        // Walk past the within-RG residue. These rows *are* decoded —
+        // page-level skip via OffsetIndex (#381) would let us drop the
+        // leading pages at the byte level instead.
         for (long i = 0; i < withinRg; i++) {
             if (!reader.hasNext()) {
                 break;
@@ -457,18 +466,21 @@ public class ParquetFileReader implements AutoCloseable {
         /// Begin reading from the given absolute row index. Earlier row groups
         /// are not opened — their pages are not fetched or decoded — so this
         /// is an O(1 RG) seek on remote backends, in contrast to walking
-        /// next() from row 0.
+        /// `next()` from row 0.
         ///
-        /// On files with an OffsetIndex, the underlying [IndexedFetchPlan]
-        /// further narrows the per-column fetch to pages from the page
-        /// containing `firstRow` onwards. Files without an OffsetIndex fall
-        /// back to walking the row group from its start (skipped rows are
-        /// decoded internally and not yielded to the caller).
+        /// **Cost within the target row group.** The reader still yields
+        /// rows from the row group's first row, then walks `next()`
+        /// `firstRow - rowGroupFirstRow` times to discard the leading
+        /// residue. Those residue rows *are* decoded — `firstRow` near
+        /// the end of a 1 M-row group walks ~1 M decoded `next()` calls.
+        /// Page-level skip via OffsetIndex is tracked as #381.
         ///
         /// `firstRow == 0` is the no-op default. `firstRow == totalRows`
-        /// produces an empty reader. Indexes into the *first* file's rows for
-        /// multi-file readers; cross-file `firstRow` is out of scope. Mutually
-        /// exclusive with [#tail]; composes with [#head] for a bounded
+        /// produces an empty reader. `firstRow > totalRows` throws
+        /// [IllegalArgumentException] at `build()` time. Indexes into the
+        /// *first* file's rows for multi-file readers; cross-file
+        /// `firstRow` is out of scope. Mutually exclusive with [#tail];
+        /// composes with [#head] for a bounded
         /// `[firstRow, firstRow + maxRows)` window.
         public RowReaderBuilder firstRow(long firstRow) {
             if (firstRow < 0) {

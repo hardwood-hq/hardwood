@@ -58,12 +58,6 @@ public class ChunkHandle {
         this.region = null;
     }
 
-    /// Convenience overload for callers that haven't been wired with a purpose
-    /// tag yet. Tagged as `unattributed` in fetch logs.
-    public ChunkHandle(InputFile inputFile, long fileOffset, int length) {
-        this(inputFile, fileOffset, length, "unattributed");
-    }
-
     /// Creates a chunk handle that's a sub-range of a coalesced cross-column
     /// [SharedRegion]. Used when [RowGroupIterator] decides several columns'
     /// chunks fit cheaply into one ranged GET; each column's
