@@ -61,6 +61,7 @@ Use Python 3.10–3.14 (PyArrow 24.0.0, pinned in `requirements.txt`, supports t
 
 Before starting new work, check whether a corresponding GitHub issue exists. If not, create one first so that all commits and pull requests can reference it.
 Commit messages must begin with the GitHub issue key (e.g. `#90 Include file name in all exceptions raised during reading`). This applies to every commit, including fixups and amendments.
+Focus the body on **why**, not **what** — the diff already shows the what. A short paragraph is usually enough; do not restate the change as a bullet list. See [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
 
 # Code Reviews
 

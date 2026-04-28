@@ -48,6 +48,9 @@ docs/hooks/__pycache__/
 out/
 release-output.log
 
+# Extracted CLI distribution artifacts
+hardwood-cli-early-access-*/
+
 # Claude
 .claude/worktrees/
 __pycache__/

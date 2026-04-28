@@ -49,6 +49,20 @@ See the [Getting Started](https://hardwood.dev/latest/getting-started/) guide fo
 
 ---
 
+## Repository Documentation
+
+| Document | Purpose |
+|---|---|
+| [ARCHITECTURE.md](ARCHITECTURE.md) | High-level architecture and module layout. |
+| [CONTRIBUTING.md](CONTRIBUTING.md) | How to contribute: workflow, commit format, PR expectations. |
+| [ROADMAP.md](ROADMAP.md) | Implementation status, roadmap, and milestones. |
+| [NATIVE_BUILD.md](NATIVE_BUILD.md) | How the GraalVM native CLI build works. |
+| [PERFORMANCE.md](PERFORMANCE.md) | Benchmark results and how to run performance tests. |
+| [TESTING.md](TESTING.md) | Manual testing recipes (e.g. S3 via s3proxy). |
+| [RELEASING.md](RELEASING.md) | Release process. |
+
+---
+
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — how to find work, the issue-first workflow, commit message format, and PR expectations.
@@ -126,7 +140,7 @@ Requires Docker. The build runs inside a Linux container and produces a Linux x8
 
 > **Note:** The container build always produces a Linux binary. Running it on macOS will fail with `exec format error`. Use the local GraalVM build for macOS binaries.
 
-See [NATIVE_BUILD.md](NATIVE_BUILD.md) for details on how the native build works (compression codec handling, build arguments, testing).
+See [NATIVE_BUILD.md](NATIVE_BUILD.md) for details on how the native build works (compression codec handling, build arguments).
 
 ### Building the Documentation
 

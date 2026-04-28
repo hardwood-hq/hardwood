@@ -36,6 +36,8 @@ Every commit message begins with the issue key:
 
 This applies to every commit, including fixups.
 
+Focus the body on **why** the change is being made, with at most a high-level overview of **what**. The diff already shows the what; don't restate it as a bullet list. Keep it concise — a short paragraph is usually enough.
+
 ## Opening a pull request
 
 The PR template checklist ([.github/PULL_REQUEST_TEMPLATE.md](.github/PULL_REQUEST_TEMPLATE.md)) covers the basics: build passes, commit message format, test coverage, and documentation updates. Please run through it before requesting review.

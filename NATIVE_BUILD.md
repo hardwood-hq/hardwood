@@ -33,35 +33,4 @@ The solution differs by codec:
 
 Automated coverage of the native binary is provided by the Quarkus integration-test infrastructure; see [_designs/NATIVE_INTEGRATION_TESTS.md](_designs/NATIVE_INTEGRATION_TESTS.md). The ITs run against the compiled native executable during `./mvnw -Pnative -pl cli verify`.
 
-The steps below are useful for ad-hoc manual testing of the native binary against S3.
-
-1. Start s3proxy and set environment
-
-```bash
-docker run -d --name s3proxy -p 9090:80 \
-    -e S3PROXY_AUTHORIZATION=none \
-    -e S3PROXY_ENDPOINT=http://0.0.0.0:80 \
-    -e JCLOUDS_PROVIDER=transient \
-    andrewgaul/s3proxy:sha-6597ca59cd5c5fa8ee313e13d349d507cc6090c3
-
-export AWS_ENDPOINT_URL=http://localhost:9090
-export AWS_ACCESS_KEY_ID=foo
-export AWS_SECRET_ACCESS_KEY=bar
-export AWS_REGION=us-east-1
-export AWS_PATH_STYLE=true
-```
-
-2. Create bucket and upload with curl
-
-```bash
-curl -X PUT http://localhost:9090/test-bucket
-
-curl -X PUT --data-binary @performance-testing/test-data-setup/target/tlc-trip-record-data/yellow_tripdata_2025-01.parquet \
-    http://localhost:9090/test-bucket/yellow_tripdata_2025-01.parquet
-```
-
-3. Run hardwood CLI
-
-```bash
-cli/target/hardwood-cli-early-access-macos-aarch64/bin/hardwood info -f s3://test-bucket/yellow_tripdata_2025-01.parquet
-```
+For ad-hoc manual testing of the native binary against S3, see the [Manual S3 testing](TESTING.md#manual-s3-testing) recipe in [TESTING.md](TESTING.md).
