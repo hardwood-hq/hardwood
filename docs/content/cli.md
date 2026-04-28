@@ -131,15 +131,20 @@ actually meaningful in the current context — so the menus above show the
 full vocabulary, but the keybar tells you which subset is live right
 now.
 
-Available screens: Overview, Schema (expandable tree of groups + leaves),
-Row groups, Column chunks, Column chunk detail (facts + drill menu), Pages
-(with a page-header modal on Enter), Column index, Offset index, Footer &
-indexes (which also drills into a file-wide list of every chunk's column
-index, offset index, or dictionary region),
-Column-across-row-groups (from the Schema screen), Dictionary (with
-full-value modal on Enter and `/` inline search), and Data preview (row
-values via `RowReader`; `←/→` scrolls the visible column window,
-`PgDn/PgUp` flips pages).
+Available screens:
+- Overview  
+  <a href="./img/01-landing-overview.png"><img src="./img/01-landing-overview.png" alt="Overview screen" width="220"></a>
+- Schema (expandable tree of groups + leaves)  
+  <a href="./img/02-schema-tree.png"><img src="./img/02-schema-tree.png" alt="Schema screen" width="220"></a>
+- Row groups, Column chunks, Column chunk detail (facts + drill menu)   
+  <a href="./img/03-rg-miniseries.png"><img src="./img/03-rg-miniseries.png" alt="Row groups screen" width="220"></a>
+- Pages (with page-header modal on Enter)  
+  <a href="./img/04-pages-header-modal.png"><img src="./img/04-pages-header-modal.png" alt="Pages screen with page-header modal" width="220"></a>
+- Column index, Offset index, Footer & indexes (which also drills into a file-wide list of every chunk's column index, offset index, or dictionary region), Column-across-row-groups (from the Schema screen)   
+- Dictionary (full-value modal on Enter and `/` inline search)  
+  <a href="./img/05-dict-search.png"><img src="./img/05-dict-search.png" alt="Dictionary screen with inline search" width="220"></a>
+- Data preview (row values via `RowReader`; `←/→` scrolls visible columns; `PgDn/PgUp` flips pages)  
+  <a href="./img/06-data-scrolled-right.png"><img src="./img/06-data-scrolled-right.png" alt="Data preview screen scrolled right" width="220"></a>
 
 The `--rows N` flag sets the Data preview page size (default: 20).
 
