@@ -50,7 +50,7 @@ import dev.hardwood.schema.ColumnSchema;
 ///   bytes-per-value (`totalCompressedSize / numValues`) multiplied by
 ///   `maxRows` and a safety factor, floored at one page size and
 ///   capped at the default ceiling.
-public final class SequentialFetchPlan implements FetchPlan {
+public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
 
     /// Minimum chunk size when `maxRows` is active (1 MB).
     /// Sized to roughly one Parquet data page so header scanning does not
@@ -88,6 +88,12 @@ public final class SequentialFetchPlan implements FetchPlan {
     private final int rowGroupIndex;
     private final String fileName;
     private final List<ResolvedPredicate> dropLeaves;
+    /// Optional pre-created first [ChunkHandle], typically a region-backed
+    /// view from cross-column coalescing (#374). When set, the iterator's
+    /// first `advanceChunk(0)` call uses this handle instead of creating
+    /// a fresh standalone one. Subsequent advances (with `chunkSize` <
+    /// columnChunkLength) still create per-column handles lazily.
+    private ChunkHandle firstChunkHandle;
 
     private SequentialFetchPlan(InputFile inputFile, long columnChunkOffset, int columnChunkLength,
                                  int chunkSize, ColumnSchema columnSchema,
@@ -115,6 +121,42 @@ public final class SequentialFetchPlan implements FetchPlan {
     @Override
     public Iterator<PageInfo> pages() {
         return new SequentialPageIterator();
+    }
+
+    /// Returns the byte offset of this plan's first ChunkHandle (the
+    /// chunk it would create on the first `advanceChunk(0)`). Used by
+    /// cross-column coalescing in [RowGroupIterator] to decide which
+    /// plans' first reads to merge into a shared region.
+    @Override
+    public long firstChunkOffset() {
+        return columnChunkOffset;
+    }
+
+    /// Returns the byte length of this plan's first ChunkHandle.
+    @Override
+    public int firstChunkLength() {
+        return chunkSize;
+    }
+
+    /// Coalesce-safe iff the first chunk covers the whole column chunk.
+    /// Smaller chunk sizes are produced by `head(N)` truncation; in that
+    /// case bridging to a neighbour column would pull in bytes the
+    /// per-column iterator would otherwise have read separately,
+    /// producing a double-fetch.
+    @Override
+    public boolean isCoalesceSafe() {
+        return chunkSize == columnChunkLength;
+    }
+
+    /// Replaces the iterator's first ChunkHandle with a region-backed
+    /// view, so the first read slices the shared buffer rather than
+    /// issuing a per-column `readRange`.
+    @Override
+    public void attachSharedRegion(SharedRegion region, int rowGroupIndex) {
+        String purpose = "rg=" + rowGroupIndex + " col='" + columnSchema.name()
+                + "' seqChunk@0 (region-backed)";
+        this.firstChunkHandle = new ChunkHandle(region,
+                columnChunkOffset, chunkSize, purpose);
     }
 
     /// Builds a [SequentialFetchPlan] with no predicate-driven page skipping.
@@ -311,7 +353,13 @@ public final class SequentialFetchPlan implements FetchPlan {
         private void advanceChunk(int relPos) {
             ChunkHandle prefetched = currentHandle != null ? currentHandle.nextChunk() : null;
 
-            if (prefetched != null && relPos >= handleEnd
+            if (currentHandle == null && relPos == 0 && firstChunkHandle != null) {
+                // First advance, externally-supplied handle (region-backed via
+                // cross-column coalescing in RowGroupIterator).
+                currentHandle = firstChunkHandle;
+                handleStart = 0;
+            }
+            else if (prefetched != null && relPos >= handleEnd
                     && relPos < handleEnd + prefetched.length()) {
                 currentHandle = prefetched;
                 handleStart = handleEnd;
