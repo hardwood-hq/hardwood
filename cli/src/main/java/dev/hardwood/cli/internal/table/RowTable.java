@@ -10,7 +10,6 @@ package dev.hardwood.cli.internal.table;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.CharacterCodingException;
 import java.nio.charset.CharsetDecoder;
 import java.nio.charset.CodingErrorAction;
@@ -157,8 +156,7 @@ public final class RowTable {
             return new BigDecimal(new BigInteger(bytes), dt.scale()).toPlainString();
         }
         if (lt instanceof LogicalType.IntervalType && bytes.length == 12) {
-            ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
-            return RowValueFormatter.formatInterval(bb.getInt(0), bb.getInt(4), bb.getInt(8));
+            return RowValueFormatter.formatIntervalBytes(bytes);
         }
         return switch (pn.type()) {
             case INT96 -> decodeInt96Timestamp(bytes);

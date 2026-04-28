@@ -10,7 +10,6 @@ package dev.hardwood.cli.internal;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -18,7 +17,9 @@ import java.time.LocalTime;
 import java.util.HexFormat;
 import java.util.UUID;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -356,41 +357,39 @@ public final class RowValueFormatter {
             return new UUID(bb.getLong(), bb.getLong()).toString();
         }
         if (lt instanceof LogicalType.IntervalType && raw.length == 12) {
-            ByteBuffer bb = ByteBuffer.wrap(raw).order(ByteOrder.LITTLE_ENDIAN);
-            return formatInterval(bb.getInt(0), bb.getInt(4), bb.getInt(8));
+            return formatIntervalBytes(raw);
         }
         return formatRawBytes(raw);
+    }
+
+    /// Decode a 12-byte FIXED_LEN_BYTE_ARRAY INTERVAL payload (as used in
+    /// page/dictionary stats) and render it via [#formatInterval(PqInterval)].
+    public static String formatIntervalBytes(byte[] bytes) {
+        return formatInterval(LogicalTypeConverter.convertToInterval(bytes, PhysicalType.FIXED_LEN_BYTE_ARRAY));
     }
 
     public static String formatInterval(PqInterval interval) {
         if (interval == null) {
             return "null";
         }
-        return formatInterval(interval.months(), interval.days(), interval.milliseconds());
-    }
-
-    public static String formatInterval(int months, int days, int milliseconds) {
-        long m = Integer.toUnsignedLong(months);
-        long d = Integer.toUnsignedLong(days);
-        long ms = Integer.toUnsignedLong(milliseconds);
-        if (m == 0 && d == 0 && ms == 0) {
+        if (interval.months() == 0 && interval.days() == 0 && interval.milliseconds() == 0) {
             return "0ms";
         }
         StringBuilder sb = new StringBuilder();
-        if (m != 0) {
-            sb.append(m).append("mo");
+        if (interval.months() != 0) {
+            sb.append(interval.months()).append("mo");
         }
-        if (d != 0) {
+        if (interval.days() != 0) {
             if (!sb.isEmpty()) {
                 sb.append(' ');
             }
-            sb.append(d).append('d');
+            sb.append(interval.days()).append('d');
         }
-        if (ms != 0) {
+        if (interval.milliseconds() != 0) {
             if (!sb.isEmpty()) {
                 sb.append(' ');
             }
-            sb.append(ms).append("ms");
+            sb.append(interval.milliseconds()).append("ms");
         }
         return sb.toString();
     }

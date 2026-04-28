@@ -122,9 +122,11 @@ class RowValueFormatterTest {
     }
 
     @Test
-    void intervalAboveMaxValueUsesUnsignedRendering() {
-        // 0xFFFFFFFF = 4294967295 as unsigned, -1 as signed int
-        assertThat(RowValueFormatter.formatInterval(new PqInterval(-1, -1, -1)))
+    void intervalAtMaxUnsigned32BitRenders() {
+        // 0xFFFFFFFF = 4_294_967_295 — the upper bound of the on-disk
+        // unsigned-32-bit encoding, which `PqInterval` exposes verbatim as a long.
+        long maxUint32 = 0xFFFFFFFFL;
+        assertThat(RowValueFormatter.formatInterval(new PqInterval(maxUint32, maxUint32, maxUint32)))
                 .isEqualTo("4294967295mo 4294967295d 4294967295ms");
     }
 

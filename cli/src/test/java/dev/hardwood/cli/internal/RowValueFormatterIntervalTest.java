@@ -46,7 +46,7 @@ class RowValueFormatterIntervalTest {
     void readAll() throws IOException {
         Path file = Path.of(getClass().getResource("/interval_logical_type_test.parquet").getPath());
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
-             RowReader rowReader = fileReader.createRowReader()) {
+             RowReader rowReader = fileReader.rowReader()) {
             FileSchema schema = fileReader.getFileSchema();
             durationField = schema.getField("duration");
             durationIdx = schema.getColumn("duration").columnIndex();
