@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
@@ -406,7 +407,130 @@ public class RowGroupIterator {
             }
         }
 
+        coalesceAcrossColumns(plans, inputFile, workItem);
+
         return plans;
+    }
+
+    /// Maximum byte gap that cross-column coalescing will bridge between
+    /// adjacent column chunks. Adjacent chunks are typically 0 bytes apart,
+    /// but writers may emit padding / checksum bytes; 64 KB tolerates that
+    /// without paying for sizeable dead bytes between non-adjacent chunks.
+    private static final int MAX_CROSS_COL_GAP_BYTES = 64 * 1024;
+
+    /// Coalesces the *first* read of multiple columns within this row group
+    /// into a smaller number of larger ranged GETs. See #374.
+    ///
+    /// Conservative scope: only coalesces plans that report
+    /// [CoalescableFirstChunk#isCoalesceSafe] as true, i.e. those whose
+    /// first chunk represents the entire byte range the column will read.
+    /// Plans with page drops keep their per-column reads — coalescing
+    /// across an intra-column drop would over-fetch the dropped bytes
+    /// into the shared region *and* later re-fetch the column's
+    /// non-first page groups via the per-column chain (double-fetch).
+    /// IndexedFetchPlans with a single page group qualify;
+    /// SequentialFetchPlans qualify when their chunk size covers the
+    /// entire column chunk (`head(N)` truncation may shrink it below).
+    private void coalesceAcrossColumns(FetchPlan[] plans, InputFile inputFile, WorkItem workItem) {
+        // Collect (offset, length, plan-index) for each plan's first read.
+        record Entry(int planIndex, long offset, int length) {}
+        List<Entry> entries = new ArrayList<>(plans.length);
+        for (int i = 0; i < plans.length; i++) {
+            FetchPlan plan = plans[i];
+            if (plan instanceof CoalescableFirstChunk c && c.isCoalesceSafe()) {
+                entries.add(new Entry(i, c.firstChunkOffset(), c.firstChunkLength()));
+            }
+        }
+        if (entries.size() < 2) {
+            return;
+        }
+        entries.sort(Comparator.comparingLong(Entry::offset));
+
+        // Greedy walk: accumulate entries into a region while the gap and
+        // total span stay within bounds.
+        List<List<Entry>> regionEntries = new ArrayList<>();
+        List<Entry> current = new ArrayList<>();
+        long currentEnd = -1;
+        long currentStart = -1;
+        for (Entry e : entries) {
+            long gap = (currentEnd < 0) ? 0 : e.offset() - currentEnd;
+            long combinedSpan = (currentStart < 0) ? e.length() : e.offset() + e.length() - currentStart;
+            if (current.isEmpty()
+                    || (gap <= MAX_CROSS_COL_GAP_BYTES && combinedSpan <= MAX_COALESCED_BYTES)) {
+                if (current.isEmpty()) {
+                    currentStart = e.offset();
+                }
+                current.add(e);
+                currentEnd = e.offset() + e.length();
+            }
+            else {
+                regionEntries.add(current);
+                current = new ArrayList<>();
+                current.add(e);
+                currentStart = e.offset();
+                currentEnd = e.offset() + e.length();
+            }
+        }
+        if (!current.isEmpty()) {
+            regionEntries.add(current);
+        }
+
+        // Skip the rewrite if every "region" is just one column — coalescing
+        // would buy nothing.
+        boolean anyMerged = regionEntries.stream().anyMatch(g -> g.size() > 1);
+        if (!anyMerged) {
+            return;
+        }
+
+        // Build SharedRegions and rewrite each merged plan's first ChunkHandle
+        // to slice from the region. Single-entry "regions" are left alone.
+        SharedRegion[] regionsByPlan = new SharedRegion[plans.length];
+        SharedRegion previous = null;
+        for (List<Entry> group : regionEntries) {
+            if (group.size() == 1) {
+                continue;
+            }
+            long regionOffset = group.get(0).offset();
+            long regionEnd = group.get(group.size() - 1).offset()
+                    + group.get(group.size() - 1).length();
+            int regionLength = Math.toIntExact(regionEnd - regionOffset);
+            String purpose = "rg=" + workItem.rowGroupIndex()
+                    + " region=" + group.get(0).planIndex() + ".." + group.get(group.size() - 1).planIndex();
+            SharedRegion region = new SharedRegion(inputFile, regionOffset, regionLength, purpose);
+            if (previous != null) {
+                previous.setNextRegion(region);
+            }
+            previous = region;
+            for (Entry e : group) {
+                regionsByPlan[e.planIndex()] = region;
+            }
+        }
+
+        for (int i = 0; i < plans.length; i++) {
+            SharedRegion region = regionsByPlan[i];
+            if (region == null) {
+                continue;
+            }
+            ((CoalescableFirstChunk) plans[i]).attachSharedRegion(region, workItem.rowGroupIndex());
+        }
+    }
+
+    /// Plans that expose their first read's byte range and accept a
+    /// region-backed [ChunkHandle] for it.
+    interface CoalescableFirstChunk {
+        long firstChunkOffset();
+        int firstChunkLength();
+
+        /// Returns true when the plan's first chunk is the only chunk
+        /// (i.e. no later page groups will be fetched per-column).
+        /// When false, cross-column coalescing skips this plan: bridging
+        /// to a neighbour column would over-fetch the bytes between this
+        /// plan's first chunk and its later chunks (e.g. dropped pages)
+        /// into the shared region, *and* the per-column chain would later
+        /// re-fetch those same later chunks.
+        boolean isCoalesceSafe();
+
+        void attachSharedRegion(SharedRegion region, int rowGroupIndex);
     }
 
     /// A contiguous byte range covering one or more pages within a column.

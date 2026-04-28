@@ -27,11 +27,11 @@ import dev.hardwood.schema.ColumnSchema;
 /// Pages are pre-computed at plan time from the OffsetIndex (with filter and
 /// maxRows already applied). Byte data and dictionary parsing are deferred
 /// until the iterator is first advanced — no I/O happens at plan time.
-final class IndexedFetchPlan implements FetchPlan {
+final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableFirstChunk {
 
     private final List<PageLocation> neededPages;
     private final List<RowGroupIterator.PageGroup> pageGroups;
-    private final List<ChunkHandle> chunkHandles;
+    private List<ChunkHandle> chunkHandles;
     private final long firstDataPageOffset; // from OffsetIndex (not necessarily first needed page)
     private final ColumnSchema columnSchema;
     private final ColumnChunk columnChunk;
@@ -75,6 +75,51 @@ final class IndexedFetchPlan implements FetchPlan {
     @Override
     public Iterator<PageInfo> pages() {
         return new PageIterator();
+    }
+
+    @Override
+    public long firstChunkOffset() {
+        return chunkHandles.isEmpty() ? 0 : chunkHandles.get(0).fileOffset();
+    }
+
+    @Override
+    public int firstChunkLength() {
+        return chunkHandles.isEmpty() ? 0 : chunkHandles.get(0).length();
+    }
+
+    /// Coalesce-safe iff the column has a single page group. Multiple
+    /// groups mean a filter dropped pages, leaving intra-column gaps —
+    /// bridging to neighbour columns would pull dropped bytes into the
+    /// shared region and double-fetch the later page groups.
+    @Override
+    public boolean isCoalesceSafe() {
+        return chunkHandles.size() == 1;
+    }
+
+    /// Replaces the *first* chunk handle with a region-backed view.
+    /// Subsequent page-group handles (when filter / maxRows / large
+    /// chunks produced multiple groups) keep their per-column reads —
+    /// cross-column coalescing only spans the first read of each column.
+    @Override
+    public void attachSharedRegion(SharedRegion region, int rowGroupIndex) {
+        if (chunkHandles.isEmpty()) {
+            return;
+        }
+        ChunkHandle original = chunkHandles.get(0);
+        ChunkHandle replacement = new ChunkHandle(region,
+                original.fileOffset(), original.length(),
+                "rg=" + rowGroupIndex + " col='" + columnSchema.name()
+                        + "' pageGroup=1 (region-backed)");
+        if (chunkHandles.size() > 1) {
+            replacement.setNextChunk(chunkHandles.get(1));
+        }
+        // Rebuild the immutable list with the replacement at index 0.
+        List<ChunkHandle> rebuilt = new java.util.ArrayList<>(chunkHandles.size());
+        rebuilt.add(replacement);
+        for (int i = 1; i < chunkHandles.size(); i++) {
+            rebuilt.add(chunkHandles.get(i));
+        }
+        this.chunkHandles = rebuilt;
     }
 
     /// Builds an [IndexedFetchPlan]. No I/O occurs — the plan is pure metadata.

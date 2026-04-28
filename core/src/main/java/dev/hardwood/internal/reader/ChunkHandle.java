@@ -33,6 +33,12 @@ public class ChunkHandle {
     private final long fileOffset;
     private final int length;
     private final String purpose;
+    /// Non-null when this handle is a sub-range of a coalesced
+    /// cross-column region (#374). When set, `ensureFetched()` slices
+    /// the region's buffer instead of issuing its own `readRange`, and
+    /// the per-handle `nextChunk` chain is unused (pre-fetch is
+    /// driven at the region level).
+    private final SharedRegion region;
     private volatile ChunkHandle nextChunk;
     private volatile ByteBuffer data;
 
@@ -49,12 +55,26 @@ public class ChunkHandle {
         this.fileOffset = fileOffset;
         this.length = length;
         this.purpose = purpose;
+        this.region = null;
     }
 
     /// Convenience overload for callers that haven't been wired with a purpose
     /// tag yet. Tagged as `unattributed` in fetch logs.
     public ChunkHandle(InputFile inputFile, long fileOffset, int length) {
         this(inputFile, fileOffset, length, "unattributed");
+    }
+
+    /// Creates a chunk handle that's a sub-range of a coalesced cross-column
+    /// [SharedRegion]. Used when [RowGroupIterator] decides several columns'
+    /// chunks fit cheaply into one ranged GET; each column's
+    /// `ensureFetched()` then slices the shared buffer rather than issuing
+    /// its own `readRange`.
+    public ChunkHandle(SharedRegion region, long fileOffset, int length, String purpose) {
+        this.inputFile = null;
+        this.fileOffset = fileOffset;
+        this.length = length;
+        this.purpose = purpose;
+        this.region = region;
     }
 
     /// Returns the absolute file offset of this chunk.
@@ -89,6 +109,13 @@ public class ChunkHandle {
             return buf;
         }
         fetchData();
+        // Region-backed handles delegate pre-fetch to SharedRegion.nextRegion,
+        // not to the per-handle nextChunk chain — the chain may still be set
+        // by the per-column page-group construction, but it would re-fetch
+        // bytes the shared region already covers.
+        if (region != null) {
+            return data;
+        }
         // Pre-fetch next chunk asynchronously (one-ahead only — fetchData
         // does not trigger further pre-fetches)
         ChunkHandle next = nextChunk;
@@ -114,12 +141,20 @@ public class ChunkHandle {
 
     /// Fetches this chunk's data if not already cached. Does NOT trigger
     /// pre-fetch of the next chunk.
+    ///
+    /// When the handle is region-backed (`region != null`), this slices
+    /// the shared region's buffer — the underlying `readRange` happens
+    /// at the region level, once, no matter how many columns share it.
     private void fetchData() {
         if (data != null) {
             return;
         }
         synchronized (this) {
             if (data != null) {
+                return;
+            }
+            if (region != null) {
+                data = region.slice(fileOffset, length);
                 return;
             }
             // If the caller set an outer scope (e.g. "prefetch rg=2"), prepend it

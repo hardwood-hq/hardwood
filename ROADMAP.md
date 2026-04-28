@@ -446,7 +446,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [x] Page indexes (OffsetIndex for page scanning, ColumnIndex for page-level predicate filtering)
 - [x] Predicate pushdown (row group filtering via statistics, page filtering via ColumnIndex)
 - [x] Page-range I/O for filtered reads (only matching pages fetched from remote backends)
-- [x] Coalesced reads for remote backends (`ChunkRange`, `RowGroupIndexBuffers`)
+- [x] Coalesced reads for remote backends (`ChunkRange`, `RowGroupIndexBuffers`, cross-column `SharedRegion`)
 - [ ] Bloom filters
 - [x] **Validate**: Performance improvement with filtering
 
