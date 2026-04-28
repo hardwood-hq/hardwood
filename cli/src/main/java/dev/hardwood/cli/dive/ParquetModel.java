@@ -23,6 +23,7 @@ import dev.hardwood.internal.reader.ColumnIndexBuffers;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.DictionaryParser;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.RangeBackedInputFile;
 import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
@@ -333,10 +334,14 @@ public final class ParquetModel implements AutoCloseable {
     }
 
     /// Network usage of the underlying [InputFile] for this session.
-    /// Returns `null` for local files; for [S3InputFile] returns a live
+    /// Returns `null` for local files; for [S3InputFile] (possibly
+    /// behind a [RangeBackedInputFile] decorator) returns a live
     /// snapshot of request count and bytes fetched since `open()`.
     public NetStats netStats() {
-        if (inputFile instanceof S3InputFile s3) {
+        InputFile inner = inputFile instanceof RangeBackedInputFile rbf
+                ? rbf.delegate()
+                : inputFile;
+        if (inner instanceof S3InputFile s3) {
             return new NetStats(s3.networkRequestCount(), s3.networkBytesFetched());
         }
         return null;

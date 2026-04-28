@@ -14,6 +14,7 @@ import java.nio.file.Path;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.aws.auth.SdkCredentialsProviders;
+import dev.hardwood.s3.RangeBacking;
 import dev.hardwood.s3.S3Source;
 import picocli.CommandLine;
 import picocli.CommandLine.Model.CommandSpec;
@@ -41,9 +42,20 @@ public class FileMixin {
     }
 
     InputFile toInputFile() {
+        return toInputFile(RangeBacking.NONE);
+    }
+
+    /// Resolves the configured `--file` to an [InputFile]. For remote
+    /// (`s3://`) URIs, opens an [S3Source] with the given range-caching
+    /// strategy. Streaming commands (`print`, `convert`, `info`,
+    /// `inspect`) leave the default [RangeBacking#NONE]; interactive
+    /// commands like `dive` opt into [RangeBacking#SPARSE_TEMPFILE] so
+    /// repeat reads of the same byte ranges hit a local mmap-backed
+    /// cache instead of S3.
+    InputFile toInputFile(RangeBacking rangeBacking) {
         for (String prefix : REMOTE_PREFIXES) {
             if (file.startsWith(prefix)) {
-                return createS3InputFile();
+                return createS3InputFile(rangeBacking);
             }
         }
         for (String prefix : UNSUPPORTED_REMOTE_PREFIXES) {
@@ -55,11 +67,12 @@ public class FileMixin {
         return InputFile.of(Path.of(file));
     }
 
-    private InputFile createS3InputFile() {
+    private InputFile createS3InputFile(RangeBacking rangeBacking) {
         String endpointUrl = resolveEndpoint();
 
         S3Source.Builder builder = S3Source.builder()
-                .credentials(SdkCredentialsProviders.defaultChain());
+                .credentials(SdkCredentialsProviders.defaultChain())
+                .rangeBacking(rangeBacking);
 
         if (endpointUrl != null) {
             builder.endpoint(endpointUrl);

@@ -10,12 +10,14 @@ package dev.hardwood.s3;
 import java.io.Closeable;
 import java.net.URI;
 import java.net.http.HttpClient;
+import java.nio.file.Path;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.reader.RangeBackedInputFile;
 import dev.hardwood.s3.internal.S3Api;
 
 /// A configured connection to an S3-compatible object store.
@@ -32,22 +34,35 @@ public final class S3Source implements Closeable {
     private final S3Api api;
     private final HttpClient httpClient;
     private final boolean externalHttpClient;
+    private final RangeBacking rangeBacking;
+    private final Path tempDir;
 
-    private S3Source(S3Api api, HttpClient httpClient, boolean externalHttpClient) {
+    private S3Source(S3Api api, HttpClient httpClient, boolean externalHttpClient,
+                     RangeBacking rangeBacking, Path tempDir) {
         this.api = api;
         this.httpClient = httpClient;
         this.externalHttpClient = externalHttpClient;
+        this.rangeBacking = rangeBacking;
+        this.tempDir = tempDir;
     }
 
-    /// Creates an [S3InputFile] for the given bucket and key.
-    public S3InputFile inputFile(String bucket, String key) {
+    /// Creates an [InputFile] for the given bucket and key. Returns an
+    /// [S3InputFile] when range backing is [RangeBacking#NONE] (the
+    /// default); otherwise wraps that bare file in a
+    /// [RangeBackedInputFile] so repeated reads of the same byte range
+    /// hit the local mapping.
+    public InputFile inputFile(String bucket, String key) {
         Objects.requireNonNull(bucket, "bucket must not be null");
         Objects.requireNonNull(key, "key must not be null");
-        return new S3InputFile(this, bucket, key);
+        S3InputFile bare = new S3InputFile(this, bucket, key);
+        return rangeBacking == RangeBacking.SPARSE_TEMPFILE
+                ? new RangeBackedInputFile(bare, tempDir)
+                : bare;
     }
 
-    /// Creates an [S3InputFile] from an `s3://bucket/key` URI.
-    public S3InputFile inputFile(String uri) {
+    /// Creates an [InputFile] from an `s3://bucket/key` URI. See
+    /// [#inputFile(String, String)] for the [RangeBacking] policy.
+    public InputFile inputFile(String uri) {
         Objects.requireNonNull(uri, "uri must not be null");
         String[] parsed = parseS3Uri(uri);
         return inputFile(parsed[0], parsed[1]);
@@ -121,6 +136,8 @@ public final class S3Source implements Closeable {
         private Duration requestTimeout = DEFAULT_REQUEST_TIMEOUT;
         private int maxRetries = DEFAULT_MAX_RETRIES;
         private HttpClient httpClient;
+        private RangeBacking rangeBacking = RangeBacking.NONE;
+        private Path tempDir;
 
         private Builder() {
         }
@@ -187,6 +204,25 @@ public final class S3Source implements Closeable {
             return this;
         }
 
+        /// Sets the range-caching strategy for files opened from this
+        /// source. Default is [RangeBacking#NONE] (every `readRange`
+        /// is a network GET). Opt in to [RangeBacking#SPARSE_TEMPFILE]
+        /// for interactive workloads that re-read the same byte ranges
+        /// — `dive` is the canonical opt-in caller.
+        public Builder rangeBacking(RangeBacking rangeBacking) {
+            this.rangeBacking = Objects.requireNonNull(rangeBacking, "rangeBacking must not be null");
+            return this;
+        }
+
+        /// Sets the temp directory used by [RangeBacking#SPARSE_TEMPFILE]
+        /// for the sparse-file backing. Defaults to the JVM's
+        /// `java.io.tmpdir`. Ignored when range backing is
+        /// [RangeBacking#NONE].
+        public Builder tempDir(Path tempDir) {
+            this.tempDir = Objects.requireNonNull(tempDir, "tempDir must not be null");
+            return this;
+        }
+
         /// Builds the [S3Source].
         ///
         /// Region is required when targeting AWS S3 (no custom endpoint).
@@ -210,7 +246,10 @@ public final class S3Source implements Closeable {
                     : HttpClient.newBuilder().connectTimeout(connectTimeout).build();
             S3Api api = new S3Api(client, credentialsProvider, effectiveRegion, endpointUri, pathStyle,
                     requestTimeout, maxRetries);
-            return new S3Source(api, client, externalClient);
+            Path effectiveTempDir = tempDir != null
+                    ? tempDir
+                    : Path.of(System.getProperty("java.io.tmpdir"));
+            return new S3Source(api, client, externalClient, rangeBacking, effectiveTempDir);
         }
     }
 }

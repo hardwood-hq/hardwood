@@ -20,6 +20,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.dive.DiveApp;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.internal.Fmt;
+import dev.hardwood.s3.RangeBacking;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
 import picocli.CommandLine;
@@ -72,7 +73,11 @@ public class DiveCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
-        InputFile inputFile = fileMixin.toInputFile();
+        // Dive re-reads the same byte ranges constantly (page-up/page-down
+        // navigation, jump-to-end-then-back, the `t` toggle, etc.). Opt
+        // into the sparse-tempfile range cache so those repeats hit a
+        // local mmap instead of S3. See #373.
+        InputFile inputFile = fileMixin.toInputFile(RangeBacking.SPARSE_TEMPFILE);
         if (inputFile == null) {
             return CommandLine.ExitCode.SOFTWARE;
         }
