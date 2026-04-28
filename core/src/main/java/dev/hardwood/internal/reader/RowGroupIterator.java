@@ -72,6 +72,12 @@ public class RowGroupIterator {
     private final HardwoodContextImpl context;
     private final long maxRows;
 
+    /// Number of leading rows of the first row group to skip. Non-zero only on
+    /// the tail-read fast path; consumed by [#getSharedMetadata] to synthesize a
+    /// `[tailSkip, numRows)` matching range so the existing per-page mask
+    /// machinery drops the leading pages and trims the straddling page.
+    private final long tailSkip;
+
     // Set after first file
     private FileSchema referenceSchema;
     private ProjectedSchema projectedSchema;
@@ -138,12 +144,32 @@ public class RowGroupIterator {
     /// @param context the Hardwood context
     /// @param maxRows maximum rows to read (0 = unlimited)
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context, long maxRows) {
+        this(inputFiles, context, maxRows, 0);
+    }
+
+    /// Creates a RowGroupIterator with a tail-skip budget applied to the first
+    /// row group.
+    ///
+    /// @param inputFiles one or more input files (must not be empty)
+    /// @param context the Hardwood context
+    /// @param maxRows maximum rows to read (0 = unlimited)
+    /// @param tailSkip leading rows of the first row group to skip via per-page
+    ///        masking (0 = unused). Caller must guarantee every projected column
+    ///        in every subset row group has an OffsetIndex; otherwise sequential
+    ///        columns would emit unmaskable rows from offset 0 and break
+    ///        cross-column alignment.
+    public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
+                            long maxRows, long tailSkip) {
         if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
+        }
+        if (tailSkip < 0) {
+            throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
         }
         this.inputFiles = new ArrayList<>(inputFiles);
         this.context = context;
         this.maxRows = maxRows;
+        this.tailSkip = tailSkip;
     }
 
     /// Returns the maximum rows limit (0 = unlimited).
@@ -247,6 +273,13 @@ public class RowGroupIterator {
                 if (filterPredicate != null) {
                     matchingRows = PageFilterEvaluator.computeMatchingRows(
                             filterPredicate, workItem.rowGroup(), indexBuffers);
+                }
+                else if (tailSkip > 0 && workItem.workItemIndex() == 0) {
+                    // Tail-read fast path: synthesize a [tailSkip, numRows) matching
+                    // range on the first row group so the per-page mask machinery
+                    // drops leading pages and trims the straddling page in place of
+                    // the post-iteration skip loop.
+                    matchingRows = RowRanges.range(tailSkip, workItem.rowGroup().numRows());
                 }
 
                 return new SharedRowGroupMetadata(indexBuffers, matchingRows);

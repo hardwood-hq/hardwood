@@ -36,6 +36,20 @@ public class RowRanges {
         return new RowRanges(new long[]{ 0, rowGroupRowCount }, true);
     }
 
+    /// Creates a RowRanges containing the single half-open interval `[start, end)`.
+    ///
+    /// Unlike [#all(long)], the result is *not* the all-rows sentinel — `isAll()`
+    /// returns `false` and per-page mask computation will discard rows outside
+    /// the interval. Used by the tail-read fast path to express the "skip the
+    /// leading `start` rows of this row group" range.
+    public static RowRanges range(long start, long end) {
+        if (start < 0 || start >= end) {
+            throw new IllegalArgumentException("range must satisfy 0 <= start < end, got ["
+                    + start + ", " + end + ")");
+        }
+        return new RowRanges(new long[]{ start, end }, false);
+    }
+
     /// Returns `true` if this instance represents all rows (no filtering).
     public boolean isAll() {
         return all;
