@@ -69,6 +69,13 @@ public final class ParquetModel implements AutoCloseable {
     // position only; the two never share state directly.
     private RowReader previewCursor;
     private long previewCursorPosition;
+    /// Row group the preview cursor is currently iterating in. -1 when no
+    /// cursor is open. Used by [#readPreviewPage] to decide whether a
+    /// requested `firstRow` can reuse the cursor — only same-RG forward
+    /// moves reuse; cross-RG jumps and backward moves rebuild via
+    /// `firstRow(N)` so the new cursor is scoped to the target RG and
+    /// doesn't fetch bytes from intervening row groups.
+    private int previewCursorRowGroup = -1;
     private static final int DICTIONARY_CACHE_CAPACITY = 4;
     private static final int PAGE_HEADER_CACHE_CAPACITY = 8;
     /// Default maximum chunk-size for a Dictionary load. Larger chunks need the
@@ -185,6 +192,24 @@ public final class ParquetModel implements AutoCloseable {
 
     public ColumnChunk chunk(int rowGroupIndex, int columnIndex) {
         return rowGroup(rowGroupIndex).columns().get(columnIndex);
+    }
+
+    /// Index of the row group containing the given absolute row, by
+    /// cumulative `RowGroup.numRows()`. Linear in the row-group count.
+    /// Returns the last row group when `row` equals total row count.
+    public int rowGroupContaining(long row) {
+        if (row < 0) {
+            throw new IllegalArgumentException("row must be non-negative: " + row);
+        }
+        long cumulative = 0;
+        List<RowGroup> rowGroups = metadata.rowGroups();
+        for (int i = 0; i < rowGroups.size(); i++) {
+            cumulative += rowGroups.get(i).numRows();
+            if (row < cumulative) {
+                return i;
+            }
+        }
+        return Math.max(0, rowGroups.size() - 1);
     }
 
     /// Reads the column index for a chunk, caching the result for the session.
@@ -358,16 +383,34 @@ public final class ParquetModel implements AutoCloseable {
         return reader;
     }
 
-    /// Reads a page of rows starting at `firstRow`. The `consumer` is called
-    /// once per row with a [RowReader] already positioned on that row. Reuses
-    /// a forward-only cursor across calls: moving forward skips ahead without
-    /// reopening, moving backwards closes and recreates the reader.
+    /// Reads a page of rows starting at `firstRow`. The `consumer` is
+    /// called once per row with a [RowReader] already positioned on that
+    /// row.
+    ///
+    /// Reuses a forward-only cursor across calls when the next call
+    /// moves forward and the existing cursor still has rows left to
+    /// yield. Otherwise closes the cursor and opens a new one via
+    /// `buildRowReader().firstRow(firstRow).build()`, which seeks
+    /// directly to the row group containing `firstRow` instead of
+    /// walking from row 0 — the headline win for jump-to-end on remote
+    /// files.
     public void readPreviewPage(long firstRow, int pageSize, java.util.function.Consumer<RowReader> consumer)
             throws IOException {
-        if (previewCursor == null || firstRow < previewCursorPosition) {
+        int targetRg = rowGroupContaining(firstRow);
+        // Reuse only when staying in the same row group AND moving forward.
+        // Cross-RG jumps must rebuild via firstRow(N) so the new cursor is
+        // scoped to the target RG — without this, a forward-skip via next()
+        // through intervening RGs would fetch every byte in between (which
+        // is exactly what `firstRow(N)` exists to avoid).
+        boolean canReuse = previewCursor != null
+                && previewCursorRowGroup == targetRg
+                && previewCursorPosition <= firstRow
+                && previewCursor.hasNext();
+        if (!canReuse) {
             closePreviewCursor();
-            previewCursor = reader.rowReader();
-            previewCursorPosition = 0;
+            previewCursor = reader.buildRowReader().firstRow(firstRow).build();
+            previewCursorPosition = firstRow;
+            previewCursorRowGroup = targetRg;
         }
         while (previewCursorPosition < firstRow && previewCursor.hasNext()) {
             previewCursor.next();
@@ -379,6 +422,12 @@ public final class ParquetModel implements AutoCloseable {
             previewCursorPosition++;
             consumer.accept(previewCursor);
             read++;
+        }
+        // Forward iteration may cross row-group boundaries (cursor wasn't
+        // bounded). Update the tracked RG so the next call's same-RG check
+        // is accurate.
+        if (previewCursorPosition > 0) {
+            previewCursorRowGroup = rowGroupContaining(previewCursorPosition - 1);
         }
     }
 
@@ -392,6 +441,7 @@ public final class ParquetModel implements AutoCloseable {
             }
             previewCursor = null;
             previewCursorPosition = 0;
+            previewCursorRowGroup = -1;
         }
     }
 

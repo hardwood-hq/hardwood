@@ -231,7 +231,49 @@ public class ParquetFileReader implements AutoCloseable {
     // ============================================================
 
     RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter, long maxRows) {
-        return buildRowReader(projection, filter, maxRows, firstFileMetaData.rowGroups());
+        return buildRowReader(projection, filter, maxRows, 0L);
+    }
+
+    RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter, long maxRows,
+                             long firstRow) {
+        if (firstRow == 0L) {
+            return buildRowReader(projection, filter, maxRows, firstFileMetaData.rowGroups());
+        }
+        // Locate the row group containing `firstRow` by walking cumulative
+        // RowGroup.numRows(). For multi-file readers this indexes into the
+        // first file only — cross-file firstRow is out of scope.
+        List<RowGroup> all = firstFileMetaData.rowGroups();
+        long cumulative = 0L;
+        int targetRg = all.size(); // sentinel: past-the-end yields empty reader
+        long withinRg = 0L;
+        for (int i = 0; i < all.size(); i++) {
+            long rgRows = all.get(i).numRows();
+            if (firstRow < cumulative + rgRows) {
+                targetRg = i;
+                withinRg = firstRow - cumulative;
+                break;
+            }
+            cumulative += rgRows;
+        }
+        if (targetRg >= all.size()) {
+            // firstRow at or past end of file — return an empty reader.
+            return buildRowReader(projection, filter, maxRows, List.<RowGroup>of());
+        }
+        List<RowGroup> rowGroups = targetRg == 0
+                ? all
+                : all.subList(targetRg, all.size());
+        // The reader yields from the start of `targetRg`. We bump maxRows
+        // by the within-RG skip distance because head(N) bounds *yielded*
+        // rows; the residue rows we discard via next() count too.
+        long maxRowsAdjusted = maxRows == 0 ? 0 : maxRows + withinRg;
+        RowReader reader = buildRowReader(projection, filter, maxRowsAdjusted, rowGroups);
+        for (long i = 0; i < withinRg; i++) {
+            if (!reader.hasNext()) {
+                break;
+            }
+            reader.next();
+        }
+        return reader;
     }
 
     RowReader buildTailRowReader(ColumnProjection projection, long tailRows) {
@@ -367,6 +409,10 @@ public class ParquetFileReader implements AutoCloseable {
         /// Positive: return at most `tailRows` rows from the end.
         /// Zero (default): no limit. Mutually exclusive with `headRows`.
         private long tailRows;
+        /// Zero (default): start from row 0. Positive: skip rows before the
+        /// given absolute row index, opening only the row group(s) needed
+        /// to reach it. Mutually exclusive with `tailRows`.
+        private long firstRow;
 
         private RowReaderBuilder(ParquetFileReader fileReader) {
             this.fileReader = fileReader;
@@ -399,12 +445,36 @@ public class ParquetFileReader implements AutoCloseable {
         /// Limit to the last `tailRows` rows. Row groups that do not overlap
         /// the tail are skipped entirely, so pages for earlier row groups are
         /// never fetched or decoded — useful on remote backends. Mutually
-        /// exclusive with [#head] and [#filter]. Single-file only.
+        /// exclusive with [#head], [#filter], and [#firstRow]. Single-file only.
         public RowReaderBuilder tail(long tailRows) {
             if (tailRows <= 0) {
                 throw new IllegalArgumentException("tail row count must be positive: " + tailRows);
             }
             this.tailRows = tailRows;
+            return this;
+        }
+
+        /// Begin reading from the given absolute row index. Earlier row groups
+        /// are not opened — their pages are not fetched or decoded — so this
+        /// is an O(1 RG) seek on remote backends, in contrast to walking
+        /// next() from row 0.
+        ///
+        /// On files with an OffsetIndex, the underlying [IndexedFetchPlan]
+        /// further narrows the per-column fetch to pages from the page
+        /// containing `firstRow` onwards. Files without an OffsetIndex fall
+        /// back to walking the row group from its start (skipped rows are
+        /// decoded internally and not yielded to the caller).
+        ///
+        /// `firstRow == 0` is the no-op default. `firstRow == totalRows`
+        /// produces an empty reader. Indexes into the *first* file's rows for
+        /// multi-file readers; cross-file `firstRow` is out of scope. Mutually
+        /// exclusive with [#tail]; composes with [#head] for a bounded
+        /// `[firstRow, firstRow + maxRows)` window.
+        public RowReaderBuilder firstRow(long firstRow) {
+            if (firstRow < 0) {
+                throw new IllegalArgumentException("firstRow must be non-negative: " + firstRow);
+            }
+            this.firstRow = firstRow;
             return this;
         }
 
@@ -416,10 +486,13 @@ public class ParquetFileReader implements AutoCloseable {
                 throw new IllegalArgumentException("tail cannot be combined with a filter: "
                         + "the set of matching rows is not known from row-group statistics alone");
             }
+            if (tailRows > 0 && firstRow > 0) {
+                throw new IllegalArgumentException("tail and firstRow are mutually exclusive");
+            }
             if (tailRows > 0) {
                 return fileReader.buildTailRowReader(projection, tailRows);
             }
-            return fileReader.buildRowReader(projection, filter, headRows);
+            return fileReader.buildRowReader(projection, filter, headRows, firstRow);
         }
     }
 
