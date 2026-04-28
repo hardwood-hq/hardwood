@@ -297,7 +297,18 @@ public class ParquetFileReader implements AutoCloseable {
         }
         long skip = Math.max(0, rowsInSubset - tailRows);
 
-        RowReader reader = buildRowReader(projection, null, 0, subset);
+        if (skip == 0 || canFastSkipTail(subset, projection)) {
+            // Fast path: per-page row masking drops the leading pages and trims the
+            // straddling page in IndexedFetchPlan, so the reader yields exactly
+            // tailRows rows from its first hasNext() with no caller-side advance.
+            return buildRowReader(projection, null, 0, subset, skip);
+        }
+
+        // Fallback: at least one projected column lacks an OffsetIndex and uses
+        // SequentialFetchPlan, which has no per-page mask support yet. Decoding
+        // every leading row and discarding it at the reader level keeps cross-
+        // column row alignment intact.
+        RowReader reader = buildRowReader(projection, null, 0, subset, 0);
         for (long i = 0; i < skip; i++) {
             if (!reader.hasNext()) {
                 break;
@@ -307,14 +318,39 @@ public class ParquetFileReader implements AutoCloseable {
         return reader;
     }
 
+    /// Whether every projected column in every subset row group has an
+    /// OffsetIndex. Required for the tail-read fast path because the per-page
+    /// row mask is only honoured by [dev.hardwood.internal.reader.IndexedFetchPlan];
+    /// `SequentialFetchPlan` would emit unmasked rows from offset 0 and break
+    /// cross-column alignment with the masked OffsetIndex columns.
+    private boolean canFastSkipTail(List<RowGroup> subset, ColumnProjection projection) {
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        int projectedCount = projectedSchema.getProjectedColumnCount();
+        for (RowGroup rg : subset) {
+            for (int p = 0; p < projectedCount; p++) {
+                int originalIndex = projectedSchema.toOriginalIndex(p);
+                if (rg.columns().get(originalIndex).offsetIndexOffset() == null) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
+
     private RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
                                      long maxRows, List<RowGroup> firstFileRowGroups) {
+        return buildRowReader(projection, filter, maxRows, firstFileRowGroups, 0L);
+    }
+
+    private RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
+                                     long maxRows, List<RowGroup> firstFileRowGroups,
+                                     long tailSkip) {
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
 
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
 
-        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, maxRows);
+        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, maxRows, tailSkip);
         iterator.setFirstFile(schema, firstFileRowGroups);
         iterator.initialize(projectedSchema, resolved);
         rowGroupIterators.add(iterator);
