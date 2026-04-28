@@ -401,7 +401,7 @@ public sealed interface FilterPredicate
 
     // ==================== UUID Predicates ====================
 
-    /// Creates an equal predicate for a [UUID] column (Parquet UUID logical type).
+    /// Creates an equals predicate for a [UUID] column (Parquet UUID logical type).
     /// The UUID is encoded as a 16-byte big-endian `FIXED_LEN_BYTE_ARRAY`.
     static FilterPredicate eq(String column, UUID value) {
         return new UUIDColumnPredicate(column, Operator.EQ, uuidToBytes(value));
@@ -510,8 +510,9 @@ public sealed interface FilterPredicate
         }
     }
 
-    /// Predicate for `FIXED_LEN_BYTE_ARRAY` columns that require signed (two's complement)
-    /// comparison, such as decimals. The value must be padded to the column's fixed length.
+    /// Predicate for decimal columns stored as `FIXED_LEN_BYTE_ARRAY`, which require signed
+    /// (two's complement) comparison. The column must carry a `DECIMAL` logical type and the
+    /// value must be padded to the column's fixed length.
     record SignedBinaryColumnPredicate(String column, Operator op, byte[] value) implements FilterPredicate {
 
         @Override
