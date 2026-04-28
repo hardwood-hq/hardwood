@@ -21,7 +21,6 @@ import dev.hardwood.metadata.RowGroup;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Style;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
@@ -96,7 +95,7 @@ public final class ColumnChunksScreen {
                     cmd.dictionaryPageOffset() != null ? "yes" : "no"));
         }
         Row header = Row.from("#", "Column", "Type", "Logical", "Codec", "Compressed", "Ratio", "Dict")
-                .style(Style.EMPTY.bold());
+                .style(Theme.accent().bold());
         Block block = Block.builder()
                 .title(" RG #" + state.rowGroupIndex() + " column chunks "
                         + Plurals.rangeOf(state.selection(),
@@ -104,7 +103,6 @@ public final class ColumnChunksScreen {
                                 Keys.viewportStride()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -120,7 +118,7 @@ public final class ColumnChunksScreen {
                 .columnSpacing(2)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         tableState.select(state.selection());

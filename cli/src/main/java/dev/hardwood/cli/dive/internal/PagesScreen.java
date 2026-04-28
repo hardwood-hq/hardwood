@@ -201,9 +201,9 @@ public final class PagesScreen {
         }
         Row header = hasAnyStats
                 ? Row.from("#", "Type", "First row", "Values", "Encoding", "Comp", "Uncomp", "Nulls", "Min", "Max")
-                        .style(Style.EMPTY.bold())
+                        .style(Theme.accent().bold())
                 : Row.from("#", "Type", "First row", "Values", "Encoding", "Comp", "Uncomp", "Nulls")
-                        .style(Style.EMPTY.bold());
+                        .style(Theme.accent().bold());
         String titleSuffix = hasAnyStats ? "" : " (no column index)";
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
@@ -212,7 +212,6 @@ public final class PagesScreen {
                         + titleSuffix + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         List<Constraint> widths = new ArrayList<>();
         widths.add(new Constraint.Length(4));   // #
@@ -239,7 +238,7 @@ public final class PagesScreen {
                 .columnSpacing(1)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         if (!headers.isEmpty()) {
@@ -248,6 +247,7 @@ public final class PagesScreen {
         table.render(area, buffer, tableState);
 
         if (state.modalOpen() && !headers.isEmpty()) {
+            buffer.setStyle(area, Theme.dim());
             renderHeaderModal(buffer, area, headers.get(state.selection()), state.selection(), col,
                     state.logicalTypes());
         }
@@ -372,7 +372,7 @@ public final class PagesScreen {
         Statistics inline = inlineStats(header);
         if (inline != null) {
             lines.add(Line.empty());
-            lines.add(Line.from(new Span(" Inline statistics ", Style.EMPTY.bold())));
+            lines.add(Line.from(new Span(" Inline statistics ", Theme.accent().bold())));
             lines.add(kv("  Min", formatStatFull(inline.minValue(), col, logical)));
             lines.add(kv("  Max", formatStatFull(inline.maxValue(), col, logical)));
             if (inline.nullCount() != null) {
@@ -385,13 +385,12 @@ public final class PagesScreen {
         boolean onDataPage = header.type() != PageHeader.PageType.DICTIONARY_PAGE;
         boolean hasLogical = col.logicalType() != null && onDataPage;
         String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
-        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
+        lines.add(Line.from(new Span(hint, Theme.dim())));
 
         Block block = Block.builder()
                 .title(" Page #" + index + " header ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
@@ -411,8 +410,8 @@ public final class PagesScreen {
     private static Line kv(String key, String value) {
         return Line.from(
                 Span.raw(" "),
-                new Span(padRight(key, 20), Style.EMPTY),
-                new Span(value, Style.EMPTY.bold()));
+                new Span(padRight(key, 20), Theme.primary()),
+                new Span(value, Style.EMPTY));
     }
 
     private static String padRight(String s, int width) {

@@ -21,7 +21,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -175,8 +174,8 @@ public final class ColumnIndexScreen {
 
         Paragraph.builder()
                 .text(Text.from(Line.from(
-                        new Span(" Boundary order: ", Style.EMPTY.fg(Theme.DIM)),
-                        new Span(ci.boundaryOrder().name(), Style.EMPTY.bold()))))
+                        new Span(" Boundary order: ", Theme.primary()),
+                        Span.raw(ci.boundaryOrder().name()))))
                 .left()
                 .build()
                 .render(split.get(0), buffer);
@@ -195,7 +194,7 @@ public final class ColumnIndexScreen {
                     formatStat(ci.minValues().get(idx), col, state.logicalTypes()),
                     formatStat(ci.maxValues().get(idx), col, state.logicalTypes())));
         }
-        Row header = Row.from("#", "Null page", "Nulls", "Min", "Max").style(Style.EMPTY.bold());
+        Row header = Row.from("#", "Null page", "Nulls", "Min", "Max").style(Theme.accent().bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" Column index "
@@ -206,7 +205,6 @@ public final class ColumnIndexScreen {
                         + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -219,7 +217,7 @@ public final class ColumnIndexScreen {
                 .columnSpacing(2)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         if (!filtered.isEmpty()) {
@@ -229,6 +227,7 @@ public final class ColumnIndexScreen {
 
         if (state.modalOpen() && !filtered.isEmpty()) {
             int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            buffer.setStyle(area, Theme.dim());
             renderMinMaxModal(buffer, area, idx,
                     ci.minValues().get(idx), ci.maxValues().get(idx),
                     col, state.logicalTypes());
@@ -250,17 +249,16 @@ public final class ColumnIndexScreen {
         dev.tamboui.widgets.Clear.INSTANCE.render(modal, buffer);
 
         List<Line> lines = new ArrayList<>();
-        lines.add(Line.from(new Span(" Min ", Style.EMPTY.bold()), Span.raw(min)));
-        lines.add(Line.from(new Span(" Max ", Style.EMPTY.bold()), Span.raw(max)));
+        lines.add(Line.from(new Span(" Min ", Theme.primary()), Span.raw(min)));
+        lines.add(Line.from(new Span(" Max ", Theme.primary()), Span.raw(max)));
         lines.add(Line.empty());
         boolean hasLogical = col.logicalType() != null;
         String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
-        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
+        lines.add(Line.from(new Span(hint, Theme.dim())));
         Block block = Block.builder()
                 .title(" Page #" + pageIndex + " min / max ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(modal, buffer);
     }
@@ -321,7 +319,7 @@ public final class ColumnIndexScreen {
                     .text(Text.from(Line.from(new Span(
                             " " + Plurals.format(totalPages, "page", "pages")
                                     + ". Press / to filter by min/max.",
-                            Style.EMPTY.fg(Theme.DIM)))))
+                            Theme.dim()))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -329,10 +327,10 @@ public final class ColumnIndexScreen {
         }
         String cursor = state.searching() ? "█" : "";
         Line line = Line.from(
-                new Span(" / ", Style.EMPTY.fg(Theme.ACCENT).bold()),
-                new Span(state.filter() + cursor, Style.EMPTY.bold()),
+                new Span(" / ", Theme.primary()),
+                new Span(state.filter() + cursor, Theme.primary()),
                 new Span("  (" + Fmt.fmt("%,d", matchCount) + " / "
-                        + Plurals.format(totalPages, "page", "pages") + ")", Style.EMPTY.fg(Theme.DIM)));
+                        + Plurals.format(totalPages, "page", "pages") + ")", Theme.dim()));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 
@@ -369,11 +367,10 @@ public final class ColumnIndexScreen {
                 .title(" Column index ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.DIM)
                 .build();
         Paragraph.builder()
                 .block(block)
-                .text(Text.from(Line.from(new Span(" " + message, Style.EMPTY.fg(Theme.DIM)))))
+                .text(Text.from(Line.from(new Span(" " + message, Theme.dim()))))
                 .left()
                 .build()
                 .render(area, buffer);

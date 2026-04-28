@@ -21,7 +21,6 @@ import dev.hardwood.metadata.RowGroup;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -111,12 +110,11 @@ public final class FileIndexesScreen {
                     .title(title)
                     .borders(Borders.ALL)
                     .borderType(BorderType.ROUNDED)
-                    .borderColor(Theme.DIM)
                     .build();
             Paragraph.builder()
                     .block(emptyBlock)
                     .text(Text.from(Line.from(
-                            new Span(" " + message, Style.EMPTY.fg(Theme.DIM)))))
+                            new Span(" " + message, Theme.dim()))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -152,10 +150,10 @@ public final class FileIndexesScreen {
             }
         }
         Row header = switch (state.kind()) {
-            case COLUMN -> Row.from("RG", "Column", "CI offset", "CI bytes").style(Style.EMPTY.bold());
-            case OFFSET -> Row.from("RG", "Column", "OI offset", "OI bytes").style(Style.EMPTY.bold());
+            case COLUMN -> Row.from("RG", "Column", "CI offset", "CI bytes").style(Theme.accent().bold());
+            case OFFSET -> Row.from("RG", "Column", "OI offset", "OI bytes").style(Theme.accent().bold());
             case DICTIONARY -> Row.from("RG", "Column", "Dict offset", "Data offset", "Dict span")
-                    .style(Style.EMPTY.bold());
+                    .style(Theme.accent().bold());
         };
         List<Constraint> widths = switch (state.kind()) {
             case COLUMN, OFFSET -> List.of(
@@ -180,7 +178,6 @@ public final class FileIndexesScreen {
                 .title(title)
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -189,7 +186,7 @@ public final class FileIndexesScreen {
                 .columnSpacing(2)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         if (!entries.isEmpty()) {

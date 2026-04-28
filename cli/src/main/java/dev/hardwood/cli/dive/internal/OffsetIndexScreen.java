@@ -20,7 +20,6 @@ import dev.hardwood.metadata.PageLocation;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -89,12 +88,11 @@ public final class OffsetIndexScreen {
                     .title(" Offset index ")
                     .borders(Borders.ALL)
                     .borderType(BorderType.ROUNDED)
-                    .borderColor(Theme.DIM)
                     .build();
             Paragraph.builder()
                     .block(emptyBlock)
                     .text(Text.from(Line.from(
-                            new Span(" No offset index for this chunk.", Style.EMPTY.fg(Theme.DIM)))))
+                            new Span(" No offset index for this chunk.", Theme.dim()))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -110,14 +108,13 @@ public final class OffsetIndexScreen {
                     Sizes.format(loc.compressedPageSize()),
                     Fmt.fmt("%,d", loc.firstRowIndex())));
         }
-        Row header = Row.from("#", "Offset", "Size", "First row").style(Style.EMPTY.bold());
+        Row header = Row.from("#", "Offset", "Size", "First row").style(Theme.accent().bold());
         Block block = Block.builder()
                 .title(" Offset index "
                         + Plurals.rangeOf(state.selection(), locations.size(), Keys.viewportStride())
                         + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -129,7 +126,7 @@ public final class OffsetIndexScreen {
                 .columnSpacing(2)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         if (!locations.isEmpty()) {

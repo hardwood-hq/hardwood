@@ -24,7 +24,6 @@ import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Style;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
@@ -129,7 +128,7 @@ public final class ColumnAcrossRowGroupsScreen {
                     max));
         }
         Row header = Row.from("RG", "Rows", "Pages", "Comp", "Ratio", "Dict", "CI", "Nulls", "Min", "Max")
-                .style(Style.EMPTY.bold());
+                .style(Theme.accent().bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" " + truncateLeft(col.fieldPath().toString(), 40)
@@ -139,7 +138,6 @@ public final class ColumnAcrossRowGroupsScreen {
                         + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -157,7 +155,7 @@ public final class ColumnAcrossRowGroupsScreen {
                 .columnSpacing(1)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         tableState.select(state.selection());

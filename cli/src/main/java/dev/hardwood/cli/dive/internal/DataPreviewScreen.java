@@ -222,7 +222,7 @@ public final class DataPreviewScreen {
             }
             rows.add(Row.from(truncated));
         }
-        Row header = Row.from(visible.toArray(new String[0])).style(Style.EMPTY.bold());
+        Row header = Row.from(visible.toArray(new String[0])).style(Theme.accent().bold());
 
         long total = model.facts().totalRows();
         long lastRow = state.firstRow() + state.rows().size();
@@ -235,7 +235,6 @@ public final class DataPreviewScreen {
                 .title(title)
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         List<Constraint> widths = new ArrayList<>();
         for (int i = 0; i < visible.size(); i++) {
@@ -248,7 +247,7 @@ public final class DataPreviewScreen {
                 .columnSpacing(2)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         if (!state.rows().isEmpty()) {
@@ -256,6 +255,7 @@ public final class DataPreviewScreen {
         }
         table.render(area, buffer, tableState);
         if (state.modalRow() >= 0 && state.modalRow() < state.rows().size()) {
+            buffer.setStyle(area, Theme.dim());
             renderRecordModal(buffer, area, model, state);
         }
     }
@@ -297,7 +297,7 @@ public final class DataPreviewScreen {
                     wrapped.add("");
                 }
                 all.add(Line.from(
-                        new Span(" " + name + pad + " : ", Style.EMPTY.bold()),
+                        new Span(" " + name + pad + " : ", Theme.primary()),
                         Span.raw(wrapped.get(0))));
                 for (int k = 1; k < wrapped.size(); k++) {
                     all.add(Line.from(Span.raw(continuationIndent + wrapped.get(k))));
@@ -305,7 +305,7 @@ public final class DataPreviewScreen {
             }
             else {
                 all.add(Line.from(
-                        new Span(" " + name + pad + " : ", Style.EMPTY.bold()),
+                        new Span(" " + name + pad + " : ", Theme.primary()),
                         Span.raw(truncate(value, valueBudget))));
             }
         }
@@ -332,7 +332,7 @@ public final class DataPreviewScreen {
             String pad = " ".repeat(maxKeyWidth - name.length());
             boolean isExpanded = state.expandedColumns().contains(fieldIdx);
             String value = fieldIdx < values.size() ? values.get(fieldIdx) : "";
-            Style accent = Style.EMPTY.bold().fg(Theme.ACCENT);
+            Style selectionStyle = Theme.selection();
             if (cursorLine == fieldFirstLine) {
                 String shown;
                 if (isExpanded) {
@@ -344,15 +344,15 @@ public final class DataPreviewScreen {
                     shown = truncate(value, valueBudget);
                 }
                 all.set(cursorLine, Line.from(
-                        new Span("▶" + name + pad + " : ", accent),
-                        new Span(shown, accent)));
+                        new Span("▶" + name + pad + " : ", selectionStyle),
+                        new Span(shown, selectionStyle)));
             }
             else if (isExpanded) {
                 String fullValue = fieldIdx < expanded.size() ? expanded.get(fieldIdx) : value;
                 List<String> wrapped = wrapValue(fullValue, valueBudget);
                 int contIdx = cursorLine - fieldFirstLine;
                 String text = contIdx < wrapped.size() ? wrapped.get(contIdx) : "";
-                all.set(cursorLine, Line.from(new Span(continuationIndent + text, accent)));
+                all.set(cursorLine, Line.from(new Span(continuationIndent + text, selectionStyle)));
             }
         }
 
@@ -400,14 +400,13 @@ public final class DataPreviewScreen {
         if (!hint.startsWith(" ")) {
             hint = " " + hint;
         }
-        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
+        lines.add(Line.from(new Span(hint, Theme.dim())));
 
         long absRow = state.firstRow() + state.modalRow();
         Block block = Block.builder()
                 .title(Fmt.fmt(" Row %,d ", absRow + 1))
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder()
                 .block(block)

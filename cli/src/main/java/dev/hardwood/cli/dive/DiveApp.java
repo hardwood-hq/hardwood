@@ -27,6 +27,7 @@ import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
 import dev.hardwood.cli.dive.internal.RowGroupIndexesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupsScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
+import dev.hardwood.cli.dive.internal.Theme;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.terminal.Frame;
@@ -176,6 +177,10 @@ public final class DiveApp {
         Chrome.renderKeybar(buffer, regions.keybar(), screenKeys, globalKeys);
 
         if (helpOpen) {
+            // Faint the body so the modal pops; the modal's own
+            // Clear+paint restores full intensity inside its area.
+            // Chrome (top bar, breadcrumb, keybar) stays unchanged.
+            buffer.setStyle(regions.body(), Theme.dim());
             HelpOverlay.render(buffer, area);
         }
     }

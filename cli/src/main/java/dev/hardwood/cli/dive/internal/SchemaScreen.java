@@ -188,10 +188,10 @@ public final class SchemaScreen {
         // Pre-compute the longest width per aligned column so every row's
         // type / logical / repetition fields line up vertically. Name column
         // = indent + marker + name in tree mode, path in filtered mode.
-        int maxName = 0;
-        int maxType = 0;
-        int maxLogical = 0;
-        int maxRepetition = 0;
+        int maxName = "Name".length();
+        int maxType = "Type".length();
+        int maxLogical = "Logical".length();
+        int maxRepetition = "Repetition".length();
         TypeParts[] parts = new TypeParts[rows.size()];
         for (int i = 0; i < rows.size(); i++) {
             Row row = rows.get(i);
@@ -204,11 +204,18 @@ public final class SchemaScreen {
             maxLogical = Math.max(maxLogical, parts[i].logical().length());
             maxRepetition = Math.max(maxRepetition, parts[i].repetition().length());
         }
+        Style headerStyle = Theme.accent().bold();
+        lines.add(Line.from(
+                Span.raw("  "),
+                new Span(padRight("Name", maxName), headerStyle),
+                new Span("  " + padRight("Type", maxType), headerStyle),
+                new Span("  " + padRight("Logical", maxLogical), headerStyle),
+                new Span("  " + padRight("Repetition", maxRepetition), headerStyle)));
         for (int i = 0; i < rows.size(); i++) {
             Row row = rows.get(i);
             boolean selected = i == state.selection();
             String cursor = selected ? "▸ " : "  ";
-            Style nameStyle = selected ? Style.EMPTY.bold() : Style.EMPTY;
+            Style nameStyle = selected ? Theme.selection() : Style.EMPTY;
             TypeParts p = parts[i];
             String colSuffix = !row.isGroup() ? "[col " + row.columnIndex() + "]" : "";
             if (filtering) {
@@ -217,10 +224,10 @@ public final class SchemaScreen {
                         Span.raw(cursor),
                         new Span(row.path(), nameStyle),
                         Span.raw(pad),
-                        new Span("  " + padRight(p.type(), maxType), Style.EMPTY.fg(Theme.DIM)),
-                        new Span("  " + padRight(p.logical(), maxLogical), Style.EMPTY.fg(Theme.DIM)),
-                        new Span("  " + padRight(p.repetition(), maxRepetition), Style.EMPTY.fg(Theme.DIM)),
-                        new Span("  " + colSuffix, Style.EMPTY.fg(Theme.DIM))));
+                        new Span("  " + padRight(p.type(), maxType), Style.EMPTY),
+                        new Span("  " + padRight(p.logical(), maxLogical), Style.EMPTY),
+                        new Span("  " + padRight(p.repetition(), maxRepetition), Style.EMPTY),
+                        new Span("  " + colSuffix, Style.EMPTY)));
                 continue;
             }
             String indent = "  ".repeat(row.depth());
@@ -236,13 +243,13 @@ public final class SchemaScreen {
             lines.add(Line.from(
                     Span.raw(cursor),
                     Span.raw(indent),
-                    new Span(marker, Style.EMPTY.fg(Theme.ACCENT)),
+                    new Span(marker, Theme.accent()),
                     new Span(row.node().name(), nameStyle),
                     Span.raw(pad),
-                    new Span("  " + padRight(p.type(), maxType), Style.EMPTY.fg(Theme.DIM)),
-                    new Span("  " + padRight(p.logical(), maxLogical), Style.EMPTY.fg(Theme.DIM)),
-                    new Span("  " + padRight(p.repetition(), maxRepetition), Style.EMPTY.fg(Theme.DIM)),
-                    new Span("  " + colSuffix, Style.EMPTY.fg(Theme.DIM))));
+                    new Span("  " + padRight(p.type(), maxType), Style.EMPTY),
+                    new Span("  " + padRight(p.logical(), maxLogical), Style.EMPTY),
+                    new Span("  " + padRight(p.repetition(), maxRepetition), Style.EMPTY),
+                    new Span("  " + colSuffix, Style.EMPTY)));
         }
         Block block = Block.builder()
                 .title(" Schema "
@@ -255,7 +262,6 @@ public final class SchemaScreen {
                         + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(split.get(1), buffer);
     }
@@ -286,7 +292,7 @@ public final class SchemaScreen {
                     .text(Text.from(Line.from(new Span(
                             " " + Plurals.format(totalColumns, "leaf column", "leaf columns")
                                     + ". Press / to filter by path.",
-                            Style.EMPTY.fg(Theme.DIM)))))
+                            Theme.dim()))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -294,10 +300,10 @@ public final class SchemaScreen {
         }
         String cursor = state.searching() ? "█" : "";
         Line line = Line.from(
-                new Span(" / ", Style.EMPTY.fg(Theme.ACCENT).bold()),
-                new Span(state.filter() + cursor, Style.EMPTY.bold()),
+                new Span(" / ", Theme.primary()),
+                new Span(state.filter() + cursor, Theme.primary()),
                 new Span("  (" + Fmt.fmt("%,d", matchCount) + " / "
-                        + Plurals.format(totalColumns, "leaf", "leaves") + ")", Style.EMPTY.fg(Theme.DIM)));
+                        + Plurals.format(totalColumns, "leaf", "leaves") + ")", Theme.dim()));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 

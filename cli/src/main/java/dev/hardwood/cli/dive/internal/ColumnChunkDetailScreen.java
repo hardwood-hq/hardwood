@@ -268,10 +268,10 @@ public final class ColumnChunkDetailScreen {
             boolean selected = focused && i == effectiveSelection && enabled;
             String cursor = selected ? "▶ " : "  ";
             String hint = menuHint(item, model, state);
-            Style labelStyle = !enabled
-                    ? Style.EMPTY.fg(Theme.DIM)
-                    : selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
-            Style hintStyle = Style.EMPTY.fg(Theme.DIM);
+            Style labelStyle = selected
+                    ? Theme.selection()
+                    : Theme.primary();
+            Style hintStyle = Style.EMPTY;
             lines.add(Line.from(
                     new Span(cursor, labelStyle),
                     new Span(padRight(item.label, 16), labelStyle),
@@ -295,18 +295,20 @@ public final class ColumnChunkDetailScreen {
     }
 
     private static Block paneBlock(String title, boolean focused) {
-        return Block.builder()
+        Block.Builder b = Block.builder()
                 .title(title)
                 .borders(Borders.ALL)
-                .borderType(BorderType.ROUNDED)
-                .borderColor(focused ? Theme.ACCENT : Theme.DIM)
-                .build();
+                .borderType(BorderType.ROUNDED);
+        if (!focused) {
+            b.borderStyle(Theme.dim());
+        }
+        return b.build();
     }
 
     private static Line fact(String key, String value) {
         return Line.from(
-                new Span(" " + padRight(key, 22), Style.EMPTY),
-                new Span(value, Style.EMPTY.bold()));
+                new Span(" " + padRight(key, 22), Theme.primary()),
+                new Span(value, Style.EMPTY));
     }
 
     /// Special-case the Path row: when the path is short, a single "Path  value"
@@ -319,8 +321,8 @@ public final class ColumnChunkDetailScreen {
             return List.of(fact("Path", path));
         }
         return List.of(
-                Line.from(new Span(" " + padRight("Path", 22), Style.EMPTY)),
-                Line.from(new Span("   " + path, Style.EMPTY.bold())));
+                Line.from(new Span(" " + padRight("Path", 22), Theme.primary())),
+                Line.from(new Span("   " + path, Style.EMPTY)));
     }
 
     private static String formatStatValue(byte[] bytes, ColumnSchema col, boolean useLogicalType) {

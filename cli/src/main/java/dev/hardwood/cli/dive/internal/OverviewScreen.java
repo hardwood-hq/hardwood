@@ -183,6 +183,7 @@ public final class OverviewScreen {
         renderFactsPane(buffer, cols.get(0), model, state);
         renderMenuPane(buffer, cols.get(1), model, state);
         if (state.kvModalOpen()) {
+            buffer.setStyle(area, Theme.dim());
             renderKvModal(buffer, area, model, state);
         }
     }
@@ -215,16 +216,18 @@ public final class OverviewScreen {
         List<Map.Entry<String, String>> kv = f.keyValueMetadata();
         if (!kv.isEmpty()) {
             lines.add(Line.empty());
-            lines.add(Line.from(new Span("key/value meta (" + kv.size() + ")", Style.EMPTY.bold())));
+            lines.add(Line.from(new Span("key/value meta (" + kv.size() + ")", Theme.accent().bold())));
             for (int i = 0; i < kv.size(); i++) {
                 Map.Entry<String, String> entry = kv.get(i);
                 boolean selected = focused && i == state.kvSelection();
                 String marker = selected ? "▶ " : "  ";
-                Style keyStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
+                Style rowStyle = selected ? Theme.selection() : null;
+                Style keyStyle = rowStyle != null ? rowStyle : Theme.primary();
+                Style valueStyle = rowStyle != null ? rowStyle : Style.EMPTY;
                 lines.add(Line.from(
                         new Span(marker, keyStyle),
                         new Span(padRight(entry.getKey(), 16), keyStyle),
-                        new Span(trim(entry.getValue(), 32), keyStyle)));
+                        new Span(trim(entry.getValue(), 32), valueStyle)));
             }
         }
         renderParagraph(buffer, area, block, Text.from(lines));
@@ -265,12 +268,11 @@ public final class OverviewScreen {
                 : (scroll > 0
                         ? " ↑ " + scroll + " lines above · Esc / Enter close · ↑↓ scroll · Shift+↑↓ page"
                         : " Press Esc or Enter to close");
-        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
+        lines.add(Line.from(new Span(hint, Theme.dim())));
         Block block = Block.builder()
                 .title(" " + entry.getKey() + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
@@ -284,25 +286,41 @@ public final class OverviewScreen {
             MenuItem item = items[i];
             boolean selected = focused && i == state.menuSelection();
             String cursor = selected ? "▶ " : "  ";
-            String hint = menuHint(item, model);
-            Style labelStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
-            Style hintStyle = Style.EMPTY.fg(Theme.DIM);
+            MenuHint hint = menuHint(item, model);
+            Style labelStyle = selected
+                    ? Theme.selection()
+                    : Theme.primary();
             lines.add(Line.from(
                     new Span(cursor, labelStyle),
                     new Span(padRight(item.label, 20), labelStyle),
-                    new Span(hint, hintStyle)));
+                    new Span(hint.value(), Style.EMPTY),
+                    new Span(hint.suffix(), Theme.dim())));
         }
         renderParagraph(buffer, area, block, Text.from(lines));
     }
 
-    private static String menuHint(MenuItem item, ParquetModel model) {
+    /// Right-column annotation for a drill-into menu row: the count
+    /// `value` (rendered in default fg, e.g. "4 columns"), and an
+    /// optional dim `suffix` (e.g. " · browse by column"). Built so
+    /// the count reads as a fact while the descriptor sits behind it
+    /// at a quieter weight.
+    private record MenuHint(String value, String suffix) {
+    }
+
+    private static MenuHint menuHint(MenuItem item, ParquetModel model) {
         return switch (item) {
-            case SCHEMA -> padRight(Plurals.format(model.columnCount(), "column", "columns"),
-                    AXIS_HINT_WIDTH) + " · browse by column";
-            case ROW_GROUPS -> padRight(Plurals.format(model.rowGroupCount(), "group", "groups"),
-                    AXIS_HINT_WIDTH) + " · browse by row group";
-            case FOOTER -> Sizes.format(FooterScreen.footerAndIndexBytes(model));
-            case DATA_PREVIEW -> Plurals.format(model.facts().totalRows(), "row", "rows");
+            case SCHEMA -> new MenuHint(
+                    padRight(Plurals.format(model.columnCount(), "column", "columns"), AXIS_HINT_WIDTH),
+                    " · browse by column");
+            case ROW_GROUPS -> new MenuHint(
+                    padRight(Plurals.format(model.rowGroupCount(), "group", "groups"), AXIS_HINT_WIDTH),
+                    " · browse by row group");
+            case FOOTER -> new MenuHint(
+                    Sizes.format(FooterScreen.footerAndIndexBytes(model)),
+                    "");
+            case DATA_PREVIEW -> new MenuHint(
+                    Plurals.format(model.facts().totalRows(), "row", "rows"),
+                    "");
         };
     }
 
@@ -313,7 +331,7 @@ public final class OverviewScreen {
 
     private static Line factsLine(String key, String value) {
         return Line.from(
-                new Span(padRight(key, 16), Style.EMPTY),
+                new Span(padRight(key, 16), Theme.primary()),
                 new Span(value, Style.EMPTY));
     }
 
@@ -322,11 +340,8 @@ public final class OverviewScreen {
                 .title(" " + title + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED);
-        if (focused) {
-            b.borderColor(Theme.ACCENT);
-        }
-        else {
-            b.borderColor(Theme.DIM);
+        if (!focused) {
+            b.borderStyle(Theme.dim());
         }
         return b.build();
     }

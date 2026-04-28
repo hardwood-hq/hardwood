@@ -67,11 +67,11 @@ public final class Chrome {
     }
 
     public static void renderTopBar(Buffer buffer, Rect area, ParquetModel model) {
-        Style bold = Style.EMPTY.bold();
-        Style dim = Style.EMPTY.fg(Theme.DIM);
+        Style brand = Theme.accent().bold();
+        Style dim = Theme.dim();
         ParquetModel.Facts f = model.facts();
         List<Span> spans = new ArrayList<>();
-        spans.add(new Span(" hardwood dive ", bold.fg(Theme.ACCENT)));
+        spans.add(new Span(" hardwood dive ", brand));
         spans.add(new Span("│ ", dim));
         spans.add(Span.raw(basename(model.displayPath())));
         spans.add(new Span(" │ ", dim));
@@ -113,17 +113,20 @@ public final class Chrome {
                 haveRgInPath = true;
             }
         }
+        Style dim = Theme.dim();
         for (int i = 0; i < frames.size(); i++) {
             if (i > 0) {
-                spans.add(new Span(" › ", Style.EMPTY.fg(Theme.DIM)));
+                spans.add(new Span(" › ", dim));
             }
             boolean last = i == frames.size() - 1;
-            Style style = last ? Style.EMPTY.bold() : Style.EMPTY.fg(Theme.DIM);
             String label = breadcrumbLabel(frames.get(i), model);
             if (last) {
                 label += leafContextSuffix(frames.get(i), model, haveRgInPath, haveColInPath);
+                spans.add(new Span(label, Theme.primary()));
             }
-            spans.add(new Span(label, style));
+            else {
+                spans.add(new Span(label, dim));
+            }
         }
         Paragraph.builder().text(convert(Line.from(spans))).left().build().render(area, buffer);
     }
@@ -163,12 +166,12 @@ public final class Chrome {
     }
 
     public static void renderKeybar(Buffer buffer, Rect area, String screenKeys, String globalKeys) {
-        Style dim = Style.EMPTY.fg(Theme.DIM);
+        Style style = Theme.dim();
         Line line = Line.from(
                 Span.raw(" "),
-                new Span(screenKeys, dim),
-                new Span(KEYBAR_SEP, dim),
-                new Span(globalKeys, dim));
+                new Span(screenKeys, style),
+                new Span(KEYBAR_SEP, style),
+                new Span(globalKeys, style));
         Paragraph.builder()
                 .text(convert(line))
                 .left()

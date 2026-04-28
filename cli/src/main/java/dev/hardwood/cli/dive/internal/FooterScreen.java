@@ -171,7 +171,6 @@ public final class FooterScreen {
                 .title(" Footer & indexes ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
@@ -189,8 +188,8 @@ public final class FooterScreen {
         String marker = enabled ? "▶" : " ";
         String shown = text.startsWith(" ") ? marker + text.substring(1) : marker + text;
         Style style = enabled
-                ? Style.EMPTY.bold().fg(Theme.ACCENT)
-                : Style.EMPTY.bold();
+                ? Theme.selection()
+                : Theme.primary();
         visible.set(offset, Line.from(new Span(shown, style)));
     }
 
@@ -286,7 +285,7 @@ public final class FooterScreen {
 
         List<Line> lines = new ArrayList<>();
 
-        lines.add(Line.from(new Span(" File layout ", Style.EMPTY.bold())));
+        lines.add(Line.from(new Span(" File layout ", Theme.accent().bold())));
         lines.add(fact("  File size", Sizes.dualFormat(fileSize)));
         lines.add(fact("  Format version", String.valueOf(model.metadata().version())));
         lines.add(fact("  Created by",
@@ -303,14 +302,14 @@ public final class FooterScreen {
         }
 
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Encodings ", Style.EMPTY.bold())));
+        lines.add(Line.from(new Span(" Encodings ", Theme.accent().bold())));
         for (Map.Entry<Encoding, Integer> e : stats.encodingHistogram().entrySet()) {
             lines.add(fact("  " + e.getKey().name(),
                     Plurals.format(e.getValue(), "chunk", "chunks")));
         }
 
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Codecs ", Style.EMPTY.bold())));
+        lines.add(Line.from(new Span(" Codecs ", Theme.accent().bold())));
         for (Map.Entry<CompressionCodec, Integer> e : stats.codecHistogram().entrySet()) {
             int pct = stats.totalChunks() == 0 ? 0
                     : (int) Math.round(100.0 * e.getValue() / stats.totalChunks());
@@ -319,7 +318,7 @@ public final class FooterScreen {
         }
 
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Page indexes ", Style.EMPTY.bold())));
+        lines.add(Line.from(new Span(" Page indexes ", Theme.accent().bold())));
         lines.add(fact("  Column indexes",
                 Sizes.dualFormat(stats.columnIndexBytes()) + "  ("
                         + coverage(stats.columnIndexCount(), stats.totalChunks()) + ")"));
@@ -328,12 +327,12 @@ public final class FooterScreen {
                         + coverage(stats.offsetIndexCount(), stats.totalChunks()) + ")"));
 
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Dictionary ", Style.EMPTY.bold())));
+        lines.add(Line.from(new Span(" Dictionary ", Theme.accent().bold())));
         lines.add(fact("  With dictionary",
                 coverage(stats.dictionaryCount(), stats.totalChunks())));
 
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Aggregate ", Style.EMPTY.bold())));
+        lines.add(Line.from(new Span(" Aggregate ", Theme.accent().bold())));
         lines.add(fact("  Compressed data", Sizes.dualFormat(model.facts().compressedBytes())));
         lines.add(fact("  Uncompressed data", Sizes.dualFormat(model.facts().uncompressedBytes())));
         lines.add(fact("  Compression ratio",
@@ -473,8 +472,8 @@ public final class FooterScreen {
 
     private static Line fact(String key, String value) {
         return Line.from(
-                new Span(" " + padRight(key, 26), Style.EMPTY),
-                new Span(value, Style.EMPTY.bold()));
+                new Span(" " + padRight(key, 26), Theme.primary()),
+                new Span(value, Style.EMPTY));
     }
 
     private static String padRight(String s, int width) {

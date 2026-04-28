@@ -21,7 +21,6 @@ import dev.hardwood.metadata.RowGroup;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Style;
 import dev.tamboui.tui.event.KeyEvent;
 import dev.tamboui.widgets.block.Block;
 import dev.tamboui.widgets.block.BorderType;
@@ -106,13 +105,12 @@ public final class RowGroupsScreen {
                     oiCount + "/" + chunkCount));
         }
         Row header = Row.from("#", "Rows", "Uncompressed", "Compressed", "Ratio", "CI", "OI")
-                .style(Style.EMPTY.bold());
+                .style(Theme.accent().bold());
         Block block = Block.builder()
                 .title(" Row groups " + Plurals.rangeOf(state.selection(),
                         model.rowGroupCount(), Keys.viewportStride()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -127,7 +125,7 @@ public final class RowGroupsScreen {
                 .columnSpacing(2)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         tableState.select(state.selection());

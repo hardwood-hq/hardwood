@@ -63,6 +63,11 @@ Before starting new work, check whether a corresponding GitHub issue exists. If 
 Commit messages must begin with the GitHub issue key (e.g. `#90 Include file name in all exceptions raised during reading`). This applies to every commit, including fixups and amendments.
 Focus the body on **why**, not **what** — the diff already shows the what. A short paragraph is usually enough; do not restate the change as a bullet list. See [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
 
+# Dive TUI
+
+When changing visual styling in the `hardwood dive` TUI (any code under `cli/src/main/java/dev/hardwood/cli/dive/`), follow the visual-hierarchy decision tree in [_designs/DIVE_THEME.md](_designs/DIVE_THEME.md). Style spans through one of `Theme.primary()` / `Theme.accent()` / `Theme.selection()` / `Theme.dim()`, or leave them at default fg via `Style.EMPTY`. Direct use of `Color.*` constants or literal `Style.EMPTY.bold()` / `Style.EMPTY.fg(...)` outside `Theme.java` is a smell — review against the decision tree before introducing any.
+
 # Code Reviews
 
 When reviewing a pull request, make sure the principles described here are applied.
+When asked to review a PR, write the findings to a Markdown file with a `[ ]` checkbox in front of each actionable item. When subsequently asked to address those review remarks, check the items off (`[x]`) as they are resolved.

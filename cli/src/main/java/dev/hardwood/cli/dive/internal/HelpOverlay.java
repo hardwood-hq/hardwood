@@ -38,7 +38,7 @@ public final class HelpOverlay {
         dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
 
         List<Line> lines = List.of(
-                Line.from(new Span("Navigation", Style.EMPTY.bold())),
+                Line.from(new Span("Navigation", Theme.accent().bold())),
                 kv("↑ / ↓", "move selection"),
                 kv("g / G", "jump to first / last row"),
                 kv("Enter", "drill into selected item"),
@@ -46,32 +46,31 @@ public final class HelpOverlay {
                 kv("Tab / Shift-Tab", "switch focused pane"),
                 kv("o", "return to Overview"),
                 Line.empty(),
-                Line.from(new Span("Schema tree", Style.EMPTY.bold())),
+                Line.from(new Span("Schema tree", Theme.accent().bold())),
                 kv("→ / Enter", "expand group · drill leaf"),
                 kv("←", "collapse group"),
                 kv("e / c", "expand / collapse all groups"),
                 Line.empty(),
-                Line.from(new Span("Inline search", Style.EMPTY.bold())),
+                Line.from(new Span("Inline search", Theme.accent().bold())),
                 kv("/", "enter filter mode (Schema, Column index, Dictionary)"),
                 kv("Enter", "commit filter"),
                 kv("Esc", "clear filter"),
                 Line.empty(),
-                Line.from(new Span("Global", Style.EMPTY.bold())),
+                Line.from(new Span("Global", Theme.accent().bold())),
                 kv("?", "toggle this help"),
                 kv("q / Ctrl-C", "quit"),
                 Line.empty(),
-                Line.from(new Span("Data preview", Style.EMPTY.bold())),
+                Line.from(new Span("Data preview", Theme.accent().bold())),
                 kv("PgDn / PgUp", "page forward / back (Shift+↓/↑ on macOS)"),
                 kv("← / →", "scroll visible columns"),
                 kv("g / G", "jump to first / last row of file"),
                 Line.empty(),
-                Line.from(new Span("Press ? or Esc to close", Style.EMPTY.fg(Theme.DIM))));
+                Line.from(new Span("Press ? or Esc to close", Theme.dim())));
 
         Block block = Block.builder()
                 .title(" hardwood dive — help ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
@@ -79,7 +78,7 @@ public final class HelpOverlay {
     private static Line kv(String key, String description) {
         return Line.from(
                 Span.raw("  "),
-                new Span(padRight(key, 18), Style.EMPTY.fg(Theme.ACCENT)),
+                new Span(padRight(key, 18), Theme.primary()),
                 new Span(description, Style.EMPTY));
     }
 

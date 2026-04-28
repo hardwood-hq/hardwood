@@ -21,7 +21,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -199,7 +198,7 @@ public final class DictionaryScreen {
                     "[" + idx + "]",
                     formatValue(dict, idx, col, VALUE_PREVIEW_MAX, state.logicalTypes())));
         }
-        Row header = Row.from("#", "Value").style(Style.EMPTY.bold());
+        Row header = Row.from("#", "Value").style(Theme.accent().bold());
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" Dictionary entries "
@@ -210,7 +209,6 @@ public final class DictionaryScreen {
                         + typeMode + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -219,7 +217,7 @@ public final class DictionaryScreen {
                 .columnSpacing(2)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         if (!filtered.isEmpty()) {
@@ -229,6 +227,7 @@ public final class DictionaryScreen {
 
         if (state.modalOpen() && !filtered.isEmpty()) {
             int dictIdx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            buffer.setStyle(area, Theme.dim());
             renderValueModal(buffer, area, dict, col, dictIdx, state.logicalTypes());
         }
     }
@@ -262,7 +261,7 @@ public final class DictionaryScreen {
             Paragraph.builder()
                     .text(Text.from(Line.from(new Span(
                             " " + Plurals.format(totalSize, "entry", "entries") + ". Press / to filter.",
-                            Style.EMPTY.fg(Theme.DIM)))))
+                            Theme.dim()))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -270,10 +269,10 @@ public final class DictionaryScreen {
         }
         String cursor = state.searching() ? "█" : "";
         Line line = Line.from(
-                new Span(" / ", Style.EMPTY.fg(Theme.ACCENT).bold()),
-                new Span(state.filter() + cursor, Style.EMPTY.bold()),
+                new Span(" / ", Theme.primary()),
+                new Span(state.filter() + cursor, Theme.primary()),
                 new Span("  (" + Fmt.fmt("%,d", filteredSize) + " / "
-                        + Plurals.format(totalSize, "entry", "entries") + ")", Style.EMPTY.fg(Theme.DIM)));
+                        + Plurals.format(totalSize, "entry", "entries") + ")", Theme.dim()));
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 
@@ -368,12 +367,11 @@ public final class DictionaryScreen {
         lines.add(Line.empty());
         lines.add(Line.from(new Span(
                 " (raise the cap with --max-dict-bytes on the next launch)",
-                Style.EMPTY.fg(Theme.DIM))));
+                Theme.dim())));
         Block block = Block.builder()
                 .title(" Dictionary — load confirmation ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
@@ -383,13 +381,12 @@ public final class DictionaryScreen {
                 .title(" Dictionary ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.DIM)
                 .build();
         Paragraph.builder()
                 .block(block)
                 .text(Text.from(Line.from(new Span(
                         " This chunk is not dictionary-encoded.",
-                        Style.EMPTY.fg(Theme.DIM)))))
+                        Theme.dim()))))
                 .left()
                 .build()
                 .render(area, buffer);
@@ -411,13 +408,12 @@ public final class DictionaryScreen {
         lines.add(Line.empty());
         boolean hasLogical = col.logicalType() != null;
         String hint = " Esc / Enter close" + (hasLogical ? " · t logical types" : "");
-        lines.add(Line.from(new Span(hint, Style.EMPTY.fg(Theme.DIM))));
+        lines.add(Line.from(new Span(hint, Theme.dim())));
 
         Block block = Block.builder()
                 .title(" Entry #" + index + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }

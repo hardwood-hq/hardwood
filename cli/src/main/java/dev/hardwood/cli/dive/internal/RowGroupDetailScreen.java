@@ -148,16 +148,16 @@ public final class RowGroupDetailScreen {
         lines.add(fact("Column chunks", String.valueOf(chunkCount)));
         lines.add(fact("Total byte size", Sizes.dualFormat(rg.totalByteSize())));
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Compression ", Style.EMPTY.bold())));
+        lines.add(Line.from(new Span(" Compression ", Theme.accent().bold())));
         lines.add(fact("  Compressed", Sizes.dualFormat(compressed)));
         lines.add(fact("  Uncompressed", Sizes.dualFormat(uncompressed)));
         lines.add(fact("  Ratio", Fmt.fmt("%.2f×", ratio)));
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Encoding mix ", Style.EMPTY.bold())));
+        lines.add(Line.from(new Span(" Encoding mix ", Theme.accent().bold())));
         lines.add(fact("  Encodings", mix(encodingCounts)));
         lines.add(fact("  Codecs", mix(codecCounts)));
         lines.add(Line.empty());
-        lines.add(Line.from(new Span(" Page indexes ", Style.EMPTY.bold())));
+        lines.add(Line.from(new Span(" Page indexes ", Theme.accent().bold())));
         lines.add(fact("  Column indexes", Sizes.dualFormat(ciBytes)
                 + "  (" + ciCount + "/" + chunkCount + " chunks)"));
         lines.add(fact("  Offset indexes", Sizes.dualFormat(oiBytes)
@@ -177,7 +177,9 @@ public final class RowGroupDetailScreen {
             MenuItem item = items[i];
             boolean selected = focused && i == state.menuSelection();
             String cursor = selected ? "▶ " : "  ";
-            Style labelStyle = selected ? Style.EMPTY.bold().fg(Theme.ACCENT) : Style.EMPTY;
+            Style labelStyle = selected
+                    ? Theme.selection()
+                    : Theme.primary();
             lines.add(Line.from(
                     new Span(cursor, labelStyle),
                     new Span(item.label, labelStyle)));
@@ -195,18 +197,20 @@ public final class RowGroupDetailScreen {
     }
 
     private static Block paneBlock(String title, boolean focused) {
-        return Block.builder()
+        Block.Builder b = Block.builder()
                 .title(title)
                 .borders(Borders.ALL)
-                .borderType(BorderType.ROUNDED)
-                .borderColor(focused ? Theme.ACCENT : Theme.DIM)
-                .build();
+                .borderType(BorderType.ROUNDED);
+        if (!focused) {
+            b.borderStyle(Theme.dim());
+        }
+        return b.build();
     }
 
     private static Line fact(String key, String value) {
         return Line.from(
-                new Span(" " + padRight(key, 22), Style.EMPTY),
-                new Span(value, Style.EMPTY.bold()));
+                new Span(" " + padRight(key, 22), Theme.primary()),
+                new Span(value, Style.EMPTY));
     }
 
     private static String padRight(String s, int width) {

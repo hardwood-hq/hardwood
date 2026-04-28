@@ -20,7 +20,6 @@ import dev.hardwood.metadata.RowGroup;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
-import dev.tamboui.style.Style;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -119,13 +118,12 @@ public final class RowGroupIndexesScreen {
                     .title(" RG #" + state.rowGroupIndex() + " index regions ")
                     .borders(Borders.ALL)
                     .borderType(BorderType.ROUNDED)
-                    .borderColor(Theme.DIM)
                     .build();
             Paragraph.builder()
                     .block(emptyBlock)
                     .text(Text.from(Line.from(
                             new Span(" This row group has no column or offset indexes.",
-                                    Style.EMPTY.fg(Theme.DIM)))))
+                                    Theme.dim()))))
                     .left()
                     .build()
                     .render(area, buffer);
@@ -140,14 +138,13 @@ public final class RowGroupIndexesScreen {
                     Sizes.format(e.size())));
         }
         Row header = Row.from("Column", "Index type", "Offset", "Size")
-                .style(Style.EMPTY.bold());
+                .style(Theme.accent().bold());
         Block block = Block.builder()
                 .title(" RG #" + state.rowGroupIndex() + " index regions "
                         + Plurals.rangeOf(state.selection(), entries.size(),
                                 Keys.viewportStride()) + " ")
                 .borders(Borders.ALL)
                 .borderType(BorderType.ROUNDED)
-                .borderColor(Theme.ACCENT)
                 .build();
         Table table = Table.builder()
                 .header(header)
@@ -159,7 +156,7 @@ public final class RowGroupIndexesScreen {
                 .columnSpacing(2)
                 .block(block)
                 .highlightSymbol("▶ ")
-                .highlightStyle(Style.EMPTY.bold())
+                .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
         if (!entries.isEmpty()) {
