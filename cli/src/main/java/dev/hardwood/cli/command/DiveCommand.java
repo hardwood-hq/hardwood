@@ -19,6 +19,7 @@ import java.util.logging.SimpleFormatter;
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.dive.DiveApp;
 import dev.hardwood.cli.dive.ParquetModel;
+import dev.hardwood.cli.internal.Fmt;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
 import picocli.CommandLine;
@@ -125,7 +126,7 @@ public class DiveCommand implements Callable<Integer> {
             handler.setFormatter(new SimpleFormatter() {
                 @Override
                 public String format(LogRecord record) {
-                    return String.format("%1$tFT%1$tT.%1$tL %2$s [%3$s] %4$s%n",
+                    return Fmt.fmt("%1$tFT%1$tT.%1$tL %2$s [%3$s] %4$s%n",
                             record.getMillis(), record.getLevel(), record.getLoggerName(),
                             formatMessage(record));
                 }
