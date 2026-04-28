@@ -31,7 +31,6 @@ public final class BinaryComparator {
     ///
     /// @return negative if a < b, zero if equal, positive if a > b
     public static int compareSigned(byte[] a, byte[] b) {
-        int len = a.length;
         if (a.length != b.length) {
             throw new IllegalArgumentException(
                     "Signed binary comparison requires same-length arrays: " + a.length + " vs " + b.length);
@@ -45,6 +44,6 @@ public final class BinaryComparator {
             return cmp;
         }
         // Remaining bytes: compare as unsigned
-        return Arrays.compareUnsigned(a, 1, len, b, 1, len);
+        return Arrays.compareUnsigned(a, 1, a.length, b, 1, a.length);
     }
 }

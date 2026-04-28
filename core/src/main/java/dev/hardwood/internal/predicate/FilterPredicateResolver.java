@@ -246,9 +246,8 @@ public class FilterPredicateResolver {
 
         if (!expectedLogicalType.isInstance(logicalType)) {
             throw new IllegalArgumentException(
-                    "Column '" + columnName + "' has logical type " + logicalType
-                            + "; given filter predicate logical type "
-                            + expectedLogicalType.getName() + " is incompatible");
+                    "Column '" + columnName + "' is not a " + expectedLogicalType.getSimpleName()
+                            + " column (logical type: " + logicalType + ")");
         }
     }
 

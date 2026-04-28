@@ -309,10 +309,12 @@ FilterPredicate filter = FilterPredicate.lt("start_time", LocalTime.of(9, 0));
 // DECIMAL columns — scale and physical type are resolved from the column schema
 FilterPredicate filter = FilterPredicate.gtEq("amount", new BigDecimal("99.99"));
 
-// UUID columns
+// UUID columns — column must carry the UUID logical type
 FilterPredicate filter = FilterPredicate.eq("request_id",
     UUID.fromString("550e8400-e29b-41d4-a716-446655440000"));
 ```
+
+The logical-type factories validate the column's logical type at reader creation: `BigDecimal` predicates require a `DECIMAL` column and `UUID` predicates require a `UUID` column. Applying them to a plain `FIXED_LEN_BYTE_ARRAY` column without the corresponding logical-type annotation throws `IllegalArgumentException`.
 
 Raw physical-type predicates (`int`, `long`, etc.) remain available for columns without logical types or for filtering on the underlying physical value directly.
 
