@@ -61,6 +61,15 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// to absorb per-value size skew within the column chunk.
     private static final int MAX_ROWS_CHUNK_SAFETY_FACTOR = 2;
 
+    /// Upper bound on `columnChunkLength` for fetching the entire column
+    /// in one go even under `maxRows` truncation (4 MB). Below this
+    /// threshold the over-fetch is small (≤ 4× the `head(N)` floor) and
+    /// the column becomes coalesce-safe — all of its bytes can join a
+    /// cross-column [SharedRegion]. Above it, the per-column truncation
+    /// stays in effect: a 50 MB column under `head(30)` should not pull
+    /// down 50 MB. See #382.
+    private static final int FETCH_WHOLE_COLUMN_THRESHOLD = 4 * MAX_ROWS_CHUNK_FLOOR;
+
     /// Chunk size when reading without a row limit (128 MB). Also used as
     /// the ceiling for the `maxRows` dynamic estimate.
     /// Overridable via the `hardwood.internal.sequentialChunkSize` system property (bytes).
@@ -184,7 +193,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         long columnChunkOffset = columnChunk.chunkStartOffset();
         int columnChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
         int chunkSize = Math.min(columnChunkLength,
-                computeChunkSize(columnChunk.metaData(), maxRows));
+                computeChunkSize(columnChunkLength, columnChunk.metaData(), maxRows));
 
         return new SequentialFetchPlan(inputFile, columnChunkOffset, columnChunkLength, chunkSize,
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
@@ -203,9 +212,15 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     ///
     /// The estimate is floored at [MAX_ROWS_CHUNK_FLOOR] to avoid sub-page
     /// round-trips during header scanning and capped at [DEFAULT_CHUNK_SIZE].
-    private static int computeChunkSize(ColumnMetaData metaData, long maxRows) {
+    /// Columns whose entire chunk is below [FETCH_WHOLE_COLUMN_THRESHOLD]
+    /// short-circuit to the full chunk length so they remain coalesce-safe
+    /// (#382).
+    static int computeChunkSize(int columnChunkLength, ColumnMetaData metaData, long maxRows) {
         if (maxRows <= 0) {
             return DEFAULT_CHUNK_SIZE;
+        }
+        if (columnChunkLength <= FETCH_WHOLE_COLUMN_THRESHOLD) {
+            return columnChunkLength;
         }
         long numValues = metaData.numValues();
         if (numValues <= 0) {

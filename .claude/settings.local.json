@@ -118,7 +118,9 @@
       "Bash(git reset *)",
       "Bash(git ls-tree *)",
       "Bash(git fetch *)",
-      "Bash(gh label *)"
+      "Bash(gh label *)",
+      "Bash(git tag *)",
+      "Bash(git apply *)"
     ]
   }
 }
