@@ -49,16 +49,6 @@ public final class Theme {
     private static final Color SOLARIZED_BLUE = Color.rgb(38, 139, 210);
     private static final Color SOLARIZED_YELLOW = Color.rgb(181, 137, 0);
 
-    /// Whether the host terminal advertises 24-bit truecolor support
-    /// via `$COLORTERM`. Set by iTerm2, kitty, alacritty, WezTerm,
-    /// Ghostty, modern gnome-terminal / xterm, VS Code's terminal,
-    /// foot, and most other terminals released in the last decade
-    /// that support truecolor. Probed once at class-load time —
-    /// the value is fixed for the lifetime of the JVM.
-    private static final boolean TRUECOLOR =
-            "truecolor".equals(System.getenv("COLORTERM"))
-                    || "24bit".equals(System.getenv("COLORTERM"));
-
     /// Bold default foreground — labels, breadcrumb leaf, enabled
     /// drill-into menu labels, the `/` search prompt, and other
     /// "you-are-here" markers. Adds visual weight without imposing
@@ -94,7 +84,7 @@ public final class Theme {
     /// default body fg. On legacy terminals named `Color.BLUE`
     /// (ANSI 4) is used.
     public static Style accent() {
-        return Style.EMPTY.fg(TRUECOLOR ? SOLARIZED_BLUE : Color.BLUE);
+        return Style.EMPTY.fg(supportsTruecolor(System.getenv("COLORTERM")) ? SOLARIZED_BLUE : Color.BLUE);
     }
 
     /// Active-row indicator for navigable tables and menus —
@@ -103,6 +93,23 @@ public final class Theme {
     /// truecolor terminals (Solarized yellow `#b58900`); bold
     /// named `Color.YELLOW` otherwise.
     public static Style selection() {
-        return Style.EMPTY.bold().fg(TRUECOLOR ? SOLARIZED_YELLOW : Color.YELLOW);
+        return Style.EMPTY.bold().fg(supportsTruecolor(System.getenv("COLORTERM")) ? SOLARIZED_YELLOW : Color.YELLOW);
+    }
+
+    /// Whether the given `$COLORTERM` value advertises 24-bit
+    /// truecolor support. Set to `truecolor` or `24bit` by iTerm2,
+    /// kitty, alacritty, WezTerm, Ghostty, modern gnome-terminal /
+    /// xterm, VS Code's terminal, foot, and most other terminals
+    /// released in the last decade that support truecolor.
+    ///
+    /// Probed on every call rather than cached in a `static final`
+    /// field. In a Quarkus / Mandrel native image the static
+    /// initializer of a reachable class can run at build time,
+    /// which would freeze `System.getenv("COLORTERM")` to whatever
+    /// the build runner saw (typically unset) and disable truecolor
+    /// for every user. Reading on each call sidesteps the class-init
+    /// timing question entirely. See #394.
+    static boolean supportsTruecolor(String colorterm) {
+        return "truecolor".equals(colorterm) || "24bit".equals(colorterm);
     }
 }
