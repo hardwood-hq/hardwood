@@ -11,6 +11,7 @@ import java.lang.foreign.Arena;
 import java.lang.foreign.SymbolLookup;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Locale;
 
 /// Handles loading the libdeflate native library across platforms.
 public final class LibdeflateLoader {
@@ -96,7 +97,7 @@ public final class LibdeflateLoader {
     }
 
     private static String[] getLibraryNames() {
-        String os = System.getProperty("os.name", "").toLowerCase();
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("linux")) {
             return LINUX_NAMES;
         }
@@ -110,7 +111,7 @@ public final class LibdeflateLoader {
     }
 
     private static Path[] getSearchPaths() {
-        String os = System.getProperty("os.name", "").toLowerCase();
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("linux")) {
             return new Path[]{
                     Path.of("/usr/lib"),
@@ -143,7 +144,7 @@ public final class LibdeflateLoader {
     }
 
     private static String getInstallInstructions() {
-        String os = System.getProperty("os.name", "").toLowerCase();
+        String os = System.getProperty("os.name", "").toLowerCase(Locale.ROOT);
         if (os.contains("linux")) {
             return "apt install libdeflate-dev (Debian/Ubuntu) or dnf install libdeflate-devel (Fedora)";
         }

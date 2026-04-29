@@ -7,6 +7,8 @@
  */
 package dev.hardwood.schema;
 
+import java.util.Locale;
+
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -43,9 +45,9 @@ public record ColumnSchema(
     @Override
     public String toString() {
         StringBuilder sb = new StringBuilder();
-        sb.append(repetitionType.name().toLowerCase());
+        sb.append(repetitionType.name().toLowerCase(Locale.ROOT));
         sb.append(" ");
-        sb.append(type.name().toLowerCase());
+        sb.append(type.name().toLowerCase(Locale.ROOT));
         if (typeLength != null) {
             sb.append("(").append(typeLength).append(")");
         }
