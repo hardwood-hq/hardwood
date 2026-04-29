@@ -14,7 +14,7 @@
   <parent>
     <groupId>dev.hardwood</groupId>
     <artifactId>hardwood-parent</artifactId>
-    <version>1.0.0-SNAPSHOT</version>
+    <version>1.0.0.Beta2</version>
   </parent>
 
   <artifactId>hardwood-parquet-java-compat</artifactId>
@@ -27,7 +27,7 @@
     <connection>scm:git:git://github.com/hardwood-hq/hardwood.git</connection>
     <developerConnection>scm:git:git@github.com:hardwood-hq/hardwood.git</developerConnection>
     <url>https://github.com/hardwood-hq/hardwood/</url>
-    <tag>HEAD</tag>
+    <tag>v1.0.0.Beta2</tag>
   </scm>
 
   <properties>
@@ -170,8 +170,7 @@
             </goals>
             <configuration>
               <target>
-                <jar destfile="${project.build.directory}/upstream-ref.jar"
-                     basedir="${project.build.directory}/upstream-ref-classes"/>
+                <jar destfile="${project.build.directory}/upstream-ref.jar" basedir="${project.build.directory}/upstream-ref-classes" />
               </target>
             </configuration>
           </execution>
