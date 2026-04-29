@@ -26,7 +26,7 @@ Import it in your dependency management so you can declare Hardwood dependencies
         <dependency>
             <groupId>dev.hardwood</groupId>
             <artifactId>hardwood-bom</artifactId>
-            <version>1.0.0.Beta1</version>
+            <version>1.0.0.Beta2</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -38,7 +38,7 @@ Import it in your dependency management so you can declare Hardwood dependencies
 
 ```groovy
 dependencies {
-    implementation platform('dev.hardwood:hardwood-bom:1.0.0.Beta1')
+    implementation platform('dev.hardwood:hardwood-bom:1.0.0.Beta2')
 }
 ```
 
@@ -61,14 +61,14 @@ If you prefer not to use the BOM, you can specify the version directly:
 <dependency>
     <groupId>dev.hardwood</groupId>
     <artifactId>hardwood-core</artifactId>
-    <version>1.0.0.Beta1</version>
+    <version>1.0.0.Beta2</version>
 </dependency>
 ```
 
 **Gradle:**
 
 ```groovy
-implementation 'dev.hardwood:hardwood-core:1.0.0.Beta1'
+implementation 'dev.hardwood:hardwood-core:1.0.0.Beta2'
 ```
 
 ## Logging
