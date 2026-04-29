@@ -41,10 +41,11 @@ Trigger the `Release` workflow from the GitHub Actions UI with the following inp
 
 - **Release version**: The version to release (e.g., `1.0.0`)
 - **Development version**: The next snapshot version (e.g., `1.1.0-SNAPSHOT`)
-- **Stage**: `UPLOAD` to upload the release to the deploy to the Maven Central portal (you can examine it at https://central.sonatype.com/publishing/deployments then), or `PUBLISH` to publish directly to Maven Central
+- **Stage**: `UPLOAD` to upload the release to the deploy to the Maven Central portal (you can examine it at https://central.sonatype.com/publishing/deployments then), or `FULL` to publish directly to Maven Central
 
-To test a staged release, run the following:
+To test a staged release, check out the release tag and run:
 
 ```shell
-MAVEN_CENTRAL_BEARER_TOKEN=`printf "${MAVENCENTRAL_USERNAME}:${MAVENCENTRAL_TOKEN}" | base64` ./mvnw clean verify -pl :hardwood-integration-test -Pcentral.manual.testing -s release-test-settings.xml -Dhardwood.version=<VERSION>
+git checkout v<VERSION>
+MAVEN_CENTRAL_BEARER_TOKEN=`printf "${MAVENCENTRAL_USERNAME}:${MAVENCENTRAL_TOKEN}" | base64` ./mvnw clean verify -pl :hardwood-integration-test -Pcentral.manual.testing -s release-test-settings.xml
 ```

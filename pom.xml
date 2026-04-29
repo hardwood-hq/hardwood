@@ -53,6 +53,9 @@
     <module>aws-auth</module>
     <module>avro</module>
     <module>cli</module>
+    <module>parquet-java-compat</module>
+    <module>integration-test</module>
+    <module>parquet-testing-runner</module>
   </modules>
 
   <properties>
@@ -411,19 +414,6 @@
       </modules>
     </profile>
     <profile>
-      <id>non-deployed-modules</id>
-      <activation>
-        <property>
-          <name>!skipNonDeployedModules</name>
-        </property>
-      </activation>
-      <modules>
-        <module>parquet-java-compat</module>
-        <module>integration-test</module>
-        <module>parquet-testing-runner</module>
-      </modules>
-    </profile>
-    <profile>
       <id>deployment</id>
       <properties>
         <altDeploymentRepository>local::file:${maven.multiModuleProjectDirectory}/target/staging-deploy</altDeploymentRepository>
@@ -521,7 +511,7 @@
             <configuration>
               <tagNameFormat>v@{project.version}</tagNameFormat>
               <goals>deploy</goals>
-              <arguments>-ntp -B -DskipNonDeployedModules -DskipTests</arguments>
+              <arguments>-ntp -B -DskipTests</arguments>
               <scmCommentPrefix>[release] </scmCommentPrefix>
               <scmReleaseCommitComment>@{prefix} Releasing version @{releaseLabel}</scmReleaseCommitComment>
               <scmDevelopmentCommitComment>@{prefix} Bump for next development cycle</scmDevelopmentCommitComment>

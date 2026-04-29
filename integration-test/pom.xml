@@ -22,9 +22,8 @@
   <name>Hardwood Integration Tests</name>
   <description>Integration tests for Hardwood</description>
 
-  <!-- Making the version overridable here for testing against tagged versions, e.g. during a release -->
   <properties>
-    <hardwood.version>${project.version}</hardwood.version>
+    <maven.deploy.skip>true</maven.deploy.skip>
   </properties>
 
   <dependencyManagement>
@@ -32,7 +31,7 @@
       <dependency>
         <groupId>dev.hardwood</groupId>
         <artifactId>hardwood-bom</artifactId>
-        <version>${hardwood.version}</version>
+        <version>${project.version}</version>
         <type>pom</type>
         <scope>import</scope>
       </dependency>

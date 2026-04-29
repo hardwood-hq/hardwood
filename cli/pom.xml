@@ -23,6 +23,8 @@
            Surefire here; the native-image CI job overrides via -DskipSurefire=true
            to skip only the JVM @QuarkusMainTest suite while keeping Failsafe. -->
       <skipSurefire>${skipTests}</skipSurefire>
+      <!-- Distributed as native binaries via the GitHub release, not as a Maven artifact. -->
+      <maven.deploy.skip>true</maven.deploy.skip>
   </properties>
   <parent>
     <groupId>dev.hardwood</groupId>
