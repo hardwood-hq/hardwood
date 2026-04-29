@@ -162,7 +162,7 @@ class RecordFilterBenchmarkTest {
                 FilterPredicate.lt("value", 500.0));
         long count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             RowReader rows = reader.createRowReader(filter)) {
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
             while (rows.hasNext()) {
                 rows.next();
                 count++;
@@ -178,7 +178,7 @@ class RecordFilterBenchmarkTest {
                 FilterPredicate.lt("value", Double.MAX_VALUE));
         long count = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             RowReader rows = reader.createRowReader(filter)) {
+             RowReader rows = reader.buildRowReader().filter(filter).build()) {
             while (rows.hasNext()) {
                 rows.next();
                 count++;
