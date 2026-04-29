@@ -91,41 +91,29 @@ public final class DataPreviewScreen {
         // full-record modal at the cursor. When the cursor would move past
         // the loaded slice, auto-page so the cursor walks through the whole
         // dataset like any other list screen.
+        // The visible window slides freely: `firstRow` is the absolute index
+        // of the first visible row, not a page-aligned offset. Step / page
+        // navigation moves the absolute selection (`firstRow + selectedRow`)
+        // and slides the window minimally, mirroring the dictionary and
+        // other list screens — so PgUp lands the cursor at the top, PgDn at
+        // the bottom, and step-down past the bottom row keeps the cursor at
+        // the bottom while the rows underneath shift up.
         if (Keys.isStepUp(event)) {
-            int rowsLoaded = state.rows().size();
-            if (rowsLoaded == 0) {
+            if (state.rows().isEmpty()) {
                 return false;
             }
-            if (state.selectedRow() == 0) {
-                if (state.firstRow() == 0) {
-                    return false;
-                }
-                long prevFirst = Math.max(0, state.firstRow() - state.pageSize());
-                ScreenState.DataPreview loaded = loadPage(model, prevFirst, state.pageSize(),
-                        state.columnScroll(), state.logicalTypes());
-                int lastRow = Math.max(0, loaded.rows().size() - 1);
-                stack.replaceTop(withSelectedRow(loaded, lastRow));
-                return true;
-            }
-            stack.replaceTop(withSelectedRow(state, state.selectedRow() - 1));
-            return true;
+            stack.replaceTop(moveBy(state, -1, model, total, ScrollBias.KEEP));
+            return state.firstRow() != 0 || state.selectedRow() != 0;
         }
         if (Keys.isStepDown(event)) {
-            int rowsLoaded = state.rows().size();
-            if (rowsLoaded == 0) {
+            if (state.rows().isEmpty()) {
                 return false;
             }
-            if (state.selectedRow() >= rowsLoaded - 1) {
-                long nextFirst = state.firstRow() + state.pageSize();
-                if (nextFirst >= total) {
-                    return false;
-                }
-                ScreenState.DataPreview loaded = loadPage(model, nextFirst, state.pageSize(),
-                        state.columnScroll(), state.logicalTypes());
-                stack.replaceTop(withSelectedRow(loaded, 0));
-                return true;
+            long abs = state.firstRow() + state.selectedRow();
+            if (abs >= total - 1) {
+                return false;
             }
-            stack.replaceTop(withSelectedRow(state, state.selectedRow() + 1));
+            stack.replaceTop(moveBy(state, 1, model, total, ScrollBias.KEEP));
             return true;
         }
         if (event.isConfirm() && !state.rows().isEmpty()) {
@@ -133,33 +121,19 @@ public final class DataPreviewScreen {
             return true;
         }
         if (Keys.isPageDown(event)) {
-            long nextFirst = Math.min(total, state.firstRow() + state.pageSize());
-            if (nextFirst >= total) {
-                // Already on the last page — snap the selection to the actual
-                // last row of the dataset instead of being a no-op.
-                int lastRow = Math.max(0, state.rows().size() - 1);
-                if (state.selectedRow() == lastRow) {
-                    return false;
-                }
-                stack.replaceTop(withSelectedRow(state, lastRow));
-                return true;
+            long abs = state.firstRow() + state.selectedRow();
+            if (abs >= total - 1) {
+                return false;
             }
-            stack.replaceTop(loadPage(model, nextFirst, state.pageSize(), state.columnScroll(),
-                    state.logicalTypes()));
+            stack.replaceTop(moveBy(state, state.pageSize(), model, total, ScrollBias.BOTTOM));
             return true;
         }
         if (Keys.isPageUp(event)) {
-            long prevFirst = Math.max(0, state.firstRow() - state.pageSize());
-            if (prevFirst == state.firstRow()) {
-                // Already on the first page — snap the selection to row 0.
-                if (state.selectedRow() == 0) {
-                    return false;
-                }
-                stack.replaceTop(withSelectedRow(state, 0));
-                return true;
+            long abs = state.firstRow() + state.selectedRow();
+            if (abs == 0) {
+                return false;
             }
-            stack.replaceTop(loadPage(model, prevFirst, state.pageSize(), state.columnScroll(),
-                    state.logicalTypes()));
+            stack.replaceTop(moveBy(state, -state.pageSize(), model, total, ScrollBias.TOP));
             return true;
         }
         if (event.isLeft()) {
@@ -178,28 +152,19 @@ public final class DataPreviewScreen {
             return true;
         }
         if (Keys.isJumpTop(event)) {
-            if (state.firstRow() == 0) {
-                if (state.selectedRow() == 0) {
-                    return false;
-                }
-                stack.replaceTop(withSelectedRow(state, 0));
-                return true;
+            long abs = state.firstRow() + state.selectedRow();
+            if (abs == 0) {
+                return false;
             }
-            stack.replaceTop(loadPage(model, 0, state.pageSize(), state.columnScroll(),
-                    state.logicalTypes()));
+            stack.replaceTop(moveTo(state, 0, model, total, ScrollBias.TOP));
             return true;
         }
         if (Keys.isJumpBottom(event)) {
-            long lastPageFirst = Math.max(0, total - state.pageSize());
-            ScreenState.DataPreview onLastPage = state.firstRow() == lastPageFirst
-                    ? state
-                    : loadPage(model, lastPageFirst, state.pageSize(), state.columnScroll(),
-                            state.logicalTypes());
-            int lastRow = Math.max(0, onLastPage.rows().size() - 1);
-            if (onLastPage == state && state.selectedRow() == lastRow) {
+            long abs = state.firstRow() + state.selectedRow();
+            if (abs == total - 1) {
                 return false;
             }
-            stack.replaceTop(withSelectedRow(onLastPage, lastRow));
+            stack.replaceTop(moveTo(state, total - 1, model, total, ScrollBias.BOTTOM));
             return true;
         }
         // Toggle logical-type rendering. Modifier-free `t` (avoid clobbering
@@ -656,6 +621,48 @@ public final class DataPreviewScreen {
         return new ScreenState.DataPreview(firstRow, pageSize, slice.columnNames(),
                 slice.rows(), slice.expandedRows(), columnScroll, 0, -1,
                 logicalTypes, Set.of(), 0);
+    }
+
+    /// How to position the cursor within the viewport after a navigation move.
+    /// `KEEP` slides the window minimally (cursor stays in its current row),
+    /// `TOP` aligns the new selection at row 0, `BOTTOM` aligns it at the
+    /// last visible row — matching dictionary-screen / dive list scrolling.
+    private enum ScrollBias { KEEP, TOP, BOTTOM }
+
+    private static ScreenState.DataPreview moveBy(ScreenState.DataPreview state, long delta,
+                                                   ParquetModel model, long total, ScrollBias bias) {
+        long abs = state.firstRow() + state.selectedRow();
+        long newAbs = Math.max(0, Math.min(total - 1, abs + delta));
+        return moveTo(state, newAbs, model, total, bias);
+    }
+
+    private static ScreenState.DataPreview moveTo(ScreenState.DataPreview state, long newAbs,
+                                                   ParquetModel model, long total, ScrollBias bias) {
+        int viewport = state.pageSize();
+        long clampedAbs = Math.max(0, Math.min(total - 1, newAbs));
+        long newFirst = switch (bias) {
+            case KEEP -> {
+                long top = state.firstRow();
+                if (clampedAbs < top) {
+                    yield clampedAbs;
+                }
+                if (clampedAbs >= top + viewport) {
+                    yield clampedAbs - viewport + 1;
+                }
+                yield top;
+            }
+            case TOP -> clampedAbs;
+            case BOTTOM -> Math.max(0, clampedAbs - viewport + 1);
+        };
+        if (newFirst + viewport > total) {
+            newFirst = Math.max(0, total - viewport);
+        }
+        ScreenState.DataPreview loaded = newFirst == state.firstRow() && state.pageSize() == viewport
+                ? state
+                : loadPage(model, newFirst, viewport, state.columnScroll(), state.logicalTypes());
+        int rowsLoaded = loaded.rows().size();
+        int newSel = (int) Math.max(0, Math.min(rowsLoaded - 1, clampedAbs - loaded.firstRow()));
+        return withSelectedRow(loaded, newSel);
     }
 
     private static String truncate(String s, int max) {

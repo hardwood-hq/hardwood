@@ -326,7 +326,10 @@ class DiveStateTest {
     }
 
     @Test
-    void dataPreviewPageDownAdvancesFirstRow() {
+    void dataPreviewPageDownAdvancesAbsoluteSelectionBottomPinned() {
+        // Sliding-window navigation: PgDn advances the absolute selection by
+        // one viewport (pageSize), and the window slides so the cursor sits
+        // on the last visible row — mirroring the dictionary screen.
         int pageSize = 10;
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
         NavigationStack stack = rooted(initial);
@@ -334,7 +337,8 @@ class DiveStateTest {
         DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
 
         ScreenState.DataPreview next = (ScreenState.DataPreview) stack.top();
-        assertThat(next.firstRow()).isEqualTo(pageSize);
+        assertThat(next.firstRow() + next.selectedRow()).isEqualTo(pageSize);
+        assertThat(next.selectedRow()).isEqualTo(pageSize - 1);
         assertThat(next.rows()).hasSize(pageSize);
     }
 
@@ -385,8 +389,67 @@ class DiveStateTest {
 
         ScreenState.DataPreview second = (ScreenState.DataPreview) stack.top();
         // `id` column in column_index_pushdown.parquet is sorted 0..9999.
-        // Page 1 starts at row 10 → first id value in the second page is "10".
-        assertThat(second.rows().get(0).get(0)).isEqualTo("10");
+        // Sliding window after one PgDn from row 0: cursor sits on absolute
+        // row 10, the window covers [1, 10] so the first visible id is "1"
+        // and the cursor (selectedRow = pageSize - 1) lands on id "10".
+        assertThat(second.rows().get(0).get(0)).isEqualTo("1");
+        assertThat(second.rows().get(second.selectedRow()).get(0)).isEqualTo("10");
+    }
+
+    @Test
+    void dataPreviewStepDownPastBottomKeepsCursorAtBottom() {
+        // Mirrors dictionary's behaviour: walking past the bottom of the
+        // viewport slides the window by one row and keeps the cursor on
+        // the last visible row. Without this the cursor would jump to the
+        // top of the next page.
+        int pageSize = 4;
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
+        NavigationStack stack = rooted(initial);
+        // Move to the bottom of the first viewport.
+        for (int i = 0; i < pageSize - 1; i++) {
+            DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        }
+        ScreenState.DataPreview atBottom = (ScreenState.DataPreview) stack.top();
+        assertThat(atBottom.firstRow()).isZero();
+        assertThat(atBottom.selectedRow()).isEqualTo(pageSize - 1);
+
+        DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+
+        ScreenState.DataPreview slid = (ScreenState.DataPreview) stack.top();
+        assertThat(slid.firstRow()).isEqualTo(1);
+        assertThat(slid.selectedRow()).isEqualTo(pageSize - 1);
+        assertThat(slid.firstRow() + slid.selectedRow()).isEqualTo(pageSize);
+    }
+
+    @Test
+    void dataPreviewStepUpPastTopKeepsCursorAtTop() {
+        // Symmetric: walking past the top of the viewport slides the window
+        // by one row in the other direction and keeps the cursor on row 0.
+        int pageSize = 4;
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
+        NavigationStack stack = rooted(initial);
+        // Slide a few rows down so we have room to step up across the top.
+        for (int i = 0; i < pageSize + 2; i++) {
+            DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        }
+        ScreenState.DataPreview anchored = (ScreenState.DataPreview) stack.top();
+        assertThat(anchored.selectedRow()).isEqualTo(pageSize - 1);
+        long abs = anchored.firstRow() + anchored.selectedRow();
+
+        // Step up enough times to drop the cursor to row 0 of the viewport.
+        for (int i = 0; i < pageSize - 1; i++) {
+            DataPreviewScreen.handle(key(KeyCode.UP), model, stack);
+        }
+        ScreenState.DataPreview atTop = (ScreenState.DataPreview) stack.top();
+        assertThat(atTop.selectedRow()).isZero();
+        long topFirstRow = atTop.firstRow();
+
+        DataPreviewScreen.handle(key(KeyCode.UP), model, stack);
+
+        ScreenState.DataPreview slid = (ScreenState.DataPreview) stack.top();
+        assertThat(slid.firstRow()).isEqualTo(topFirstRow - 1);
+        assertThat(slid.selectedRow()).isZero();
+        assertThat(slid.firstRow() + slid.selectedRow()).isEqualTo(abs - pageSize);
     }
 
     @Test
@@ -492,9 +555,11 @@ class DiveStateTest {
 
     @Test
     void dataPreviewPageDownOnLastPageMovesSelectionToLastRow() {
-        // On the last page, PgDn can't advance to a further page, but the
-        // selection should still snap to the actual last row of the dataset
-        // rather than be a no-op (issue #400 follow-up comment).
+        // After enough PgDn presses the cursor reaches the last row of the
+        // dataset and stays there: each PgDn advances by one viewport with a
+        // bottom-pinned cursor, so the cursor walks all the way to row
+        // `total - 1` and subsequent PgDn presses are no-ops (issue #400
+        // follow-up comment).
         int pageSize = 10;
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
         NavigationStack stack = rooted(initial);
@@ -503,7 +568,6 @@ class DiveStateTest {
         while (((ScreenState.DataPreview) stack.top()).firstRow() < lastPageFirst) {
             DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
         }
-        assertThat(((ScreenState.DataPreview) stack.top()).selectedRow()).isZero();
 
         DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
 
@@ -534,10 +598,10 @@ class DiveStateTest {
 
     @Test
     void dataPreviewShiftGFromLastPageMovesSelectionToLastRow() {
-        // Reach the last page via PgDn (each PgDn resets selection to 0), so
-        // that firstRow already equals lastPageFirst when G is pressed. Without
-        // the fix, the original code returned false here as a no-op and left
-        // the cursor on the first row of the last page.
+        // Reach the last viewport via repeated PgDn (sliding window: each
+        // PgDn advances `firstRow + selectedRow` by one viewport with the
+        // cursor bottom-pinned), then verify that pressing G keeps the
+        // cursor on the actual last row of the dataset.
         int pageSize = 10;
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
         NavigationStack stack = rooted(initial);
@@ -546,7 +610,6 @@ class DiveStateTest {
         while (((ScreenState.DataPreview) stack.top()).firstRow() < lastPageFirst) {
             DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
         }
-        assertThat(((ScreenState.DataPreview) stack.top()).selectedRow()).isZero();
 
         DataPreviewScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), model, stack);
