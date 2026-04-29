@@ -97,6 +97,8 @@ jobs:
   release-cli:
     if: inputs.release-cli
     needs: release
+    permissions:
+      contents: write
     uses: ./.github/workflows/release-cli.yml
     with:
       release-version: ${{ inputs.release-version }}
