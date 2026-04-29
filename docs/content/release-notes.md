@@ -11,38 +11,51 @@
 -->
 # Release Notes
 
-See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for the full changelog.
+See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
+
+## 1.0.0.Beta2
+
+Highlights of this release:
+
+- Interactive `hardwood dive` TUI for exploring Parquet files
+- Parquet Variant logical type, including shredded reassembly
+- Additional logical types: INTERVAL, MAP/LIST, INT96 timestamps
+- Faster reads via a parallel per-column pipeline and per-column in-page row skipping
+- Reduced S3 traffic via byte-range caching, coalesced GETs, and small-column fetches
+- Unified reader API based on builders
+- CLI is now released as a separate artifact, with reorganized `inspect` subcommands
+
+See the [1.0.0.Beta2 milestone](https://github.com/hardwood-hq/hardwood/milestone/3?closed=1) on GitHub for the full list of resolved issues.
 
 ## 1.0.0.Beta1
 
 [Announcement blog post](https://www.morling.dev/blog/hardwood-reaches-beta-s3-predicate-push-down-cli/)
 
-- S3 and remote object store support with coalesced reads ([#31](https://github.com/hardwood-hq/hardwood/issues/31))
-- CLI tool for inspecting and querying Parquet files ([#38](https://github.com/hardwood-hq/hardwood/issues/38))
-- Avro `GenericRecord` support via the `hardwood-avro` module ([#131](https://github.com/hardwood-hq/hardwood/issues/131))
-- Row group filtering with predicate push-down ([#59](https://github.com/hardwood-hq/hardwood/issues/59))
-- Page-level column index filtering ([#118](https://github.com/hardwood-hq/hardwood/issues/118))
-- `InputFile` abstraction for pluggable file sources ([#98](https://github.com/hardwood-hq/hardwood/issues/98))
-- `FieldPath` for unambiguous column lookup ([#59](https://github.com/hardwood-hq/hardwood/issues/59))
-- Page CRC verification ([#76](https://github.com/hardwood-hq/hardwood/issues/76))
-- Key/value metadata access ([#135](https://github.com/hardwood-hq/hardwood/issues/135))
-- S3 support and filtering in the parquet-java compatibility layer ([#123](https://github.com/hardwood-hq/hardwood/issues/123))
-- Project documentation site ([#109](https://github.com/hardwood-hq/hardwood/issues/109))
+Highlights of this release:
+
+- S3 and remote object store support with coalesced reads
+- CLI tool for inspecting and querying Parquet files
+- Avro `GenericRecord` support via the `hardwood-avro` module
+- Row group filtering with predicate push-down and page-level column index filtering
+- `InputFile` abstraction for pluggable file sources
+- S3 support and filtering in the parquet-java compatibility layer
+- Project documentation site
+
+See the [1.0.0.Beta1 milestone](https://github.com/hardwood-hq/hardwood/milestone/1?closed=1) on GitHub for the full list of resolved issues.
 
 ## 1.0.0.Alpha1
 
 [Announcement blog post](https://www.morling.dev/blog/hardwood-new-parser-for-apache-parquet/)
+
+Highlights of this release:
 
 - Zero-dependency Parquet file reader for Java
 - Row-oriented and columnar read APIs
 - Support for flat and nested schemas (lists, maps, structs)
 - All standard encodings (RLE, DELTA_BINARY_PACKED, DELTA_BYTE_ARRAY, BYTE_STREAM_SPLIT, etc.)
 - Compression: Snappy, ZSTD, LZ4, GZIP, Brotli
-- Projection push-down
-- Parallel page pre-fetching and eager batch assembly
-- Memory-mapped file I/O
-- JFR events for observability
-- Multi-file reader
-- BOM for dependency management
-- parquet-java compatibility layer
+- Projection push-down, parallel page pre-fetching, and memory-mapped file I/O
+- Multi-file reader and `parquet-java` compatibility layer
 - Optional Vector API acceleration on Java 22+
+- JFR events for observability
+- BOM for dependency management
