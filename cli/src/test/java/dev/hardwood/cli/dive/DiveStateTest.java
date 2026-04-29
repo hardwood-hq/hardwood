@@ -415,19 +415,53 @@ class DiveStateTest {
 
     @Test
     void dataPreviewGReloadsAtRowZeroShiftGAtEnd() {
-        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, 10);
+        int pageSize = 10;
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
         NavigationStack stack = rooted(initial);
 
         DataPreviewScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), model, stack);
 
-        long expectedFirst = Math.max(0, model.facts().totalRows() - 10);
-        assertThat(((ScreenState.DataPreview) stack.top()).firstRow()).isEqualTo(expectedFirst);
+        long total = model.facts().totalRows();
+        long expectedFirst = Math.max(0, total - pageSize);
+        ScreenState.DataPreview atEnd = (ScreenState.DataPreview) stack.top();
+        assertThat(atEnd.firstRow()).isEqualTo(expectedFirst);
+        // Selection must point at the actual last row of the dataset, not the
+        // first row of the last page (issue #400).
+        assertThat(atEnd.selectedRow()).isEqualTo(atEnd.rows().size() - 1);
+        assertThat(atEnd.firstRow() + atEnd.selectedRow()).isEqualTo(total - 1);
 
         DataPreviewScreen.handle(
                 new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'g'), model, stack);
 
-        assertThat(((ScreenState.DataPreview) stack.top()).firstRow()).isZero();
+        ScreenState.DataPreview atStart = (ScreenState.DataPreview) stack.top();
+        assertThat(atStart.firstRow()).isZero();
+        assertThat(atStart.selectedRow()).isZero();
+    }
+
+    @Test
+    void dataPreviewShiftGFromLastPageMovesSelectionToLastRow() {
+        // Reach the last page via PgDn (each PgDn resets selection to 0), so
+        // that firstRow already equals lastPageFirst when G is pressed. Without
+        // the fix, the original code returned false here as a no-op and left
+        // the cursor on the first row of the last page.
+        int pageSize = 10;
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
+        NavigationStack stack = rooted(initial);
+        long total = model.facts().totalRows();
+        long lastPageFirst = Math.max(0, total - pageSize);
+        while (((ScreenState.DataPreview) stack.top()).firstRow() < lastPageFirst) {
+            DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
+        }
+        assertThat(((ScreenState.DataPreview) stack.top()).selectedRow()).isZero();
+
+        DataPreviewScreen.handle(
+                new KeyEvent(KeyCode.CHAR, KeyModifiers.NONE, 'G'), model, stack);
+
+        ScreenState.DataPreview atEnd = (ScreenState.DataPreview) stack.top();
+        assertThat(atEnd.firstRow()).isEqualTo(lastPageFirst);
+        assertThat(atEnd.selectedRow()).isEqualTo(atEnd.rows().size() - 1);
+        assertThat(atEnd.firstRow() + atEnd.selectedRow()).isEqualTo(total - 1);
     }
 
     @Test

@@ -167,7 +167,11 @@ public final class DataPreviewScreen {
         }
         if (Keys.isJumpTop(event)) {
             if (state.firstRow() == 0) {
-                return false;
+                if (state.selectedRow() == 0) {
+                    return false;
+                }
+                stack.replaceTop(withSelectedRow(state, 0));
+                return true;
             }
             stack.replaceTop(loadPage(model, 0, state.pageSize(), state.columnScroll(),
                     state.logicalTypes()));
@@ -175,11 +179,15 @@ public final class DataPreviewScreen {
         }
         if (Keys.isJumpBottom(event)) {
             long lastPageFirst = Math.max(0, total - state.pageSize());
-            if (state.firstRow() == lastPageFirst) {
+            ScreenState.DataPreview onLastPage = state.firstRow() == lastPageFirst
+                    ? state
+                    : loadPage(model, lastPageFirst, state.pageSize(), state.columnScroll(),
+                            state.logicalTypes());
+            int lastRow = Math.max(0, onLastPage.rows().size() - 1);
+            if (onLastPage == state && state.selectedRow() == lastRow) {
                 return false;
             }
-            stack.replaceTop(loadPage(model, lastPageFirst, state.pageSize(), state.columnScroll(),
-                    state.logicalTypes()));
+            stack.replaceTop(withSelectedRow(onLastPage, lastRow));
             return true;
         }
         // Toggle logical-type rendering. Modifier-free `t` (avoid clobbering
