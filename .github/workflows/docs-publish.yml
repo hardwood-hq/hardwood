@@ -1,0 +1,61 @@
+#
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Copyright The original authors
+#
+#  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+#
+
+name: Publish versioned documentation
+
+# Manual follow-up to a release: fires the publish-docs repository_dispatch
+# at the site repo for a specific version. Run this once any post-release
+# touch-ups (blog post link, errata) have landed on a `-docs` tag, so the
+# release tag itself stays immutable.
+
+on:
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: 'Git ref to build from (tag, branch, or SHA — e.g. v1.0.0.Beta2-docs)'
+        required: true
+      version:
+        description: 'Version label on the site (e.g. 1.0.0.Beta2)'
+        required: true
+      update-latest:
+        description: 'Point the site''s "latest" alias at this version (uncheck for back-ports)'
+        required: true
+        type: boolean
+        default: true
+
+jobs:
+  dispatch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 'Resolve ref to a commit SHA'
+        id: resolve
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+          REF: ${{ inputs.ref }}
+        run: |
+          SHA=$(gh api "repos/$GH_REPO/commits/$REF" --jq '.sha')
+          if [ -z "$SHA" ]; then
+            echo "Could not resolve $REF to a commit"
+            exit 1
+          fi
+          echo "sha=$SHA" >> "$GITHUB_OUTPUT"
+
+      - name: 'Fire repository_dispatch to site repo'
+        env:
+          GH_TOKEN: ${{ secrets.DOCS_DISPATCH_TOKEN }}
+          SHA: ${{ steps.resolve.outputs.sha }}
+          VERSION: ${{ inputs.version }}
+          UPDATE_LATEST: ${{ inputs.update-latest }}
+        run: |
+          jq -n \
+            --arg ref "$SHA" \
+            --arg ver "$VERSION" \
+            --argjson latest "$UPDATE_LATEST" \
+            '{event_type: "publish-docs", client_payload: {source_ref: $ref, version: $ver, update_latest: $latest}}' \
+          | gh api repos/hardwood-hq/hardwood-hq.github.io/dispatches --input -

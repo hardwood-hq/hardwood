@@ -8,9 +8,11 @@
 
 name: Trigger documentation publish
 
+# Refreshes the `dev` docs after a successful Main Build on main. Versioned
+# release docs are published manually via docs-publish.yml once any post-
+# release follow-ups (blog post link, etc.) have been added.
+
 on:
-  push:
-    tags: ['v*']
   workflow_run:
     workflows: [Main Build]
     types: [completed]
@@ -19,29 +21,15 @@ on:
 jobs:
   dispatch:
     runs-on: ubuntu-latest
-    if: >-
-      github.event_name == 'push'
-      || github.event.workflow_run.conclusion == 'success'
+    if: github.event.workflow_run.conclusion == 'success'
 
     steps:
       - name: Fire repository_dispatch to site repo
         env:
           GH_TOKEN: ${{ secrets.DOCS_DISPATCH_TOKEN }}
+          SHA: ${{ github.event.workflow_run.head_sha }}
         run: |
-          if [ "${{ github.event_name }}" = "push" ]; then
-            REF="${{ github.ref_name }}"
-            SHA="${{ github.sha }}"
-          else
-            REF="${{ github.event.workflow_run.head_branch }}"
-            SHA="${{ github.event.workflow_run.head_sha }}"
-          fi
-          if [[ "$REF" == v* ]]; then
-            VERSION_LABEL="${REF#v}"
-          else
-            VERSION_LABEL="dev"
-          fi
           jq -n \
             --arg ref "$SHA" \
-            --arg ver "$VERSION_LABEL" \
-            '{event_type: "publish-docs", client_payload: {source_ref: $ref, version: $ver, update_latest: true}}' \
+            '{event_type: "publish-docs", client_payload: {source_ref: $ref, version: "dev", update_latest: false}}' \
           | gh api repos/hardwood-hq/hardwood-hq.github.io/dispatches --input -
