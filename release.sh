@@ -117,7 +117,6 @@ git commit -m "[release] Update versions for ${RELEASE_VERSION}"
 
 echo "Running Maven release:prepare release:perform..."
 ./mvnw -ntp -B -Prelease release:prepare release:perform \
-  -DskipNonDeployedModules \
   -DreleaseVersion="${RELEASE_VERSION}" \
   -DdevelopmentVersion="${DEVELOPMENT_VERSION}" \
   -Dresume=false \
@@ -126,6 +125,11 @@ echo "Running Maven release:prepare release:perform..."
   -DpreparationGoals="clean verify -DskipTests" \
   -Darguments="-DskipTests"
 git push -u origin "release/${RELEASE_VERSION}"
+# Push the tag created by release:prepare so JReleaser finds it on the release
+# commit. Without this, JReleaser doesn't see a tag on GitHub and creates one
+# at the release branch's HEAD (the dev-bump commit), which would land the tag
+# on the wrong commit.
+git push origin "${RELEASE_TAG}"
 
 # -- Publish to Maven Central ------------------------------------------------
 
@@ -150,12 +154,21 @@ if [[ "$STAGE" == "UPLOAD" ]]; then
   echo "Verifying staged release (using temporary local repo)..."
   STAGING_LOCAL_REPO="$(mktemp -d)"
 
-  ./mvnw -B clean verify \
+  # The staging repo only serves dev.hardwood:* — pre-warm the temp local repo
+  # with every external dep from the home cache so those don't round-trip to
+  # staging and get 404s before falling back to Central. Only dev.hardwood:*
+  # is actually fetched from staging.
+  rsync -a "${HOME}/.m2/repository/" "${STAGING_LOCAL_REPO}/" --exclude='dev/hardwood'
+
+  # Run from target/checkout so ${project.version} resolves to RELEASE_VERSION;
+  # release-test-settings.xml lives in the project root.
+  pushd target/checkout > /dev/null
+  ../../mvnw -B clean verify \
     -pl :hardwood-integration-test \
     -Pcentral.manual.testing \
-    -s release-test-settings.xml \
-    -Dhardwood.version="${RELEASE_VERSION}" \
+    -s ../../release-test-settings.xml \
     -Dmaven.repo.local="${STAGING_LOCAL_REPO}"
+  popd > /dev/null
 
   rm -rf "${STAGING_LOCAL_REPO}"
 fi
@@ -166,7 +179,7 @@ echo "Merging release branch back into ${BASE_BRANCH}..."
 git checkout "${BASE_BRANCH}"
 git merge --ff-only "release/${RELEASE_VERSION}"
 git push origin "${BASE_BRANCH}"
-git push origin --delete "release/${RELEASE_VERSION}" # tag already created by JRelease
+git push origin --delete "release/${RELEASE_VERSION}" # tag already pushed above
 git branch -d "release/${RELEASE_VERSION}"
 
 ELAPSED=$(( $(date +%s) - START_TIME ))
