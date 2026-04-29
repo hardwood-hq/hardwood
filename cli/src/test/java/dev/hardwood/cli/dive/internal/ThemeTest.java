@@ -41,13 +41,25 @@ class ThemeTest {
     void accentIsBlue() {
         assertThat(Theme.accent().effectiveModifiers()).doesNotContain(Modifier.BOLD);
         Color fg = Theme.accent().fg().orElseThrow();
-        boolean truecolor = "truecolor".equals(System.getenv("COLORTERM"))
-                || "24bit".equals(System.getenv("COLORTERM"));
-        if (truecolor) {
+        if (Theme.supportsTruecolor(System.getenv("COLORTERM"))) {
             assertThat(fg).isEqualTo(Color.rgb(38, 139, 210));
         }
         else {
             assertThat(fg).isSameAs(Color.BLUE);
         }
+    }
+
+    /// Pins both branches of the `$COLORTERM` probe deterministically.
+    /// [#accentIsBlue] can only cover whichever branch matches the
+    /// test process's actual environment, so it would not have caught
+    /// #394 (truecolor frozen to false at native-image build time) on
+    /// a build runner that has `COLORTERM` unset.
+    @Test
+    void truecolorProbeRecognisesBothAdvertisedValues() {
+        assertThat(Theme.supportsTruecolor("truecolor")).isTrue();
+        assertThat(Theme.supportsTruecolor("24bit")).isTrue();
+        assertThat(Theme.supportsTruecolor("256color")).isFalse();
+        assertThat(Theme.supportsTruecolor("")).isFalse();
+        assertThat(Theme.supportsTruecolor(null)).isFalse();
     }
 }
