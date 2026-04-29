@@ -23,7 +23,7 @@ Highlights of this release:
 - Faster reads via a parallel per-column pipeline and per-column in-page row skipping
 - Reduced S3 traffic via byte-range caching, coalesced GETs, and small-column fetches
 - Unified reader API based on builders
-- CLI is now released as a separate artifact, with reorganized `inspect` subcommands
+- CLI with reorganized `inspect` subcommands
 
 See the [1.0.0.Beta2 milestone](https://github.com/hardwood-hq/hardwood/milestone/3?closed=1) on GitHub for the full list of resolved issues.
 
