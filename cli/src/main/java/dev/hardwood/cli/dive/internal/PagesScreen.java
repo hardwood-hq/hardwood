@@ -129,14 +129,24 @@ public final class PagesScreen {
         OffsetIndex offsetIndex = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
 
-        List<Row> rows = new ArrayList<>();
         // Hide Min / Max columns entirely when no page-level stats are available
         // anywhere (no ColumnIndex AND no inline statistics on any page). Every
         // row would be "—" otherwise, pure visual noise.
         boolean hasAnyStats = columnIndex != null || headers.stream()
                 .anyMatch(h -> h.type() != PageHeader.PageType.DICTIONARY_PAGE && inlineStats(h) != null);
+        // Build Row objects only for the visible window — see RowWindow.
+        RowWindow window = RowWindow.bottomPinned(state.selection(), headers.size(), area.height() - 3);
+        // Per-data-page stats are addressed by `dataPageIdx`, which advances
+        // only on non-dictionary pages. Recover its value at window.start()
+        // by counting non-dict pages in the skipped prefix.
         int dataPageIdx = 0;
-        for (int i = 0; i < headers.size(); i++) {
+        for (int i = 0; i < window.start(); i++) {
+            if (headers.get(i).type() != PageHeader.PageType.DICTIONARY_PAGE) {
+                dataPageIdx++;
+            }
+        }
+        List<Row> rows = new ArrayList<>(window.size());
+        for (int i = window.start(); i < window.end(); i++) {
             PageHeader h = headers.get(i);
             String firstRow = "—";
             String min = "—";
@@ -242,7 +252,7 @@ public final class PagesScreen {
                 .build();
         TableState tableState = new TableState();
         if (!headers.isEmpty()) {
-            tableState.select(state.selection());
+            tableState.select(window.selectionInWindow());
         }
         table.render(area, buffer, tableState);
 

@@ -76,8 +76,10 @@ public final class ColumnChunksScreen {
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnChunks state) {
         Keys.observeViewport(area.height() - 3);
         RowGroup rg = model.rowGroup(state.rowGroupIndex());
-        List<Row> rows = new ArrayList<>();
-        for (int i = 0; i < rg.columns().size(); i++) {
+        // Build Row objects only for the visible window — see RowWindow.
+        RowWindow window = RowWindow.bottomPinned(state.selection(), rg.columns().size(), area.height() - 3);
+        List<Row> rows = new ArrayList<>(window.size());
+        for (int i = window.start(); i < window.end(); i++) {
             ColumnChunk cc = rg.columns().get(i);
             ColumnMetaData cmd = cc.metaData();
             double ratio = cmd.totalCompressedSize() == 0
@@ -121,7 +123,7 @@ public final class ColumnChunksScreen {
                 .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
-        tableState.select(state.selection());
+        tableState.select(window.selectionInWindow());
         table.render(area, buffer, tableState);
     }
 

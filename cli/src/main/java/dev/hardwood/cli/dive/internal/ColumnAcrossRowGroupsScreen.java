@@ -91,8 +91,10 @@ public final class ColumnAcrossRowGroupsScreen {
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnAcrossRowGroups state) {
         Keys.observeViewport(area.height() - 3);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
-        List<Row> rows = new ArrayList<>();
-        for (int i = 0; i < model.rowGroupCount(); i++) {
+        // Build Row objects only for the visible window — see RowWindow.
+        RowWindow window = RowWindow.bottomPinned(state.selection(), model.rowGroupCount(), area.height() - 3);
+        List<Row> rows = new ArrayList<>(window.size());
+        for (int i = window.start(); i < window.end(); i++) {
             RowGroup rg = model.rowGroup(i);
             ColumnChunk cc = rg.columns().get(state.columnIndex());
             ColumnMetaData cmd = cc.metaData();
@@ -158,7 +160,7 @@ public final class ColumnAcrossRowGroupsScreen {
                 .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
-        tableState.select(state.selection());
+        tableState.select(window.selectionInWindow());
         table.render(area, buffer, tableState);
     }
 

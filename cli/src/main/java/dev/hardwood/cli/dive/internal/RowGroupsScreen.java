@@ -75,8 +75,10 @@ public final class RowGroupsScreen {
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.RowGroups state) {
         Keys.observeViewport(area.height() - 3);
-        List<Row> rows = new ArrayList<>();
-        for (int i = 0; i < model.rowGroupCount(); i++) {
+        // Build Row objects only for the visible window — see RowWindow.
+        RowWindow window = RowWindow.bottomPinned(state.selection(), model.rowGroupCount(), area.height() - 3);
+        List<Row> rows = new ArrayList<>(window.size());
+        for (int i = window.start(); i < window.end(); i++) {
             RowGroup rg = model.rowGroup(i);
             long compressed = 0;
             long uncompressed = 0;
@@ -128,7 +130,7 @@ public final class RowGroupsScreen {
                 .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
-        tableState.select(state.selection());
+        tableState.select(window.selectionInWindow());
         table.render(area, buffer, tableState);
     }
 

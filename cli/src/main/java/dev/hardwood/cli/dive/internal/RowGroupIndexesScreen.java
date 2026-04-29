@@ -129,8 +129,11 @@ public final class RowGroupIndexesScreen {
                     .render(area, buffer);
             return;
         }
-        List<Row> rows = new ArrayList<>();
-        for (Entry e : entries) {
+        // Build Row objects only for the visible window — see RowWindow.
+        RowWindow window = RowWindow.bottomPinned(state.selection(), entries.size(), area.height() - 3);
+        List<Row> rows = new ArrayList<>(window.size());
+        for (int i = window.start(); i < window.end(); i++) {
+            Entry e = entries.get(i);
             rows.add(Row.from(
                     Sizes.columnPath(e.chunk().metaData()),
                     e.typeLabel(),
@@ -160,7 +163,7 @@ public final class RowGroupIndexesScreen {
                 .build();
         TableState tableState = new TableState();
         if (!entries.isEmpty()) {
-            tableState.select(Math.min(state.selection(), entries.size() - 1));
+            tableState.select(window.selectionInWindow());
         }
         table.render(area, buffer, tableState);
     }

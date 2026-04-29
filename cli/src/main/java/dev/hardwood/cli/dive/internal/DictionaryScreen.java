@@ -7,7 +7,9 @@
  */
 package dev.hardwood.cli.dive.internal;
 
+import java.lang.ref.WeakReference;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Locale;
 
@@ -49,11 +51,28 @@ public final class DictionaryScreen {
     /// thousands of entries re-filters twice per navigation keystroke (once in
     /// handle, once in render); caching the most recent (dict, filter) result
     /// turns navigation into O(1) lookups while still invalidating when the
-    /// user types / deletes a character.
-    private static Dictionary cachedDict;
+    /// user types / deletes a character. The dictionary is held via
+    /// `WeakReference` so an evicted entry from the model's bounded
+    /// `dictionaryCache` is not pinned for the lifetime of the JVM.
+    private static WeakReference<Dictionary> cachedDictRef;
     private static String cachedFilter;
     private static boolean cachedLogical;
-    private static List<Integer> cachedFiltered;
+    private static int cachedSize;
+    private static int[] cachedFiltered;
+
+    /// Result of filtering a dictionary by the user's `/ filter` string. When
+    /// `indices == null` the view is the identity mapping `[0, size)` — used
+    /// for the (very common) empty-filter case so the cache hit path
+    /// allocates nothing per entry. Otherwise `indices[i]` is the dictionary
+    /// index of the `i`-th visible entry.
+    private record FilterIndex(int size, int[] indices) {
+        boolean isEmpty() {
+            return size == 0;
+        }
+        int at(int i) {
+            return indices == null ? i : indices[i];
+        }
+    }
 
     private DictionaryScreen() {
     }
@@ -99,7 +118,7 @@ public final class DictionaryScreen {
         }
         Dictionary dict = loadDictionary(model, state);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
-        List<Integer> filtered = filteredIndices(dict, col, state.filter(), state.logicalTypes());
+        FilterIndex filtered = filteredIndices(dict, col, state.filter(), state.logicalTypes());
         // Plain Up/Down step one entry; PgDn/PgUp (and the Shift+↓/↑ Mac
         // chord since most macOS laptops have no dedicated PgDn/PgUp keys)
         // move Keys.viewportStride() entries via the shared helper.
@@ -136,7 +155,7 @@ public final class DictionaryScreen {
             // For numeric dictionaries like VendorID=1, the row already shows the
             // full value, so a modal would just redraw the same character in a
             // bigger frame.
-            int idx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            int idx = filtered.at(Math.min(state.selection(), filtered.size() - 1));
             String full = fullValue(dict, idx, col, state.logicalTypes());
             if (full.length() <= VALUE_PREVIEW_MAX) {
                 return false;
@@ -186,15 +205,20 @@ public final class DictionaryScreen {
         }
 
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
-        List<Integer> filtered = filteredIndices(dict, col, state.filter(), state.logicalTypes());
+        FilterIndex filtered = filteredIndices(dict, col, state.filter(), state.logicalTypes());
         List<Rect> split = Layout.vertical()
                 .constraints(new Constraint.Length(1), new Constraint.Fill(1))
                 .split(area);
 
         renderSearchBar(buffer, split.get(0), state, dict.size(), filtered.size());
 
-        List<Row> rows = new ArrayList<>();
-        for (int idx : filtered) {
+        // Build Row objects only for the visible window — see RowWindow for
+        // why list screens must do this.
+        int total = filtered.size();
+        RowWindow window = RowWindow.bottomPinned(state.selection(), total, area.height() - 4);
+        List<Row> rows = new ArrayList<>(window.size());
+        for (int i = window.start(); i < window.end(); i++) {
+            int idx = filtered.at(i);
             rows.add(Row.from(
                     "[" + idx + "]",
                     formatValue(dict, idx, col, VALUE_PREVIEW_MAX, state.logicalTypes())));
@@ -203,7 +227,7 @@ public final class DictionaryScreen {
         String typeMode = state.logicalTypes() ? "" : " · physical";
         Block block = Block.builder()
                 .title(" Dictionary entries "
-                        + Plurals.rangeOf(state.selection(), filtered.size(), Keys.viewportStride())
+                        + Plurals.rangeOf(state.selection(), total, Keys.viewportStride())
                         + (state.filter().isEmpty()
                                 ? ""
                                 : " · " + Plurals.format(dict.size(), "entry", "entries") + " total")
@@ -221,13 +245,13 @@ public final class DictionaryScreen {
                 .highlightStyle(Theme.selection())
                 .build();
         TableState tableState = new TableState();
-        if (!filtered.isEmpty()) {
-            tableState.select(Math.min(state.selection(), filtered.size() - 1));
+        if (total > 0) {
+            tableState.select(window.selectionInWindow());
         }
         table.render(split.get(1), buffer, tableState);
 
         if (state.modalOpen() && !filtered.isEmpty()) {
-            int dictIdx = filtered.get(Math.min(state.selection(), filtered.size() - 1));
+            int dictIdx = filtered.at(Math.min(state.selection(), filtered.size() - 1));
             buffer.setStyle(area, Theme.dim());
             renderValueModal(buffer, area, dict, col, dictIdx, state.logicalTypes());
         }
@@ -236,12 +260,12 @@ public final class DictionaryScreen {
     public static String keybarKeys(ScreenState.DictionaryView state, ParquetModel model) {
         Dictionary dict = needsConfirmation(model, state) ? null : loadDictionary(model, state);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
-        java.util.List<Integer> filtered = dict == null ? java.util.List.of()
+        FilterIndex filtered = dict == null ? new FilterIndex(0, null)
                 : filteredIndices(dict, col, state.filter(), state.logicalTypes());
         int count = filtered.size();
         boolean canExpand = false;
         if (dict != null && count > 0) {
-            int idx = filtered.get(Math.min(state.selection(), count - 1));
+            int idx = filtered.at(Math.min(state.selection(), count - 1));
             canExpand = fullValue(dict, idx, col, state.logicalTypes()).length() > VALUE_PREVIEW_MAX;
         }
         boolean hasLogical = col.logicalType() != null;
@@ -277,27 +301,39 @@ public final class DictionaryScreen {
         Paragraph.builder().text(Text.from(line)).left().build().render(area, buffer);
     }
 
-    private static List<Integer> filteredIndices(Dictionary dict, ColumnSchema col, String filter,
+    private static FilterIndex filteredIndices(Dictionary dict, ColumnSchema col, String filter,
                                                   boolean useLogicalType) {
         if (dict == null) {
-            return List.of();
+            return new FilterIndex(0, null);
         }
-        if (dict == cachedDict && filter.equals(cachedFilter) && useLogicalType == cachedLogical) {
-            return cachedFiltered;
+        Dictionary cached = cachedDictRef == null ? null : cachedDictRef.get();
+        if (dict == cached && filter.equals(cachedFilter) && useLogicalType == cachedLogical) {
+            return new FilterIndex(cachedSize, cachedFiltered);
         }
-        List<Integer> out = new ArrayList<>();
-        String needle = filter.toLowerCase(Locale.ROOT);
-        for (int i = 0; i < dict.size(); i++) {
-            if (needle.isEmpty() || fullValue(dict, i, col, useLogicalType).toLowerCase(Locale.ROOT).contains(needle)) {
-                out.add(i);
+        int n = dict.size();
+        int size;
+        int[] indices;
+        if (filter.isEmpty()) {
+            size = n;
+            indices = null;
+        } else {
+            String needle = filter.toLowerCase(Locale.ROOT);
+            int[] tmp = new int[n];
+            int k = 0;
+            for (int i = 0; i < n; i++) {
+                if (fullValue(dict, i, col, useLogicalType).toLowerCase(Locale.ROOT).contains(needle)) {
+                    tmp[k++] = i;
+                }
             }
+            size = k;
+            indices = (k == n) ? null : Arrays.copyOf(tmp, k);
         }
-        List<Integer> result = List.copyOf(out);
-        cachedDict = dict;
+        cachedDictRef = new WeakReference<>(dict);
         cachedFilter = filter;
         cachedLogical = useLogicalType;
-        cachedFiltered = result;
-        return result;
+        cachedSize = size;
+        cachedFiltered = indices;
+        return new FilterIndex(size, indices);
     }
 
     private static ScreenState.DictionaryView with(ScreenState.DictionaryView state,

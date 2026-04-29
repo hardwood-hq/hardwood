@@ -183,8 +183,11 @@ public final class ColumnIndexScreen {
 
         renderSearchBar(buffer, split.get(1), state, ci.getPageCount(), filtered.size());
 
-        List<Row> rows = new ArrayList<>();
-        for (int idx : filtered) {
+        // Build Row objects only for the visible window — see RowWindow.
+        RowWindow window = RowWindow.bottomPinned(state.selection(), filtered.size(), area.height() - 5);
+        List<Row> rows = new ArrayList<>(window.size());
+        for (int i = window.start(); i < window.end(); i++) {
+            int idx = filtered.get(i);
             String nulls = ci.nullCounts() != null && idx < ci.nullCounts().size()
                     ? Fmt.fmt("%,d", ci.nullCounts().get(idx))
                     : "—";
@@ -222,7 +225,7 @@ public final class ColumnIndexScreen {
                 .build();
         TableState tableState = new TableState();
         if (!filtered.isEmpty()) {
-            tableState.select(Math.min(state.selection(), filtered.size() - 1));
+            tableState.select(window.selectionInWindow());
         }
         table.render(split.get(2), buffer, tableState);
 

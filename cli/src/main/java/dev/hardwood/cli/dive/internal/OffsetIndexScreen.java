@@ -98,9 +98,11 @@ public final class OffsetIndexScreen {
                     .render(area, buffer);
             return;
         }
-        List<Row> rows = new ArrayList<>();
         List<PageLocation> locations = oi.pageLocations();
-        for (int i = 0; i < locations.size(); i++) {
+        // Build Row objects only for the visible window — see RowWindow.
+        RowWindow window = RowWindow.bottomPinned(state.selection(), locations.size(), area.height() - 3);
+        List<Row> rows = new ArrayList<>(window.size());
+        for (int i = window.start(); i < window.end(); i++) {
             PageLocation loc = locations.get(i);
             rows.add(Row.from(
                     String.valueOf(i),
@@ -130,7 +132,7 @@ public final class OffsetIndexScreen {
                 .build();
         TableState tableState = new TableState();
         if (!locations.isEmpty()) {
-            tableState.select(state.selection());
+            tableState.select(window.selectionInWindow());
         }
         table.render(area, buffer, tableState);
     }
