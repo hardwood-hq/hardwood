@@ -44,40 +44,36 @@ public final class OffsetIndexScreen {
         OffsetIndex oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
         int count = oi != null ? oi.pageLocations().size() : 0;
         if (Keys.isStepUp(event)) {
-            stack.replaceTop(new ScreenState.OffsetIndexView(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.max(0, state.selection() - 1)));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - 1)));
             return true;
         }
         if (Keys.isStepDown(event)) {
-            stack.replaceTop(new ScreenState.OffsetIndexView(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.min(count - 1, state.selection() + 1)));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + 1)));
             return true;
         }
         if (Keys.isPageDown(event) && count > 0) {
-            stack.replaceTop(new ScreenState.OffsetIndexView(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + Keys.viewportStride())));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
-            stack.replaceTop(new ScreenState.OffsetIndexView(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.max(0, state.selection() - Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - Keys.viewportStride())));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
-            stack.replaceTop(new ScreenState.OffsetIndexView(
-                    state.rowGroupIndex(), state.columnIndex(), 0));
+            stack.replaceTop(moved(state, 0));
             return true;
         }
         if (Keys.isJumpBottom(event) && count > 0) {
-            stack.replaceTop(new ScreenState.OffsetIndexView(
-                    state.rowGroupIndex(), state.columnIndex(), count - 1));
+            stack.replaceTop(moved(state, count - 1));
             return true;
         }
         return false;
+    }
+
+    private static ScreenState.OffsetIndexView moved(ScreenState.OffsetIndexView state, int newSelection) {
+        int newTop = RowWindow.adjustTop(state.scrollTop(), newSelection, Keys.viewportStride());
+        return new ScreenState.OffsetIndexView(state.rowGroupIndex(), state.columnIndex(),
+                newSelection, newTop);
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.OffsetIndexView state) {
@@ -100,7 +96,8 @@ public final class OffsetIndexScreen {
         }
         List<PageLocation> locations = oi.pageLocations();
         // Build Row objects only for the visible window — see RowWindow.
-        RowWindow window = RowWindow.bottomPinned(state.selection(), locations.size(), area.height() - 3);
+        RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
+                locations.size(), area.height() - 3);
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             PageLocation loc = locations.get(i);

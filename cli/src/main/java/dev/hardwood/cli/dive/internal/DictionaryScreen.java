@@ -215,7 +215,7 @@ public final class DictionaryScreen {
         // Build Row objects only for the visible window — see RowWindow for
         // why list screens must do this.
         int total = filtered.size();
-        RowWindow window = RowWindow.bottomPinned(state.selection(), total, area.height() - 4);
+        RowWindow window = RowWindow.from(state.scrollTop(), state.selection(), total, area.height() - 4);
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             int idx = filtered.at(i);
@@ -338,21 +338,29 @@ public final class DictionaryScreen {
 
     private static ScreenState.DictionaryView with(ScreenState.DictionaryView state,
                                                     int selection, boolean modalOpen, String filter, boolean searching) {
+        // Filter / searching transitions reset the cursor to row 0; in that
+        // case reset the scroll-top too so the new top of the list is also
+        // the visible top. Otherwise (plain navigation), scroll the viewport
+        // minimally to keep `selection` in view.
+        boolean resetScroll = !filter.equals(state.filter()) || searching != state.searching();
+        int newTop = resetScroll
+                ? 0
+                : RowWindow.adjustTop(state.scrollTop(), selection, Keys.viewportStride());
         return new ScreenState.DictionaryView(
                 state.rowGroupIndex(), state.columnIndex(), selection, modalOpen, filter, searching,
-                state.loadConfirmed(), state.logicalTypes());
+                state.loadConfirmed(), state.logicalTypes(), newTop);
     }
 
     private static ScreenState.DictionaryView withConfirmed(ScreenState.DictionaryView state, boolean confirmed) {
         return new ScreenState.DictionaryView(
                 state.rowGroupIndex(), state.columnIndex(), state.selection(), state.modalOpen(),
-                state.filter(), state.searching(), confirmed, state.logicalTypes());
+                state.filter(), state.searching(), confirmed, state.logicalTypes(), state.scrollTop());
     }
 
     private static ScreenState.DictionaryView withLogical(ScreenState.DictionaryView state, boolean logical) {
         return new ScreenState.DictionaryView(
                 state.rowGroupIndex(), state.columnIndex(), state.selection(), state.modalOpen(),
-                state.filter(), state.searching(), state.loadConfirmed(), logical);
+                state.filter(), state.searching(), state.loadConfirmed(), logical, state.scrollTop());
     }
 
     private static boolean needsConfirmation(ParquetModel model, ScreenState.DictionaryView state) {

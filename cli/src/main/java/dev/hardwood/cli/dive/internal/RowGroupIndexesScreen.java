@@ -69,31 +69,27 @@ public final class RowGroupIndexesScreen {
         List<Entry> entries = entries(model.rowGroup(state.rowGroupIndex()));
         int count = entries.size();
         if (Keys.isStepUp(event)) {
-            stack.replaceTop(new ScreenState.RowGroupIndexes(
-                    state.rowGroupIndex(), Math.max(0, state.selection() - 1)));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - 1)));
             return true;
         }
         if (Keys.isStepDown(event)) {
-            stack.replaceTop(new ScreenState.RowGroupIndexes(
-                    state.rowGroupIndex(), Math.min(count - 1, state.selection() + 1)));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + 1)));
             return true;
         }
         if (Keys.isPageDown(event) && count > 0) {
-            stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(),
-                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + Keys.viewportStride())));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
-            stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(),
-                    Math.max(0, state.selection() - Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - Keys.viewportStride())));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
-            stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(), 0));
+            stack.replaceTop(moved(state, 0));
             return true;
         }
         if (Keys.isJumpBottom(event) && count > 0) {
-            stack.replaceTop(new ScreenState.RowGroupIndexes(state.rowGroupIndex(), count - 1));
+            stack.replaceTop(moved(state, count - 1));
             return true;
         }
         if (event.isConfirm() && count > 0) {
@@ -130,7 +126,8 @@ public final class RowGroupIndexesScreen {
             return;
         }
         // Build Row objects only for the visible window — see RowWindow.
-        RowWindow window = RowWindow.bottomPinned(state.selection(), entries.size(), area.height() - 3);
+        RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
+                entries.size(), area.height() - 3);
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             Entry e = entries.get(i);
@@ -177,6 +174,11 @@ public final class RowGroupIndexesScreen {
                 .add(count > 0, "[Enter] open")
                 .add(true, "[Esc] back")
                 .build();
+    }
+
+    private static ScreenState.RowGroupIndexes moved(ScreenState.RowGroupIndexes state, int newSelection) {
+        int newTop = RowWindow.adjustTop(state.scrollTop(), newSelection, Keys.viewportStride());
+        return new ScreenState.RowGroupIndexes(state.rowGroupIndex(), newSelection, newTop);
     }
 
     private static List<Entry> entries(RowGroup rg) {

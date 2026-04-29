@@ -14,11 +14,12 @@ package dev.hardwood.cli.dive.internal;
 /// dictionaries with hundreds of thousands of entries, page lists with
 /// thousands of pages, or wide-schema files.
 ///
-/// The window is bottom-pinned on the selection: when the cursor sits at or
-/// past the bottom of the viewport, the window scrolls so the cursor stays
-/// on the last row. This mirrors what `TableState.scrollToSelected` produces
-/// when the state is constructed fresh each frame, so swapping in the slice
-/// gives the same on-screen result.
+/// Scrolling is direction-aware via a persisted `scrollTop` (the absolute row
+/// index of the first visible row): step / page navigation only adjusts
+/// `scrollTop` enough to keep `selection` in view. So a `PgUp` lands the
+/// cursor at the top of the new viewport, a `PgDn` past the bottom lands it
+/// at the bottom, and motion that stays inside the existing viewport leaves
+/// `scrollTop` alone (the cursor moves, the rows do not).
 ///
 /// `selectionInWindow` is the selection's row index relative to the slice
 /// (i.e. `selection - start`), suitable for `TableState.select(...)` after
@@ -33,18 +34,48 @@ public record RowWindow(int start, int end, int selectionInWindow) {
         return start >= end;
     }
 
-    /// Compute the visible window for a list of `total` rows, bottom-pinned
-    /// on `selection`, given the viewport's row capacity. `viewport` may be
-    /// non-positive (very narrow terminals): callers get a single-row
-    /// window in that case so the table still draws the cursor.
-    public static RowWindow bottomPinned(int selection, int total, int viewport) {
+    /// Compute the visible window for a list of `total` rows, given the
+    /// caller's current `scrollTop` and `selection`. The window starts at
+    /// `scrollTop` clamped so `selection` is visible — if the caller fed in a
+    /// stale `scrollTop` (e.g. the row count shrank, or `selection` jumped),
+    /// the window slides to the closest position that keeps `selection` in
+    /// view. `viewport` may be non-positive (very narrow terminals): callers
+    /// get a single-row window in that case so the table still draws the
+    /// cursor.
+    public static RowWindow from(int scrollTop, int selection, int total, int viewport) {
         if (total <= 0) {
             return new RowWindow(0, 0, 0);
         }
         int v = Math.max(1, viewport);
         int sel = Math.min(Math.max(0, selection), total - 1);
-        int start = sel >= v ? sel - v + 1 : 0;
-        int end = Math.min(total, start + v);
-        return new RowWindow(start, end, sel - start);
+        int top = Math.max(0, Math.min(scrollTop, Math.max(0, total - 1)));
+        if (sel < top) {
+            top = sel;
+        }
+        else if (sel >= top + v) {
+            top = sel - v + 1;
+        }
+        if (top + v > total) {
+            top = Math.max(0, total - v);
+        }
+        int end = Math.min(total, top + v);
+        return new RowWindow(top, end, sel - top);
+    }
+
+    /// Update a stored `scrollTop` so that `selection` is visible inside a
+    /// window of `viewport` rows, scrolling as little as possible. Callers
+    /// thread the result through their state record so the next frame's
+    /// [#from] keeps the same viewport when the selection stays in range.
+    public static int adjustTop(int prevTop, int selection, int viewport) {
+        int v = Math.max(1, viewport);
+        int sel = Math.max(0, selection);
+        int top = Math.max(0, prevTop);
+        if (sel < top) {
+            return sel;
+        }
+        if (sel >= top + v) {
+            return Math.max(0, sel - v + 1);
+        }
+        return top;
     }
 }

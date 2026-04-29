@@ -67,59 +67,57 @@ public final class PagesScreen {
                 && !event.hasCtrl() && !event.hasAlt() && onDataPage) {
             stack.replaceTop(new ScreenState.Pages(
                     state.rowGroupIndex(), state.columnIndex(),
-                    state.selection(), state.modalOpen(), !logical));
+                    state.selection(), state.modalOpen(), !logical, state.scrollTop()));
             return true;
         }
         if (state.modalOpen()) {
             if (event.isCancel() || event.isConfirm()) {
                 stack.replaceTop(new ScreenState.Pages(
-                        state.rowGroupIndex(), state.columnIndex(), state.selection(), false, logical));
+                        state.rowGroupIndex(), state.columnIndex(), state.selection(), false, logical,
+                        state.scrollTop()));
                 return true;
             }
             return false;
         }
         if (Keys.isStepUp(event)) {
-            stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.max(0, state.selection() - 1), false, logical));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - 1), logical));
             return true;
         }
         if (Keys.isStepDown(event)) {
-            stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.min(headers.size() - 1, state.selection() + 1), false, logical));
+            stack.replaceTop(moved(state, Math.min(headers.size() - 1, state.selection() + 1), logical));
             return true;
         }
         if (Keys.isPageDown(event) && !headers.isEmpty()) {
-            stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.min(headers.size() - 1, state.selection() + Keys.viewportStride()),
-                    false, logical));
+            stack.replaceTop(moved(state,
+                    Math.min(headers.size() - 1, state.selection() + Keys.viewportStride()), logical));
             return true;
         }
         if (Keys.isPageUp(event) && !headers.isEmpty()) {
-            stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(),
-                    Math.max(0, state.selection() - Keys.viewportStride()),
-                    false, logical));
+            stack.replaceTop(moved(state,
+                    Math.max(0, state.selection() - Keys.viewportStride()), logical));
             return true;
         }
         if (Keys.isJumpTop(event) && !headers.isEmpty()) {
-            stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(), 0, false, logical));
+            stack.replaceTop(moved(state, 0, logical));
             return true;
         }
         if (Keys.isJumpBottom(event) && !headers.isEmpty()) {
-            stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(), headers.size() - 1, false, logical));
+            stack.replaceTop(moved(state, headers.size() - 1, logical));
             return true;
         }
         if (event.isConfirm() && !headers.isEmpty()) {
             stack.replaceTop(new ScreenState.Pages(
-                    state.rowGroupIndex(), state.columnIndex(), state.selection(), true, logical));
+                    state.rowGroupIndex(), state.columnIndex(), state.selection(), true, logical,
+                    state.scrollTop()));
             return true;
         }
         return false;
+    }
+
+    private static ScreenState.Pages moved(ScreenState.Pages state, int newSelection, boolean logical) {
+        int newTop = RowWindow.adjustTop(state.scrollTop(), newSelection, Keys.viewportStride());
+        return new ScreenState.Pages(state.rowGroupIndex(), state.columnIndex(), newSelection,
+                false, logical, newTop);
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.Pages state) {
@@ -135,7 +133,8 @@ public final class PagesScreen {
         boolean hasAnyStats = columnIndex != null || headers.stream()
                 .anyMatch(h -> h.type() != PageHeader.PageType.DICTIONARY_PAGE && inlineStats(h) != null);
         // Build Row objects only for the visible window — see RowWindow.
-        RowWindow window = RowWindow.bottomPinned(state.selection(), headers.size(), area.height() - 3);
+        RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
+                headers.size(), area.height() - 3);
         // Per-data-page stats are addressed by `dataPageIdx`, which advances
         // only on non-dictionary pages. Recover its value at window.start()
         // by counting non-dict pages in the skipped prefix.

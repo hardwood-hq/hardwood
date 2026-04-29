@@ -414,6 +414,57 @@ class DiveStateTest {
     }
 
     @Test
+    void dictionaryPageUpLandsCursorAtTopOfNewViewport() {
+        // PgUp from a bottom-pinned position should reveal the previous
+        // viewport with the cursor at row 0, mirroring the data preview's
+        // PgUp behaviour. Concretely: with viewportStride=10 and the cursor
+        // at index 50, the visible window is [41, 50]; one PgUp moves
+        // selection to 40 and the visible window slides to [40, 49] —
+        // selection - scrollTop = 0, so the cursor lands at the top.
+        dev.hardwood.cli.dive.internal.Keys.observeViewport(10);
+        // Find a dictionary column with at least 60 entries so we can scroll.
+        for (int rg = 0; rg < model.rowGroupCount(); rg++) {
+            for (int c = 0; c < model.rowGroup(rg).columns().size(); c++) {
+                if (model.chunk(rg, c).metaData().dictionaryPageOffset() == null) {
+                    continue;
+                }
+                NavigationStack stack = rooted(new ScreenState.DictionaryView(
+                        rg, c, 50, false, "", false, true, true, 41));
+
+                DictionaryScreen.handle(key(KeyCode.PAGE_UP), model, stack);
+
+                ScreenState.DictionaryView top = (ScreenState.DictionaryView) stack.top();
+                assertThat(top.selection()).isEqualTo(40);
+                assertThat(top.scrollTop()).isEqualTo(40);
+                return;
+            }
+        }
+    }
+
+    @Test
+    void dictionaryStepUpInsideViewportLeavesScrollAlone() {
+        // A single up-arrow that stays inside the current viewport should
+        // not slide the visible rows: `scrollTop` is preserved.
+        dev.hardwood.cli.dive.internal.Keys.observeViewport(10);
+        for (int rg = 0; rg < model.rowGroupCount(); rg++) {
+            for (int c = 0; c < model.rowGroup(rg).columns().size(); c++) {
+                if (model.chunk(rg, c).metaData().dictionaryPageOffset() == null) {
+                    continue;
+                }
+                NavigationStack stack = rooted(new ScreenState.DictionaryView(
+                        rg, c, 45, false, "", false, true, true, 41));
+
+                DictionaryScreen.handle(key(KeyCode.UP), model, stack);
+
+                ScreenState.DictionaryView top = (ScreenState.DictionaryView) stack.top();
+                assertThat(top.selection()).isEqualTo(44);
+                assertThat(top.scrollTop()).isEqualTo(41);
+                return;
+            }
+        }
+    }
+
+    @Test
     void dataPreviewGReloadsAtRowZeroShiftGAtEnd() {
         int pageSize = 10;
         ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);

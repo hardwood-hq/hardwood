@@ -49,8 +49,15 @@ public sealed interface ScreenState {
         }
     }
 
-    /// Row groups in the file, one row per group.
-    record RowGroups(int selection) implements ScreenState {}
+    /// Row groups in the file, one row per group. `scrollTop` is the absolute
+    /// row index of the first visible row, threaded across frames so list
+    /// navigation scrolls minimally and direction-aware (PgUp lands the
+    /// cursor at the top of the new viewport, etc.).
+    record RowGroups(int selection, int scrollTop) implements ScreenState {
+        public RowGroups(int selection) {
+            this(selection, 0);
+        }
+    }
 
     /// Two-pane overview of one row group: facts (left) + drill menu (right)
     /// leading to Column chunks and Indexes-for-this-RG.
@@ -61,10 +68,18 @@ public sealed interface ScreenState {
 
     /// Per-chunk index location table for one row group: Column |
     /// CI offset | CI bytes | OI offset | OI bytes.
-    record RowGroupIndexes(int rowGroupIndex, int selection) implements ScreenState {}
+    record RowGroupIndexes(int rowGroupIndex, int selection, int scrollTop) implements ScreenState {
+        public RowGroupIndexes(int rowGroupIndex, int selection) {
+            this(rowGroupIndex, selection, 0);
+        }
+    }
 
     /// Column chunks within one row group.
-    record ColumnChunks(int rowGroupIndex, int selection) implements ScreenState {}
+    record ColumnChunks(int rowGroupIndex, int selection, int scrollTop) implements ScreenState {
+        public ColumnChunks(int rowGroupIndex, int selection) {
+            this(rowGroupIndex, selection, 0);
+        }
+    }
 
     /// All metadata for one `(rowGroup, column)` chunk. `focus` chooses between
     /// the facts pane and the drill-into menu. `logicalTypes` controls whether
@@ -80,8 +95,12 @@ public sealed interface ScreenState {
     /// `logicalTypes` controls whether stats columns render via logical type
     /// (default) or raw physical-type form — toggled with `t`.
     record Pages(int rowGroupIndex, int columnIndex, int selection, boolean modalOpen,
-                 boolean logicalTypes)
+                 boolean logicalTypes, int scrollTop)
             implements ScreenState {
+        public Pages(int rowGroupIndex, int columnIndex, int selection, boolean modalOpen,
+                     boolean logicalTypes) {
+            this(rowGroupIndex, columnIndex, selection, modalOpen, logicalTypes, 0);
+        }
     }
 
     /// Per-page statistics view for one column chunk. `filter` is the live
@@ -98,11 +117,21 @@ public sealed interface ScreenState {
             String filter,
             boolean searching,
             boolean logicalTypes,
-            boolean modalOpen) implements ScreenState {
+            boolean modalOpen,
+            int scrollTop) implements ScreenState {
+        public ColumnIndexView(int rowGroupIndex, int columnIndex, int selection,
+                                String filter, boolean searching, boolean logicalTypes,
+                                boolean modalOpen) {
+            this(rowGroupIndex, columnIndex, selection, filter, searching, logicalTypes, modalOpen, 0);
+        }
     }
 
     /// Page-location view for one column chunk.
-    record OffsetIndexView(int rowGroupIndex, int columnIndex, int selection) implements ScreenState {
+    record OffsetIndexView(int rowGroupIndex, int columnIndex, int selection, int scrollTop)
+            implements ScreenState {
+        public OffsetIndexView(int rowGroupIndex, int columnIndex, int selection) {
+            this(rowGroupIndex, columnIndex, selection, 0);
+        }
     }
 
     /// Raw footer layout: file size, footer offset/length, aggregate index bytes.
@@ -122,16 +151,24 @@ public sealed interface ScreenState {
     /// of side data — Column index, Offset index, or Dictionary. Chunks
     /// without the relevant data are filtered out. Enter drills into the
     /// matching per-chunk screen.
-    record FileIndexes(Kind kind, int selection) implements ScreenState {
+    record FileIndexes(Kind kind, int selection, int scrollTop) implements ScreenState {
         public enum Kind { COLUMN, OFFSET, DICTIONARY }
+
+        public FileIndexes(Kind kind, int selection) {
+            this(kind, selection, 0);
+        }
     }
 
     /// Cross-row-group view of one leaf column. `selection` drills into
     /// [ColumnChunkDetail] for the corresponding `(rowGroup, column)`.
     /// `logicalTypes` controls whether Min / Max render via logical type
     /// (default) or raw physical-type form — toggled with `t`.
-    record ColumnAcrossRowGroups(int columnIndex, int selection, boolean logicalTypes)
+    record ColumnAcrossRowGroups(int columnIndex, int selection, boolean logicalTypes,
+                                  int scrollTop)
             implements ScreenState {
+        public ColumnAcrossRowGroups(int columnIndex, int selection, boolean logicalTypes) {
+            this(columnIndex, selection, logicalTypes, 0);
+        }
     }
 
     /// Dictionary entries for one column chunk. `selection` is the position
@@ -148,7 +185,14 @@ public sealed interface ScreenState {
             String filter,
             boolean searching,
             boolean loadConfirmed,
-            boolean logicalTypes) implements ScreenState {
+            boolean logicalTypes,
+            int scrollTop) implements ScreenState {
+        public DictionaryView(int rowGroupIndex, int columnIndex, int selection,
+                              boolean modalOpen, String filter, boolean searching,
+                              boolean loadConfirmed, boolean logicalTypes) {
+            this(rowGroupIndex, columnIndex, selection, modalOpen, filter, searching,
+                    loadConfirmed, logicalTypes, 0);
+        }
     }
 
     /// Projected rows. `firstRow` is the 0-based absolute index of the first row

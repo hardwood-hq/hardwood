@@ -40,29 +40,27 @@ public final class ColumnChunksScreen {
         ScreenState.ColumnChunks state = (ScreenState.ColumnChunks) stack.top();
         int count = model.rowGroup(state.rowGroupIndex()).columns().size();
         if (Keys.isStepUp(event)) {
-            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), Math.max(0, state.selection() - 1)));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - 1)));
             return true;
         }
         if (Keys.isStepDown(event)) {
-            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), Math.min(count - 1, state.selection() + 1)));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + 1)));
             return true;
         }
         if (Keys.isPageDown(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(),
-                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + Keys.viewportStride())));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(),
-                    Math.max(0, state.selection() - Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - Keys.viewportStride())));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), 0));
+            stack.replaceTop(moved(state, 0));
             return true;
         }
         if (Keys.isJumpBottom(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnChunks(state.rowGroupIndex(), count - 1));
+            stack.replaceTop(moved(state, count - 1));
             return true;
         }
         if (event.isConfirm() && count > 0) {
@@ -73,11 +71,17 @@ public final class ColumnChunksScreen {
         return false;
     }
 
+    private static ScreenState.ColumnChunks moved(ScreenState.ColumnChunks state, int newSelection) {
+        int newTop = RowWindow.adjustTop(state.scrollTop(), newSelection, Keys.viewportStride());
+        return new ScreenState.ColumnChunks(state.rowGroupIndex(), newSelection, newTop);
+    }
+
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnChunks state) {
         Keys.observeViewport(area.height() - 3);
         RowGroup rg = model.rowGroup(state.rowGroupIndex());
         // Build Row objects only for the visible window — see RowWindow.
-        RowWindow window = RowWindow.bottomPinned(state.selection(), rg.columns().size(), area.height() - 3);
+        RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
+                rg.columns().size(), area.height() - 3);
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             ColumnChunk cc = rg.columns().get(i);

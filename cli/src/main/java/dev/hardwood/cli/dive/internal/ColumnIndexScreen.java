@@ -61,7 +61,8 @@ public final class ColumnIndexScreen {
                 && !event.hasCtrl() && !event.hasAlt()) {
             stack.replaceTop(new ScreenState.ColumnIndexView(
                     state.rowGroupIndex(), state.columnIndex(), state.selection(),
-                    state.filter(), false, !state.logicalTypes(), state.modalOpen()));
+                    state.filter(), false, !state.logicalTypes(), state.modalOpen(),
+                    state.scrollTop()));
             return true;
         }
         if (state.modalOpen()) {
@@ -184,7 +185,8 @@ public final class ColumnIndexScreen {
         renderSearchBar(buffer, split.get(1), state, ci.getPageCount(), filtered.size());
 
         // Build Row objects only for the visible window — see RowWindow.
-        RowWindow window = RowWindow.bottomPinned(state.selection(), filtered.size(), area.height() - 5);
+        RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
+                filtered.size(), area.height() - 5);
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             int idx = filtered.get(i);
@@ -340,14 +342,17 @@ public final class ColumnIndexScreen {
 
     private static ScreenState.ColumnIndexView with(ScreenState.ColumnIndexView state,
                                                      int selection, String filter, boolean searching) {
+        int newTop = selection == state.selection()
+                ? state.scrollTop()
+                : RowWindow.adjustTop(state.scrollTop(), selection, Keys.viewportStride());
         return new ScreenState.ColumnIndexView(
                 state.rowGroupIndex(), state.columnIndex(), selection, filter, searching,
-                state.logicalTypes(), state.modalOpen());
+                state.logicalTypes(), state.modalOpen(), newTop);
     }
 
     private static ScreenState.ColumnIndexView withModal(ScreenState.ColumnIndexView s, boolean modal) {
         return new ScreenState.ColumnIndexView(s.rowGroupIndex(), s.columnIndex(), s.selection(),
-                s.filter(), s.searching(), s.logicalTypes(), modal);
+                s.filter(), s.searching(), s.logicalTypes(), modal, s.scrollTop());
     }
 
     /// tamboui's Table clips silently at column width. Cap the formatted

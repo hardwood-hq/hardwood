@@ -44,33 +44,29 @@ public final class ColumnAcrossRowGroupsScreen {
         int count = model.rowGroupCount();
         boolean logical = state.logicalTypes();
         if (Keys.isStepUp(event)) {
-            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
-                    state.columnIndex(), Math.max(0, state.selection() - 1), logical));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - 1), logical));
             return true;
         }
         if (Keys.isStepDown(event)) {
-            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
-                    state.columnIndex(), Math.min(count - 1, state.selection() + 1), logical));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + 1), logical));
             return true;
         }
         if (Keys.isPageDown(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
-                    state.columnIndex(),
+            stack.replaceTop(moved(state,
                     Math.min(count - 1, state.selection() + Keys.viewportStride()), logical));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
-                    state.columnIndex(),
+            stack.replaceTop(moved(state,
                     Math.max(0, state.selection() - Keys.viewportStride()), logical));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), 0, logical));
+            stack.replaceTop(moved(state, 0, logical));
             return true;
         }
         if (Keys.isJumpBottom(event) && count > 0) {
-            stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), count - 1, logical));
+            stack.replaceTop(moved(state, count - 1, logical));
             return true;
         }
         if (event.isConfirm() && count > 0) {
@@ -82,17 +78,24 @@ public final class ColumnAcrossRowGroupsScreen {
         if (event.code() == dev.tamboui.tui.event.KeyCode.CHAR && event.character() == 't'
                 && !event.hasCtrl() && !event.hasAlt()) {
             stack.replaceTop(new ScreenState.ColumnAcrossRowGroups(
-                    state.columnIndex(), state.selection(), !logical));
+                    state.columnIndex(), state.selection(), !logical, state.scrollTop()));
             return true;
         }
         return false;
+    }
+
+    private static ScreenState.ColumnAcrossRowGroups moved(ScreenState.ColumnAcrossRowGroups state,
+                                                            int newSelection, boolean logical) {
+        int newTop = RowWindow.adjustTop(state.scrollTop(), newSelection, Keys.viewportStride());
+        return new ScreenState.ColumnAcrossRowGroups(state.columnIndex(), newSelection, logical, newTop);
     }
 
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.ColumnAcrossRowGroups state) {
         Keys.observeViewport(area.height() - 3);
         ColumnSchema col = model.schema().getColumn(state.columnIndex());
         // Build Row objects only for the visible window — see RowWindow.
-        RowWindow window = RowWindow.bottomPinned(state.selection(), model.rowGroupCount(), area.height() - 3);
+        RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
+                model.rowGroupCount(), area.height() - 3);
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             RowGroup rg = model.rowGroup(i);

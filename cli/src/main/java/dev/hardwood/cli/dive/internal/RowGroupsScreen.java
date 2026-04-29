@@ -40,29 +40,27 @@ public final class RowGroupsScreen {
         ScreenState.RowGroups state = (ScreenState.RowGroups) stack.top();
         int count = model.rowGroupCount();
         if (Keys.isStepUp(event)) {
-            stack.replaceTop(new ScreenState.RowGroups(Math.max(0, state.selection() - 1)));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - 1)));
             return true;
         }
         if (Keys.isStepDown(event)) {
-            stack.replaceTop(new ScreenState.RowGroups(Math.min(count - 1, state.selection() + 1)));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + 1)));
             return true;
         }
         if (Keys.isPageDown(event) && count > 0) {
-            stack.replaceTop(new ScreenState.RowGroups(
-                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + Keys.viewportStride())));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
-            stack.replaceTop(new ScreenState.RowGroups(
-                    Math.max(0, state.selection() - Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - Keys.viewportStride())));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
-            stack.replaceTop(new ScreenState.RowGroups(0));
+            stack.replaceTop(moved(state, 0));
             return true;
         }
         if (Keys.isJumpBottom(event) && count > 0) {
-            stack.replaceTop(new ScreenState.RowGroups(count - 1));
+            stack.replaceTop(moved(state, count - 1));
             return true;
         }
         if (event.isConfirm() && count > 0) {
@@ -73,10 +71,16 @@ public final class RowGroupsScreen {
         return false;
     }
 
+    private static ScreenState.RowGroups moved(ScreenState.RowGroups state, int newSelection) {
+        int newTop = RowWindow.adjustTop(state.scrollTop(), newSelection, Keys.viewportStride());
+        return new ScreenState.RowGroups(newSelection, newTop);
+    }
+
     public static void render(Buffer buffer, Rect area, ParquetModel model, ScreenState.RowGroups state) {
         Keys.observeViewport(area.height() - 3);
         // Build Row objects only for the visible window — see RowWindow.
-        RowWindow window = RowWindow.bottomPinned(state.selection(), model.rowGroupCount(), area.height() - 3);
+        RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
+                model.rowGroupCount(), area.height() - 3);
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             RowGroup rg = model.rowGroup(i);

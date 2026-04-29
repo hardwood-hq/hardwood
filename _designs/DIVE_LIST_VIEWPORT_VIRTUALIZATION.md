@@ -14,20 +14,22 @@ smoothly as a small file does.
 ## Behaviour
 
 Each list screen's `render` constructs `Row` objects only for the rows
-the table will actually paint, derived from the current selection and
-the available viewport height. The visible window is bottom-pinned on
-the selection, matching what `TableState.scrollToSelected` would
-produce when the state is constructed fresh each frame:
+the table will actually paint, derived from the current selection, a
+persisted `scrollTop` (the absolute row index of the first visible row),
+and the available viewport height:
 
 ```
 viewport = max(1, area.height() - <chrome>)   // chrome varies per screen
 sel      = clamp(selection, 0, total - 1)
-start    = sel >= viewport ? sel - viewport + 1 : 0
-end      = min(total, start + viewport)
+top      = clamp(scrollTop, 0, max(0, total - 1))
+if sel < top:                top = sel                        // top-pin
+elif sel >= top + viewport:  top = sel - viewport + 1         // bottom-pin
+if top + viewport > total:   top = max(0, total - viewport)   // clamp tail
+end = min(total, top + viewport)
 ```
 
-The math lives in a shared helper, [`RowWindow.bottomPinned(selection,
-total, viewport)`](../cli/src/main/java/dev/hardwood/cli/dive/internal/RowWindow.java),
+The math lives in a shared helper, [`RowWindow.from(scrollTop,
+selection, total, viewport)`](../cli/src/main/java/dev/hardwood/cli/dive/internal/RowWindow.java),
 which returns the `[start, end)` range plus `selectionInWindow` (the
 slice-relative selection index). Each screen builds rows for that range
 only, then sets `TableState.select(window.selectionInWindow())` so the
@@ -35,9 +37,18 @@ table draws the cursor at the right row of the slice. The underlying
 widget keeps its existing rendering behaviour and never sees the rest
 of the collection.
 
-The user-visible behaviour is unchanged: range header
-(`Plurals.rangeOf`), search bar (where present), modal, and key bar
-all still operate against the full row count.
+Each screen's state record carries `scrollTop`, and a sibling helper
+[`RowWindow.adjustTop(prevTop, selection, viewport)`](../cli/src/main/java/dev/hardwood/cli/dive/internal/RowWindow.java)
+keeps it in sync on each navigation event: motion that stays inside the
+existing viewport leaves `scrollTop` alone, motion that runs off the top
+or bottom slides it just enough to keep `selection` visible. So a
+`PgUp` from a bottom-pinned position lands the cursor at the top of the
+new viewport (mirroring the data preview's per-page reload), `PgDn`
+past the bottom keeps it at the bottom, and step navigation moves the
+cursor within the visible rows without scrolling them.
+
+Range header (`Plurals.rangeOf`), search bar, modal, and key bar all
+still operate against the full row count.
 
 ## Affected screens
 

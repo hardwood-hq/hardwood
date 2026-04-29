@@ -50,31 +50,27 @@ public final class FileIndexesScreen {
         List<Entry> entries = entries(model, state.kind());
         int count = entries.size();
         if (Keys.isStepUp(event) && count > 0) {
-            stack.replaceTop(new ScreenState.FileIndexes(state.kind(),
-                    Math.max(0, state.selection() - 1)));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - 1)));
             return true;
         }
         if (Keys.isStepDown(event) && count > 0) {
-            stack.replaceTop(new ScreenState.FileIndexes(state.kind(),
-                    Math.min(count - 1, state.selection() + 1)));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + 1)));
             return true;
         }
         if (Keys.isPageDown(event) && count > 0) {
-            stack.replaceTop(new ScreenState.FileIndexes(state.kind(),
-                    Math.min(count - 1, state.selection() + Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.min(count - 1, state.selection() + Keys.viewportStride())));
             return true;
         }
         if (Keys.isPageUp(event) && count > 0) {
-            stack.replaceTop(new ScreenState.FileIndexes(state.kind(),
-                    Math.max(0, state.selection() - Keys.viewportStride())));
+            stack.replaceTop(moved(state, Math.max(0, state.selection() - Keys.viewportStride())));
             return true;
         }
         if (Keys.isJumpTop(event) && count > 0) {
-            stack.replaceTop(new ScreenState.FileIndexes(state.kind(), 0));
+            stack.replaceTop(moved(state, 0));
             return true;
         }
         if (Keys.isJumpBottom(event) && count > 0) {
-            stack.replaceTop(new ScreenState.FileIndexes(state.kind(), count - 1));
+            stack.replaceTop(moved(state, count - 1));
             return true;
         }
         if (event.isConfirm() && count > 0) {
@@ -121,7 +117,8 @@ public final class FileIndexesScreen {
             return;
         }
         // Build Row objects only for the visible window — see RowWindow.
-        RowWindow window = RowWindow.bottomPinned(state.selection(), entries.size(), area.height() - 3);
+        RowWindow window = RowWindow.from(state.scrollTop(), state.selection(),
+                entries.size(), area.height() - 3);
         List<Row> rows = new ArrayList<>(window.size());
         for (int i = window.start(); i < window.end(); i++) {
             Entry e = entries.get(i);
@@ -207,6 +204,11 @@ public final class FileIndexesScreen {
                 .add(count > 0, "[Enter] open")
                 .add(true, "[Esc] back")
                 .build();
+    }
+
+    private static ScreenState.FileIndexes moved(ScreenState.FileIndexes state, int newSelection) {
+        int newTop = RowWindow.adjustTop(state.scrollTop(), newSelection, Keys.viewportStride());
+        return new ScreenState.FileIndexes(state.kind(), newSelection, newTop);
     }
 
     private static List<Entry> entries(ParquetModel model, ScreenState.FileIndexes.Kind kind) {
