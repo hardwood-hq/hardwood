@@ -11,6 +11,7 @@ import java.util.ArrayList;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
+import java.util.Locale;
 import java.util.Set;
 
 import dev.hardwood.cli.dive.NavigationStack;
@@ -336,7 +337,7 @@ public final class SchemaScreen {
     }
 
     private static List<Row> matchingLeaves(FileSchema schema, String filter) {
-        String needle = filter.toLowerCase();
+        String needle = filter.toLowerCase(Locale.ROOT);
         List<Row> all = new ArrayList<>();
         SchemaNode.GroupNode root = schema.getRootNode();
         for (SchemaNode child : root.children()) {
@@ -344,7 +345,7 @@ public final class SchemaScreen {
         }
         List<Row> matched = new ArrayList<>();
         for (Row r : all) {
-            if (r.path().toLowerCase().contains(needle)) {
+            if (r.path().toLowerCase(Locale.ROOT).contains(needle)) {
                 matched.add(r);
             }
         }

@@ -14,6 +14,7 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 
@@ -130,7 +131,7 @@ public final class Aws4Signer {
     private static TreeMap<String, String> lowercaseSorted(Map<String, String> headers) {
         TreeMap<String, String> sorted = new TreeMap<>();
         for (Map.Entry<String, String> entry : headers.entrySet()) {
-            sorted.put(entry.getKey().toLowerCase(), entry.getValue());
+            sorted.put(entry.getKey().toLowerCase(Locale.ROOT), entry.getValue());
         }
         return sorted;
     }

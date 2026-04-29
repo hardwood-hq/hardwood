@@ -9,6 +9,7 @@ package dev.hardwood.cli.dive.internal;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
@@ -285,9 +286,9 @@ public final class DictionaryScreen {
             return cachedFiltered;
         }
         List<Integer> out = new ArrayList<>();
-        String needle = filter.toLowerCase();
+        String needle = filter.toLowerCase(Locale.ROOT);
         for (int i = 0; i < dict.size(); i++) {
-            if (needle.isEmpty() || fullValue(dict, i, col, useLogicalType).toLowerCase().contains(needle)) {
+            if (needle.isEmpty() || fullValue(dict, i, col, useLogicalType).toLowerCase(Locale.ROOT).contains(needle)) {
                 out.add(i);
             }
         }

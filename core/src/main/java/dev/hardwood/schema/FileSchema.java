@@ -9,6 +9,7 @@ package dev.hardwood.schema;
 
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Locale;
 
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.ConvertedType;
@@ -322,7 +323,7 @@ public class FileSchema {
         switch (node) {
             case SchemaNode.GroupNode group -> {
                 sb.append(prefix);
-                sb.append(group.repetitionType().name().toLowerCase());
+                sb.append(group.repetitionType().name().toLowerCase(Locale.ROOT));
                 sb.append(" group ").append(group.name());
                 if (group.logicalType() != null) {
                     sb.append(" (").append(group.logicalType()).append(")");
@@ -338,8 +339,8 @@ public class FileSchema {
             }
             case SchemaNode.PrimitiveNode prim -> {
                 sb.append(prefix);
-                sb.append(prim.repetitionType().name().toLowerCase());
-                sb.append(" ").append(prim.type().name().toLowerCase());
+                sb.append(prim.repetitionType().name().toLowerCase(Locale.ROOT));
+                sb.append(" ").append(prim.type().name().toLowerCase(Locale.ROOT));
                 sb.append(" ").append(prim.name());
                 if (prim.logicalType() != null) {
                     sb.append(" (").append(prim.logicalType()).append(")");
