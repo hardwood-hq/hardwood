@@ -11,6 +11,7 @@ import java.io.Closeable;
 import java.io.IOException;
 import java.lang.reflect.Method;
 import java.net.URI;
+import java.util.Locale;
 import java.util.Set;
 
 import org.apache.hadoop.conf.Configuration;
@@ -79,7 +80,7 @@ public final class HadoopInputFile implements InputFile {
 
     private static boolean isS3(URI uri) {
         String scheme = uri.getScheme();
-        return scheme != null && S3_SCHEMES.contains(scheme.toLowerCase());
+        return scheme != null && S3_SCHEMES.contains(scheme.toLowerCase(Locale.ROOT));
     }
 
     private static dev.hardwood.InputFile createS3InputFile(URI uri, Configuration conf) {

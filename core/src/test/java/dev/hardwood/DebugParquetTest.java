@@ -11,6 +11,7 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
+import java.util.Locale;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ParquetFileReader;
@@ -122,18 +123,18 @@ public class DebugParquetTest {
         }
         // Add parameters for parameterized types
         if (logicalType instanceof LogicalType.TimestampType ts) {
-            return name.toUpperCase() + "(" + ts.unit() + ")";
+            return name.toUpperCase(Locale.ROOT) + "(" + ts.unit() + ")";
         }
         if (logicalType instanceof LogicalType.TimeType t) {
-            return name.toUpperCase() + "(" + t.unit() + ")";
+            return name.toUpperCase(Locale.ROOT) + "(" + t.unit() + ")";
         }
         if (logicalType instanceof LogicalType.DecimalType d) {
-            return name.toUpperCase() + "(" + d.precision() + "," + d.scale() + ")";
+            return name.toUpperCase(Locale.ROOT) + "(" + d.precision() + "," + d.scale() + ")";
         }
         if (logicalType instanceof LogicalType.IntType i) {
             return (i.isSigned() ? "INT" : "UINT") + "_" + i.bitWidth();
         }
-        return name.toUpperCase();
+        return name.toUpperCase(Locale.ROOT);
     }
 
     private static String padRight(String s, int width) {

@@ -15,10 +15,12 @@ import java.nio.file.Path;
 import java.time.ZonedDateTime;
 import java.time.format.DateTimeFormatter;
 import java.util.LinkedHashMap;
+import java.util.Locale;
 import java.util.Map;
 import java.util.TreeMap;
 import java.util.stream.Stream;
 
+import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
@@ -82,6 +84,39 @@ class Aws4SignerTest {
         assertThat(actual).isEqualTo(expected);
     }
 
+    /// Regression test for the SigV4 canonical-header lowercasing under a Turkish
+    /// JVM default locale: without `Locale.ROOT`, `I` lowercases to dotless `ı`,
+    /// producing a canonical request — and therefore a signature — that AWS will
+    /// reject. Both signings must produce byte-identical authorization headers.
+    @Test
+    void signatureIsIndependentOfDefaultLocale() {
+        Map<String, String> headers = new LinkedHashMap<>();
+        headers.put("Host", "example.amazonaws.com");
+        headers.put("X-Custom-ID", "value");
+        URI uri = URI.create("https://example.amazonaws.com/");
+        ZonedDateTime now = ZonedDateTime.parse(
+                "2024-01-01T00:00:00Z", DateTimeFormatter.ISO_DATE_TIME);
+
+        Locale original = Locale.getDefault();
+        try {
+            Locale.setDefault(Locale.ROOT);
+            Aws4Signer.SignResult rootResult = Aws4Signer.sign(
+                    "GET", uri, headers, Aws4Signer.sha256Empty(),
+                    "AKID", "SECRET", null, "us-east-1", "s3", now);
+
+            Locale.setDefault(Locale.forLanguageTag("tr-TR"));
+            Aws4Signer.SignResult turkishResult = Aws4Signer.sign(
+                    "GET", uri, headers, Aws4Signer.sha256Empty(),
+                    "AKID", "SECRET", null, "us-east-1", "s3", now);
+
+            assertThat(turkishResult.authorizationHeader())
+                    .isEqualTo(rootResult.authorizationHeader());
+        }
+        finally {
+            Locale.setDefault(original);
+        }
+    }
+
     // ==================== Test case parser ====================
 
     record TestCase(
@@ -114,7 +149,7 @@ class Aws4SignerTest {
         TreeMap<String, String> buildCanonicalHeaders() {
             TreeMap<String, String> headers = new TreeMap<>();
             for (Map.Entry<String, String> entry : requestHeaders.entrySet()) {
-                headers.put(entry.getKey().toLowerCase(), entry.getValue());
+                headers.put(entry.getKey().toLowerCase(Locale.ROOT), entry.getValue());
             }
             headers.put("x-amz-date", timestamp);
             if (signBody) {
