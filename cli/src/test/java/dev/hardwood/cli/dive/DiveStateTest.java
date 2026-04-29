@@ -440,6 +440,48 @@ class DiveStateTest {
     }
 
     @Test
+    void dataPreviewPageDownOnLastPageMovesSelectionToLastRow() {
+        // On the last page, PgDn can't advance to a further page, but the
+        // selection should still snap to the actual last row of the dataset
+        // rather than be a no-op (issue #400 follow-up comment).
+        int pageSize = 10;
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
+        NavigationStack stack = rooted(initial);
+        long total = model.facts().totalRows();
+        long lastPageFirst = Math.max(0, total - pageSize);
+        while (((ScreenState.DataPreview) stack.top()).firstRow() < lastPageFirst) {
+            DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
+        }
+        assertThat(((ScreenState.DataPreview) stack.top()).selectedRow()).isZero();
+
+        DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack);
+
+        ScreenState.DataPreview atEnd = (ScreenState.DataPreview) stack.top();
+        assertThat(atEnd.firstRow()).isEqualTo(lastPageFirst);
+        assertThat(atEnd.selectedRow()).isEqualTo(atEnd.rows().size() - 1);
+        assertThat(atEnd.firstRow() + atEnd.selectedRow()).isEqualTo(total - 1);
+    }
+
+    @Test
+    void dataPreviewPageUpOnFirstPageMovesSelectionToFirstRow() {
+        // Symmetric: on the first page, PgUp can't load an earlier page, but
+        // the selection should snap to row 0 rather than be a no-op.
+        int pageSize = 10;
+        ScreenState.DataPreview initial = DataPreviewScreen.initialState(model, pageSize);
+        NavigationStack stack = rooted(initial);
+        DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack);
+        assertThat(((ScreenState.DataPreview) stack.top()).selectedRow()).isEqualTo(3);
+
+        DataPreviewScreen.handle(key(KeyCode.PAGE_UP), model, stack);
+
+        ScreenState.DataPreview atStart = (ScreenState.DataPreview) stack.top();
+        assertThat(atStart.firstRow()).isZero();
+        assertThat(atStart.selectedRow()).isZero();
+    }
+
+    @Test
     void dataPreviewShiftGFromLastPageMovesSelectionToLastRow() {
         // Reach the last page via PgDn (each PgDn resets selection to 0), so
         // that firstRow already equals lastPageFirst when G is pressed. Without

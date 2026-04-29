@@ -135,7 +135,14 @@ public final class DataPreviewScreen {
         if (Keys.isPageDown(event)) {
             long nextFirst = Math.min(total, state.firstRow() + state.pageSize());
             if (nextFirst >= total) {
-                return false;
+                // Already on the last page — snap the selection to the actual
+                // last row of the dataset instead of being a no-op.
+                int lastRow = Math.max(0, state.rows().size() - 1);
+                if (state.selectedRow() == lastRow) {
+                    return false;
+                }
+                stack.replaceTop(withSelectedRow(state, lastRow));
+                return true;
             }
             stack.replaceTop(loadPage(model, nextFirst, state.pageSize(), state.columnScroll(),
                     state.logicalTypes()));
@@ -144,7 +151,12 @@ public final class DataPreviewScreen {
         if (Keys.isPageUp(event)) {
             long prevFirst = Math.max(0, state.firstRow() - state.pageSize());
             if (prevFirst == state.firstRow()) {
-                return false;
+                // Already on the first page — snap the selection to row 0.
+                if (state.selectedRow() == 0) {
+                    return false;
+                }
+                stack.replaceTop(withSelectedRow(state, 0));
+                return true;
             }
             stack.replaceTop(loadPage(model, prevFirst, state.pageSize(), state.columnScroll(),
                     state.logicalTypes()));
