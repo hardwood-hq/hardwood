@@ -13,7 +13,7 @@
 
 The `hardwood` CLI lets you inspect and convert Parquet files from the command line — useful for exploring datasets, debugging file structure, and quick format conversions without writing Java code. It reads local files and S3 URIs, and ships as a GraalVM native binary with instant startup.
 
-Pre-built native binaries for Linux, macOS, and Windows are available from the [early-access release](https://github.com/hardwood-hq/hardwood/releases/tag/1.0-early-access).
+Pre-built native binaries for Linux, macOS, and Windows are available from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}).
 
 !!! note "macOS"
     The binary is not notarized. On first run, macOS Gatekeeper will block it. Remove the quarantine flag after extracting:
@@ -68,15 +68,13 @@ hardwood inspect dictionary -f data.parquet -c category --limit 0
 
 ## Interactive exploration (`dive`)
 
-`hardwood dive` launches a terminal UI for navigating a Parquet file's structure
-without re-invoking the CLI for each slice:
+`hardwood dive` launches a terminal UI for interactively navigating a Parquet file's structure:
 
 ```shell
 hardwood dive -f data.parquet
 ```
 
-From the Overview landing screen, drill into **Schema** or **Row groups**,
-then into column chunks and per-chunk metadata.
+<script src="https://asciinema.org/a/992284.js" id="asciicast-992284" async="true"></script>
 
 ### What you can do with it
 
@@ -140,8 +138,6 @@ Column-across-row-groups (from the Schema screen), Dictionary (with
 full-value modal on Enter and `/` inline search), and Data preview (row
 values via `RowReader`; `←/→` scrolls the visible column window,
 `PgDn/PgUp` flips pages).
-
-The `--rows N` flag sets the Data preview page size (default: 20).
 
 ### Layout
 

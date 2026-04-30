@@ -13,6 +13,8 @@
 
 Hardwood runs on Java 21 or newer; Java 25 is recommended for best performance.
 
+If you just want to inspect or convert Parquet files from the command line, grab a pre-built native binary for Linux, macOS, or Windows from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}); see the [CLI](cli.md) page for details.
+
 ## Using the BOM (Bill of Materials)
 
 The `hardwood-bom` manages versions for all Hardwood modules and their optional runtime dependencies.
@@ -26,7 +28,7 @@ Import it in your dependency management so you can declare Hardwood dependencies
         <dependency>
             <groupId>dev.hardwood</groupId>
             <artifactId>hardwood-bom</artifactId>
-            <version>1.0.0.Beta2</version>
+            <version>{{hardwood_version}}</version>
             <type>pom</type>
             <scope>import</scope>
         </dependency>
@@ -38,7 +40,7 @@ Import it in your dependency management so you can declare Hardwood dependencies
 
 ```groovy
 dependencies {
-    implementation platform('dev.hardwood:hardwood-bom:1.0.0.Beta2')
+    implementation platform('dev.hardwood:hardwood-bom:{{hardwood_version}}')
 }
 ```
 
@@ -61,14 +63,14 @@ If you prefer not to use the BOM, you can specify the version directly:
 <dependency>
     <groupId>dev.hardwood</groupId>
     <artifactId>hardwood-core</artifactId>
-    <version>1.0.0.Beta2</version>
+    <version>{{hardwood_version}}</version>
 </dependency>
 ```
 
 **Gradle:**
 
 ```groovy
-implementation 'dev.hardwood:hardwood-core:1.0.0.Beta2'
+implementation 'dev.hardwood:hardwood-core:{{hardwood_version}}'
 ```
 
 ## Logging
