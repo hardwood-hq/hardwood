@@ -68,15 +68,13 @@ hardwood inspect dictionary -f data.parquet -c category --limit 0
 
 ## Interactive exploration (`dive`)
 
-`hardwood dive` launches a terminal UI for navigating a Parquet file's structure
-without re-invoking the CLI for each slice:
+`hardwood dive` launches a terminal UI for interactively navigating a Parquet file's structure:
 
 ```shell
 hardwood dive -f data.parquet
 ```
 
-From the Overview landing screen, drill into **Schema** or **Row groups**,
-then into column chunks and per-chunk metadata.
+<script src="https://asciinema.org/a/992284.js" id="asciicast-992284" async="true"></script>
 
 ### What you can do with it
 
@@ -140,8 +138,6 @@ Column-across-row-groups (from the Schema screen), Dictionary (with
 full-value modal on Enter and `/` inline search), and Data preview (row
 values via `RowReader`; `←/→` scrolls the visible column window,
 `PgDn/PgUp` flips pages).
-
-The `--rows N` flag sets the Data preview page size (default: 20).
 
 ### Layout
 
