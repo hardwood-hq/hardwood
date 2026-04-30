@@ -87,6 +87,9 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/hardwood-hq/hardwood
+  # Latest released version, substituted into Maven/Gradle examples in the
+  # docs via the {{hardwood_version}} placeholder. Updated by release.sh.
+  hardwood_version: 1.0.0.Beta2
   # GitHub release tag the CLI download link points at. Updated by release.sh
   # for the tagged docs build; main keeps it at the rolling early-access tag.
   cli_release_tag: 1.0-early-access
