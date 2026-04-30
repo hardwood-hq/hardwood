@@ -8,6 +8,7 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -297,17 +298,27 @@ public class ParquetFileReader implements AutoCloseable {
         }
         long skip = Math.max(0, rowsInSubset - tailRows);
 
-        if (skip == 0 || canFastSkipTail(subset, projection)) {
+        boolean fastSkip;
+        try {
+            fastSkip = skip == 0 || canFastSkipTail(subset, projection);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(
+                    "Failed to probe page formats while preparing tail read", e);
+        }
+
+        if (fastSkip) {
             // Fast path: per-page row masking drops the leading pages and trims the
-            // straddling page in IndexedFetchPlan, so the reader yields exactly
-            // tailRows rows from its first hasNext() with no caller-side advance.
+            // straddling page in the projected fetch plans, so the reader yields
+            // exactly tailRows rows from its first hasNext() with no caller-side
+            // advance.
             return buildRowReader(projection, null, 0, subset, skip);
         }
 
-        // Fallback: at least one projected column lacks an OffsetIndex and uses
-        // SequentialFetchPlan, which has no per-page mask support yet. Decoding
-        // every leading row and discarding it at the reader level keeps cross-
-        // column row alignment intact.
+        // Fallback: at least one projected column closes the per-page mask gate
+        // (a nested-v1 column without an OffsetIndex). Decoding every leading
+        // row and discarding it at the reader level keeps cross-column row
+        // alignment intact.
         RowReader reader = buildRowReader(projection, null, 0, subset, 0);
         for (long i = 0; i < skip; i++) {
             if (!reader.hasNext()) {
@@ -328,11 +339,16 @@ public class ParquetFileReader implements AutoCloseable {
     /// Delegates to the row-group-wide gate in
     /// [dev.hardwood.internal.reader.RowGroupIterator#masksApplicableForRowGroup]
     /// so the tail-read decision matches the iterator's per-row-group
-    /// decision exactly.
-    private boolean canFastSkipTail(List<RowGroup> subset, ColumnProjection projection) {
+    /// decision exactly. Carries the same I/O cost (one bounded page-header
+    /// read per nested-without-OffsetIndex column) which is paid only on
+    /// files where such columns exist.
+    private boolean canFastSkipTail(List<RowGroup> subset, ColumnProjection projection)
+            throws IOException {
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        InputFile inputFile = inputFiles.get(0);
         for (RowGroup rg : subset) {
-            if (!RowGroupIterator.masksApplicableForRowGroup(projectedSchema, rg, schema)) {
+            if (!RowGroupIterator.masksApplicableForRowGroup(
+                    projectedSchema, rg, schema, inputFile)) {
                 return false;
             }
         }

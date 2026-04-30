@@ -22,6 +22,7 @@ import java.util.concurrent.atomic.AtomicIntegerArray;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -364,16 +365,26 @@ public class RowGroupIterator {
         int projectedCount = projectedSchema.getProjectedColumnCount();
 
         // Per-page masks are honoured for this row group only when every
-        // projected column either has an OffsetIndex or is flat — masking a
-        // subset of columns would leave sibling columns row-misaligned. When
-        // the gate is closed we promote `matchingRows` to ALL so neither plan
-        // applies a mask; row-group-level statistics still drop the group
-        // when possible, and the row reader applies the residual filter to
+        // projected column is mask-friendly (e.g., has an OffsetIndex, is flat,
+        // or is nested with `DATA_PAGE_V2` pages). Masking a subset of
+        // columns would leave sibling columns row-misaligned. When the gate
+        // is closed we promote `matchingRows` to ALL so neither plan applies
+        // a mask; row-group-level statistics still drop the group when
+        // possible, and the row reader applies the residual filter to
         // surviving rows.
-        if (!matchingRows.isAll()
-                && !masksApplicableForRowGroup(projectedSchema, rowGroup,
-                        workItem.fileSchema())) {
-            matchingRows = RowRanges.ALL;
+        if (!matchingRows.isAll()) {
+            try {
+                if (!masksApplicableForRowGroup(projectedSchema, rowGroup,
+                        workItem.fileSchema(), inputFile)) {
+                    matchingRows = RowRanges.ALL;
+                }
+            }
+            catch (IOException e) {
+                throw new UncheckedIOException(
+                        ExceptionContext.filePrefix(inputFile.name())
+                                + "Failed to probe page formats for row group "
+                                + workItem.rowGroupIndex(), e);
+            }
         }
 
         // Convert the iterator-wide maxRows into a per-row-group remainder.
@@ -676,16 +687,32 @@ public class RowGroupIterator {
     }
 
     /// Whether per-page row masks may be applied by the projected plans of
-    /// this row group. Returns `true` iff every projected column is either
-    /// backed by an OffsetIndex (its plan is an [IndexedFetchPlan], which
-    /// honours masks) or is flat — `maxRepetitionLevel == 0`, where a
-    /// [SequentialFetchPlan] can apply masks without walking repetition
-    /// levels. A nested column lacking an OffsetIndex returns `false`:
-    /// alignment is preserved by promoting `matchingRows` to [RowRanges#ALL]
-    /// for the whole row group rather than masking only the columns we know
-    /// how to handle.
+    /// this row group. Returns `true` iff every projected column is one of:
+    ///
+    /// - backed by an OffsetIndex (its plan is an [IndexedFetchPlan], which
+    ///   honours masks);
+    /// - flat (`maxRepetitionLevel == 0`), where a [SequentialFetchPlan]
+    ///   needs no rep-level walk to translate per-page row masks into
+    ///   per-page record counts;
+    /// - nested with `DATA_PAGE_V2` data pages, whose repetition levels live
+    ///   in an uncompressed prefix and can be walked without invoking the
+    ///   codec.
+    ///
+    /// A nested column lacking an OffsetIndex with `DATA_PAGE` (v1) data
+    /// pages closes the gate for the whole row group: counting records there
+    /// would require decompressing the page body, defeating the
+    /// skip-without-decompress optimisation. When the gate is closed,
+    /// `matchingRows` is promoted to [RowRanges#ALL] for the row group so no
+    /// plan applies a mask — preserving cross-column row alignment instead
+    /// of masking only the columns we know how to handle.
+    ///
+    /// Performs at most one bounded page-header read per nested-without-
+    /// OffsetIndex column to detect v1 vs v2; files where every projected
+    /// column has an OffsetIndex (parquet-mr default since 1.11) pay no I/O
+    /// here.
     public static boolean masksApplicableForRowGroup(ProjectedSchema projectedSchema,
-                                                      RowGroup rowGroup, FileSchema fileSchema) {
+                                                      RowGroup rowGroup, FileSchema fileSchema,
+                                                      InputFile inputFile) throws IOException {
         int projectedCount = projectedSchema.getProjectedColumnCount();
         for (int p = 0; p < projectedCount; p++) {
             int originalIndex = projectedSchema.toOriginalIndex(p);
@@ -695,6 +722,10 @@ public class RowGroupIterator {
             }
             ColumnSchema columnSchema = fileSchema.getColumn(originalIndex);
             if (columnSchema.maxRepetitionLevel() == 0) {
+                continue;
+            }
+            if (PageFormatProbe.firstDataPageType(inputFile, columnChunk)
+                    == PageHeader.PageType.DATA_PAGE_V2) {
                 continue;
             }
             return false;
