@@ -158,7 +158,45 @@ A monorepo `./mvnw verify` continues to pass — the optimisation is internal-on
 
 ## Results
 
-Numbers to be filled in after running `RecordFilterBenchmarkTest` and `RecordFilterMicroBenchmark` on this branch (legacy vs compiled).
+Hardware: macOS aarch64 (Apple Silicon), Oracle JDK 25.0.3, Maven wrapper 3.9.12.
+
+### End-to-end (`RecordFilterBenchmarkTest -Dperf.runs=10`)
+
+10 M rows × `id: long`, `value: double`. Average wall-clock per run:
+
+| Scenario | Avg time | Records/sec |
+|---|---:|---:|
+| No filter (baseline) | 21.2 ms | 472,509,126 |
+| Match-all (1 leaf, `id >= 0`) | 29.9 ms | 334,829,508 |
+| Selective (`id < 1%`) | 2.0 ms | 50,059,130 |
+| Compound match-all (`id >= 0 AND value < +inf`) | 53.1 ms | 188,323,445 |
+| Page+record combined (`id BETWEEN ... AND value < 500`) | 3.5 ms | 14,468,632 |
+
+Headline ratios from this run:
+
+- **Match-all overhead: 41.1 %** (21 ms → 30 ms). Predicate-only cost ≈ `(29.9 − 21.2) / 10 M = 0.87 ns/row` — close to the JMH single-leaf floor.
+- **Selective speedup: 10.6×** (21 ms → 2 ms).
+- **Compound overhead: 150.9 %** (21 ms → 53 ms). Predicate-only cost ≈ `(53.1 − 21.2) / 10 M = 3.19 ns/row`.
+- **Page+record speedup: 6.1×** (21 ms → 3.5 ms).
+
+### JMH micro-benchmark (`RecordFilterMicroBenchmark`)
+
+2 forks × 5 warmup × 5 measurement iterations. `ns/op` is per-row cost over a 4096-row in-memory batch (`@OperationsPerInvocation(BATCH_SIZE)`). Match-all predicates only — every row evaluated, so dispatch overhead is the entire cost.
+
+| Shape | Legacy ns/op | Compiled ns/op | Speedup |
+|---|---:|---:|---:|
+| `single` (`id >= 0`) | 2.691 ± 0.020 | **0.516 ± 0.005** | **5.21×** |
+| `and2` | 9.069 ± 0.086 | **2.040 ± 0.034** | **4.45×** |
+| `and3` | 22.146 ± 0.186 | **8.085 ± 0.086** | **2.74×** |
+| `and4` | 32.022 ± 0.519 | **13.446 ± 0.068** | **2.38×** |
+| `or2` | 4.607 ± 0.024 | **0.839 ± 0.007** | **5.49×** |
+| `nested` (and-of-or) | 33.213 ± 0.404 | **10.702 ± 0.221** | **3.10×** |
+| `intIn5` | 3.796 ± 0.025 | **1.387 ± 0.027** | **2.74×** |
+| `intIn32` | 7.035 ± 0.045 | **3.180 ± 0.029** | **2.21×** |
+
+(Errors are 99.9 % confidence intervals from JMH.)
+
+Single-leaf shapes (`single`, `or2`) get the largest relative wins because dispatch is the entire cost — Stage 1's compiled lambda + Stage 3's indexed access reduces that to a literal comparison plus an array load. Compound shapes (`and2`/`and3`/`and4`/`nested`) still pay for the generic `AndNMatcher`/`OrNMatcher` array walker — the per-iteration `compiled[i].test(row)` call site cannot be proven monomorphic by the JIT, so each leaf body is reached through a virtual call. A subsequent layer that materialises arity-2/3/4 matchers as fixed-field classes (deferred to a follow-up) would let the JIT inline through those call sites and collapse the compound bodies.
 
 ---
 
