@@ -97,6 +97,14 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private final int rowGroupIndex;
     private final String fileName;
     private final List<ResolvedPredicate> dropLeaves;
+    /// Row ranges this column should keep. [RowRanges#ALL] means no per-page
+    /// row mask is applied; a non-trivial range is paired with [#rowGroupRowCount]
+    /// so the iterator can compute `pageLastRow` for the final page. 
+    private final RowRanges matchingRows;
+    /// Total rows in the enclosing row group. Used together with
+    /// [#matchingRows] to compute the final page's `pageLastRow` when masks
+    /// are active. Unused when [#matchingRows] is [RowRanges#ALL].
+    private final long rowGroupRowCount;
     /// Optional pre-created first [ChunkHandle], typically a region-backed
     /// view from cross-column coalescing (#374). When set, the iterator's
     /// first `advanceChunk(0)` call uses this handle instead of creating
@@ -108,7 +116,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                  int chunkSize, ColumnSchema columnSchema,
                                  ColumnChunk columnChunk, HardwoodContextImpl context,
                                  long maxRows, int rowGroupIndex, String fileName,
-                                 List<ResolvedPredicate> dropLeaves) {
+                                 List<ResolvedPredicate> dropLeaves,
+                                 RowRanges matchingRows, long rowGroupRowCount) {
+        if (matchingRows == null) {
+            throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
+        }
+        if (!matchingRows.isAll() && rowGroupRowCount <= 0) {
+            throw new IllegalArgumentException(
+                    "rowGroupRowCount must be positive when matchingRows is non-trivial, got "
+                            + rowGroupRowCount);
+        }
         this.inputFile = inputFile;
         this.columnChunkOffset = columnChunkOffset;
         this.columnChunkLength = columnChunkLength;
@@ -120,6 +137,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
         this.dropLeaves = dropLeaves;
+        this.matchingRows = matchingRows;
+        this.rowGroupRowCount = rowGroupRowCount;
     }
 
     @Override
@@ -168,12 +187,24 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 columnChunkOffset, chunkSize, purpose);
     }
 
-    /// Builds a [SequentialFetchPlan] with no predicate-driven page skipping.
+    /// Builds a [SequentialFetchPlan] with no predicate-driven page skipping
+    /// and no per-page row mask. Equivalent to passing [RowRanges#ALL].
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
-                maxRows, List.of());
+                maxRows, List.of(), RowRanges.ALL, 0L);
+    }
+
+    /// Builds a [SequentialFetchPlan] that may drop data pages whose inline
+    /// [Statistics] prove they cannot match any of the given AND-necessary leaf
+    /// predicates, with no per-page row mask.
+    public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
+                                      ColumnChunk columnChunk, HardwoodContextImpl context,
+                                      int rowGroupIndex, String fileName, long maxRows,
+                                      List<ResolvedPredicate> dropLeaves) {
+        return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
+                maxRows, dropLeaves, RowRanges.ALL, 0L);
     }
 
     /// Builds a [SequentialFetchPlan] that may drop data pages whose inline
@@ -186,10 +217,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// Page skipping is only applied when the column is optional
     /// (`maxDefinitionLevel > 0`) — required columns cannot produce nulls, so
     /// every page is decoded normally.
+    ///
+    /// `matchingRows` carries the row-group-wide row ranges this column should
+    /// keep. [RowRanges#ALL] disables per-page masking (today's behaviour); a
+    /// non-trivial range pairs with `rowGroupRowCount` so the iterator can
+    /// compute the final page's `pageLastRow`.
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows,
-                                      List<ResolvedPredicate> dropLeaves) {
+                                      List<ResolvedPredicate> dropLeaves,
+                                      RowRanges matchingRows, long rowGroupRowCount) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         int columnChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
         int chunkSize = Math.min(columnChunkLength,
@@ -197,7 +234,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
 
         return new SequentialFetchPlan(inputFile, columnChunkOffset, columnChunkLength, chunkSize,
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
-                dropLeaves == null ? List.of() : dropLeaves);
+                dropLeaves == null ? List.of() : dropLeaves,
+                matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount);
     }
 
     /// Computes the per-fetch chunk size.

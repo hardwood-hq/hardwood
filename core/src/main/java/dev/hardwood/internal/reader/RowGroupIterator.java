@@ -382,12 +382,15 @@ public class RowGroupIterator {
             if (colBuffers == null || colBuffers.offsetIndex() == null) {
                 // No OffsetIndex — sequential lazy fetching. Per-page drop via
                 // inline DataPageHeader.statistics happens inside SequentialFetchPlan
-                // for the AND-necessary leaves touching this column.
+                // for the AND-necessary leaves touching this column. `matchingRows`
+                // is plumbed through for #371 but not yet consulted — until the
+                // mask-application slice lands, the plan behaves as if it received
+                // RowRanges.ALL.
                 List<ResolvedPredicate> leaves = dropLeavesByColumn.getOrDefault(originalIndex, List.of());
                 plans[projCol] = SequentialFetchPlan.build(
                         inputFile, columnSchema, columnChunk,
                         context, workItem.rowGroupIndex(), inputFile.name(),
-                        perRgMaxRows, leaves);
+                        perRgMaxRows, leaves, matchingRows, rowGroup.numRows());
                 continue;
             }
 
