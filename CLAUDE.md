@@ -63,6 +63,16 @@ Before starting new work, check whether a corresponding GitHub issue exists. If 
 Commit messages must begin with the GitHub issue key (e.g. `#90 Include file name in all exceptions raised during reading`). This applies to every commit, including fixups and amendments.
 Focus the body on **why**, not **what** — the diff already shows the what. A short paragraph is usually enough; do not restate the change as a bullet list. See [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
 
+When filing an issue, apply the relevant labels from the repo's label set. Common ones:
+- `bug` — defect / something isn't working as documented or intended.
+- `enhancement` — new feature or improvement to existing behavior.
+- `documentation` — docs-only change.
+- `cli` — anything in the `cli` module (commands, flags, output formatting).
+- `dive` — anything in the `hardwood dive` interactive TUI.
+- `good first issue` + `help wanted` — well-scoped, self-contained tasks suitable for an external contributor (clear acceptance criteria, no deep architectural decisions, limited blast radius). Apply both together.
+
+Labels are not mutually exclusive — a TUI bug should get `bug` + `cli` + `dive`. Run `gh label list` to see the full current set before inventing one.
+
 # Dive TUI
 
 When changing visual styling in the `hardwood dive` TUI (any code under `cli/src/main/java/dev/hardwood/cli/dive/`), follow the visual-hierarchy decision tree in [_designs/DIVE_THEME.md](_designs/DIVE_THEME.md). Style spans through one of `Theme.primary()` / `Theme.accent()` / `Theme.selection()` / `Theme.dim()`, or leave them at default fg via `Style.EMPTY`. Direct use of `Color.*` constants or literal `Style.EMPTY.bold()` / `Style.EMPTY.fg(...)` outside `Theme.java` is a smell — review against the decision tree before introducing any.
