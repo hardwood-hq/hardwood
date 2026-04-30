@@ -126,20 +126,6 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     "rowGroupRowCount must be positive when matchingRows is non-trivial, got "
                             + rowGroupRowCount);
         }
-        // Per-page masks are only honoured for flat columns here. A nested
-        // column reaching this constructor with non-trivial `matchingRows`
-        // means the row-group-wide gate in RowGroupIterator did not promote
-        // `matchingRows` to ALL — sibling indexed columns would mask while
-        // we would not, leaving rows misaligned across columns.
-        if (!matchingRows.isAll() && columnSchema.maxRepetitionLevel() != 0) {
-            throw new IllegalStateException(
-                    "SequentialFetchPlan with non-trivial matchingRows requires a flat column; "
-                            + "column '" + columnSchema.name()
-                            + "' has maxRepetitionLevel="
-                            + columnSchema.maxRepetitionLevel()
-                            + ". RowGroupIterator's mask gate should have promoted "
-                            + "matchingRows to RowRanges.ALL for this row group.");
-        }
         this.inputFile = inputFile;
         this.columnChunkOffset = columnChunkOffset;
         this.columnChunkLength = columnChunkLength;
@@ -303,6 +289,12 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         private boolean exhausted;
         private int position; // relative to column chunk start
         private long valuesRead;
+        /// Top-level records consumed so far. Equals [#valuesRead] for flat
+        /// columns; for nested columns it counts `rep_level == 0` occurrences
+        /// across the pages seen. Tracked only when [#matchingRows] is
+        /// non-trivial — when masks are inactive the cursor stays at zero and
+        /// is never consulted.
+        private long recordsRead;
         private int pageCount;
         /// Look-ahead cache for the next page to emit. Populated lazily by
         /// [#hasNext()] and consumed by [#next()]. Look-ahead is required
@@ -505,25 +497,32 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
 
                 int numValues = (int) getValueCount(header);
 
-                // For flat columns one value is one record, so `valuesRead`
-                // is the page's first row index. The constructor's defensive
-                // check guarantees we only reach this branch on a flat column
-                // when `matchingRows` is non-trivial.
+                // When masks are inactive we don't need a record count for
+                // the page — `recordsInPage` stays at zero and the cursor
+                // never advances. When active, flat columns return
+                // `numValues` directly; nested columns walk the rep-level
+                // RLE prefix of a v2 page (a v1 page on a nested column
+                // would require decompression — the row-group-wide gate
+                // forbids it).
                 PageRowMask mask;
+                int recordsInPage;
                 if (matchingRows.isAll()) {
                     mask = PageRowMask.ALL;
+                    recordsInPage = 0;
                 }
                 else {
-                    long pageFirstRow = valuesRead;
-                    long pageLastRow = pageFirstRow + numValues;
+                    recordsInPage = computeRecordsInPage(header, headerSize, numValues);
+                    long pageFirstRow = recordsRead;
+                    long pageLastRow = pageFirstRow + recordsInPage;
                     mask = matchingRows.maskForPage(pageFirstRow, pageLastRow);
                 }
 
                 if (mask == null) {
                     // Drop the page entirely — the body bytes are never read,
-                    // never decompressed. `valuesRead` still advances so the
-                    // value-count guard at end-of-iteration remains honest.
+                    // never decompressed. Counters still advance so the
+                    // end-of-iteration guards remain honest.
                     valuesRead += numValues;
+                    recordsRead += recordsInPage;
                     position += totalPageSize;
                     pageCount++;
                     continue;
@@ -534,7 +533,17 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     // Inline-stats drop coexists with the mask: the placeholder
                     // covers exactly the rows the mask would have kept, so
                     // sibling columns see consistent record counts.
-                    int placeholderRecords = mask.isAll() ? numValues : mask.totalRecords();
+                    int placeholderRecords;
+                    if (mask.isAll()) {
+                        // No mask trimming — use the page's record count when
+                        // we know it (nested columns under active masking) or
+                        // its value count (flat columns or inactive masking,
+                        // where the two coincide).
+                        placeholderRecords = recordsInPage > 0 ? recordsInPage : numValues;
+                    }
+                    else {
+                        placeholderRecords = mask.totalRecords();
+                    }
                     pageInfo = PageInfo.nullPlaceholder(placeholderRecords, columnSchema, metaData);
                 }
                 else {
@@ -542,6 +551,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask);
                 }
                 valuesRead += numValues;
+                recordsRead += recordsInPage;
                 position += totalPageSize;
                 pageCount++;
                 return pageInfo;
@@ -552,7 +562,41 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                         + "': metadata declares " + metaData.numValues()
                         + " values but pages contain " + valuesRead);
             }
+            if (!matchingRows.isAll() && recordsRead != rowGroupRowCount) {
+                throw new IOException("Record count mismatch for column '" + columnSchema.name()
+                        + "': row group declares " + rowGroupRowCount
+                        + " rows but pages contain " + recordsRead + " records.");
+            }
             return null;
+        }
+
+        /// Computes the number of top-level records in a data page when masks
+        /// are active. Flat columns return `numValues` directly. Nested
+        /// columns walk the v2 page's uncompressed rep-level RLE prefix; a
+        /// v1 nested page would require decompression to count records and
+        /// is rejected here — the row-group-wide gate is responsible for
+        /// promoting `matchingRows` to ALL before we ever reach this branch.
+        private int computeRecordsInPage(PageHeader header, int headerSize, int numValues)
+                throws IOException {
+            if (columnSchema.maxRepetitionLevel() == 0) {
+                return numValues;
+            }
+            if (header.type() != PageHeader.PageType.DATA_PAGE_V2) {
+                throw new IllegalStateException("Per-page row masking on a nested column requires "
+                        + "DATA_PAGE_V2 pages; column '" + columnSchema.name()
+                        + "' has a v1 data page. The row-group-wide mask gate should have "
+                        + "promoted matchingRows to RowRanges.ALL for this row group.");
+            }
+            DataPageHeaderV2 v2Header = header.dataPageHeaderV2();
+            int repLevelLength = v2Header.repetitionLevelsByteLength();
+            if (repLevelLength == 0) {
+                // No repetition levels means every value is a top-level record.
+                return numValues;
+            }
+            byte[] repLevels = new byte[repLevelLength];
+            readBytes(position + headerSize, repLevelLength).get(repLevels);
+            return PageRecordCounter.countTopLevelRecords(repLevels, 0, repLevelLength,
+                    numValues, columnSchema.maxRepetitionLevel());
         }
 
         /// Reads bytes that span multiple chunks by advancing through
