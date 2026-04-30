@@ -318,20 +318,22 @@ public class ParquetFileReader implements AutoCloseable {
         return reader;
     }
 
-    /// Whether every projected column in every subset row group has an
-    /// OffsetIndex. Required for the tail-read fast path because the per-page
-    /// row mask is only honoured by [dev.hardwood.internal.reader.IndexedFetchPlan];
-    /// `SequentialFetchPlan` would emit unmasked rows from offset 0 and break
-    /// cross-column alignment with the masked OffsetIndex columns.
+    /// Whether the per-page row mask machinery is applicable to every row
+    /// group in `subset`. When `true`, the synthesized `[skip, numRows)`
+    /// `RowRanges` flows through the same plumbing as a filter and trims
+    /// leading rows on every column without a post-iteration
+    /// decode-and-discard loop; when `false`, the caller falls back to
+    /// decoding and discarding the prefix.
+    ///
+    /// Delegates to the row-group-wide gate in
+    /// [dev.hardwood.internal.reader.RowGroupIterator#masksApplicableForRowGroup]
+    /// so the tail-read decision matches the iterator's per-row-group
+    /// decision exactly.
     private boolean canFastSkipTail(List<RowGroup> subset, ColumnProjection projection) {
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        int projectedCount = projectedSchema.getProjectedColumnCount();
         for (RowGroup rg : subset) {
-            for (int p = 0; p < projectedCount; p++) {
-                int originalIndex = projectedSchema.toOriginalIndex(p);
-                if (rg.columns().get(originalIndex).offsetIndexOffset() == null) {
-                    return false;
-                }
+            if (!RowGroupIterator.masksApplicableForRowGroup(projectedSchema, rg, schema)) {
+                return false;
             }
         }
         return true;

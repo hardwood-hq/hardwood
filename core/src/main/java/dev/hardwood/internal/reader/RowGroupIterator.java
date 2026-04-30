@@ -363,6 +363,19 @@ public class RowGroupIterator {
         InputFile inputFile = workItem.inputFile();
         int projectedCount = projectedSchema.getProjectedColumnCount();
 
+        // Per-page masks are honoured for this row group only when every
+        // projected column either has an OffsetIndex or is flat — masking a
+        // subset of columns would leave sibling columns row-misaligned. When
+        // the gate is closed we promote `matchingRows` to ALL so neither plan
+        // applies a mask; row-group-level statistics still drop the group
+        // when possible, and the row reader applies the residual filter to
+        // surviving rows.
+        if (!matchingRows.isAll()
+                && !masksApplicableForRowGroup(projectedSchema, rowGroup,
+                        workItem.fileSchema())) {
+            matchingRows = RowRanges.ALL;
+        }
+
         // Convert the iterator-wide maxRows into a per-row-group remainder.
         // `PageLocation.firstRowIndex` and `SequentialFetchPlan.valuesRead`
         // are both row-group-local (reset to 0 each RG), so passing the global
@@ -380,12 +393,9 @@ public class RowGroupIterator {
             ColumnIndexBuffers colBuffers = shared.indexBuffers().forColumn(originalIndex);
 
             if (colBuffers == null || colBuffers.offsetIndex() == null) {
-                // No OffsetIndex — sequential lazy fetching. Per-page drop via
-                // inline DataPageHeader.statistics happens inside SequentialFetchPlan
-                // for the AND-necessary leaves touching this column. `matchingRows`
-                // is plumbed through for #371 but not yet consulted — until the
-                // mask-application slice lands, the plan behaves as if it received
-                // RowRanges.ALL.
+                // No OffsetIndex — sequential lazy fetching. Per-page drops via
+                // inline DataPageHeader.statistics and per-page row masks both
+                // happen inside SequentialFetchPlan.
                 List<ResolvedPredicate> leaves = dropLeavesByColumn.getOrDefault(originalIndex, List.of());
                 plans[projCol] = SequentialFetchPlan.build(
                         inputFile, columnSchema, columnChunk,
@@ -663,6 +673,33 @@ public class RowGroupIterator {
             }
         }
         return needed;
+    }
+
+    /// Whether per-page row masks may be applied by the projected plans of
+    /// this row group. Returns `true` iff every projected column is either
+    /// backed by an OffsetIndex (its plan is an [IndexedFetchPlan], which
+    /// honours masks) or is flat — `maxRepetitionLevel == 0`, where a
+    /// [SequentialFetchPlan] can apply masks without walking repetition
+    /// levels. A nested column lacking an OffsetIndex returns `false`:
+    /// alignment is preserved by promoting `matchingRows` to [RowRanges#ALL]
+    /// for the whole row group rather than masking only the columns we know
+    /// how to handle.
+    public static boolean masksApplicableForRowGroup(ProjectedSchema projectedSchema,
+                                                      RowGroup rowGroup, FileSchema fileSchema) {
+        int projectedCount = projectedSchema.getProjectedColumnCount();
+        for (int p = 0; p < projectedCount; p++) {
+            int originalIndex = projectedSchema.toOriginalIndex(p);
+            ColumnChunk columnChunk = rowGroup.columns().get(originalIndex);
+            if (columnChunk.offsetIndexOffset() != null) {
+                continue;
+            }
+            ColumnSchema columnSchema = fileSchema.getColumn(originalIndex);
+            if (columnSchema.maxRepetitionLevel() == 0) {
+                continue;
+            }
+            return false;
+        }
+        return true;
     }
 
     /// Truncates a page list to cover at most `maxRows` rows.

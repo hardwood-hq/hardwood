@@ -126,6 +126,20 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                     "rowGroupRowCount must be positive when matchingRows is non-trivial, got "
                             + rowGroupRowCount);
         }
+        // Per-page masks are only honoured for flat columns here. A nested
+        // column reaching this constructor with non-trivial `matchingRows`
+        // means the row-group-wide gate in RowGroupIterator did not promote
+        // `matchingRows` to ALL — sibling indexed columns would mask while
+        // we would not, leaving rows misaligned across columns.
+        if (!matchingRows.isAll() && columnSchema.maxRepetitionLevel() != 0) {
+            throw new IllegalStateException(
+                    "SequentialFetchPlan with non-trivial matchingRows requires a flat column; "
+                            + "column '" + columnSchema.name()
+                            + "' has maxRepetitionLevel="
+                            + columnSchema.maxRepetitionLevel()
+                            + ". RowGroupIterator's mask gate should have promoted "
+                            + "matchingRows to RowRanges.ALL for this row group.");
+        }
         this.inputFile = inputFile;
         this.columnChunkOffset = columnChunkOffset;
         this.columnChunkLength = columnChunkLength;
@@ -290,7 +304,13 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         private int position; // relative to column chunk start
         private long valuesRead;
         private int pageCount;
-        private Boolean hasNext;
+        /// Look-ahead cache for the next page to emit. Populated lazily by
+        /// [#hasNext()] and consumed by [#next()]. Look-ahead is required
+        /// because per-page row masks may drop pages while counters still
+        /// indicate "more values remain"; without the cache, `hasNext()`
+        /// could return `true` and `next()` then have nothing to emit.
+        private PageInfo nextPage;
+        private boolean nextPageComputed;
 
         // Current chunk handle state
         private ChunkHandle currentHandle;
@@ -299,21 +319,25 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
 
         @Override
         public boolean hasNext() {
-            if (hasNext != null) {
-                return hasNext;
+            if (nextPageComputed) {
+                return nextPage != null;
             }
             if (exhausted) {
-                hasNext = false;
                 return false;
             }
             try {
-                hasNext = checkHasNext();
+                nextPage = findNextEmittablePage();
             }
             catch (IOException e) {
                 throw new UncheckedIOException("Failed to scan pages for column '"
                         + columnSchema.name() + "'", e);
             }
-            return hasNext;
+            nextPageComputed = true;
+            if (nextPage == null) {
+                exhausted = true;
+                emitEvent();
+            }
+            return nextPage != null;
         }
 
         @Override
@@ -321,36 +345,10 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             if (!hasNext()) {
                 throw new NoSuchElementException();
             }
-            hasNext = null;
-            try {
-                return scanNextPage();
-            }
-            catch (IOException e) {
-                throw new UncheckedIOException("Failed to scan page for column '"
-                        + columnSchema.name() + "'", e);
-            }
-        }
-
-        private boolean checkHasNext() throws IOException {
-            if (maxRows > 0 && valuesRead >= maxRows) {
-                exhausted = true;
-                emitEvent();
-                return false;
-            }
-            if (!initialized) {
-                initialize();
-            }
-            boolean hasMore = valuesRead < metaData.numValues() && position < columnChunkLength;
-            if (!hasMore) {
-                exhausted = true;
-                emitEvent();
-                if (valuesRead != metaData.numValues()) {
-                    throw new IOException("Value count mismatch for column '" + columnSchema.name()
-                            + "': metadata declares " + metaData.numValues()
-                            + " values but pages contain " + valuesRead);
-                }
-            }
-            return hasMore;
+            PageInfo result = nextPage;
+            nextPage = null;
+            nextPageComputed = false;
+            return result;
         }
 
         /// Reads a page header at the given relative position, growing the
@@ -470,41 +468,90 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             }
         }
 
-        private PageInfo scanNextPage() throws IOException {
-            while (valuesRead < metaData.numValues() && position < columnChunkLength) {
+        /// Scans forward through page headers until an emittable data page is
+        /// found, or the column chunk is exhausted. Pages are dropped when
+        /// either:
+        ///
+        /// - the iterator-wide `maxRows` budget is hit (returns `null`); or
+        /// - per-page row masking determines no row of the page falls inside
+        ///   [#matchingRows] — the page body is skipped without being read or
+        ///   decompressed, saving the codec invocation and value-decode work
+        ///   for rows that would have been thrown away anyway.
+        ///
+        /// On normal exhaustion, validates that `valuesRead` matches the
+        /// column chunk's declared `numValues`. The check stays load-bearing
+        /// even with masked drops because `valuesRead` accumulates each
+        /// page's `header.num_values` regardless of whether the page was
+        /// kept, dropped, or replaced with a null-placeholder.
+        private PageInfo findNextEmittablePage() throws IOException {
+            if (!initialized) {
+                initialize();
+            }
+            while (position < columnChunkLength && valuesRead < metaData.numValues()) {
+                if (maxRows > 0 && valuesRead >= maxRows) {
+                    return null;
+                }
                 ParsedHeader parsed = readPageHeader(position);
                 PageHeader header = parsed.header();
                 int headerSize = parsed.headerSize();
+                int totalPageSize = headerSize + header.compressedPageSize();
 
-                int compressedSize = header.compressedPageSize();
-                int totalPageSize = headerSize + compressedSize;
-
-                if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
+                if (header.type() != PageHeader.PageType.DATA_PAGE
+                        && header.type() != PageHeader.PageType.DATA_PAGE_V2) {
+                    // DICTIONARY_PAGE or INDEX_PAGE — skip without emitting.
                     position += totalPageSize;
                     continue;
                 }
 
-                if (header.type() == PageHeader.PageType.DATA_PAGE
-                        || header.type() == PageHeader.PageType.DATA_PAGE_V2) {
-                    int numValues = (int) getValueCount(header);
-                    PageInfo pageInfo;
-                    if (canDropByInlineStats(header)) {
-                        pageInfo = PageInfo.nullPlaceholder(numValues, columnSchema, metaData);
-                    }
-                    else {
-                        ByteBuffer pageData = readBytes(position, totalPageSize);
-                        pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary);
-                    }
+                int numValues = (int) getValueCount(header);
+
+                // For flat columns one value is one record, so `valuesRead`
+                // is the page's first row index. The constructor's defensive
+                // check guarantees we only reach this branch on a flat column
+                // when `matchingRows` is non-trivial.
+                PageRowMask mask;
+                if (matchingRows.isAll()) {
+                    mask = PageRowMask.ALL;
+                }
+                else {
+                    long pageFirstRow = valuesRead;
+                    long pageLastRow = pageFirstRow + numValues;
+                    mask = matchingRows.maskForPage(pageFirstRow, pageLastRow);
+                }
+
+                if (mask == null) {
+                    // Drop the page entirely — the body bytes are never read,
+                    // never decompressed. `valuesRead` still advances so the
+                    // value-count guard at end-of-iteration remains honest.
                     valuesRead += numValues;
                     position += totalPageSize;
                     pageCount++;
-                    return pageInfo;
+                    continue;
                 }
 
+                PageInfo pageInfo;
+                if (canDropByInlineStats(header)) {
+                    // Inline-stats drop coexists with the mask: the placeholder
+                    // covers exactly the rows the mask would have kept, so
+                    // sibling columns see consistent record counts.
+                    int placeholderRecords = mask.isAll() ? numValues : mask.totalRecords();
+                    pageInfo = PageInfo.nullPlaceholder(placeholderRecords, columnSchema, metaData);
+                }
+                else {
+                    ByteBuffer pageData = readBytes(position, totalPageSize);
+                    pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask);
+                }
+                valuesRead += numValues;
                 position += totalPageSize;
+                pageCount++;
+                return pageInfo;
             }
 
-            exhausted = true;
+            if (valuesRead != metaData.numValues()) {
+                throw new IOException("Value count mismatch for column '" + columnSchema.name()
+                        + "': metadata declares " + metaData.numValues()
+                        + " values but pages contain " + valuesRead);
+            }
             return null;
         }
 
