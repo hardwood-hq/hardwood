@@ -31,6 +31,7 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
+import dev.hardwood.internal.predicate.RecordFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.metadata.PhysicalType;
@@ -88,6 +89,7 @@ public class RecordFilterMegamorphicBenchmark {
 
     private FileSchema schema;
     private StructAccessor[] rows;
+    private ResolvedPredicate[] predicates;
     private RowMatcher[] fused;
     private RowMatcher[] generic;
 
@@ -95,7 +97,7 @@ public class RecordFilterMegamorphicBenchmark {
     public void setup() {
         schema = buildSchema();
         rows = buildRows(BATCH_SIZE, 42L);
-        ResolvedPredicate[] predicates = buildPredicates();
+        predicates = buildPredicates();
         fused = new RowMatcher[predicates.length];
         generic = new RowMatcher[predicates.length];
         for (int i = 0; i < predicates.length; i++) {
@@ -124,6 +126,23 @@ public class RecordFilterMegamorphicBenchmark {
             StructAccessor r = batch[i];
             for (int j = 0; j < ms.length; j++) {
                 bh.consume(ms[j].test(r));
+            }
+        }
+    }
+
+    /// Legacy interpreter baseline: every row goes through
+    /// [RecordFilterEvaluator.matchesRow], which walks the predicate tree
+    /// per row with a sealed-type switch and name-keyed accessor lookups.
+    /// No compiler involvement at all — this is pre-stage-1 behaviour.
+    @Benchmark
+    public void legacyMegamorphic(Blackhole bh) {
+        ResolvedPredicate[] ps = predicates;
+        StructAccessor[] batch = rows;
+        FileSchema sch = schema;
+        for (int i = 0; i < batch.length; i++) {
+            StructAccessor r = batch[i];
+            for (int j = 0; j < ps.length; j++) {
+                bh.consume(RecordFilterEvaluator.matchesRow(ps[j], r, sch));
             }
         }
     }

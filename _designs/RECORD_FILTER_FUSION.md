@@ -249,33 +249,76 @@ Each fused matcher's source is mechanical, and the file is large (~4000–5000 l
 
 Hardware: macOS aarch64 (Apple Silicon), Oracle JDK 25.0.3, Maven wrapper 3.9.12.
 
-### JMH micro — `RecordFilterMegamorphicBenchmark`
+### JMH micro — `RecordFilterMicroBenchmark` (legacy vs compiled-with-fusion)
 
-2 forks × 5 warmup × 5 measurement iterations (default JMH config). The
-benchmark runs 12 distinct fused (combo × connective) shapes against a
-4096-row in-memory batch in two arms: `fusedMegamorphic` compiles each
-matcher through `RecordFilterCompiler` with fusion enabled (each shape
-yields a unique synthetic class — outer site megamorphic, body inlined),
-and `genericMegamorphic` builds a generic `and2`/`or2` envelope around
-each leaf pair so the inner `a.test()` / `b.test()` sites also accumulate
-12 receiver classes and go megamorphic. `ns/op` is per row × per shape.
+Per-shape monomorphic micro: each `@Benchmark` invocation drives one
+matcher class against 4096 rows, so the call site is monomorphic and the
+JIT inlines through without help. Compares the legacy
+`RecordFilterEvaluator.matchesRow` interpreter to the full compiler +
+fusion pipeline. 2 forks × 5 warmup × 5 measurement iterations.
+`@OperationsPerInvocation(BATCH_SIZE)` so `ns/op` is per row.
 
-| Shape mix (12 fused tuples)         | Generic ns/op | Fused ns/op | Speedup |
-|-------------------------------------|--------------:|------------:|--------:|
-| Aggregate (avgt over all 12 shapes) | 5.298 ± 0.087 | **3.014 ± 0.014** | **1.76×** |
+| Shape   | Legacy ns/op    | Compiled+fused ns/op | Speedup vs legacy |
+|---------|----------------:|---------------------:|------------------:|
+| single  |  2.703 ± 0.033  | **0.523 ± 0.003**    | **5.17×**         |
+| and2    | 10.299 ± 0.053  | **0.584 ± 0.006**    | **17.63×**        |
+| and3    | 22.141 ± 0.104  | **0.551 ± 0.006**    | **40.18×**        |
+| and4    | 32.264 ± 0.874  | **0.649 ± 0.009**    | **49.71×**        |
+| or2     |  4.628 ± 0.044  | **0.517 ± 0.003**    | **8.95×**         |
+| nested  | 33.766 ± 0.484  | **1.002 ± 0.021**    | **33.70×**        |
+| intIn5  |  3.801 ± 0.052  | **1.404 ± 0.025**    | **2.71×**         |
+| intIn32 |  7.016 ± 0.026  | **3.186 ± 0.030**    | **2.20×**         |
 
-The fused arm holds steady at ~3 ns/op even with 12 distinct receiver
-classes flowing through the outer site. The generic arm pays an
-additional ~2.3 ns/row for the inner-site megamorphism that fusion
-eliminates.
+These per-shape numbers are essentially unchanged from the Stage 1–3
+results in [RECORD_FILTER_COMPILATION.md](RECORD_FILTER_COMPILATION.md):
+under monomorphic conditions the JIT was already folding everything
+inline at the call sites of `And2Matcher` / `Or2Matcher`, so fusion
+adds nothing. The fusion contribution only shows up when the inline
+caches go megamorphic, which the next benchmark deliberately induces.
+
+### JMH micro — `RecordFilterMegamorphicBenchmark` (megamorphic three-way)
+
+Same JMH config (2 forks × 5/5 iterations). The benchmark runs 12
+distinct fused (combo × connective) shapes against a 4096-row in-memory
+batch and reports `ns/op` per row × per shape. Three arms:
+
+- **`legacyMegamorphic`** — every row goes through
+  `RecordFilterEvaluator.matchesRow(predicate, row, schema)`, walking the
+  predicate tree per row with sealed-type switches and name-keyed accessor
+  lookups. Pre-Stage-1 behaviour.
+- **`genericMegamorphic`** — Stage 1–3 baseline: each child is compiled
+  individually, then wrapped in a generic `and2`/`or2` envelope. All 12
+  envelopes share the same `a.test()` / `b.test()` bytecode locations, so
+  the inner sites accumulate 12 receiver classes and go megamorphic.
+- **`fusedMegamorphic`** — Stage 4: each (combo × connective) tuple
+  produces a unique synthetic class. Outer site is still megamorphic, but
+  every body is direct primitive arithmetic with no inner virtual call.
+
+| Arm                  | ns/op (per row × per shape) | Speedup vs legacy | Speedup vs generic |
+|----------------------|----------------------------:|------------------:|-------------------:|
+| `legacyMegamorphic`  | 19.150 ± 0.239              | 1.00×             | —                  |
+| `genericMegamorphic` |  5.407 ± 0.074              | 3.54×             | 1.00×              |
+| `fusedMegamorphic`   | **3.031 ± 0.035**           | **6.32×**         | **1.78×**          |
+
+The first 3.54× of the speedup over legacy comes from the Stage 1–3
+compiler — eliminating per-row tree walking and operator switches even
+under megamorphism. Stage 4 adds another **1.78×** on top by removing
+the inner-site megamorphism inside `And2Matcher` / `Or2Matcher`, taking
+the cumulative legacy speedup to **6.32×** under deliberate inline-cache
+pollution.
 
 ### End-to-end — `RecordFilterMegamorphicEndToEndTest`
 
 10M-row Parquet file, schema `(id long, value double, tag int, flag boolean,
 bin string)`, 5 measurement runs per shape. Same 12 query shapes as the JMH
-micro, executed sequentially through `ParquetFileReader.buildRowReader()`.
+megamorphic micro, executed sequentially through `ParquetFileReader.buildRowReader()`.
 Two separate JVM invocations — one with `-Dhardwood.recordfilter.fusion=true`,
-one with `=false` — to keep the static `FUSION_ENABLED` flag clean.
+one with `=false` — to keep the static `FUSION_ENABLED` flag clean. The
+"generic" column is the Stage 3 baseline (compiled but not fused), not
+the legacy interpreter — `FilteredRowReader` uses compiled matchers
+unconditionally, so the legacy interpreter is not reachable through the
+end-to-end reader path. Use the JMH `legacyMegamorphic` arm above for
+the legacy comparison.
 
 | Shape                                                 | Generic ms | Fused ms | Speedup |
 |-------------------------------------------------------|-----------:|---------:|--------:|
@@ -302,10 +345,12 @@ matches only ~0.1 % of rows so the per-row matcher cost is amortized
 into noise. The aggregate **42 % wall-clock reduction** holds even though
 several shapes traverse 10M rows where decode time is non-trivial.
 
-### Why the gap stays under 2× end-to-end
+### Why the end-to-end gap is smaller than the JMH gap
 
-The JMH micro isolates dispatch and shows the body-only win (1.76×); end-to-end
-those 2.3 ns/row are competing with decode, projection, and reader plumbing.
-The remaining cost is dominated by the residual outer-site megamorphism at
-`FilteredRowReader.hasNext` and by the page-decode pipeline — see the
-*Future work* section for Stage 5 directions targeting the outer site.
+The JMH megamorphic micro isolates dispatch and shows the body-only win
+(1.78× over the generic compiler, 6.32× over legacy); end-to-end the
+saved ~2.4 ns/row competes with decode, projection, and reader plumbing,
+which dominate at high selectivity. The remaining cost is the residual
+outer-site megamorphism at `FilteredRowReader.hasNext` plus the
+page-decode pipeline — see the *Future work* section for Stage 5
+directions targeting the outer site.
