@@ -15,6 +15,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.0.0.Beta2 (2026-04-29)
 
+[Announcement blog post](https://www.morling.dev/blog/variant-support-interactive-parquet-file-tui-hardwood-1.0.0.beta2-is-out/)
+
 Highlights of this release:
 
 - Interactive `hardwood dive` TUI for exploring Parquet files
