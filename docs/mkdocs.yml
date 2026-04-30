@@ -51,6 +51,7 @@ theme:
 
 hooks:
   - hooks/git_commit.py
+  - hooks/page_variables.py
 
 plugins:
   - search
@@ -86,3 +87,6 @@ extra:
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/hardwood-hq/hardwood
+  # GitHub release tag the CLI download link points at. Updated by release.sh
+  # for the tagged docs build; main keeps it at the rolling early-access tag.
+  cli_release_tag: 1.0-early-access

@@ -110,7 +110,12 @@ sed "s/^Latest version: .*/Latest version: ${RELEASE_VERSION}, ${RELEASE_DATE}/"
 sed "s/${OLD_VERSION}/${RELEASE_VERSION}/g" docs/content/getting-started.md > docs/content/getting-started.md.tmp && mv docs/content/getting-started.md.tmp docs/content/getting-started.md
 sed "s/${OLD_VERSION}/${RELEASE_VERSION}/g" docs/content/index.md > docs/content/index.md.tmp && mv docs/content/index.md.tmp docs/content/index.md
 sed -i "s/^Latest version: .*/Latest version: ${RELEASE_VERSION}, ${RELEASE_DATE}/" docs/content/index.md
-git add README.md docs/content/getting-started.md docs/content/index.md
+# Point the CLI download link (rendered via the {{cli_release_tag}} placeholder
+# in getting-started.md and cli.md) at this release's tag for the tagged docs
+# build. A follow-up commit after release:perform restores the placeholder
+# value to 1.0-early-access so main keeps advertising the rolling release.
+sed -i "s|^  cli_release_tag: .*|  cli_release_tag: ${RELEASE_TAG}|" docs/mkdocs.yml
+git add README.md docs/content/getting-started.md docs/content/index.md docs/mkdocs.yml
 git commit -m "[release] Update versions for ${RELEASE_VERSION}"
 
 # -- Prepare and perform release ---------------------------------------------
@@ -124,6 +129,14 @@ echo "Running Maven release:prepare release:perform..."
   -DlocalCheckout=true \
   -DpreparationGoals="clean verify -DskipTests" \
   -Darguments="-DskipTests"
+
+# Restore the cli_release_tag placeholder value to 1.0-early-access so main's
+# HEAD points at the rolling early-access binaries. The release tag (created
+# by release:prepare above) already captured the version-specific value.
+sed -i "s|^  cli_release_tag: .*|  cli_release_tag: 1.0-early-access|" docs/mkdocs.yml
+git add docs/mkdocs.yml
+git commit -m "[release] Restore CLI download link for dev docs"
+
 git push -u origin "release/${RELEASE_VERSION}"
 # Push the tag created by release:prepare so JReleaser finds it on the release
 # commit. Without this, JReleaser doesn't see a tag on GitHub and creates one
