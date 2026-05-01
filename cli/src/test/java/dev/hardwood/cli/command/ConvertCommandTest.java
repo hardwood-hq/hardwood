@@ -40,6 +40,11 @@ class ConvertCommandTest implements ConvertCommandContract {
     }
 
     @Override
+    public String multiRowGroupIntFile() {
+        return getClass().getResource("/filter_pushdown_int.parquet").getPath();
+    }
+
+    @Override
     public String nonexistentFile() {
         return "nonexistent.parquet";
     }

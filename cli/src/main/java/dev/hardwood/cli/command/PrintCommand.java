@@ -25,7 +25,6 @@ import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.cli.internal.table.StreamedTable;
 import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.reader.ParquetFileReader.RowReaderBuilder;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
@@ -36,8 +35,6 @@ import picocli.CommandLine.Spec;
 
 @CommandLine.Command(name = "print", description = "Print all rows as an ASCII table.")
 public class PrintCommand implements Callable<Integer> {
-
-    private static final String ALL = "ALL";
 
     @CommandLine.Mixin
     HelpMixin help;
@@ -66,7 +63,7 @@ public class PrintCommand implements Callable<Integer> {
     @CommandLine.Option(names = {"-rd", "--row-delimiter"}, description = "Should a line separate rows, it is lighter without but less readable when it overlaps a single terminal line.")
     boolean rowDelimiter;
 
-    @CommandLine.Option(names = {"-n", "--rows"}, defaultValue = ALL, description = "Number of rows to display. Positive values show the first N rows (head), negative values show the last N rows (tail), 'ALL' shows every row.")
+    @CommandLine.Option(names = {"-n", "--rows"}, defaultValue = RowLimits.ALL, description = "Number of rows to display. Positive values show the first N rows (head), negative values show the last N rows (tail), 'ALL' shows every row.")
     String n;
 
     @CommandLine.Option(names = {"-c", "--columns"}, description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
@@ -79,12 +76,12 @@ public class PrintCommand implements Callable<Integer> {
             return CommandLine.ExitCode.SOFTWARE;
         }
 
-        int rowLimit = parseRowLimit();
+        int rowLimit = RowLimits.parse(n, spec);
         ColumnProjection projection = parseColumnProjection();
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema fileSchema = reader.getFileSchema();
-            try (RowReader rowReader = buildRowReader(reader, projection, rowLimit)) {
+            try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, rowLimit)) {
                 String[] headers = RowTable.topLevelFieldNames(fileSchema, projection);
                 List<SchemaNode> fields = projectedFields(fileSchema, projection);
                 AtomicLong rowIndex = addRowIndex ? new AtomicLong() : null;
@@ -131,30 +128,6 @@ public class PrintCommand implements Callable<Integer> {
                 maxWidth,
                 truncate,
                 rowDelimiter);
-    }
-
-    private static RowReader buildRowReader(ParquetFileReader reader, ColumnProjection projection, int rowLimit) {
-        RowReaderBuilder builder = reader.buildRowReader().projection(projection);
-        if (rowLimit > 0) {
-            builder.head(rowLimit);
-        }
-        else if (rowLimit < 0) {
-            builder.tail(-rowLimit);
-        }
-        return builder.build();
-    }
-
-    private int parseRowLimit() {
-        if (ALL.equalsIgnoreCase(n)) {
-            return 0;
-        }
-        try {
-            return Integer.parseInt(n);
-        }
-        catch (NumberFormatException e) {
-            throw new CommandLine.ParameterException(spec.commandLine(),
-                    "Invalid value for option '-n': expected an integer or 'ALL', got '" + n + "'");
-        }
     }
 
     private ColumnProjection parseColumnProjection() {
