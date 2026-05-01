@@ -30,8 +30,6 @@ import picocli.CommandLine.Spec;
 @CommandLine.Command(name = "convert", description = "Convert Parquet file to CSV or JSON.")
 public class ConvertCommand implements Callable<Integer> {
 
-    private static final String ALL = "ALL";
-
     enum Format {
         CSV,
         JSON
@@ -55,7 +53,7 @@ public class ConvertCommand implements Callable<Integer> {
     @CommandLine.Option(names = {"-c", "--columns"}, description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
     String columns;
 
-    @CommandLine.Option(names = {"-n", "--rows"}, defaultValue = ALL, description = "Number of rows to convert. Positive values convert the first N rows (head), negative values convert the last N rows (tail), 'ALL' converts every row.")
+    @CommandLine.Option(names = {"-n", "--rows"}, defaultValue = RowLimits.ALL, description = "Number of rows to convert. Positive values convert the first N rows (head), negative values convert the last N rows (tail), 'ALL' converts every row.")
     String n;
 
     @Override
@@ -65,7 +63,7 @@ public class ConvertCommand implements Callable<Integer> {
             return CommandLine.ExitCode.SOFTWARE;
         }
 
-        int rowLimit = parseRowLimit();
+        int rowLimit = RowLimits.parse(n, spec);
         ColumnProjection projection = parseColumnProjection();
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
@@ -73,7 +71,7 @@ public class ConvertCommand implements Callable<Integer> {
             List<SchemaNode> fields = projectedFields(fileSchema, projection);
 
             PrintWriter out = openOutput();
-            try (RowReader rowReader = buildRowReader(reader, projection, rowLimit)) {
+            try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, rowLimit)) {
                 switch (format) {
                     case CSV -> writeCsv(out, fields, rowReader);
                     case JSON -> writeJson(out, fields, rowReader);
@@ -125,29 +123,6 @@ public class ConvertCommand implements Callable<Integer> {
             return new PrintWriter(new FileWriter(outputFile));
         }
         return spec.commandLine().getOut();
-    }
-
-    private static RowReader buildRowReader(ParquetFileReader reader, ColumnProjection projection, int rowLimit) {
-        ParquetFileReader.RowReaderBuilder builder = reader.buildRowReader().projection(projection);
-        if (rowLimit > 0) {
-            builder.head(rowLimit);
-        }
-        else if (rowLimit < 0) {
-            builder.tail(-rowLimit);
-        }
-        return builder.build();
-    }
-
-    private int parseRowLimit() {
-        if (ALL.equalsIgnoreCase(n)) {
-            return 0;
-        }
-        try {
-            return Integer.parseInt(n);
-        } catch (NumberFormatException e) {
-            throw new CommandLine.ParameterException(spec.commandLine(),
-                    "Invalid value for option '-n': expected an integer or 'ALL', got '" + n + "'");
-        }
     }
 
     // ==================== CSV ====================

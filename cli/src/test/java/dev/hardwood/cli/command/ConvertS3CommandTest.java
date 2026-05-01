@@ -25,6 +25,11 @@ class ConvertS3CommandTest extends AbstractS3CommandTest implements ConvertComma
     }
 
     @Override
+    public String multiRowGroupIntFile() {
+        return S3_MULTI_ROW_GROUP_INT_FILE;
+    }
+
+    @Override
     public String nonexistentFile() {
         return S3_NONEXISTENT_FILE;
     }

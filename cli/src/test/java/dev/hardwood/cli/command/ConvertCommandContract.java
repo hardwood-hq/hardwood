@@ -20,6 +20,8 @@ interface ConvertCommandContract {
 
     String listFile();
 
+    String multiRowGroupIntFile();
+
     String nonexistentFile();
 
     @Test
@@ -113,7 +115,7 @@ interface ConvertCommandContract {
     }
 
     @Test
-    default void explicitOneShowsFirstRow(){
+    default void head() {
         Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "1");
 
         assertThat(result.exitCode()).isZero();
@@ -123,7 +125,7 @@ interface ConvertCommandContract {
     }
 
     @Test
-    default void explicitNegativeOneShowsLastRow(){
+    default void tail() {
         Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "-1");
 
         assertThat(result.exitCode()).isZero();
@@ -133,7 +135,34 @@ interface ConvertCommandContract {
     }
 
     @Test
-    default void explicitAllShowsEveryRow(){
+    default void tailOnMultipleRowGroups() {
+        // filter_pushdown_int.parquet has three row groups of 100 rows each.
+        // The tail must reflect the last rows of the file regardless of the
+        // row-group layout; this also exercises the code path that skips
+        // row groups outside the tail.
+        Cli.Result result = Cli.launch("convert", "-f", multiRowGroupIntFile(), "--format", "csv", "-n", "-3");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id,value,label
+                298,298,rg3_298
+                299,299,rg3_299
+                300,300,rg3_300""");
+    }
+
+    @Test
+    default void headJsonOutput() {
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "json", "-n", "1");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                [
+                  {"id":"1","value":"100"}
+                ]""");
+    }
+
+    @Test
+    default void explicitAllConvertsEveryRow() {
         Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "ALL");
 
         assertThat(result.exitCode()).isZero();
@@ -142,6 +171,22 @@ interface ConvertCommandContract {
                 1,100
                 2,200
                 3,300""");
+    }
+
+    @Test
+    default void rejectsNonIntegerRowLimit() {
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "abc");
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).contains("Invalid value for option '-n'");
+    }
+
+    @Test
+    default void rejectsZeroRowLimit() {
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "0");
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).contains("Invalid value for option '-n'");
     }
 
 }
