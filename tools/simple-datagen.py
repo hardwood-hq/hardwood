@@ -2644,3 +2644,80 @@ print("\nGenerated geospatial_e2e_test.parquet:")
 print("  - 3 row groups (Europe, Asia, Americas) with WKB Point geometries")
 print("  - location column has GEOMETRY logical type and per-chunk GeospatialStatistics")
 
+# =====================================================================
+# Misaligned per-column page boundaries WITHOUT a Page Index. Exercises
+# the SequentialFetchPlan mask path: filter pushdown and tail-mode fast
+# path must keep columns row-aligned even though there's no OffsetIndex
+# to carry per-page row counts. Independently sized from
+# misaligned_pages.parquet so the file stays small (~80 KiB).
+# =====================================================================
+
+NO_INDEX_ROWS = 2000
+no_index_misaligned_schema = pa.schema([
+    ('narrow', pa.int32(), False),
+    ('wide', pa.binary(), False),
+])
+no_index_misaligned_table = pa.table({
+    'narrow': list(range(NO_INDEX_ROWS)),
+    # 4-byte ASCII row prefix so the wide value self-identifies its row.
+    # Total ~32 B/value (24-byte payload + 4-byte length prefix + framing).
+    'wide': [f"row={i:05d}-{'x' * 19}".encode() for i in range(NO_INDEX_ROWS)],
+}, schema=no_index_misaligned_schema)
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/misaligned_pages_no_index.parquet',
+    schema=no_index_misaligned_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='2.0',
+    data_page_size=512,
+    # write_batch_size=7 keeps narrow's page period (~19×7 values) coprime
+    # with wide's (~3×7 values) so per-column page boundaries don't line up.
+    write_batch_size=7,
+    write_statistics=True,
+    write_page_index=False,
+)
+writer.write_table(no_index_misaligned_table)
+writer.close()
+
+print("\nGenerated misaligned_pages_no_index.parquet:")
+print(f"  - 1 row group, {NO_INDEX_ROWS} rows, Parquet v2, NO ColumnIndex/OffsetIndex")
+print("  - narrow INT32 vs wide ~32 B/value with coprime page periods")
+print("  - Drives the SequentialFetchPlan per-page mask path for flat columns")
+
+# =====================================================================
+# Misaligned page boundaries with a nested LIST<STRING> column on a v2
+# fixture without a Page Index. Drives the rep-level walk path in
+# SequentialFetchPlan when the row-group-wide mask gate admits nested-v2
+# columns.
+# =====================================================================
+
+NESTED_V2_ROWS = 2000
+nested_v2_schema = pa.schema([
+    ('narrow', pa.int32(), False),
+    # Two strings per row: a row-self-identifying tag plus a label.
+    ('tags', pa.list_(pa.field('element', pa.string()))),
+])
+nested_v2_table = pa.table({
+    'narrow': list(range(NESTED_V2_ROWS)),
+    'tags': [[f"row={i:05d}", f"tag-{i % 7}"] for i in range(NESTED_V2_ROWS)],
+}, schema=nested_v2_schema)
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/misaligned_pages_nested_v2.parquet',
+    schema=nested_v2_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='2.0',
+    data_page_size=512,
+    write_batch_size=7,
+    write_statistics=True,
+    write_page_index=False,
+)
+writer.write_table(nested_v2_table)
+writer.close()
+
+print("\nGenerated misaligned_pages_nested_v2.parquet:")
+print(f"  - 1 row group, {NESTED_V2_ROWS} rows, Parquet v2, NO ColumnIndex/OffsetIndex")
+print("  - narrow INT32 (flat) + tags LIST<STRING> (nested, 2 elements per row)")
+print("  - Drives SequentialFetchPlan rep-level walk on a v2 nested column")
