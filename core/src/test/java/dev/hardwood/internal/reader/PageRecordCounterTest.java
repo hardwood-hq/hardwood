@@ -7,7 +7,16 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.util.Arrays;
+import java.util.Random;
+import java.util.stream.Stream;
+
 import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.Arguments;
+import org.junit.jupiter.params.provider.MethodSource;
+
+import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -91,5 +100,153 @@ class PageRecordCounterTest {
         byte[] data = { (byte) ((1 << 1) | 1), (byte) 0x84, 0x00 };
         int records = PageRecordCounter.countTopLevelRecords(data, 0, data.length, 5, 2);
         assertThat(records).isEqualTo(3);
+    }
+
+    /// Round-trip equivalence: for varied rep-level sequences, the walker's
+    /// zero-count must match what you get by fully decoding the same bytes via
+    /// [RleBitPackingHybridDecoder] and counting zeros in the materialised
+    /// `int[]`. This guards the count-only optimisation against drift from the
+    /// canonical decode path.
+    @ParameterizedTest
+    @MethodSource("roundTripCases")
+    void testWalkerMatchesMaterialisedDecode(String name, int[] values, int maxRepLevel) {
+        int bitWidth = bitWidthFor(maxRepLevel);
+        byte[] bytes = encodeBitPacked(values, bitWidth);
+
+        int[] decoded = new int[values.length];
+        new RleBitPackingHybridDecoder(bytes, bitWidth).readInts(decoded, 0, values.length);
+        int expectedZeros = 0;
+        for (int v : decoded) {
+            if (v == 0) expectedZeros++;
+        }
+
+        int walkerZeros = PageRecordCounter.countTopLevelRecords(
+                bytes, 0, bytes.length, values.length, maxRepLevel);
+
+        assertThat(walkerZeros)
+                .as("case %s: walker count must match materialised-decode count", name)
+                .isEqualTo(expectedZeros);
+    }
+
+    /// Round-trip with RLE-encoded runs (single repeated value). Catches RLE
+    /// dispatch bugs the bit-packed cases can't reach.
+    @ParameterizedTest
+    @MethodSource("rleRoundTripCases")
+    void testWalkerMatchesMaterialisedRleDecode(String name, int value, int count, int maxRepLevel) {
+        int bitWidth = bitWidthFor(maxRepLevel);
+        byte[] bytes = encodeRle(value, count, bitWidth);
+
+        int[] decoded = new int[count];
+        new RleBitPackingHybridDecoder(bytes, bitWidth).readInts(decoded, 0, count);
+        int expectedZeros = 0;
+        for (int v : decoded) {
+            if (v == 0) expectedZeros++;
+        }
+
+        int walkerZeros = PageRecordCounter.countTopLevelRecords(
+                bytes, 0, bytes.length, count, maxRepLevel);
+
+        assertThat(walkerZeros)
+                .as("case %s: walker count must match materialised-decode count", name)
+                .isEqualTo(expectedZeros);
+    }
+
+    static Stream<Arguments> roundTripCases() {
+        Random rng = new Random(0x37137137L);
+        return Stream.of(
+                Arguments.of("all-zeros bw=1", filled(64, 0), 1),
+                Arguments.of("all-ones bw=1", filled(64, 1), 1),
+                Arguments.of("alternating bw=1", alternating(64, 0, 1), 1),
+                Arguments.of("alternating bw=1 odd-length", alternating(63, 0, 1), 1),
+                Arguments.of("partial-group bw=1", alternating(5, 0, 1), 1),
+                Arguments.of("random bw=1 large", randomLevels(rng, 4096, 1), 1),
+                Arguments.of("random bw=2", randomLevels(rng, 1024, 2), 2),
+                Arguments.of("random bw=3", randomLevels(rng, 1024, 3), 5),
+                Arguments.of("random bw=4", randomLevels(rng, 1024, 4), 12),
+                Arguments.of("random bw=8", randomLevels(rng, 512, 8), 200),
+                Arguments.of("non-multiple-of-8 bw=2", randomLevels(rng, 17, 2), 2));
+    }
+
+    static Stream<Arguments> rleRoundTripCases() {
+        return Stream.of(
+                Arguments.of("rle zero short bw=1", 0, 5, 1),
+                Arguments.of("rle one short bw=1", 1, 5, 1),
+                Arguments.of("rle zero long bw=1", 0, 1024, 1),
+                Arguments.of("rle two bw=2", 2, 100, 2),
+                Arguments.of("rle 200 bw=8", 200, 50, 200),
+                Arguments.of("rle huge varint header bw=1", 0, 200_000, 1));
+    }
+
+    private static int[] filled(int length, int value) {
+        int[] out = new int[length];
+        Arrays.fill(out, value);
+        return out;
+    }
+
+    private static int[] alternating(int length, int a, int b) {
+        int[] out = new int[length];
+        for (int i = 0; i < length; i++) {
+            out[i] = (i % 2 == 0) ? a : b;
+        }
+        return out;
+    }
+
+    private static int[] randomLevels(Random rng, int length, int maxLevel) {
+        int[] out = new int[length];
+        for (int i = 0; i < length; i++) {
+            out[i] = rng.nextInt(maxLevel + 1);
+        }
+        return out;
+    }
+
+    private static int bitWidthFor(int maxLevel) {
+        return 32 - Integer.numberOfLeadingZeros(maxLevel);
+    }
+
+    /// Mini RLE/bit-packing-hybrid encoder — emits a single bit-packed run
+    /// covering `padded = ceil(values.length / 8) * 8` values. Padding values
+    /// are zero. Sufficient for round-trip equivalence testing.
+    private static byte[] encodeBitPacked(int[] values, int bitWidth) {
+        int groups = (values.length + 7) / 8;
+        int padded = groups * 8;
+        int dataBytes = groups * bitWidth;
+        byte[] out = new byte[10 + dataBytes];
+        int pos = writeUnsignedVarInt(out, 0, ((long) groups << 1) | 1L);
+
+        long bits = 0;
+        int bitsInBuf = 0;
+        for (int i = 0; i < padded; i++) {
+            int v = (i < values.length) ? values[i] : 0;
+            bits |= ((long) v) << bitsInBuf;
+            bitsInBuf += bitWidth;
+            while (bitsInBuf >= 8) {
+                out[pos++] = (byte) (bits & 0xFF);
+                bits >>>= 8;
+                bitsInBuf -= 8;
+            }
+        }
+        if (bitsInBuf > 0) {
+            out[pos++] = (byte) (bits & 0xFF);
+        }
+        return Arrays.copyOf(out, pos);
+    }
+
+    private static byte[] encodeRle(int value, int count, int bitWidth) {
+        int bytesNeeded = (bitWidth + 7) / 8;
+        byte[] out = new byte[10 + bytesNeeded];
+        int pos = writeUnsignedVarInt(out, 0, (long) count << 1);
+        for (int i = 0; i < bytesNeeded; i++) {
+            out[pos++] = (byte) ((value >> (i * 8)) & 0xFF);
+        }
+        return Arrays.copyOf(out, pos);
+    }
+
+    private static int writeUnsignedVarInt(byte[] out, int pos, long value) {
+        while ((value & ~0x7FL) != 0) {
+            out[pos++] = (byte) ((value & 0x7F) | 0x80);
+            value >>>= 7;
+        }
+        out[pos++] = (byte) value;
+        return pos;
     }
 }
