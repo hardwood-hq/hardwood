@@ -483,6 +483,13 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 if (maxRows > 0 && valuesRead >= maxRows) {
                     return null;
                 }
+                // Once `recordsRead` has crossed the last matching row, every
+                // remaining page produces a null mask. Exit before parsing
+                // any more page headers so trailing-region scans don't pay
+                // for work we know will be discarded.
+                if (!matchingRows.isAll() && recordsRead >= matchingRows.endRow()) {
+                    return null;
+                }
                 ParsedHeader parsed = readPageHeader(position);
                 PageHeader header = parsed.header();
                 int headerSize = parsed.headerSize();

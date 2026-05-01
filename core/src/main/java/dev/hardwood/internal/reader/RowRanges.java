@@ -55,6 +55,21 @@ public class RowRanges {
         return all;
     }
 
+    /// Returns the exclusive end of the last matching row range. Used as a
+    /// short-circuit cursor by sequential page scanners: once the iterator's
+    /// row cursor has crossed `endRow()`, no later page can produce a non-null
+    /// per-page mask and scanning further is wasted work.
+    ///
+    /// Returns `Long.MAX_VALUE` for [#ALL] so callers that already gate on
+    /// `!isAll()` see a no-op end value if they accidentally invoke this on
+    /// the sentinel.
+    public long endRow() {
+        if (all) {
+            return Long.MAX_VALUE;
+        }
+        return ranges[ranges.length - 1];
+    }
+
     /// Creates RowRanges from page locations and a keep bitmap.
     ///
     /// For each page where `keep[i]` is true, the row range

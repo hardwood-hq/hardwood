@@ -200,6 +200,38 @@ class RowRangesTest {
     }
 
     @Test
+    void testEndRowOnAllSentinelReturnsLongMaxValue() {
+        assertEquals(Long.MAX_VALUE, RowRanges.ALL.endRow());
+    }
+
+    @Test
+    void testEndRowOnAllForRowGroupReturnsLongMaxValue() {
+        // `all(N)` sets the all-rows flag; the actual row count is irrelevant
+        // to the early-exit semantics, so we return the sentinel value here too.
+        assertEquals(Long.MAX_VALUE, RowRanges.all(1000).endRow());
+    }
+
+    @Test
+    void testEndRowOnSingleRangeReturnsRangeEnd() {
+        assertEquals(800L, RowRanges.range(100, 800).endRow());
+    }
+
+    @Test
+    void testEndRowOnMultiRangeReturnsLastIntervalEnd() {
+        // [0, 10), [20, 30), [40, 50) → endRow == 50
+        List<PageLocation> pages = List.of(
+                new PageLocation(0, 100, 0),
+                new PageLocation(100, 100, 10),
+                new PageLocation(200, 100, 20),
+                new PageLocation(300, 100, 30),
+                new PageLocation(400, 100, 40),
+                new PageLocation(500, 100, 50));
+        RowRanges ranges = RowRanges.fromPages(
+                pages, new boolean[]{ true, false, true, false, true, false }, 60);
+        assertEquals(50L, ranges.endRow());
+    }
+
+    @Test
     void testIntersectSingleRangeAgainstMultipleRanges() {
         // a: [0, 60)
         List<PageLocation> pagesA = List.of(
