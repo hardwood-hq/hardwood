@@ -1,6 +1,6 @@
 # Plan: Per-Page Row Masking in `SequentialFetchPlan` (#371)
 
-**Status: Proposed**
+**Status: Completed**
 
 ## Context
 
