@@ -133,18 +133,24 @@ now.
 
 Available screens:
 - Overview  
-  <a href="./img/01-landing-overview.png"><img src="./img/01-landing-overview.png" alt="Overview screen" width="220"></a>
+  <a href="./img/screenshots/01-landing-overview.svg"><img src="./img/screenshots/01-landing-overview.svg" alt="Overview screen" width="320"></a>
 - Schema (expandable tree of groups + leaves)  
-  <a href="./img/02-schema-tree.png"><img src="./img/02-schema-tree.png" alt="Schema screen" width="220"></a>
-- Row groups, Column chunks, Column chunk detail (facts + drill menu)   
-  <a href="./img/03-rg-miniseries.png"><img src="./img/03-rg-miniseries.png" alt="Row groups screen" width="220"></a>
+  <a href="./img/screenshots/02-schema-tree.svg"><img src="./img/screenshots/02-schema-tree.svg" alt="Schema screen" width="320"></a>
+- Row groups   
+  <a href="./img/screenshots/03-1-rg.svg"><img src="./img/screenshots/03-1-rg.svg" alt="Row groups screen" width="320"></a>
+- Row group detail  
+  <a href="./img/screenshots/03-2-rg-detail.svg"><img src="./img/screenshots/03-2-rg-detail.svg" alt="Row groups screen" width="320"></a>
+- Column chunks   
+  <a href="./img/screenshots/03-3-rg-column-chunks.svg"><img src="./img/screenshots/03-3-rg-column-chunks.svg" alt="Row groups screen" width="320"></a>
+- Column chunk detail (facts + drill menu)   
+  <a href="./img/screenshots/03-4-rg-column-chunk-detail.svg"><img src="./img/screenshots/03-4-rg-column-chunk-detail.svg" alt="Row groups screen" width="320"></a>
 - Pages (with page-header modal on Enter)  
-  <a href="./img/04-pages-header-modal.png"><img src="./img/04-pages-header-modal.png" alt="Pages screen with page-header modal" width="220"></a>
+  <a href="./img/screenshots/04-pages-header-modal.svg"><img src="./img/screenshots/04-pages-header-modal.svg" alt="Pages screen with page-header modal" width="320"></a>
 - Column index, Offset index, Footer & indexes (which also drills into a file-wide list of every chunk's column index, offset index, or dictionary region), Column-across-row-groups (from the Schema screen)   
 - Dictionary (full-value modal on Enter and `/` inline search)  
-  <a href="./img/05-dict-search.png"><img src="./img/05-dict-search.png" alt="Dictionary screen with inline search" width="220"></a>
+  <a href="./img/screenshots/05-dict-search.svg"><img src="./img/screenshots/05-dict-search.svg" alt="Dictionary screen with inline search" width="320"></a>
 - Data preview (row values via `RowReader`; `←/→` scrolls visible columns; `PgDn/PgUp` flips pages)  
-  <a href="./img/06-data-scrolled-right.png"><img src="./img/06-data-scrolled-right.png" alt="Data preview screen scrolled right" width="220"></a>
+  <a href="./img/screenshots/06-data-scrolled-right.svg"><img src="./img/screenshots/06-data-scrolled-right.svg" alt="Data preview screen scrolled right" width="320"></a>
 
 The `--rows N` flag sets the Data preview page size (default: 20).
 
