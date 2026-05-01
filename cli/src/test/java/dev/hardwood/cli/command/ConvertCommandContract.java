@@ -111,4 +111,37 @@ interface ConvertCommandContract {
 
         assertThat(result.exitCode()).isNotZero();
     }
+
+    @Test
+    default void explicitOneShowsFirstRow(){
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "1");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id,value
+                1,100""");
+    }
+
+    @Test
+    default void explicitNegativeOneShowsLastRow(){
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "-1");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id,value
+                3,300""");
+    }
+
+    @Test
+    default void explicitAllShowsEveryRow(){
+        Cli.Result result = Cli.launch("convert", "-f", plainFile(), "--format", "csv", "-n", "ALL");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("""
+                id,value
+                1,100
+                2,200
+                3,300""");
+    }
+
 }
