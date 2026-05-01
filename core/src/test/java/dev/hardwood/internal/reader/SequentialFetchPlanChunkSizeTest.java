@@ -104,6 +104,7 @@ class SequentialFetchPlanChunkSizeTest {
                 Map.of(),
                 0L,
                 null,
+                null,
                 null);
     }
 }

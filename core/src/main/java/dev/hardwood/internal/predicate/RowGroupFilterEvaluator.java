@@ -7,6 +7,10 @@
  */
 package dev.hardwood.internal.predicate;
 
+import dev.hardwood.internal.util.Geospatial;
+import dev.hardwood.metadata.BoundingBox;
+import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.GeospatialStatistics;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.Statistics;
 
@@ -86,6 +90,17 @@ public class RowGroupFilterEvaluator {
                     }
                 }
                 yield true;
+            }
+            case ResolvedPredicate.GeospatialPredicate p -> {
+                ColumnMetaData cmd = rowGroup.columns().get(p.columnIndex()).metaData();
+                GeospatialStatistics geospatialStatistics = cmd.geospatialStatistics();
+                if (geospatialStatistics == null || geospatialStatistics.bbox() == null) {
+                    yield false; // no stats, can't drop
+                }
+                BoundingBox bbox = geospatialStatistics.bbox();
+                yield !Geospatial.xAxisOverlaps(bbox.xmin(), bbox.xmax(), p.xmin(), p.xmax()) ||
+                        bbox.ymax() < p.ymin() ||
+                        bbox.ymin() > p.ymax();
             }
         };
     }

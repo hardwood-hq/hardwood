@@ -10,6 +10,7 @@ package dev.hardwood.internal.thrift;
 import java.io.IOException;
 
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.LogicalType.EdgeInterpolationAlgorithm;
 import dev.hardwood.metadata.LogicalType.TimeUnit;
 
 /// Reader for LogicalType union from Thrift Compact Protocol.
@@ -80,6 +81,8 @@ public class LogicalTypeReader {
                     }
                     case 16 -> readVariantType(reader);
                     // Skip unsupported types (NullType, Float16Type, etc.)
+                    case 17 -> readGeometryType(reader);
+                    case 18 -> readGeographyType(reader);
                     default -> {
                         reader.skipField(header.type());
                         yield null;
@@ -332,6 +335,120 @@ public class LogicalTypeReader {
                 case 2 -> TimeUnit.MICROS;
                 case 3 -> TimeUnit.NANOS;
                 default -> throw new IllegalArgumentException("Unexpected time unit:" + fieldId);
+            };
+        }
+        finally {
+            reader.popFieldIdContext(saved);
+        }
+    }
+
+    private static LogicalType.GeometryType readGeometryType(ThriftCompactReader reader) throws IOException {
+        short saved = reader.pushFieldIdContext();
+        try {
+            return readGeometryTypeInternal(reader);
+        }
+        finally {
+            reader.popFieldIdContext(saved);
+        }
+    }
+
+    private static LogicalType.GeometryType readGeometryTypeInternal(ThriftCompactReader reader) throws IOException {
+        String crs = null;
+        while (true) {
+            ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
+            if (header == null) {
+                break;
+            }
+
+            switch (header.fieldId()) {
+                case 1: // CRS
+                    if (header.type() == 0x08) { // TYPE_BINARY
+                        crs = reader.readString();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
+                default:
+                    reader.skipField(header.type());
+                    break;
+            }
+        }
+
+        if (crs == null) {
+            crs = "OGC:CRS84";
+        }
+
+        return new LogicalType.GeometryType(crs);
+    }
+
+    private static LogicalType.GeographyType readGeographyType(ThriftCompactReader reader) throws IOException {
+        short saved = reader.pushFieldIdContext();
+        try {
+            return readGeographyTypeInternal(reader);
+        }
+        finally {
+            reader.popFieldIdContext(saved);
+        }
+    }
+
+    private static LogicalType.GeographyType readGeographyTypeInternal(ThriftCompactReader reader) throws IOException {
+        String crs = null;
+        EdgeInterpolationAlgorithm edgeInterpolation = null;
+        while (true) {
+            ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
+            if (header == null) {
+                break;
+            }
+
+            switch (header.fieldId()) {
+                case 1: // CRS
+                    if (header.type() == 0x08) { // TYPE_BINARY
+                        crs = reader.readString();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
+                case 2: // EdgeInterpolation
+                    if (header.type() == 0x0C) { // TYPE_STRUCT
+                        edgeInterpolation = readEdgeInterpolation(reader);
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
+                default:
+                    reader.skipField(header.type());
+                    break;
+            }
+        }
+
+        if (crs == null) {
+            crs = "OGC:CRS84";
+        }
+        if (edgeInterpolation == null) {
+            edgeInterpolation = EdgeInterpolationAlgorithm.SPHERICAL;
+        }
+
+        return new LogicalType.GeographyType(crs, edgeInterpolation);
+    }
+
+    private static EdgeInterpolationAlgorithm readEdgeInterpolation(ThriftCompactReader reader) throws IOException {
+        short saved = reader.pushFieldIdContext();
+        try {
+            ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
+            int fieldId = header.fieldId();
+            reader.skipField(header.type());
+            reader.readFieldHeader(); // Consume STOP
+
+            return switch (fieldId) {
+                case 1 -> EdgeInterpolationAlgorithm.SPHERICAL;
+                case 2 -> EdgeInterpolationAlgorithm.VINCENTY;
+                case 3 -> EdgeInterpolationAlgorithm.THOMAS;
+                case 4 -> EdgeInterpolationAlgorithm.ANDOYER;
+                case 5 -> EdgeInterpolationAlgorithm.KARNEY;
+                default -> throw new IllegalArgumentException("Unexpected edge interpolation:" + fieldId);
             };
         }
         finally {

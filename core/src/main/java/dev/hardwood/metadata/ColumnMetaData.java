@@ -23,6 +23,7 @@ import java.util.Map;
 /// @param dataPageOffset byte offset in the file where the first data page begins
 /// @param dictionaryPageOffset byte offset in the file where the dictionary page begins, or `null` if there is no dictionary page
 /// @param statistics column chunk statistics (min/max values, null count, distinct count), or `null` if absent
+/// @param geospatialStatistics column chunk geospatial statistics (bounding box, geospatial types), or `null` if absent
 /// @see <a href="https://parquet.apache.org/docs/file-format/data-pages/columnchunks/">File Format – Column Chunks</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public record ColumnMetaData(
@@ -36,5 +37,6 @@ public record ColumnMetaData(
         Map<String, String> keyValueMetadata,
         long dataPageOffset,
         Long dictionaryPageOffset,
-        Statistics statistics) {
+        Statistics statistics,
+        GeospatialStatistics geospatialStatistics) {
 }

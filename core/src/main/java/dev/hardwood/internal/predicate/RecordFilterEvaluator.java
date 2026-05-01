@@ -141,6 +141,9 @@ public class RecordFilterEvaluator {
                 }
                 yield false;
             }
+            // Spatial intersects is a coarse-grained, bbox-only filter applied at the row group
+            // and page level. Per-row WKB decoding is left to the caller, so every surviving row passes here.
+            case ResolvedPredicate.GeospatialPredicate p -> true;
         };
     }
 

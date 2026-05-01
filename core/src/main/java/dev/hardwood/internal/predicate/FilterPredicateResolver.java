@@ -26,6 +26,7 @@ import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.InstantColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntInPredicate;
+import dev.hardwood.reader.FilterPredicate.IntersectsPredicate;
 import dev.hardwood.reader.FilterPredicate.LongColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.LongInPredicate;
 import dev.hardwood.reader.FilterPredicate.Not;
@@ -189,6 +190,16 @@ public class FilterPredicateResolver {
             case Not n -> {
                 ResolvedPredicate resolvedDelegate = resolve(n.delegate(), schema);
                 yield ResolvedPredicate.negate(resolvedDelegate);
+            }
+            case IntersectsPredicate p -> {
+                ColumnSchema cs = resolveColumn(p.column(), schema);
+                if (!(cs.logicalType() instanceof LogicalType.GeometryType) &&
+                        !(cs.logicalType() instanceof LogicalType.GeographyType)) {
+                    throw new IllegalArgumentException(
+                            "Column '" + p.column() + "' is not a GEOMETRY or GEOGRAPHY column");
+                }
+                yield new ResolvedPredicate.GeospatialPredicate(cs.columnIndex(),
+                        p.xmin(), p.ymin(), p.xmax(), p.ymax());
             }
         };
     }

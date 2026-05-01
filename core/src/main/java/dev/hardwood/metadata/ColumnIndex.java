@@ -16,6 +16,7 @@ import java.util.List;
 /// @param maxValues per-page maximum values in the column's physical sort order
 /// @param boundaryOrder ordering of min/max values: UNORDERED, ASCENDING, or DESCENDING
 /// @param nullCounts per-page null counts, or `null` if not available
+/// @param geospatialStatistics per-page geospatial stats, or `null` if not available
 /// @see <a href="https://parquet.apache.org/docs/file-format/pageindex/">File Format – Page Index</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public record ColumnIndex(
@@ -23,7 +24,8 @@ public record ColumnIndex(
         List<byte[]> minValues,
         List<byte[]> maxValues,
         BoundaryOrder boundaryOrder,
-        List<Long> nullCounts) {
+        List<Long> nullCounts,
+        List<GeospatialStatistics> geospatialStatistics) {
 
     /// Ordering of min/max values across pages.
     public enum BoundaryOrder {

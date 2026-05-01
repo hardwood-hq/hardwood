@@ -107,6 +107,9 @@ public final class RecordFilterCompiler {
             }
             case ResolvedPredicate.And and -> compileAnd(and.children(), schema, topLevelFieldIndex);
             case ResolvedPredicate.Or or -> compileOr(or.children(), schema, topLevelFieldIndex);
+            // Spatial intersects is bbox-only pushdown (row group + page level). Per-row WKB
+            // decoding is left to the caller, so every surviving row passes here.
+            case ResolvedPredicate.GeospatialPredicate p -> row -> true;
         };
     }
 

@@ -1577,7 +1577,7 @@ def _write_zigzag(val):
     return _write_varint((val << 1) ^ (val >> 63))
 
 _STOP = b'\x00'
-_T_I32, _T_I64, _T_BIN, _T_LIST, _T_STRUCT = 0x05, 0x06, 0x08, 0x09, 0x0C
+_T_I32, _T_I64, _T_BIN, _T_LIST, _T_STRUCT, _T_DOUBLE = 0x05, 0x06, 0x08, 0x09, 0x0C, 0x07
 
 class _ThriftWriter:
     def __init__(self):
@@ -1590,6 +1590,9 @@ class _ThriftWriter:
         return self
     def i32(self, v):  self.buf += _write_zigzag(v); return self
     def i64(self, v):  self.buf += _write_zigzag(v); return self
+    def double(self, v):
+        self.buf += struct.pack('<d', v)
+        return self
     def s(self, v):    b = v.encode(); self.buf += _write_varint(len(b)) + b; return self
     def lst(self, t, n):
         self.buf += bytes([(n << 4) | t]) if n < 15 else (bytes([0xF0 | t]) + _write_varint(n))
@@ -1601,14 +1604,15 @@ class _ThriftWriter:
 def _kv_struct(k, v):
     w = _ThriftWriter(); w.f(1,_T_BIN).s(k).f(2,_T_BIN).s(v).end(); return w.out()
 
-# SchemaElement fields: 1=type, 3=repetition_type, 4=name, 5=num_children, 6=converted_type
-def _schema_elem(name, type_val=None, rep=None, num_children=None, ct=None):
+# SchemaElement fields: 1=type, 3=repetition_type, 4=name, 5=num_children, 6=converted_type, 10=logical_type
+def _schema_elem(name, type_val=None, rep=None, num_children=None, ct=None, logical_type=None):
     w = _ThriftWriter()
     if type_val is not None: w.f(1, _T_I32).i32(type_val)
     if rep is not None:      w.f(3, _T_I32).i32(rep)
     w.f(4, _T_BIN).s(name)
     if num_children is not None: w.f(5, _T_I32).i32(num_children)
     if ct is not None:       w.f(6, _T_I32).i32(ct)
+    if logical_type is not None: w.f(10, _T_STRUCT).raw(logical_type)
     w.end()
     return w.out()
 
@@ -1996,6 +2000,7 @@ print("\nGenerated inline_page_stats.parquet:")
 print("  - 1 row group, 10000 rows, sorted id [0,9999] and value [1000,10999]")
 print("  - Parquet v1 with inline DataPageHeader.statistics (no ColumnIndex)")
 
+
 # ============================================================================
 # Variant logical type
 # ============================================================================
@@ -2345,3 +2350,297 @@ print("\nGenerated misaligned_pages.parquet:")
 print("  - 1 row group, 10000 rows, Parquet v2 with ColumnIndex + OffsetIndex")
 print("  - narrow INT32 (4 B/value, ~10 pages) vs wide BYTE_ARRAY (~96 B/value, ~197 pages)")
 print("  - Per-column page boundaries do not line up — exercises cross-column row alignment")
+
+# test data for geospatial metadata reading
+geospatial_schema = pa.schema([pa.field('city_name', pa.string(), False), pa.field('city_geom', pa.binary(), True)])
+geospatial_table = pa.table({'city_name': ['London', 'Paris', 'Tokyo'], 'city_geom': [b'\x01', b'\x02', b'\x03']}, schema=geospatial_schema)
+geospatial_base_path = '/tmp/_geospatial_base.parquet'
+pq.write_table(geospatial_table, geospatial_base_path, use_dictionary=False, compression=None, data_page_version='1.0')
+
+with open(geospatial_base_path, 'rb') as f:
+    base_data = f.read()
+base_footer_len = struct.unpack('<I', base_data[-8:-4])[0]
+pre_footer = base_data[:len(base_data) - 8 - base_footer_len]
+base_pf = pq.ParquetFile(geospatial_base_path)
+base_rg = base_pf.metadata.row_group(0)
+
+# Build FileMetaData with column-level kv metadata
+fm = _ThriftWriter()
+fm.f(1, _T_I32).i32(2)
+fm.f(2, _T_LIST).lst(_T_STRUCT, 3)
+fm.raw(_schema_elem("schema", num_children=2))
+fm.raw(_schema_elem("city_name", type_val=6, rep=0))
+fm.raw(_schema_elem("city_geom", type_val=6, rep=1))
+fm.f(3, _T_I64).i64(3)
+fm.f(4, _T_LIST).lst(_T_STRUCT, 1)
+
+rw = _ThriftWriter()
+rw.f(1, _T_LIST).lst(_T_STRUCT, 2)
+
+for ci in range(2):
+    col = base_rg.column(ci)
+    pt = 6
+    encs = [enc_map.get(str(e), 0) for e in col.encodings]
+
+    # column chunk
+    cc = _ThriftWriter()
+    cc.f(2, _T_I64).i64(col.file_offset)
+    cc.f(3, _T_STRUCT)
+
+    md = _ThriftWriter()
+    md.f(1, _T_I32).i32(pt)
+    md.f(2, _T_LIST).lst(_T_I32, len(encs))
+    for e in encs: md.i32(e)
+    md.f(3, _T_LIST).lst(_T_BIN, 1).s(col.path_in_schema)
+    md.f(4, _T_I32).i32(0)
+    md.f(5, _T_I64).i64(col.num_values)
+    md.f(6, _T_I64).i64(col.total_uncompressed_size)
+    md.f(7, _T_I64).i64(col.total_compressed_size)
+    md.f(9, _T_I64).i64(col.data_page_offset)
+    if ci == 1:
+        bbox = _ThriftWriter()
+        bbox.f(1, _T_DOUBLE).double(-4.0)  # xmin
+        bbox.f(2, _T_DOUBLE).double(7.5)   # xmax
+        bbox.f(3, _T_DOUBLE).double(20.96)  # ymin
+        bbox.f(4, _T_DOUBLE).double(77.08)  # ymax
+        bbox.f(5, _T_DOUBLE).double(10.5)   # zmin
+        bbox.f(6, _T_DOUBLE).double(90.0) # zmax
+        bbox.end()
+
+        geospatial = _ThriftWriter()
+        geospatial.f(1, _T_STRUCT).raw(bbox.out())
+        geospatial.f(2, _T_LIST).lst(_T_I32, 2).i32(1).i32(6)
+        geospatial.end()
+
+        md.f(17, _T_STRUCT).raw(geospatial.out())
+    md.end()
+
+    cc.raw(md.out()).end()
+    rw.raw(cc.out())
+
+rw.f(2, _T_I64).i64(base_rg.total_byte_size)
+rw.f(3, _T_I64).i64(base_rg.num_rows)
+rw.end()
+fm.raw(rw.out())
+fm.f(6, _T_BIN).s("hardwood-test-datagen")
+fm.end()
+
+footer_bytes = fm.out()
+output = pre_footer + footer_bytes + struct.pack('<I', len(footer_bytes)) + b'PAR1'
+with open('core/src/test/resources/geospatial_stats_test.parquet', 'wb') as f:
+    f.write(output)
+
+print("\nGenerated geospatial_stats_test.parquet:")
+print("  - city_geom column has GeospatialStatistics at field 17")
+print("  - BoundingBox: xmin=-4.0, xmax=7.5, ymin=20.96, ymax=77.08, zmin=10.5, zmax=90.0")
+print("  - geospatial_types: [1, 6]")
+
+# ============================================================================
+# Geospatial fixtures: variants that exercise optional-field handling
+# ============================================================================
+
+def _geo_variant_path(name):
+    return 'core/src/test/resources/' + name
+
+def _build_geospatial_variant(out_path, *, with_bbox, with_types):
+    """Generate a one-row-group, two-column Parquet file. The second column carries
+    a GeospatialStatistics struct whose bbox / types presence is controlled by the
+    flags. Used by GeospatialStatisticsTest to cover bbox-absent / types-absent."""
+    schema = pa.schema([pa.field('city_name', pa.string(), False),
+                        pa.field('city_geom', pa.binary(), True)])
+    table = pa.table({'city_name': ['London', 'Paris', 'Tokyo'],
+                      'city_geom': [b'\x01', b'\x02', b'\x03']}, schema=schema)
+    base_path = '/tmp/_geospatial_variant_base.parquet'
+    pq.write_table(table, base_path, use_dictionary=False, compression=None,
+                   data_page_version='1.0')
+
+    with open(base_path, 'rb') as f:
+        base_data = f.read()
+    base_footer_len = struct.unpack('<I', base_data[-8:-4])[0]
+    pre_footer = base_data[:len(base_data) - 8 - base_footer_len]
+    base_pf = pq.ParquetFile(base_path)
+    base_rg = base_pf.metadata.row_group(0)
+
+    fm = _ThriftWriter()
+    fm.f(1, _T_I32).i32(2)
+    fm.f(2, _T_LIST).lst(_T_STRUCT, 3)
+    fm.raw(_schema_elem("schema", num_children=2))
+    fm.raw(_schema_elem("city_name", type_val=6, rep=0))
+    fm.raw(_schema_elem("city_geom", type_val=6, rep=1))
+    fm.f(3, _T_I64).i64(3)
+    fm.f(4, _T_LIST).lst(_T_STRUCT, 1)
+
+    rw = _ThriftWriter()
+    rw.f(1, _T_LIST).lst(_T_STRUCT, 2)
+
+    for ci in range(2):
+        col = base_rg.column(ci)
+        encs = [enc_map.get(str(e), 0) for e in col.encodings]
+        cc = _ThriftWriter()
+        cc.f(2, _T_I64).i64(col.file_offset)
+        cc.f(3, _T_STRUCT)
+
+        md = _ThriftWriter()
+        md.f(1, _T_I32).i32(6)
+        md.f(2, _T_LIST).lst(_T_I32, len(encs))
+        for e in encs: md.i32(e)
+        md.f(3, _T_LIST).lst(_T_BIN, 1).s(col.path_in_schema)
+        md.f(4, _T_I32).i32(0)
+        md.f(5, _T_I64).i64(col.num_values)
+        md.f(6, _T_I64).i64(col.total_uncompressed_size)
+        md.f(7, _T_I64).i64(col.total_compressed_size)
+        md.f(9, _T_I64).i64(col.data_page_offset)
+        if ci == 1:
+            geospatial = _ThriftWriter()
+            if with_bbox:
+                bbox = _ThriftWriter()
+                bbox.f(1, _T_DOUBLE).double(-4.0)
+                bbox.f(2, _T_DOUBLE).double(7.5)
+                bbox.f(3, _T_DOUBLE).double(20.96)
+                bbox.f(4, _T_DOUBLE).double(77.08)
+                bbox.end()
+                geospatial.f(1, _T_STRUCT).raw(bbox.out())
+            if with_types:
+                geospatial.f(2, _T_LIST).lst(_T_I32, 1).i32(1)
+            geospatial.end()
+            md.f(17, _T_STRUCT).raw(geospatial.out())
+        md.end()
+
+        cc.raw(md.out()).end()
+        rw.raw(cc.out())
+
+    rw.f(2, _T_I64).i64(base_rg.total_byte_size)
+    rw.f(3, _T_I64).i64(base_rg.num_rows)
+    rw.end()
+    fm.raw(rw.out())
+    fm.f(6, _T_BIN).s("hardwood-test-datagen")
+    fm.end()
+
+    footer_bytes = fm.out()
+    output = pre_footer + footer_bytes + struct.pack('<I', len(footer_bytes)) + b'PAR1'
+    with open(out_path, 'wb') as f:
+        f.write(output)
+
+_build_geospatial_variant(_geo_variant_path('geospatial_stats_types_only.parquet'),
+                          with_bbox=False, with_types=True)
+print("\nGenerated geospatial_stats_types_only.parquet:")
+print("  - GeospatialStatistics with geospatial_types=[1] and no bounding box")
+
+_build_geospatial_variant(_geo_variant_path('geospatial_stats_bbox_only.parquet'),
+                          with_bbox=True, with_types=False)
+print("\nGenerated geospatial_stats_bbox_only.parquet:")
+print("  - GeospatialStatistics with bounding box and no geospatial_types list")
+
+# ============================================================================
+# Geospatial end-to-end fixture: 3 row groups (Europe, Asia, Americas)
+# Used by GeospatialEndToEndTest to verify spatial filter pushdown.
+# ============================================================================
+
+def wkb_point(x, y):
+    # WKB Point: byte order (1=little endian) + type (1=Point) + x + y
+    return struct.pack('<BIdd', 1, 1, x, y)
+
+def _geometry_logical_type():
+    # LogicalType union field 17 = GeometryType (empty struct: defaults to OGC:CRS84)
+    w = _ThriftWriter()
+    w.f(17, _T_STRUCT).end()
+    w.end()
+    return w.out()
+
+europe_names = ['London', 'Paris', 'Berlin']
+europe_points = [wkb_point(-0.12, 51.50), wkb_point(2.35, 48.85), wkb_point(13.40, 52.52)]
+asia_names = ['Tokyo', 'Beijing', 'Mumbai']
+asia_points = [wkb_point(139.69, 35.68), wkb_point(116.39, 39.91), wkb_point(72.87, 19.07)]
+america_names = ['New York', 'Chicago', 'LA']
+america_points = [wkb_point(-74.00, 40.71), wkb_point(-87.62, 41.87), wkb_point(-118.24, 34.05)]
+
+geo_schema = pa.schema([pa.field('city_name', pa.string(), False),
+                        pa.field('location', pa.binary(), False)])
+geo_base_path = '/tmp/_geo_e2e_base.parquet'
+writer = pq.ParquetWriter(geo_base_path, geo_schema, use_dictionary=False,
+                          compression=None, data_page_version='1.0')
+writer.write_table(pa.table({'city_name': europe_names, 'location': europe_points}, schema=geo_schema))
+writer.write_table(pa.table({'city_name': asia_names, 'location': asia_points}, schema=geo_schema))
+writer.write_table(pa.table({'city_name': america_names, 'location': america_points}, schema=geo_schema))
+writer.close()
+
+base_pf = pq.ParquetFile(geo_base_path)
+with open(geo_base_path, 'rb') as f:
+    base_data = f.read()
+base_footer_len = struct.unpack('<I', base_data[-8:-4])[0]
+pre_footer = base_data[:len(base_data) - 8 - base_footer_len]
+
+fm = _ThriftWriter()
+fm.f(1, _T_I32).i32(2)
+fm.f(2, _T_LIST).lst(_T_STRUCT, 3)
+fm.raw(_schema_elem("schema", num_children=2))
+fm.raw(_schema_elem("city_name", type_val=6, rep=0))
+fm.raw(_schema_elem("location", type_val=6, rep=0, logical_type=_geometry_logical_type()))
+fm.f(3, _T_I64).i64(9)
+fm.f(4, _T_LIST).lst(_T_STRUCT, 3)
+
+continent_bbox = {
+    0: [-0.12, 13.40, 48.85, 52.52],   # Europe
+    1: [72.87, 139.69, 19.07, 39.91],  # Asia
+    2: [-118.24, -74.00, 34.05, 41.87],# Americas
+}
+for rgi in range(3):
+    rw = _ThriftWriter()
+    rw.f(1, _T_LIST).lst(_T_STRUCT, 2)
+    base_rg = base_pf.metadata.row_group(rgi)
+    for ci in range(2):
+        col = base_rg.column(ci)
+        encs = [enc_map.get(str(e), 0) for e in col.encodings]
+
+        cc = _ThriftWriter()
+        cc.f(2, _T_I64).i64(col.file_offset)
+        cc.f(3, _T_STRUCT)
+
+        md = _ThriftWriter()
+        md.f(1, _T_I32).i32(6)
+        md.f(2, _T_LIST).lst(_T_I32, len(encs))
+        for e in encs: md.i32(e)
+        md.f(3, _T_LIST).lst(_T_BIN, 1).s(col.path_in_schema)
+        md.f(4, _T_I32).i32(0)
+        md.f(5, _T_I64).i64(col.num_values)
+        md.f(6, _T_I64).i64(col.total_uncompressed_size)
+        md.f(7, _T_I64).i64(col.total_compressed_size)
+        md.f(9, _T_I64).i64(col.data_page_offset)
+        if ci == 1:
+            bbox = _ThriftWriter()
+            bbox.f(1, _T_DOUBLE).double(continent_bbox[rgi][0])  # xmin
+            bbox.f(2, _T_DOUBLE).double(continent_bbox[rgi][1])  # xmax
+            bbox.f(3, _T_DOUBLE).double(continent_bbox[rgi][2])  # ymin
+            bbox.f(4, _T_DOUBLE).double(continent_bbox[rgi][3])  # ymax
+            bbox.f(5, _T_DOUBLE).double(10.5)
+            bbox.f(6, _T_DOUBLE).double(90.0)
+            bbox.end()
+
+            geospatial = _ThriftWriter()
+            geospatial.f(1, _T_STRUCT).raw(bbox.out())
+            geospatial.f(2, _T_LIST).lst(_T_I32, 2).i32(1).i32(6)
+            geospatial.end()
+
+            md.f(17, _T_STRUCT).raw(geospatial.out())
+        md.end()
+
+        cc.raw(md.out()).end()
+        rw.raw(cc.out())
+
+    rw.f(2, _T_I64).i64(base_rg.total_byte_size)
+    rw.f(3, _T_I64).i64(base_rg.num_rows)
+    rw.end()
+    fm.raw(rw.out())
+
+fm.f(6, _T_BIN).s("hardwood-test-datagen")
+fm.end()
+
+footer_bytes = fm.out()
+output = pre_footer + footer_bytes + struct.pack('<I', len(footer_bytes)) + b'PAR1'
+with open('core/src/test/resources/geospatial_e2e_test.parquet', 'wb') as f:
+    f.write(output)
+
+print("\nGenerated geospatial_e2e_test.parquet:")
+print("  - 3 row groups (Europe, Asia, Americas) with WKB Point geometries")
+print("  - location column has GEOMETRY logical type and per-chunk GeospatialStatistics")
+

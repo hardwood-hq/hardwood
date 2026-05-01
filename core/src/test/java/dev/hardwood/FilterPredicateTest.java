@@ -27,11 +27,13 @@ import org.junit.jupiter.params.provider.MethodSource;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
+import dev.hardwood.metadata.BoundingBox;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FieldPath;
+import dev.hardwood.metadata.GeospatialStatistics;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -1105,6 +1107,138 @@ class FilterPredicateTest {
                 .isEqualTo(canDropRowGroup(deMorganEquivalent, rg, schema));
     }
 
+    @Test
+    void testRowGroupIsNotDroppedWithIntersectingBoundingBox() {
+        FileSchema schema = createGeometrySchema();
+        RowGroup rg = createGeospatialRowGroup(2.0, 10.0, -4.0, 6.0);
+
+        // query bbox totally covered by chunk bbox
+        FilterPredicate totallyCovered = FilterPredicate.intersects("col", 3.0, 0.0, 8.0, 4.0);
+        assertThat(canDropRowGroup(totallyCovered, rg, schema)).isFalse();
+
+        // query bbox totally covering chunk bbox
+        FilterPredicate totallyCovering = FilterPredicate.intersects("col", 0.0, -10.0, 15.0, 10.0);
+        assertThat(canDropRowGroup(totallyCovering, rg, schema)).isFalse();
+
+        // query bbox partially covering chunk bbox on left
+        FilterPredicate partialLeft = FilterPredicate.intersects("col", -5.0, 0.0, 5.0, 3.0);
+        assertThat(canDropRowGroup(partialLeft, rg, schema)).isFalse();
+
+        // query bbox partially covering chunk bbox on right
+        FilterPredicate partialRight = FilterPredicate.intersects("col", 8.0, 0.0, 15.0, 3.0);
+        assertThat(canDropRowGroup(partialRight, rg, schema)).isFalse();
+
+        // query bbox partially covering chunk bbox from below
+        FilterPredicate partialBelow = FilterPredicate.intersects("col", 4.0, -10.0, 8.0, 0.0);
+        assertThat(canDropRowGroup(partialBelow, rg, schema)).isFalse();
+
+        // query bbox partially covering chunk bbox from above
+        FilterPredicate partialAbove =  FilterPredicate.intersects("col", 4.0, 3.0, 8.0, 10.0);
+        assertThat(canDropRowGroup(partialAbove, rg, schema)).isFalse();
+
+        // query bbox partially covering chunk bbox on a corner
+        FilterPredicate  corner = FilterPredicate.intersects("col", 8.0, 4.0, 15.0, 10.0);
+        assertThat(canDropRowGroup(corner, rg, schema)).isFalse();
+    }
+
+    @Test
+    void testRowGroupIsNotDroppedWhenGeospatialstatsAreNotAvailable() {
+        FileSchema schema = createGeometrySchema();
+        FilterPredicate query = FilterPredicate.intersects("col", 3.0, 0.0, 8.0, 4.0);
+
+        // geospatial stats metadata mot available
+        RowGroup rgWithNoGeostats = createRowGroupWithNoGeoStats();
+        assertThat(canDropRowGroup(query, rgWithNoGeostats, schema)).isFalse();
+
+        // bounding box absent in metadata
+        RowGroup rgWithNoBbox = createRowGroupWithNullBbox();
+        assertThat(canDropRowGroup(query, rgWithNoBbox, schema)).isFalse();
+    }
+
+    @Test
+    void testRowGroupIsDroppedWithNonIntersectingBoundingBox() {
+        FileSchema schema = createGeometrySchema();
+        RowGroup rg = createGeospatialRowGroup(2.0, 10.0, -4.0, 6.0);
+
+        // query bbox below chunk bbox
+        FilterPredicate below = FilterPredicate.intersects("col",
+                2.5, -10.0, 9.3, -6.0);
+        assertThat(canDropRowGroup(below, rg, schema)).isTrue();
+
+        // query bbox to left of chunk bbox
+        FilterPredicate left = FilterPredicate.intersects("col",
+                -5.0, -1.0, 0.0, 3.0);
+        assertThat(canDropRowGroup(left, rg, schema)).isTrue();
+
+        // query bbox above chunk bbox
+        FilterPredicate above = FilterPredicate.intersects("col",
+                4.0, 7.0, 8.0, 10.0);
+        assertThat(canDropRowGroup(above, rg, schema)).isTrue();
+
+        // query bbox to right of chunk bbox
+        FilterPredicate right = FilterPredicate.intersects("col",
+                11.0, -1.0, 15.0, 3.0);
+        assertThat(canDropRowGroup(right, rg, schema)).isTrue();
+    }
+
+    @Test
+    void testAntimeridianWrapping() {
+        FileSchema schema = createGeometrySchema();
+
+        // chunk wraps, query doesn't with it's end to right of chunk's start
+        RowGroup rgWrapping = createGeospatialRowGroup(170.0, -170.0, -10.0, 10.0);
+        FilterPredicate notWrapping = FilterPredicate.intersects("col", 160.0, -5.0, 180.0, 5.0);
+        assertThat(canDropRowGroup(notWrapping, rgWrapping, schema)).isFalse();
+
+        // query wraps, chunk doesn't with it's end to right of query's start
+        RowGroup rgNotWrapping = createGeospatialRowGroup(160.0, 180.0, -10.0, 10.0);
+        FilterPredicate wrapping = FilterPredicate.intersects("col", 170.0, -5.0, -170.0, 5.0);
+        assertThat(canDropRowGroup(wrapping, rgNotWrapping, schema)).isFalse();
+
+        // both chunk and query wrap, with query's x-axis expanse entirely within chunk's x-axis expanse
+        FilterPredicate wrappingWithinChunk = FilterPredicate.intersects("col", 160.0, -5.0, -160.0, 5.0);
+        assertThat(canDropRowGroup(wrappingWithinChunk, rgWrapping, schema)).isFalse();
+
+        // chunk wraps, query doesn't with it's start and end both to left of chunk's start and to right of chunk's end
+        FilterPredicate outsideChunk = FilterPredicate.intersects("col", 10.0, -5.0, 20.0, 5.0);
+        assertThat(canDropRowGroup(outsideChunk, rgWrapping, schema)).isTrue();
+    }
+
+    @Test
+    void testIntersectingBoundingBoxIsNotDroppedForGeography() {
+        RowGroup rg = createGeospatialRowGroup(2.0, 10.0, -4.0, 6.0);
+        FileSchema schema = createGeographySchema();
+
+        FilterPredicate filter = FilterPredicate.intersects("col", 3.0, 0.0, 8.0, 4.0);
+        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
+    }
+
+    @Test
+    void testIntersectsComposedWithAnd() {
+        RowGroup rg = createGeospatialRowGroup(2.0, 10.0, -4.0, 6.0);
+        FileSchema schema = createGeographySchema();
+
+        // one of the spatial predicate doesn't intersect, so drop
+        FilterPredicate filter = FilterPredicate.and(
+                FilterPredicate.intersects("col", 11.0, -1.0, 15.0, 3.0),  // non-intersecting
+                FilterPredicate.intersects("col", 3.0, 0.0, 8.0, 4.0)       // intersecting
+        );
+        assertThat(canDropRowGroup(filter, rg, schema)).isTrue();
+    }
+
+    @Test
+    void testIntersectsComposedWithOr() {
+        RowGroup rg = createGeospatialRowGroup(2.0, 10.0, -4.0, 6.0);
+        FileSchema schema = createGeometrySchema();
+
+        // only one intersects, don't drop
+        FilterPredicate filter = FilterPredicate.or(
+                FilterPredicate.intersects("col", 11.0, -1.0, 15.0, 3.0),  // non-intersecting
+                FilterPredicate.intersects("col", 3.0, 0.0, 8.0, 4.0)       // intersecting
+        );
+        assertThat(canDropRowGroup(filter, rg, schema)).isFalse();
+    }
+
     // ==================== Helpers ====================
 
     private static RowGroup createIntRowGroup(int min, int max) {
@@ -1157,7 +1291,7 @@ class FilterPredicateTest {
         Statistics stats = new Statistics(min, max, 0L, null, false);
         ColumnMetaData cmd = new ColumnMetaData(
                 type, List.of(Encoding.PLAIN), FieldPath.of("col"),
-                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, stats);
+                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, stats, null);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, 100);
     }
@@ -1166,7 +1300,7 @@ class FilterPredicateTest {
         Statistics stats = new Statistics(null, null, nullCount, null, false);
         ColumnMetaData cmd = new ColumnMetaData(
                 type, List.of(Encoding.PLAIN), FieldPath.of("col"),
-                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, stats);
+                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, stats, null);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, numRows);
     }
@@ -1174,9 +1308,31 @@ class FilterPredicateTest {
     private static RowGroup createRowGroupWithoutStatistics() {
         ColumnMetaData cmd = new ColumnMetaData(
                 PhysicalType.INT32, List.of(Encoding.PLAIN), FieldPath.of("col"),
-                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, null);
+                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, null, null);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null);
         return new RowGroup(List.of(chunk), 1000, 100);
+    }
+
+    private static RowGroup createGeospatialRowGroup(double xmin, double xmax, double ymin, double ymax) {
+        BoundingBox bbox = new BoundingBox(xmin, xmax, ymin, ymax, null, null, null, null);
+        GeospatialStatistics geospatialStatistics = new GeospatialStatistics(bbox, List.of(1));
+        return new RowGroup(List.of(createGeostatsColumnChunk(geospatialStatistics)), 1000, 100);
+    }
+
+    private static RowGroup createRowGroupWithNoGeoStats() {
+        return new RowGroup(List.of(createGeostatsColumnChunk(null)), 1000, 100);
+    }
+
+    private static RowGroup createRowGroupWithNullBbox() {
+        GeospatialStatistics geospatialStatistics = new GeospatialStatistics(null, List.of(1));
+        return new RowGroup(List.of(createGeostatsColumnChunk(geospatialStatistics)), 1000, 100);
+    }
+
+    private static ColumnChunk createGeostatsColumnChunk(GeospatialStatistics geospatialStatistics) {
+        ColumnMetaData cmd = new ColumnMetaData(
+                PhysicalType.BYTE_ARRAY, List.of(Encoding.PLAIN), FieldPath.of("col"),
+                CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, null, geospatialStatistics);
+        return new ColumnChunk(cmd, null, null, null, null);
     }
 
     private static FileSchema createIntSchema() {
@@ -1210,10 +1366,24 @@ class FilterPredicateTest {
         return FileSchema.fromSchemaElements(List.of(root, col));
     }
 
+    private static FileSchema createGeometrySchema() {
+        return createSchemaForType(PhysicalType.BYTE_ARRAY, new LogicalType.GeometryType("OGC:CRS84"));
+    }
+
+    private static FileSchema createGeographySchema() {
+        return createSchemaForType(PhysicalType.BYTE_ARRAY, new LogicalType.GeographyType("OGC:CRS84", LogicalType.EdgeInterpolationAlgorithm.SPHERICAL));
+    }
+
     private static FileSchema createSchemaForType(PhysicalType type) {
         // Root element + one column
         SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
         SchemaElement col = new SchemaElement("col", type, null, RepetitionType.REQUIRED, null, null, null, null, null, null);
+        return FileSchema.fromSchemaElements(List.of(root, col));
+    }
+
+    private static FileSchema createSchemaForType(PhysicalType type, LogicalType logicalType) {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement col = new SchemaElement("col", type, null, RepetitionType.REQUIRED, null, null, null, null, null, logicalType);
         return FileSchema.fromSchemaElements(List.of(root, col));
     }
 

@@ -369,6 +369,54 @@ class FilterPredicateResolverTest {
                 .hasMessageContaining("not found");
     }
 
+    // ==================== Geospatial ====================
+
+    @Test
+    void resolveIntersectsOnGeometryColumn() {
+        FileSchema schema = schemaWithLogicalType("loc", PhysicalType.BYTE_ARRAY,
+                new LogicalType.GeometryType("OGC:CRS84"));
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.intersects("loc", -25.0, 35.0, 45.0, 72.0), schema);
+
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.GeospatialPredicate.class);
+        ResolvedPredicate.GeospatialPredicate gp = (ResolvedPredicate.GeospatialPredicate) resolved;
+        assertThat(gp.columnIndex()).isEqualTo(0);
+        assertThat(gp.xmin()).isEqualTo(-25.0);
+        assertThat(gp.ymin()).isEqualTo(35.0);
+        assertThat(gp.xmax()).isEqualTo(45.0);
+        assertThat(gp.ymax()).isEqualTo(72.0);
+    }
+
+    @Test
+    void resolveIntersectsOnGeographyColumn() {
+        FileSchema schema = schemaWithLogicalType("loc", PhysicalType.BYTE_ARRAY,
+                new LogicalType.GeographyType("OGC:CRS84", LogicalType.EdgeInterpolationAlgorithm.SPHERICAL));
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.intersects("loc", 0.0, 0.0, 1.0, 1.0), schema);
+
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.GeospatialPredicate.class);
+    }
+
+    @Test
+    void resolveIntersectsOnNonGeoColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("col", PhysicalType.BYTE_ARRAY, new LogicalType.StringType());
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.intersects("col", 0.0, 0.0, 1.0, 1.0), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("GEOMETRY")
+                .hasMessageContaining("GEOGRAPHY");
+    }
+
+    @Test
+    void resolveNotIntersectsThrows() {
+        FileSchema schema = schemaWithLogicalType("loc", PhysicalType.BYTE_ARRAY,
+                new LogicalType.GeometryType("OGC:CRS84"));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.intersects("loc", 0.0, 0.0, 1.0, 1.0)), schema))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessageContaining("Negation");
+    }
+
     // ==================== Helpers ====================
 
     private static FileSchema schemaWithLogicalType(String columnName, PhysicalType type,

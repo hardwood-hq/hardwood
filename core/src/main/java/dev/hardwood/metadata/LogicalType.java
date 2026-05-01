@@ -14,7 +14,7 @@ package dev.hardwood.metadata;
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public sealed
 interface LogicalType
-permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType,LogicalType.VariantType
+permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType,LogicalType.VariantType,LogicalType.GeometryType,LogicalType.GeographyType
 {
 
     /// UTF-8 encoded string.
@@ -101,6 +101,17 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
         }
     }
 
+    /// Geometry type with configurable CRS
+    ///
+    /// @param crs geospatial coordinate reference system, OGC:CRS84 if absent
+    record GeometryType(String crs) implements LogicalType {}
+
+    /// Geography type with configurable CRS
+    ///
+    /// @param crs geospatial coordinate reference system, OGC:CRS84 if absent
+    /// @param edgeInterpolation geodesic formulation
+    record GeographyType(String crs, EdgeInterpolationAlgorithm edgeInterpolation) implements LogicalType {}
+
     /// Resolution of time and timestamp logical types.
     enum TimeUnit {
         /// Millisecond resolution.
@@ -109,5 +120,10 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
         MICROS,
         /// Nanosecond resolution.
         NANOS
+    }
+
+    /// Geodesic formulations to model and compute the shortest path on Earth.
+    enum EdgeInterpolationAlgorithm {
+        SPHERICAL, VINCENTY, THOMAS, ANDOYER, KARNEY
     }
 }

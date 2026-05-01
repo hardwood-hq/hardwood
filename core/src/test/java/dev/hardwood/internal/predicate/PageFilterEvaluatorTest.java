@@ -25,8 +25,10 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.internal.reader.RowRanges;
+import dev.hardwood.metadata.BoundingBox;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.FileMetaData;
+import dev.hardwood.metadata.GeospatialStatistics;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
 import dev.hardwood.metadata.RowGroup;
@@ -132,7 +134,7 @@ class PageFilterEvaluatorTest {
                 List.of(intBytes(1), intBytes(0), intBytes(21)),
                 List.of(intBytes(10), intBytes(0), intBytes(30)),
                 ColumnIndex.BoundaryOrder.UNORDERED,
-                null);
+                null, null);
 
         RowRanges ranges = PageFilterEvaluator.evaluatePages(nullPageColumnIndex, THREE_PAGE_OFFSET_INDEX, THREE_PAGE_ROW_COUNT,
                 (columnIndex, pageIndex) -> {
@@ -476,7 +478,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     private static ColumnIndex longColumnIndex(long[] mins, long[] maxs) {
@@ -489,7 +491,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     @Test
@@ -563,7 +565,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     private static ColumnIndex doubleColumnIndex(double[] mins, double[] maxs) {
@@ -576,7 +578,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     private static ColumnIndex booleanColumnIndex(boolean[] mins, boolean[] maxs) {
@@ -589,7 +591,7 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, minValues, maxValues,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
     }
 
     private static ColumnIndex binaryColumnIndex(List<byte[]> mins, List<byte[]> maxs) {
@@ -598,7 +600,105 @@ class PageFilterEvaluatorTest {
             nullPages.add(false);
         }
         return new ColumnIndex(nullPages, mins, maxs,
-                ColumnIndex.BoundaryOrder.UNORDERED, null);
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
+    }
+
+    // Geospatial Filtering Tests
+
+    @Test
+    void testSpatialPagesDropsDisjointPagesAndKeepsIntersecting() {
+        // 3 pages, each with a distinct bbox (Europe, Asia, Americas)
+        ColumnIndex columnIdx = geospatialColumnIndex(
+                bbox(-25.0, 45.0, 35.0, 72.0),     // Europe
+                bbox(60.0, 150.0, -10.0, 50.0),    // Asia
+                bbox(-130.0, -60.0, 25.0, 50.0));  // Americas
+        OffsetIndex offsetIdx = offsetIndex(30, 30, 30);
+
+        // Query box matching Europe
+        ResolvedPredicate.GeospatialPredicate europe = new ResolvedPredicate.GeospatialPredicate(
+                0, -10.0, 40.0, 30.0, 60.0);
+        RowRanges ranges = PageFilterEvaluator.evaluateSpatialPages(columnIdx, offsetIdx, europe, 90);
+
+        assertTrue(ranges.overlapsPage(0, 30));
+        assertFalse(ranges.overlapsPage(30, 60));
+        assertFalse(ranges.overlapsPage(60, 90));
+    }
+
+    @Test
+    void testSpatialPagesKeepsAllWhenNoGeospatialStats() {
+        // ColumnIndex with no geospatial stats — everything must be kept.
+        ColumnIndex columnIdx = new ColumnIndex(
+                List.of(false, false, false),
+                List.of(intBytes(0), intBytes(0), intBytes(0)),
+                List.of(intBytes(0), intBytes(0), intBytes(0)),
+                ColumnIndex.BoundaryOrder.UNORDERED, null, null);
+        OffsetIndex offsetIdx = offsetIndex(30, 30, 30);
+        ResolvedPredicate.GeospatialPredicate predicate = new ResolvedPredicate.GeospatialPredicate(
+                0, -10.0, 40.0, 30.0, 60.0);
+
+        RowRanges ranges = PageFilterEvaluator.evaluateSpatialPages(columnIdx, offsetIdx, predicate, 90);
+
+        assertTrue(ranges.overlapsPage(0, 30));
+        assertTrue(ranges.overlapsPage(30, 60));
+        assertTrue(ranges.overlapsPage(60, 90));
+    }
+
+    @Test
+    void testSpatialPagesKeepsPageWithMissingPerPageBbox() {
+        // Middle page's stats slot is null; should be kept.
+        List<GeospatialStatistics> stats = new ArrayList<>();
+        stats.add(new GeospatialStatistics(bbox(-25.0, 45.0, 35.0, 72.0), List.of()));
+        stats.add(null);
+        stats.add(new GeospatialStatistics(bbox(-130.0, -60.0, 25.0, 50.0), List.of()));
+        ColumnIndex columnIdx = geospatialColumnIndexFromStats(stats);
+        OffsetIndex offsetIdx = offsetIndex(30, 30, 30);
+        ResolvedPredicate.GeospatialPredicate europe = new ResolvedPredicate.GeospatialPredicate(
+                0, -10.0, 40.0, 30.0, 60.0);
+
+        RowRanges ranges = PageFilterEvaluator.evaluateSpatialPages(columnIdx, offsetIdx, europe, 90);
+
+        assertTrue(ranges.overlapsPage(0, 30));
+        assertTrue(ranges.overlapsPage(30, 60));   // unknown stats: keep
+        assertFalse(ranges.overlapsPage(60, 90));  // disjoint: drop
+    }
+
+    @Test
+    void testSpatialPagesAntimeridianWrappingPageIsKept() {
+        // Wrapping chunk bbox (xmin > xmax) overlapping a non-wrapping query bbox.
+        ColumnIndex columnIdx = geospatialColumnIndex(bbox(170.0, -170.0, -10.0, 10.0));
+        OffsetIndex offsetIdx = offsetIndex(50);
+        ResolvedPredicate.GeospatialPredicate touchingDateLine = new ResolvedPredicate.GeospatialPredicate(
+                0, 160.0, -5.0, 180.0, 5.0);
+
+        RowRanges ranges = PageFilterEvaluator.evaluateSpatialPages(
+                columnIdx, offsetIdx, touchingDateLine, 50);
+
+        assertTrue(ranges.overlapsPage(0, 50));
+    }
+
+    private static BoundingBox bbox(double xmin, double xmax, double ymin, double ymax) {
+        return new BoundingBox(xmin, xmax, ymin, ymax, null, null, null, null);
+    }
+
+    private static ColumnIndex geospatialColumnIndex(BoundingBox... pageBboxes) {
+        List<GeospatialStatistics> stats = new ArrayList<>();
+        for (BoundingBox bbox : pageBboxes) {
+            stats.add(new GeospatialStatistics(bbox, List.of()));
+        }
+        return geospatialColumnIndexFromStats(stats);
+    }
+
+    private static ColumnIndex geospatialColumnIndexFromStats(List<GeospatialStatistics> stats) {
+        List<Boolean> nullPages = new ArrayList<>();
+        List<byte[]> minValues = new ArrayList<>();
+        List<byte[]> maxValues = new ArrayList<>();
+        for (int i = 0; i < stats.size(); i++) {
+            nullPages.add(false);
+            minValues.add(new byte[0]);
+            maxValues.add(new byte[0]);
+        }
+        return new ColumnIndex(nullPages, minValues, maxValues,
+                ColumnIndex.BoundaryOrder.UNORDERED, null, stats);
     }
 
     /// Creates an OffsetIndex with the given number of rows per page.

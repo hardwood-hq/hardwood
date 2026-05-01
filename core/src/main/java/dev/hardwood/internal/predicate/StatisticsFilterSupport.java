@@ -70,6 +70,7 @@ final class StatisticsFilterSupport {
             case ResolvedPredicate.IsNotNullPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;
             case ResolvedPredicate.Or ignored -> false;
+            case ResolvedPredicate.GeospatialPredicate ignored -> false;
         };
     }
 
