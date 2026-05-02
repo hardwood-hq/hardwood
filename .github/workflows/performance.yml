@@ -17,6 +17,25 @@ on:
   push:
     branches: [ main ]
   workflow_dispatch:
+    inputs:
+      perf_runs:
+        description: 'Number of timed runs per contender'
+        required: false
+        default: '5'
+        type: string
+      tests:
+        description: 'Surefire -Dtest filter; pass "*" to run every perf test'
+        required: false
+        default: 'FlatPerformanceTest,NestedPerformanceTest'
+        type: string
+
+# Single source of truth for the taxi-data window. The downloader (run via
+# the test-data-setup module on cache miss) and the perf test both honor
+# `perf.start` / `perf.end`; keeping the cache key aligned ensures we don't
+# silently widen the window when the cache is regenerated.
+env:
+  PERF_START: '2023-01'
+  PERF_END: '2025-12'
 
 jobs:
   performance-tests:
@@ -48,7 +67,7 @@ jobs:
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: performance-testing/test-data-setup/target/tlc-trip-record-data/
-          key: taxi-data-2023-01-to-2025-12
+          key: taxi-data-${{ env.PERF_START }}-to-${{ env.PERF_END }}
 
       - name: 'Cache Overture Maps data'
         uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
@@ -62,7 +81,11 @@ jobs:
         run: ./mvnw -B -DskipTests install -pl :hardwood-core,:hardwood-avro,:hardwood-s3,:hardwood-aws-auth -am
 
       - name: 'Run performance tests (with SIMD)'
-        # Limit CI runs to Flat/Nested performance (others will be reserved for on-demand)
-        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start=2023-01 -Dperf.end=2025-12 -Dperf.runs=5 -Dtest='FlatPerformanceTest,NestedPerformanceTest' -Dsurefire.failIfNoSpecifiedTests=false
+        # Defaults match push-to-main: Flat + Nested over the full cached
+        # taxi-data window. workflow_dispatch can override `perf_runs` and
+        # the `-Dtest` filter (use "*" to run everything in the perf module).
         env:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
+          PERF_RUNS: ${{ inputs.perf_runs || '5' }}
+          TESTS: ${{ inputs.tests || 'FlatPerformanceTest,NestedPerformanceTest' }}
+        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start="$PERF_START" -Dperf.end="$PERF_END" -Dperf.runs="$PERF_RUNS" -Dtest="$TESTS" -Dsurefire.failIfNoSpecifiedTests=false
