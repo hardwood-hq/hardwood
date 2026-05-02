@@ -46,9 +46,9 @@ class MisalignedPageBoundariesTest {
 
     private static final Path MISALIGNED_FILE =
             Paths.get("src/test/resources/misaligned_pages.parquet");
-    /// Fixture without ColumnIndex/OffsetIndex; tail-mode must fall back to the
-    /// existing decode-and-discard path because per-page masking is only honoured
-    /// by IndexedFetchPlan.
+    /// Flat fixture without ColumnIndex/OffsetIndex. Both projected columns
+    /// are flat, so the per-page mask gate opens for tail-mode reads and the
+    /// fast path applies even though there is no Page Index.
     private static final Path INLINE_STATS_FILE =
             Paths.get("src/test/resources/inline_page_stats.parquet");
     private static final int TOTAL_ROWS = 10_000;
@@ -149,10 +149,13 @@ class MisalignedPageBoundariesTest {
     }
 
     @Test
-    void tailReadFallsBackWhenColumnsLackOffsetIndex() throws Exception {
-        // inline_page_stats.parquet has no OffsetIndex, so tail-mode cannot use
-        // the per-page mask fast path and must fall back to decode-and-discard.
-        // Correctness must be preserved either way.
+    void tailReadAppliesPageMaskFastPathOnNoIndexFlatFile() throws Exception {
+        // inline_page_stats.parquet has no OffsetIndex but its columns are
+        // flat, so the row-group-wide mask gate opens and tail-mode runs
+        // through the SequentialFetchPlan per-page mask path. The original
+        // shape of this test asserted decode-and-discard fallback; with
+        // mask support extended to flat columns the fast path now applies
+        // here, and correctness is verified the same way.
         int tailRows = 1500;
         int firstExpectedRow = TOTAL_ROWS - tailRows;
 

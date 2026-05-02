@@ -8,6 +8,7 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -297,17 +298,27 @@ public class ParquetFileReader implements AutoCloseable {
         }
         long skip = Math.max(0, rowsInSubset - tailRows);
 
-        if (skip == 0 || canFastSkipTail(subset, projection)) {
+        boolean fastSkip;
+        try {
+            fastSkip = skip == 0 || canFastSkipTail(subset, projection);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException(
+                    "Failed to probe page formats while preparing tail read", e);
+        }
+
+        if (fastSkip) {
             // Fast path: per-page row masking drops the leading pages and trims the
-            // straddling page in IndexedFetchPlan, so the reader yields exactly
-            // tailRows rows from its first hasNext() with no caller-side advance.
+            // straddling page in the projected fetch plans, so the reader yields
+            // exactly tailRows rows from its first hasNext() with no caller-side
+            // advance.
             return buildRowReader(projection, null, 0, subset, skip);
         }
 
-        // Fallback: at least one projected column lacks an OffsetIndex and uses
-        // SequentialFetchPlan, which has no per-page mask support yet. Decoding
-        // every leading row and discarding it at the reader level keeps cross-
-        // column row alignment intact.
+        // Fallback: at least one projected column closes the per-page mask gate
+        // (a nested-v1 column without an OffsetIndex). Decoding every leading
+        // row and discarding it at the reader level keeps cross-column row
+        // alignment intact.
         RowReader reader = buildRowReader(projection, null, 0, subset, 0);
         for (long i = 0; i < skip; i++) {
             if (!reader.hasNext()) {
@@ -318,20 +329,27 @@ public class ParquetFileReader implements AutoCloseable {
         return reader;
     }
 
-    /// Whether every projected column in every subset row group has an
-    /// OffsetIndex. Required for the tail-read fast path because the per-page
-    /// row mask is only honoured by [dev.hardwood.internal.reader.IndexedFetchPlan];
-    /// `SequentialFetchPlan` would emit unmasked rows from offset 0 and break
-    /// cross-column alignment with the masked OffsetIndex columns.
-    private boolean canFastSkipTail(List<RowGroup> subset, ColumnProjection projection) {
+    /// Whether the per-page row mask machinery is applicable to every row
+    /// group in `subset`. When `true`, the synthesized `[skip, numRows)`
+    /// `RowRanges` flows through the same plumbing as a filter and trims
+    /// leading rows on every column without a post-iteration
+    /// decode-and-discard loop; when `false`, the caller falls back to
+    /// decoding and discarding the prefix.
+    ///
+    /// Delegates to the row-group-wide gate in
+    /// [dev.hardwood.internal.reader.RowGroupIterator#masksApplicableForRowGroup]
+    /// so the tail-read decision matches the iterator's per-row-group
+    /// decision exactly. Carries the same I/O cost (one bounded page-header
+    /// read per nested-without-OffsetIndex column) which is paid only on
+    /// files where such columns exist.
+    private boolean canFastSkipTail(List<RowGroup> subset, ColumnProjection projection)
+            throws IOException {
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        int projectedCount = projectedSchema.getProjectedColumnCount();
+        InputFile inputFile = inputFiles.get(0);
         for (RowGroup rg : subset) {
-            for (int p = 0; p < projectedCount; p++) {
-                int originalIndex = projectedSchema.toOriginalIndex(p);
-                if (rg.columns().get(originalIndex).offsetIndexOffset() == null) {
-                    return false;
-                }
+            if (!RowGroupIterator.masksApplicableForRowGroup(
+                    projectedSchema, rg, schema, inputFile)) {
+                return false;
             }
         }
         return true;

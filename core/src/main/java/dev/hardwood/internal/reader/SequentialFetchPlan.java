@@ -97,6 +97,14 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private final int rowGroupIndex;
     private final String fileName;
     private final List<ResolvedPredicate> dropLeaves;
+    /// Row ranges this column should keep. [RowRanges#ALL] means no per-page
+    /// row mask is applied; a non-trivial range is paired with [#rowGroupRowCount]
+    /// so the iterator can compute `pageLastRow` for the final page. 
+    private final RowRanges matchingRows;
+    /// Total rows in the enclosing row group. Used together with
+    /// [#matchingRows] to compute the final page's `pageLastRow` when masks
+    /// are active. Unused when [#matchingRows] is [RowRanges#ALL].
+    private final long rowGroupRowCount;
     /// Optional pre-created first [ChunkHandle], typically a region-backed
     /// view from cross-column coalescing (#374). When set, the iterator's
     /// first `advanceChunk(0)` call uses this handle instead of creating
@@ -108,7 +116,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                  int chunkSize, ColumnSchema columnSchema,
                                  ColumnChunk columnChunk, HardwoodContextImpl context,
                                  long maxRows, int rowGroupIndex, String fileName,
-                                 List<ResolvedPredicate> dropLeaves) {
+                                 List<ResolvedPredicate> dropLeaves,
+                                 RowRanges matchingRows, long rowGroupRowCount) {
+        if (matchingRows == null) {
+            throw new IllegalArgumentException("matchingRows must not be null; use RowRanges.ALL");
+        }
+        if (!matchingRows.isAll() && rowGroupRowCount <= 0) {
+            throw new IllegalArgumentException(
+                    "rowGroupRowCount must be positive when matchingRows is non-trivial, got "
+                            + rowGroupRowCount);
+        }
         this.inputFile = inputFile;
         this.columnChunkOffset = columnChunkOffset;
         this.columnChunkLength = columnChunkLength;
@@ -120,6 +137,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         this.rowGroupIndex = rowGroupIndex;
         this.fileName = fileName;
         this.dropLeaves = dropLeaves;
+        this.matchingRows = matchingRows;
+        this.rowGroupRowCount = rowGroupRowCount;
     }
 
     @Override
@@ -168,12 +187,24 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 columnChunkOffset, chunkSize, purpose);
     }
 
-    /// Builds a [SequentialFetchPlan] with no predicate-driven page skipping.
+    /// Builds a [SequentialFetchPlan] with no predicate-driven page skipping
+    /// and no per-page row mask. Equivalent to passing [RowRanges#ALL].
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows) {
         return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
-                maxRows, List.of());
+                maxRows, List.of(), RowRanges.ALL, 0L);
+    }
+
+    /// Builds a [SequentialFetchPlan] that may drop data pages whose inline
+    /// [Statistics] prove they cannot match any of the given AND-necessary leaf
+    /// predicates, with no per-page row mask.
+    public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
+                                      ColumnChunk columnChunk, HardwoodContextImpl context,
+                                      int rowGroupIndex, String fileName, long maxRows,
+                                      List<ResolvedPredicate> dropLeaves) {
+        return build(inputFile, columnSchema, columnChunk, context, rowGroupIndex, fileName,
+                maxRows, dropLeaves, RowRanges.ALL, 0L);
     }
 
     /// Builds a [SequentialFetchPlan] that may drop data pages whose inline
@@ -186,10 +217,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// Page skipping is only applied when the column is optional
     /// (`maxDefinitionLevel > 0`) — required columns cannot produce nulls, so
     /// every page is decoded normally.
+    ///
+    /// `matchingRows` carries the row-group-wide row ranges this column should
+    /// keep. [RowRanges#ALL] disables per-page masking (today's behaviour); a
+    /// non-trivial range pairs with `rowGroupRowCount` so the iterator can
+    /// compute the final page's `pageLastRow`.
     public static SequentialFetchPlan build(InputFile inputFile, ColumnSchema columnSchema,
                                       ColumnChunk columnChunk, HardwoodContextImpl context,
                                       int rowGroupIndex, String fileName, long maxRows,
-                                      List<ResolvedPredicate> dropLeaves) {
+                                      List<ResolvedPredicate> dropLeaves,
+                                      RowRanges matchingRows, long rowGroupRowCount) {
         long columnChunkOffset = columnChunk.chunkStartOffset();
         int columnChunkLength = Math.toIntExact(columnChunk.metaData().totalCompressedSize());
         int chunkSize = Math.min(columnChunkLength,
@@ -197,7 +234,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
 
         return new SequentialFetchPlan(inputFile, columnChunkOffset, columnChunkLength, chunkSize,
                 columnSchema, columnChunk, context, maxRows, rowGroupIndex, fileName,
-                dropLeaves == null ? List.of() : dropLeaves);
+                dropLeaves == null ? List.of() : dropLeaves,
+                matchingRows == null ? RowRanges.ALL : matchingRows, rowGroupRowCount);
     }
 
     /// Computes the per-fetch chunk size.
@@ -251,8 +289,20 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         private boolean exhausted;
         private int position; // relative to column chunk start
         private long valuesRead;
+        /// Top-level records consumed so far. Equals [#valuesRead] for flat
+        /// columns; for nested columns it counts `rep_level == 0` occurrences
+        /// across the pages seen. Tracked only when [#matchingRows] is
+        /// non-trivial — when masks are inactive the cursor stays at zero and
+        /// is never consulted.
+        private long recordsRead;
         private int pageCount;
-        private Boolean hasNext;
+        /// Look-ahead cache for the next page to emit. Populated lazily by
+        /// [#hasNext()] and consumed by [#next()]. Look-ahead is required
+        /// because per-page row masks may drop pages while counters still
+        /// indicate "more values remain"; without the cache, `hasNext()`
+        /// could return `true` and `next()` then have nothing to emit.
+        private PageInfo nextPage;
+        private boolean nextPageComputed;
 
         // Current chunk handle state
         private ChunkHandle currentHandle;
@@ -261,21 +311,25 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
 
         @Override
         public boolean hasNext() {
-            if (hasNext != null) {
-                return hasNext;
+            if (nextPageComputed) {
+                return nextPage != null;
             }
             if (exhausted) {
-                hasNext = false;
                 return false;
             }
             try {
-                hasNext = checkHasNext();
+                nextPage = findNextEmittablePage();
             }
             catch (IOException e) {
                 throw new UncheckedIOException("Failed to scan pages for column '"
                         + columnSchema.name() + "'", e);
             }
-            return hasNext;
+            nextPageComputed = true;
+            if (nextPage == null) {
+                exhausted = true;
+                emitEvent();
+            }
+            return nextPage != null;
         }
 
         @Override
@@ -283,36 +337,10 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             if (!hasNext()) {
                 throw new NoSuchElementException();
             }
-            hasNext = null;
-            try {
-                return scanNextPage();
-            }
-            catch (IOException e) {
-                throw new UncheckedIOException("Failed to scan page for column '"
-                        + columnSchema.name() + "'", e);
-            }
-        }
-
-        private boolean checkHasNext() throws IOException {
-            if (maxRows > 0 && valuesRead >= maxRows) {
-                exhausted = true;
-                emitEvent();
-                return false;
-            }
-            if (!initialized) {
-                initialize();
-            }
-            boolean hasMore = valuesRead < metaData.numValues() && position < columnChunkLength;
-            if (!hasMore) {
-                exhausted = true;
-                emitEvent();
-                if (valuesRead != metaData.numValues()) {
-                    throw new IOException("Value count mismatch for column '" + columnSchema.name()
-                            + "': metadata declares " + metaData.numValues()
-                            + " values but pages contain " + valuesRead);
-                }
-            }
-            return hasMore;
+            PageInfo result = nextPage;
+            nextPage = null;
+            nextPageComputed = false;
+            return result;
         }
 
         /// Reads a page header at the given relative position, growing the
@@ -432,42 +460,150 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             }
         }
 
-        private PageInfo scanNextPage() throws IOException {
-            while (valuesRead < metaData.numValues() && position < columnChunkLength) {
+        /// Scans forward through page headers until an emittable data page is
+        /// found, or the column chunk is exhausted. Pages are dropped when
+        /// either:
+        ///
+        /// - the iterator-wide `maxRows` budget is hit (returns `null`); or
+        /// - per-page row masking determines no row of the page falls inside
+        ///   [#matchingRows] — the page body is skipped without being read or
+        ///   decompressed, saving the codec invocation and value-decode work
+        ///   for rows that would have been thrown away anyway.
+        ///
+        /// On normal exhaustion, validates that `valuesRead` matches the
+        /// column chunk's declared `numValues`. The check stays load-bearing
+        /// even with masked drops because `valuesRead` accumulates each
+        /// page's `header.num_values` regardless of whether the page was
+        /// kept, dropped, or replaced with a null-placeholder.
+        private PageInfo findNextEmittablePage() throws IOException {
+            if (!initialized) {
+                initialize();
+            }
+            while (position < columnChunkLength && valuesRead < metaData.numValues()) {
+                if (maxRows > 0 && valuesRead >= maxRows) {
+                    return null;
+                }
+                // Once `recordsRead` has crossed the last matching row, every
+                // remaining page produces a null mask. Exit before parsing
+                // any more page headers so trailing-region scans don't pay
+                // for work we know will be discarded.
+                if (!matchingRows.isAll() && recordsRead >= matchingRows.endRow()) {
+                    return null;
+                }
                 ParsedHeader parsed = readPageHeader(position);
                 PageHeader header = parsed.header();
                 int headerSize = parsed.headerSize();
+                int totalPageSize = headerSize + header.compressedPageSize();
 
-                int compressedSize = header.compressedPageSize();
-                int totalPageSize = headerSize + compressedSize;
-
-                if (header.type() == PageHeader.PageType.DICTIONARY_PAGE) {
+                if (header.type() != PageHeader.PageType.DATA_PAGE
+                        && header.type() != PageHeader.PageType.DATA_PAGE_V2) {
+                    // DICTIONARY_PAGE or INDEX_PAGE — skip without emitting.
                     position += totalPageSize;
                     continue;
                 }
 
-                if (header.type() == PageHeader.PageType.DATA_PAGE
-                        || header.type() == PageHeader.PageType.DATA_PAGE_V2) {
-                    int numValues = (int) getValueCount(header);
-                    PageInfo pageInfo;
-                    if (canDropByInlineStats(header)) {
-                        pageInfo = PageInfo.nullPlaceholder(numValues, columnSchema, metaData);
-                    }
-                    else {
-                        ByteBuffer pageData = readBytes(position, totalPageSize);
-                        pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary);
-                    }
-                    valuesRead += numValues;
-                    position += totalPageSize;
-                    pageCount++;
-                    return pageInfo;
+                int numValues = (int) getValueCount(header);
+
+                // When masks are inactive we don't need a record count for
+                // the page — `recordsInPage` stays at zero and the cursor
+                // never advances. When active, flat columns return
+                // `numValues` directly; nested columns walk the rep-level
+                // RLE prefix of a v2 page (a v1 page on a nested column
+                // would require decompression — the row-group-wide gate
+                // forbids it).
+                PageRowMask mask;
+                int recordsInPage;
+                if (matchingRows.isAll()) {
+                    mask = PageRowMask.ALL;
+                    recordsInPage = 0;
+                }
+                else {
+                    recordsInPage = computeRecordsInPage(header, headerSize, numValues);
+                    long pageFirstRow = recordsRead;
+                    long pageLastRow = pageFirstRow + recordsInPage;
+                    mask = matchingRows.maskForPage(pageFirstRow, pageLastRow);
                 }
 
+                if (mask == null) {
+                    // Drop the page entirely — the body bytes are never read,
+                    // never decompressed. Counters still advance so the
+                    // end-of-iteration guards remain honest.
+                    valuesRead += numValues;
+                    recordsRead += recordsInPage;
+                    position += totalPageSize;
+                    pageCount++;
+                    continue;
+                }
+
+                PageInfo pageInfo;
+                if (canDropByInlineStats(header)) {
+                    // Inline-stats drop coexists with the mask: the placeholder
+                    // covers exactly the rows the mask would have kept, so
+                    // sibling columns see consistent record counts.
+                    int placeholderRecords;
+                    if (mask.isAll()) {
+                        // No mask trimming — use the page's record count when
+                        // we know it (nested columns under active masking) or
+                        // its value count (flat columns or inactive masking,
+                        // where the two coincide).
+                        placeholderRecords = recordsInPage > 0 ? recordsInPage : numValues;
+                    }
+                    else {
+                        placeholderRecords = mask.totalRecords();
+                    }
+                    pageInfo = PageInfo.nullPlaceholder(placeholderRecords, columnSchema, metaData);
+                }
+                else {
+                    ByteBuffer pageData = readBytes(position, totalPageSize);
+                    pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask);
+                }
+                valuesRead += numValues;
+                recordsRead += recordsInPage;
                 position += totalPageSize;
+                pageCount++;
+                return pageInfo;
             }
 
-            exhausted = true;
+            if (valuesRead != metaData.numValues()) {
+                throw new IOException("Value count mismatch for column '" + columnSchema.name()
+                        + "': metadata declares " + metaData.numValues()
+                        + " values but pages contain " + valuesRead);
+            }
+            if (!matchingRows.isAll() && recordsRead != rowGroupRowCount) {
+                throw new IOException("Record count mismatch for column '" + columnSchema.name()
+                        + "': row group declares " + rowGroupRowCount
+                        + " rows but pages contain " + recordsRead + " records.");
+            }
             return null;
+        }
+
+        /// Computes the number of top-level records in a data page when masks
+        /// are active. Flat columns return `numValues` directly. Nested
+        /// columns walk the v2 page's uncompressed rep-level RLE prefix; a
+        /// v1 nested page would require decompression to count records and
+        /// is rejected here — the row-group-wide gate is responsible for
+        /// promoting `matchingRows` to ALL before we ever reach this branch.
+        private int computeRecordsInPage(PageHeader header, int headerSize, int numValues)
+                throws IOException {
+            if (columnSchema.maxRepetitionLevel() == 0) {
+                return numValues;
+            }
+            if (header.type() != PageHeader.PageType.DATA_PAGE_V2) {
+                throw new IllegalStateException("Per-page row masking on a nested column requires "
+                        + "DATA_PAGE_V2 pages; column '" + columnSchema.name()
+                        + "' has a v1 data page. The row-group-wide mask gate should have "
+                        + "promoted matchingRows to RowRanges.ALL for this row group.");
+            }
+            DataPageHeaderV2 v2Header = header.dataPageHeaderV2();
+            int repLevelLength = v2Header.repetitionLevelsByteLength();
+            if (repLevelLength == 0) {
+                // No repetition levels means every value is a top-level record.
+                return numValues;
+            }
+            byte[] repLevels = new byte[repLevelLength];
+            readBytes(position + headerSize, repLevelLength).get(repLevels);
+            return PageRecordCounter.countTopLevelRecords(repLevels, 0, repLevelLength,
+                    numValues, columnSchema.maxRepetitionLevel());
         }
 
         /// Reads bytes that span multiple chunks by advancing through
