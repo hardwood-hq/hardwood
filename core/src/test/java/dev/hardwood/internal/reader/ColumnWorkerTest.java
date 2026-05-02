@@ -8,6 +8,8 @@
 package dev.hardwood.internal.reader;
 
 import java.nio.file.Path;
+import java.util.List;
+import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -40,7 +42,7 @@ class ColumnWorkerTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void flatPipelineDeliversAllRows() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
 
             FileSchema schema = reader.getFileSchema();
             long expectedRows = reader.getFileMetaData().rowGroups().stream()
@@ -75,7 +77,7 @@ class ColumnWorkerTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void flatBatchesHaveCorrectCapacity() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
 
             FileSchema schema = reader.getFileSchema();
             RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
@@ -119,7 +121,7 @@ class ColumnWorkerTest {
     @Timeout(value = 10, unit = TimeUnit.SECONDS)
     void flatPipelineTracksNulls() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(WITH_NULLS))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(WITH_NULLS))) {
 
             FileSchema schema = reader.getFileSchema();
             RowGroupIterator iterator = createIterator(WITH_NULLS, schema, context);
@@ -172,7 +174,7 @@ class ColumnWorkerTest {
         long maxRows = 100;
 
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
 
             FileSchema schema = reader.getFileSchema();
             RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
@@ -233,7 +235,7 @@ class ColumnWorkerTest {
         Path nestedFile = Path.of("src/test/resources/list_basic_test.parquet");
 
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(nestedFile))) {
 
             FileSchema schema = reader.getFileSchema();
             long expectedRows = reader.getFileMetaData().rowGroups().stream()
@@ -304,7 +306,7 @@ class ColumnWorkerTest {
     @Timeout(value = 30, unit = TimeUnit.SECONDS)
     void closeJoinsThreadsAndAwaitsInFlightDecodes() throws Exception {
         try (HardwoodContextImpl context = HardwoodContextImpl.create();
-             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
 
             FileSchema schema = reader.getFileSchema();
             RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
@@ -316,19 +318,29 @@ class ColumnWorkerTest {
             AtomicInteger decodesEntered = new AtomicInteger();
             AtomicInteger decodesFinished = new AtomicInteger();
 
-            Executor stalledExecutor = command -> Thread.ofVirtual().start(() -> {
-                decodesEntered.incrementAndGet();
-                firstSubmitted.countDown();
-                try {
-                    release.await();
-                }
-                catch (InterruptedException e) {
-                    Thread.currentThread().interrupt();
-                    return;
-                }
-                command.run();
-                decodesFinished.incrementAndGet();
-            });
+            // Track the virtual threads started by the stalled executor so we can join
+            // them after close() returns. This is necessary because decodesFinished++ runs
+            // AFTER command.run() in the virtual thread — i.e. after the CompletableFuture
+            // that ColumnWorker tracks has already completed. Without joining the threads
+            // here, the assertion would have a race between close() returning and the
+            // virtual threads incrementing decodesFinished.
+            List<Thread> executorThreads = new CopyOnWriteArrayList<>();
+
+            Executor stalledExecutor = command -> {
+                Thread t = Thread.ofVirtual().start(() -> {
+                    decodesEntered.incrementAndGet();
+                    firstSubmitted.countDown();
+                    try {
+                        release.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    command.run();
+                    decodesFinished.incrementAndGet();
+                });
+                executorThreads.add(t);
+            };
 
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
@@ -365,8 +377,126 @@ class ColumnWorkerTest {
             assertThat(worker.drainThread.isAlive())
                     .as("drain thread must have exited")
                     .isFalse();
+
+            // Join all executor virtual threads so that decodesFinished++ has run in
+            // every thread before we assert. The decode tasks themselves are guaranteed
+            // done by close(), but the per-thread bookkeeping after command.run() needs
+            // its own synchronisation point.
+            for (Thread t : executorThreads) {
+                t.join(TimeUnit.SECONDS.toMillis(5));
+            }
+
             assertThat(decodesFinished.get())
                     .as("every submitted decode task should have finished")
+                    .isEqualTo(decodesEntered.get());
+        }
+    }
+
+    /// Regression test for the interrupt-flag bug in [ColumnWorker#close()].
+    ///
+    /// **Scenario**: the thread that calls `close()` is interrupted while it is
+    /// blocked in `retrieverThread.join()`. Before the fix, `close()` re-asserted
+    /// `Thread.currentThread().interrupt()` immediately after catching the
+    /// exception,
+    /// so the subsequent `CompletableFuture.allOf().join()` saw the flag and
+    /// returned
+    /// at once — leaving decode tasks still executing. Any `InputFile` released in
+    /// its
+    /// own `close()` (mapped buffers, HTTP connections, etc.) could therefore free
+    /// memory a decode task was still reading from.
+    ///
+    /// **After the fix**: the flag is saved into a local boolean and restored only
+    /// *after* `allOf().join()` has drained every in-flight task.
+    ///
+    /// Assertions:
+    /// 1. All decode tasks finish (`decodesFinished == decodesEntered`).
+    /// 2. The interrupt flag is re-asserted on the closer thread when it returns.
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void closeCompletesDecodesDespiteCallerInterrupt() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+                ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+            int batchCapacity = 64;
+
+            // Latch that holds every decode task parked until we release it.
+            CountDownLatch release = new CountDownLatch(1);
+            // Signals the moment the first task has been submitted to the executor.
+            CountDownLatch firstSubmitted = new CountDownLatch(1);
+
+            AtomicInteger decodesEntered = new AtomicInteger();
+            AtomicInteger decodesFinished = new AtomicInteger();
+            List<Thread> executorThreads = new CopyOnWriteArrayList<>();
+
+            Executor stalledExecutor = command -> {
+                Thread t = Thread.ofVirtual().start(() -> {
+                    decodesEntered.incrementAndGet();
+                    firstSubmitted.countDown();
+                    try {
+                        release.await();
+                    } catch (InterruptedException e) {
+                        Thread.currentThread().interrupt();
+                        return;
+                    }
+                    command.run();
+                    decodesFinished.incrementAndGet();
+                });
+                executorThreads.add(t);
+            };
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, batchCapacity,
+                    context.decompressorFactory(), stalledExecutor, 0);
+            worker.start();
+
+            // Wait until at least one decode task is in flight.
+            assertThat(firstSubmitted.await(5, TimeUnit.SECONDS))
+                    .as("retriever should have submitted at least one decode task")
+                    .isTrue();
+
+            // Start close() on a separate virtual thread, then interrupt it while it
+            // is blocked inside retrieverThread.join() / drainThread.join().
+            Thread closer = Thread.ofVirtual().start(worker::close);
+            Thread.sleep(100); // give close() time to enter join()
+            closer.interrupt();
+
+            // close() is now interrupted but must NOT return until we release the
+            // decode tasks. Give it a moment to (incorrectly) short-circuit if buggy.
+            Thread.sleep(200);
+            assertThat(closer.isAlive())
+                    .as("close() must not return early after an interrupt — decode tasks are still running")
+                    .isTrue();
+
+            // Release all stalled decode tasks so close() can drain them.
+            release.countDown();
+            closer.join(TimeUnit.SECONDS.toMillis(10));
+
+            assertThat(closer.isAlive())
+                    .as("close() should have returned after decodes drained")
+                    .isFalse();
+
+            // The interrupt flag must be restored on the closer thread after close()
+            // returns.
+            assertThat(closer.isInterrupted())
+                    .as("close() must restore the interrupt flag after draining")
+                    .isTrue();
+
+            // Join executor threads so decodesFinished++ is visible before we assert.
+            for (Thread t : executorThreads) {
+                t.join(TimeUnit.SECONDS.toMillis(5));
+            }
+
+            assertThat(decodesFinished.get())
+                    .as("all decode tasks must have completed despite the interrupt")
                     .isEqualTo(decodesEntered.get());
         }
     }
@@ -458,10 +588,10 @@ class ColumnWorkerTest {
         }
     }
 
-    // ==================== Helpers ====================
+    // Helpers
 
     private static RowGroupIterator createIterator(Path file, FileSchema schema,
-                                                    HardwoodContextImpl context) throws Exception {
+            HardwoodContextImpl context) throws Exception {
         InputFile inputFile = InputFile.of(file);
         inputFile.open();
 
@@ -486,4 +616,261 @@ class ColumnWorkerTest {
         exchange.checkError();
         return totalRows;
     }
+
+    // ── Additional ColumnWorker lifecycle / robustness tests ─────────────────
+
+    /// `isFinished()` returns false before the pipeline reaches EOF and true after.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void isFinishedFalseBeforeEofAndTrueAfter() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), 64);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, 64,
+                    context.decompressorFactory(), context.executor(), 0);
+
+            assertThat(worker.isFinished())
+                    .as("isFinished() must be false before start()")
+                    .isFalse();
+
+            worker.start();
+
+            // Drain batches. Once poll() returns null the drain thread has set done.
+            consumeAllBatches(exchange);
+
+            assertThat(worker.isFinished())
+                    .as("isFinished() must be true once the pipeline reaches EOF")
+                    .isTrue();
+
+            worker.close();
+        }
+    }
+
+    /// Calling `close()` a second time must not throw or deadlock.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void closeIsIdempotent() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), 64);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, 64,
+                    context.decompressorFactory(), context.executor(), 0);
+            worker.start();
+
+            worker.close();
+            worker.close(); // must not throw or block
+        }
+    }
+
+    /// A decode task that throws propagates the error through the exchange to the consumer.
+    ///
+    /// This is different from `errorPropagatedToConsumer` which signals the exchange
+    /// directly. Here the error originates inside `decode()` itself — by injecting a
+    /// [DecompressorFactory] whose decompressor always throws on `decompress()`.
+    /// `decode()` catches the exception via its `catch (Throwable)` block and calls
+    /// `signalError()`, which routes it to the [BatchExchange]. The consumer sees it
+    /// when calling `checkError()` after `poll()` returns null.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void decodeErrorFromExecutorReachesConsumer() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+
+            // A DecompressorFactory whose decompressor always throws on decompress(),
+            // simulating a corrupt page. The exception is caught inside decode() and
+            // routed to the exchange via signalError().
+            dev.hardwood.internal.compression.DecompressorFactory failingFactory =
+                    new dev.hardwood.internal.compression.DecompressorFactory(null) {
+                        @Override
+                        public dev.hardwood.internal.compression.Decompressor getDecompressor(
+                                dev.hardwood.metadata.CompressionCodec codec) {
+                            return new dev.hardwood.internal.compression.Decompressor() {
+                                @Override
+                                public byte[] decompress(java.nio.ByteBuffer compressed,
+                                                         int uncompressedSize)
+                                        throws java.io.IOException {
+                                    throw new java.io.IOException("injected decompression failure");
+                                }
+
+                                @Override
+                                public String getName() { return "failing-decompressor"; }
+                            };
+                        }
+                    };
+
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), 64);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, 64,
+                    failingFactory, context.executor(), 0);
+            worker.start();
+
+            // poll() returns null once the exchange is done (error or natural EOF).
+            BatchExchange.Batch batch;
+            while ((batch = exchange.poll()) != null) {
+                exchange.recycle(batch);
+            }
+
+            // checkError() must re-throw the injected IOException.
+            assertThatThrownBy(exchange::checkError)
+                    .as("error from decode() must reach the consumer via the exchange")
+                    .isInstanceOf(Exception.class)
+                    .hasMessageContaining("injected decompression failure");
+
+            worker.close();
+        }
+    }
+
+
+    /// Requesting `maxRows = 0` is treated as "unlimited" and must deliver every row.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void maxRowsZeroMeansUnlimited() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            long expectedRows = reader.getFileMetaData().rowGroups().stream()
+                    .mapToLong(rg -> rg.numRows()).sum();
+
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), 64);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, 64,
+                    context.decompressorFactory(), context.executor(), 0);
+            worker.start();
+
+            long totalRows = consumeAllBatches(exchange);
+            worker.close();
+
+            assertThat(totalRows)
+                    .as("maxRows=0 must deliver all rows, not zero")
+                    .isEqualTo(expectedRows);
+        }
+    }
+
+    /// `close()` terminates the pipeline mid-stream: the worker stops producing
+    /// batches promptly even when there are still pages to read.
+    ///
+    /// Verifies that close() does not block indefinitely when the consumer stops
+    /// consuming before EOF, and that no exception is thrown after close().
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void closeStopsPipelineMidStream() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            long totalRows = reader.getFileMetaData().rowGroups().stream()
+                    .mapToLong(rg -> rg.numRows()).sum();
+            // Only meaningful if there are enough rows to require multiple batches.
+            assertThat(totalRows).as("test file must have more than 64 rows").isGreaterThan(64);
+
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), 64);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, 64,
+                    context.decompressorFactory(), context.executor(), 0);
+            worker.start();
+
+            // Consume only one batch then close mid-stream.
+            BatchExchange.Batch first = exchange.poll();
+            assertThat(first).as("at least one batch must be produced").isNotNull();
+            long rowsSeen = first.recordCount;
+            exchange.recycle(first);
+
+            // close() must return promptly even though the source has more data.
+            worker.close();
+
+            assertThat(rowsSeen)
+                    .as("at least one batch worth of rows must have been consumed")
+                    .isGreaterThan(0)
+                    .isLessThan(totalRows);
+        }
+    }
+
+    /// The retriever and drain VThreads must exit after close().
+    ///
+    /// Complements `closeJoinsThreadsAndAwaitsInFlightDecodes` but uses the real
+    /// executor (not a stalled one) so thread liveness is checked in the normal
+    /// non-stalled case too.
+    @Test
+    @Timeout(value = 10, unit = TimeUnit.SECONDS)
+    void closeTerminatesBothVThreads() throws Exception {
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(TEST_FILE))) {
+
+            FileSchema schema = reader.getFileSchema();
+            RowGroupIterator iterator = createIterator(TEST_FILE, schema, context);
+            ColumnSchema column = schema.getColumn(0);
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch b = new BatchExchange.Batch();
+                        b.values = BatchExchange.allocateArray(column.type(), 64);
+                        return b;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(iterator, 0), exchange, column, 64,
+                    context.decompressorFactory(), context.executor(), 0);
+            worker.start();
+
+            // Let the pipeline run for a little while, then close it.
+            Thread.sleep(50);
+            worker.close();
+
+            assertThat(worker.retrieverThread.isAlive())
+                    .as("retriever thread must have exited after close()")
+                    .isFalse();
+            assertThat(worker.drainThread.isAlive())
+                    .as("drain thread must have exited after close()")
+                    .isFalse();
+        }
+    }
 }
+
