@@ -98,37 +98,9 @@
     </dependency>
     <dependency>
       <groupId>dev.hardwood</groupId>
-      <artifactId>hardwood-core</artifactId>
-      <type>test-jar</type>
+      <artifactId>hardwood-test-support</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
-
-  <build>
-    <plugins>
-      <!-- Publish a slim test-jar containing only the S3ProxyContainers helper,
-           so cli/ and parquet-java-compat/ tests can share the same s3proxy
-           image SHA, credentials, and container setup. Test resources (such as
-           log4j2.xml) are deliberately excluded to avoid colliding with
-           consumers' own test-classpath resources. -->
-      <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-jar-plugin</artifactId>
-        <executions>
-          <execution>
-            <id>test-jar</id>
-            <goals>
-              <goal>test-jar</goal>
-            </goals>
-            <configuration>
-              <includes>
-                <include>dev/hardwood/s3/S3ProxyContainers.class</include>
-              </includes>
-            </configuration>
-          </execution>
-        </executions>
-      </plugin>
-    </plugins>
-  </build>
 
 </project>

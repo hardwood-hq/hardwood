@@ -188,8 +188,7 @@
     </dependency>
     <dependency>
       <groupId>dev.hardwood</groupId>
-      <artifactId>hardwood-s3</artifactId>
-      <type>test-jar</type>
+      <artifactId>hardwood-test-support</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
