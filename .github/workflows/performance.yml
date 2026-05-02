@@ -1,0 +1,68 @@
+#
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Copyright The original authors
+#
+#  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+#
+
+# Performance tests run post-merge on main and on demand via the Actions UI.
+# They are not part of the PR gate: results on shared GitHub runners are too
+# noisy to reliably catch regressions, and the ~3 min stage was the longest
+# blocker on every PR. Maintainers investigating a suspect PR can dispatch
+# this workflow against any branch from the Actions tab.
+name: Performance Tests
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  performance-tests:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: 'Check out repository'
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
+        with:
+          submodules: 'true'
+
+      - name: 'Set up Java'
+        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
+        with:
+          java-version: '25'
+          distribution: 'temurin'
+
+      - name: 'Cache Maven dependencies'
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+        with:
+          path: ~/.m2/repository
+          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
+          restore-keys: |
+            maven-${{ runner.os }}-${{ github.job }}-
+            maven-${{ runner.os }}-
+
+      - name: 'Cache taxi data'
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+        with:
+          path: performance-testing/test-data-setup/target/tlc-trip-record-data/
+          key: taxi-data-2023-01-to-2025-12
+
+      - name: 'Cache Overture Maps data'
+        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+        with:
+          path: performance-testing/test-data-setup/target/overture-maps-data/
+          key: overture-maps-places-v1
+          restore-keys: |
+            overture-maps-places-
+
+      - name: 'Install core, s3 and aws-auth into local repo'
+        run: ./mvnw -B -DskipTests install -pl :hardwood-core,:hardwood-avro,:hardwood-s3,:hardwood-aws-auth -am
+
+      - name: 'Run performance tests (with SIMD)'
+        # Limit CI runs to Flat/Nested performance (others will be reserved for on-demand)
+        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start=2023-01 -Dperf.end=2025-12 -Dperf.runs=5 -Dtest='FlatPerformanceTest,NestedPerformanceTest' -Dsurefire.failIfNoSpecifiedTests=false
+        env:
+          MAVEN_OPTS: '--add-modules jdk.incubator.vector'

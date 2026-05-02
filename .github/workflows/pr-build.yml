@@ -381,60 +381,6 @@ jobs:
         if: ${{ matrix.install_libdeflate && matrix.enable_incubating }}
         run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector"
 
-  performance-tests:
-    needs: build-s3
-    runs-on: ubuntu-latest
-
-    steps:
-      - name: 'Check out repository'
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6 — https://github.com/actions/checkout/releases/tag/v6
-        with:
-          submodules: 'true'
-
-      - name: 'Set up Java'
-        uses: actions/setup-java@be666c2fcd27ec809703dec50e508c2fdc7f6654  # v5 — https://github.com/actions/setup-java/releases/tag/v5
-        with:
-          java-version: '25'
-          distribution: 'temurin'
-
-      - name: 'Cache Maven dependencies'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: ~/.m2/repository
-          key: maven-${{ runner.os }}-${{ github.job }}-${{ hashFiles('**/pom.xml') }}
-          restore-keys: |
-            maven-${{ runner.os }}-${{ github.job }}-
-            maven-${{ runner.os }}-build-s3-
-            maven-${{ runner.os }}-build-core-
-            maven-${{ runner.os }}-
-
-      - name: 'Download core and s3 artifacts'
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8 — https://github.com/actions/download-artifact/releases/tag/v8
-        with:
-          pattern: maven-repo-{core,s3}
-          path: ~/.m2/repository/dev/hardwood/
-          merge-multiple: true
-
-      - name: 'Cache taxi data'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: performance-testing/test-data-setup/target/tlc-trip-record-data/
-          key: taxi-data-2023-01-to-2025-12
-
-      - name: 'Cache Overture Maps data'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
-        with:
-          path: performance-testing/test-data-setup/target/overture-maps-data/
-          key: overture-maps-places-v1
-          restore-keys: |
-            overture-maps-places-
-
-      - name: 'Run performance tests (with SIMD)'
-        # Limit CI runs to Flat/Nested performance (others will be reserved for on-demand)
-        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start=2023-01 -Dperf.end=2025-12 -Dperf.runs=5 -Dtest='FlatPerformanceTest,NestedPerformanceTest' -Dsurefire.failIfNoSpecifiedTests=false
-        env:
-          MAVEN_OPTS: '--add-modules jdk.incubator.vector'
-
   # Verify the native CLI build on PRs
   native-build-check:
     if: github.event_name == 'pull_request'
