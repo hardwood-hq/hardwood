@@ -42,7 +42,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Equivalence tests for the indexed compile path. For every predicate
 /// shape the indexed matcher (built via the projection-aware
 /// `RecordFilterCompiler.compile` overload) must agree with the
-/// name-based matcher and with the legacy [RecordFilterEvaluator] oracle.
+/// name-based matcher and with the expected boolean.
 ///
 /// Rows here implement [RowReader], so they support both the name-based
 /// accessors (inherited from [StructAccessor]) and the indexed accessors
@@ -154,12 +154,10 @@ class RecordFilterIndexedTest {
 
     private static void assertEquivalent(ResolvedPredicate predicate, RowReader row, FileSchema schema,
             ProjectedSchema projection, boolean expected) {
-        boolean legacy = RecordFilterEvaluator.matchesRow(predicate, row, schema);
         boolean compiledName = RecordFilterCompiler.compile(predicate, schema).test(row);
         boolean compiledIndexed = RecordFilterCompiler.compile(predicate, schema, projection::toProjectedIndex).test(row);
-        assertThat(compiledName).as("legacy/compiled-name disagreed for %s", predicate).isEqualTo(legacy);
-        assertThat(compiledIndexed).as("legacy/compiled-indexed disagreed for %s", predicate).isEqualTo(legacy);
-        assertThat(legacy).as("legacy oracle disagreed with expected for %s", predicate).isEqualTo(expected);
+        assertThat(compiledName).as("compiled-name disagreed with expected for %s", predicate).isEqualTo(expected);
+        assertThat(compiledIndexed).as("compiled-indexed disagreed with expected for %s", predicate).isEqualTo(expected);
     }
 
     private static ProjectedSchema projectAll(FileSchema schema) {

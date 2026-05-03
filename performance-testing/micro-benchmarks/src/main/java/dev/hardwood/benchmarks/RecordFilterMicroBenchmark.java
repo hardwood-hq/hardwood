@@ -31,7 +31,6 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
-import dev.hardwood.internal.predicate.RecordFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.metadata.PhysicalType;
@@ -51,8 +50,7 @@ import dev.hardwood.schema.FileSchema;
 
 /// Predicate evaluation micro-benchmark, isolated from any I/O.
 ///
-/// Measures the per-row cost of [RecordFilterEvaluator.matchesRow] (legacy)
-/// against [RecordFilterCompiler.compile] + [RowMatcher.test] (compiled),
+/// Measures the per-row cost of [RecordFilterCompiler.compile] + [RowMatcher.test]
 /// across a range of predicate shapes that stress different aspects of the
 /// dispatch path:
 ///
@@ -82,27 +80,15 @@ public class RecordFilterMicroBenchmark {
     @Param({ "single", "and2", "and3", "and4", "or2", "nested", "intIn5", "intIn32" })
     public String shape;
 
-    private FileSchema schema;
     private StructAccessor[] rows;
-    private ResolvedPredicate predicate;
     private RowMatcher compiled;
 
     @Setup
     public void setup() {
-        schema = buildSchema();
+        FileSchema schema = buildSchema();
         rows = buildRows(BATCH_SIZE, 42L);
-        predicate = buildPredicate(shape);
+        ResolvedPredicate predicate = buildPredicate(shape);
         compiled = RecordFilterCompiler.compile(predicate, schema);
-    }
-
-    @Benchmark
-    public void legacy(Blackhole bh) {
-        ResolvedPredicate p = predicate;
-        FileSchema s = schema;
-        StructAccessor[] batch = rows;
-        for (int i = 0; i < batch.length; i++) {
-            bh.consume(RecordFilterEvaluator.matchesRow(p, batch[i], s));
-        }
     }
 
     @Benchmark

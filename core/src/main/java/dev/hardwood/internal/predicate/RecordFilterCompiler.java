@@ -21,7 +21,7 @@ import dev.hardwood.schema.FileSchema;
 /// All field-name lookups, struct-path resolutions, and operator decisions
 /// are performed at compile time. The returned matcher only reads values
 /// and runs comparisons per row, eliminating the type and operator
-/// switches that [RecordFilterEvaluator] performs for every row.
+/// switches a generic tree-walking evaluator would perform for every row.
 public final class RecordFilterCompiler {
 
     static final String[] EMPTY_PATH = new String[0];
@@ -324,8 +324,8 @@ public final class RecordFilterCompiler {
         };
     }
 
-    // Float and Double use Float.compare / Double.compare to match the legacy
-    // RecordFilterEvaluator semantics for NaN ordering.
+    // Float and Double use Float.compare / Double.compare so NaN orders after
+    // all other values (and -0.0 < +0.0), consistent with the file-level stats path.
 
     private static RowMatcher floatLeaf(String[] path, String name, Operator op, float v) {
         return switch (op) {
