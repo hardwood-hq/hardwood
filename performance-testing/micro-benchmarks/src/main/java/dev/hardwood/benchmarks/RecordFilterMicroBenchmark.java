@@ -30,10 +30,13 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.BatchMatcher;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.RecordFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
+import dev.hardwood.internal.reader.BatchExchange;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
@@ -47,7 +50,9 @@ import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.StructAccessor;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.ProjectedSchema;
 
 /// Predicate evaluation micro-benchmark, isolated from any I/O.
 ///
@@ -87,12 +92,28 @@ public class RecordFilterMicroBenchmark {
     private ResolvedPredicate predicate;
     private RowMatcher compiled;
 
+    // Drain-side state — populated for eligible shapes (single, and2). null otherwise.
+    private BatchMatcher[] drainFragments;
+    private BatchExchange.Batch[] drainBatches;
+    private long[] drainCombined;
+    private long[] drainColumnScratch; // reused per-column matches workspace
+
     @Setup
     public void setup() {
         schema = buildSchema();
         rows = buildRows(BATCH_SIZE, 42L);
         predicate = buildPredicate(shape);
         compiled = RecordFilterCompiler.compile(predicate, schema);
+
+        ProjectedSchema projection = ProjectedSchema.create(schema, ColumnProjection.all());
+        drainFragments = BatchFilterCompiler.tryCompile(predicate, schema,
+                projection::toProjectedIndex);
+        if (drainFragments != null) {
+            drainBatches = buildDrainBatches(rows, drainFragments.length);
+            int wordsLen = (BATCH_SIZE + 63) >>> 6;
+            drainCombined = new long[wordsLen];
+            drainColumnScratch = new long[wordsLen];
+        }
     }
 
     @Benchmark
@@ -111,6 +132,76 @@ public class RecordFilterMicroBenchmark {
         StructAccessor[] batch = rows;
         for (int i = 0; i < batch.length; i++) {
             bh.consume(m.test(batch[i]));
+        }
+    }
+
+    /// Drain-side variant: per-column [BatchMatcher] writes a long[] of matches,
+    /// the columns are intersected, surviving rows are iterated via
+    /// `Long.numberOfTrailingZeros`. Single-threaded — measures codegen quality
+    /// against the value array, isolated from the parallelism story which
+    /// requires the full reader pipeline.
+    ///
+    /// Skipped (no-op) for shapes that are not eligible (`or2`, `nested`, `intIn*`,
+    /// and `and3`/`and4` because they include an INT32 leaf).
+    @Benchmark
+    public void drainSide(Blackhole bh) {
+        BatchMatcher[] fragments = drainFragments;
+        if (fragments == null) {
+            return; // shape not eligible — see class javadoc.
+        }
+        BatchExchange.Batch[] batches = drainBatches;
+        long[] combined = drainCombined;
+        long[] scratch = drainColumnScratch;
+
+        boolean initialised = false;
+        for (int col = 0; col < fragments.length; col++) {
+            BatchMatcher m = fragments[col];
+            if (m == null) {
+                continue;
+            }
+            m.test(batches[col], scratch);
+            if (!initialised) {
+                System.arraycopy(scratch, 0, combined, 0, combined.length);
+                initialised = true;
+            }
+            else {
+                for (int wi = 0; wi < combined.length; wi++) {
+                    combined[wi] &= scratch[wi];
+                }
+            }
+        }
+        // Iterate surviving rows. Each call to Blackhole defeats DCE.
+        int n = BATCH_SIZE;
+        int rowIdx = -1;
+        while (true) {
+            int next = nextSetBit(combined, rowIdx + 1, n);
+            if (next < 0) {
+                break;
+            }
+            rowIdx = next;
+            bh.consume(rowIdx);
+        }
+    }
+
+    private static int nextSetBit(long[] words, int from, int limit) {
+        if (from >= limit) {
+            return -1;
+        }
+        int wordIdx = from >>> 6;
+        long word = words[wordIdx] & (-1L << from);
+        while (true) {
+            if (word != 0L) {
+                int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(word);
+                return bit < limit ? bit : -1;
+            }
+            wordIdx++;
+            if (wordIdx >= words.length) {
+                return -1;
+            }
+            if ((wordIdx << 6) >= limit) {
+                return -1;
+            }
+            word = words[wordIdx];
         }
     }
 
@@ -142,6 +233,39 @@ public class RecordFilterMicroBenchmark {
             out[i] = new FlatStub(idVal, valueVal, tagVal, flagVal);
         }
         return out;
+    }
+
+    /// Builds parallel typed-array [BatchExchange.Batch]es from the same row data
+    /// used by `legacy` and `compiled`, ensuring all three benchmarks evaluate
+    /// the same predicate on the same values. The returned array is indexed by
+    /// projected column index (id=0, value=1, tag=2, flag=3).
+    private static BatchExchange.Batch[] buildDrainBatches(StructAccessor[] sourceRows, int columnCount) {
+        BatchExchange.Batch[] out = new BatchExchange.Batch[columnCount];
+        int n = sourceRows.length;
+        long[] ids = new long[n];
+        double[] values = new double[n];
+        int[] tags = new int[n];
+        boolean[] flags = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            FlatStub r = (FlatStub) sourceRows[i];
+            ids[i] = r.idVal;
+            values[i] = r.valueVal;
+            tags[i] = r.tagVal;
+            flags[i] = r.flagVal;
+        }
+        if (columnCount > 0) out[0] = batch(ids, n);
+        if (columnCount > 1) out[1] = batch(values, n);
+        if (columnCount > 2) out[2] = batch(tags, n);
+        if (columnCount > 3) out[3] = batch(flags, n);
+        return out;
+    }
+
+    private static BatchExchange.Batch batch(Object values, int recordCount) {
+        BatchExchange.Batch b = new BatchExchange.Batch();
+        b.values = values;
+        b.nulls = null; // schema is REQUIRED across all columns — no nulls.
+        b.recordCount = recordCount;
+        return b;
     }
 
     /// Builds predicate shapes that all match every row in the batch.

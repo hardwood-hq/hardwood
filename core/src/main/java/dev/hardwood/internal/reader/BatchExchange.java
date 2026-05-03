@@ -40,6 +40,12 @@ public class BatchExchange<B> {
         public BitSet nulls;
         public int recordCount;
         public String fileName;
+        /// Per-batch matches mask, populated by [dev.hardwood.internal.predicate.BatchMatcher]
+        /// on the drain thread when drain-side filtering is enabled. `null` means "no
+        /// fragment for this column" — interpreted as all-ones during intersection.
+        /// When non-null, sized to `(batchCapacity + 63) >>> 6` and overwritten on every
+        /// drain-side test call.
+        public long[] matches;
     }
 
     private final ArrayBlockingQueue<B> readyQueue;

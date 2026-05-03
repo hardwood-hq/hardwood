@@ -11,6 +11,7 @@ import java.util.BitSet;
 import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.internal.predicate.BatchMatcher;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column pipeline that decodes pages in parallel and assembles flat batches.
@@ -20,6 +21,7 @@ import dev.hardwood.schema.ColumnSchema;
 public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     private BitSet currentNulls;
+    private BatchMatcher columnFilter;
 
     /// Creates a new flat column worker.
     ///
@@ -36,6 +38,14 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                             Executor decodeExecutor, long maxRows) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
               decodeExecutor, maxRows);
+    }
+
+    /// Installs a drain-side per-column filter that runs against every published batch,
+    /// writing matches into the batch's `matches` array. Must be set before [#start()]
+    /// and only by [FlatRowReader] when the drain-side path is enabled. `null` (the
+    /// default) leaves the worker on the existing path — no filter evaluation.
+    public void setColumnFilter(BatchMatcher columnFilter) {
+        this.columnFilter = columnFilter;
     }
 
     @Override
@@ -112,6 +122,12 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                 ? (BitSet) currentNulls.clone()
                 : null;
         currentBatch.fileName = currentBatchFileName;
+
+        if (columnFilter != null) {
+            // Drain-side filter: evaluate while the just-filled value array is hot in
+            // this drain core's L1. Writes into currentBatch.matches in place.
+            columnFilter.test(currentBatch, currentBatch.matches);
+        }
 
         long t0 = System.nanoTime();
         try {
