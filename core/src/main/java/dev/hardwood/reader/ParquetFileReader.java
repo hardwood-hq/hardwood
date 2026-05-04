@@ -8,7 +8,6 @@
 package dev.hardwood.reader;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -298,61 +297,37 @@ public class ParquetFileReader implements AutoCloseable {
         }
         long skip = Math.max(0, rowsInSubset - tailRows);
 
-        boolean fastSkip;
-        try {
-            fastSkip = skip == 0 || canFastSkipTail(subset, projection);
-        }
-        catch (IOException e) {
-            throw new UncheckedIOException(
-                    "Failed to probe page formats while preparing tail read", e);
+        // Build the iterator first (with tailSkip=0); its
+        // SharedRowGroupMetadata cache is what surfaces the gate decision.
+        // Probing through the iterator avoids the prior duplicate probe
+        // where canFastSkipTail and computeFetchPlans both ran the same
+        // page-format check per row group.
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0L, 0L);
+        iterator.setFirstFile(schema, subset);
+        iterator.initialize(projectedSchema, null);
+        rowGroupIterators.add(iterator);
+
+        boolean fastSkip = (skip == 0) || iterator.canFastSkipFirstFileSubset();
+        if (fastSkip && skip > 0) {
+            iterator.setTailSkip(skip);
         }
 
-        if (fastSkip) {
-            // Fast path: per-page row masking drops the leading pages and trims the
-            // straddling page in the projected fetch plans, so the reader yields
-            // exactly tailRows rows from its first hasNext() with no caller-side
-            // advance.
-            return buildRowReader(projection, null, 0, subset, skip);
-        }
+        RowReader reader = RowReader.create(iterator, schema, projectedSchema, context, null, 0);
 
-        // Fallback: at least one projected column closes the per-page mask gate
-        // (a nested-v1 column without an OffsetIndex). Decoding every leading
-        // row and discarding it at the reader level keeps cross-column row
-        // alignment intact.
-        RowReader reader = buildRowReader(projection, null, 0, subset, 0);
-        for (long i = 0; i < skip; i++) {
-            if (!reader.hasNext()) {
-                break;
+        if (!fastSkip) {
+            // Fallback: at least one projected column closes the per-page
+            // mask gate (a nested-v1 column without an OffsetIndex). Decode
+            // every leading row and discard it to preserve cross-column
+            // row alignment.
+            for (long i = 0; i < skip; i++) {
+                if (!reader.hasNext()) {
+                    break;
+                }
+                reader.next();
             }
-            reader.next();
         }
         return reader;
-    }
-
-    /// Whether the per-page row mask machinery is applicable to every row
-    /// group in `subset`. When `true`, the synthesized `[skip, numRows)`
-    /// `RowRanges` flows through the same plumbing as a filter and trims
-    /// leading rows on every column without a post-iteration
-    /// decode-and-discard loop; when `false`, the caller falls back to
-    /// decoding and discarding the prefix.
-    ///
-    /// Delegates to the row-group-wide gate in
-    /// [dev.hardwood.internal.reader.RowGroupIterator#masksApplicableForRowGroup]
-    /// so the tail-read decision matches the iterator's per-row-group
-    /// decision exactly. Carries the same I/O cost (one bounded page-header
-    /// read per nested-without-OffsetIndex column) which is paid only on
-    /// files where such columns exist.
-    private boolean canFastSkipTail(List<RowGroup> subset, ColumnProjection projection)
-            throws IOException {
-        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        InputFile inputFile = inputFiles.get(0);
-        for (RowGroup rg : subset) {
-            if (!RowGroupIterator.masksApplicableForRowGroup(
-                    projectedSchema, rg, schema, inputFile)) {
-                return false;
-            }
-        }
-        return true;
     }
 
     private RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,

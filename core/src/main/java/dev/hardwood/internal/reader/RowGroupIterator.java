@@ -74,10 +74,12 @@ public class RowGroupIterator {
     private final long maxRows;
 
     /// Number of leading rows of the first row group to skip. Non-zero only on
-    /// the tail-read fast path; consumed by [#getSharedMetadata] to synthesize a
-    /// `[tailSkip, numRows)` matching range so the existing per-page mask
-    /// machinery drops the leading pages and trims the straddling page.
-    private final long tailSkip;
+    /// the tail-read fast path; consumed by [#computeFetchPlans] to synthesize
+    /// a `[tailSkip, numRows)` matching range so the existing per-page mask
+    /// machinery drops the leading pages and trims the straddling page. May
+    /// be promoted from the construction-time value of `0` via
+    /// [#setTailSkip(long)] once the gate decision is in.
+    private long tailSkip;
 
     // Set after first file
     private FileSchema referenceSchema;
@@ -126,9 +128,17 @@ public class RowGroupIterator {
     ) {}
 
     /// Cached shared metadata for one row group, reused across columns.
+    ///
+    /// `matchingRows` is filter-derived only — the tail-read fast path's
+    /// synthesized `[tailSkip, numRows)` range is applied later in
+    /// [#computeFetchPlans] so this record can be populated before
+    /// `tailSkip` is known (the tail-read fast path needs to consult
+    /// `maskCapability` to decide whether `tailSkip` is viable in the
+    /// first place).
     public record SharedRowGroupMetadata(
             RowGroupIndexBuffers indexBuffers,
-            RowRanges matchingRows
+            RowRanges matchingRows,
+            MaskCapability maskCapability
     ) {}
 
     /// Result of opening and validating a file.
@@ -275,15 +285,13 @@ public class RowGroupIterator {
                     matchingRows = PageFilterEvaluator.computeMatchingRows(
                             filterPredicate, workItem.rowGroup(), indexBuffers);
                 }
-                else if (tailSkip > 0 && workItem.workItemIndex() == 0) {
-                    // Tail-read fast path: synthesize a [tailSkip, numRows) matching
-                    // range on the first row group so the per-page mask machinery
-                    // drops leading pages and trims the straddling page in place of
-                    // the post-iteration skip loop.
-                    matchingRows = RowRanges.range(tailSkip, workItem.rowGroup().numRows());
-                }
 
-                return new SharedRowGroupMetadata(indexBuffers, matchingRows);
+                MaskCapability maskCapability = masksApplicableForRowGroup(
+                        projectedSchema, workItem.rowGroup(), workItem.fileSchema(),
+                        workItem.inputFile())
+                        ? MaskCapability.YES : MaskCapability.NO;
+
+                return new SharedRowGroupMetadata(indexBuffers, matchingRows, maskCapability);
             }
             catch (IOException e) {
                 throw new UncheckedIOException(
@@ -291,6 +299,50 @@ public class RowGroupIterator {
                         + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
             }
         });
+    }
+
+    /// Sets the tail-skip budget for the first row group's fetch plans.
+    ///
+    /// Used by [dev.hardwood.reader.ParquetFileReader#buildTailRowReader] to
+    /// defer the tail-skip decision until after the gate has been probed via
+    /// [#canFastSkipFirstFileSubset]. The value flows into
+    /// [#computeFetchPlans] when it builds the per-row-group fetch plans —
+    /// so callers must invoke this method before any column has consumed
+    /// from the iterator (specifically before
+    /// [#getColumnPlan(WorkItem, int)]).
+    ///
+    /// @throws IllegalStateException if a fetch plan has already been
+    ///         computed for the first work item, since changing the tail
+    ///         skip after the fact would yield inconsistent plans.
+    public void setTailSkip(long tailSkip) {
+        if (tailSkip < 0) {
+            throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
+        }
+        if (!fetchPlanCache.isEmpty()) {
+            throw new IllegalStateException(
+                    "setTailSkip must be called before any column requests its fetch plan");
+        }
+        this.tailSkip = tailSkip;
+    }
+
+    /// Pre-probes the row-group-wide mask gate for every first-file work
+    /// item, returning `true` iff per-page masking is applicable across all
+    /// of them. Used by the tail-read fast path: a single pass through
+    /// [#getSharedMetadata] populates the cache and surfaces the gate
+    /// decision, so [#computeFetchPlans] does not run a second probe.
+    ///
+    /// Multi-file iteration is not in scope — the tail-read fast path only
+    /// targets single-file readers.
+    public boolean canFastSkipFirstFileSubset() {
+        for (WorkItem workItem : workItems) {
+            if (workItem.fileIndex() != 0) {
+                continue;
+            }
+            if (getSharedMetadata(workItem).maskCapability() == MaskCapability.NO) {
+                return false;
+            }
+        }
+        return true;
     }
 
     /// Returns the [FetchPlan] for the given column in the given row group.
@@ -364,6 +416,14 @@ public class RowGroupIterator {
         InputFile inputFile = workItem.inputFile();
         int projectedCount = projectedSchema.getProjectedColumnCount();
 
+        // Apply the tail-read fast path's synthesized matching range here
+        // (rather than in `getSharedMetadata`) so the cached metadata stays
+        // independent of `tailSkip`. That lets `canFastSkipFirstFileSubset`
+        // populate the cache before the tail-skip decision is made.
+        if (matchingRows.isAll() && tailSkip > 0 && workItem.workItemIndex() == 0) {
+            matchingRows = RowRanges.range(tailSkip, rowGroup.numRows());
+        }
+
         // Per-page masks are honoured for this row group only when every
         // projected column is mask-friendly (e.g., has an OffsetIndex, is flat,
         // or is nested with `DATA_PAGE_V2` pages). Masking a subset of
@@ -372,19 +432,8 @@ public class RowGroupIterator {
         // a mask; row-group-level statistics still drop the group when
         // possible, and the row reader applies the residual filter to
         // surviving rows.
-        if (!matchingRows.isAll()) {
-            try {
-                if (!masksApplicableForRowGroup(projectedSchema, rowGroup,
-                        workItem.fileSchema(), inputFile)) {
-                    matchingRows = RowRanges.ALL;
-                }
-            }
-            catch (IOException e) {
-                throw new UncheckedIOException(
-                        ExceptionContext.filePrefix(inputFile.name())
-                                + "Failed to probe page formats for row group "
-                                + workItem.rowGroupIndex(), e);
-            }
+        if (!matchingRows.isAll() && shared.maskCapability() == MaskCapability.NO) {
+            matchingRows = RowRanges.ALL;
         }
 
         // Convert the iterator-wide maxRows into a per-row-group remainder.
