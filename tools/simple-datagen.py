@@ -2721,3 +2721,43 @@ print("\nGenerated misaligned_pages_nested_v2.parquet:")
 print(f"  - 1 row group, {NESTED_V2_ROWS} rows, Parquet v2, NO ColumnIndex/OffsetIndex")
 print("  - narrow INT32 (flat) + tags LIST<STRING> (nested, 2 elements per row)")
 print("  - Drives SequentialFetchPlan rep-level walk on a v2 nested column")
+
+# =====================================================================
+# Nested LIST<STRING> column with DATA_PAGE (v1) pages and no Page Index.
+# Closes the row-group-wide mask gate: the rep-level prefix lives inside
+# the compressed area on a v1 page, so counting top-level records would
+# require decompression — which defeats the skip-without-decompress
+# optimisation. Drives the gate-closed branch in
+# RowGroupIterator.computeFetchPlans (matchingRows promoted to ALL) and
+# the tail-read fallback path that decode-and-discards leading rows
+# instead of using per-page masks.
+# =====================================================================
+
+NESTED_V1_ROWS = 2000
+nested_v1_schema = pa.schema([
+    ('narrow', pa.int32(), False),
+    ('tags', pa.list_(pa.field('element', pa.string()))),
+])
+nested_v1_table = pa.table({
+    'narrow': list(range(NESTED_V1_ROWS)),
+    'tags': [[f"row={i:05d}", f"tag-{i % 7}"] for i in range(NESTED_V1_ROWS)],
+}, schema=nested_v1_schema)
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/nested_v1_no_index.parquet',
+    schema=nested_v1_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    data_page_size=512,
+    write_batch_size=7,
+    write_statistics=True,
+    write_page_index=False,
+)
+writer.write_table(nested_v1_table)
+writer.close()
+
+print("\nGenerated nested_v1_no_index.parquet:")
+print(f"  - 1 row group, {NESTED_V1_ROWS} rows, Parquet v1, NO ColumnIndex/OffsetIndex")
+print("  - narrow INT32 (flat) + tags LIST<STRING> (nested, v1 pages)")
+print("  - Closes the row-group-wide mask gate; drives the fallback path")
