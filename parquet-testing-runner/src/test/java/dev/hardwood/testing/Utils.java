@@ -555,22 +555,16 @@ public class Utils {
 
     // ==================== Column-Level Comparison ====================
 
-    /// Additional files to skip in column-level comparison tests.
-    /// Files with nested/repeated columns where column-level comparison
-    /// requires list reconstruction from offsets (deferred).
+    /// Additional files to skip in column-level comparison tests beyond [#SKIPPED_FILES].
+    /// All listed files contain empty repeated groups: the public [ColumnReader] API
+    /// exposes per-record offsets, level-null bitmaps, and element-null bitmaps but
+    /// not definition levels, which are needed to distinguish an empty list (size 0,
+    /// no elements) from a list containing a single null element (size 1). Both
+    /// produce the same offset/null shape, so reconstruction can't tell them apart.
     static final Set<String> COLUMN_SKIPPED_FILES = Set.of(
-            "list_columns.parquet",
-            "nested_lists.snappy.parquet",
-            "nested_maps.snappy.parquet",
-            "nested_structs.rust.parquet",
-            "nonnullable.impala.parquet",
-            "nullable.impala.parquet",
             "null_list.parquet",
-            "old_list_structure.parquet",
-            "repeated_no_annotation.parquet",
-            "repeated_primitive_no_list.parquet",
-            "incorrect_map_schema.parquet",
-            "map_no_value.parquet"
+            "nullable.impala.parquet",
+            "nonnullable.impala.parquet"
     );
 
     /// Compare a Parquet file column-by-column using ColumnReaders against parquet-java reference data.
@@ -580,17 +574,52 @@ public class Utils {
 
         for (int colIdx = 0; colIdx < schema.getColumnCount(); colIdx++) {
             ColumnSchema colSchema = schema.getColumn(colIdx);
-
-            // Skip nested/repeated columns
-            if (colSchema.maxRepetitionLevel() > 0) {
+            // parquet-java's AvroParquetReader collapses Variant `typed_value`
+            // subtrees into the canonical `value` binary, so reference data for
+            // shredded subcolumns is unavailable. Skip them.
+            if (isUnderVariantShred(schema, colSchema)) {
                 continue;
             }
-
-            String colName = colSchema.name();
             try (ColumnReader columnReader = readerFactory.columnReader(colIdx)) {
-                compareColumnReader(colName, columnReader, referenceRows);
+                if (colSchema.maxRepetitionLevel() == 0) {
+                    compareColumnReader(colSchema.name(), columnReader, referenceRows);
+                }
+                else {
+                    compareNestedColumnReader(colSchema, columnReader, referenceRows);
+                }
             }
         }
+    }
+
+    /// Returns true when the column lives inside a Variant group's `typed_value`
+    /// shred subtree. Walks the schema along the column's [dev.hardwood.metadata.FieldPath]
+    /// looking for a `typed_value` step that occurs after a Variant-annotated ancestor.
+    private static boolean isUnderVariantShred(FileSchema schema, ColumnSchema colSchema) {
+        SchemaNode current = schema.getRootNode();
+        boolean variantAncestor = false;
+        for (String name : colSchema.fieldPath().elements()) {
+            if (!(current instanceof SchemaNode.GroupNode group)) {
+                return false;
+            }
+            if (group.isVariant()) {
+                variantAncestor = true;
+            }
+            if (variantAncestor && "typed_value".equals(name)) {
+                return true;
+            }
+            SchemaNode next = null;
+            for (SchemaNode child : group.children()) {
+                if (child.name().equals(name)) {
+                    next = child;
+                    break;
+                }
+            }
+            if (next == null) {
+                return false;
+            }
+            current = next;
+        }
+        return false;
     }
 
     /// Compare a single ColumnReader's data against reference rows.
@@ -630,6 +659,146 @@ public class Utils {
         assertThat(rowIdx)
                 .as("Column '%s' row count", colName)
                 .isEqualTo(referenceRows.size());
+    }
+
+    /// Compare a nested column (`maxRepetitionLevel > 0`) against parquet-java by
+    /// reconstructing each top-level record's value from the [ColumnReader]'s
+    /// offsets/level-null/element-null arrays and matching it to the same value
+    /// extracted from the Avro [GenericRecord] along the column's [dev.hardwood.metadata.FieldPath].
+    static void compareNestedColumnReader(ColumnSchema colSchema, ColumnReader reader,
+                                          List<GenericRecord> referenceRows) {
+        int maxRep = colSchema.maxRepetitionLevel();
+        List<String> path = colSchema.fieldPath().elements();
+        int rowIdx = 0;
+        while (reader.nextBatch()) {
+            int recordCount = reader.getRecordCount();
+            for (int r = 0; r < recordCount; r++) {
+                if (rowIdx >= referenceRows.size()) {
+                    break;
+                }
+                Object reconstructed = reconstructNested(reader, 0, r, maxRep);
+                Object expected = extractAvroAlongPath(referenceRows.get(rowIdx), path, 0);
+                String ctx = String.format("Row %d, column '%s'", rowIdx, colSchema.name());
+                deepCompareNested(ctx, expected, reconstructed);
+                rowIdx++;
+            }
+        }
+        assertThat(rowIdx)
+                .as("Column '%s' row count", colSchema.name())
+                .isEqualTo(referenceRows.size());
+    }
+
+    /// Reconstruct one container's value from a nested [ColumnReader]'s
+    /// offsets/level-nulls/element-nulls. Returns `null` when the container at
+    /// `level` is null, a `List` for outer levels, or a `List` of leaf values at
+    /// the innermost level.
+    private static Object reconstructNested(ColumnReader reader, int level, int idx, int maxRep) {
+        BitSet levelNulls = reader.getLevelNulls(level);
+        if (levelNulls != null && levelNulls.get(idx)) {
+            return null;
+        }
+        int[] offsets = reader.getOffsets(level);
+        int start = offsets[idx];
+        int end = (idx + 1 < offsets.length) ? offsets[idx + 1]
+                : (level + 1 == maxRep ? reader.getValueCount() : reader.getOffsets(level + 1).length);
+        if (level + 1 == maxRep) {
+            BitSet elementNulls = reader.getElementNulls();
+            List<Object> leaves = new ArrayList<>(end - start);
+            for (int v = start; v < end; v++) {
+                leaves.add(elementNulls != null && elementNulls.get(v)
+                        ? null : convertToComparable(getColumnReaderValue(reader, v)));
+            }
+            return leaves;
+        }
+        List<Object> items = new ArrayList<>(end - start);
+        for (int j = start; j < end; j++) {
+            items.add(reconstructNested(reader, level + 1, j, maxRep));
+        }
+        return items;
+    }
+
+    /// Walk a parquet-java [GenericRecord] along a leaf column's
+    /// [dev.hardwood.metadata.FieldPath]. Avro elides Parquet's structural
+    /// group names (`list`, `element`, `key_value`) when it lifts them into
+    /// `array[]` / `map[]`, so any path component that isn't a field on the
+    /// current record is treated as structural and skipped. List elements
+    /// receive the rest of the path applied per-element; map keys/values are
+    /// projected by name.
+    private static Object extractAvroAlongPath(Object current, List<String> path, int pathIdx) {
+        while (pathIdx < path.size() && current != null) {
+            String name = path.get(pathIdx);
+            if (current instanceof GenericRecord rec) {
+                if (rec.getSchema().getField(name) != null) {
+                    current = rec.get(name);
+                }
+                pathIdx++;
+                continue;
+            }
+            if (current instanceof Map<?, ?> map) {
+                if ("key".equals(name)) {
+                    List<Object> keys = new ArrayList<>(map.size());
+                    for (Object k : map.keySet()) {
+                        keys.add(convertToComparable(k));
+                    }
+                    return keys;
+                }
+                if ("value".equals(name)) {
+                    List<Object> values = new ArrayList<>(map.size());
+                    for (Object v : map.values()) {
+                        values.add(extractAvroAlongPath(v, path, pathIdx + 1));
+                    }
+                    return values;
+                }
+                // Structural ("key_value") — elide
+                pathIdx++;
+                continue;
+            }
+            if (current instanceof List<?> list) {
+                List<Object> mapped = new ArrayList<>(list.size());
+                for (Object e : list) {
+                    mapped.add(extractAvroAlongPath(e, path, pathIdx));
+                }
+                return mapped;
+            }
+            // Reached a leaf primitive before the path was exhausted
+            break;
+        }
+        return current == null ? null : convertToComparable(current);
+    }
+
+    /// Deep-compare two reconstructed values (each null, a leaf, or a `List`).
+    /// Leaves go through the same numeric tolerance and `String`/`byte[]` coercion
+    /// rules used by [#compareColumnValue].
+    private static void deepCompareNested(String ctx, Object expected, Object actual) {
+        if (expected == null) {
+            assertThat(actual).as(ctx + " should be null").isNull();
+            return;
+        }
+        assertThat(actual).as(ctx + " should not be null").isNotNull();
+        if (expected instanceof List<?> expList && actual instanceof List<?> actList) {
+            assertThat(actList).as(ctx + " size").hasSize(expList.size());
+            for (int i = 0; i < expList.size(); i++) {
+                deepCompareNested(ctx + "[" + i + "]", expList.get(i), actList.get(i));
+            }
+            return;
+        }
+        Object expCmp = convertToComparable(expected);
+        if (expCmp instanceof String refStr && actual instanceof byte[] actBytes) {
+            assertThat(new String(actBytes, java.nio.charset.StandardCharsets.UTF_8))
+                    .as(ctx).isEqualTo(refStr);
+        }
+        else if (expCmp instanceof Float f) {
+            assertThat((Float) actual).as(ctx).isCloseTo(f, within(0.0001f));
+        }
+        else if (expCmp instanceof Double d) {
+            assertThat((Double) actual).as(ctx).isCloseTo(d, within(0.0000001d));
+        }
+        else if (expCmp instanceof byte[] refBytes) {
+            assertThat((byte[]) actual).as(ctx).isEqualTo(refBytes);
+        }
+        else {
+            assertThat(actual).as(ctx).isEqualTo(expCmp);
+        }
     }
 
     /// Functional interface for creating column readers (abstracts single-file vs multi-file).

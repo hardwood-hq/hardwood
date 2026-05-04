@@ -157,11 +157,13 @@ class ParquetComparisonTest {
             FileSchema schema = mfReader.getFileSchema();
             for (int colIdx = 0; colIdx < schema.getColumnCount(); colIdx++) {
                 ColumnSchema colSchema = schema.getColumn(colIdx);
-                if (colSchema.maxRepetitionLevel() > 0) {
-                    continue;
-                }
                 ColumnReader columnReader = columns.getColumnReader(colIdx);
-                Utils.compareColumnReader(colSchema.name(), columnReader, reference);
+                if (colSchema.maxRepetitionLevel() == 0) {
+                    Utils.compareColumnReader(colSchema.name(), columnReader, reference);
+                }
+                else {
+                    Utils.compareNestedColumnReader(colSchema, columnReader, reference);
+                }
             }
         }
     }
