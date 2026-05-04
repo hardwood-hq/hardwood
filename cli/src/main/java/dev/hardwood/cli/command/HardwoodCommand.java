@@ -42,7 +42,6 @@ class VersionProviderWithConfigProvider implements IVersionProvider {
     public String[] getVersion() {
         String applicationName = "hardwood";
         String applicationVersion = Version.getVersion();
-
         return new String[]{ Fmt.fmt("%s %s", applicationName, applicationVersion) };
     }
 }

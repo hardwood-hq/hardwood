@@ -11,6 +11,7 @@ Run ./mvnw verify to build the project.
 When doing changes in hardwood-core, install that module before running the performance tests or any other module.
 When running Maven commands, always apply a timeout of 180 seconds to detect deadlocks early on.
 Enable -Pperformance-test to run performance tests.
+All plugin versions must be declared in the parent `pom.xml`'s `<pluginManagement>`. Module POMs reference plugins by `groupId`/`artifactId` only, never with a `<version>` of their own.
 
 # Design
 
