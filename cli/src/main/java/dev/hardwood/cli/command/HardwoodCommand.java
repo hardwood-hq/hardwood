@@ -43,6 +43,11 @@ class VersionProviderWithConfigProvider implements IVersionProvider {
     public String[] getVersion() {
         String applicationName = "hardwood";
         String applicationVersion = ConfigProvider.getConfig().getValue("project.version", String.class);
-        return new String[]{ Fmt.fmt("%s %s", applicationName, applicationVersion) };
+        String applicationRevision = ConfigProvider.getConfig().getValue("project.revision", String.class);
+        String dirtyStatus = ConfigProvider.getConfig().getValue("project.revision.dirty", String.class);
+
+        String dirtyMark = "tainted".equalsIgnoreCase(dirtyStatus) ? "-dirty" : "";
+
+        return new String[]{ Fmt.fmt("%s %s (%s%s)", applicationName, applicationVersion, applicationRevision, dirtyMark) };
     }
 }
