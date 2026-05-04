@@ -110,7 +110,7 @@ class PageRecordCounterTest {
     @ParameterizedTest
     @MethodSource("roundTripCases")
     void testWalkerMatchesMaterialisedDecode(String name, int[] values, int maxRepLevel) {
-        int bitWidth = bitWidthFor(maxRepLevel);
+        int bitWidth = PageRecordCounter.bitWidthFor(maxRepLevel);
         byte[] bytes = encodeBitPacked(values, bitWidth);
 
         int[] decoded = new int[values.length];
@@ -133,7 +133,7 @@ class PageRecordCounterTest {
     @ParameterizedTest
     @MethodSource("rleRoundTripCases")
     void testWalkerMatchesMaterialisedRleDecode(String name, int value, int count, int maxRepLevel) {
-        int bitWidth = bitWidthFor(maxRepLevel);
+        int bitWidth = PageRecordCounter.bitWidthFor(maxRepLevel);
         byte[] bytes = encodeRle(value, count, bitWidth);
 
         int[] decoded = new int[count];
@@ -197,10 +197,6 @@ class PageRecordCounterTest {
             out[i] = rng.nextInt(maxLevel + 1);
         }
         return out;
-    }
-
-    private static int bitWidthFor(int maxLevel) {
-        return 32 - Integer.numberOfLeadingZeros(maxLevel);
     }
 
     /// Mini RLE/bit-packing-hybrid encoder — emits a single bit-packed run

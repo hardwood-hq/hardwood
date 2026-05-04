@@ -29,14 +29,18 @@ import dev.hardwood.metadata.ColumnChunk;
 /// at the first data page is authoritative.
 final class PageFormatProbe {
 
-    /// Initial peek size for the page header. One KiB covers a typical header
+    /// Initial peek size for a page header. One KiB covers a typical header
     /// without inline `min_value`/`max_value` binaries.
-    private static final int INITIAL_PEEK_SIZE = 1024;
+    ///
+    /// Shared with [SequentialFetchPlan]'s page-header reader: both peek
+    /// the same kind of bytes from the same kind of place, so the budget
+    /// lives in one place instead of being duplicated.
+    static final int INITIAL_PEEK_SIZE = 1024;
 
     /// Upper bound on the peek size. Headers carrying long inline statistics
     /// rarely exceed a few KiB; 1 MiB is comfortably beyond that and protects
     /// against runaway reads on a corrupt file.
-    private static final int MAX_PEEK_SIZE = 1024 * 1024;
+    static final int MAX_PEEK_SIZE = 1024 * 1024;
 
     private PageFormatProbe() {
     }

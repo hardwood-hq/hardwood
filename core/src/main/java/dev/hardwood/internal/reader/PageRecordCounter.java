@@ -210,7 +210,13 @@ final class PageRecordCounter {
         return records;
     }
 
-    private static int bitWidthFor(int maxLevel) {
+    /// Returns the number of bits required to represent values in
+    /// `[0, maxLevel]` as a packed RLE/bit-packed-hybrid value. Returns
+    /// `0` when `maxLevel <= 0` (flat columns; no rep-level bits to
+    /// encode). Package-private so test fixtures can encode rep-level
+    /// streams using the same width formula the production walker
+    /// consumes — keeps round-trip equivalence tests honest.
+    static int bitWidthFor(int maxLevel) {
         if (maxLevel <= 0) {
             return 0;
         }

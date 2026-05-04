@@ -76,16 +76,6 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     private static final int DEFAULT_CHUNK_SIZE =
             Integer.getInteger("hardwood.internal.sequentialChunkSize", 128 * 1024 * 1024);
 
-    /// Initial peek size used to read a page header. Grown on demand when the
-    /// page header is larger (e.g. because the writer emitted inline
-    /// `DataPageHeader.statistics` with long `min_value`/`max_value` binaries).
-    private static final int INITIAL_PAGE_HEADER_PEEK_SIZE = 1024;
-
-    /// Upper bound for page header peek growth. Parquet does not formally cap
-    /// the page header size, but 1 MiB is well beyond what any sensible writer
-    /// produces and protects against runaway reads on a corrupt file.
-    private static final int MAX_PAGE_HEADER_PEEK_SIZE = 1024 * 1024;
-
     private final InputFile inputFile;
     private final long columnChunkOffset;
     private final int columnChunkLength;
@@ -349,7 +339,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// past the initial peek size.
         private ParsedHeader readPageHeader(int relPos) throws IOException {
             int remaining = columnChunkLength - relPos;
-            int peekSize = Math.min(INITIAL_PAGE_HEADER_PEEK_SIZE, remaining);
+            int peekSize = Math.min(PageFormatProbe.INITIAL_PEEK_SIZE, remaining);
             while (true) {
                 ByteBuffer headerBuf = readBytes(relPos, peekSize);
                 ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
@@ -363,12 +353,13 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                                 + columnSchema.name() + "' exceeds the full column chunk remainder ("
                                 + remaining + " bytes) — the file is likely corrupt", eof);
                     }
-                    if (peekSize >= MAX_PAGE_HEADER_PEEK_SIZE) {
+                    if (peekSize >= PageFormatProbe.MAX_PEEK_SIZE) {
                         throw new IOException("Page header for column '"
                                 + columnSchema.name() + "' exceeds maximum peek size ("
-                                + MAX_PAGE_HEADER_PEEK_SIZE + " bytes)", eof);
+                                + PageFormatProbe.MAX_PEEK_SIZE + " bytes)", eof);
                     }
-                    peekSize = Math.min(remaining, Math.min(peekSize * 2, MAX_PAGE_HEADER_PEEK_SIZE));
+                    peekSize = Math.min(remaining,
+                            Math.min(peekSize * 2, PageFormatProbe.MAX_PEEK_SIZE));
                 }
             }
         }
@@ -479,6 +470,9 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             if (!initialized) {
                 initialize();
             }
+            // Each loop iteration: read one page header, derive its row mask,
+            // then either skip the page (mask null), emit it as a placeholder
+            // (inline-stats drop), or emit the body slice.
             while (position < columnChunkLength && valuesRead < metaData.numValues()) {
                 if (maxRows > 0 && valuesRead >= maxRows) {
                     return null;
