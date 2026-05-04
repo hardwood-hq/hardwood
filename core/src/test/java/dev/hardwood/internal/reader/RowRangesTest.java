@@ -205,10 +205,10 @@ class RowRangesTest {
     }
 
     @Test
-    void testEndRowOnAllForRowGroupReturnsLongMaxValue() {
-        // `all(N)` sets the all-rows flag; the actual row count is irrelevant
-        // to the early-exit semantics, so we return the sentinel value here too.
-        assertEquals(Long.MAX_VALUE, RowRanges.all(1000).endRow());
+    void testEndRowOnAllForRowGroupReturnsRowGroupCount() {
+        // `all(N)` matches every row but knows where the last row sits — return
+        // that, not the row-count-less sentinel value reserved for ALL.
+        assertEquals(1000L, RowRanges.all(1000).endRow());
     }
 
     @Test
