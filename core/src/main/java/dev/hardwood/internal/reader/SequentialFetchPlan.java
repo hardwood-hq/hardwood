@@ -505,20 +505,22 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 int numValues = (int) getValueCount(header);
 
                 // When masks are inactive we don't need a record count for
-                // the page — `recordsInPage` stays at zero and the cursor
-                // never advances. When active, flat columns return
-                // `numValues` directly; nested columns walk the rep-level
-                // RLE prefix of a v2 page (a v1 page on a nested column
-                // would require decompression — the row-group-wide gate
-                // forbids it).
+                // the page and `recordsInPageComputed` stays false. When
+                // active, flat columns return `numValues` directly; nested
+                // columns walk the rep-level RLE prefix of a v2 page (a v1
+                // page on a nested column would require decompression —
+                // the row-group-wide gate forbids it).
                 PageRowMask mask;
                 int recordsInPage;
+                boolean recordsInPageComputed;
                 if (matchingRows.isAll()) {
                     mask = PageRowMask.ALL;
                     recordsInPage = 0;
+                    recordsInPageComputed = false;
                 }
                 else {
                     recordsInPage = computeRecordsInPage(header, headerSize, numValues);
+                    recordsInPageComputed = true;
                     long pageFirstRow = recordsRead;
                     long pageLastRow = pageFirstRow + recordsInPage;
                     mask = matchingRows.maskForPage(pageFirstRow, pageLastRow);
@@ -546,7 +548,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                         // we know it (nested columns under active masking) or
                         // its value count (flat columns or inactive masking,
                         // where the two coincide).
-                        placeholderRecords = recordsInPage > 0 ? recordsInPage : numValues;
+                        placeholderRecords = recordsInPageComputed ? recordsInPage : numValues;
                     }
                     else {
                         placeholderRecords = mask.totalRecords();
