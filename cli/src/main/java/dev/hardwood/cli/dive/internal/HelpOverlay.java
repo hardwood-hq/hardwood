@@ -9,6 +9,7 @@ package dev.hardwood.cli.dive.internal;
 
 import java.util.List;
 
+import dev.hardwood.cli.internal.Version;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
@@ -38,6 +39,8 @@ public final class HelpOverlay {
         dev.tamboui.widgets.Clear.INSTANCE.render(area, buffer);
 
         List<Line> lines = List.of(
+                Line.from(new Span("Version: " + Version.getVersion(), Theme.primary())),
+                Line.empty(),
                 Line.from(new Span("Navigation", Theme.accent().bold())),
                 kv("↑ / ↓", "move selection"),
                 kv("g / G", "jump to first / last row"),

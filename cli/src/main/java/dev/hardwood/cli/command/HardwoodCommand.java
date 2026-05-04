@@ -7,9 +7,8 @@
  */
 package dev.hardwood.cli.command;
 
-import org.eclipse.microprofile.config.ConfigProvider;
-
 import dev.hardwood.cli.internal.Fmt;
+import dev.hardwood.cli.internal.Version;
 import io.quarkus.picocli.runtime.PicocliCommandLineFactory;
 import io.quarkus.picocli.runtime.annotations.TopCommand;
 import jakarta.enterprise.inject.Produces;
@@ -42,12 +41,8 @@ class VersionProviderWithConfigProvider implements IVersionProvider {
     @Override
     public String[] getVersion() {
         String applicationName = "hardwood";
-        String applicationVersion = ConfigProvider.getConfig().getValue("project.version", String.class);
-        String applicationRevision = ConfigProvider.getConfig().getValue("project.revision", String.class);
-        String dirtyStatus = ConfigProvider.getConfig().getValue("project.revision.dirty", String.class);
+        String applicationVersion = Version.getVersion();
 
-        String dirtyMark = "tainted".equalsIgnoreCase(dirtyStatus) ? "-dirty" : "";
-
-        return new String[]{ Fmt.fmt("%s %s (%s%s)", applicationName, applicationVersion, applicationRevision, dirtyMark) };
+        return new String[]{ Fmt.fmt("%s %s", applicationName, applicationVersion) };
     }
 }
