@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.nio.ByteBuffer;
+
 /// Counts top-level records inside a single Parquet data page without invoking
 /// the value decoder.
 ///
@@ -53,6 +55,20 @@ final class PageRecordCounter {
     ///         columns must not call this — use `header.num_values` directly)
     static int countTopLevelRecords(byte[] levels, int offset, int length,
                                      int numValues, int maxRepetitionLevel) {
+        return countTopLevelRecords(ByteBuffer.wrap(levels), offset, length,
+                numValues, maxRepetitionLevel);
+    }
+
+    /// `ByteBuffer` overload — production callers pass the zero-copy slice
+    /// returned by `readBytes` directly, avoiding a per-page `byte[]`
+    /// allocation and `ByteBuffer.get(byte[])` copy. Works on both heap and
+    /// direct buffers via absolute-indexed `get(int)`.
+    ///
+    /// Indexing is absolute: `offset` is the byte position within `levels`,
+    /// not an offset relative to the buffer's `position()`. The buffer's
+    /// position and limit are not modified.
+    static int countTopLevelRecords(ByteBuffer levels, int offset, int length,
+                                     int numValues, int maxRepetitionLevel) {
         if (maxRepetitionLevel <= 0) {
             throw new IllegalArgumentException(
                     "countTopLevelRecords called on a flat column "
@@ -75,7 +91,7 @@ final class PageRecordCounter {
     /// for the same reason the decoder does — Parquet's bit-packed groups are
     /// byte-aligned per group of 8, but a partial group at the end of a run
     /// shares the trailing byte with whatever follows.
-    private static int walkAndCountZeros(byte[] data, int offset, int length,
+    private static int walkAndCountZeros(ByteBuffer data, int offset, int length,
                                           int numValues, int bitWidth) {
         final int dataEnd = offset + length;
         final int bitMask = (1 << bitWidth) - 1;
@@ -94,7 +110,7 @@ final class PageRecordCounter {
             long header = 0;
             int shift = 0;
             while (pos < dataEnd) {
-                int b = data[pos++] & 0xFF;
+                int b = data.get(pos++) & 0xFF;
                 header |= (long) (b & 0x7F) << shift;
                 if ((b & 0x80) == 0) {
                     break;
@@ -108,7 +124,7 @@ final class PageRecordCounter {
                 int value = 0;
                 int bytesNeeded = (bitWidth + 7) / 8;
                 for (int i = 0; i < bytesNeeded && pos < dataEnd; i++) {
-                    value |= (data[pos++] & 0xFF) << (i * 8);
+                    value |= (data.get(pos++) & 0xFF) << (i * 8);
                 }
                 value &= bitMask;
 
@@ -143,7 +159,7 @@ final class PageRecordCounter {
             // 8 are non-zero (continuations); the rest are records.
             if (bitWidth == 1) {
                 while (read + 8 <= toRead && pos < dataEnd) {
-                    int b = data[pos++] & 0xFF;
+                    int b = data.get(pos++) & 0xFF;
                     records += 8 - Integer.bitCount(b);
                     read += 8;
                 }
@@ -154,7 +170,7 @@ final class PageRecordCounter {
                 while (read + 8 <= toRead && pos + bitWidth <= dataEnd) {
                     long bits = 0;
                     for (int i = 0; i < bitWidth; i++) {
-                        bits |= ((long) (data[pos++] & 0xFF)) << (i * 8);
+                        bits |= ((long) (data.get(pos++) & 0xFF)) << (i * 8);
                     }
                     for (int i = 0; i < 8; i++) {
                         if ((bits & bitMask) == 0) {
@@ -170,7 +186,7 @@ final class PageRecordCounter {
             // is met. Handles bit widths > 8 and the final partial group.
             while (read < toRead) {
                 while (bitsInBuffer < bitWidth && pos < dataEnd) {
-                    bitBuffer |= ((long) (data[pos++] & 0xFF)) << bitsInBuffer;
+                    bitBuffer |= ((long) (data.get(pos++) & 0xFF)) << bitsInBuffer;
                     bitsInBuffer += 8;
                 }
                 if (bitsInBuffer < bitWidth) {

@@ -602,8 +602,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 // No repetition levels means every value is a top-level record.
                 return numValues;
             }
-            byte[] repLevels = new byte[repLevelLength];
-            readBytes(position + headerSize, repLevelLength).get(repLevels);
+            ByteBuffer repLevels = readBytes(position + headerSize, repLevelLength);
             return PageRecordCounter.countTopLevelRecords(repLevels, 0, repLevelLength,
                     numValues, columnSchema.maxRepetitionLevel());
         }
