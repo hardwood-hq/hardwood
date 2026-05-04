@@ -272,7 +272,8 @@ public class RowGroupIterator {
     /// subsequent columns reuse the cached result.
     ///
     /// @param workItem the work item to get metadata for
-    /// @return shared metadata (index buffers and matching row ranges)
+    /// @return shared metadata (index buffers, filter-derived matching row
+    ///         ranges, and the row-group-wide mask-applicability decision)
     public SharedRowGroupMetadata getSharedMetadata(WorkItem workItem) {
         return metadataCache.computeIfAbsent(workItem.workItemIndex(), idx -> {
             try (FetchReason.Scope ignored = FetchReason.set(
@@ -305,7 +306,7 @@ public class RowGroupIterator {
     ///
     /// Used by [dev.hardwood.reader.ParquetFileReader#buildTailRowReader] to
     /// defer the tail-skip decision until after the gate has been probed via
-    /// [#canFastSkipFirstFileSubset]. The value flows into
+    /// [#canFastSkipAllRowGroups]. The value flows into
     /// [#computeFetchPlans] when it builds the per-row-group fetch plans —
     /// so callers must invoke this method before any column has consumed
     /// from the iterator (specifically before
@@ -425,7 +426,7 @@ public class RowGroupIterator {
 
         // Apply the tail-read fast path's synthesized matching range here
         // (rather than in `getSharedMetadata`) so the cached metadata stays
-        // independent of `tailSkip`. That lets `canFastSkipFirstFileSubset`
+        // independent of `tailSkip`. That lets `canFastSkipAllRowGroups`
         // populate the cache before the tail-skip decision is made.
         if (matchingRows.isAll() && tailSkip > 0 && workItem.workItemIndex() == 0) {
             matchingRows = RowRanges.range(tailSkip, rowGroup.numRows());

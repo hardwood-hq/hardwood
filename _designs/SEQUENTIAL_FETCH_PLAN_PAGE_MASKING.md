@@ -9,7 +9,7 @@
 That leaves two gaps:
 
 1. **Latent correctness gap in mixed-OffsetIndex configurations.** When the filter column has an OffsetIndex but a sibling projected column does not, the indexed column applies its mask while the sequential column does not. Sibling pages are no longer row-aligned. In practice this is masked by writers being all-or-nothing on Page Index, but it is the same misalignment story as #277.
-2. **Tail-mode fast path is gated off** for files without Page Index. [`ParquetFileReader.canFastSkipTail`](../core/src/main/java/dev/hardwood/reader/ParquetFileReader.java) returns `false` if any projected column lacks an OffsetIndex, falling back to decode-and-discard.
+2. **Tail-mode fast path is gated off** for files without Page Index. [`ParquetFileReader.buildTailRowReader`](../core/src/main/java/dev/hardwood/reader/ParquetFileReader.java) gates the per-page-mask path on the row-group-wide [`MaskCapability`](../core/src/main/java/dev/hardwood/internal/reader/MaskCapability.java) check; when the gate is closed it falls back to decode-and-discard.
 
 The expected win is primarily **CPU**: dropped pages skip the codec, value decoding, and rep/def-level walks. I/O savings are a possible follow-up that requires `chunkSize` to adapt to `RowRanges` (see *Out-of-scope follow-ups*).
 
@@ -53,7 +53,7 @@ The format check is the only new I/O introduced by this plan. It runs in `RowGro
 1. `matchingRows.isAll()` is false (no filter pushdown, no tail skip → mask wouldn't affect anything anyway), **and**
 2. There is at least one projected nested column lacking an OffsetIndex.
 
-For each such column we peek the first data page header by reading a small range starting at `metaData.dataPageOffset()` (or `dictionaryPageOffset()` if present, walking past the dictionary page). The peek is bounded by `INITIAL_PAGE_HEADER_PEEK_SIZE` (1 KiB, with the existing growth-on-EOF loop); typically far less than a single network round-trip. Detection happens once per row group and is cached on `SharedRowGroupMetadata`.
+For each such column we peek the first data page header by reading a small range starting at `metaData.dataPageOffset()` (or `dictionaryPageOffset()` if present, walking past the dictionary page). The peek is bounded by `PageFormatProbe.INITIAL_PEEK_SIZE` (1 KiB, with the existing growth-on-EOF loop); typically far less than a single network round-trip. Detection happens once per row group and is cached on `SharedRowGroupMetadata` — both [`computeFetchPlans`](../core/src/main/java/dev/hardwood/internal/reader/RowGroupIterator.java) and the tail-read fast path's gate consult the cache rather than re-probing.
 
 The check returns one of:
 
@@ -164,9 +164,9 @@ A dedicated test exercises a multi-page column where the mask drops some pages, 
 
 ### Tail-mode gate
 
-`ParquetFileReader.canFastSkipTail` keeps its name and signature but loosens the check to delegate to the same `MaskCapability` logic used by `RowGroupIterator`. For files where every projected column has an OffsetIndex, behaviour is unchanged. For files where some columns lack OffsetIndex, the gate now opens iff every such column is flat or nested-v2. The synthesized `RowRanges.range(skip, numRows)` flows through the same plumbing as a filter `RowRanges`.
+The tail-read fast path consults the same `MaskCapability` logic used by `RowGroupIterator`. For files where every projected column has an OffsetIndex, behaviour is unchanged. For files where some columns lack OffsetIndex, the gate now opens iff every such column is flat or nested-v2. The synthesized `RowRanges.range(skip, numRows)` flows through the same plumbing as a filter `RowRanges`.
 
-The detection happens at row-group level via the cached `SharedRowGroupMetadata.maskCapability()`. When `canFastSkipTail` runs (in `buildTailRowReader`, before the row reader is built), the metadata cache is empty, so detection is performed inline. The cost is a single small read per row group with at least one nested-without-OffsetIndex column — typical files have zero such columns and pay nothing.
+`buildTailRowReader` constructs the `RowGroupIterator` with `tailSkip=0`, then calls `RowGroupIterator.canFastSkipAllRowGroups()` — a single pass that primes the per-row-group `SharedRowGroupMetadata` cache (running the page-format probe at most once per row group) and returns whether every gate is open. If the gate is open, `setTailSkip(skip)` flows the budget into the existing iterator before any column has consumed from it. This avoids the duplicate page-format probe that an inline pre-check + a separate `computeFetchPlans` probe would incur. The cost is a single small read per row group with at least one nested-without-OffsetIndex column — typical files have zero such columns and pay nothing.
 
 ### Trailing-page early-exit
 
@@ -176,7 +176,7 @@ For a filter matching `[50 000, 60 000)` in a 1 M-row group with ~1024-row pages
 
 The fix is small enough to fold into this plan:
 
-1. Add `RowRanges.endRow()` returning the `end` of the last interval (or `Long.MAX_VALUE` for `RowRanges.ALL`, which short-circuits the check below).
+1. Add `RowRanges.endRow()` returning the `end` of the last interval (or `Long.MAX_VALUE` for the row-count-less `RowRanges.ALL` sentinel, which short-circuits the check below; the bounded `RowRanges.all(N)` form returns `N`).
 2. In `SequentialPageIterator.checkHasNext`, short-circuit when the cursor has crossed the last matching row:
 
    ```java
