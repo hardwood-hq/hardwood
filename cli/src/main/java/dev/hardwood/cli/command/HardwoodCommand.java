@@ -7,9 +7,8 @@
  */
 package dev.hardwood.cli.command;
 
-import org.eclipse.microprofile.config.ConfigProvider;
-
 import dev.hardwood.cli.internal.Fmt;
+import dev.hardwood.cli.internal.Version;
 import io.quarkus.picocli.runtime.PicocliCommandLineFactory;
 import io.quarkus.picocli.runtime.annotations.TopCommand;
 import jakarta.enterprise.inject.Produces;
@@ -42,7 +41,8 @@ class VersionProviderWithConfigProvider implements IVersionProvider {
     @Override
     public String[] getVersion() {
         String applicationName = "hardwood";
-        String applicationVersion = ConfigProvider.getConfig().getValue("project.version", String.class);
+        String applicationVersion = Version.getVersion();
+
         return new String[]{ Fmt.fmt("%s %s", applicationName, applicationVersion) };
     }
 }
