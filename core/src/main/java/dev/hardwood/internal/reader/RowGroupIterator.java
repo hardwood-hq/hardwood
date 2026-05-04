@@ -325,19 +325,26 @@ public class RowGroupIterator {
         this.tailSkip = tailSkip;
     }
 
-    /// Pre-probes the row-group-wide mask gate for every first-file work
-    /// item, returning `true` iff per-page masking is applicable across all
-    /// of them. Used by the tail-read fast path: a single pass through
+    /// Pre-probes the row-group-wide mask gate for every work item,
+    /// returning `true` iff per-page masking is applicable across all of
+    /// them. Used by the tail-read fast path: a single pass through
     /// [#getSharedMetadata] populates the cache and surfaces the gate
     /// decision, so [#computeFetchPlans] does not run a second probe.
     ///
-    /// Multi-file iteration is not in scope — the tail-read fast path only
-    /// targets single-file readers.
-    public boolean canFastSkipFirstFileSubset() {
+    /// Tail reading is single-file only — this method asserts that
+    /// invariant rather than silently ignoring non-first-file work items.
+    /// If multi-file tail reading is added later, that work must explicitly
+    /// thread per-row-group input files through the gate decision.
+    ///
+    /// @throws IllegalStateException if the iterator was constructed with
+    ///         more than one input file
+    public boolean canFastSkipAllRowGroups() {
+        if (inputFiles.size() != 1) {
+            throw new IllegalStateException(
+                    "canFastSkipAllRowGroups requires a single-file iterator, got "
+                            + inputFiles.size() + " files");
+        }
         for (WorkItem workItem : workItems) {
-            if (workItem.fileIndex() != 0) {
-                continue;
-            }
             if (getSharedMetadata(workItem).maskCapability() == MaskCapability.NO) {
                 return false;
             }

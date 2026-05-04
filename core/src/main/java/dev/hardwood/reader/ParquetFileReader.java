@@ -308,7 +308,7 @@ public class ParquetFileReader implements AutoCloseable {
         iterator.initialize(projectedSchema, null);
         rowGroupIterators.add(iterator);
 
-        boolean fastSkip = (skip == 0) || iterator.canFastSkipFirstFileSubset();
+        boolean fastSkip = (skip == 0) || iterator.canFastSkipAllRowGroups();
         if (fastSkip && skip > 0) {
             iterator.setTailSkip(skip);
         }
