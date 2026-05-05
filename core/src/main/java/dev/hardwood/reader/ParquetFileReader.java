@@ -297,44 +297,37 @@ public class ParquetFileReader implements AutoCloseable {
         }
         long skip = Math.max(0, rowsInSubset - tailRows);
 
-        if (skip == 0 || canFastSkipTail(subset, projection)) {
-            // Fast path: per-page row masking drops the leading pages and trims the
-            // straddling page in IndexedFetchPlan, so the reader yields exactly
-            // tailRows rows from its first hasNext() with no caller-side advance.
-            return buildRowReader(projection, null, 0, subset, skip);
+        // Build the iterator first (with tailSkip=0); its
+        // SharedRowGroupMetadata cache is what surfaces the gate decision.
+        // Probing through the iterator avoids the prior duplicate probe
+        // where canFastSkipTail and computeFetchPlans both ran the same
+        // page-format check per row group.
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0L, 0L);
+        iterator.setFirstFile(schema, subset);
+        iterator.initialize(projectedSchema, null);
+        rowGroupIterators.add(iterator);
+
+        boolean fastSkip = (skip == 0) || iterator.canFastSkipAllRowGroups();
+        if (fastSkip && skip > 0) {
+            iterator.setTailSkip(skip);
         }
 
-        // Fallback: at least one projected column lacks an OffsetIndex and uses
-        // SequentialFetchPlan, which has no per-page mask support yet. Decoding
-        // every leading row and discarding it at the reader level keeps cross-
-        // column row alignment intact.
-        RowReader reader = buildRowReader(projection, null, 0, subset, 0);
-        for (long i = 0; i < skip; i++) {
-            if (!reader.hasNext()) {
-                break;
+        RowReader reader = RowReader.create(iterator, schema, projectedSchema, context, null, 0);
+
+        if (!fastSkip) {
+            // Fallback: at least one projected column closes the per-page
+            // mask gate (a nested-v1 column without an OffsetIndex). Decode
+            // every leading row and discard it to preserve cross-column
+            // row alignment.
+            for (long i = 0; i < skip; i++) {
+                if (!reader.hasNext()) {
+                    break;
+                }
+                reader.next();
             }
-            reader.next();
         }
         return reader;
-    }
-
-    /// Whether every projected column in every subset row group has an
-    /// OffsetIndex. Required for the tail-read fast path because the per-page
-    /// row mask is only honoured by [dev.hardwood.internal.reader.IndexedFetchPlan];
-    /// `SequentialFetchPlan` would emit unmasked rows from offset 0 and break
-    /// cross-column alignment with the masked OffsetIndex columns.
-    private boolean canFastSkipTail(List<RowGroup> subset, ColumnProjection projection) {
-        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        int projectedCount = projectedSchema.getProjectedColumnCount();
-        for (RowGroup rg : subset) {
-            for (int p = 0; p < projectedCount; p++) {
-                int originalIndex = projectedSchema.toOriginalIndex(p);
-                if (rg.columns().get(originalIndex).offsetIndexOffset() == null) {
-                    return false;
-                }
-            }
-        }
-        return true;
     }
 
     private RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
