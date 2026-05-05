@@ -558,11 +558,6 @@ public class Utils {
 
     // ==================== Column-Level Comparison ====================
 
-    /// Additional files to skip in column-level comparison tests beyond [#SKIPPED_FILES].
-    /// Empty by default — every file the row-level comparison runs on is also
-    /// validated column-by-column.
-    static final Set<String> COLUMN_SKIPPED_FILES = Set.of();
-
     /// Compare a Parquet file column-by-column using [ColumnReader]s against parquet-java reference data.
     static void compareColumns(ParquetFileReader fileReader, List<GenericRecord> referenceRows)
             throws IOException {

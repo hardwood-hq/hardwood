@@ -63,11 +63,8 @@ class ParquetComparisonTest {
     void compareColumnsWithReference(Path testFile) throws Exception {
         String fileName = testFile.getFileName().toString();
 
-        // Skip files that are in either skip list
         assumeFalse(Utils.SKIPPED_FILES.contains(fileName),
                 "Skipping " + fileName + " (in skip list)");
-        assumeFalse(Utils.COLUMN_SKIPPED_FILES.contains(fileName),
-                "Skipping " + fileName + " (in column skip list)");
 
         runWithThreadDumpOnTimeout(() -> compareColumnsParquetFile(testFile), 120, fileName);
     }
