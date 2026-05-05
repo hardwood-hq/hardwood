@@ -324,9 +324,10 @@ public class ColumnReader implements AutoCloseable {
     ///
     /// Together with [#getLevelNulls(int)] this disambiguates the four
     /// container states a list/map can be in: null, empty, non-empty with null
-    /// element(s), and non-empty with value(s). Without this bitmap, an empty
-    /// list is indistinguishable from a list containing a single null element
-    /// because both encode as one phantom entry with [#getElementNulls()] set.
+    /// element(s), and non-empty with value(s). Specifically, this bitmap is
+    /// what lets a caller tell an empty list apart from a list containing a
+    /// single null element — in the underlying encoding both produce one
+    /// phantom entry that [#getElementNulls()] flags as null.
     ///
     /// @param level the nesting level (0 = outermost group)
     /// @return BitSet where set bits indicate empty containers, or null if no empties at that level
