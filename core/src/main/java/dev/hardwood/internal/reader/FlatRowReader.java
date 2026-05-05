@@ -668,8 +668,7 @@ public final class FlatRowReader implements RowReader {
 
             while (wIndex < activeWords) {
                 long currentWord = combined[wIndex];
-                long mw = matches[wIndex];
-                combined[wIndex] = currentWord & mw;
+                combined[wIndex] = currentWord & matches[wIndex];
                 wIndex++;
             }
         }
