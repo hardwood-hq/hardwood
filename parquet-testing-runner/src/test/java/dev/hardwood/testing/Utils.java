@@ -13,6 +13,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.Collection;
 import java.util.Iterator;
@@ -719,7 +720,7 @@ public class Utils {
             if (a == null) return -1;
             if (b == null) return 1;
             if (a instanceof byte[] aBytes && b instanceof byte[] bBytes) {
-                return java.util.Arrays.compare(aBytes, bBytes);
+                return Arrays.compare(aBytes, bBytes);
             }
             if (a instanceof Comparable<?> && a.getClass() == b.getClass()) {
                 return ((Comparable<Object>) a).compareTo(b);
@@ -763,21 +764,22 @@ public class Utils {
 
     /// Path components that name Parquet structural groups Avro elides when it
     /// lifts a LIST/MAP into native `array[]` / `map[]`. Includes the standard
-    /// 3-level encoding (`list`, `element`, `key_value`) and the legacy
-    /// 2-level LIST encoding rule 3a (`array`); rule 3b's `<list-name>_tuple` is
+    /// 3-level encoding (`list`, `element`, `key_value`), the legacy 2-level
+    /// LIST encoding rule 3a (`array`), and the legacy MAP alias `map` used by
+    /// older writers (e.g. Hive, Impala); rule 3b's `<list-name>_tuple` is
     /// matched by suffix, see [#isStructuralListGroup].
     /// Any other unknown name is treated as a real bug, not silently elided.
     private static final Set<String> STRUCTURAL_GROUP_NAMES = Set.of(
-            "list", "element", "key_value", "array");
+            "list", "element", "key_value", "array", "map");
 
     /// Walk a parquet-java [GenericRecord] along a leaf column's
     /// [dev.hardwood.metadata.FieldPath]. Avro elides Parquet's structural
-    /// group names (`list`, `element`, `key_value`, `array`, `<name>_tuple`)
-    /// when it lifts them into `array[]` / `map[]`; those components are
-    /// skipped during the walk. Any other path component that doesn't match
-    /// a field on the current record is a bug — fail loudly rather than
-    /// silently no-op. List elements receive the rest of the path applied
-    /// per-element; map keys/values are projected by name.
+    /// group names (`list`, `element`, `key_value`, `array`, `map`,
+    /// `<name>_tuple`) when it lifts them into `array[]` / `map[]`; those
+    /// components are skipped during the walk. Any other path component that
+    /// doesn't match a field on the current record is a bug — fail loudly
+    /// rather than silently no-op. List elements receive the rest of the path
+    /// applied per-element; map keys/values are projected by name.
     private static Object extractAvroAlongPath(Object current, List<String> path, int pathIdx) {
         while (pathIdx < path.size() && current != null) {
             String name = path.get(pathIdx);
@@ -811,16 +813,12 @@ public class Utils {
                     }
                     return values;
                 }
-                // `key_value` is the standard structural group name for MAPs;
-                // `map` is the legacy alias used by older writers (e.g. Hive,
-                // Impala). Both elide on the Avro side.
-                if ("key_value".equals(name) || "map".equals(name)) {
-                    pathIdx++;
-                    continue;
-                }
-                // A map can sit inside a LIST element (e.g. `arr.list.element.map.key_value...`).
-                // After the outer list distributes, the recursive walk arrives
-                // here with the list's structural names still ahead; elide them.
+                // Map structural names (`key_value`, legacy `map`) elide
+                // directly. List structural names (`list`, `element`, `array`,
+                // `<name>_tuple`) appear here when a map sits inside a LIST
+                // element (e.g. `arr.list.element.map.key_value...`) — after
+                // the outer list distributes, the recursive walk arrives here
+                // with the list's structural names still ahead.
                 if (isStructuralListGroup(name)) {
                     pathIdx++;
                     continue;
