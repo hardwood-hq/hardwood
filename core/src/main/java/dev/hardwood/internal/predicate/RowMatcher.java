@@ -16,8 +16,8 @@ import dev.hardwood.row.StructAccessor;
 /// [RecordFilterCompiler] and reused for every row. By holding all
 /// invariant state (column indices, leaf names, struct paths, literal
 /// operands, child arrays) in fields rather than recomputing per row, the
-/// compiler eliminates the type and operator switches that
-/// [RecordFilterEvaluator] performs.
+/// compiler eliminates the type and operator switches a generic
+/// tree-walking evaluator would perform.
 ///
 /// Each leaf type (one for every combination of value type and operator)
 /// is its own concrete class — or factory-produced lambda — so that JIT

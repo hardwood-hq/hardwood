@@ -44,7 +44,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// **Case A** — `not(gt(age, 30))`: both engines drop the null row.
 /// parquet-java's `LogicalInverseRewriter` rewrites `not(gt)` to `ltEq`, and
 /// `LtEq.updateNull()` returns false. Hardwood's `ResolvedPredicate.negate()`
-/// applies the same operator inversion, and `RecordFilterEvaluator`
+/// applies the same operator inversion, and the compiled record-level matcher
 /// short-circuits null comparisons to false.
 ///
 /// **Case B** — `not(eq(age, 30))`: parquet-java keeps the null row, Hardwood

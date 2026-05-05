@@ -20,9 +20,10 @@ import org.testcontainers.containers.GenericContainer;
 /// client streams the file to the daemon over the docker socket), unlike
 /// `withFileSystemBind`, whose paths must be visible to the daemon directly.
 ///
-/// Published as part of the `hardwood-s3` test-jar so the `cli` and
-/// `parquet-java-compat` modules can share a single image SHA and container
-/// configuration.
+/// Lives in the non-deployed `hardwood-test-support` module so the `cli`,
+/// `parquet-java-compat`, and `performance-testing/end-to-end` modules can
+/// share a single image SHA and container configuration without exposing
+/// it on Maven Central.
 public final class S3ProxyContainers {
 
     /// `andrewgaul/s3proxy` image pinned to the s3proxy 3.1.0 release commit,

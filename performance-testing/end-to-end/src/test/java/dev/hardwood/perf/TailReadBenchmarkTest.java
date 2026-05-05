@@ -10,8 +10,8 @@ package dev.hardwood.perf;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.Test;
-import org.junit.jupiter.api.condition.EnabledIf;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;
@@ -21,47 +21,61 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// Benchmark for the tail-read path ([ParquetFileReader.RowReaderBuilder#tail]).
 ///
-/// On the slow path (`main` / no OffsetIndex / pre-#277 fast path), the reader
-/// decodes every leading row of the first kept row group and discards them via
-/// a post-iteration `next()` loop. On the fast path (#277 / OffsetIndex
-/// available), per-page masking drops the leading pages entirely and trims the
-/// straddling page in IndexedFetchPlan, so the reader yields the tail rows
+/// On the slow path (decode-and-discard fallback), the reader decodes every
+/// leading row of the first kept row group and discards them via a
+/// post-iteration `next()` loop. On the fast path (per-page mask machinery
+/// extended to flat columns), the leading pages are dropped entirely and the
+/// straddling page is trimmed in place, so the reader yields the tail rows
 /// without touching the rest of the row group.
+///
+/// Two paired fixtures share schema and data but differ only in whether a Page
+/// Index is written, which is exactly the gate the tail-read fast path keys
+/// on. Both are produced by `generate_benchmark_data.py`.
 ///
 /// Run:
 ///   ./mvnw test -Pperformance-test -pl performance-testing/end-to-end \
 ///     -Dtest="TailReadBenchmarkTest" -Dperf.runs=5
-@EnabledIf("hasTaxiFile")
 class TailReadBenchmarkTest {
 
-    private static final Path BENCHMARK_FILE = Path.of("target/page_filter_benchmark.parquet");
+    private static final Path INDEXED_FIXTURE = Path.of(
+            "../test-data-setup/target/benchmark-data/page_scan_with_index.parquet");
+    private static final Path NO_INDEX_FIXTURE = Path.of(
+            "../test-data-setup/target/benchmark-data/page_scan_no_index.parquet");
+
     private static final int DEFAULT_RUNS = 5;
     private static final long TAIL_ROWS = 10_000;
 
-    @SuppressWarnings("unused") // Used by @EnabledIf
-    static boolean hasTaxiFile() {
-        return Files.exists(BENCHMARK_FILE);
+    @Test
+    void tailReadThroughputWithIndex() throws Exception {
+        runBenchmark("Tail Read Benchmark (with Page Index)", INDEXED_FIXTURE);
     }
 
     @Test
-    void tailReadThroughput() throws Exception {
+    void tailReadThroughputNoIndex() throws Exception {
+        runBenchmark("Tail Read Benchmark (no Page Index)", NO_INDEX_FIXTURE);
+    }
+
+    private void runBenchmark(String label, Path fixture) throws Exception {
+        Assumptions.assumeTrue(Files.exists(fixture),
+                () -> "Fixture not present: " + fixture
+                        + " (run generate_benchmark_data.py to produce it)");
         int runs = Integer.parseInt(System.getProperty("perf.runs", String.valueOf(DEFAULT_RUNS)));
 
-        System.out.println("\n=== Tail Read Benchmark ===");
-        System.out.println("File: " + BENCHMARK_FILE.getFileName() + " ("
-                + Files.size(BENCHMARK_FILE) / (1024 * 1024) + " MB)");
+        System.out.println("\n=== " + label + " ===");
+        System.out.println("File: " + fixture.getFileName() + " ("
+                + Files.size(fixture) / (1024 * 1024) + " MB)");
         System.out.println("Tail rows requested: " + TAIL_ROWS);
         System.out.println("Runs: " + runs);
 
         // Warm up
-        runTail();
-        runTail();
+        runTail(fixture);
+        runTail(fixture);
 
         long[] times = new long[runs];
         long rowsRead = 0;
         for (int i = 0; i < runs; i++) {
             long start = System.nanoTime();
-            rowsRead = runTail();
+            rowsRead = runTail(fixture);
             times[i] = System.nanoTime() - start;
         }
 
@@ -77,9 +91,9 @@ class TailReadBenchmarkTest {
         assertThat(rowsRead).isEqualTo(TAIL_ROWS);
     }
 
-    private long runTail() throws Exception {
+    private long runTail(Path fixture) throws Exception {
         long count = 0;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(fixture));
              RowReader rows = reader.buildRowReader().tail(TAIL_ROWS).build()) {
             while (rows.hasNext()) {
                 rows.next();

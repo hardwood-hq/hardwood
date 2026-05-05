@@ -97,20 +97,11 @@
         <scope>import</scope>
       </dependency>
 
-      <!-- Shared s3proxy test container helper, published as the hardwood-s3 test-jar -->
+      <!-- Shared test helpers -->
       <dependency>
         <groupId>dev.hardwood</groupId>
-        <artifactId>hardwood-s3</artifactId>
+        <artifactId>hardwood-test-support</artifactId>
         <version>${project.version}</version>
-        <type>test-jar</type>
-      </dependency>
-
-      <!-- Shared JFR recorder base class, published as the hardwood-core test-jar -->
-      <dependency>
-        <groupId>dev.hardwood</groupId>
-        <artifactId>hardwood-core</artifactId>
-        <version>${project.version}</version>
-        <type>test-jar</type>
       </dependency>
     </dependencies>
   </dependencyManagement>

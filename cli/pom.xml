@@ -188,8 +188,7 @@
     </dependency>
     <dependency>
       <groupId>dev.hardwood</groupId>
-      <artifactId>hardwood-s3</artifactId>
-      <type>test-jar</type>
+      <artifactId>hardwood-test-support</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
@@ -343,7 +342,6 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-antrun-plugin</artifactId>
-            <version>3.1.0</version>
             <executions>
               <execution>
                 <id>stage-native-libs</id>
@@ -564,6 +562,65 @@
             </goals>
           </execution>
         </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-antrun-plugin</artifactId>
+        <executions>
+          <execution>
+            <!-- Capture the short commit SHA and a working-tree dirty flag for
+                 use in `application.properties` and the JAR manifest. Both git
+                 invocations are best-effort: when git is missing or the build
+                 runs from a non-checkout (e.g. a source tarball), `revision`
+                 falls back to `unknown` and `revisionDirty` to `false`. -->
+            <id>capture-git-info</id>
+            <phase>initialize</phase>
+            <goals>
+              <goal>run</goal>
+            </goals>
+            <configuration>
+              <exportAntProperties>true</exportAntProperties>
+              <target>
+                <exec executable="git" outputproperty="gitRevision" errorproperty="gitRevisionErr" resultproperty="gitRevisionExit" failifexecutionfails="false" failonerror="false" dir="${maven.multiModuleProjectDirectory}">
+                  <arg value="rev-parse"/>
+                  <arg value="--short=7"/>
+                  <arg value="HEAD"/>
+                </exec>
+                <exec executable="git" outputproperty="gitStatus" errorproperty="gitStatusErr" resultproperty="gitStatusExit" failifexecutionfails="false" failonerror="false" dir="${maven.multiModuleProjectDirectory}">
+                  <arg value="status"/>
+                  <arg value="--porcelain"/>
+                </exec>
+                <condition property="revision" value="${gitRevision}">
+                  <and>
+                    <equals arg1="${gitRevisionExit}" arg2="0"/>
+                    <not><equals arg1="${gitRevision}" arg2="" trim="true"/></not>
+                  </and>
+                </condition>
+                <property name="revision" value="unknown"/>
+                <condition property="revisionDirty" value="true">
+                  <and>
+                    <equals arg1="${gitStatusExit}" arg2="0"/>
+                    <not><equals arg1="${gitStatus}" arg2="" trim="true"/></not>
+                  </and>
+                </condition>
+                <property name="revisionDirty" value="false"/>
+              </target>
+            </configuration>
+          </execution>
+        </executions>
+      </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-jar-plugin</artifactId>
+        <configuration>
+          <archive>
+            <manifestEntries>
+              <Implementation-Title>${project.name}</Implementation-Title>
+              <Implementation-Version>${project.version}</Implementation-Version>
+              <Implementation-Build>${revision}</Implementation-Build>
+            </manifestEntries>
+          </archive>
+        </configuration>
       </plugin>
     </plugins>
   </build>

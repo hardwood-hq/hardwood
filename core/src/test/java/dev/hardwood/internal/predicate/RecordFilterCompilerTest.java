@@ -39,7 +39,7 @@ import dev.hardwood.schema.FileSchema;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
-class RecordFilterEvaluatorTest {
+class RecordFilterCompilerTest {
 
     // ==================== Int ====================
 
@@ -297,13 +297,7 @@ class RecordFilterEvaluatorTest {
     // ==================== Helpers ====================
 
     private static boolean matchesRow(ResolvedPredicate predicate, StructAccessor row, FileSchema schema) {
-        boolean legacy = RecordFilterEvaluator.matchesRow(predicate, row, schema);
-        boolean compiled = RecordFilterCompiler.compile(predicate, schema).test(row);
-        if (legacy != compiled) {
-            throw new AssertionError("Legacy/compiled disagreement: predicate=" + predicate
-                    + " legacy=" + legacy + " compiled=" + compiled);
-        }
-        return legacy;
+        return RecordFilterCompiler.compile(predicate, schema).test(row);
     }
 
     private static void assertMatch(boolean expected, ResolvedPredicate predicate,

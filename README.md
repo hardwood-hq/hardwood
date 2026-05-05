@@ -63,6 +63,13 @@ See the [Getting Started](https://hardwood.dev/latest/getting-started/) guide fo
 
 ---
 
+## Talks & Posts
+
+- [Hardwood: A New Parser for Apache Parquet](https://www.morling.dev/blog/hardwood-new-parser-for-apache-parquet/) — project announcement
+- [Open Source Friday with Gunnar Morling with Hardwood](https://www.youtube.com/watch?v=teqFSSQEtCw) — GitHub Open Source Friday
+
+---
+
 ## Contributing
 
 Contributions are welcome! See [CONTRIBUTING.md](CONTRIBUTING.md) for the full guide — how to find work, the issue-first workflow, commit message format, and PR expectations.
@@ -186,7 +193,6 @@ The `package` phase is needed to build the current jar before comparing. The rep
 See [PERFORMANCE.md](PERFORMANCE.md) for benchmark results and instructions on running performance tests.
 
 ---
-
 
 ## License
 

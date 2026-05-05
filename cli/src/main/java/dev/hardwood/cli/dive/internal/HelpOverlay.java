@@ -9,6 +9,7 @@ package dev.hardwood.cli.dive.internal;
 
 import java.util.List;
 
+import dev.hardwood.cli.internal.Version;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
@@ -29,7 +30,7 @@ public final class HelpOverlay {
 
     public static void render(Buffer buffer, Rect screenArea) {
         int width = Math.min(60, screenArea.width() - 4);
-        int height = Math.min(22, screenArea.height() - 2);
+        int height = Math.min(31, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
@@ -65,6 +66,7 @@ public final class HelpOverlay {
                 kv("← / →", "scroll visible columns"),
                 kv("g / G", "jump to first / last row of file"),
                 Line.empty(),
+                Line.from(new Span("Version: " + Version.getVersion(), Theme.dim())),
                 Line.from(new Span("Press ? or Esc to close", Theme.dim())));
 
         Block block = Block.builder()

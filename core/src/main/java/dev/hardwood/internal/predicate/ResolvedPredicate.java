@@ -17,7 +17,8 @@ import dev.hardwood.reader.FilterPredicate;
 ///
 /// All logical-type conversions, column name resolution, and physical type validation
 /// have already been performed. Evaluators ([RowGroupFilterEvaluator],
-/// [PageFilterEvaluator], [RecordFilterEvaluator]) work exclusively with this type.
+/// [PageFilterEvaluator]) and the record-level [RecordFilterCompiler] work
+/// exclusively with this type.
 public sealed interface ResolvedPredicate {
 
     record IntPredicate(int columnIndex, FilterPredicate.Operator op, int value) implements ResolvedPredicate {}

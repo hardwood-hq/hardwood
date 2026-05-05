@@ -50,8 +50,8 @@ jobs:
             exit 1
           fi
 
-      - name: 'Build and install BOMs, core and avro'
-        run: ./mvnw -B clean install -pl :hardwood-bom,:hardwood-test-bom,:hardwood-core,:hardwood-avro
+      - name: 'Build and install BOMs, test-support, core and avro'
+        run: ./mvnw -B clean install -pl :hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -60,6 +60,7 @@ jobs:
           path: |
             ~/.m2/repository/dev/hardwood/hardwood-bom/
             ~/.m2/repository/dev/hardwood/hardwood-test-bom/
+            ~/.m2/repository/dev/hardwood/hardwood-test-support/
             ~/.m2/repository/dev/hardwood/hardwood-core/
             ~/.m2/repository/dev/hardwood/hardwood-avro/
           retention-days: 1
