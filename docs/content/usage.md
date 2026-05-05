@@ -556,14 +556,25 @@ try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
 
 ### Nested and Repeated Columns
 
-For nested columns (lists, maps), `ColumnReader` provides multi-level offsets and per-level null bitmaps. A list/map container has four states the reader exposes separately:
+For nested columns (lists, maps), `ColumnReader` provides multi-level offsets and per-level null bitmaps. A list/map container has four states, and three bitmaps together identify which one each record is in:
 
 - **Null** — `getLevelNulls(level)` set at the container's index.
 - **Empty** — `getEmptyListMarkers(level)` set; the container exists but has no entries.
 - **Non-empty with null element(s)** — neither `getLevelNulls` nor `getEmptyListMarkers` set; `getElementNulls()` flags the null leaves inside the range.
 - **Non-empty with values** — only `getElementNulls()` indicates per-leaf nullability (or is `null` if all leaves are required).
 
-Without `getEmptyListMarkers`, an empty list is indistinguishable from a list containing a single null element — both encode as a single phantom entry with `getElementNulls()` set.
+`getEmptyListMarkers()` is what lets you tell an empty list apart from a list containing a single null element: in the underlying encoding, both produce a single phantom entry that `getElementNulls()` flags as null, so without this bitmap they'd be indistinguishable.
+
+For a column `optional group tags (LIST) { repeated group list { optional binary element (STRING); } }` holding these four records:
+
+| Record index | Logical value | `getLevelNulls(0)` | `getEmptyListMarkers(0)` | `offsets[0]` | `getElementNulls()` at value index |
+|---|---|---|---|---|---|
+| 0 | `null`        | `1` | `0` | `0` | `1` (phantom) |
+| 1 | `[]`          | `0` | `1` | `1` | `1` (phantom) |
+| 2 | `[null]`      | `0` | `0` | `2` | `1` (real null element) |
+| 3 | `["x"]`       | `0` | `0` | `3` | `0` (`values[3] = "x"`) |
+
+The `values` array has length 4 (one entry per record); the entries at indices 0 and 1 are phantoms whose contents are unspecified — `getLevelNulls(0)` and `getEmptyListMarkers(0)` are what tell the reader to skip them rather than dereference them.
 
 ```java
 try (ColumnReader reader = fileReader.columnReader("tags")) {
