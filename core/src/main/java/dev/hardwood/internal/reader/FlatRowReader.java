@@ -266,28 +266,28 @@ public final class FlatRowReader implements RowReader {
     /// Returns `-1` if no such bit exists. Used by the drain-side iteration path so
     /// `hasNext()`/`next()` stay monomorphic without a wrapping reader.
     private static int nextSetBit(long[] words, int from, int limit) {
-        if (from >= limit) {
-            return -1;
-        }
-        int wordIdx = from >>> 6;
-        int wordCount = words.length;
-        if (wordIdx >= wordCount) {
-            return -1;
-        }
-        long wordWithUncheckedBits = words[wordIdx] & (-1L << from);
+        if (from >= limit) return -1;
+
+        // Word range that could contain bits in [from, limit)
+        int startWord = from >>> 6;
+        int endWord = (limit - 1) >>> 6;
+        int wordIdx = startWord;
+
+        // Mask first word to ignore bits before `from`
+        long word = words[wordIdx] & (~0L << (from & 63));
+
         while (true) {
-            if (wordWithUncheckedBits != 0L) {
-                int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(wordWithUncheckedBits);
+            if (word != 0L) {
+                // Convert (word index + bit position) to get global bit index (row index)
+                int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(word);
                 return bit < limit ? bit : -1;
             }
-            wordIdx++;
-            if (wordIdx >= wordCount) {
+
+            if (++wordIdx > endWord) {
                 return -1;
             }
-            if ((wordIdx << 6) >= limit) {
-                return -1;
-            }
-            wordWithUncheckedBits = words[wordIdx];
+
+            word = words[wordIdx];
         }
     }
 
