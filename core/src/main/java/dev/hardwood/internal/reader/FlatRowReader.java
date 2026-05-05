@@ -82,11 +82,6 @@ public final class FlatRowReader implements RowReader {
     private String currentFileName;
 
     public FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, FlatColumnWorker[] columnWorkers,
-                         FileSchema fileSchema, ProjectedSchema projectedSchema) {
-        this(exchanges, columnWorkers, fileSchema, projectedSchema, false, 0, null);
-    }
-
-    public FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, FlatColumnWorker[] columnWorkers,
                          FileSchema fileSchema, ProjectedSchema projectedSchema,
                          boolean drainSide, int wordsLen, int[] filteredColumns) {
         this.exchanges = exchanges;
@@ -151,7 +146,7 @@ public final class FlatRowReader implements RowReader {
         if (filter != null) {
             columnFilters = BatchFilterCompiler.tryCompile(filter, schema, projectedSchema::toProjectedIndex);
         }
-        final boolean drainSide = columnFilters != null;
+        boolean drainSide = columnFilters != null;
         final int wordsLen = (batchSize + 63) >>> 6;
 
         FlatColumnWorker[] workers = new FlatColumnWorker[projectedColumnCount];
@@ -192,15 +187,20 @@ public final class FlatRowReader implements RowReader {
 
         int[] filteredColumns = null;
         if (drainSide) {
-            int count = 0;
-            for (int i = 0; i < columnFilters.length; i++) {
-                if (columnFilters[i] != null) count++;
-            }
-            filteredColumns = new int[count];
+            int len = columnFilters.length;
+            int[] tmp = new int[len];
             int idx = 0;
-            for (int i = 0; i < columnFilters.length; i++) {
-                if (columnFilters[i] != null) filteredColumns[idx++] = i;
+
+            for (int i = 0; i < len; i++) {
+                if (columnFilters[i] != null) {
+                    tmp[idx++] = i;
+                }
             }
+
+            filteredColumns = java.util.Arrays.copyOf(tmp, idx);
+        }
+        if (filteredColumns == null || filteredColumns.length == 0) {
+            drainSide = false;
         }
 
         FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projectedSchema,
@@ -274,10 +274,10 @@ public final class FlatRowReader implements RowReader {
         if (wordIdx >= wordCount) {
             return -1;
         }
-        long word = words[wordIdx] & (-1L << from);
+        long wordWithUncheckedBits = words[wordIdx] & (-1L << from);
         while (true) {
-            if (word != 0L) {
-                int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(word);
+            if (wordWithUncheckedBits != 0L) {
+                int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(wordWithUncheckedBits);
                 return bit < limit ? bit : -1;
             }
             wordIdx++;
@@ -287,7 +287,7 @@ public final class FlatRowReader implements RowReader {
             if ((wordIdx << 6) >= limit) {
                 return -1;
             }
-            word = words[wordIdx];
+            wordWithUncheckedBits = words[wordIdx];
         }
     }
 
@@ -647,42 +647,30 @@ public final class FlatRowReader implements RowReader {
     /// for the rows currently held by this reader.
     ///
     /// Iterates only the columns recorded in [#filteredColumns] (built once at
-    /// construction time) so there is no per-batch null check on `Batch.matches`.
+    /// construction time), so there is no per-batch null check on `Batch.matches`.
     /// Only the words covering `[0, batchSize)` are touched — bits past
     /// `batchSize` are not read by the consumer (`nextSetBit` is bounded by
     /// `batchSize`), so leaving them stale is safe and avoids the trailing
     /// zero-fill the previous shape paid every batch.
     private void intersectMatches() {
-        int n = batchSize;
-        int activeWords = (n + 63) >>> 6;
-        int[] cols = filteredColumns;
-        int colsLen = cols.length;
+        int activeWords = (batchSize + 63) >>> 6;
         BatchExchange.Batch[] batches = previousBatches;
         long[] combined = combinedWords;
 
-        if (colsLen == 0) {
-            // Defensive: drainSide is true but no columnFilters were installed.
-            // Treat the whole batch as matching.
-            int fullWords = n >>> 6;
-            for (int w = 0; w < fullWords; w++) {
-                combined[w] = -1L;
-            }
-            int tail = n & 63;
-            if (tail != 0) {
-                combined[fullWords] = (1L << tail) - 1L;
-            }
-            return;
-        }
-
         // First column: bulk copy the words covering the active range.
-        long[] first = batches[cols[0]].matches;
+        long[] first = batches[filteredColumns[0]].matches;
         System.arraycopy(first, 0, combined, 0, activeWords);
 
         // Remaining columns: word-wise AND-merge.
-        for (int c = 1; c < colsLen; c++) {
-            long[] m = batches[cols[c]].matches;
-            for (int w = 0; w < activeWords; w++) {
-                combined[w] &= m[w];
+        for (int col = 1; col < filteredColumns.length; col++) {
+            long[] matches = batches[filteredColumns[col]].matches;
+            int wIndex = 0;
+
+            while (wIndex < activeWords) {
+                long currentWord = combined[wIndex];
+                long mw = matches[wIndex];
+                combined[wIndex] = currentWord & mw;
+                wIndex++;
             }
         }
     }
