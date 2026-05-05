@@ -558,12 +558,11 @@ public class Utils {
     // ==================== Column-Level Comparison ====================
 
     /// Additional files to skip in column-level comparison tests beyond [#SKIPPED_FILES].
-    /// The remaining entries here exercise legacy MAP encodings and Avro
-    /// HashMap-backed iteration order; they're separate concerns from the
-    /// empty-list disambiguator and tracked separately.
+    /// The remaining entry exercises Avro HashMap-backed map iteration order
+    /// against Hardwood's column-stream order, which the column-level
+    /// comparator can't yet canonicalize.
     static final Set<String> COLUMN_SKIPPED_FILES = Set.of(
-            "nullable.impala.parquet",
-            "nonnullable.impala.parquet"
+            "nullable.impala.parquet"
     );
 
     /// Compare a Parquet file column-by-column using [ColumnReader]s against parquet-java reference data.
@@ -769,13 +768,23 @@ public class Utils {
                     }
                     return values;
                 }
-                if ("key_value".equals(name)) {
+                // `key_value` is the standard structural group name for MAPs;
+                // `map` is the legacy alias used by older writers (e.g. Hive,
+                // Impala). Both elide on the Avro side.
+                if ("key_value".equals(name) || "map".equals(name)) {
+                    pathIdx++;
+                    continue;
+                }
+                // A map can sit inside a LIST element (e.g. `arr.list.element.map.key_value...`).
+                // After the outer list distributes, the recursive walk arrives
+                // here with the list's structural names still ahead; elide them.
+                if (isStructuralListGroup(name)) {
                     pathIdx++;
                     continue;
                 }
                 throw new IllegalStateException(
                         "Path component '" + name + "' is not a valid map projection (expected"
-                                + " 'key', 'value', or 'key_value'); full path: " + path);
+                                + " 'key', 'value', 'key_value', or 'map'); full path: " + path);
             }
             if (current instanceof List<?> list) {
                 List<Object> mapped = new ArrayList<>(list.size());
