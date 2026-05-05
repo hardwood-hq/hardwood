@@ -617,7 +617,14 @@ try (Hardwood hardwood = Hardwood.create();
 
 ### Nested and Repeated Columns
 
-For nested columns (lists, maps), `ColumnReader` provides multi-level offsets and per-level null bitmaps:
+For nested columns (lists, maps), `ColumnReader` provides multi-level offsets and per-level null bitmaps. A list/map container has four states the reader exposes separately:
+
+- **Null** — `getLevelNulls(level)` set at the container's index.
+- **Empty** — `getEmptyListMarkers(level)` set; the container exists but has no entries.
+- **Non-empty with null element(s)** — neither `getLevelNulls` nor `getEmptyListMarkers` set; `getElementNulls()` flags the null leaves inside the range.
+- **Non-empty with values** — only `getElementNulls()` indicates per-leaf nullability (or is `null` if all leaves are required).
+
+Without `getEmptyListMarkers`, an empty list is indistinguishable from a list containing a single null element — both encode as a single phantom entry with `getElementNulls()` set.
 
 ```java
 try (ColumnReader reader = fileReader.columnReader("tags")) {
@@ -625,12 +632,14 @@ try (ColumnReader reader = fileReader.columnReader("tags")) {
         int recordCount = reader.getRecordCount();
         int valueCount = reader.getValueCount();
         byte[][] values = reader.getBinaries();
-        int[] offsets = reader.getOffsets(0);            // record -> value position
-        BitSet recordNulls = reader.getLevelNulls(0);    // null list records
-        BitSet elementNulls = reader.getElementNulls();  // null elements within lists
+        int[] offsets = reader.getOffsets(0);                 // record -> value position
+        BitSet recordNulls = reader.getLevelNulls(0);         // null list records
+        BitSet emptyMarkers = reader.getEmptyListMarkers(0);  // empty (size 0) lists
+        BitSet elementNulls = reader.getElementNulls();       // null elements within lists
 
         for (int r = 0; r < recordCount; r++) {
-            if (recordNulls != null && recordNulls.get(r)) continue;
+            if (recordNulls != null && recordNulls.get(r)) continue;     // null list
+            if (emptyMarkers != null && emptyMarkers.get(r)) continue;   // empty list
             int start = offsets[r];
             int end = (r + 1 < recordCount) ? offsets[r + 1] : valueCount;
             for (int i = start; i < end; i++) {

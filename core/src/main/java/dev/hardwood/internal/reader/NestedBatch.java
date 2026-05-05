@@ -19,8 +19,8 @@ import java.util.BitSet;
 /// thread and published through a `BatchExchange<NestedBatch>`.
 ///
 /// The drain computes index structures (element nulls, multi-level offsets,
-/// level nulls) before publishing, so the consumer thread does not need to
-/// perform any expensive index computation.
+/// level nulls, empty-list markers) before publishing, so the consumer thread
+/// does not need to perform any expensive index computation.
 public final class NestedBatch {
     // Raw arrays (filled by drain assembly)
     public Object values;
@@ -37,4 +37,5 @@ public final class NestedBatch {
     public BitSet elementNulls;
     public int[][] multiLevelOffsets;
     public BitSet[] levelNulls;
+    public BitSet[] emptyListMarkers;
 }

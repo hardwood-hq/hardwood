@@ -200,8 +200,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         nestedValueCount = 0;
     }
 
-    /// Computes index structures (element nulls, multi-level offsets, level nulls)
-    /// on the batch before it is published.
+    /// Computes index structures (element nulls, multi-level offsets, level nulls,
+    /// empty-list markers) on the batch before it is published.
     private void computeIndex(NestedBatch batch) {
         int[] defLevels = batch.definitionLevels;
         int valueCount = batch.valueCount;
@@ -212,13 +212,16 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         if (maxRepetitionLevel > 0 && batch.repetitionLevels != null && valueCount > 0) {
             batch.multiLevelOffsets = NestedLevelComputer.computeMultiLevelOffsets(
                     batch.repetitionLevels, valueCount, batch.recordCount, maxRepetitionLevel);
-            batch.levelNulls = NestedLevelComputer.computeLevelNulls(
+            NestedLevelComputer.LevelIndex levelIndex = NestedLevelComputer.computeLevelIndex(
                     defLevels, batch.repetitionLevels, valueCount,
                     maxRepetitionLevel, levelNullThresholds);
+            batch.levelNulls = levelIndex.levelNulls();
+            batch.emptyListMarkers = levelIndex.emptyListMarkers();
         }
         else {
             batch.multiLevelOffsets = null;
             batch.levelNulls = null;
+            batch.emptyListMarkers = null;
         }
     }
 

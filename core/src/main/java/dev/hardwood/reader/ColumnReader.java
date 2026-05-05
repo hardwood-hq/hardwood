@@ -47,7 +47,11 @@ import dev.hardwood.schema.ProjectedSchema;
 /// }
 /// ```
 ///
-/// **Simple list usage (nestingDepth=1):**
+/// **Simple list usage (nestingDepth=1):** a list/repeated container has four
+/// states (null, empty, list-with-null-element(s), list-with-value(s));
+/// `getLevelNulls` and `getEmptyListMarkers` together disambiguate the first
+/// two from the rest, and `getElementNulls` distinguishes null elements from
+/// real values inside a non-empty list.
 /// ```java
 /// try (ColumnReader reader = fileReader.columnReader("fare_components")) {
 ///     while (reader.nextBatch()) {
@@ -56,9 +60,11 @@ import dev.hardwood.schema.ProjectedSchema;
 ///         double[] values = reader.getDoubles();
 ///         int[] offsets = reader.getOffsets(0);
 ///         BitSet recordNulls = reader.getLevelNulls(0);
+///         BitSet emptyMarkers = reader.getEmptyListMarkers(0);
 ///         BitSet elementNulls = reader.getElementNulls();
 ///         for (int r = 0; r < recordCount; r++) {
-///             if (recordNulls != null && recordNulls.get(r)) continue;
+///             if (recordNulls != null && recordNulls.get(r)) continue;       // null list
+///             if (emptyMarkers != null && emptyMarkers.get(r)) continue;     // empty list
 ///             int start = offsets[r];
 ///             int end = (r + 1 < recordCount) ? offsets[r + 1] : valueCount;
 ///             for (int i = start; i < end; i++) {
@@ -92,6 +98,7 @@ public class ColumnReader implements AutoCloseable {
     // Computed nested data (lazily populated per batch)
     private int[][] multiLevelOffsets;
     private BitSet[] levelNulls;
+    private BitSet[] emptyListMarkers;
     private BitSet elementNulls;
     private boolean nestedDataComputed;
 
@@ -169,6 +176,7 @@ public class ColumnReader implements AutoCloseable {
         nestedDataComputed = false;
         multiLevelOffsets = null;
         levelNulls = null;
+        emptyListMarkers = null;
         elementNulls = null;
 
         return true;
@@ -311,6 +319,24 @@ public class ColumnReader implements AutoCloseable {
         return levelNulls[level];
     }
 
+    /// Empty-list bitmap at a given nesting level. A set bit means the
+    /// container at that level is non-null but contains zero entries.
+    ///
+    /// Together with [#getLevelNulls(int)] this disambiguates the four
+    /// container states a list/map can be in: null, empty, non-empty with null
+    /// element(s), and non-empty with value(s). Without this bitmap, an empty
+    /// list is indistinguishable from a list containing a single null element
+    /// because both encode as one phantom entry with [#getElementNulls()] set.
+    ///
+    /// @param level the nesting level (0 = outermost group)
+    /// @return BitSet where set bits indicate empty containers, or null if no empties at that level
+    public BitSet getEmptyListMarkers(int level) {
+        checkBatchAvailable();
+        checkNestedLevel(level);
+        ensureNestedDataComputed();
+        return emptyListMarkers[level];
+    }
+
     // ==================== Offsets for Repeated Columns ====================
 
     /// Nesting depth: 0 for flat, maxRepetitionLevel for nested.
@@ -397,6 +423,7 @@ public class ColumnReader implements AutoCloseable {
         elementNulls = currentNestedBatch.elementNulls;
         multiLevelOffsets = currentNestedBatch.multiLevelOffsets;
         levelNulls = currentNestedBatch.levelNulls;
+        emptyListMarkers = currentNestedBatch.emptyListMarkers;
 
         // Provide empty arrays when fields are null (non-repeated columns)
         if (multiLevelOffsets == null) {
@@ -404,6 +431,9 @@ public class ColumnReader implements AutoCloseable {
         }
         if (levelNulls == null) {
             levelNulls = new BitSet[maxRepetitionLevel];
+        }
+        if (emptyListMarkers == null) {
+            emptyListMarkers = new BitSet[maxRepetitionLevel];
         }
     }
 

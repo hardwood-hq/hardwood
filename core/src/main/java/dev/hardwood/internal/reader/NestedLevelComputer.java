@@ -131,37 +131,64 @@ public final class NestedLevelComputer {
         };
     }
 
-    /// Compute per-level null bitmaps from definition and repetition levels.
+    /// Computed per-level null and empty-list bitmaps, returned by [#computeLevelIndex].
+    ///
+    /// `levelNulls[k]` flags items at level k whose enclosing container is null;
+    /// `emptyListMarkers[k]` flags items whose container is present-but-empty
+    /// (the def level reached the parent of the repeated group but not the
+    /// repeated group itself). Both arrays are positionally aligned with the
+    /// items at level k. A `null` entry at any index means "no bits set" at
+    /// that level.
+    public record LevelIndex(BitSet[] levelNulls, BitSet[] emptyListMarkers) {}
+
+    /// Compute per-level null and empty-list bitmaps from definition and
+    /// repetition levels in a single pass.
+    ///
+    /// At each repeated level k with threshold `t = levelNullThresholds[k]`:
+    /// - `def < t` ⇒ the container is null (an ancestor is missing).
+    /// - `def == t` ⇒ the container exists but has no entries (empty list).
+    /// - `def > t` ⇒ the container has at least one entry (possibly null at
+    ///               the leaf, which is captured separately by the element-null
+    ///               bitmap from [#computeElementNulls]).
     ///
     /// @param levelNullThresholds per-level definition level thresholds from
     ///                            [#computeLevelNullThresholds]
-    /// @return array of BitSets, one per nesting level; null entries mean all-non-null at that level
-    public static BitSet[] computeLevelNulls(int[] defLevels, int[] repLevels,
-                                             int valueCount, int maxRepLevel,
-                                             int[] levelNullThresholds) {
+    public static LevelIndex computeLevelIndex(int[] defLevels, int[] repLevels,
+                                               int valueCount, int maxRepLevel,
+                                               int[] levelNullThresholds) {
         BitSet[] levelNulls = new BitSet[maxRepLevel];
+        BitSet[] emptyListMarkers = new BitSet[maxRepLevel];
 
         for (int k = 0; k < maxRepLevel; k++) {
             int defThreshold = levelNullThresholds[k];
             BitSet nullBits = null;
+            BitSet emptyBits = null;
 
             int itemIdx = 0;
             for (int i = 0; i < valueCount; i++) {
                 if (repLevels[i] <= k) {
-                    if (defLevels[i] < defThreshold) {
+                    int def = defLevels[i];
+                    if (def < defThreshold) {
                         if (nullBits == null) {
                             nullBits = new BitSet();
                         }
                         nullBits.set(itemIdx);
+                    }
+                    else if (def == defThreshold) {
+                        if (emptyBits == null) {
+                            emptyBits = new BitSet();
+                        }
+                        emptyBits.set(itemIdx);
                     }
                     itemIdx++;
                 }
             }
 
             levelNulls[k] = nullBits;
+            emptyListMarkers[k] = emptyBits;
         }
 
-        return levelNulls;
+        return new LevelIndex(levelNulls, emptyListMarkers);
     }
 
     /// Compute leaf-level null bitmap.
