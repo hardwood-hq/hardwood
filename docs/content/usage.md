@@ -548,6 +548,9 @@ try (Hardwood hardwood = Hardwood.create();
 
 The `ColumnReader` provides batch-oriented columnar access with typed primitive arrays, avoiding per-row method calls and boxing. This is the fastest way to consume Parquet data when you process columns independently.
 
+!!! warning "Experimental API"
+    The `ColumnReader` is under active development; The shape of the batch accessors and nested-offset representation may change in future releases without prior deprecation.
+
 ### Single-File Column Reading
 
 ```java
