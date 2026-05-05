@@ -481,77 +481,14 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 The filter column does not need to be in the projection — Hardwood reads the filter column's statistics for pushdown regardless.
 
-## Reading Multiple Files
-
-When processing multiple Parquet files, use the `Hardwood` class to share a thread pool across readers.
-
-### Unified Multi-File Reader
-
-`Hardwood.open(List<InputFile>)` returns a `ParquetFileReader` over many files. The same `RowReader`, `ColumnReader`, and `ColumnReaders` APIs apply — there is no separate multi-file class.
-
-```java
-import dev.hardwood.Hardwood;
-import dev.hardwood.InputFile;
-import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.reader.RowReader;
-
-List<InputFile> files = InputFile.ofPaths(
-    Path.of("data_2024_01.parquet"),
-    Path.of("data_2024_02.parquet"),
-    Path.of("data_2024_03.parquet")
-);
-
-try (Hardwood hardwood = Hardwood.create();
-     ParquetFileReader parquet = hardwood.openAll(files);
-     RowReader reader = parquet.rowReader()) {
-
-    while (reader.hasNext()) {
-        reader.next();
-        // Access data using the same API as a single-file RowReader
-        long id = reader.getLong("id");
-        String name = reader.getString("name");
-    }
-}
-```
-
-Cross-file prefetching is automatic: when pages from file N are running low, pages from file N+1 are already being prefetched. This eliminates I/O stalls at file boundaries.
-
-By default, `Hardwood.create()` sizes the thread pool to the number of available processors. For custom thread pool sizing, use `HardwoodContext` directly:
-
-```java
-import dev.hardwood.HardwoodContext;
-
-try (HardwoodContext context = HardwoodContext.create(4);  // 4 threads
-     ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path), context);
-     RowReader rowReader = reader.rowReader()) {
-    // ...
-}
-```
-
-**With column projection:**
-
-```java
-try (Hardwood hardwood = Hardwood.create();
-     ParquetFileReader parquet = hardwood.openAll(files);
-     RowReader reader = parquet.buildRowReader()
-             .projection(ColumnProjection.columns("id", "name", "amount"))
-             .build()) {
-
-    while (reader.hasNext()) {
-        reader.next();
-        // Only projected columns are read
-    }
-}
-```
-
 ## Column-Oriented Reading (ColumnReader)
 
 The `ColumnReader` provides batch-oriented columnar access with typed primitive arrays, avoiding per-row method calls and boxing. This is the fastest way to consume Parquet data when you process columns independently.
 
 !!! warning "Experimental API"
-    The `ColumnReader` is under active development; The shape of the batch accessors and nested-offset representation may change in future releases without prior deprecation.
+    The `ColumnReader` is under active development; the shape of the batch accessors and nested-offset representation may change in future releases without prior deprecation.
 
-### Single-File Column Reading
+### Reading a Single Column
 
 ```java
 import dev.hardwood.InputFile;
@@ -579,9 +516,9 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 
 Typed accessors are available for each physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`, `getBinaries()`, and `getStrings()`. Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter, use the builder form: `reader.buildColumnReader("id").filter(predicate).build()`.
 
-### Multi-Column / Multi-File Reading
+### Reading Multiple Columns
 
-For reading multiple columns together (especially across multiple files with cross-file prefetching), use `columnReaders(projection)` which returns a `ColumnReaders` collection:
+For reading multiple columns together, use `columnReaders(projection)` which returns a `ColumnReaders` collection:
 
 ```java
 import dev.hardwood.Hardwood;
@@ -590,8 +527,7 @@ import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.schema.ColumnProjection;
 
-try (Hardwood hardwood = Hardwood.create();
-     ParquetFileReader parquet = hardwood.openAll(files);
+try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
      ColumnReaders columns = parquet.columnReaders(
              ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))
              .build()) {
@@ -647,6 +583,52 @@ try (ColumnReader reader = fileReader.columnReader("tags")) {
 ```
 
 `getNestingDepth()` returns 0 for flat columns, or the number of offset levels for nested columns.
+
+## Reading Multiple Files
+
+When processing multiple Parquet files, use the `Hardwood` class to share a thread pool across readers.
+`Hardwood.openAll(List<InputFile>)` returns a `ParquetFileReader` over many files. The same `RowReader`, `ColumnReader`, and `ColumnReaders` APIs apply.
+
+```java
+import dev.hardwood.Hardwood;
+import dev.hardwood.InputFile;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
+
+List<InputFile> files = InputFile.ofPaths(
+    Path.of("data_2024_01.parquet"),
+    Path.of("data_2024_02.parquet"),
+    Path.of("data_2024_03.parquet")
+);
+
+try (Hardwood hardwood = Hardwood.create();
+     ParquetFileReader parquet = hardwood.openAll(files);
+     RowReader reader = parquet.rowReader()) {
+
+    while (reader.hasNext()) {
+        reader.next();
+        // Access data using the same API as a single-file RowReader
+        long id = reader.getLong("id");
+        String name = reader.getString("name");
+    }
+}
+```
+
+Cross-file prefetching is automatic: when pages from file N are running low, pages from file N+1 are already being prefetched. This eliminates I/O stalls at file boundaries.
+
+The schema of the first file is the reference schema. Each subsequent file is validated against it as it is opened: every projected column must exist with a matching physical type, logical type, and repetition type, otherwise a `SchemaIncompatibleException` is thrown. Non-projected columns are not checked, so files may carry additional columns. With no explicit projection, all columns of the first file are projected and therefore required in every subsequent file.
+
+By default, `Hardwood.create()` sizes the thread pool to the number of available processors. For custom thread pool sizing, use `HardwoodContext` directly:
+
+```java
+import dev.hardwood.HardwoodContext;
+
+try (HardwoodContext context = HardwoodContext.create(4);  // 4 threads
+     ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path), context);
+     RowReader rowReader = reader.rowReader()) {
+    // ...
+}
+```
 
 ## Accessing File Metadata
 
