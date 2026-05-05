@@ -43,16 +43,15 @@ import dev.hardwood.schema.ProjectedSchema;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
-/// Three-way equivalence: legacy [RecordFilterEvaluator], compiled [RecordFilterCompiler],
-/// and drain-side [BatchFilterCompiler] + per-column [BatchMatcher] all agree on which
-/// rows survive a given predicate. Constitutes the load-bearing correctness gate for the
-/// drain-side prototype.
+/// Two-way equivalence: compiled [RecordFilterCompiler] and drain-side [BatchFilterCompiler]
+/// + per-column [BatchMatcher] agree on which rows survive a given predicate. Constitutes
+/// the load-bearing correctness gate for the drain-side prototype.
 class DrainSideOracleTest {
 
     private static final int N = 256;
 
     @Test
-    void singleLongLeaf_allOps_threeWaysAgree() {
+    void singleLongLeaf_allOps_bothWaysAgree() {
         Workload w = workload(0xC0FFEE);
         for (Operator op : Operator.values()) {
             ResolvedPredicate p = new ResolvedPredicate.LongPredicate(0, op, 100L);
@@ -61,7 +60,7 @@ class DrainSideOracleTest {
     }
 
     @Test
-    void singleDoubleLeaf_allOps_threeWaysAgree() {
+    void singleDoubleLeaf_allOps_bothWaysAgree() {
         Workload w = workload(0xBEEF);
         for (Operator op : Operator.values()) {
             ResolvedPredicate p = new ResolvedPredicate.DoublePredicate(1, op, 0.5);
@@ -71,7 +70,7 @@ class DrainSideOracleTest {
 
     @ParameterizedTest(name = "and(id {0} 100, value {1} 0.5)")
     @MethodSource("opPairs")
-    void andOfLongAndDouble_threeWaysAgree(Operator opA, Operator opB) {
+    void andOfLongAndDouble_bothWaysAgree(Operator opA, Operator opB) {
         Workload w = workload(0xFEED);
         ResolvedPredicate p = new ResolvedPredicate.And(List.of(
                 new ResolvedPredicate.LongPredicate(0, opA, 100L),
@@ -92,23 +91,11 @@ class DrainSideOracleTest {
     }
 
     private static void assertSurvivorsAgree(ResolvedPredicate predicate, Workload w) {
-        BitSet legacy = legacySurvivors(predicate, w);
         BitSet compiled = compiledSurvivors(predicate, w);
         BitSet drainSide = drainSideSurvivors(predicate, w);
-        assertEquals(legacy, compiled, () -> "legacy/compiled diverged for " + predicate);
         if (drainSide != null) {
-            assertEquals(legacy, drainSide, () -> "legacy/drain-side diverged for " + predicate);
+            assertEquals(compiled, drainSide, () -> "compiled/drain-side diverged for " + predicate);
         }
-    }
-
-    private static BitSet legacySurvivors(ResolvedPredicate predicate, Workload w) {
-        BitSet out = new BitSet(N);
-        for (int i = 0; i < N; i++) {
-            if (RecordFilterEvaluator.matchesRow(predicate, w.row(i), w.schema)) {
-                out.set(i);
-            }
-        }
-        return out;
     }
 
     private static BitSet compiledSurvivors(ResolvedPredicate predicate, Workload w) {
