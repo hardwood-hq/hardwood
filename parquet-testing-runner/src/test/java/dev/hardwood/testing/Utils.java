@@ -558,15 +558,10 @@ public class Utils {
     // ==================== Column-Level Comparison ====================
 
     /// Additional files to skip in column-level comparison tests beyond [#SKIPPED_FILES].
-    /// All listed files contain empty repeated groups: the public [ColumnReader] API
-    /// exposes per-record offsets, level-null bitmaps, and element-null bitmaps but
-    /// not definition levels, which are needed to distinguish an empty list (size 0,
-    /// no elements) from a list containing a single null element (size 1). Both
-    /// produce the same offset/null shape, so reconstruction can't tell them apart.
-    /// Tracked by #422 — once the public API exposes the missing signal, these
-    /// files can be removed from this set.
+    /// The remaining entries here exercise legacy MAP encodings and Avro
+    /// HashMap-backed iteration order; they're separate concerns from the
+    /// empty-list disambiguator and tracked separately.
     static final Set<String> COLUMN_SKIPPED_FILES = Set.of(
-            "null_list.parquet",
             "nullable.impala.parquet",
             "nonnullable.impala.parquet"
     );
@@ -692,13 +687,17 @@ public class Utils {
     }
 
     /// Reconstruct one container's value from a nested [ColumnReader]'s
-    /// offsets/level-nulls/element-nulls. Returns `null` when the container at
-    /// `level` is null, a `List` for outer levels, or a `List` of leaf values at
-    /// the innermost level.
+    /// offsets / level-nulls / empty-list markers / element-nulls. Returns
+    /// `null` when the container at `level` is null, an empty `List` when the
+    /// container is present-but-empty, or a populated `List` otherwise.
     private static Object reconstructNested(ColumnReader reader, int level, int idx, int maxRep) {
         BitSet levelNulls = reader.getLevelNulls(level);
         if (levelNulls != null && levelNulls.get(idx)) {
             return null;
+        }
+        BitSet emptyMarkers = reader.getEmptyListMarkers(level);
+        if (emptyMarkers != null && emptyMarkers.get(idx)) {
+            return List.of();
         }
         int[] offsets = reader.getOffsets(level);
         int start = offsets[idx];
