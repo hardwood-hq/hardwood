@@ -558,12 +558,9 @@ public class Utils {
     // ==================== Column-Level Comparison ====================
 
     /// Additional files to skip in column-level comparison tests beyond [#SKIPPED_FILES].
-    /// The remaining entry exercises Avro HashMap-backed map iteration order
-    /// against Hardwood's column-stream order, which the column-level
-    /// comparator can't yet canonicalize.
-    static final Set<String> COLUMN_SKIPPED_FILES = Set.of(
-            "nullable.impala.parquet"
-    );
+    /// Empty by default — every file the row-level comparison runs on is also
+    /// validated column-by-column.
+    static final Set<String> COLUMN_SKIPPED_FILES = Set.of();
 
     /// Compare a Parquet file column-by-column using [ColumnReader]s against parquet-java reference data.
     static void compareColumns(ParquetFileReader fileReader, List<GenericRecord> referenceRows)
@@ -666,6 +663,13 @@ public class Utils {
                                           List<GenericRecord> referenceRows) {
         int maxRep = colSchema.maxRepetitionLevel();
         List<String> path = colSchema.fieldPath().elements();
+        // parquet-java's AvroParquetReader exposes Parquet maps via HashMap-backed
+        // GenericData.Map, whose iteration order is non-deterministic. For
+        // map-key/map-value columns, that means the per-row key (or value) list
+        // may be in a different order than the Hardwood column-stream order.
+        // The row-level test sidesteps this with key-based lookup; here we
+        // canonicalize both sides by sorting innermost lists before comparing.
+        boolean isMapProjection = path.contains("key_value") || path.contains("map");
         int rowIdx = 0;
         while (reader.nextBatch()) {
             int recordCount = reader.getRecordCount();
@@ -675,6 +679,10 @@ public class Utils {
                         .isLessThan(referenceRows.size());
                 Object reconstructed = reconstructNested(reader, 0, r, maxRep);
                 Object expected = extractAvroAlongPath(referenceRows.get(rowIdx), path, 0);
+                if (isMapProjection) {
+                    sortInnermostLists(reconstructed);
+                    sortInnermostLists(expected);
+                }
                 String ctx = String.format("Row %d, column '%s'", rowIdx, colSchema.name());
                 deepCompareNested(ctx, expected, reconstructed);
                 rowIdx++;
@@ -683,6 +691,41 @@ public class Utils {
         assertThat(rowIdx)
                 .as("Column '%s' row count", colSchema.name())
                 .isEqualTo(referenceRows.size());
+    }
+
+    /// Recursively sort the deepest (leaf-bearing) lists in the reconstructed
+    /// shape so that order-dependent comparisons between Hardwood and Avro work
+    /// for map projections. Non-list values pass through unchanged.
+    @SuppressWarnings({"unchecked", "rawtypes"})
+    private static void sortInnermostLists(Object value) {
+        if (!(value instanceof List<?> list) || list.isEmpty()) {
+            return;
+        }
+        Object firstNonNull = null;
+        for (Object e : list) {
+            if (e != null) {
+                firstNonNull = e;
+                break;
+            }
+        }
+        if (firstNonNull instanceof List<?>) {
+            for (Object item : list) {
+                sortInnermostLists(item);
+            }
+            return;
+        }
+        ((List) list).sort((a, b) -> {
+            if (a == null && b == null) return 0;
+            if (a == null) return -1;
+            if (b == null) return 1;
+            if (a instanceof byte[] aBytes && b instanceof byte[] bBytes) {
+                return java.util.Arrays.compare(aBytes, bBytes);
+            }
+            if (a instanceof Comparable<?> && a.getClass() == b.getClass()) {
+                return ((Comparable<Object>) a).compareTo(b);
+            }
+            return 0;
+        });
     }
 
     /// Reconstruct one container's value from a nested [ColumnReader]'s
