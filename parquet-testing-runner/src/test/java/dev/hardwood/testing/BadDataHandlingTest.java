@@ -26,10 +26,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Verifies how Hardwood handles corrupted and intentionally-malformed Parquet files from
 /// the `apache/parquet-testing` suite (the `bad_data/` directory plus a handful of files
-/// in `data/` with corrupted CRCs). Covers both the single-file [ParquetFileReader] and
-/// the [ParquetFileReader] paths, including failures that appear mid-sequence. These
-/// tests do not compare against parquet-java — they assert Hardwood's own reject/accept
-/// behavior — so they live here rather than in [ParquetComparisonTest].
+/// in `data/` with corrupted CRCs). Covers both isolated bad files and bad files appearing
+/// mid-sequence in a multi-file [ParquetFileReader] input. These tests do not compare
+/// against parquet-java — they assert Hardwood's own reject/accept behavior — so they
+/// live here rather than in [ParquetComparisonTest].
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class BadDataHandlingTest {
 
@@ -41,7 +41,7 @@ class BadDataHandlingTest {
         Utils.ensureGoodCFile(repoDir);
     }
 
-    // ==================== Single-file rejection ====================
+    // ==================== Rejection on a single bad file ====================
 
     @Test
     void rejectParquet1481() throws IOException {
@@ -130,33 +130,33 @@ class BadDataHandlingTest {
         }
     }
 
-    // ==================== Multi-file rejection (mid-sequence) ====================
+    // ==================== Rejection on a bad file mid-sequence ====================
 
     @Test
-    void multiFileReaderRejectsBadFileMidSequence() throws IOException {
+    void rejectsParquet1481MidSequence() throws IOException {
         Path good = repoDir.resolve("data/alltypes_plain.parquet");
         Path bad = repoDir.resolve("bad_data/PARQUET-1481.parquet");
         Utils.assertBadDataRejected("PARQUET-1481.parquet",
                 "[PARQUET-1481.parquet] Invalid or corrupt physical type value: -7 (expected 0-7)."
                         + " File metadata may be corrupted",
-                multiFileReadAction(good, bad));
+                concatenatedReadAction(good, bad));
     }
 
     @Test
-    void multiFileReaderRejectsDictheaderMidSequence() throws IOException {
+    void rejectsDictheaderMidSequence() throws IOException {
         Path good = repoDir.resolve("data/alltypes_plain.parquet");
         Path bad = repoDir.resolve("bad_data/ARROW-RS-GH-6229-DICTHEADER.parquet");
         Utils.assertBadDataRejected("ARROW-RS-GH-6229-DICTHEADER.parquet",
-                multiFileReadAction(good, bad));
+                concatenatedReadAction(good, bad));
     }
 
     @Test
-    void multiFileReaderRejectsLevelsMidSequence() throws IOException {
+    void rejectsLevelsMidSequence() throws IOException {
         Path good = repoDir.resolve("data/good_c.parquet");
         Path bad = repoDir.resolve("bad_data/ARROW-RS-GH-6229-LEVELS.parquet");
         Utils.assertBadDataRejected("ARROW-RS-GH-6229-LEVELS.parquet",
                 "[ARROW-RS-GH-6229-LEVELS.parquet] Column 'c' not found",
-                multiFileReadAction(good, bad));
+                concatenatedReadAction(good, bad));
     }
 
     // ==================== Helpers ====================
@@ -177,7 +177,7 @@ class BadDataHandlingTest {
           .hasRootCauseMessage(expectedCauseMessage);
     }
 
-    private ThrowableAssert.ThrowingCallable singleFileReadAction(String fileName) {
+    private ThrowableAssert.ThrowingCallable readAction(String fileName) {
         Path testFile = repoDir.resolve("bad_data/" + fileName);
         return () -> {
             try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(testFile));
@@ -190,19 +190,19 @@ class BadDataHandlingTest {
     }
 
     private void assertBadDataRejected(String fileName) throws IOException {
-        Utils.assertBadDataRejected(fileName, singleFileReadAction(fileName));
+        Utils.assertBadDataRejected(fileName, readAction(fileName));
     }
 
     private void assertBadDataRejected(String fileName, String expectedMessage) throws IOException {
-        Utils.assertBadDataRejected(fileName, expectedMessage, singleFileReadAction(fileName));
+        Utils.assertBadDataRejected(fileName, expectedMessage, readAction(fileName));
     }
 
-    private ThrowableAssert.ThrowingCallable multiFileReadAction(Path good, Path bad) {
+    private ThrowableAssert.ThrowingCallable concatenatedReadAction(Path good, Path bad) {
         return () -> {
             try (HardwoodContextImpl context = HardwoodContextImpl.create();
-                 ParquetFileReader mfReader = ParquetFileReader.openAll(
+                 ParquetFileReader reader = ParquetFileReader.openAll(
                          List.of(InputFile.of(good), InputFile.of(bad)), context);
-                 RowReader rowReader = mfReader.rowReader()) {
+                 RowReader rowReader = reader.rowReader()) {
                 while (rowReader.hasNext()) {
                     rowReader.next();
                 }

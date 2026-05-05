@@ -9,6 +9,7 @@ package dev.hardwood.testing;
 
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -37,6 +38,7 @@ import org.assertj.core.api.ThrowableAssert;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -123,7 +125,7 @@ public class Utils {
 
     /// Generates `data/good_c.parquet` under the given cloned repo if not already present.
     /// The file is a valid single-column (`required int32 c`) file sharing its schema with
-    /// `bad_data/ARROW-RS-GH-6229-LEVELS.parquet`, so the multi-file bad-data tests can
+    /// `bad_data/ARROW-RS-GH-6229-LEVELS.parquet`, so the mid-sequence bad-data tests can
     /// read a good prefix followed by a failing file. Idempotent.
     static void ensureGoodCFile(Path repoDir) throws IOException {
         Path output = repoDir.resolve("data/good_c.parquet");
@@ -561,17 +563,18 @@ public class Utils {
     /// not definition levels, which are needed to distinguish an empty list (size 0,
     /// no elements) from a list containing a single null element (size 1). Both
     /// produce the same offset/null shape, so reconstruction can't tell them apart.
+    /// Tracked by #422 — once the public API exposes the missing signal, these
+    /// files can be removed from this set.
     static final Set<String> COLUMN_SKIPPED_FILES = Set.of(
             "null_list.parquet",
             "nullable.impala.parquet",
             "nonnullable.impala.parquet"
     );
 
-    /// Compare a Parquet file column-by-column using ColumnReaders against parquet-java reference data.
-    /// Each column reader is created via the factory and closed after use.
-    static void compareColumns(FileSchema schema, ColumnReaderFactory readerFactory, List<GenericRecord> referenceRows)
+    /// Compare a Parquet file column-by-column using [ColumnReader]s against parquet-java reference data.
+    static void compareColumns(ParquetFileReader fileReader, List<GenericRecord> referenceRows)
             throws IOException {
-
+        FileSchema schema = fileReader.getFileSchema();
         for (int colIdx = 0; colIdx < schema.getColumnCount(); colIdx++) {
             ColumnSchema colSchema = schema.getColumn(colIdx);
             // parquet-java's AvroParquetReader collapses Variant `typed_value`
@@ -580,7 +583,7 @@ public class Utils {
             if (isUnderVariantShred(schema, colSchema)) {
                 continue;
             }
-            try (ColumnReader columnReader = readerFactory.columnReader(colIdx)) {
+            try (ColumnReader columnReader = fileReader.columnReader(colIdx)) {
                 if (colSchema.maxRepetitionLevel() == 0) {
                     compareColumnReader(colSchema.name(), columnReader, referenceRows);
                 }
@@ -631,9 +634,9 @@ public class Utils {
             BitSet nulls = columnReader.getElementNulls();
 
             for (int i = 0; i < count; i++) {
-                if (rowIdx >= referenceRows.size()) {
-                    break;
-                }
+                assertThat(rowIdx)
+                        .as("Column '%s' produced more records than reference", colName)
+                        .isLessThan(referenceRows.size());
                 GenericRecord refRow = referenceRows.get(rowIdx);
                 Object refValue = getRefColumnValue(refRow, colName);
 
@@ -673,9 +676,9 @@ public class Utils {
         while (reader.nextBatch()) {
             int recordCount = reader.getRecordCount();
             for (int r = 0; r < recordCount; r++) {
-                if (rowIdx >= referenceRows.size()) {
-                    break;
-                }
+                assertThat(rowIdx)
+                        .as("Column '%s' produced more records than reference", colSchema.name())
+                        .isLessThan(referenceRows.size());
                 Object reconstructed = reconstructNested(reader, 0, r, maxRep);
                 Object expected = extractAvroAlongPath(referenceRows.get(rowIdx), path, 0);
                 String ctx = String.format("Row %d, column '%s'", rowIdx, colSchema.name());
@@ -717,22 +720,40 @@ public class Utils {
         return items;
     }
 
+    /// Path components that name Parquet structural groups Avro elides when it
+    /// lifts a LIST/MAP into native `array[]` / `map[]`. Includes the standard
+    /// 3-level encoding (`list`, `element`, `key_value`) and the legacy
+    /// 2-level LIST encoding rule 3a (`array`); rule 3b's `<list-name>_tuple` is
+    /// matched by suffix, see [#isStructuralListGroup].
+    /// Any other unknown name is treated as a real bug, not silently elided.
+    private static final Set<String> STRUCTURAL_GROUP_NAMES = Set.of(
+            "list", "element", "key_value", "array");
+
     /// Walk a parquet-java [GenericRecord] along a leaf column's
     /// [dev.hardwood.metadata.FieldPath]. Avro elides Parquet's structural
-    /// group names (`list`, `element`, `key_value`) when it lifts them into
-    /// `array[]` / `map[]`, so any path component that isn't a field on the
-    /// current record is treated as structural and skipped. List elements
-    /// receive the rest of the path applied per-element; map keys/values are
-    /// projected by name.
+    /// group names (`list`, `element`, `key_value`, `array`, `<name>_tuple`)
+    /// when it lifts them into `array[]` / `map[]`; those components are
+    /// skipped during the walk. Any other path component that doesn't match
+    /// a field on the current record is a bug — fail loudly rather than
+    /// silently no-op. List elements receive the rest of the path applied
+    /// per-element; map keys/values are projected by name.
     private static Object extractAvroAlongPath(Object current, List<String> path, int pathIdx) {
         while (pathIdx < path.size() && current != null) {
             String name = path.get(pathIdx);
             if (current instanceof GenericRecord rec) {
                 if (rec.getSchema().getField(name) != null) {
                     current = rec.get(name);
+                    pathIdx++;
+                    continue;
                 }
-                pathIdx++;
-                continue;
+                if (isStructuralListGroup(name)) {
+                    pathIdx++;
+                    continue;
+                }
+                throw new IllegalStateException(
+                        "Path component '" + name + "' is neither a field of Avro record '"
+                                + rec.getSchema().getName() + "' nor a known Parquet structural"
+                                + " group name; full path: " + path);
             }
             if (current instanceof Map<?, ?> map) {
                 if ("key".equals(name)) {
@@ -749,9 +770,13 @@ public class Utils {
                     }
                     return values;
                 }
-                // Structural ("key_value") — elide
-                pathIdx++;
-                continue;
+                if ("key_value".equals(name)) {
+                    pathIdx++;
+                    continue;
+                }
+                throw new IllegalStateException(
+                        "Path component '" + name + "' is not a valid map projection (expected"
+                                + " 'key', 'value', or 'key_value'); full path: " + path);
             }
             if (current instanceof List<?> list) {
                 List<Object> mapped = new ArrayList<>(list.size());
@@ -766,9 +791,14 @@ public class Utils {
         return current == null ? null : convertToComparable(current);
     }
 
+    private static boolean isStructuralListGroup(String name) {
+        return STRUCTURAL_GROUP_NAMES.contains(name) || name.endsWith("_tuple");
+    }
+
     /// Deep-compare two reconstructed values (each null, a leaf, or a `List`).
-    /// Leaves go through the same numeric tolerance and `String`/`byte[]` coercion
-    /// rules used by [#compareColumnValue].
+    /// Both `expected` and `actual` have already been passed through
+    /// [#convertToComparable] at construction time (see [#extractAvroAlongPath]
+    /// and [#reconstructNested]); leaves are delegated to [#compareLeaf].
     private static void deepCompareNested(String ctx, Object expected, Object actual) {
         if (expected == null) {
             assertThat(actual).as(ctx + " should be null").isNull();
@@ -782,29 +812,7 @@ public class Utils {
             }
             return;
         }
-        Object expCmp = convertToComparable(expected);
-        if (expCmp instanceof String refStr && actual instanceof byte[] actBytes) {
-            assertThat(new String(actBytes, java.nio.charset.StandardCharsets.UTF_8))
-                    .as(ctx).isEqualTo(refStr);
-        }
-        else if (expCmp instanceof Float f) {
-            assertThat((Float) actual).as(ctx).isCloseTo(f, within(0.0001f));
-        }
-        else if (expCmp instanceof Double d) {
-            assertThat((Double) actual).as(ctx).isCloseTo(d, within(0.0000001d));
-        }
-        else if (expCmp instanceof byte[] refBytes) {
-            assertThat((byte[]) actual).as(ctx).isEqualTo(refBytes);
-        }
-        else {
-            assertThat(actual).as(ctx).isEqualTo(expCmp);
-        }
-    }
-
-    /// Functional interface for creating column readers (abstracts single-file vs multi-file).
-    @FunctionalInterface
-    interface ColumnReaderFactory {
-        ColumnReader columnReader(int columnIndex) throws IOException;
+        compareLeaf(ctx, expected, actual);
     }
 
     /// Get reference value for a flat column from a GenericRecord.
@@ -838,23 +846,30 @@ public class Utils {
                                            ColumnReader reader, int batchIdx) {
         String context = String.format("Row %d, column '%s'", rowIdx, colName);
         Object actual = getColumnReaderValue(reader, batchIdx);
-        Object comparableActual = convertToComparable(actual);
+        compareLeaf(context, refValue, convertToComparable(actual));
+    }
 
-        if (refValue instanceof String refStr && comparableActual instanceof byte[] actualBytes) {
-            assertThat(new String(actualBytes, java.nio.charset.StandardCharsets.UTF_8))
+    /// Leaf-value comparison shared by flat ([#compareColumnValue]) and nested
+    /// ([#deepCompareNested]) paths. Both arguments are expected to have already
+    /// been run through [#convertToComparable] by the caller. Applies numeric
+    /// tolerance for `Float`/`Double` and decodes UTF-8 when the reference is a
+    /// `String` but the actual is a raw `byte[]`.
+    private static void compareLeaf(String context, Object expected, Object actual) {
+        if (expected instanceof String refStr && actual instanceof byte[] actualBytes) {
+            assertThat(new String(actualBytes, StandardCharsets.UTF_8))
                     .as(context).isEqualTo(refStr);
         }
-        else if (refValue instanceof Float f) {
-            assertThat((Float) comparableActual).as(context).isCloseTo(f, within(0.0001f));
+        else if (expected instanceof Float f) {
+            assertThat((Float) actual).as(context).isCloseTo(f, within(0.0001f));
         }
-        else if (refValue instanceof Double d) {
-            assertThat((Double) comparableActual).as(context).isCloseTo(d, within(0.0000001d));
+        else if (expected instanceof Double d) {
+            assertThat((Double) actual).as(context).isCloseTo(d, within(0.0000001d));
         }
-        else if (refValue instanceof byte[] refBytes) {
-            assertThat((byte[]) comparableActual).as(context).isEqualTo(refBytes);
+        else if (expected instanceof byte[] refBytes) {
+            assertThat((byte[]) actual).as(context).isEqualTo(refBytes);
         }
         else {
-            assertThat(comparableActual).as(context).isEqualTo(refValue);
+            assertThat(actual).as(context).isEqualTo(expected);
         }
     }
 
