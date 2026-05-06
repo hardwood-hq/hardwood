@@ -11,6 +11,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 import java.util.List;
 
+import dev.hardwood.Experimental;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
@@ -32,6 +33,9 @@ import dev.hardwood.schema.ProjectedSchema;
 /// Provides typed primitive arrays for zero-boxing access. For nested/repeated columns,
 /// multi-level offsets and per-level null bitmaps enable efficient traversal without
 /// per-row virtual dispatch.
+///
+/// **This API is [Experimental]:** the shape of the batch accessors and nested-offset
+/// representation may change in future releases without prior deprecation.
 ///
 /// **Flat column usage:**
 /// ```java
@@ -74,6 +78,7 @@ import dev.hardwood.schema.ProjectedSchema;
 ///     }
 /// }
 /// ```
+@Experimental
 public class ColumnReader implements AutoCloseable {
 
     static final int DEFAULT_BATCH_SIZE = 262_144;

@@ -121,7 +121,8 @@
       "Bash(gh label *)",
       "Bash(git tag *)",
       "Bash(git apply *)",
-      "Bash(gh run *)"
+      "Bash(gh run *)",
+      "WebFetch(domain:www.youtube.com)"
     ]
   }
 }
