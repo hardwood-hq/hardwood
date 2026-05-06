@@ -134,6 +134,16 @@ class RecordFilterBenchmarkTest {
                         FilterPredicate.lt("value", 500.0)),
                 runs);
 
+        Run sortedCluster = timeFilter(
+                // ~50% selectivity but on a **sorted** column — every batch's bitset
+                // is one long run of 1s followed by 0s (or all 0s after id crosses
+                // TOTAL/2). Pairs with `compoundMid` to isolate the run-structure
+                // effect: same drain shape, same selectivity, very different runs.
+                FilterPredicate.and(
+                        FilterPredicate.lt("id", (long) (TOTAL_ROWS / 2)),
+                        FilterPredicate.gtEq("tag", 0)),
+                runs);
+
         Run empty = timeFilter(
                 FilterPredicate.and(
                         FilterPredicate.lt("id", 0L),
@@ -182,6 +192,8 @@ class RecordFilterBenchmarkTest {
         System.out.println();
         printResults("Compound mid 50% (id>=0 AND value<500)", PATH_DRAIN, compoundMid, runs);
         System.out.println();
+        printResults("Sorted cluster 50% (id<N/2 AND tag>=0)", PATH_DRAIN, sortedCluster, runs);
+        System.out.println();
         printResults("Empty result (id<0 AND value<+inf)", PATH_DRAIN, empty, runs);
         System.out.println();
         printResults("OR fallback (id<0 OR value<500)", PATH_CONSUMER, orFilter, runs);
@@ -219,6 +231,8 @@ class RecordFilterBenchmarkTest {
         assertThat(compoundSelective.rows[0]).isEqualTo(10_000L);
         // Compound mid: value uniform [0, 1000) so value<500 keeps ~50%.
         assertThat(compoundMid.rows[0]).isBetween((long) (TOTAL_ROWS * 0.4), (long) (TOTAL_ROWS * 0.6));
+        // Sorted cluster: id<N/2 is exactly N/2 rows, tag>=0 always true.
+        assertThat(sortedCluster.rows[0]).isEqualTo(TOTAL_ROWS / 2L);
         assertThat(empty.rows[0]).isEqualTo(0L);
         // OR: id<0 is empty so the result is the value<500 half.
         assertThat(orFilter.rows[0]).isBetween((long) (TOTAL_ROWS * 0.4), (long) (TOTAL_ROWS * 0.6));

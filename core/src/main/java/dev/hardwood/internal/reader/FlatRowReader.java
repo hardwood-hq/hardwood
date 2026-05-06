@@ -70,13 +70,24 @@ public final class FlatRowReader implements RowReader {
     // Drain-side filter path: when drainSide is true, iterate via nextSetBit over
     // combinedWords. When false, the original rowIndex++ path is taken.
     private final boolean drainSide;
-    private final long[] combinedWords; // null when !drainSide
+    /// AND-merged per-row matches for the current batch. `null` when `!drainSide`.
+    /// Multi-column case: an owned buffer filled by [#intersectMatches]. Single-column
+    /// case: aliased per batch to the underlying [BatchExchange.Batch#matches] array
+    /// (no copy needed — there is nothing to intersect).
+    private long[] combinedWords;
     /// Projected indices of columns that have a [BatchMatcher] column-filter installed.
     /// Iterating this array in [#intersectMatches] avoids per-column null checks
     /// on `Batch.matches` and skips columns without columnFilters entirely. `null`
     /// when `!drainSide`.
     private final int[] filteredColumns;
     private int pendingRowIndex = -1;
+    /// Exclusive upper bound of the current run of consecutive-1 bits in
+    /// [#combinedWords] starting at or before `rowIndex + 1`. While
+    /// `rowIndex + 1 < runEndExclusive`, [#hasNext] can advance without
+    /// invoking [#nextSetBit] — replacing per-row mask + `numberOfTrailingZeros`
+    /// with a simple bound check, which is the win for match-all-like batches.
+    /// Reset to 0 each time a new batch loads.
+    private int runEndExclusive;
 
     // File name from the current batch — used for exception enrichment
     private String currentFileName;
@@ -93,7 +104,12 @@ public final class FlatRowReader implements RowReader {
         this.flatNulls = new BitSet[columnCount];
         this.previousBatches = new BatchExchange.Batch[columnCount];
         this.drainSide = drainSide;
-        this.combinedWords = drainSide ? new long[wordsLen] : null;
+        // Multi-column drain needs a private buffer for the AND-merged words.
+        // Single-column drain aliases the batch's matches array directly (see
+        // intersectMatches) so no allocation is needed here.
+        this.combinedWords = drainSide && filteredColumns != null && filteredColumns.length > 1
+                ? new long[wordsLen]
+                : null;
         this.filteredColumns = filteredColumns;
 
         // Build name-to-index map and cache column metadata
@@ -238,10 +254,17 @@ public final class FlatRowReader implements RowReader {
             if (pendingRowIndex >= 0) {
                 return true;
             }
+            // Fast path: still inside a known run of consecutive 1-bits — skip
+            // nextSetBit and just advance. This is the match-all/dense-batch win.
+            if (rowIndex + 1 < runEndExclusive) {
+                pendingRowIndex = rowIndex + 1;
+                return true;
+            }
             while (true) {
                 int next = nextSetBit(combinedWords, rowIndex + 1, batchSize);
                 if (next >= 0) {
                     pendingRowIndex = next;
+                    runEndExclusive = scanRunEnd(combinedWords, next, batchSize);
                     return true;
                 }
                 if (!loadNextBatch()) {
@@ -264,6 +287,38 @@ public final class FlatRowReader implements RowReader {
         else {
             rowIndex++;
         }
+    }
+
+    /// Finds the **exclusive** end of the run of consecutive 1-bits in `words`
+    /// starting at `from`, bounded above by `limit`. Returns the index of the
+    /// first 0-bit at or after `from`, or `limit` if every bit in `[from, limit)`
+    /// is set.
+    ///
+    /// Caller must have already established that bit `from` is set; this method
+    /// is used by [#hasNext] to amortize per-row `nextSetBit` calls when whole
+    /// batches (or large stretches) match
+    private static int scanRunEnd(long[] words, int from, int limit) {
+        int wordIdx = from >>> 6;
+        int endWord = (limit - 1) >>> 6;
+        int bitInWord = from & 63;
+        // Force the bits below `from` to 1 so they don't show up as the "next zero" — they're irrelevant.
+        long lowMask = ~(~0L << bitInWord);
+        long word = words[wordIdx] | lowMask;
+        long zeros = ~word;
+
+        if (zeros != 0L) {
+            int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(zeros);
+            return Math.min(bit, limit);
+        }
+
+        while (++wordIdx <= endWord) {
+            word = words[wordIdx];
+            if (word != ~0L) {
+                int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(~word);
+                return Math.min(bit, limit);
+            }
+        }
+        return limit;
     }
 
     /// Finds the next set bit in `words` at or above `from`, bounded above by `limit` (exclusive).
@@ -643,6 +698,7 @@ public final class FlatRowReader implements RowReader {
         if (drainSide) {
             intersectMatches();
             pendingRowIndex = -1;
+            runEndExclusive = 0;
         }
         return true;
     }
@@ -656,9 +712,21 @@ public final class FlatRowReader implements RowReader {
     /// `batchSize` are not read by the consumer (`nextSetBit` is bounded by
     /// `batchSize`), so leaving them stale is safe and avoids the trailing
     /// zero-fill the previous shape paid every batch.
+    ///
+    /// **Single-column fast path**: when only one column has a matcher there is
+    /// nothing to AND-merge, so [combinedWords] is aliased directly to the batch's
+    /// own `matches` array — no copy, no owned buffer. The alias is reseated each
+    /// batch; the array stays valid until the batch is recycled in the next
+    /// [#loadNextBatch].
     private void intersectMatches() {
-        int activeWords = (batchSize + 63) >>> 6;
         BatchExchange.Batch[] batches = previousBatches;
+
+        if (filteredColumns.length == 1) {
+            combinedWords = batches[filteredColumns[0]].matches;
+            return;
+        }
+
+        int activeWords = (batchSize + 63) >>> 6;
         long[] combined = combinedWords;
 
         // First column: bulk copy the words covering the active range.
