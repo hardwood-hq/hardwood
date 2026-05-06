@@ -142,8 +142,12 @@ public final class FlatRowReader implements RowReader {
 
         // Try the drain-side path first. tryCompile returns null for any non-eligible
         // predicate; null falls through to the existing FilteredRowReader path below.
+        // The `hardwood.drainSide.enabled` system property (default `true`) lets
+        // benchmarks force every filtered query down the FilteredRowReader path for
+        // A/B comparison without touching code.
         BatchMatcher[] columnFilters = null;
-        if (filter != null) {
+        if (filter != null && Boolean.parseBoolean(
+                System.getProperty("hardwood.drainSide.enabled", "true"))) {
             columnFilters = BatchFilterCompiler.tryCompile(filter, schema, projectedSchema::toProjectedIndex);
         }
         boolean drainSide = columnFilters != null;

@@ -13,6 +13,8 @@ import java.util.function.IntUnaryOperator;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.predicate.matcher.longs.LongInBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
@@ -44,16 +46,6 @@ class BatchFilterCompilerTest {
     }
 
     @Test
-    void tryCompile_singleLongLeaf_returnsNullToAvoidDrainOverhead() {
-        // Drain-side has no parallelism win on a single fragment — the per-row
-        // compiled path is tighter, so we fall through to FilteredRowReader.
-        FileSchema schema = schema(leaf("id", PhysicalType.INT64));
-        ResolvedPredicate predicate = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
-
-        assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
-    }
-
-    @Test
     void tryCompile_andOfLongAndDoubleLeaves_returnsTwoFragments() {
         FileSchema schema = longDoubleSchema();
         ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
@@ -68,6 +60,58 @@ class BatchFilterCompilerTest {
         assertEquals(2, result.length);
         assertInstanceOf(LongBatchMatcher.class, result[0]);
         assertInstanceOf(DoubleBatchMatcher.class, result[1]);
+    }
+
+    @Test
+    void singleLongLeaf_returnsOneFragment() {
+        FileSchema schema = schema(leaf("id", PhysicalType.INT64));
+        ResolvedPredicate predicate = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
+
+        BatchMatcher[] result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+
+        assertNotNull(result);
+        assertEquals(1, result.length);
+        assertInstanceOf(LongBatchMatcher.class, result[0]);
+    }
+
+    @Test
+    void singleBooleanLeaf_returnsOneFragment() {
+        FileSchema schema = schema(leaf("flag", PhysicalType.BOOLEAN));
+        ResolvedPredicate predicate = new ResolvedPredicate.BooleanPredicate(0, Operator.EQ, true);
+
+        BatchMatcher[] result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+
+        assertNotNull(result);
+        assertEquals(1, result.length);
+        assertInstanceOf(BooleanBatchMatcher.class, result[0]);
+    }
+
+    @Test
+    void singleLongInLeaf_returnsOneFragment() {
+        FileSchema schema = schema(leaf("id", PhysicalType.INT64));
+        ResolvedPredicate predicate = new ResolvedPredicate.LongInPredicate(0, new long[]{1L, 2L, 3L});
+
+        BatchMatcher[] result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+
+        assertNotNull(result);
+        assertEquals(1, result.length);
+        assertInstanceOf(LongInBatchMatcher.class, result[0]);
+    }
+
+    @Test
+    void singleIsNullLeaf_returnsOneFragment() {
+        FileSchema schema = schema(leaf("id", PhysicalType.INT64));
+        ResolvedPredicate predicate = new ResolvedPredicate.IsNullPredicate(0);
+
+        BatchMatcher[] result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+
+        assertNotNull(result);
+        assertEquals(1, result.length);
+        assertInstanceOf(IsNullBatchMatcher.class, result[0]);
     }
 
     @Nested
@@ -109,45 +153,10 @@ class BatchFilterCompilerTest {
         }
 
         @Test
-        void intLeaf_returnsNull() {
-            FileSchema schema = schema(leaf("id", PhysicalType.INT32));
-            ResolvedPredicate predicate = new ResolvedPredicate.IntPredicate(0, Operator.GT, 5);
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
-        }
-
-        @Test
-        void floatLeaf_returnsNull() {
-            FileSchema schema = schema(leaf("v", PhysicalType.FLOAT));
-            ResolvedPredicate predicate = new ResolvedPredicate.FloatPredicate(0, Operator.GT, 5.0f);
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
-        }
-
-        @Test
-        void booleanLeaf_returnsNull() {
-            FileSchema schema = schema(leaf("flag", PhysicalType.BOOLEAN));
-            ResolvedPredicate predicate = new ResolvedPredicate.BooleanPredicate(0, Operator.EQ, true);
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
-        }
-
-        @Test
         void binaryLeaf_returnsNull() {
             FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
             ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
                     new byte[]{'h', 'i'}, false);
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
-        }
-
-        @Test
-        void longInLeaf_returnsNull() {
-            FileSchema schema = schema(leaf("id", PhysicalType.INT64));
-            ResolvedPredicate predicate = new ResolvedPredicate.LongInPredicate(0, new long[]{1L, 2L, 3L});
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
-        }
-
-        @Test
-        void isNullLeaf_returnsNull() {
-            FileSchema schema = schema(leaf("id", PhysicalType.INT64));
-            ResolvedPredicate predicate = new ResolvedPredicate.IsNullPredicate(0);
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 

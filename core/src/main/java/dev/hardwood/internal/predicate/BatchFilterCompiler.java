@@ -40,7 +40,6 @@ import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNotNullBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
-import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.schema.FileSchema;
 
 /// Compiles an eligible [ResolvedPredicate] into per-column [BatchMatcher] fragments
@@ -75,62 +74,60 @@ public final class BatchFilterCompiler {
         if (leaves == null) {
             return null;
         }
-        if (leaves.size() < 2) {
-            // Drain-side parallelism only pays off when there are >= 2 distinct
-            // column fragments. A single-leaf query has no peer drain to absorb
-            // the matcher cost in parallel, and the compiled per-row path is
-            // tighter than the batch-loop + nextSetBit iteration shape emitted
-            // here. Falling through lets the caller use FilteredRowReader.
-            return null;
-        }
 
+        int leavesSize = leaves.size();
+        int[] projectedIdx = new int[leavesSize];
         int maxProjected = -1;
-        for (ResolvedPredicate leaf : leaves) {
+
+        for (int i = 0; i < leavesSize; i++) {
+            ResolvedPredicate leaf = leaves.get(i);
+
             int fileIdx = leafColumnIndex(leaf);
-            if (fileIdx < 0) {
+            if (fileIdx == -1 || !isTopLevel(schema, fileIdx)) {
                 return null;
             }
-            if (!isTopLevel(schema, fileIdx)) {
-                return null;
-            }
+
             int projected = topLevelFieldIndex.applyAsInt(fileIdx);
-            if (projected < 0) {
+            if (projected < 0 || !isSupported(leaf)) {
                 return null;
             }
-            if (!isSupported(leaf)) {
-                return null;
-            }
+
+            projectedIdx[i] = projected;
+
             if (projected > maxProjected) {
                 maxProjected = projected;
             }
         }
 
         BatchMatcher[] result = new BatchMatcher[maxProjected + 1];
-        for (ResolvedPredicate leaf : leaves) {
-            int fileIdx = leafColumnIndex(leaf);
-            int projected = topLevelFieldIndex.applyAsInt(fileIdx);
+
+        for (int i = 0; i < leavesSize; i++) {
+            int projected = projectedIdx[i];
+
             if (result[projected] != null) {
                 // Two leaves on the same column: not supported in v1.
                 return null;
             }
-            BatchMatcher matcher = compileLeaf(leaf, projected);
+
+            BatchMatcher matcher = compileLeaf(leaves.get(i), projected);
             if (matcher == null) {
                 return null;
             }
+
             result[projected] = matcher;
         }
         return result;
     }
 
     private static List<ResolvedPredicate> flattenAnd(ResolvedPredicate predicate) {
-        if (predicate instanceof ResolvedPredicate.And and) {
-            for (ResolvedPredicate child : and.children()) {
+        if (predicate instanceof ResolvedPredicate.And(List<ResolvedPredicate> children)) {
+            for (ResolvedPredicate child : children) {
                 if (child instanceof ResolvedPredicate.And
                         || child instanceof ResolvedPredicate.Or) {
                     return null;
                 }
             }
-            return and.children();
+            return children;
         }
         if (predicate instanceof ResolvedPredicate.Or
                 || predicate instanceof ResolvedPredicate.GeospatialPredicate) {
@@ -160,25 +157,16 @@ public final class BatchFilterCompiler {
 
     private static boolean isSupported(ResolvedPredicate leaf) {
         return switch (leaf) {
-            case ResolvedPredicate.LongPredicate p -> isComparisonOp(p.op());
-            case ResolvedPredicate.DoublePredicate p -> isComparisonOp(p.op());
-            case ResolvedPredicate.IntPredicate p -> isComparisonOp(p.op());
-            case ResolvedPredicate.FloatPredicate p -> isComparisonOp(p.op());
-            // BooleanPredicate is only meaningful for EQ/NOT_EQ — other ops in
-            // RecordFilterCompiler.booleanLeaf collapse to a non-null check,
-            // which doesn't map to a typed boolean matcher.
-            case ResolvedPredicate.BooleanPredicate p -> p.op() == Operator.EQ || p.op() == Operator.NOT_EQ;
+            case ResolvedPredicate.LongPredicate ignored -> true;
+            case ResolvedPredicate.DoublePredicate ignored -> true;
+            case ResolvedPredicate.IntPredicate ignored -> true;
+            case ResolvedPredicate.FloatPredicate ignored -> true;
             case ResolvedPredicate.IntInPredicate ignored -> true;
             case ResolvedPredicate.LongInPredicate ignored -> true;
             case ResolvedPredicate.IsNullPredicate ignored -> true;
             case ResolvedPredicate.IsNotNullPredicate ignored -> true;
+            case ResolvedPredicate.BooleanPredicate p -> true;
             default -> false;
-        };
-    }
-
-    private static boolean isComparisonOp(Operator op) {
-        return switch (op) {
-            case EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ -> true;
         };
     }
 
