@@ -44,7 +44,7 @@ import dev.hardwood.schema.ProjectedSchema;
 import static org.junit.jupiter.api.Assertions.assertEquals;
 
 /// Two-way equivalence: compiled [RecordFilterCompiler] and drain-side [BatchFilterCompiler]
-/// + per-column [BatchMatcher] agree on which rows survive a given predicate. Constitutes
+/// + per-column [ColumnBatchMatcher] agree on which rows survive a given predicate. Constitutes
 /// the load-bearing correctness gate for the drain-side prototype.
 class DrainSideOracleTest {
 
@@ -111,7 +111,7 @@ class DrainSideOracleTest {
     }
 
     private static BitSet drainSideSurvivors(ResolvedPredicate predicate, Workload w) {
-        BatchMatcher[] fragments = BatchFilterCompiler.tryCompile(predicate, w.schema,
+        ColumnBatchMatcher[] fragments = BatchFilterCompiler.tryCompile(predicate, w.schema,
                 w.projection::toProjectedIndex);
         if (fragments == null) {
             // Predicate not eligible for drain-side (single-leaf shapes fall back
@@ -124,7 +124,7 @@ class DrainSideOracleTest {
         long[] combined = new long[wordsLen];
         boolean initialised = false;
         for (int col = 0; col < fragments.length; col++) {
-            BatchMatcher m = fragments[col];
+            ColumnBatchMatcher m = fragments[col];
             if (m == null) {
                 continue;
             }

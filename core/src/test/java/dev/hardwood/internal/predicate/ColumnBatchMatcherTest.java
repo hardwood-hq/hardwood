@@ -27,7 +27,7 @@ import dev.hardwood.internal.reader.BatchExchange;
 
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
-class BatchMatcherTest {
+class ColumnBatchMatcherTest {
 
     private static BatchExchange.Batch longBatch(long[] values, BitSet nulls) {
         BatchExchange.Batch batch = new BatchExchange.Batch();
@@ -45,7 +45,7 @@ class BatchMatcherTest {
         return b;
     }
 
-    private static long[] runMatcher(BatchMatcher matcher, BatchExchange.Batch batch) {
+    private static long[] runMatcher(ColumnBatchMatcher matcher, BatchExchange.Batch batch) {
         long[] out = new long[(batch.recordCount + 63) >>> 6];
         matcher.test(batch, out);
         return out;

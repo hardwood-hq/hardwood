@@ -31,7 +31,7 @@ import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.internal.predicate.BatchFilterCompiler;
-import dev.hardwood.internal.predicate.BatchMatcher;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
@@ -89,7 +89,7 @@ public class RecordFilterMicroBenchmark {
     private RowMatcher compiled;
 
     // Drain-side state — populated for eligible shapes (single, and2). null otherwise.
-    private BatchMatcher[] drainFragments;
+    private ColumnBatchMatcher[] drainFragments;
     private BatchExchange.Batch[] drainBatches;
     private long[] drainCombined;
     private long[] drainColumnScratch; // reused per-column matches workspace
@@ -121,7 +121,7 @@ public class RecordFilterMicroBenchmark {
         }
     }
 
-    /// Drain-side variant: per-column [BatchMatcher] writes a long[] of matches,
+    /// Drain-side variant: per-column [ColumnBatchMatcher] writes a long[] of matches,
     /// the columns are intersected, surviving rows are iterated via
     /// `Long.numberOfTrailingZeros`. Single-threaded — measures codegen quality
     /// against the value array, isolated from the parallelism story which
@@ -131,7 +131,7 @@ public class RecordFilterMicroBenchmark {
     /// and `and3`/`and4` because they include an INT32 leaf).
     @Benchmark
     public void drainSide(Blackhole bh) {
-        BatchMatcher[] fragments = drainFragments;
+        ColumnBatchMatcher[] fragments = drainFragments;
         if (fragments == null) {
             return; // shape not eligible — see class javadoc.
         }
@@ -141,7 +141,7 @@ public class RecordFilterMicroBenchmark {
 
         boolean initialised = false;
         for (int col = 0; col < fragments.length; col++) {
-            BatchMatcher m = fragments[col];
+            ColumnBatchMatcher m = fragments[col];
             if (m == null) {
                 continue;
             }

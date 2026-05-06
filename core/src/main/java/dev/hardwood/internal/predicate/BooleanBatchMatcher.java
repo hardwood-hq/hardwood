@@ -7,6 +7,6 @@
  */
 package dev.hardwood.internal.predicate;
 
-/// Marker for `boolean` typed [BatchMatcher]s. Implementations cast `batch.values` to `boolean[]`.
-public non-sealed interface BooleanBatchMatcher extends BatchMatcher {
+/// Marker for `boolean` typed [ColumnBatchMatcher]s. Implementations cast `batch.values` to `boolean[]`.
+public non-sealed interface BooleanBatchMatcher extends ColumnBatchMatcher {
 }

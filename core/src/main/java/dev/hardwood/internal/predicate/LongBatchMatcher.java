@@ -7,6 +7,6 @@
  */
 package dev.hardwood.internal.predicate;
 
-/// Marker for `long` typed [BatchMatcher]s. Implementations cast `batch.values` to `long[]`.
-public non-sealed interface LongBatchMatcher extends BatchMatcher {
+/// Marker for `long` typed [ColumnBatchMatcher]s. Implementations cast `batch.values` to `long[]`.
+public non-sealed interface LongBatchMatcher extends ColumnBatchMatcher {
 }

@@ -7,6 +7,6 @@
  */
 package dev.hardwood.internal.predicate;
 
-/// Marker for `double` typed [BatchMatcher]s. Implementations cast `batch.values` to `double[]`.
-public non-sealed interface DoubleBatchMatcher extends BatchMatcher {
+/// Marker for `double` typed [ColumnBatchMatcher]s. Implementations cast `batch.values` to `double[]`.
+public non-sealed interface DoubleBatchMatcher extends ColumnBatchMatcher {
 }

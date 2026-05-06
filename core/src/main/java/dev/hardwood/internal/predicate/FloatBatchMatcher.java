@@ -7,6 +7,6 @@
  */
 package dev.hardwood.internal.predicate;
 
-/// Marker for `float` typed [BatchMatcher]s. Implementations cast `batch.values` to `float[]`.
-public non-sealed interface FloatBatchMatcher extends BatchMatcher {
+/// Marker for `float` typed [ColumnBatchMatcher]s. Implementations cast `batch.values` to `float[]`.
+public non-sealed interface FloatBatchMatcher extends ColumnBatchMatcher {
 }

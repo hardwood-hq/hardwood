@@ -53,7 +53,7 @@ class BatchFilterCompilerTest {
                 new ResolvedPredicate.DoublePredicate(1, Operator.LT, 500.0)
         ));
 
-        BatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);
@@ -67,7 +67,7 @@ class BatchFilterCompilerTest {
         FileSchema schema = schema(leaf("id", PhysicalType.INT64));
         ResolvedPredicate predicate = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
 
-        BatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);
@@ -80,7 +80,7 @@ class BatchFilterCompilerTest {
         FileSchema schema = schema(leaf("flag", PhysicalType.BOOLEAN));
         ResolvedPredicate predicate = new ResolvedPredicate.BooleanPredicate(0, Operator.EQ, true);
 
-        BatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);
@@ -93,7 +93,7 @@ class BatchFilterCompilerTest {
         FileSchema schema = schema(leaf("id", PhysicalType.INT64));
         ResolvedPredicate predicate = new ResolvedPredicate.LongInPredicate(0, new long[]{1L, 2L, 3L});
 
-        BatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);
@@ -106,7 +106,7 @@ class BatchFilterCompilerTest {
         FileSchema schema = schema(leaf("id", PhysicalType.INT64));
         ResolvedPredicate predicate = new ResolvedPredicate.IsNullPredicate(0);
 
-        BatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);

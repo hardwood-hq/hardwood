@@ -20,7 +20,7 @@ import dev.hardwood.internal.reader.BatchExchange;
 /// The matcher overwrites `outWords` in full — the caller does not need to
 /// clear it beforehand. `outWords.length` must be at least
 /// `(batch.recordCount + 63) >>> 6`.
-public sealed interface BatchMatcher
+public sealed interface ColumnBatchMatcher
         permits LongBatchMatcher, DoubleBatchMatcher, IntBatchMatcher, FloatBatchMatcher,
         BooleanBatchMatcher, NullBatchMatcher {
 

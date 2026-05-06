@@ -18,7 +18,7 @@ import java.util.UUID;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.predicate.BatchFilterCompiler;
-import dev.hardwood.internal.predicate.BatchMatcher;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
@@ -75,7 +75,7 @@ public final class FlatRowReader implements RowReader {
     /// case: aliased per batch to the underlying [BatchExchange.Batch#matches] array
     /// (no copy needed — there is nothing to intersect).
     private long[] combinedWords;
-    /// Projected indices of columns that have a [BatchMatcher] column-filter installed.
+    /// Projected indices of columns that have a [ColumnBatchMatcher] column-filter installed.
     /// Iterating this array in [#intersectMatches] avoids per-column null checks
     /// on `Batch.matches` and skips columns without columnFilters entirely. `null`
     /// when `!drainSide`.
@@ -161,12 +161,12 @@ public final class FlatRowReader implements RowReader {
         // The `hardwood.drainSide.enabled` system property (default `true`) lets
         // benchmarks force every filtered query down the FilteredRowReader path for
         // A/B comparison without touching code.
-        BatchMatcher[] columnFilters = null;
+        ColumnBatchMatcher[] columnBatchMatchers = null;
         if (filter != null && Boolean.parseBoolean(
                 System.getProperty("hardwood.drainSide.enabled", "true"))) {
-            columnFilters = BatchFilterCompiler.tryCompile(filter, schema, projectedSchema::toProjectedIndex);
+            columnBatchMatchers = BatchFilterCompiler.tryCompile(filter, schema, projectedSchema::toProjectedIndex);
         }
-        boolean drainSide = columnFilters != null;
+        boolean drainSide = columnBatchMatchers != null;
         final int wordsLen = (batchSize + 63) >>> 6;
 
         FlatColumnWorker[] workers = new FlatColumnWorker[projectedColumnCount];
@@ -183,7 +183,7 @@ public final class FlatRowReader implements RowReader {
             // Allocate matches[] only when this column actually has a filter installed.
             // Other columns leave Batch.matches null (sentinel = all-ones in intersect).
             final boolean allocateMatches =
-                    drainSide && i < columnFilters.length && columnFilters[i] != null;
+                    drainSide && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
             BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recycling(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
@@ -197,7 +197,7 @@ public final class FlatRowReader implements RowReader {
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), maxRows);
             if (allocateMatches) {
-                worker.setColumnFilter(columnFilters[i]);
+                worker.setColumnFilter(columnBatchMatchers[i]);
             }
 
             buffers[i] = buffer;
@@ -207,12 +207,12 @@ public final class FlatRowReader implements RowReader {
 
         int[] filteredColumns = null;
         if (drainSide) {
-            int len = columnFilters.length;
+            int len = columnBatchMatchers.length;
             int[] tmp = new int[len];
             int idx = 0;
 
             for (int i = 0; i < len; i++) {
-                if (columnFilters[i] != null) {
+                if (columnBatchMatchers[i] != null) {
                     tmp[idx++] = i;
                 }
             }

@@ -42,7 +42,7 @@ import dev.hardwood.internal.predicate.matcher.nulls.IsNotNullBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
 import dev.hardwood.schema.FileSchema;
 
-/// Compiles an eligible [ResolvedPredicate] into per-column [BatchMatcher] fragments
+/// Compiles an eligible [ResolvedPredicate] into per-column [ColumnBatchMatcher] fragments
 /// for drain-side evaluation in [dev.hardwood.internal.reader.FlatColumnWorker].
 ///
 /// Eligibility is **all-or-nothing** per query:
@@ -68,7 +68,7 @@ public final class BatchFilterCompiler {
     /// @param topLevelFieldIndex maps a file column index to the projected
     ///     column index, or `-1` if the column is not addressable as a top-level
     ///     projected leaf
-    public static BatchMatcher[] tryCompile(ResolvedPredicate predicate, FileSchema schema,
+    public static ColumnBatchMatcher[] tryCompile(ResolvedPredicate predicate, FileSchema schema,
             IntUnaryOperator topLevelFieldIndex) {
         List<ResolvedPredicate> leaves = flattenAnd(predicate);
         if (leaves == null) {
@@ -99,7 +99,7 @@ public final class BatchFilterCompiler {
             }
         }
 
-        BatchMatcher[] result = new BatchMatcher[maxProjected + 1];
+        ColumnBatchMatcher[] result = new ColumnBatchMatcher[maxProjected + 1];
 
         for (int i = 0; i < leavesSize; i++) {
             int projected = projectedIdx[i];
@@ -109,7 +109,7 @@ public final class BatchFilterCompiler {
                 return null;
             }
 
-            BatchMatcher matcher = compileLeaf(leaves.get(i), projected);
+            ColumnBatchMatcher matcher = compileLeaf(leaves.get(i), projected);
             if (matcher == null) {
                 return null;
             }
@@ -170,7 +170,7 @@ public final class BatchFilterCompiler {
         };
     }
 
-    private static BatchMatcher compileLeaf(ResolvedPredicate leaf, int projectedIdx) {
+    private static ColumnBatchMatcher compileLeaf(ResolvedPredicate leaf, int projectedIdx) {
         return switch (leaf) {
             case ResolvedPredicate.LongPredicate p -> switch (p.op()) {
                 case GT -> new LongGtBatchMatcher(projectedIdx, p.value());

@@ -7,6 +7,6 @@
  */
 package dev.hardwood.internal.predicate;
 
-/// Marker for `int` typed [BatchMatcher]s. Implementations cast `batch.values` to `int[]`.
-public non-sealed interface IntBatchMatcher extends BatchMatcher {
+/// Marker for `int` typed [ColumnBatchMatcher]s. Implementations cast `batch.values` to `int[]`.
+public non-sealed interface IntBatchMatcher extends ColumnBatchMatcher {
 }
