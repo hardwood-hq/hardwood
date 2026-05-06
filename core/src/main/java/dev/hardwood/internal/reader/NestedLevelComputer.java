@@ -131,15 +131,15 @@ public final class NestedLevelComputer {
         };
     }
 
-    /// Computed per-level null and empty-list bitmaps, returned by [#computeLevelIndex].
+    /// Per-level null and empty-list bitmaps, returned by [#computeLevelBitmaps].
     ///
     /// `levelNulls[k]` flags items at level k whose enclosing container is null;
     /// `emptyListMarkers[k]` flags items whose container is present-but-empty
     /// (the def level reached the parent of the repeated group but not the
     /// repeated group itself). Both arrays are positionally aligned with the
     /// items at level k. A `null` entry at any index means "no bits set" at
-    /// that level.
-    public record LevelIndex(BitSet[] levelNulls, BitSet[] emptyListMarkers) {}
+    /// that level — callers should treat it the same as an all-zero BitSet.
+    public record LevelBitmaps(BitSet[] levelNulls, BitSet[] emptyListMarkers) {}
 
     /// Compute per-level null and empty-list bitmaps from definition and
     /// repetition levels in a single pass.
@@ -153,9 +153,9 @@ public final class NestedLevelComputer {
     ///
     /// @param levelNullThresholds per-level definition level thresholds from
     ///                            [#computeLevelNullThresholds]
-    public static LevelIndex computeLevelIndex(int[] defLevels, int[] repLevels,
-                                               int valueCount, int maxRepLevel,
-                                               int[] levelNullThresholds) {
+    public static LevelBitmaps computeLevelBitmaps(int[] defLevels, int[] repLevels,
+                                                   int valueCount, int maxRepLevel,
+                                                   int[] levelNullThresholds) {
         BitSet[] levelNulls = new BitSet[maxRepLevel];
         BitSet[] emptyListMarkers = new BitSet[maxRepLevel];
 
@@ -188,7 +188,7 @@ public final class NestedLevelComputer {
             emptyListMarkers[k] = emptyBits;
         }
 
-        return new LevelIndex(levelNulls, emptyListMarkers);
+        return new LevelBitmaps(levelNulls, emptyListMarkers);
     }
 
     /// Compute leaf-level null bitmap.

@@ -575,10 +575,39 @@ public class Utils {
                     compareColumnReader(colSchema.name(), columnReader, referenceRows);
                 }
                 else {
-                    compareNestedColumnReader(colSchema, columnReader, referenceRows);
+                    compareNestedColumnReader(schema, colSchema, columnReader, referenceRows);
                 }
             }
         }
+    }
+
+    /// Returns true when the column has a MAP-annotated ancestor in the schema.
+    /// Walks the schema along the column's [dev.hardwood.metadata.FieldPath]
+    /// rather than relying on path-component name matching, since structural
+    /// names like `map` and `key_value` could legally be user-defined field
+    /// names elsewhere in the tree.
+    private static boolean isUnderMap(FileSchema schema, ColumnSchema colSchema) {
+        SchemaNode current = schema.getRootNode();
+        for (String name : colSchema.fieldPath().elements()) {
+            if (!(current instanceof SchemaNode.GroupNode group)) {
+                return false;
+            }
+            if (group.isMap()) {
+                return true;
+            }
+            SchemaNode next = null;
+            for (SchemaNode child : group.children()) {
+                if (child.name().equals(name)) {
+                    next = child;
+                    break;
+                }
+            }
+            if (next == null) {
+                return false;
+            }
+            current = next;
+        }
+        return false;
     }
 
     /// Returns true when the column lives inside a Variant group's `typed_value`
@@ -655,8 +684,8 @@ public class Utils {
     /// reconstructing each top-level record's value from the [ColumnReader]'s
     /// offsets/level-null/element-null arrays and matching it to the same value
     /// extracted from the Avro [GenericRecord] along the column's [dev.hardwood.metadata.FieldPath].
-    static void compareNestedColumnReader(ColumnSchema colSchema, ColumnReader reader,
-                                          List<GenericRecord> referenceRows) {
+    static void compareNestedColumnReader(FileSchema schema, ColumnSchema colSchema,
+                                          ColumnReader reader, List<GenericRecord> referenceRows) {
         int maxRep = colSchema.maxRepetitionLevel();
         List<String> path = colSchema.fieldPath().elements();
         // parquet-java's AvroParquetReader exposes Parquet maps via HashMap-backed
@@ -665,7 +694,7 @@ public class Utils {
         // may be in a different order than the Hardwood column-stream order.
         // The row-level test sidesteps this with key-based lookup; here we
         // canonicalize both sides by sorting innermost lists before comparing.
-        boolean isMapProjection = path.contains("key_value") || path.contains("map");
+        boolean isMapProjection = isUnderMap(schema, colSchema);
         int rowIdx = 0;
         while (reader.nextBatch()) {
             int recordCount = reader.getRecordCount();
@@ -720,7 +749,12 @@ public class Utils {
             if (a instanceof Comparable<?> && a.getClass() == b.getClass()) {
                 return ((Comparable<Object>) a).compareTo(b);
             }
-            return 0;
+            // Map projections at the column level only ever bottom out in
+            // primitive leaves. If something else shows up the comparator
+            // would silently no-op, which would mask a real ordering bug.
+            throw new IllegalStateException(
+                    "Unsupported leaf type for innermost-list sort: "
+                            + a.getClass().getName() + " vs " + b.getClass().getName());
         });
     }
 

@@ -334,6 +334,10 @@ public class ColumnReader implements AutoCloseable {
     /// single null element — in the underlying encoding both produce one
     /// phantom entry that [#getElementNulls()] flags as null.
     ///
+    /// A `null` return is the sparse representation of an all-zero bitmap
+    /// (no empty containers at this level in the current batch); callers
+    /// should treat it the same as an unset bit at every index.
+    ///
     /// @param level the nesting level (0 = outermost group)
     /// @return BitSet where set bits indicate empty containers, or null if no empties at that level
     public BitSet getEmptyListMarkers(int level) {
