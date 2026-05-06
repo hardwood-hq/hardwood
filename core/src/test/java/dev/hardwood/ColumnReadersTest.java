@@ -352,4 +352,82 @@ class ColumnReadersTest {
             assertThat(reader.getNestingDepth()).isEqualTo(0);
         }
     }
+
+    /// `primitive_lists_test.parquet` row 2 has `int_list = []` (empty) and
+    /// row 3 has `int_list = null`. This pins the public-API contract that
+    /// `getEmptyListMarkers` and `getLevelNulls` together separate the two
+    /// states — the underlying computer is covered by `NestedLevelComputerTest`,
+    /// here we only check that the bitmaps reach a caller through `ColumnReader`.
+    @Test
+    void testGetEmptyListMarkersDistinguishesEmptyFromNull() throws Exception {
+        Path filePath = Paths.get("src/test/resources/primitive_lists_test.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("int_list.list.element"))) {
+
+            ColumnReader reader = columns.getColumnReader("int_list.list.element");
+            assertThat(reader.nextBatch()).isTrue();
+            assertThat(reader.getRecordCount()).isEqualTo(4);
+
+            BitSet levelNulls = reader.getLevelNulls(0);
+            BitSet emptyMarkers = reader.getEmptyListMarkers(0);
+
+            assertThat(levelNulls).isNotNull();
+            assertThat(levelNulls.get(3)).as("row 3 is null").isTrue();
+            assertThat(levelNulls.get(2)).as("row 2 is empty, not null").isFalse();
+
+            assertThat(emptyMarkers).isNotNull();
+            assertThat(emptyMarkers.get(2)).as("row 2 is empty").isTrue();
+            assertThat(emptyMarkers.get(3)).as("row 3 is null, not empty").isFalse();
+            assertThat(emptyMarkers.get(0)).as("row 0 has values").isFalse();
+            assertThat(emptyMarkers.get(1)).as("row 1 has values").isFalse();
+        }
+    }
+
+    @Test
+    void testGetEmptyListMarkersThrowsBeforeNextBatch() throws Exception {
+        Path filePath = Paths.get("src/test/resources/primitive_lists_test.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("int_list.list.element"))) {
+
+            ColumnReader reader = columns.getColumnReader("int_list.list.element");
+            assertThatThrownBy(() -> reader.getEmptyListMarkers(0))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("No batch available");
+        }
+    }
+
+    @Test
+    void testGetEmptyListMarkersThrowsForFlatColumn() throws Exception {
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
+
+            ColumnReader reader = columns.getColumnReader("id");
+            assertThat(reader.nextBatch()).isTrue();
+            assertThatThrownBy(() -> reader.getEmptyListMarkers(0))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("flat columns");
+        }
+    }
+
+    @Test
+    void testGetEmptyListMarkersThrowsForLevelOutOfRange() throws Exception {
+        Path filePath = Paths.get("src/test/resources/primitive_lists_test.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("int_list.list.element"))) {
+
+            ColumnReader reader = columns.getColumnReader("int_list.list.element");
+            assertThat(reader.nextBatch()).isTrue();
+            assertThatThrownBy(() -> reader.getEmptyListMarkers(5))
+                    .isInstanceOf(IndexOutOfBoundsException.class);
+        }
+    }
 }

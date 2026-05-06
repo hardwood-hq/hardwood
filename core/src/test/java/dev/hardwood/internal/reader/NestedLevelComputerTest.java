@@ -40,12 +40,13 @@ class NestedLevelComputerTest {
         int valueCount = 4;
         int maxRepLevel = 1;
         int[] thresholds = { 1 };
+        int leafMaxDef = 3;
 
-        NestedLevelComputer.LevelIndex index = NestedLevelComputer.computeLevelIndex(
+        NestedLevelComputer.LevelBitmaps bitmaps = NestedLevelComputer.computeLevelBitmaps(
                 defLevels, repLevels, valueCount, maxRepLevel, thresholds);
 
-        BitSet levelNulls = index.levelNulls()[0];
-        BitSet emptyMarkers = index.emptyListMarkers()[0];
+        BitSet levelNulls = bitmaps.levelNulls()[0];
+        BitSet emptyMarkers = bitmaps.emptyListMarkers()[0];
 
         // Only row 0 is null at the list level.
         assertThat(levelNulls).isNotNull();
@@ -64,7 +65,7 @@ class NestedLevelComputerTest {
         // Element-null bitmap must keep rows 2 (null element) and 1 / 0 (phantom)
         // separate from row 3 (real value); the disambiguation between rows 1
         // and 2 lives entirely in `emptyMarkers`.
-        BitSet elementNulls = NestedLevelComputer.computeElementNulls(defLevels, valueCount, 3);
+        BitSet elementNulls = NestedLevelComputer.computeElementNulls(defLevels, valueCount, leafMaxDef);
         assertThat(elementNulls).isNotNull();
         assertThat(elementNulls.get(0)).isTrue();
         assertThat(elementNulls.get(1)).isTrue();
@@ -80,11 +81,11 @@ class NestedLevelComputerTest {
         int[] repLevels = { 0, 0, 0 };
         int[] thresholds = { 1 };
 
-        NestedLevelComputer.LevelIndex index = NestedLevelComputer.computeLevelIndex(
+        NestedLevelComputer.LevelBitmaps bitmaps = NestedLevelComputer.computeLevelBitmaps(
                 defLevels, repLevels, 3, 1, thresholds);
 
-        assertThat(index.levelNulls()[0]).isNull();
-        assertThat(index.emptyListMarkers()[0]).isNull();
+        assertThat(bitmaps.levelNulls()[0]).isNull();
+        assertThat(bitmaps.emptyListMarkers()[0]).isNull();
     }
 
     /// Nested-list case (maxRepLevel=2): the inner-list empty state is
@@ -102,26 +103,81 @@ class NestedLevelComputerTest {
         int[] repLevels = { 0, 0, 0 };
         int[] thresholds = { 1, 3 };
 
-        NestedLevelComputer.LevelIndex index = NestedLevelComputer.computeLevelIndex(
+        NestedLevelComputer.LevelBitmaps bitmaps = NestedLevelComputer.computeLevelBitmaps(
                 defLevels, repLevels, 3, 2, thresholds);
 
         // Level 0 (outer list)
-        assertThat(index.levelNulls()[0]).isNull();        // none of the outer lists are null
-        BitSet outerEmpty = index.emptyListMarkers()[0];
+        assertThat(bitmaps.levelNulls()[0]).isNull();      // none of the outer lists are null
+        BitSet outerEmpty = bitmaps.emptyListMarkers()[0];
         assertThat(outerEmpty.get(0)).isTrue();             // row 0 outer is empty
         assertThat(outerEmpty.get(1)).isFalse();
         assertThat(outerEmpty.get(2)).isFalse();
 
         // Level 1 (inner list) — itemIdx counts every rep<=1 boundary, which
         // here is every value (3 items).
-        BitSet innerNulls = index.levelNulls()[1];
+        BitSet innerNulls = bitmaps.levelNulls()[1];
         assertThat(innerNulls.get(0)).isTrue();             // row 0: outer empty, inner shadowed as null
         assertThat(innerNulls.get(1)).isTrue();             // row 1: inner explicitly null
         assertThat(innerNulls.get(2)).isFalse();            // row 2: inner is empty, not null
 
-        BitSet innerEmpty = index.emptyListMarkers()[1];
+        BitSet innerEmpty = bitmaps.emptyListMarkers()[1];
         assertThat(innerEmpty.get(0)).isFalse();
         assertThat(innerEmpty.get(1)).isFalse();
         assertThat(innerEmpty.get(2)).isTrue();             // row 2 inner is empty
+    }
+
+    /// Pins the `list<list<int>>` example shown in `docs/content/usage.md`
+    /// (the multi-level nesting subsection). The three records `[[1, 2], [3]]`,
+    /// `[]`, `[[], [4]]` produce the def/rep streams below; if the offsets
+    /// or per-level bitmaps drift, the docs table needs updating too.
+    @Test
+    void pinsMultiLevelDocsExample() {
+        // Schema: `optional matrix (LIST) { repeated list { optional element (LIST)
+        // { repeated list { optional int32 element; } } } }`
+        //   matrix.list.maxDef = 2 → threshold[0] = 1
+        //   matrix.list.element.list.maxDef = 4 → threshold[1] = 3
+        // Records:
+        //   rec 0 [[1,2],[3]]: (def=5, rep=0), (def=5, rep=2), (def=5, rep=1)
+        //   rec 1 []:          (def=1, rep=0)
+        //   rec 2 [[], [4]]:   (def=3, rep=0), (def=5, rep=1)
+        int[] defLevels = { 5, 5, 5, 1, 3, 5 };
+        int[] repLevels = { 0, 2, 1, 0, 0, 1 };
+        int valueCount = 6;
+        int recordCount = 3;
+        int maxRepLevel = 2;
+        int[] thresholds = { 1, 3 };
+        int leafMaxDef = 5;
+
+        int[][] offsets = NestedLevelComputer.computeMultiLevelOffsets(
+                repLevels, valueCount, recordCount, maxRepLevel);
+        NestedLevelComputer.LevelBitmaps bitmaps = NestedLevelComputer.computeLevelBitmaps(
+                defLevels, repLevels, valueCount, maxRepLevel, thresholds);
+        BitSet elementNulls = NestedLevelComputer.computeElementNulls(defLevels, valueCount, leafMaxDef);
+
+        // Outer offsets: record r → starting index in offsets[1].
+        assertThat(offsets[0]).containsExactly(0, 2, 3);
+        // Inner offsets: inner-list j → starting index in `values`.
+        assertThat(offsets[1]).containsExactly(0, 2, 3, 4, 5);
+
+        // Outer level: only record 1 (`[]`) is empty; none are null.
+        assertThat(bitmaps.levelNulls()[0]).isNull();
+        BitSet outerEmpty = bitmaps.emptyListMarkers()[0];
+        assertThat(outerEmpty.get(1)).isTrue();
+        assertThat(outerEmpty.cardinality()).isEqualTo(1);
+
+        // Inner level: index 2 is the phantom for record 1's empty outer
+        // (shadowed as null at level 1); index 3 is the empty `[]` inner of
+        // record 2.
+        BitSet innerNulls = bitmaps.levelNulls()[1];
+        assertThat(innerNulls.get(2)).isTrue();
+        assertThat(innerNulls.cardinality()).isEqualTo(1);
+        BitSet innerEmpty = bitmaps.emptyListMarkers()[1];
+        assertThat(innerEmpty.get(3)).isTrue();
+        assertThat(innerEmpty.cardinality()).isEqualTo(1);
+
+        // Phantom slots in the leaf array (`values[3]` and `values[4]`).
+        assertThat(elementNulls.get(3)).isTrue();
+        assertThat(elementNulls.get(4)).isTrue();
+        assertThat(elementNulls.cardinality()).isEqualTo(2);
     }
 }

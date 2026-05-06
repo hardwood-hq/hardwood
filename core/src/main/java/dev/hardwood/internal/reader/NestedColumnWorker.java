@@ -212,11 +212,11 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         if (maxRepetitionLevel > 0 && batch.repetitionLevels != null && valueCount > 0) {
             batch.multiLevelOffsets = NestedLevelComputer.computeMultiLevelOffsets(
                     batch.repetitionLevels, valueCount, batch.recordCount, maxRepetitionLevel);
-            NestedLevelComputer.LevelIndex levelIndex = NestedLevelComputer.computeLevelIndex(
+            NestedLevelComputer.LevelBitmaps bitmaps = NestedLevelComputer.computeLevelBitmaps(
                     defLevels, batch.repetitionLevels, valueCount,
                     maxRepetitionLevel, levelNullThresholds);
-            batch.levelNulls = levelIndex.levelNulls();
-            batch.emptyListMarkers = levelIndex.emptyListMarkers();
+            batch.levelNulls = bitmaps.levelNulls();
+            batch.emptyListMarkers = bitmaps.emptyListMarkers();
         }
         else {
             batch.multiLevelOffsets = null;

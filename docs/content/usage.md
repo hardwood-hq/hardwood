@@ -626,16 +626,24 @@ For nested columns (lists, maps), `ColumnReader` provides multi-level offsets an
 
 `getEmptyListMarkers()` is what lets you tell an empty list apart from a list containing a single null element: in the underlying encoding, both produce a single phantom entry that `getElementNulls()` flags as null, so without this bitmap they'd be indistinguishable.
 
-For a column `optional group tags (LIST) { repeated group list { optional binary element (STRING); } }` holding these four records:
+For a column `optional group tags (LIST) { repeated group list { optional binary element (STRING); } }`, the four container states look like this:
 
 | Record index | Logical value | `getLevelNulls(0)` | `getEmptyListMarkers(0)` | `offsets[0]` | `getElementNulls()` at value index |
 |---|---|---|---|---|---|
-| 0 | `null`        | `1` | `0` | `0` | `1` (phantom) |
-| 1 | `[]`          | `0` | `1` | `1` | `1` (phantom) |
-| 2 | `[null]`      | `0` | `0` | `2` | `1` (real null element) |
-| 3 | `["x"]`       | `0` | `0` | `3` | `0` (`values[3] = "x"`) |
+| 0 | `null`     | `1` | `0` | `0` | `1` (phantom) |
+| 1 | `[]`       | `0` | `1` | `1` | `1` (phantom) |
+| 2 | `[null]`   | `0` | `0` | `2` | `1` (real null element) |
+| 3 | `["x"]`    | `0` | `0` | `3` | `0` (`values[3] = "x"`) |
 
-The `values` array has length 4 (one entry per record); the entries at indices 0 and 1 are phantoms whose contents are unspecified — `getLevelNulls(0)` and `getEmptyListMarkers(0)` are what tell the reader to skip them rather than dereference them.
+`getLevelNulls(0)` and `getEmptyListMarkers(0)` are what tell the reader to skip the two phantom entries (rows 0 and 1) rather than dereference them.
+
+Multi-element lists stretch the `values` array beyond `recordCount`. For a single record holding `["a", null, "b"]`:
+
+| Record index | Logical value | `getLevelNulls(0)` | `getEmptyListMarkers(0)` | `offsets[0]` | `getElementNulls()` |
+|---|---|---|---|---|---|
+| 0 | `["a", null, "b"]` | `0` | `0` | `0` | bit 0 = `0`, bit 1 = `1`, bit 2 = `0` |
+
+`recordCount = 1` but `valueCount = 3`; the record's range runs from `offsets[0] = 0` to `valueCount = 3`, with `values[0] = "a"`, `values[1]` skipped (flagged in `getElementNulls()`), and `values[2] = "b"`.
 
 ```java
 try (ColumnReader reader = fileReader.columnReader("tags")) {
@@ -664,6 +672,67 @@ try (ColumnReader reader = fileReader.columnReader("tags")) {
 ```
 
 `getNestingDepth()` returns 0 for flat columns, or the number of offset levels for nested columns.
+
+#### Multi-level nesting
+
+For columns with `getNestingDepth() > 1` (e.g. `list<list<int>>`), every offset/bitmap method takes a `level` argument and you walk through the levels in turn. `getOffsets(k)` maps an item at level k to its starting index in level k+1, and the innermost level's offsets point into the leaf `values` array. `getLevelNulls(k)` and `getEmptyListMarkers(k)` describe the four container states at that level — same semantics as in the single-level case, just per nesting depth.
+
+For a column `optional group matrix (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional int32 element; } } } }` (i.e. `list<list<int>>` with `getNestingDepth() == 2`) holding three records — `[[1, 2], [3]]`, `[]`, `[[], [4]]` — the outer level has one entry per record:
+
+| Record | Logical value     | `getLevelNulls(0)` | `getEmptyListMarkers(0)` | `getOffsets(0)` |
+|---|---|---|---|---|
+| 0 | `[[1, 2], [3]]`   | `0` | `0` | `0` |
+| 1 | `[]`              | `0` | `1` | `2` |
+| 2 | `[[], [4]]`       | `0` | `0` | `3` |
+
+The inner level enumerates every inner list (or phantom) across all records — each entry in `getOffsets(0)` indexes into this table, whose length is `getOffsets(1).length`:
+
+| Inner index | From   | Logical value                | `getLevelNulls(1)` | `getEmptyListMarkers(1)` | `getOffsets(1)` |
+|---|---|---|---|---|---|
+| 0 | record 0 | `[1, 2]`                   | `0` | `0` | `0` |
+| 1 | record 0 | `[3]`                      | `0` | `0` | `2` |
+| 2 | record 1 | (phantom — outer list `[]`) | `1` | `0` | `3` |
+| 3 | record 2 | `[]`                       | `0` | `1` | `4` |
+| 4 | record 2 | `[4]`                      | `0` | `0` | `5` |
+
+`values` has length 6: `[1, 2, 3, ?, ?, 4]`. Indexes 3 and 4 are phantoms (the outer `[]` of record 1 and the inner `[]` of record 2 respectively); `getElementNulls()` flags both.
+
+```java
+try (ColumnReader reader = fileReader.columnReader("matrix")) {
+    while (reader.nextBatch()) {
+        int recordCount = reader.getRecordCount();
+        int valueCount = reader.getValueCount();
+        int[] values = reader.getInts();
+        int[] outerOffsets = reader.getOffsets(0);
+        int[] innerOffsets = reader.getOffsets(1);
+        BitSet outerNulls = reader.getLevelNulls(0);
+        BitSet outerEmpty = reader.getEmptyListMarkers(0);
+        BitSet innerNulls = reader.getLevelNulls(1);
+        BitSet innerEmpty = reader.getEmptyListMarkers(1);
+        BitSet elementNulls = reader.getElementNulls();
+
+        for (int r = 0; r < recordCount; r++) {
+            if (outerNulls != null && outerNulls.get(r)) continue;     // outer null
+            if (outerEmpty != null && outerEmpty.get(r)) continue;     // outer empty
+            int innerStart = outerOffsets[r];
+            int innerEnd = (r + 1 < recordCount) ? outerOffsets[r + 1] : innerOffsets.length;
+            for (int j = innerStart; j < innerEnd; j++) {
+                if (innerNulls != null && innerNulls.get(j)) continue;
+                if (innerEmpty != null && innerEmpty.get(j)) continue;
+                int leafStart = innerOffsets[j];
+                int leafEnd = (j + 1 < innerOffsets.length) ? innerOffsets[j + 1] : valueCount;
+                for (int i = leafStart; i < leafEnd; i++) {
+                    if (elementNulls == null || !elementNulls.get(i)) {
+                        // process values[i]
+                    }
+                }
+            }
+        }
+    }
+}
+```
+
+Deeper nestings extend the same chain: at depth N you walk `getOffsets(0)` through `getOffsets(N - 1)`, checking the corresponding `getLevelNulls(k)` and `getEmptyListMarkers(k)` at each step before descending.
 
 ## Accessing File Metadata
 
