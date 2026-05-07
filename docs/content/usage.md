@@ -568,6 +568,19 @@ try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
 
 ### Nested and Repeated Columns
 
+#### Navigating nested groups in the schema
+
+Before opening a reader for a nested column, you usually need to walk the file's schema tree to find the leaf you want. `SchemaNode.GroupNode` exposes the structural primitives:
+
+- `isList()` / `isMap()` / `isStruct()` — disambiguate which kind of group a node is.
+- `getListElement()` — for LIST groups, returns the element node, applying Parquet's backward-compatibility rules for legacy 2-level encodings.
+- `getMapKey()` / `getMapValue()` — for MAP groups, returns the key and value nodes from the standard `map.key_value.key` / `map.key_value.value` encoding.
+- `children()` — for plain struct groups, iterate to get each field.
+
+All three navigation methods return `null` when the group isn't of the expected kind or its encoding is malformed. Callers decide whether `null` is fatal at their layer.
+
+#### Reading nested data
+
 For nested columns (lists, maps), `ColumnReader` provides multi-level offsets and per-level null bitmaps. A list/map container has four states, and three bitmaps together identify which one each record is in:
 
 - **Null** — `getLevelNulls(level)` set at the container's index.

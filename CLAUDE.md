@@ -63,6 +63,7 @@ Use Python 3.10–3.14 (PyArrow 24.0.0, pinned in `requirements.txt`, supports t
 Before starting new work, check whether a corresponding GitHub issue exists. If not, create one first so that all commits and pull requests can reference it.
 Commit messages must begin with the GitHub issue key (e.g. `#90 Include file name in all exceptions raised during reading`). This applies to every commit, including fixups and amendments.
 Focus the body on **why**, not **what** — the diff already shows the what. A short paragraph is usually enough; do not restate the change as a bullet list. See [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
+A sentence belongs in the message only if it helps a future reader understand the diff. Drop ephemeral minutiae — slips caught and fixed within the same branch, transient process issues, references to interim states that won't survive in the final history, or commentary about how the change was developed rather than what it does.
 
 When filing an issue, apply the relevant labels from the repo's label set. Common ones:
 - `bug` — defect / something isn't working as documented or intended.
