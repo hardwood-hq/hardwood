@@ -398,4 +398,71 @@ public class MapSchemaTest {
             }
         }
     }
+
+    // ==================== getMapKey / getMapValue ====================
+
+    @Test
+    void testGetMapKeyAndGetMapValueOnStandardEncoding() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            SchemaNode.GroupNode attributesGroup =
+                    (SchemaNode.GroupNode) fileReader.getFileSchema().getField("attributes");
+            assertThat(attributesGroup.isMap()).isTrue();
+
+            SchemaNode keyNode = attributesGroup.getMapKey();
+            assertThat(keyNode).isNotNull();
+            assertThat(keyNode.name()).isEqualTo("key");
+            assertThat(keyNode).isInstanceOf(SchemaNode.PrimitiveNode.class);
+
+            SchemaNode valueNode = attributesGroup.getMapValue();
+            assertThat(valueNode).isNotNull();
+            assertThat(valueNode.name()).isEqualTo("value");
+            assertThat(valueNode).isInstanceOf(SchemaNode.PrimitiveNode.class);
+        }
+    }
+
+    @Test
+    void testGetMapKeyValueWithMapOfMaps() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/map_of_maps_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            // Find the outer MAP group; its value is itself a MAP.
+            SchemaNode.GroupNode outerMap = null;
+            for (SchemaNode child : fileReader.getFileSchema().getRootNode().children()) {
+                if (child instanceof SchemaNode.GroupNode g && g.isMap()) {
+                    outerMap = g;
+                    break;
+                }
+            }
+            assertThat(outerMap).isNotNull();
+
+            // Inner MAP is the outer map's value.
+            SchemaNode innerValue = outerMap.getMapValue();
+            assertThat(innerValue).isInstanceOf(SchemaNode.GroupNode.class);
+            SchemaNode.GroupNode innerMap = (SchemaNode.GroupNode) innerValue;
+            assertThat(innerMap.isMap()).isTrue();
+
+            // Inner map's own key/value should be reachable too.
+            assertThat(innerMap.getMapKey()).isNotNull();
+            assertThat(innerMap.getMapValue()).isNotNull();
+        }
+    }
+
+    @Test
+    void testGetMapKeyValueReturnsNullForNonMapGroup() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            // The MAP group itself is "attributes"; navigate to its key_value subgroup, which
+            // is REPEATED but not MAP-annotated — getMapKey/Value on it must return null.
+            SchemaNode.GroupNode attributesGroup =
+                    (SchemaNode.GroupNode) fileReader.getFileSchema().getField("attributes");
+            SchemaNode.GroupNode keyValueGroup =
+                    (SchemaNode.GroupNode) attributesGroup.children().get(0);
+            assertThat(keyValueGroup.isMap()).isFalse();
+            assertThat(keyValueGroup.getMapKey()).isNull();
+            assertThat(keyValueGroup.getMapValue()).isNull();
+        }
+    }
 }

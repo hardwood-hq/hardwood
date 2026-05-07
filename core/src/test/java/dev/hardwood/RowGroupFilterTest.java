@@ -14,6 +14,7 @@ import java.util.List;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
@@ -58,7 +59,7 @@ class RowGroupFilterTest {
     private static long midpoint(RowGroup rg) {
         long start = rg.columns().get(0).chunkStartOffset();
         long compressed = 0;
-        for (var c : rg.columns()) {
+        for (ColumnChunk c : rg.columns()) {
             compressed += c.metaData().totalCompressedSize();
         }
         return start + compressed / 2;
