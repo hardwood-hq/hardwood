@@ -16,6 +16,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 ## Unreleased
 
 - `RowGroupPredicate` for split-aware row group selection. Pass `RowGroupPredicate.byteRange(start, end)` to any reader builder's `filter(...)` to restrict reading to the row groups whose midpoint falls in the given file byte range — the standard split convention used by Hadoop-style integrations (Flink `BulkFormat`, Spark file source, …). Combines with `FilterPredicate` via intersection. See [Split-Aware Reading](usage.md#split-aware-reading) and [#431](https://github.com/hardwood-hq/hardwood/issues/431).
+- Coordinated `ColumnReaders.nextBatch()` and `ColumnReaders.getRecordCount()` for multi-column reads. A single call advances every underlying reader in lockstep, returns `false` when any is exhausted, and validates that the readers' record counts agree. Replaces the prior `col0.nextBatch() & col1.nextBatch() & …` idiom and gives consumers structural alignment instead of an implicit invariant. See [Reading Multiple Columns](usage.md#reading-multiple-columns), [#434](https://github.com/hardwood-hq/hardwood/issues/434), and the related contract gap [#61](https://github.com/hardwood-hq/hardwood/issues/61).
 
 ## 1.0.0.Beta2 (2026-04-29)
 

@@ -531,32 +531,27 @@ Typed accessors are available for each physical type: `getInts()`, `getLongs()`,
 
 ### Reading Multiple Columns
 
-For reading multiple columns together, use `columnReaders(projection)` which returns a `ColumnReaders` collection:
+For reading multiple columns together, use `columnReaders(projection)` which returns a `ColumnReaders` collection. Drive every reader in lockstep with `ColumnReaders.nextBatch()`:
 
 ```java
 import dev.hardwood.Hardwood;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ColumnReaders;
-import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.schema.ColumnProjection;
 
 try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
-     ColumnReaders columns = parquet.columnReaders(
+     ColumnReaders columns = parquet.buildColumnReaders(
              ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))
              .build()) {
-
-    ColumnReader col0 = columns.getColumnReader("passenger_count");
-    ColumnReader col1 = columns.getColumnReader("trip_distance");
-    ColumnReader col2 = columns.getColumnReader("fare_amount");
 
     long passengerCount = 0;
     double tripDistance = 0, fareAmount = 0;
 
-    while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
-        int count = col0.getRecordCount();
-        double[] v0 = col0.getDoubles();
-        double[] v1 = col1.getDoubles();
-        double[] v2 = col2.getDoubles();
+    while (columns.nextBatch()) {
+        int count = columns.getRecordCount();
+        double[] v0 = columns.getColumnReader("passenger_count").getDoubles();
+        double[] v1 = columns.getColumnReader("trip_distance").getDoubles();
+        double[] v2 = columns.getColumnReader("fare_amount").getDoubles();
 
         for (int i = 0; i < count; i++) {
             passengerCount += (long) v0[i];
@@ -566,6 +561,8 @@ try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
     }
 }
 ```
+
+`ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when any reader is exhausted — partial advancement isn't possible because all readers consume from a shared `RowGroupIterator`. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-reader record counts throw `IllegalStateException`. Single-column consumers, or callers that need fine-grained per-reader cadence, can still call `ColumnReader.nextBatch()` directly on the readers returned by `getColumnReader(...)`.
 
 ### Nested and Repeated Columns
 
