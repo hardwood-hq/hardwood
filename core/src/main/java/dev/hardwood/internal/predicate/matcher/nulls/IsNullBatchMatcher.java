@@ -13,7 +13,7 @@ import dev.hardwood.internal.predicate.NullBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 
 /// IS NULL: bit `i` is set iff row `i` is null. Bulk-copies [BitSet#toLongArray]
-/// then masks off bits past `recordCount`. No per-bit loop.
+/// into the live range. No per-bit loop.
 public final class IsNullBatchMatcher implements NullBatchMatcher {
 
     private final int columnIndex;
@@ -35,7 +35,7 @@ public final class IsNullBatchMatcher implements NullBatchMatcher {
 
         if (nulls == null) {
             // No nulls in this batch — every row is non-null.
-            for (int w = 0; w < outWords.length; w++) {
+            for (int w = 0; w < wordsForN; w++) {
                 outWords[w] = 0L;
             }
             return;
@@ -48,13 +48,8 @@ public final class IsNullBatchMatcher implements NullBatchMatcher {
         for (int w = copy; w < wordsForN; w++) {
             outWords[w] = 0L;
         }
-        // Mask off the partial-tail bits past recordCount.
-        int tail = n & 63;
-        if (tail != 0 && wordsForN > 0) {
-            outWords[wordsForN - 1] &= (1L << tail) - 1L;
-        }
-        for (int w = wordsForN; w < outWords.length; w++) {
-            outWords[w] = 0L;
-        }
+        // Bits past `n` (in the last live word and in stale trailing words) are
+        // intentionally left as-is — the consumer (FlatRowReader#intersectMatches)
+        // only touches the words covering `[0, n)`, so masking would be dead work.
     }
 }
