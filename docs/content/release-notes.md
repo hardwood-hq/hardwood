@@ -13,6 +13,10 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
+## Unreleased
+
+- `RowGroupPredicate` for split-aware row group selection. Pass `RowGroupPredicate.byteRange(start, end)` to any reader builder's `filter(...)` to restrict reading to the row groups whose midpoint falls in the given file byte range — the standard split convention used by Hadoop-style integrations (Flink `BulkFormat`, Spark file source, …). Combines with `FilterPredicate` via intersection. See [Split-Aware Reading](usage.md#split-aware-reading) and [#431](https://github.com/hardwood-hq/hardwood/issues/431).
+
 ## 1.0.0.Beta2 (2026-04-29)
 
 [Announcement blog post](https://www.morling.dev/blog/variant-support-interactive-parquet-file-tui-hardwood-1.0.0.beta2-is-out/)

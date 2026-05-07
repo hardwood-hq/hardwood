@@ -231,29 +231,30 @@ public class ParquetFileReader implements AutoCloseable {
     // ============================================================
 
     RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter, long maxRows) {
-        return buildRowReader(projection, filter, maxRows, 0L);
+        return buildRowReader(projection, filter, null, maxRows, 0L);
     }
 
-    RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter, long maxRows,
-                             long firstRow) {
+    RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
+                             RowGroupPredicate rowGroupFilter, long maxRows, long firstRow) {
+        // Apply the row-group predicate (e.g. byte-range) up front so `firstRow` indexes
+        // into the kept sequence — a caller doing split-aware reading can seek inside *its*
+        // split. Stats-based row-group dropping (via FilterPredicate) stays inside the
+        // RowGroupIterator, so its semantics under `firstRow` are unchanged from before.
+        List<RowGroup> filteredRowGroups = rowGroupFilter == null
+                ? firstFileMetaData.rowGroups()
+                : filterRowGroups(null, rowGroupFilter);
+
         if (firstRow == 0L) {
-            return buildRowReader(projection, filter, maxRows, firstFileMetaData.rowGroups());
+            return buildRowReader(projection, filter, maxRows, filteredRowGroups);
         }
         // Locate the row group containing `firstRow` by walking cumulative
-        // RowGroup.numRows(). For multi-file readers this indexes into the
-        // first file only — cross-file firstRow is out of scope.
-        List<RowGroup> all = firstFileMetaData.rowGroups();
-        long totalRows = firstFileMetaData.numRows();
-        if (firstRow > totalRows) {
-            throw new IllegalArgumentException(
-                    "firstRow " + firstRow + " exceeds the file's total row count "
-                    + totalRows);
-        }
+        // RowGroup.numRows() over the filtered list. After the loop, `cumulative`
+        // equals the total row count of `filteredRowGroups` if no target was found.
         long cumulative = 0L;
-        int targetRg = all.size(); // sentinel: at-the-end yields empty reader
+        int targetRg = -1;
         long withinRg = 0L;
-        for (int i = 0; i < all.size(); i++) {
-            long rgRows = all.get(i).numRows();
+        for (int i = 0; i < filteredRowGroups.size(); i++) {
+            long rgRows = filteredRowGroups.get(i).numRows();
             if (firstRow < cumulative + rgRows) {
                 targetRg = i;
                 withinRg = firstRow - cumulative;
@@ -261,13 +262,18 @@ public class ParquetFileReader implements AutoCloseable {
             }
             cumulative += rgRows;
         }
-        if (targetRg >= all.size()) {
-            // firstRow == totalRows — empty reader.
+        if (targetRg < 0) {
+            if (firstRow > cumulative) {
+                throw new IllegalArgumentException(
+                        "firstRow " + firstRow
+                        + " exceeds the (row-group-filtered) total row count " + cumulative);
+            }
+            // firstRow == cumulative — empty reader.
             return buildRowReader(projection, filter, maxRows, List.<RowGroup>of());
         }
         List<RowGroup> rowGroups = targetRg == 0
-                ? all
-                : all.subList(targetRg, all.size());
+                ? filteredRowGroups
+                : filteredRowGroups.subList(targetRg, filteredRowGroups.size());
         // The reader yields from the start of `targetRg`. We bump maxRows
         // by the within-RG skip distance because head(N) bounds *yielded*
         // rows; the residue rows we discard via next() count too.
@@ -352,31 +358,47 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     ColumnReader buildColumnReader(String columnName, FilterPredicate filter) {
+        return buildColumnReader(columnName, filter, null);
+    }
+
+    ColumnReader buildColumnReader(
+            String columnName, FilterPredicate filter, RowGroupPredicate rowGroupFilter) {
         ensureSingleFile("columnReader(String)");
         InputFile inputFile = inputFiles.get(0);
-        if (filter == null) {
-            return ColumnReader.create(columnName, schema, inputFile, firstFileMetaData.rowGroups(), context);
-        }
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return ColumnReader.create(columnName, schema, inputFile, filterRowGroups(resolved), context, resolved);
+        ResolvedPredicate resolved = filter != null
+                ? FilterPredicateResolver.resolve(filter, schema) : null;
+        List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
+        return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, resolved);
     }
 
     ColumnReader buildColumnReader(int columnIndex, FilterPredicate filter) {
+        return buildColumnReader(columnIndex, filter, null);
+    }
+
+    ColumnReader buildColumnReader(
+            int columnIndex, FilterPredicate filter, RowGroupPredicate rowGroupFilter) {
         ensureSingleFile("columnReader(int)");
         InputFile inputFile = inputFiles.get(0);
-        if (filter == null) {
-            return ColumnReader.create(columnIndex, schema, inputFile, firstFileMetaData.rowGroups(), context);
-        }
-        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
-        return ColumnReader.create(columnIndex, schema, inputFile, filterRowGroups(resolved), context, resolved);
+        ResolvedPredicate resolved = filter != null
+                ? FilterPredicateResolver.resolve(filter, schema) : null;
+        List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
+        return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, resolved);
     }
 
     ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) {
+        return buildColumnReaders(projection, filter, null);
+    }
+
+    ColumnReaders buildColumnReaders(
+            ColumnProjection projection,
+            FilterPredicate filter,
+            RowGroupPredicate rowGroupFilter) {
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
+        List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
 
         RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0);
-        iterator.setFirstFile(schema, firstFileMetaData.rowGroups());
+        iterator.setFirstFile(schema, rowGroups);
         ProjectedSchema projected = iterator.initialize(projection, resolved);
         rowGroupIterators.add(iterator);
         return new ColumnReaders(context, iterator, schema, projected);
@@ -403,9 +425,22 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     private List<RowGroup> filterRowGroups(ResolvedPredicate filter) {
+        return filterRowGroups(filter, null);
+    }
+
+    /// Filter row groups by an optional column-statistics predicate and an optional
+    /// [RowGroupPredicate]. A row group is kept if and only if it passes both.
+    private List<RowGroup> filterRowGroups(
+            ResolvedPredicate filter, RowGroupPredicate rowGroupFilter) {
         List<RowGroup> all = firstFileMetaData.rowGroups();
+        // Evaluate the RowGroupPredicate first: in split-aware reads it is both
+        // cheaper (a midpoint compare for ByteRange) and more selective (one shard
+        // out of N), short-circuiting the column-statistics check on the rejected
+        // majority.
         List<RowGroup> kept = all.stream()
-                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filter, rg))
+                .filter(rg -> rowGroupFilter == null || matches(rg, rowGroupFilter))
+                .filter(rg -> filter == null
+                        || !RowGroupFilterEvaluator.canDropRowGroup(filter, rg))
                 .toList();
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();
@@ -416,6 +451,34 @@ public class ParquetFileReader implements AutoCloseable {
         event.commit();
 
         return kept;
+    }
+
+    /// Evaluate a [RowGroupPredicate] against one row group.
+    private static boolean matches(RowGroup rg, RowGroupPredicate p) {
+        return switch (p) {
+            case RowGroupPredicate.ByteRange b -> {
+                long mid = rowGroupMidpoint(rg);
+                yield mid >= b.startInclusive() && mid < b.endExclusive();
+            }
+            case RowGroupPredicate.And a -> {
+                for (RowGroupPredicate child : a.children()) {
+                    if (!matches(rg, child)) {
+                        yield false;
+                    }
+                }
+                yield true;
+            }
+        };
+    }
+
+    private static long rowGroupMidpoint(RowGroup rg) {
+        List<dev.hardwood.metadata.ColumnChunk> columns = rg.columns();
+        long start = columns.get(0).chunkStartOffset();
+        long compressed = 0;
+        for (dev.hardwood.metadata.ColumnChunk chunk : columns) {
+            compressed += chunk.metaData().totalCompressedSize();
+        }
+        return start + compressed / 2;
     }
 
     // ============================================================
@@ -441,6 +504,7 @@ public class ParquetFileReader implements AutoCloseable {
         private final ParquetFileReader fileReader;
         private ColumnProjection projection = ColumnProjection.all();
         private FilterPredicate filter;
+        private RowGroupPredicate rowGroupFilter;
         /// Positive: return at most `headRows` rows from the start.
         /// Zero (default): no limit.
         private long headRows;
@@ -465,9 +529,22 @@ public class ParquetFileReader implements AutoCloseable {
             return this;
         }
 
-        /// Apply a row-group / record-level filter predicate. Default: no filter.
+        /// Apply a column-statistics / record-level filter predicate. Default: no filter.
         public RowReaderBuilder filter(FilterPredicate filter) {
             this.filter = filter;
+            return this;
+        }
+
+        /// Apply a row-group selection predicate (e.g. byte-range, for split-aware reading).
+        /// Default: read every row group. Combines with [#filter(FilterPredicate)] via
+        /// intersection: a row group is read if and only if it passes both.
+        ///
+        /// Composes with [#head(long)] and [#firstRow(long)] over the *filtered* row-group
+        /// sequence — `firstRow(N)` skips `N` rows of the kept set, `head(N)` caps at `N`
+        /// rows of the kept set. Mutually exclusive with [#tail(long)] (tail mode requires
+        /// a known total row count, which row-group filtering invalidates).
+        public RowReaderBuilder filter(RowGroupPredicate rowGroupFilter) {
+            this.rowGroupFilter = rowGroupFilter;
             return this;
         }
 
@@ -527,13 +604,20 @@ public class ParquetFileReader implements AutoCloseable {
                 throw new IllegalArgumentException("tail cannot be combined with a filter: "
                         + "the set of matching rows is not known from row-group statistics alone");
             }
+            if (tailRows > 0 && rowGroupFilter != null) {
+                throw new IllegalArgumentException(
+                        "tail cannot be combined with a row-group filter: "
+                                + "tail mode requires a known total row count, which row-group "
+                                + "filtering invalidates");
+            }
             if (tailRows > 0 && firstRow > 0) {
                 throw new IllegalArgumentException("tail and firstRow are mutually exclusive");
             }
             if (tailRows > 0) {
                 return fileReader.buildTailRowReader(projection, tailRows);
             }
-            return fileReader.buildRowReader(projection, filter, headRows, firstRow);
+            return fileReader.buildRowReader(
+                    projection, filter, rowGroupFilter, headRows, firstRow);
         }
     }
 
@@ -556,6 +640,7 @@ public class ParquetFileReader implements AutoCloseable {
         private final int columnIndex;
         private final boolean byName;
         private FilterPredicate filter;
+        private RowGroupPredicate rowGroupFilter;
 
         private ColumnReaderBuilder(ParquetFileReader fileReader, String columnName) {
             this.fileReader = fileReader;
@@ -571,17 +656,26 @@ public class ParquetFileReader implements AutoCloseable {
             this.byName = false;
         }
 
-        /// Apply a row-group / page-level filter predicate. Default: no filter.
+        /// Apply a column-statistics filter — row groups whose statistics prove no row
+        /// matches are skipped. Default: no filter.
         public ColumnReaderBuilder filter(FilterPredicate filter) {
             this.filter = filter;
             return this;
         }
 
+        /// Apply a row-group selection predicate (e.g. byte-range, for split-aware reading).
+        /// Default: read every row group. Combines with [#filter(FilterPredicate)] via
+        /// intersection: a row group is read if and only if it passes both.
+        public ColumnReaderBuilder filter(RowGroupPredicate rowGroupFilter) {
+            this.rowGroupFilter = rowGroupFilter;
+            return this;
+        }
+
         public ColumnReader build() {
             if (byName) {
-                return fileReader.buildColumnReader(columnName, filter);
+                return fileReader.buildColumnReader(columnName, filter, rowGroupFilter);
             }
-            return fileReader.buildColumnReader(columnIndex, filter);
+            return fileReader.buildColumnReader(columnIndex, filter, rowGroupFilter);
         }
     }
 
@@ -605,6 +699,7 @@ public class ParquetFileReader implements AutoCloseable {
         private final ParquetFileReader fileReader;
         private final ColumnProjection projection;
         private FilterPredicate filter;
+        private RowGroupPredicate rowGroupFilter;
 
         private ColumnReadersBuilder(ParquetFileReader fileReader, ColumnProjection projection) {
             if (projection == null) {
@@ -614,14 +709,23 @@ public class ParquetFileReader implements AutoCloseable {
             this.projection = projection;
         }
 
-        /// Apply a row-group statistics filter. Default: no filter.
+        /// Apply a column-statistics filter — row groups whose statistics prove no row
+        /// matches are skipped. Default: no filter.
         public ColumnReadersBuilder filter(FilterPredicate filter) {
             this.filter = filter;
             return this;
         }
 
+        /// Apply a row-group selection predicate (e.g. byte-range, for split-aware reading).
+        /// Default: read every row group. Combines with [#filter(FilterPredicate)] via
+        /// intersection: a row group is read if and only if it passes both.
+        public ColumnReadersBuilder filter(RowGroupPredicate rowGroupFilter) {
+            this.rowGroupFilter = rowGroupFilter;
+            return this;
+        }
+
         public ColumnReaders build() {
-            return fileReader.buildColumnReaders(projection, filter);
+            return fileReader.buildColumnReaders(projection, filter, rowGroupFilter);
         }
     }
 
