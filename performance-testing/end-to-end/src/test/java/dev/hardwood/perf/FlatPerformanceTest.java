@@ -526,8 +526,8 @@ class FlatPerformanceTest {
                     ColumnReader col2 = columns.getColumnReader("fare_amount");
 
                     if (group.passengerCountIsLong()) {
-                        while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
-                            int count = col0.getRecordCount();
+                        while (columns.nextBatch()) {
+                            int count = columns.getRecordCount();
                             long[] v0 = col0.getLongs();
                             double[] v1 = col1.getDoubles();
                             double[] v2 = col2.getDoubles();
@@ -550,8 +550,8 @@ class FlatPerformanceTest {
                         }
                     }
                     else {
-                        while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
-                            int count = col0.getRecordCount();
+                        while (columns.nextBatch()) {
+                            int count = columns.getRecordCount();
                             double[] v0 = col0.getDoubles();
                             double[] v1 = col1.getDoubles();
                             double[] v2 = col2.getDoubles();
