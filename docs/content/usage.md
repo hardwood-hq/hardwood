@@ -398,6 +398,51 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 When combined with a filter, the limit applies to the number of **matching** rows, not the total number of scanned rows.
 
+## Split-Aware Reading
+
+When you partition a file across parallel readers — Flink `BulkFormat`, Spark file source, MapReduce-style splits — each reader is assigned a byte range and is responsible for only the row groups owned by it. Express this with `RowGroupPredicate.byteRange(start, end)`, passed to any builder's `filter(...)`:
+
+```java
+import dev.hardwood.reader.RowGroupPredicate;
+
+// One reader subtask, owning the file's first quarter.
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     ColumnReader col = fileReader.buildColumnReader("price")
+             .filter(RowGroupPredicate.byteRange(splitStart, splitEnd))
+             .build()) {
+    while (col.nextBatch()) {
+        // Only batches from row groups owned by this split.
+    }
+}
+```
+
+A row group is included if and only if its **midpoint** — the start of its first column chunk plus half of its on-disk compressed size — falls in `[start, end)`. This is the standard Hadoop-input-format split convention: across a partitioning of the file into disjoint byte ranges, every row group lands in exactly one range, regardless of where the split boundary falls inside the row group itself.
+
+**Granularity is row-group, not row.** A row group whose midpoint is in `[0, 1000)` is read in full, including any rows whose data extends beyond byte 1000. If you need true row-level windowing, combine `RowGroupPredicate` with [`RowReaderBuilder.firstRow(...)`](#seeking-to-an-absolute-row) and [`head(...)`](#row-limit).
+
+`RowGroupPredicate` composes with [`FilterPredicate`](#predicate-pushdown-filter) via intersection — both apply, and a row group is read if and only if it passes both:
+
+```java
+ColumnReader col = fileReader.buildColumnReader("price")
+        .filter(FilterPredicate.gt("price", 100))                  // column-stats
+        .filter(RowGroupPredicate.byteRange(splitStart, splitEnd)) // layout
+        .build();
+```
+
+`RowGroupPredicate.and(...)` lets you intersect multiple row-group conditions:
+
+```java
+.filter(RowGroupPredicate.and(
+        RowGroupPredicate.byteRange(splitStart, splitEnd),
+        RowGroupPredicate.byteRange(otherStart, otherEnd)))
+```
+
+The same `filter(RowGroupPredicate)` overload is available on `RowReaderBuilder` and `ColumnReadersBuilder`. On `RowReaderBuilder`, `firstRow(N)` and `head(N)` index over the *row-group-filtered* sequence — `firstRow(N)` skips `N` rows of the kept set, `head(N)` caps reading at `N` rows of the kept set. Combining `RowGroupPredicate` with `tail(N)` is rejected: tail mode requires a known total row count, which row-group filtering invalidates.
+
+### Empty ranges
+
+`byteRange(start, end)` where `end < start` is a documented empty range — the reader yields zero rows. This matches callers that pass `splitStart + splitLength` and tolerate long overflow on tail splits (a tail split with `length = Long.MAX_VALUE` overflows to a negative end, which your reader will then treat as empty if no preceding split has already covered the rest of the file).
+
 ### Reading the Tail of a File
 
 The `tail(N)` builder method reads the trailing rows of the file instead of the leading ones. Row groups that do not overlap the tail are skipped entirely, so pages for earlier row groups are never fetched or decoded — especially useful on remote backends like S3, where unneeded row groups avoid HTTP range requests altogether.
