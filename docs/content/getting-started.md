@@ -15,7 +15,7 @@ Hardwood runs on Java 21 or newer; Java 25 is recommended for best performance.
 
 If you just want to inspect or convert Parquet files from the command line, grab a pre-built native binary for Linux, macOS, or Windows from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}); see the [CLI](cli.md) page for details.
 
-## Installation
+## Dependency Management
 
 ### Using the BOM (Bill of Materials)
 
