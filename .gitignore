@@ -38,6 +38,7 @@ nb-configuration.xml
 *.rej
 
 # Local environment
+.java-version
 .env
 .venv
 .docker-venv
