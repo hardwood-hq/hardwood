@@ -181,6 +181,11 @@ final class PqStructImpl implements PqStruct {
         return readLogicalType(name, LogicalType.IntervalType.class, PqInterval.class);
     }
 
+    @Override
+    public Float getFloat16(String name) {
+        return readLogicalType(name, LogicalType.Float16Type.class, Float.class);
+    }
+
     // ==================== Nested Types ====================
 
     @Override

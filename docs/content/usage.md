@@ -148,6 +148,7 @@ All accessor methods are available in two forms:
 | `getDecimal` | INT32, INT64, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
 | `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
 | `getInterval` | FIXED_LEN_BYTE_ARRAY(12) | INTERVAL | `PqInterval` |
+| `getFloat16` | FIXED_LEN_BYTE_ARRAY(2) | FLOAT16 | `Float` |
 | `getStruct` | | | `PqStruct` |
 | `getList` | | LIST | `PqList` |
 | `getMap` | | MAP | `PqMap` |
@@ -157,6 +158,8 @@ All accessor methods are available in two forms:
 All methods are available as both `method(name)` and `method(index)`, except `getStruct`, `getList`, `getMap`, and `getVariant` which are name-based only.
 
 **INTERVAL columns:** `PqInterval` is a plain record with three `long` properties — `months()`, `days()`, and `milliseconds()`. Each holds an unsigned 32-bit value in the range `[0, 4_294_967_295]`, so no additional conversion is needed. The components are independent and not normalized. Files written by older parquet-mr / Spark / Hive writers that set only the legacy `converted_type=INTERVAL` annotation are handled transparently — no caller-side opt-in is required.
+
+**FLOAT16 columns:** `getFloat16` decodes the 2-byte IEEE 754 half-precision payload to a single-precision Java `Float`. The widening is lossless — half-precision NaN, ±Infinity, and signed zero round-trip cleanly. Use `Float.isNaN(value)` for NaN checks rather than equality.
 
 **Bare `BYTE_ARRAY` columns:** `BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
 
@@ -178,7 +181,7 @@ while (rowReader.hasNext()) {
 }
 ```
 
-**Null handling:** Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
+**Null handling:** Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getInterval`, `getFloat16`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
 
 **Type validation:** The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
 

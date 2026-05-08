@@ -128,6 +128,17 @@ public interface FieldAccessor {
     /// @throws IllegalArgumentException if the field type is not INTERVAL
     PqInterval getInterval(String name);
 
+    /// Get a FLOAT16 field value by name, decoded to a single-precision `float`.
+    ///
+    /// The Parquet `FLOAT16` logical type stores IEEE 754 half-precision (binary16)
+    /// values as 2-byte little-endian payloads in a `FIXED_LEN_BYTE_ARRAY`. The
+    /// returned `Float` is the lossless widening of the half-precision value.
+    ///
+    /// @param name the field name
+    /// @return the float value, or null if the field is null
+    /// @throws IllegalArgumentException if the field type is not FLOAT16
+    Float getFloat16(String name);
+
     // ==================== Variant ====================
 
     /// Get a VARIANT field value by name. Works both for a Parquet group annotated

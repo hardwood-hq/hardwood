@@ -196,6 +196,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
     }
 
     @Override
+    public Float getFloat16(String name) {
+        throw new UnsupportedOperationException("FLOAT16 is not a Variant-encoded type");
+    }
+
+    @Override
     public PqVariant getVariant(String name) {
         int off = valueOffsetFor(name);
         if (VariantValueDecoder.type(valueBuf, off) == VariantType.NULL) {

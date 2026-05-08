@@ -6,6 +6,7 @@
 #  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
 #
 
+import numpy
 import pyarrow as pa
 import pyarrow.parquet as pq
 from datetime import datetime, date, time, timezone
@@ -2213,6 +2214,44 @@ annotate_column_as_interval(
 
 print("\nGenerated interval_legacy_converted_type_test.parquet:")
 print("  - Same data, only the legacy converted_type=INTERVAL annotation set")
+
+# FLOAT16 logical type test
+# IEEE 754 half-precision (binary16): sign | 5-bit exponent | 10-bit mantissa,
+# stored as 2-byte FIXED_LEN_BYTE_ARRAY in little-endian. PyArrow's pa.float16()
+# emits the column with the FLOAT16 LogicalType union member already set, so no
+# post-hoc footer annotation is needed.
+float16_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('half', pa.float16(), True),
+])
+
+float16_table = pa.table({
+    'id': pa.array([1, 2, 3, 4, 5, 6, 7], type=pa.int32()),
+    'half': pa.array(
+        [
+            numpy.float16(0.0),
+            numpy.float16(1.0),
+            numpy.float16(-1.5),
+            numpy.float16(65504.0),               # max finite binary16
+            numpy.float16('inf'),
+            numpy.float16('nan'),
+            None,                                 # null
+        ],
+        type=pa.float16(),
+    ),
+}, schema=float16_schema)
+
+pq.write_table(
+    float16_table,
+    'core/src/test/resources/float16_logical_type_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated float16_logical_type_test.parquet:")
+print("  - Schema: id INT32, half FIXED_LEN_BYTE_ARRAY(2) annotated FLOAT16")
+print("  - 7 rows: 0, 1, -1.5, 65504 (max), +Inf, NaN, null")
 
 # old_list_structure_test.parquet
 # Tests reading the pre-standard 2-level LIST encoding (see hardwood-hq/hardwood#282).

@@ -184,6 +184,11 @@ public interface RowReader extends StructAccessor, AutoCloseable {
     /// @return the interval, or null if the field is null
     PqInterval getInterval(int fieldIndex);
 
+    /// Get a FLOAT16 field value by field index, decoded to a single-precision `float`.
+    ///
+    /// @return the float value, or null if the field is null
+    Float getFloat16(int fieldIndex);
+
     /// Get a field value by field index without type conversion.
     ///
     /// @return the raw value, or null if the field is null

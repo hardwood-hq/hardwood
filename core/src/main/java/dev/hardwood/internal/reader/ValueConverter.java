@@ -51,6 +51,14 @@ public final class ValueConverter {
         return (Float) rawValue;
     }
 
+    public static Float convertToFloat16(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateLogicalType(schema, LogicalType.Float16Type.class);
+        return convertLogicalType(rawValue, schema, Float.class);
+    }
+
     public static Double convertToDouble(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
@@ -170,6 +178,9 @@ public final class ValueConverter {
         }
         else if (logicalType instanceof LogicalType.BsonType) {
             return convertToBinary(rawValue, schema);
+        }
+        else if (logicalType instanceof LogicalType.Float16Type) {
+            return convertToFloat16(rawValue, schema);
         }
 
         // Fall back to physical type. BYTE_ARRAY without a STRING logical type is

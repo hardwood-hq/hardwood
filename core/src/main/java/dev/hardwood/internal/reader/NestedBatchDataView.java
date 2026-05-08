@@ -324,6 +324,10 @@ public final class NestedBatchDataView {
         return readLogicalType(lookupPrimitive(name), LogicalType.IntervalType.class, PqInterval.class);
     }
 
+    public Float getFloat16(String name) {
+        return readLogicalType(lookupPrimitive(name), LogicalType.Float16Type.class, Float.class);
+    }
+
     // ==================== Object Type Accessors (by index) ====================
 
     public String getString(int projectedIndex) {
@@ -367,6 +371,10 @@ public final class NestedBatchDataView {
 
     public PqInterval getInterval(int projectedIndex) {
         return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.IntervalType.class, PqInterval.class);
+    }
+
+    public Float getFloat16(int projectedIndex) {
+        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.Float16Type.class, Float.class);
     }
 
     // ==================== Nested Type Accessors (by name) ====================

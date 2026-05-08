@@ -79,8 +79,12 @@ public class LogicalTypeReader {
                         reader.skipField(header.type()); // Empty struct
                         yield new LogicalType.UuidType();
                     }
+                    case 15 -> { // FLOAT16
+                        reader.skipField(header.type()); // Empty struct
+                        yield new LogicalType.Float16Type();
+                    }
                     case 16 -> readVariantType(reader);
-                    // Skip unsupported types (NullType, Float16Type, etc.)
+                    // Skip unsupported types (NullType, etc.)
                     case 17 -> readGeometryType(reader);
                     case 18 -> readGeographyType(reader);
                     default -> {
