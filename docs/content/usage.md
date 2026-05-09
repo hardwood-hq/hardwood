@@ -159,7 +159,7 @@ All methods are available as both `method(name)` and `method(index)`, except `ge
 
 **INTERVAL columns:** `PqInterval` is a plain record with three `long` properties — `months()`, `days()`, and `milliseconds()`. Each holds an unsigned 32-bit value in the range `[0, 4_294_967_295]`, so no additional conversion is needed. The components are independent and not normalized. Files written by older parquet-mr / Spark / Hive writers that set only the legacy `converted_type=INTERVAL` annotation are handled transparently — no caller-side opt-in is required.
 
-**FLOAT16 columns:** `getFloat16` decodes the 2-byte IEEE 754 half-precision payload to a single-precision Java `Float`. The widening is lossless — half-precision NaN, ±Infinity, and signed zero round-trip cleanly. Use `Float.isNaN(value)` for NaN checks rather than equality.
+**FLOAT16 columns:** `getFloat16` decodes the 2-byte IEEE 754 half-precision payload to a single-precision Java `Float`. The widening is lossless — half-precision NaN, ±Infinity, and signed zero round-trip cleanly, and the original NaN bit pattern is preserved (the Parquet spec does not canonicalize NaNs on write). Use `Float.isNaN(value)` for NaN checks rather than equality.
 
 **Bare `BYTE_ARRAY` columns:** `BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
 

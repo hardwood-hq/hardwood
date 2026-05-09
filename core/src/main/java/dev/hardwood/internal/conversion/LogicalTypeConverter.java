@@ -117,7 +117,8 @@ public class LogicalTypeConverter {
             throw new IllegalArgumentException(
                     "FLOAT16 requires exactly 2 bytes, got " + bytes.length);
         }
-        short raw = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getShort();
+        // LE 2-byte short; `& 0xFF` blocks sign extension on the byte→int promotion.
+        short raw = (short) ((bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8));
         return Float.float16ToFloat(raw);
     }
 

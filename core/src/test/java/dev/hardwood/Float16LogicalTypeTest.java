@@ -10,6 +10,8 @@ package dev.hardwood;
 import java.io.IOException;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -18,6 +20,7 @@ import org.junit.jupiter.api.TestInstance;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnSchema;
@@ -117,5 +120,71 @@ class Float16LogicalTypeTest {
                 LogicalTypeConverter.convertToFloat16(new byte[4], PhysicalType.FIXED_LEN_BYTE_ARRAY))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("2 bytes");
+    }
+
+    /// `getFloat16` against a column whose physical type is FLBA but whose payload
+    /// is not a 2-byte half-precision value (here: an INTERVAL column, FLBA(12))
+    /// must surface an `IllegalArgumentException` end-to-end through the row reader,
+    /// not a `ClassCastException` or a silently misdecoded value.
+    @Test
+    void testGetFloat16OnNonFloat16ColumnRaisesIllegalArgumentException() throws IOException {
+        Path intervalFile = Paths.get("src/test/resources/interval_logical_type_test.parquet");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(intervalFile));
+             RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            assertThatThrownBy(() -> rowReader.getFloat16("duration"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("2 bytes");
+        }
+    }
+
+    /// `FilterPredicate.gt(col, 0.5f)` against a FLOAT16 column dispatches in the
+    /// resolver to a `Float16Predicate`, which decodes the 2-byte payload before
+    /// comparing. From the caller's perspective the call is identical to filtering
+    /// a physical FLOAT column.
+    @Test
+    void testFloatPredicateOnFloat16ColumnFiltersByDecodedValue() throws IOException {
+        // half values: 0.0, 1.0, -1.5, 65504.0, +Inf, NaN, null.
+        // Float.compare orders NaN after all finite values and +Inf, and treats
+        // +0.0 > -0.0; with `gt 0.5f` we keep 1.0, 65504.0, +Inf, NaN — null drops.
+        List<Float> kept = new ArrayList<>();
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE));
+             RowReader rowReader = fileReader.buildRowReader()
+                     .filter(FilterPredicate.gt("half", 0.5f))
+                     .build()) {
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                kept.add(rowReader.getFloat16("half"));
+            }
+        }
+        assertThat(kept).hasSize(4);
+        assertThat(kept.get(0)).isEqualTo(1.0f);
+        assertThat(kept.get(1)).isEqualTo(65504.0f);
+        assertThat(kept.get(2)).isEqualTo(Float.POSITIVE_INFINITY);
+        assertThat(Float.isNaN(kept.get(3))).isTrue();
+    }
+
+    /// `getFloat16` must work through the [dev.hardwood.internal.reader.FilteredRowReader]
+    /// delegating wrapper installed by `buildRowReader().filter(...)`.
+    @Test
+    void testGetFloat16ThroughFilteredRowReader() throws IOException {
+        // id=1..7 maps to half=0.0, 1.0, -1.5, 65504.0, +Inf, NaN, null. With id>3
+        // the filtered reader yields rows id=4..7.
+        List<Float> filtered = new ArrayList<>();
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE));
+             RowReader rowReader = fileReader.buildRowReader()
+                     .filter(FilterPredicate.gt("id", 3))
+                     .build()) {
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                filtered.add(rowReader.getFloat16("half"));
+            }
+        }
+        assertThat(filtered).hasSize(4);
+        assertThat(filtered.get(0)).isEqualTo(65504.0f);
+        assertThat(filtered.get(1)).isEqualTo(Float.POSITIVE_INFINITY);
+        assertThat(filtered.get(2)).isNotNull();
+        assertThat(Float.isNaN(filtered.get(2))).isTrue();
+        assertThat(filtered.get(3)).isNull();
     }
 }

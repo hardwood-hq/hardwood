@@ -84,9 +84,9 @@ public class LogicalTypeReader {
                         yield new LogicalType.Float16Type();
                     }
                     case 16 -> readVariantType(reader);
-                    // Skip unsupported types (NullType, etc.)
                     case 17 -> readGeometryType(reader);
                     case 18 -> readGeographyType(reader);
+                    // NullType (case 11) is the only currently-unsupported member (see #444)
                     default -> {
                         reader.skipField(header.type());
                         yield null;
