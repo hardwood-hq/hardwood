@@ -18,6 +18,7 @@ import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
@@ -101,7 +102,15 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             throw new NullPointerException("Field '" + name + "' is null");
         }
-        return ((float[]) batch.valueArrays[projCol])[idx];
+        if (child.schema().type() == PhysicalType.FLOAT) {
+            return ((float[]) batch.valueArrays[projCol])[idx];
+        }
+        // FLOAT16 path: convertToFloat16 returns primitive float so the value
+        // flows through without per-row autoboxing. readLogicalType isn't reused
+        // here because its `LogicalTypeConverter.convert` step boxes via Object.
+        return LogicalTypeConverter.convertToFloat16(
+                ((byte[][]) batch.valueArrays[projCol])[idx],
+                child.schema().type());
     }
 
     @Override
@@ -179,11 +188,6 @@ final class PqStructImpl implements PqStruct {
     @Override
     public PqInterval getInterval(String name) {
         return readLogicalType(name, LogicalType.IntervalType.class, PqInterval.class);
-    }
-
-    @Override
-    public Float getFloat16(String name) {
-        return readLogicalType(name, LogicalType.Float16Type.class, Float.class);
     }
 
     // ==================== Nested Types ====================

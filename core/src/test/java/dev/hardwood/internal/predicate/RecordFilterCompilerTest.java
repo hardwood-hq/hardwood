@@ -411,7 +411,6 @@ class RecordFilterCompilerTest {
             @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
             @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(); }
             @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(); }
-            @Override public Float getFloat16(String name) { throw new UnsupportedOperationException(); }
             @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(); }
             @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(); }
             @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(); }
@@ -453,7 +452,6 @@ class RecordFilterCompilerTest {
         @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
         @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(); }
         @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(); }
-        @Override public Float getFloat16(String name) { throw new UnsupportedOperationException(); }
         @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(); }
         @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(); }
         @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(); }

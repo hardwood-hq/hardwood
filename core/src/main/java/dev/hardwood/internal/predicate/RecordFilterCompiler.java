@@ -73,10 +73,15 @@ public final class RecordFilterCompiler {
                         : floatLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
             case ResolvedPredicate.Float16Predicate p -> {
+                // FLOAT16 record-level eval reuses floatLeaf because `getFloat`
+                // dispatches on the column's logical type and decodes the 2-byte
+                // payload itself. The Float16Predicate distinction matters for
+                // stats pushdown (different decode width on min/max bytes), not
+                // for per-row reads.
                 int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
                 yield idx >= 0
-                        ? indexedFloat16Leaf(idx, p.op(), p.value())
-                        : float16Leaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
+                        ? indexedFloatLeaf(idx, p.op(), p.value())
+                        : floatLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
             case ResolvedPredicate.DoublePredicate p -> {
                 int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
@@ -344,17 +349,6 @@ public final class RecordFilterCompiler {
         };
     }
 
-    private static RowMatcher float16Leaf(String[] path, String name, Operator op, float v) {
-        return switch (op) {
-            case EQ -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && Float.compare(a.getFloat16(name), v) == 0; };
-            case NOT_EQ -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && Float.compare(a.getFloat16(name), v) != 0; };
-            case LT -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && Float.compare(a.getFloat16(name), v) < 0; };
-            case LT_EQ -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && Float.compare(a.getFloat16(name), v) <= 0; };
-            case GT -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && Float.compare(a.getFloat16(name), v) > 0; };
-            case GT_EQ -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && Float.compare(a.getFloat16(name), v) >= 0; };
-        };
-    }
-
     private static RowMatcher doubleLeaf(String[] path, String name, Operator op, double v) {
         return switch (op) {
             case EQ -> row -> { StructAccessor a = resolve(row, path); return a != null && !a.isNull(name) && Double.compare(a.getDouble(name), v) == 0; };
@@ -526,17 +520,6 @@ public final class RecordFilterCompiler {
             case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) <= 0; };
             case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) > 0; };
             case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat(idx), v) >= 0; };
-        };
-    }
-
-    private static RowMatcher indexedFloat16Leaf(int idx, Operator op, float v) {
-        return switch (op) {
-            case EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat16(idx), v) == 0; };
-            case NOT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat16(idx), v) != 0; };
-            case LT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat16(idx), v) < 0; };
-            case LT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat16(idx), v) <= 0; };
-            case GT -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat16(idx), v) > 0; };
-            case GT_EQ -> row -> { RowReader r = (RowReader) row; return !r.isNull(idx) && Float.compare(r.getFloat16(idx), v) >= 0; };
         };
     }
 

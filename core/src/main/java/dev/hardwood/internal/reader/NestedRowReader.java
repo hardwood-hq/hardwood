@@ -291,9 +291,6 @@ public final class NestedRowReader implements RowReader {
     @Override public PqInterval getInterval(int i) { return dataView.getInterval(i); }
     @Override public PqInterval getInterval(String name) { return dataView.getInterval(name); }
 
-    @Override public Float getFloat16(int i) { return dataView.getFloat16(i); }
-    @Override public Float getFloat16(String name) { return dataView.getFloat16(name); }
-
     @Override public Object getValue(int i) { return dataView.getValue(i); }
     @Override public Object getValue(String name) { return dataView.getValue(name); }
 
