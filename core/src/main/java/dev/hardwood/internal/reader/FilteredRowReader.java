@@ -88,8 +88,6 @@ public final class FilteredRowReader implements RowReader {
     @Override public UUID getUuid(String name) { return delegate.getUuid(name); }
     @Override public PqInterval getInterval(int i) { return delegate.getInterval(i); }
     @Override public PqInterval getInterval(String name) { return delegate.getInterval(name); }
-    @Override public Float getFloat16(int i) { return delegate.getFloat16(i); }
-    @Override public Float getFloat16(String name) { return delegate.getFloat16(name); }
     @Override public boolean isNull(int i) { return delegate.isNull(i); }
     @Override public boolean isNull(String name) { return delegate.isNull(name); }
     @Override public Object getValue(int i) { return delegate.getValue(i); }

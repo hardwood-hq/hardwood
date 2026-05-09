@@ -106,7 +106,7 @@ public class LogicalTypeConverter {
         return new PqInterval(months, days, millis);
     }
 
-    public static Float convertToFloat16(Object value, PhysicalType physicalType) {
+    public static float convertToFloat16(Object value, PhysicalType physicalType) {
         if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
             throw new IllegalArgumentException(
                     "FLOAT16 logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);

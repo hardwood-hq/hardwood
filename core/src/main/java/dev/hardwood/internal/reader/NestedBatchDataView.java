@@ -220,7 +220,20 @@ public final class NestedBatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             throw new NullPointerException(prefix() + "Column '" + name + "' is null");
         }
-        return ((float[]) batchIndex.valueArrays[projCol])[valueIdx];
+        if (p.schema().type() == PhysicalType.FLOAT) {
+            return ((float[]) batchIndex.valueArrays[projCol])[valueIdx];
+        }
+        // FLOAT16 path: primitive convertToFloat16 keeps the value unboxed;
+        // readLogicalType isn't reused because LogicalTypeConverter.convert
+        // returns Object and would box.
+        try {
+            return LogicalTypeConverter.convertToFloat16(
+                    ((byte[][]) batchIndex.valueArrays[projCol])[valueIdx],
+                    p.schema().type());
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
     }
 
     public double getDouble(String name) {
@@ -269,7 +282,18 @@ public final class NestedBatchDataView {
         if (nulls != null && nulls.get(valueIdx)) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
-        return ((float[]) fieldValueArrays[projectedIndex])[valueIdx];
+        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
+        if (p.schema().type() == PhysicalType.FLOAT) {
+            return ((float[]) fieldValueArrays[projectedIndex])[valueIdx];
+        }
+        try {
+            return LogicalTypeConverter.convertToFloat16(
+                    ((byte[][]) fieldValueArrays[projectedIndex])[valueIdx],
+                    p.schema().type());
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
     }
 
     public double getDouble(int projectedIndex) {
@@ -324,10 +348,6 @@ public final class NestedBatchDataView {
         return readLogicalType(lookupPrimitive(name), LogicalType.IntervalType.class, PqInterval.class);
     }
 
-    public Float getFloat16(String name) {
-        return readLogicalType(lookupPrimitive(name), LogicalType.Float16Type.class, Float.class);
-    }
-
     // ==================== Object Type Accessors (by index) ====================
 
     public String getString(int projectedIndex) {
@@ -371,10 +391,6 @@ public final class NestedBatchDataView {
 
     public PqInterval getInterval(int projectedIndex) {
         return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.IntervalType.class, PqInterval.class);
-    }
-
-    public Float getFloat16(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.Float16Type.class, Float.class);
     }
 
     // ==================== Nested Type Accessors (by name) ====================

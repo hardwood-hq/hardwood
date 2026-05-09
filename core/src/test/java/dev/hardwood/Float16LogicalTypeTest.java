@@ -43,13 +43,7 @@ class Float16LogicalTypeTest {
 
     private ColumnSchema halfColumn;
     private int halfIdx;
-    private Float row0;
-    private Float row1;
-    private Float row2;
-    private Float row3;
-    private Float row4;
-    private Float row5;
-    private Float row6;
+    private final List<Float> values = new ArrayList<>();
 
     @BeforeAll
     void readAll() throws IOException {
@@ -57,20 +51,10 @@ class Float16LogicalTypeTest {
              RowReader rowReader = fileReader.rowReader()) {
             halfColumn = fileReader.getFileSchema().getColumn("half");
             halfIdx = halfColumn.columnIndex();
-            rowReader.next();
-            row0 = rowReader.getFloat16("half");
-            rowReader.next();
-            row1 = rowReader.getFloat16("half");
-            rowReader.next();
-            row2 = rowReader.getFloat16("half");
-            rowReader.next();
-            row3 = rowReader.getFloat16("half");
-            rowReader.next();
-            row4 = rowReader.getFloat16("half");
-            rowReader.next();
-            row5 = rowReader.getFloat16("half");
-            rowReader.next();
-            row6 = rowReader.getFloat16("half");
+            while (rowReader.hasNext()) {
+                rowReader.next();
+                values.add(rowReader.isNull("half") ? null : rowReader.getFloat("half"));
+            }
         }
     }
 
@@ -82,28 +66,39 @@ class Float16LogicalTypeTest {
     }
 
     @Test
-    void testGetFloat16ReturnsDecodedValues() {
-        assertThat(row0).isEqualTo(0.0f);
-        assertThat(row1).isEqualTo(1.0f);
-        assertThat(row2).isEqualTo(-1.5f);
-        assertThat(row3).isEqualTo(65504.0f);
-        assertThat(row4).isEqualTo(Float.POSITIVE_INFINITY);
-        assertThat(row5).isNotNull();
-        assertThat(Float.isNaN(row5)).isTrue();
+    void testGetFloatReturnsDecodedValuesForFloat16Column() {
+        assertThat(values).hasSize(7);
+        assertThat(values.get(0)).isEqualTo(0.0f);
+        assertThat(values.get(1)).isEqualTo(1.0f);
+        assertThat(values.get(2)).isEqualTo(-1.5f);
+        assertThat(values.get(3)).isEqualTo(65504.0f);
+        assertThat(values.get(4)).isEqualTo(Float.POSITIVE_INFINITY);
+        assertThat(values.get(5)).isNotNull();
+        assertThat(Float.isNaN(values.get(5))).isTrue();
+        assertThat(values.get(6)).isNull();
     }
 
     @Test
-    void testGetFloat16ByIndexReturnsSameValue() throws IOException {
+    void testGetFloatByIndexReturnsSameValueForFloat16Column() throws IOException {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
-            assertThat(rowReader.getFloat16(halfIdx)).isEqualTo(row0);
+            assertThat(rowReader.getFloat(halfIdx)).isEqualTo(0.0f);
         }
     }
 
+    /// Primitive accessor convention: NPE when the field is null, just like
+    /// `getInt`/`getLong`/`getDouble`/`getBoolean`.
     @Test
-    void testNullFieldReturnsNull() {
-        assertThat(row6).isNull();
+    void testGetFloatThrowsNpeOnNullFloat16Value() throws IOException {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FILE));
+             RowReader rowReader = fileReader.rowReader()) {
+            for (int i = 0; i < 7; i++) {
+                rowReader.next();
+            }
+            assertThatThrownBy(() -> rowReader.getFloat("half"))
+                    .isInstanceOf(NullPointerException.class);
+        }
     }
 
     @Test
@@ -122,19 +117,20 @@ class Float16LogicalTypeTest {
                 .hasMessageContaining("2 bytes");
     }
 
-    /// `getFloat16` against a column whose physical type is FLBA but whose payload
-    /// is not a 2-byte half-precision value (here: an INTERVAL column, FLBA(12))
-    /// must surface an `IllegalArgumentException` end-to-end through the row reader,
-    /// not a `ClassCastException` or a silently misdecoded value.
+    /// `getFloat` on a non-FLOAT column whose physical type is FLBA but is not
+    /// a half-precision payload (here: FLBA(12) annotated INTERVAL) routes
+    /// through `convertToFloat16`, whose 2-byte width check rejects the call
+    /// with `IllegalArgumentException` enriched with the source file name.
     @Test
-    void testGetFloat16OnNonFloat16ColumnRaisesIllegalArgumentException() throws IOException {
+    void testGetFloatOnNonFloat16FlbaColumnRaisesIllegalArgumentException() throws IOException {
         Path intervalFile = Paths.get("src/test/resources/interval_logical_type_test.parquet");
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(intervalFile));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
-            assertThatThrownBy(() -> rowReader.getFloat16("duration"))
+            assertThatThrownBy(() -> rowReader.getFloat("duration"))
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("2 bytes");
+                    .hasMessageContaining("2 bytes")
+                    .hasMessageContaining("interval_logical_type_test.parquet");
         }
     }
 
@@ -154,7 +150,7 @@ class Float16LogicalTypeTest {
                      .build()) {
             while (rowReader.hasNext()) {
                 rowReader.next();
-                kept.add(rowReader.getFloat16("half"));
+                kept.add(rowReader.getFloat("half"));
             }
         }
         assertThat(kept).hasSize(4);
@@ -164,10 +160,10 @@ class Float16LogicalTypeTest {
         assertThat(Float.isNaN(kept.get(3))).isTrue();
     }
 
-    /// `getFloat16` must work through the [dev.hardwood.internal.reader.FilteredRowReader]
+    /// `getFloat` must work through the [dev.hardwood.internal.reader.FilteredRowReader]
     /// delegating wrapper installed by `buildRowReader().filter(...)`.
     @Test
-    void testGetFloat16ThroughFilteredRowReader() throws IOException {
+    void testGetFloatThroughFilteredRowReader() throws IOException {
         // id=1..7 maps to half=0.0, 1.0, -1.5, 65504.0, +Inf, NaN, null. With id>3
         // the filtered reader yields rows id=4..7.
         List<Float> filtered = new ArrayList<>();
@@ -177,7 +173,7 @@ class Float16LogicalTypeTest {
                      .build()) {
             while (rowReader.hasNext()) {
                 rowReader.next();
-                filtered.add(rowReader.getFloat16("half"));
+                filtered.add(rowReader.isNull("half") ? null : rowReader.getFloat("half"));
             }
         }
         assertThat(filtered).hasSize(4);

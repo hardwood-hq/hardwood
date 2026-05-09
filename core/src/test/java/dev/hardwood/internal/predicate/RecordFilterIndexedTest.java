@@ -303,7 +303,6 @@ class RecordFilterIndexedTest {
         @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(name); }
         @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(name); }
-        @Override public Float getFloat16(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(name); }
@@ -328,7 +327,6 @@ class RecordFilterIndexedTest {
         @Override public BigDecimal getDecimal(int idx) { throw new UnsupportedOperationException(); }
         @Override public UUID getUuid(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqInterval getInterval(int idx) { throw new UnsupportedOperationException(); }
-        @Override public Float getFloat16(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqStruct getStruct(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqIntList getListOfInts(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqLongList getListOfLongs(int idx) { throw new UnsupportedOperationException(); }
