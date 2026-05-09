@@ -194,7 +194,6 @@ public class RecordFilterMicroBenchmark {
         @Override public boolean getBoolean(String name) { return flagVal; }
 
         @Override public float getFloat(String name) { throw new UnsupportedOperationException(); }
-        @Override public Float getFloat16(String name) { throw new UnsupportedOperationException(); }
         @Override public String getString(String name) { throw new UnsupportedOperationException(); }
         @Override public byte[] getBinary(String name) { throw new UnsupportedOperationException(); }
         @Override public LocalDate getDate(String name) { throw new UnsupportedOperationException(); }
