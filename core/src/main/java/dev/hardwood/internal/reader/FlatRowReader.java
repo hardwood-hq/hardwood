@@ -428,6 +428,26 @@ public final class FlatRowReader implements RowReader {
         return getInterval(resolveIndex(name));
     }
 
+    @Override
+    public Float getFloat16(int columnIndex) {
+        if (isNull(columnIndex)) {
+            return null;
+        }
+        try {
+            return LogicalTypeConverter.convertToFloat16(
+                    ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
+                    physicalTypes[columnIndex]);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
+    }
+
+    @Override
+    public Float getFloat16(String name) {
+        return getFloat16(resolveIndex(name));
+    }
+
     // ==================== Generic Value ====================
 
     @Override

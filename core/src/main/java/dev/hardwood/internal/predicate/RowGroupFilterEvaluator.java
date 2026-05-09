@@ -41,6 +41,10 @@ public class RowGroupFilterEvaluator {
                 Statistics stats = getStatistics(p.columnIndex(), rowGroup);
                 yield stats != null && StatisticsFilterSupport.canDropLeaf(p, MinMaxStats.of(stats));
             }
+            case ResolvedPredicate.Float16Predicate p -> {
+                Statistics stats = getStatistics(p.columnIndex(), rowGroup);
+                yield stats != null && StatisticsFilterSupport.canDropLeaf(p, MinMaxStats.of(stats));
+            }
             case ResolvedPredicate.DoublePredicate p -> {
                 Statistics stats = getStatistics(p.columnIndex(), rowGroup);
                 yield stats != null && StatisticsFilterSupport.canDropLeaf(p, MinMaxStats.of(stats));

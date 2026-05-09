@@ -42,6 +42,7 @@ public class LogicalTypeConverter {
             case LogicalType.JsonType t -> convertToString(physicalValue, physicalType);
             case LogicalType.BsonType t -> convertToBson(physicalValue, physicalType);
             case LogicalType.IntervalType t -> convertToInterval(physicalValue, physicalType);
+            case LogicalType.Float16Type t -> convertToFloat16(physicalValue, physicalType);
             // EnumType: pass through as-is (no conversion needed or not supported)
             // ListType and MapType are structural types handled by RecordAssembler, not primitive conversions
             default -> physicalValue;
@@ -103,6 +104,22 @@ public class LogicalTypeConverter {
         long millis = Integer.toUnsignedLong(buffer.getInt(8));
 
         return new PqInterval(months, days, millis);
+    }
+
+    public static Float convertToFloat16(Object value, PhysicalType physicalType) {
+        if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            throw new IllegalArgumentException(
+                    "FLOAT16 logical type requires FIXED_LEN_BYTE_ARRAY physical type, got " + physicalType);
+        }
+
+        byte[] bytes = (byte[]) value;
+        if (bytes.length != 2) {
+            throw new IllegalArgumentException(
+                    "FLOAT16 requires exactly 2 bytes, got " + bytes.length);
+        }
+        // LE 2-byte short; `& 0xFF` blocks sign extension on the byte→int promotion.
+        short raw = (short) ((bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8));
+        return Float.float16ToFloat(raw);
     }
 
     /// Julian day number of the Unix epoch (1970-01-01).

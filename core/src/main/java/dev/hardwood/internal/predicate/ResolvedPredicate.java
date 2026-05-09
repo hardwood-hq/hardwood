@@ -24,6 +24,13 @@ public sealed interface ResolvedPredicate {
     record IntPredicate(int columnIndex, FilterPredicate.Operator op, int value) implements ResolvedPredicate {}
     record LongPredicate(int columnIndex, FilterPredicate.Operator op, long value) implements ResolvedPredicate {}
     record FloatPredicate(int columnIndex, FilterPredicate.Operator op, float value) implements ResolvedPredicate {}
+
+    /// User-facing `FloatColumnPredicate` against a column whose physical type is
+    /// `FIXED_LEN_BYTE_ARRAY(2)` annotated `Float16Type`. Carried as a separate
+    /// resolved type so evaluators can dispatch to the 2-byte decode path for
+    /// both record values and stats min/max.
+    record Float16Predicate(int columnIndex, FilterPredicate.Operator op, float value) implements ResolvedPredicate {}
+
     record DoublePredicate(int columnIndex, FilterPredicate.Operator op, double value) implements ResolvedPredicate {}
     record BooleanPredicate(int columnIndex, FilterPredicate.Operator op, boolean value) implements ResolvedPredicate {}
 
@@ -66,6 +73,7 @@ public sealed interface ResolvedPredicate {
             case IntPredicate p -> new IntPredicate(p.columnIndex(), p.op().invert(), p.value());
             case LongPredicate p -> new LongPredicate(p.columnIndex(), p.op().invert(), p.value());
             case FloatPredicate p -> new FloatPredicate(p.columnIndex(), p.op().invert(), p.value());
+            case Float16Predicate p -> new Float16Predicate(p.columnIndex(), p.op().invert(), p.value());
             case DoublePredicate p -> new DoublePredicate(p.columnIndex(), p.op().invert(), p.value());
             case BooleanPredicate p -> new BooleanPredicate(p.columnIndex(), p.op().invert(), p.value());
             case BinaryPredicate p -> new BinaryPredicate(p.columnIndex(), p.op().invert(), p.value(), p.signed());

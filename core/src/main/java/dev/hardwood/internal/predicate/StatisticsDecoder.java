@@ -32,6 +32,12 @@ public class StatisticsDecoder {
         return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getFloat();
     }
 
+    /// Decode a 2-byte little-endian IEEE 754 binary16 value (FLOAT16) widened to float.
+    public static float decodeFloat16(byte[] bytes) {
+        short raw = (short) ((bytes[0] & 0xFF) | ((bytes[1] & 0xFF) << 8));
+        return Float.float16ToFloat(raw);
+    }
+
     /// Decode an 8-byte little-endian IEEE 754 value as a double.
     public static double decodeDouble(byte[] bytes) {
         return ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN).getDouble();
