@@ -12,7 +12,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -30,8 +29,10 @@ import org.junit.jupiter.api.TestInstance;
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.reader.Validity;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
@@ -664,15 +665,21 @@ class NestedPerformanceTest {
                     int count = versionCol.getRecordCount();
                     int[] versions = versionCol.getInts();
                     double[] confidences = confidenceCol.getDoubles();
-                    BitSet vNulls = versionCol.getElementNulls();
-                    BitSet cNulls = confidenceCol.getElementNulls();
+                    Validity vValid = versionCol.getLeafValidity();
+                    Validity cValid = confidenceCol.getLeafValidity();
+                    // Hoist the has-nulls check outside the loop so the JIT can
+                    // specialise the all-non-null fast path; calling
+                    // `validity.isNotNull(i)` per element keeps a non-trusted
+                    // instance-field null check in the inner loop.
+                    boolean vHasNulls = vValid.hasNulls();
+                    boolean cHasNulls = cValid.hasNulls();
 
                     for (int i = 0; i < count; i++) {
-                        if (vNulls == null || !vNulls.get(i)) {
+                        if (!vHasNulls || vValid.isNotNull(i)) {
                             if (versions[i] < minVersion) minVersion = versions[i];
                             if (versions[i] > maxVersion) maxVersion = versions[i];
                         }
-                        if (cNulls == null || !cNulls.get(i)) {
+                        if (!cHasNulls || cValid.isNotNull(i)) {
                             if (confidences[i] < minConfidence) minConfidence = confidences[i];
                             if (confidences[i] > maxConfidence) maxConfidence = confidences[i];
                         }
@@ -688,14 +695,16 @@ class NestedPerformanceTest {
                     int count = xminCol.getRecordCount();
                     double[] xmins = xminCol.getDoubles();
                     double[] xmaxs = xmaxCol.getDoubles();
-                    BitSet xminNulls = xminCol.getElementNulls();
-                    BitSet xmaxNulls = xmaxCol.getElementNulls();
+                    Validity xminValid = xminCol.getLeafValidity();
+                    Validity xmaxValid = xmaxCol.getLeafValidity();
+                    boolean xminHasNulls = xminValid.hasNulls();
+                    boolean xmaxHasNulls = xmaxValid.hasNulls();
 
                     for (int i = 0; i < count; i++) {
-                        if (xminNulls == null || !xminNulls.get(i)) {
+                        if (!xminHasNulls || xminValid.isNotNull(i)) {
                             if (xmins[i] < minBboxXmin) minBboxXmin = xmins[i];
                         }
-                        if (xmaxNulls == null || !xmaxNulls.get(i)) {
+                        if (!xmaxHasNulls || xmaxValid.isNotNull(i)) {
                             if (xmaxs[i] > maxBboxXmax) maxBboxXmax = xmaxs[i];
                         }
                     }
@@ -726,9 +735,10 @@ class NestedPerformanceTest {
                 while (primaryCol.nextBatch()) {
                     int count = primaryCol.getRecordCount();
                     byte[][] values = primaryCol.getBinaries();
-                    BitSet nulls = primaryCol.getElementNulls();
+                    Validity validity = primaryCol.getLeafValidity();
+                    boolean hasNulls = validity.hasNulls();
                     for (int i = 0; i < count; i++) {
-                        if (nulls == null || !nulls.get(i)) {
+                        if (!hasNulls || validity.isNotNull(i)) {
                             int len = new String(values[i], java.nio.charset.StandardCharsets.UTF_8).length();
                             if (len > maxPrimaryNameLength) maxPrimaryNameLength = len;
                         }
@@ -746,24 +756,34 @@ class NestedPerformanceTest {
                 maxPrimaryNameLength, totalAddressCount, maxAddressCount);
     }
 
-    /// Compute list sizes from a nested leaf column using level-0 offsets.
-    /// Returns totalCount, and populates `sizes[0]`=totalCount, `sizes[1]`=maxCount.
+    /// Compute list sizes from a nested leaf column using the outermost
+    /// REPEATED layer's offsets. Returns totalCount, and populates
+    /// `sizes[0]`=totalCount, `sizes[1]`=maxCount.
     private long computeListSizes(ParquetFileReader reader, int colIdx, long[] sizes) {
         long totalCount = 0;
         int maxCount = 0;
 
         try (ColumnReader col = reader.columnReader(colIdx)) {
+            int outerListLayer = -1;
+            int layerCount = -1;
             while (col.nextBatch()) {
+                if (outerListLayer < 0) {
+                    layerCount = col.getLayerCount();
+                    for (int k = 0; k < layerCount; k++) {
+                        if (col.getLayerKind(k) == LayerKind.REPEATED) {
+                            outerListLayer = k;
+                            break;
+                        }
+                    }
+                }
                 int recordCount = col.getRecordCount();
-                int valueCount = col.getValueCount();
-                int[] offsets = col.getOffsets(0);
-                BitSet levelNulls = col.getLevelNulls(0);
+                int[] offsets = col.getLayerOffsets(outerListLayer);
+                Validity listValidity = col.getLayerValidity(outerListLayer);
+                boolean listHasNulls = listValidity.hasNulls();
 
                 for (int r = 0; r < recordCount; r++) {
-                    if (levelNulls != null && levelNulls.get(r)) continue;
-                    int start = offsets[r];
-                    int end = (r + 1 < recordCount) ? offsets[r + 1] : valueCount;
-                    int size = end - start;
+                    if (listHasNulls && listValidity.isNull(r)) continue;
+                    int size = offsets[r + 1] - offsets[r];
                     totalCount += size;
                     if (size > maxCount) maxCount = size;
                 }

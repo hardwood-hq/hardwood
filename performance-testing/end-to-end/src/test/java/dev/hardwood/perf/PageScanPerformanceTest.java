@@ -12,7 +12,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -27,6 +26,7 @@ import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.Validity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.withinPercentage;
@@ -180,18 +180,21 @@ class PageScanPerformanceTest {
                 int[] v0 = col0.getInts();
                 double[] v1 = col1.getDoubles();
                 double[] v2 = col2.getDoubles();
-                BitSet n0 = col0.getElementNulls();
-                BitSet n1 = col1.getElementNulls();
-                BitSet n2 = col2.getElementNulls();
+                Validity v0Valid = col0.getLeafValidity();
+                Validity v1Valid = col1.getLeafValidity();
+                Validity v2Valid = col2.getLeafValidity();
+                boolean v0HasNulls = v0Valid.hasNulls();
+                boolean v1HasNulls = v1Valid.hasNulls();
+                boolean v2HasNulls = v2Valid.hasNulls();
 
                 for (int i = 0; i < count; i++) {
-                    if (n0 == null || !n0.get(i)) {
+                    if (!v0HasNulls || v0Valid.isNotNull(i)) {
 						passengerCount += v0[i];
 					}
-                    if (n1 == null || !n1.get(i)) {
+                    if (!v1HasNulls || v1Valid.isNotNull(i)) {
 						tripDistance += v1[i];
 					}
-                    if (n2 == null || !n2.get(i)) {
+                    if (!v2HasNulls || v2Valid.isNotNull(i)) {
 						fareAmount += v2[i];
 					}
                 }

@@ -13,13 +13,19 @@ import dev.hardwood.schema.ProjectedSchema;
 /// Computes optimal batch sizes for column data assembly.
 public final class BatchSizing {
 
+    /// Hard upper bound on the batch size returned by
+    /// [#computeOptimalBatchSize(ProjectedSchema)]. Other components that
+    /// pre-size structures around the worst-case batch size (e.g. the
+    /// `ALL_PRESENT` sentinel in `FlatRowReader`) read this constant.
+    public static final int MAX_BATCH = 524288;
+
     private BatchSizing() {}
 
     /// Computes a batch size that keeps all column arrays for one batch within the L2 cache.
     ///
     /// Each batch allocates one primitive array per projected column. The total memory for a
     /// batch is approximately `batchSize * sum(bytesPerColumn)`. This method sizes the batch
-    /// so that total stays under the target (6 MB), clamped to [`16 384`, `524 288`]
+    /// so that total stays under the target (6 MB), clamped to [`16 384`, [#MAX_BATCH]]
     /// rows.
     ///
     /// For example, 3 projected DOUBLE columns (8 bytes each = 24 bytes/row) yields
@@ -28,7 +34,7 @@ public final class BatchSizing {
         // Initially target 6 MB (fits comfortably in L2 cache)
         long targetBytes = 6L * 1024 * 1024;
         int minBatch = 16384;
-        int maxBatch = 524288;
+        int maxBatch = MAX_BATCH;
 
         int bytesPerRow = 0;
         for (int i = 0; i < projectedSchema.getProjectedColumnCount(); i++) {

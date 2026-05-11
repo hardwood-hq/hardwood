@@ -9,7 +9,6 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
@@ -19,8 +18,10 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.reader.Validity;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
@@ -70,10 +71,10 @@ class ParquetReaderTest {
                 assertThat(idValues[2]).isEqualTo(3L);
 
                 // No nulls for required column
-                assertThat(idReader.getElementNulls()).isNull();
+                assertThat(idReader.getLeafValidity().hasNulls()).isFalse();
 
                 // Flat column
-                assertThat(idReader.getNestingDepth()).isEqualTo(0);
+                assertThat(idReader.getLayerCount()).isEqualTo(0);
 
                 assertThat(idReader.nextBatch()).isFalse();
             }
@@ -140,14 +141,14 @@ class ParquetReaderTest {
                 assertThat(nameReader.getRecordCount()).isEqualTo(3);
 
                 byte[][] nameValues = nameReader.getBinaries();
-                BitSet nulls = nameReader.getElementNulls();
+                Validity validity = nameReader.getLeafValidity();
 
                 // Verify: 'alice', null, 'charlie'
-                assertThat(nulls).isNotNull();
-                assertThat(nulls.get(0)).isFalse();
+                assertThat(validity.hasNulls()).isTrue();
+                assertThat(validity.isNotNull(0)).isTrue();
                 assertThat(new String(nameValues[0])).isEqualTo("alice");
-                assertThat(nulls.get(1)).isTrue(); // null
-                assertThat(nulls.get(2)).isFalse();
+                assertThat(validity.isNull(1)).isTrue(); // null
+                assertThat(validity.isNotNull(2)).isTrue();
                 assertThat(new String(nameValues[2])).isEqualTo("charlie");
 
                 assertThat(nameReader.nextBatch()).isFalse();
@@ -270,8 +271,18 @@ class ParquetReaderTest {
                 assertThat(values[0]).isEqualTo(10001);
                 assertThat(values[1]).isEqualTo(90001);
 
-                // Row 3 has null address, so zip should be null
-                assertThat(zipReader.getElementNulls().get(2)).isTrue();
+                // Row 3 has null address — `zip` is absent under a null parent.
+                // With the layer model, this is captured by the parent STRUCT
+                // layer's validity bit (cleared) AND the leaf validity bit
+                // (cleared). Both should report row 2 as not present.
+                assertThat(zipReader.getLayerCount()).isEqualTo(1);
+                assertThat(zipReader.getLayerKind(0)).isEqualTo(LayerKind.STRUCT);
+                Validity structValidity = zipReader.getLayerValidity(0);
+                assertThat(structValidity.hasNulls()).isTrue();
+                assertThat(structValidity.isNull(2)).isTrue();
+                Validity leafValidity = zipReader.getLeafValidity();
+                assertThat(leafValidity.hasNulls()).isTrue();
+                assertThat(leafValidity.isNull(2)).isTrue();
 
                 assertThat(zipReader.nextBatch()).isFalse();
             }

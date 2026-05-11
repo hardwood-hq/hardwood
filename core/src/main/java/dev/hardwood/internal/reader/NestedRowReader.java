@@ -19,7 +19,6 @@ import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.metadata.FieldPath;
-import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -113,21 +112,18 @@ public final class NestedRowReader implements RowReader {
 
             PageSource pageSource = new PageSource(rowGroupIterator, i);
 
-            PhysicalType physType = columnSchema.type();
             BatchExchange<NestedBatch> buffer = BatchExchange.recycling(
                     columnSchema.name(), () -> {
                         NestedBatch b = new NestedBatch();
-                        b.values = BatchExchange.allocateArray(physType, batchSize);
+                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
                         return b;
                     });
-            int[] levelNullThresholds = columnSchema.maxRepetitionLevel() > 0
-                    ? NestedLevelComputer.computeLevelNullThresholds(
-                            schema.getRootNode(), columnSchema.columnIndex())
-                    : null;
+            NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
+                    schema.getRootNode(), columnSchema.columnIndex());
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), maxRows,
-                    levelNullThresholds);
+                    layers);
 
             buffers[i] = buffer;
             workers[i] = worker;

@@ -405,28 +405,38 @@ class DrainSideOracleTest {
             switch (projectedIdx) {
                 case COL_ID -> {
                     b.values = ids;
-                    b.nulls = idNulls.isEmpty() ? null : idNulls;
+                    b.validity = nullsToValidity(idNulls);
                 }
                 case COL_VALUE -> {
                     b.values = values;
-                    b.nulls = valueNulls.isEmpty() ? null : valueNulls;
+                    b.validity = nullsToValidity(valueNulls);
                 }
                 case COL_TAG -> {
                     b.values = tags;
-                    b.nulls = tagNulls.isEmpty() ? null : tagNulls;
+                    b.validity = nullsToValidity(tagNulls);
                 }
                 case COL_SCORE -> {
                     b.values = scores;
-                    b.nulls = scoreNulls.isEmpty() ? null : scoreNulls;
+                    b.validity = nullsToValidity(scoreNulls);
                 }
                 case COL_FLAG -> {
                     b.values = flags;
-                    b.nulls = flagNulls.isEmpty() ? null : flagNulls;
+                    b.validity = nullsToValidity(flagNulls);
                 }
                 default -> throw new IllegalArgumentException("col " + projectedIdx);
             }
             b.recordCount = N;
             return b;
+        }
+
+        private static BitSet nullsToValidity(BitSet nulls) {
+            if (nulls.isEmpty()) {
+                return null;
+            }
+            BitSet validity = new BitSet(N);
+            validity.set(0, N);
+            validity.andNot(nulls);
+            return validity;
         }
     }
 

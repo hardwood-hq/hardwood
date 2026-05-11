@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -323,7 +322,7 @@ final class PqStructImpl implements PqStruct {
         // flows through without per-row autoboxing. readLogicalType isn't reused
         // here because its `LogicalTypeConverter.convert` step boxes via Object.
         return LogicalTypeConverter.convertToFloat16(
-                ((byte[][]) batch.valueArrays[projCol])[idx],
+                ((BinaryBatchValues) batch.valueArrays[projCol]).byteArrayAt(idx),
                 child.schema().type());
     }
 
@@ -351,8 +350,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        byte[] raw = ((byte[][]) batch.valueArrays[projCol])[idx];
-        return new String(raw, StandardCharsets.UTF_8);
+        return batch.getString(projCol, idx);
     }
 
     private byte[] readBinary(TopLevelFieldMap.FieldDesc.Primitive child) {
@@ -361,7 +359,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(projCol, idx)) {
             return null;
         }
-        return ((byte[][]) batch.valueArrays[projCol])[idx];
+        return batch.getBinary(projCol, idx);
     }
 
     private <T> T readLogicalType(TopLevelFieldMap.FieldDesc.Primitive child, Class<T> resultClass) {
@@ -398,7 +396,7 @@ final class PqStructImpl implements PqStruct {
         if (batch.isElementNull(variantDesc.metadataCol(), metaIdx)) {
             return null;
         }
-        byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[metaIdx];
+        byte[] metadataBytes = batch.getBinary(variantDesc.metadataCol(), metaIdx);
 
         if (variantDesc.root().typed() != null) {
             // Position-mode (struct inside a list/map) would need list-aware
@@ -427,7 +425,7 @@ final class PqStructImpl implements PqStruct {
                     "Variant column '" + fieldName + "' requires its 'value' child in the projection");
         }
         int valIdx = resolveValueIndex(valueCol);
-        byte[] value = ((byte[][]) batch.valueArrays[valueCol])[valIdx];
+        byte[] value = batch.getBinary(valueCol, valIdx);
         return new PqVariantImpl(metadataBytes, value);
     }
 

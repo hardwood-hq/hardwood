@@ -13,6 +13,7 @@ import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.schema.ColumnSchema;
 
 /// Exchange buffer between a [ColumnWorker] drain thread and the consumer.
 ///
@@ -33,11 +34,25 @@ public class BatchExchange<B> {
 
     static final int READY_QUEUE_CAPACITY = 2;
 
+    /// Per-value byte budget for variable-length `BYTE_ARRAY` / `INT96`
+    /// buffers allocated by [#allocateArray]. The bytes buffer is pre-sized
+    /// to `BINARY_BYTES_PER_VALUE_HINT * capacity` and grown on overflow by
+    /// the worker append path.
+    public static final int BINARY_BYTES_PER_VALUE_HINT = 32;
+
     /// A mutable batch holder for flat columns. Pre-allocated and reused — no per-batch allocation.
     /// The drain writes into it, the consumer reads from it.
+    ///
+    /// `validity` carries set-bit-= -present semantics (a set bit means the
+    /// leaf value at that position is present); `null` is the sparse
+    /// representation of "every leaf in this batch is present."
+    ///
+    /// `values` is a typed primitive array (`int[]`, `long[]`, …) for
+    /// fixed-width physical types and a [BinaryBatchValues] for byte-array
+    /// types.
     public static final class Batch {
         public Object values;
-        public BitSet nulls;
+        public BitSet validity;
         public int recordCount;
         public String fileName;
         /// Per-batch matches mask, populated by [dev.hardwood.internal.predicate.ColumnBatchMatcher]
@@ -216,14 +231,39 @@ public class BatchExchange<B> {
 
     // ==================== Utilities ====================
 
-    public static Object allocateArray(PhysicalType type, int capacity) {
+    /// Allocates the per-batch values buffer for a column.
+    ///
+    /// For fixed-width physical types this returns the typed primitive
+    /// array (`int[]`, `long[]`, …). For byte-array-shaped types it returns
+    /// a [BinaryBatchValues] holding the concatenated byte buffer and a
+    /// sentinel-suffixed offsets array of length `capacity + 1`:
+    ///
+    /// - `BYTE_ARRAY` / `INT96`: bytes buffer is **capacity-sized** to
+    ///   `BINARY_BYTES_PER_VALUE_HINT * capacity` and grows on overflow
+    ///   via [BinaryBatchValues#appendAt].
+    /// - `FIXED_LEN_BYTE_ARRAY`: bytes buffer is sized exactly to
+    ///   `width * capacity` (`width = column.typeLength()`); offsets are
+    ///   filled trivially as `i * width`.
+    public static Object allocateArray(ColumnSchema column, int capacity) {
+        PhysicalType type = column.type();
         return switch (type) {
             case INT32 -> new int[capacity];
             case INT64 -> new long[capacity];
             case FLOAT -> new float[capacity];
             case DOUBLE -> new double[capacity];
             case BOOLEAN -> new boolean[capacity];
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 -> new byte[capacity][];
+            case BYTE_ARRAY, INT96 -> new BinaryBatchValues(
+                    new byte[Math.multiplyExact(BINARY_BYTES_PER_VALUE_HINT, capacity)],
+                    new int[capacity + 1]);
+            case FIXED_LEN_BYTE_ARRAY -> {
+                int width = column.typeLength();
+                byte[] bytes = new byte[Math.multiplyExact(width, capacity)];
+                int[] offsets = new int[capacity + 1];
+                for (int i = 0; i <= capacity; i++) {
+                    offsets[i] = Math.multiplyExact(i, width);
+                }
+                yield new BinaryBatchValues(bytes, offsets);
+            }
         };
     }
 }
