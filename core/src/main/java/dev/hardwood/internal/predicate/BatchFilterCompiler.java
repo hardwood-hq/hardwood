@@ -120,11 +120,18 @@ public final class BatchFilterCompiler {
         return result;
     }
 
+    /// `ResolvedPredicate.And` is canonicalized to a flat list of children at
+    /// construction time (see [ResolvedPredicate.And]), so a nested `And` here
+    /// would indicate a broken invariant. `Or` children remain a bail-out — the
+    /// batch path only supports column-local conjunctions.
     private static List<ResolvedPredicate> flattenAnd(ResolvedPredicate predicate) {
         if (predicate instanceof ResolvedPredicate.And(List<ResolvedPredicate> children)) {
             for (ResolvedPredicate child : children) {
-                if (child instanceof ResolvedPredicate.And
-                        || child instanceof ResolvedPredicate.Or) {
+                if (child instanceof ResolvedPredicate.And) {
+                    throw new IllegalStateException(
+                            "ResolvedPredicate.And must be flat; found nested And child");
+                }
+                if (child instanceof ResolvedPredicate.Or) {
                     return null;
                 }
             }

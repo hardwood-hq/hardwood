@@ -45,4 +45,37 @@ class ResolvedPredicateTest {
         ResolvedPredicate.Or or = new ResolvedPredicate.Or(List.of(child));
         assertThat(or.children()).hasSize(1);
     }
+
+    @Test
+    void andFlattensNestedAndAtConstruction() {
+        ResolvedPredicate a = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.EQ, 1);
+        ResolvedPredicate b = new ResolvedPredicate.IntPredicate(1, FilterPredicate.Operator.EQ, 2);
+        ResolvedPredicate c = new ResolvedPredicate.IntPredicate(2, FilterPredicate.Operator.EQ, 3);
+        ResolvedPredicate.And and = new ResolvedPredicate.And(List.of(
+                a,
+                new ResolvedPredicate.And(List.of(b, c))));
+        assertThat(and.children()).containsExactly(a, b, c);
+    }
+
+    @Test
+    void orFlattensNestedOrAtConstruction() {
+        ResolvedPredicate a = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.EQ, 1);
+        ResolvedPredicate b = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.EQ, 2);
+        ResolvedPredicate c = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.EQ, 3);
+        ResolvedPredicate.Or or = new ResolvedPredicate.Or(List.of(
+                a,
+                new ResolvedPredicate.Or(List.of(b, c))));
+        assertThat(or.children()).containsExactly(a, b, c);
+    }
+
+    @Test
+    void andDoesNotFlattenOrChild() {
+        ResolvedPredicate a = new ResolvedPredicate.IntPredicate(0, FilterPredicate.Operator.EQ, 1);
+        ResolvedPredicate.Or or = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.IntPredicate(1, FilterPredicate.Operator.EQ, 2),
+                new ResolvedPredicate.IntPredicate(1, FilterPredicate.Operator.EQ, 3)));
+        ResolvedPredicate.And and = new ResolvedPredicate.And(List.of(a, or));
+        assertThat(and.children()).containsExactly(a, or);
+    }
+
 }

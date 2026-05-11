@@ -128,7 +128,9 @@ class BatchFilterCompilerTest {
         }
 
         @Test
-        void andWithNestedAnd_returnsNull() {
+        void andWithNestedAnd_isFlattenedAndCompiles() {
+            // ResolvedPredicate.And flattens nested And at construction, so the batch
+            // path sees a single flat conjunction and compiles successfully.
             FileSchema schema = longDoubleSchema();
             ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
                     new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
@@ -136,7 +138,10 @@ class BatchFilterCompilerTest {
                             new ResolvedPredicate.DoublePredicate(1, Operator.LT, 500.0)
                     ))
             ));
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
+            ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
+                    predicate, schema, IntUnaryOperator.identity());
+            assertNotNull(result);
+            assertEquals(2, result.length);
         }
 
         @Test
