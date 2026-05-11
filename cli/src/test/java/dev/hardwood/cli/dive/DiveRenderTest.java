@@ -19,7 +19,9 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.dive.internal.HelpOverlay;
 import dev.hardwood.cli.dive.internal.Keys;
+import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -207,6 +209,29 @@ class DiveRenderTest {
             }
             RenderHarness.render(AREA, s, m);
         }
+    }
+
+    @Test
+    void helpOverlayWrapsLongDescriptions() {
+        // At 80 width, the description budget is 38 chars.
+        // The longest description is 52 chars, so it should be forced to wrap.
+        Rect screenArea = new Rect(0, 0, 80, 40);
+        Buffer buffer = Buffer.empty(screenArea);
+
+        HelpOverlay.render(buffer, screenArea);
+
+        StringBuilder sb = new StringBuilder();
+        for (int y = 0; y < screenArea.height(); y++) {
+            for (int x = 0; x < screenArea.width(); x++) {
+                String sym = buffer.get(x, y).symbol();
+                sb.append(sym == null || sym.isEmpty() ? ' ' : sym);
+            }
+            sb.append("\n");
+        }
+        String screenText = sb.toString();
+
+        assertThat(screenText).contains("enter filter mode (Schema, Column ");
+        assertThat(screenText).contains("               index, Dictionary) ");
     }
 
     static Stream<org.junit.jupiter.params.provider.Arguments> smokeMatrix() {
