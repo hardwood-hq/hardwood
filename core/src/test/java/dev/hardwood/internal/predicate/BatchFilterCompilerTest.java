@@ -158,6 +158,21 @@ class BatchFilterCompilerTest {
         }
 
         @Test
+        void andWithBinaryChild_returnsNull() {
+            // BinaryPredicate is unsupported. As a child of an otherwise-eligible
+            // And, it must poison the whole compile so the query falls back rather
+            // than the supported leaves silently running on a partial conjunction.
+            FileSchema schema = schema(
+                    leaf("id", PhysicalType.INT64),
+                    leaf("name", PhysicalType.BYTE_ARRAY));
+            ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
+                    new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
+                    new ResolvedPredicate.BinaryPredicate(1, Operator.EQ,
+                            new byte[]{'h', 'i'}, false)));
+            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
+        }
+
+        @Test
         void binaryLeaf_returnsNull() {
             FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
             ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
