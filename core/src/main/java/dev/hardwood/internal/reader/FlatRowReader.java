@@ -277,6 +277,9 @@ public final class FlatRowReader implements RowReader {
     @Override
     public void next() {
         if (drainSide) {
+            if (pendingRowIndex < 0) {
+                throw new java.util.NoSuchElementException("No matching row available. Call hasNext() first.");
+            }
             rowIndex = pendingRowIndex;
             pendingRowIndex = -1;
         }
