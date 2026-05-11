@@ -58,7 +58,7 @@ class ColumnWorkerTest {
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0);
+                    context.decompressorFactory(), context.executor(), 0, null);
             worker.start();
 
             long totalRows = consumeAllBatches(exchange);
@@ -90,7 +90,7 @@ class ColumnWorkerTest {
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0);
+                    context.decompressorFactory(), context.executor(), 0, null);
             worker.start();
 
             int batchCount = 0;
@@ -145,7 +145,7 @@ class ColumnWorkerTest {
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, nullableCol), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0);
+                    context.decompressorFactory(), context.executor(), 0, null);
             worker.start();
 
             boolean sawNulls = false;
@@ -187,7 +187,7 @@ class ColumnWorkerTest {
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), maxRows);
+                    context.decompressorFactory(), context.executor(), maxRows, null);
             worker.start();
 
             long totalRows = consumeAllBatches(exchange);
@@ -338,7 +338,7 @@ class ColumnWorkerTest {
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
                     new PageSource(iterator, 0), exchange, column, batchCapacity,
-                    context.decompressorFactory(), stalledExecutor, 0);
+                    context.decompressorFactory(), stalledExecutor, 0, null);
             worker.start();
 
             assertThat(firstSubmitted.await(5, TimeUnit.SECONDS))
@@ -394,7 +394,7 @@ class ColumnWorkerTest {
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
                     null, exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0);
+                    context.decompressorFactory(), context.executor(), 0, null);
 
             worker.initDrainState();
             worker.currentBatch = exchange.takeBatch();

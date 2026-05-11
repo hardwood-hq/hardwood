@@ -21,7 +21,7 @@ import dev.hardwood.schema.ColumnSchema;
 public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     private BitSet currentNulls;
-    private ColumnBatchMatcher columnFilter;
+    private final ColumnBatchMatcher columnFilter;
 
     /// Creates a new flat column worker.
     ///
@@ -32,19 +32,17 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     /// @param decompressorFactory for creating page decompressors
     /// @param decodeExecutor executor for decode tasks
     /// @param maxRows maximum rows to assemble (0 = unlimited)
+    /// @param columnFilter optional drain-side per-column filter that runs against every
+    ///                    published batch, writing matches into the batch's `matches`
+    ///                    array. `null` leaves the worker on the existing path — no
+    ///                    filter evaluation.
     public FlatColumnWorker(PageSource pageSource, BatchExchange<BatchExchange.Batch> exchange,
                             ColumnSchema column, int batchCapacity,
                             DecompressorFactory decompressorFactory,
-                            Executor decodeExecutor, long maxRows) {
+                            Executor decodeExecutor, long maxRows,
+                            ColumnBatchMatcher columnFilter) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
               decodeExecutor, maxRows);
-    }
-
-    /// Installs a drain-side per-column filter that runs against every published batch,
-    /// writing matches into the batch's `matches` array. Must be set before [#start()]
-    /// and only by [FlatRowReader] when the drain-side path is enabled. `null` (the
-    /// default) leaves the worker on the existing path — no filter evaluation.
-    public void setColumnFilter(ColumnBatchMatcher columnFilter) {
         this.columnFilter = columnFilter;
     }
 

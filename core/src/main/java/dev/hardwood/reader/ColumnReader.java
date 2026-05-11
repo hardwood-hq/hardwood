@@ -503,7 +503,7 @@ public class ColumnReader implements AutoCloseable {
                     });
             FlatColumnWorker flatWorker = new FlatColumnWorker(
                     pageSource, flatBuf, columnSchema, DEFAULT_BATCH_SIZE,
-                    context.decompressorFactory(), context.executor(), 0);
+                    context.decompressorFactory(), context.executor(), 0, null);
             flatWorker.start();
             return ColumnReader.forFlat(columnSchema, flatBuf, flatWorker, ownedIterator);
         }

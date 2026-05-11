@@ -189,12 +189,11 @@ public final class FlatRowReader implements RowReader {
                         }
                         return b;
                     });
+            ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
             FlatColumnWorker worker = new FlatColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), context.executor(), maxRows);
-            if (allocateMatches) {
-                worker.setColumnFilter(columnBatchMatchers[i]);
-            }
+                    context.decompressorFactory(), context.executor(), maxRows,
+                    columnFilter);
 
             buffers[i] = buffer;
             workers[i] = worker;
