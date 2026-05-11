@@ -331,6 +331,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
 - [x] Filter evaluation engine (supports INT32, INT64, FLOAT, DOUBLE, BOOLEAN, BINARY/STRING)
 - [x] Page index-based page filtering (`PageFilterEvaluator` with page-range I/O)
 - [x] Inline `DataPageHeader.statistics` fallback when Column Index is absent (`InlinePageStatsScanner`)
+- [x] Drain-side per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs/DRAIN_SIDE_RECORD_FILTERING.md`)
 - [ ] Bloom filter-based filtering
 
 ---

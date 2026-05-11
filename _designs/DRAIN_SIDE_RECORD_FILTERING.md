@@ -1,6 +1,6 @@
 ## Drain-Side Record Filtering (#250)
 
-**Status: Implemented and on by default** for any query that decomposes into column-local leaves on distinct top-level columns. Beats the compiled per-row path on every multi-column scenario measured, and is taken even for single-leaf queries (the early leaf-count gate from v1 has been removed — see the rationale under [Eligibility](#eligibility)). Ineligible shapes fall back automatically to `FilteredRowReader` via a `null` return from `BatchFilterCompiler.tryCompile`. There is no opt-in flag.
+**Status: Implemented and on by default** for any query that decomposes into column-local leaves on distinct top-level columns. The path trades single-threaded predicate throughput for cross-core parallelism: in end-to-end multi-column AND scenarios it beats the compiled per-row path (1.5–5× on the measured workloads, scaling with leaf count); in single-threaded JMH microbenchmarks it is 3.8–6.9× slower per row than the compiled path. The end-to-end wins come from running per-column matchers on the existing drain threads in parallel rather than serially on the consumer thread — see [Performance](#performance--end-to-end-full-coverage-recordfilterscenariosbenchmarktest--dperfruns5) for the full picture. It is taken even for single-leaf queries (the early leaf-count gate from v1 has been removed — see the rationale under [Eligibility](#eligibility)). Ineligible shapes fall back automatically to `FilteredRowReader` via a `null` return from `BatchFilterCompiler.tryCompile`. There is no opt-in flag.
 
 ## Context
 

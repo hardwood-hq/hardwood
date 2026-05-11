@@ -311,6 +311,8 @@ class RecordFilterBenchmarkTest {
                 .withSchema(schema)
                 .withConf(conf)
                 .withCompressionCodec(CompressionCodecName.SNAPPY)
+                // Byte budget (not a row count): TOTAL_ROWS * 16 bytes/row is a generous
+                // ceiling that forces a single row group for the whole dataset.
                 .withRowGroupSize((long) TOTAL_ROWS * 16)
                 .withWriteMode(ParquetFileWriter.Mode.OVERWRITE)
                 .withPageWriteChecksumEnabled(false)
