@@ -240,4 +240,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
         }
         return wrap(off);
     }
+
+    @Override
+    public Object getRawValue(String name) {
+        // Variant values are self-describing — there is no distinct physical
+        // representation to surface beyond what `getValue` already returns.
+        return getValue(name);
+    }
 }

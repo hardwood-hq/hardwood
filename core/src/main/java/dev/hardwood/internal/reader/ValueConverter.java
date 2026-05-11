@@ -17,6 +17,7 @@ import java.util.UUID;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.schema.SchemaNode;
 
 /// Shared validation and conversion logic for PqStruct, PqList, and PqMap implementations.
@@ -131,6 +132,14 @@ public final class ValueConverter {
         return convertLogicalType(rawValue, schema, UUID.class);
     }
 
+    public static PqInterval convertToInterval(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        validateLogicalType(schema, LogicalType.IntervalType.class);
+        return convertLogicalType(rawValue, schema, PqInterval.class);
+    }
+
     // ==================== Generic Type Conversion ====================
 
     /// Convert a primitive value based on schema type.
@@ -164,6 +173,9 @@ public final class ValueConverter {
         }
         else if (logicalType instanceof LogicalType.UuidType) {
             return convertToUuid(rawValue, schema);
+        }
+        else if (logicalType instanceof LogicalType.IntervalType) {
+            return convertToInterval(rawValue, schema);
         }
         else if (logicalType instanceof LogicalType.StringType) {
             return convertToString(rawValue, schema);

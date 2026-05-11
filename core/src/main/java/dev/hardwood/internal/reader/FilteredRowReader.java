@@ -92,6 +92,8 @@ public final class FilteredRowReader implements RowReader {
     @Override public boolean isNull(String name) { return delegate.isNull(name); }
     @Override public Object getValue(int i) { return delegate.getValue(i); }
     @Override public Object getValue(String name) { return delegate.getValue(name); }
+    @Override public Object getRawValue(int i) { return delegate.getRawValue(i); }
+    @Override public Object getRawValue(String name) { return delegate.getRawValue(name); }
     @Override public int getFieldCount() { return delegate.getFieldCount(); }
     @Override public String getFieldName(int i) { return delegate.getFieldName(i); }
     @Override public PqStruct getStruct(String name) { return delegate.getStruct(name); }

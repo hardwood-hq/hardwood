@@ -184,10 +184,17 @@ public interface RowReader extends StructAccessor, AutoCloseable {
     /// @return the interval, or null if the field is null
     PqInterval getInterval(int fieldIndex);
 
-    /// Get a field value by field index without type conversion.
+    /// Get a field value by field index, decoded to its logical-type
+    /// representation. See [#getValue(String)] for the decoded type mapping.
+    ///
+    /// @return the decoded value, or null if the field is null
+    Object getValue(int fieldIndex);
+
+    /// Get a field value by field index as its raw physical representation,
+    /// without logical-type decoding. See [#getRawValue(String)] for details.
     ///
     /// @return the raw value, or null if the field is null
-    Object getValue(int fieldIndex);
+    Object getRawValue(int fieldIndex);
 
     /// Check if a field is null by field index.
     boolean isNull(int fieldIndex);

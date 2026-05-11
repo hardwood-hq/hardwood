@@ -449,11 +449,20 @@ public final class NestedBatchDataView {
 
     public Object getValue(String name) {
         TopLevelFieldMap.FieldDesc desc = lookupField(name);
-        return readRawValue(desc);
+        return readValueImpl(desc, true);
     }
 
     public Object getValue(int projectedIndex) {
-        return readRawValue(fieldDescs[projectedIndex]);
+        return readValueImpl(fieldDescs[projectedIndex], true);
+    }
+
+    public Object getRawValue(String name) {
+        TopLevelFieldMap.FieldDesc desc = lookupField(name);
+        return readValueImpl(desc, false);
+    }
+
+    public Object getRawValue(int projectedIndex) {
+        return readValueImpl(fieldDescs[projectedIndex], false);
     }
 
     // ==================== Metadata ====================
@@ -554,14 +563,15 @@ public final class NestedBatchDataView {
         return PqMapImpl.create(batchIndex, mapDesc, rowIndex, -1);
     }
 
-    private Object readRawValue(TopLevelFieldMap.FieldDesc desc) {
+    private Object readValueImpl(TopLevelFieldMap.FieldDesc desc, boolean decode) {
         return switch (desc) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
                 int valueIdx = cachedValueIndex[p.projectedCol()];
                 if (batchIndex.isElementNull(p.projectedCol(), valueIdx)) {
                     yield null;
                 }
-                yield batchIndex.getValue(p.projectedCol(), valueIdx);
+                Object raw = batchIndex.getValue(p.projectedCol(), valueIdx);
+                yield decode ? ValueConverter.convertValue(raw, p.schema()) : raw;
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> {
                 if (isStructNull(s)) {

@@ -281,6 +281,85 @@ def annotate_group_as_variant(path: str, group_name: str, spec_version: int = 1)
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
+def _find_schema_element_by_path(file_metadata, name_path):
+    """Find a SchemaElement in `file_metadata.schema` by hierarchical name path.
+
+    The schema is a depth-first flat list; each non-leaf carries `num_children`.
+    `name_path` is a list like `['intervals', 'list', 'element']`. Returns the
+    matching SchemaElement, raising if no path matches uniquely.
+    """
+    elements = file_metadata.schema
+
+    def _walk(start, depth):
+        if depth == len(name_path):
+            return start, None  # not used
+        target = name_path[depth]
+        i = start + 1  # children begin right after the parent
+        children_remaining = elements[start].num_children or 0
+        while children_remaining > 0:
+            child = elements[i]
+            if child.name == target:
+                if depth == len(name_path) - 1:
+                    return i, child
+                return _walk(i, depth + 1)
+            # skip subtree under `child`
+            i = _skip_subtree(i)
+            children_remaining -= 1
+        raise ValueError(f"Path segment {target!r} not found at depth {depth}")
+
+    def _skip_subtree(idx):
+        nc = elements[idx].num_children or 0
+        idx += 1
+        for _ in range(nc):
+            idx = _skip_subtree(idx)
+        return idx
+
+    _, found = _walk(0, 0)
+    if found is None:
+        raise ValueError(f"Path {name_path!r} did not resolve to a leaf")
+    return found
+
+
+def annotate_element_at_path_as_interval(path: str, name_path) -> None:
+    """Annotate the SchemaElement at `name_path` (excluding the root) as INTERVAL."""
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    el.logicalType = _parquet.LogicalType(INTERVAL=_parquet.IntervalType())
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def annotate_element_at_path_as_time(path: str, name_path, *,
+                                     unit: str = "MILLIS", is_adjusted_to_utc: bool = True) -> None:
+    """Annotate the SchemaElement at `name_path` as TIME with the given unit."""
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    time_unit = {
+        "MILLIS": _parquet.TimeUnit(MILLIS=_parquet.MilliSeconds()),
+        "MICROS": _parquet.TimeUnit(MICROS=_parquet.MicroSeconds()),
+        "NANOS": _parquet.TimeUnit(NANOS=_parquet.NanoSeconds()),
+    }[unit]
+    el.logicalType = _parquet.LogicalType(
+        TIME=_parquet.TimeType(isAdjustedToUTC=is_adjusted_to_utc, unit=time_unit))
+    if unit == "MILLIS":
+        el.converted_type = _parquet.ConvertedType.TIME_MILLIS
+    elif unit == "MICROS":
+        el.converted_type = _parquet.ConvertedType.TIME_MICROS
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def annotate_element_at_path_as_decimal(path: str, name_path, *,
+                                        precision: int, scale: int) -> None:
+    """Annotate the SchemaElement at `name_path` as DECIMAL(precision, scale)."""
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    el.logicalType = _parquet.LogicalType(
+        DECIMAL=_parquet.DecimalType(scale=scale, precision=precision))
+    el.converted_type = _parquet.ConvertedType.DECIMAL
+    el.scale = scale
+    el.precision = precision
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
 def annotate_column_as_interval(path: str, column_name: str, *, legacy_only: bool = False) -> None:
     """Rewrite `path` so that the named FIXED_LEN_BYTE_ARRAY(12) column carries the INTERVAL annotation.
 

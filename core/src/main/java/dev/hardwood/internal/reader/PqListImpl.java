@@ -16,10 +16,10 @@ import java.util.NoSuchElementException;
 import java.util.UUID;
 import java.util.function.IntFunction;
 
-import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
@@ -225,6 +225,11 @@ final class PqListImpl implements PqList {
     @Override
     public Iterable<UUID> uuids() {
         return () -> new LeafIterator<>(raw -> ValueConverter.convertToUuid(raw, elementSchema));
+    }
+
+    @Override
+    public Iterable<PqInterval> intervals() {
+        return () -> new LeafIterator<>(raw -> ValueConverter.convertToInterval(raw, elementSchema));
     }
 
     // ==================== Nested Type Accessors ====================

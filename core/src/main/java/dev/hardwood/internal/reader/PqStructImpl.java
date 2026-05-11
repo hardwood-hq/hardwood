@@ -279,7 +279,13 @@ final class PqStructImpl implements PqStruct {
     @Override
     public Object getValue(String name) {
         TopLevelFieldMap.FieldDesc child = lookupChild(name);
-        return readRawValue(child);
+        return readValueImpl(child, true);
+    }
+
+    @Override
+    public Object getRawValue(String name) {
+        TopLevelFieldMap.FieldDesc child = lookupChild(name);
+        return readValueImpl(child, false);
     }
 
     // ==================== Metadata ====================
@@ -398,14 +404,15 @@ final class PqStructImpl implements PqStruct {
         return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 
-    private Object readRawValue(TopLevelFieldMap.FieldDesc child) {
+    private Object readValueImpl(TopLevelFieldMap.FieldDesc child, boolean decode) {
         return switch (child) {
             case TopLevelFieldMap.FieldDesc.Primitive p -> {
                 int idx = resolveValueIndex(p.projectedCol());
                 if (batch.isElementNull(p.projectedCol(), idx)) {
                     yield null;
                 }
-                yield batch.getValue(p.projectedCol(), idx);
+                Object raw = batch.getValue(p.projectedCol(), idx);
+                yield decode ? ValueConverter.convertValue(raw, p.schema()) : raw;
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> {
                 if (isStructNull(s)) {
@@ -419,6 +426,7 @@ final class PqStructImpl implements PqStruct {
                     PqListImpl.createGenericList(batch, l, rowIndex, valueIndex);
             case TopLevelFieldMap.FieldDesc.MapOf m ->
                     PqMapImpl.create(batch, m, rowIndex, valueIndex);
+            // Variants are self-describing; there's no raw-vs-decoded split.
             case TopLevelFieldMap.FieldDesc.Variant v -> getVariant(v.schema().name());
         };
     }
