@@ -40,6 +40,7 @@ import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNotNullBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.schema.FileSchema;
 
 /// Compiles an eligible [ResolvedPredicate] into per-column [ColumnBatchMatcher] fragments
@@ -165,7 +166,8 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.LongInPredicate ignored -> true;
             case ResolvedPredicate.IsNullPredicate ignored -> true;
             case ResolvedPredicate.IsNotNullPredicate ignored -> true;
-            case ResolvedPredicate.BooleanPredicate p -> true;
+            case ResolvedPredicate.BooleanPredicate p ->
+                    p.op() == FilterPredicate.Operator.EQ || p.op() == FilterPredicate.Operator.NOT_EQ;
             default -> false;
         };
     }
@@ -207,13 +209,17 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.BooleanPredicate p -> switch (p.op()) {
                 case EQ -> new BooleanEqBatchMatcher(projectedIdx, p.value());
                 case NOT_EQ -> new BooleanNotEqBatchMatcher(projectedIdx, p.value());
-                default -> null;
+                default -> throw new IllegalStateException(
+                        "Unsupported boolean operator reached compileLeaf: " + p.op()
+                                + " — isSupported should have rejected this");
             };
             case ResolvedPredicate.IntInPredicate p -> new IntInBatchMatcher(projectedIdx, p.values());
             case ResolvedPredicate.LongInPredicate p -> new LongInBatchMatcher(projectedIdx, p.values());
             case ResolvedPredicate.IsNullPredicate p -> new IsNullBatchMatcher(projectedIdx);
             case ResolvedPredicate.IsNotNullPredicate p -> new IsNotNullBatchMatcher(projectedIdx);
-            default -> null;
+            default -> throw new IllegalStateException(
+                    "Unsupported predicate type reached compileLeaf: " + leaf.getClass().getSimpleName()
+                            + " — isSupported should have rejected this");
         };
     }
 }
