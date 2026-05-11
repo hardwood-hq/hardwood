@@ -22,7 +22,7 @@ import dev.hardwood.internal.reader.BatchExchange;
 /// `(batch.recordCount + 63) >>> 6`.
 public sealed interface ColumnBatchMatcher
         permits LongBatchMatcher, DoubleBatchMatcher, IntBatchMatcher, FloatBatchMatcher,
-        BooleanBatchMatcher, NullBatchMatcher {
+        BooleanBatchMatcher, NullBatchMatcher, AndBatchMatcher {
 
     void test(BatchExchange.Batch batch, long[] outWords);
 }

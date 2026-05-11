@@ -38,16 +38,17 @@ A leaf is **column-local** iff:
 - Its column maps to a non-negative projected index, and
 - Its `(type, op)` is one of: `long` / `double` / `int` / `float` × `{EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ}`, `boolean` × `{EQ, NOT_EQ}`, `IntIn` / `LongIn`, `IsNull` / `IsNotNull`.
 
-`Or`, `Not`, intermediate-struct paths, geospatial predicates, `Binary*` leaves, and any leaf on a fragment-less column make the entire query non-eligible. Two leaves on the same column also force a fallback in v1 — the compiler does not yet fuse same-column comparisons into a range matcher.
+`Or`, `Not`, intermediate-struct paths, geospatial predicates, `Binary*` leaves, and any leaf on a fragment-less column make the entire query non-eligible. Multiple leaves on the same column (e.g. `id >= x AND id <= y`) are folded into a single `AndBatchMatcher` per column that runs both children and word-AND merges their bitmaps. A dedicated fused range matcher would be tighter, but the general composite already moves the `range` shape onto the drain-side path.
 
-The distinct-column rule is enforced positionally: `BatchFilterCompiler.tryCompile` allocates a `ColumnBatchMatcher[]` slot per projected column index and returns `null` when a second leaf tries to claim an already-filled slot:
+Per-column composition is enforced positionally: `BatchFilterCompiler.tryCompile` allocates a `ColumnBatchMatcher[]` slot per projected column index and folds any further leaf for that column into an `AndBatchMatcher` over the existing slot occupant:
 
 ```java
-if (result[projected] != null) {
-    // Two leaves on the same column: not supported in v1.
-    return null;
-}
+result[projected] = result[projected] == null
+        ? matcher
+        : new AndBatchMatcher(result[projected], matcher);
 ```
+
+`AndBatchMatcher` runs both children against the same batch, writing the first child's bits into the caller's `outWords` and the second into a per-instance scratch buffer, then word-ANDs the active range. The composite is type-agnostic — both children handle their own `batch.values` cast.
 
 There is no separate leaf-count gate. The v1 prototype carried an `if (leaves.size() < 2) return null;` short-circuit on the theory that single-fragment queries pay drain-side overhead with no parallelism payoff; in practice the single-leaf drain-side path is within noise of the compiled path on the end-to-end benchmark (see the `single` row in the table below) and strictly wins once a matcher gains a vectorised body, so the gate was removed.
 

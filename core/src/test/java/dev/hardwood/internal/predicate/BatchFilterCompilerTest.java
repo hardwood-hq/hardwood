@@ -201,16 +201,22 @@ class BatchFilterCompilerTest {
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, col -> -1));
         }
 
-        @Test
-        void twoLeavesOnSameColumn_returnsNull() {
-            // v1 doesn't merge per-column fragments; the eligibility check rejects
-            // the duplicate so the existing FilteredRowReader path handles ranges.
-            FileSchema schema = schema(leaf("id", PhysicalType.INT64));
-            ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
-                    new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
-                    new ResolvedPredicate.LongPredicate(0, Operator.LT, 100L)
-            ));
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
-        }
+    }
+
+    @Test
+    void twoLeavesOnSameColumn_composeIntoAndMatcher() {
+        // Range-style predicates (`id >= x AND id <= y`) put two leaves on the
+        // same projected column. The compiler keeps a single slot per column
+        // and folds the second leaf into an AndBatchMatcher composite.
+        FileSchema schema = schema(leaf("id", PhysicalType.INT64));
+        ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
+                new ResolvedPredicate.LongPredicate(0, Operator.GT_EQ, 5L),
+                new ResolvedPredicate.LongPredicate(0, Operator.LT_EQ, 100L)
+        ));
+        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+        assertNotNull(result);
+        assertEquals(1, result.length);
+        assertInstanceOf(AndBatchMatcher.class, result[0]);
     }
 }

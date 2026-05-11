@@ -104,15 +104,13 @@ public final class BatchFilterCompiler {
 
         for (int i = 0; i < leavesSize; i++) {
             int projected = projectedIdx[i];
-
-            if (result[projected] != null) {
-                // Two leaves on the same column: not supported in v1.
-                return null;
-            }
-
             ColumnBatchMatcher matcher = compileLeaf(leaves.get(i));
 
-            result[projected] = matcher;
+            // Multiple leaves on the same column (e.g. `id >= x AND id <= y`)
+            // compose into a single AND-merged matcher kept in the same slot.
+            result[projected] = result[projected] == null
+                    ? matcher
+                    : new AndBatchMatcher(result[projected], matcher);
         }
         return result;
     }
