@@ -1,6 +1,6 @@
 ## Drain-Side Record Filtering (#250)
 
-**Status: Implemented and on by default** for queries with `≥ 2` distinct column fragments. Beats the compiled per-row path on every multi-column scenario measured. Single-fragment queries and any other ineligible shapes fall back automatically to `FilteredRowReader` — the gate is in `BatchFilterCompiler.tryCompile`. There is no opt-in flag.
+**Status: Implemented and on by default** for any query that decomposes into column-local leaves on distinct top-level columns. Beats the compiled per-row path on every multi-column scenario measured, and is taken even for single-leaf queries (the early leaf-count gate from v1 has been removed — see the rationale under [Eligibility](#eligibility)). Ineligible shapes fall back automatically to `FilteredRowReader` via a `null` return from `BatchFilterCompiler.tryCompile`. There is no opt-in flag.
 
 ## Context
 
@@ -28,8 +28,8 @@ Eligible queries take the drain-side path; ineligible queries fall back to `Filt
 
 A `ResolvedPredicate` is **eligible** iff:
 
-- It is `ResolvedPredicate.And(children)` with **at least two distinct projected columns** between its children, and
-- Every child is a column-local leaf, and
+- It is either a single column-local leaf, or `ResolvedPredicate.And(children)` whose children are all column-local leaves, and
+- All leaves target **distinct** top-level projected columns (no two leaves on the same column), and
 - Every leaf has `(type, op)` supported by `BatchFilterCompiler`.
 
 A leaf is **column-local** iff:
@@ -40,7 +40,16 @@ A leaf is **column-local** iff:
 
 `Or`, `Not`, intermediate-struct paths, geospatial predicates, `Binary*` leaves, and any leaf on a fragment-less column make the entire query non-eligible. Two leaves on the same column also force a fallback in v1 — the compiler does not yet fuse same-column comparisons into a range matcher.
 
-The `≥ 2` fragment rule was the load-bearing finding from the v1 prototype: single-fragment queries pay drain-side overhead with no parallelism payoff and lose to the compiled path. The gate is implemented as `if (leaves.size() < 2) return null;` in `BatchFilterCompiler.tryCompile`, which trips before any per-leaf checks.
+The distinct-column rule is enforced positionally: `BatchFilterCompiler.tryCompile` allocates a `ColumnBatchMatcher[]` slot per projected column index and returns `null` when a second leaf tries to claim an already-filled slot:
+
+```java
+if (result[projected] != null) {
+    // Two leaves on the same column: not supported in v1.
+    return null;
+}
+```
+
+There is no separate leaf-count gate. The v1 prototype carried an `if (leaves.size() < 2) return null;` short-circuit on the theory that single-fragment queries pay drain-side overhead with no parallelism payoff; in practice the single-leaf drain-side path is within noise of the compiled path on the end-to-end benchmark (see the `single` row in the table below) and strictly wins once a matcher gains a vectorised body, so the gate was removed.
 
 ---
 
@@ -168,6 +177,8 @@ Only the words covering `[0, batchSize)` are touched — bits past `batchSize` a
 The full `./mvnw verify` passes — the drain-side path runs by default for every eligible query in the existing test suite.
 
 ### Performance — end-to-end, full coverage (`RecordFilterScenariosBenchmarkTest -Dperf.runs=5`)
+
+The numbers below were captured when the single-leaf gate still existed; rows annotated `fallback (gate)` / `gated → fallback` ran the compiled path on both runs at the time. With the gate now removed, those scenarios take the drain-side path too — at parity with compiled per the row-level data already present.
 
 10 M rows × `id: long, value: double, tag: int, flag: boolean`. Each scenario is its own `@Test` so JIT warmup ordering doesn't bias later cells. The numbers below were captured on the branch that introduced drain-side filtering against the previous compiled-only path on `main` — the comparison is a pre/post snapshot, not a runtime toggle.
 
@@ -323,7 +334,7 @@ Identity-checked by the consumer. Match-all batches: no allocation, no fill, no 
 
 **Subtle.** NaN handling for double / float: a running `Math.min` over NaN produces NaN, and the matcher's `Double.compare` semantics don't agree with `<`. The drain has to set `statsValid = false` if any NaN is seen and the matcher takes the per-row path for that batch.
 
-**Payoff.** Closes the single-fragment match-all gap that the current `< 2 leaves` gate currently sidesteps by falling back to compiled. Could let the gate flip to "always eligible if column-local."
+**Payoff.** Closes the single-fragment match-all gap. With the v1 leaf-count gate already removed, this would also make the drain-side path strictly preferable to compiled on single-leaf match-all instead of merely at parity.
 
 **Difficulty.** Low-medium. Two compare-and-update per row in the drain (cheap, branchless via `Math.min`/`Math.max`). New fields on `Batch`. Sentinel identity-comparison in the intersect helper.
 
