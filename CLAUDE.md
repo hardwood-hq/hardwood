@@ -1,7 +1,7 @@
 # General
 
 Avoid "not my department" thinking; if, for instance, there are build failures you consider unrelated to our current changes, still make an effort to fix them.
-Never add a Co-Authored-By trailer to commit messages.
+Never add Claude (or any Anthropic identity) as a Co-Authored-By trailer on commit messages. Human co-authors are fine.
 When a CLI tool is missing from the dev container (e.g. `cmp: command not found`), surface it to the user and propose adding the providing package to the `Dockerfile`'s `microdnf install` list — unless there is an obvious one-line alternative (e.g. `command -v` for `which`) or a Python equivalent that is just as terse. Do not silently work around it.
 
 # Maven
@@ -41,6 +41,8 @@ Never use `var` syntax.
 GitHub Actions should always referenced by SHA.
 
 # Documentation
+
+User-facing docs (`docs/content/*.md` and public-API JavaDoc) describe **what the API does and how to use it**. Do not include rationale for design decisions, comparisons to other internal APIs, or "we chose X to match Y" justifications — users don't need to know why two parts of the project share a convention, only that they do. Design rationale belongs in `_designs/*.md` (audience: maintainers and reviewers); user docs describe the end state directly.
 
 All JavaDoc comments must use Markdown `///` syntax (JEP 467), not the legacy `/** */` block comment style.
 Key rules for `///` Markdown JavaDoc:
