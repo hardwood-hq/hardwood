@@ -532,13 +532,13 @@ final class PqListImpl implements PqList {
         if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
             return null;
         }
-        byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[valueIdx];
+        byte[] metadataBytes = ((BinaryBatchValues) batch.valueArrays[variantDesc.metadataCol()]).byteArrayAt(valueIdx);
         int valueCol = variantDesc.valueCol();
         if (valueCol < 0) {
             throw new IllegalStateException(
                     "Variant list element requires its 'value' child in the projection");
         }
-        byte[] value = ((byte[][]) batch.valueArrays[valueCol])[valueIdx];
+        byte[] value = ((BinaryBatchValues) batch.valueArrays[valueCol]).byteArrayAt(valueIdx);
         return new PqVariantImpl(metadataBytes, value);
     }
 

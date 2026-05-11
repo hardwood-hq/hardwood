@@ -49,12 +49,12 @@ public final class FloatGtBatchMatcher implements FloatBatchMatcher {
             outWords[fullWords] = word;
         }
 
-        // Clear bits at null positions. Bits past `n` are intentionally left stale —
+        // Clear bits at absent positions. Bits past `n` are intentionally left stale —
         // the consumer (FlatRowReader#intersectMatches) only touches the words
         // covering `[0, n)`, so the trailing zero-fill would be dead work.
-        BitSet nulls = batch.nulls;
-        if (nulls != null) {
-            for (int i = nulls.nextSetBit(0); i >= 0 && i < n; i = nulls.nextSetBit(i + 1)) {
+        BitSet validity = batch.validity;
+        if (validity != null) {
+            for (int i = validity.nextClearBit(0); i < n; i = validity.nextClearBit(i + 1)) {
                 outWords[i >>> 6] &= ~(1L << (i & 63));
             }
         }

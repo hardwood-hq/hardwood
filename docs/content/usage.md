@@ -580,7 +580,7 @@ Within the target row group, the reader still decodes the leading residue rows a
 The `ColumnReader` provides batch-oriented columnar access with typed primitive arrays, avoiding per-row method calls and boxing. This is the fastest way to consume Parquet data when you process columns independently.
 
 !!! warning "Experimental API"
-    The `ColumnReader` is under active development; the shape of the batch accessors and nested-offset representation may change in future releases without prior deprecation.
+    The `ColumnReader` is under active development; the shape of the batch accessors and layer representation may change in future releases without prior deprecation.
 
 ### Reading a Single Column
 
@@ -596,10 +596,11 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
         while (fare.nextBatch()) {
             int count = fare.getRecordCount();
             double[] values = fare.getDoubles();
-            BitSet nulls = fare.getElementNulls(); // null if column is required
+            Validity validity = fare.getLeafValidity();
+            boolean hasNulls = validity.hasNulls();
 
             for (int i = 0; i < count; i++) {
-                if (nulls == null || !nulls.get(i)) {
+                if (!hasNulls || validity.isNotNull(i)) {
                     sum += values[i];
                 }
             }
@@ -608,7 +609,11 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 }
 ```
 
-Typed accessors are available for each physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`, `getBinaries()`, and `getStrings()`. Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter, use the builder form: `reader.buildColumnReader("id").filter(predicate).build()`.
+The [Validity](/api/latest/dev/hardwood/reader/Validity.html) type wraps the underlying null bitmap behind `isNull(i)` / `isNotNull(i)` / `hasNulls()`. When no item in a batch is null, `getLeafValidity()` (and `getLayerValidity(k)`) returns the shared `Validity.NO_NULLS` singleton — `hasNulls()` returns `false` in O(1) and gates the no-per-element-check fast path, no per-batch allocation. Hot inner loops should hoist `hasNulls()` into a local boolean before iterating; see [Hot loops](#hot-loops-hoist-hasnulls-outside-the-loop) for why.
+
+Typed accessors are available for each fixed-width physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`. For varlength leaves (`BINARY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) the primary accessors are `getBinaryValues()` (a `byte[]` buffer) plus `getBinaryOffsets()` (a sentinel-suffixed `int[]` of length `getValueCount() + 1`); the byte slice for value `i` is `[offsets[i], offsets[i+1])`. The convenience accessors `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf — useful for low-volume / debug paths but allocate per-row, so hot loops should read the buffers directly.
+
+Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter, use the builder form: `reader.buildColumnReader("id").filter(predicate).build()`.
 
 ### Reading Multiple Columns
 
@@ -658,55 +663,136 @@ Before opening a reader for a nested column, you usually need to walk the file's
 
 All three navigation methods return `null` when the group isn't of the expected kind or its encoding is malformed. Callers decide whether `null` is fatal at their layer.
 
-#### Reading nested data
+#### Reading nested data: the layer model
 
-For nested columns (lists, maps), `ColumnReader` provides multi-level offsets and per-level null bitmaps. A list/map container has four states, and three bitmaps together identify which one each record is in:
+`ColumnReader` exposes a column's schema chain as a sequence of **layers**. Each non-leaf node along the chain contributes zero or one layer:
 
-- **Null** — `getLevelNulls(level)` set at the container's index.
-- **Empty** — `getEmptyListMarkers(level)` set; the container exists but has no entries.
-- **Non-empty with null element(s)** — neither `getLevelNulls` nor `getEmptyListMarkers` set; `getElementNulls()` flags the null leaves inside the range.
-- **Non-empty with values** — only `getElementNulls()` indicates per-leaf nullability (or is `null` if all leaves are required).
+| Schema node | Contributes layer? | Layer kind |
+|---|---|---|
+| `REQUIRED` group | no | — |
+| `OPTIONAL` group (struct) | yes | `STRUCT` |
+| `LIST` / `MAP`-annotated group | yes — exactly one | `REPEATED` |
 
-`getEmptyListMarkers()` is what lets you tell an empty list apart from a list containing a single null element: in the underlying encoding, both produce a single phantom entry that `getElementNulls()` flags as null, so without this bitmap they'd be indistinguishable.
+Layers are numbered `0..getLayerCount() - 1` outermost-to-innermost, and the leaf is queried separately. A flat column reports `getLayerCount() == 0`.
 
-For a column `optional group tags (LIST) { repeated group list { optional binary element (STRING); } }`, the four container states look like this:
+For each layer, two buffers describe the items at that layer:
 
-| Record index | Logical value | `getLevelNulls(0)` | `getEmptyListMarkers(0)` | `offsets[0]` | `getElementNulls()` at value index |
-|---|---|---|---|---|---|
-| 0 | `null`     | `1` | `0` | `0` | `1` (phantom) |
-| 1 | `[]`       | `0` | `1` | `1` | `1` (phantom) |
-| 2 | `[null]`   | `0` | `0` | `2` | `1` (real null element) |
-| 3 | `["x"]`    | `0` | `0` | `3` | `0` (`values[3] = "x"`) |
+- `getLayerValidity(k)` — a [Validity](/api/latest/dev/hardwood/reader/Validity.html) indexed by item position; `isNull(i)` / `isNotNull(i)` answer the per-item question, `hasNulls()` is the O(1) fast-path gate. Returns the shared `Validity.NO_NULLS` singleton when no item at layer `k` is null in this batch.
+- `getLayerOffsets(k)` — sentinel-suffixed offsets of length `count(k) + 1` into the next inner layer's items (or, for the innermost layer, into the leaf-value array). Only valid when `getLayerKind(k) == REPEATED`; throws on a `STRUCT` layer.
 
-`getLevelNulls(0)` and `getEmptyListMarkers(0)` are what tell the reader to skip the two phantom entries (rows 0 and 1) rather than dereference them.
+The leaf has its own `getLeafValidity()` (also a `Validity`), and the four states of a `LIST`/`MAP` container fall out cleanly from offsets and validity:
 
-Multi-element lists stretch the `values` array beyond `recordCount`. For a single record holding `["a", null, "b"]`:
+| Logical value | `getLayerValidity` | `offsets[r+1] - offsets[r]` |
+|---|---|---|
+| `null`           | `isNull(r)`    | `0` |
+| `[]`             | `isNotNull(r)` | `0` |
+| `[null]`         | `isNotNull(r)` | `1`, leaf validity says null |
+| `[v]`            | `isNotNull(r)` | `1`, leaf validity says not null |
 
-| Record index | Logical value | `getLevelNulls(0)` | `getEmptyListMarkers(0)` | `offsets[0]` | `getElementNulls()` |
-|---|---|---|---|---|---|
-| 0 | `["a", null, "b"]` | `0` | `0` | `0` | bit 0 = `0`, bit 1 = `1`, bit 2 = `0` |
+Empty-vs-null is the offsets diff; the validity bit picks out null. No empty-marker bitmap is needed.
 
-`recordCount = 1` but `valueCount = 3`; the record's range runs from `offsets[0] = 0` to `valueCount = 3`, with `values[0] = "a"`, `values[1]` skipped (flagged in `getElementNulls()`), and `values[2] = "b"`.
+A quick reference for what `getLayerCount()` / `getLayerKind(k)` report for common chains:
+
+| Schema chain | `getLayerCount()` | Kinds (outer → inner) |
+|---|---|---|
+| `optional double x` | 0 | — |
+| `optional struct { ... int x }` | 1 | STRUCT |
+| `list<int>` | 1 | REPEATED |
+| `map<string, int>` | 1 | REPEATED |
+| `list<list<int>>` | 2 | REPEATED, REPEATED |
+| `optional struct { list<int> }` | 2 | STRUCT, REPEATED |
+| `list<optional struct { ... }>` | 2 | REPEATED, STRUCT |
+| `optional struct { map<string, int> }` | 2 | STRUCT, REPEATED |
+
+Two rules generate this table:
+
+1. **STRUCT keeps cardinality.** Items at layer `k+1` equal items at layer `k`. STRUCT layers carry validity, no offsets.
+2. **REPEATED expands cardinality.** Items at layer `k+1` equal `getLayerOffsets(k)[count(k)]`. REPEATED layers carry both validity and offsets.
+
+#### Hot loops: hoist `hasNulls()` outside the loop
+
+`Validity.NO_NULLS` is the common case on analytical workloads — most columns are non-null in most batches — and the API is designed to make checking for it O(1). In a per-element inner loop, **call `hasNulls()` once outside the loop and use a local boolean inside**, rather than calling `isNotNull(i)` directly per element:
 
 ```java
-try (ColumnReader reader = fileReader.columnReader("tags")) {
-    while (reader.nextBatch()) {
-        int recordCount = reader.getRecordCount();
-        int valueCount = reader.getValueCount();
-        byte[][] values = reader.getBinaries();
-        int[] offsets = reader.getOffsets(0);                 // record -> value position
-        BitSet recordNulls = reader.getLevelNulls(0);         // null list records
-        BitSet emptyMarkers = reader.getEmptyListMarkers(0);  // empty (size 0) lists
-        BitSet elementNulls = reader.getElementNulls();       // null elements within lists
+Validity validity = col.getLeafValidity();
+boolean hasNulls = validity.hasNulls();
+for (int i = 0; i < count; i++) {
+    if (!hasNulls || validity.isNotNull(i)) {
+        sum += values[i];
+    }
+}
+```
+
+Extracting the check once per batch is meaningfully faster than calling it per element on no-nulls data, which is the common analytical-workload case. Examples below show the hoist applied; for cold paths (small batches, schema introspection, debug code) the direct `isNull(i)` / `isNotNull(i)` form is fine and reads better.
+
+#### Flat column
+
+```java
+try (ColumnReader fare = reader.columnReader("fare_amount")) {
+    while (fare.nextBatch()) {
+        int count = fare.getRecordCount();
+        double[] values = fare.getDoubles();
+        Validity validity = fare.getLeafValidity();
+        boolean hasNulls = validity.hasNulls();
+        for (int i = 0; i < count; i++) {
+            if (!hasNulls || validity.isNotNull(i)) {
+                sum += values[i];
+            }
+        }
+    }
+}
+```
+
+#### Optional struct above an optional leaf
+
+For `optional group customer { optional int32 age }`, the leaf `age` has one `STRUCT` layer above it. The two sources of "absent" — `customer == null` versus `customer.age == null` — show up on different bitmaps:
+
+```java
+try (ColumnReader col = reader.columnReader("customer.age")) {
+    while (col.nextBatch()) {
+        int recordCount = col.getRecordCount();
+        Validity structValidity = col.getLayerValidity(0);  // customer null?
+        Validity leafValidity   = col.getLeafValidity();    // age null (within a present customer)?
+        boolean structHasNulls = structValidity.hasNulls();
+        boolean leafHasNulls   = leafValidity.hasNulls();
+        int[] ages = col.getInts();
 
         for (int r = 0; r < recordCount; r++) {
-            if (recordNulls != null && recordNulls.get(r)) continue;     // null list
-            if (emptyMarkers != null && emptyMarkers.get(r)) continue;   // empty list
+            if (structHasNulls && structValidity.isNull(r)) {
+                // customer == null
+            } else if (leafHasNulls && leafValidity.isNull(r)) {
+                // customer != null, age == null
+            } else {
+                sumAge += ages[r];
+            }
+        }
+    }
+}
+```
+
+#### Simple list
+
+For `list<double> fare_components`:
+
+```java
+try (ColumnReader col = reader.columnReader("fare_components.list.element")) {
+    while (col.nextBatch()) {
+        int recordCount = col.getRecordCount();
+        double[] values = col.getDoubles();
+        int[] offsets = col.getLayerOffsets(0);          // length recordCount + 1
+        Validity listValidity = col.getLayerValidity(0);
+        Validity leafValidity = col.getLeafValidity();
+        boolean listHasNulls = listValidity.hasNulls();
+        boolean leafHasNulls = leafValidity.hasNulls();
+
+        for (int r = 0; r < recordCount; r++) {
+            if (listHasNulls && listValidity.isNull(r)) continue;        // null list
             int start = offsets[r];
-            int end = (r + 1 < recordCount) ? offsets[r + 1] : valueCount;
+            int end   = offsets[r + 1];
+            if (start == end) continue;                                  // empty list
             for (int i = start; i < end; i++) {
-                if (elementNulls == null || !elementNulls.get(i)) {
-                    // process values[i]
+                if (!leafHasNulls || leafValidity.isNotNull(i)) {
+                    sum += values[i];
                 }
             }
         }
@@ -714,59 +800,37 @@ try (ColumnReader reader = fileReader.columnReader("tags")) {
 }
 ```
 
-`getNestingDepth()` returns 0 for flat columns, or the number of offset levels for nested columns.
+The sentinel suffix on `offsets` removes the last-record special case from the inner loop bounds.
 
 #### Multi-Level Nesting
 
-For columns with `getNestingDepth() > 1` (e.g. `list<list<int>>`), every offset/bitmap method takes a `level` argument and you walk through the levels in turn. `getOffsets(k)` maps an item at level k to its starting index in level k+1, and the innermost level's offsets point into the leaf `values` array. `getLevelNulls(k)` and `getEmptyListMarkers(k)` describe the four container states at that level — same semantics as in the single-level case, just per nesting depth.
-
-For a column `optional group matrix (LIST) { repeated group list { optional group element (LIST) { repeated group list { optional int32 element; } } } }` (i.e. `list<list<int>>` with `getNestingDepth() == 2`) holding three records — `[[1, 2], [3]]`, `[]`, `[[], [4]]` — the outer level has one entry per record:
-
-| Record | Logical value     | `getLevelNulls(0)` | `getEmptyListMarkers(0)` | `getOffsets(0)` |
-|---|---|---|---|---|
-| 0 | `[[1, 2], [3]]`   | `0` | `0` | `0` |
-| 1 | `[]`              | `0` | `1` | `2` |
-| 2 | `[[], [4]]`       | `0` | `0` | `3` |
-
-The inner level enumerates every inner list (or phantom) across all records — each entry in `getOffsets(0)` indexes into this table, whose length is `getOffsets(1).length`:
-
-| Inner index | From   | Logical value                | `getLevelNulls(1)` | `getEmptyListMarkers(1)` | `getOffsets(1)` |
-|---|---|---|---|---|---|
-| 0 | record 0 | `[1, 2]`                   | `0` | `0` | `0` |
-| 1 | record 0 | `[3]`                      | `0` | `0` | `2` |
-| 2 | record 1 | (phantom — outer list `[]`) | `1` | `0` | `3` |
-| 3 | record 2 | `[]`                       | `0` | `1` | `4` |
-| 4 | record 2 | `[4]`                      | `0` | `0` | `5` |
-
-`values` has length 6: `[1, 2, 3, ?, ?, 4]`. Indexes 3 and 4 are phantoms (the outer `[]` of record 1 and the inner `[]` of record 2 respectively); `getElementNulls()` flags both.
+For `list<list<int>>` (`getLayerCount() == 2`, both layers `REPEATED`), layer 0's offsets index into layer 1's offsets, which in turn index into the leaf array. The pattern generalises to arbitrary depth:
 
 ```java
-try (ColumnReader reader = fileReader.columnReader("matrix")) {
-    while (reader.nextBatch()) {
-        int recordCount = reader.getRecordCount();
-        int valueCount = reader.getValueCount();
-        int[] values = reader.getInts();
-        int[] outerOffsets = reader.getOffsets(0);
-        int[] innerOffsets = reader.getOffsets(1);
-        BitSet outerNulls = reader.getLevelNulls(0);
-        BitSet outerEmpty = reader.getEmptyListMarkers(0);
-        BitSet innerNulls = reader.getLevelNulls(1);
-        BitSet innerEmpty = reader.getEmptyListMarkers(1);
-        BitSet elementNulls = reader.getElementNulls();
+try (ColumnReader col = reader.columnReader("matrix.list.element.list.element")) {
+    while (col.nextBatch()) {
+        int recordCount = col.getRecordCount();
+        int[] outerOffsets     = col.getLayerOffsets(0);   // length recordCount + 1
+        int[] innerOffsets     = col.getLayerOffsets(1);
+        Validity outerValidity = col.getLayerValidity(0);
+        Validity innerValidity = col.getLayerValidity(1);
+        Validity leafValidity  = col.getLeafValidity();
+        boolean outerHasNulls = outerValidity.hasNulls();
+        boolean innerHasNulls = innerValidity.hasNulls();
+        boolean leafHasNulls  = leafValidity.hasNulls();
+        int[] values           = col.getInts();
 
         for (int r = 0; r < recordCount; r++) {
-            if (outerNulls != null && outerNulls.get(r)) continue;     // outer null
-            if (outerEmpty != null && outerEmpty.get(r)) continue;     // outer empty
+            if (outerHasNulls && outerValidity.isNull(r)) continue;
             int innerStart = outerOffsets[r];
-            int innerEnd = (r + 1 < recordCount) ? outerOffsets[r + 1] : innerOffsets.length;
+            int innerEnd   = outerOffsets[r + 1];
             for (int j = innerStart; j < innerEnd; j++) {
-                if (innerNulls != null && innerNulls.get(j)) continue;
-                if (innerEmpty != null && innerEmpty.get(j)) continue;
-                int leafStart = innerOffsets[j];
-                int leafEnd = (j + 1 < innerOffsets.length) ? innerOffsets[j + 1] : valueCount;
-                for (int i = leafStart; i < leafEnd; i++) {
-                    if (elementNulls == null || !elementNulls.get(i)) {
-                        // process values[i]
+                if (innerHasNulls && innerValidity.isNull(j)) continue;
+                int valStart = innerOffsets[j];
+                int valEnd   = innerOffsets[j + 1];
+                for (int i = valStart; i < valEnd; i++) {
+                    if (!leafHasNulls || leafValidity.isNotNull(i)) {
+                        sum += values[i];
                     }
                 }
             }
@@ -775,7 +839,102 @@ try (ColumnReader reader = fileReader.columnReader("matrix")) {
 }
 ```
 
-Deeper nestings extend the same chain: at depth N you walk `getOffsets(0)` through `getOffsets(N - 1)`, checking the corresponding `getLevelNulls(k)` and `getEmptyListMarkers(k)` at each step before descending.
+#### List of strings
+
+Layer offsets and binary offsets are orthogonal axes: layer offsets walk which leaf values belong to a record (across the `getValueCount()` axis); binary offsets walk byte spans within a single varlength leaf (across the byte axis of the values buffer).
+
+```java
+try (ColumnReader col = reader.columnReader("tags.list.element")) {
+    while (col.nextBatch()) {
+        int recordCount = col.getRecordCount();
+        int[] layerOffsets     = col.getLayerOffsets(0);
+        Validity listValidity  = col.getLayerValidity(0);
+        byte[] bytes           = col.getBinaryValues();    // capacity-sized
+        int[] binaryOffsets    = col.getBinaryOffsets();   // length valueCount + 1
+        Validity leafValidity  = col.getLeafValidity();
+        boolean listHasNulls = listValidity.hasNulls();
+        boolean leafHasNulls = leafValidity.hasNulls();
+
+        for (int r = 0; r < recordCount; r++) {
+            if (listHasNulls && listValidity.isNull(r)) continue;
+            int firstValue = layerOffsets[r];
+            int lastValue  = layerOffsets[r + 1];
+            for (int i = firstValue; i < lastValue; i++) {
+                if (leafHasNulls && leafValidity.isNull(i)) continue;
+                int byteStart = binaryOffsets[i];
+                int byteLen   = binaryOffsets[i + 1] - byteStart;
+                if (matches(bytes, byteStart, byteLen)) hits++;
+            }
+        }
+    }
+}
+```
+
+#### Map
+
+Maps report as `REPEATED` (Hardwood does not distinguish map-shape from list-shape on the layer enum — consult `getColumnSchema()` if you need that distinction).
+
+To pair keys with values, open both leaves and drive them in lockstep. The two columns share the same `map.key_value` parent, so their layer offsets agree — entry `i` of one is entry `i` of the other:
+
+```java
+try (ColumnReader keys   = reader.columnReader("tags.key_value.key");
+     ColumnReader values = reader.columnReader("tags.key_value.value")) {
+
+    while (keys.nextBatch() & values.nextBatch()) {
+        int recordCount        = keys.getRecordCount();
+        int[]    entryOffsets  = keys.getLayerOffsets(0);
+        Validity mapValidity   = keys.getLayerValidity(0);
+        byte[]   keyBytes      = keys.getBinaryValues();
+        int[]    keyOffsets    = keys.getBinaryOffsets();
+        int[]    valueInts     = values.getInts();
+        Validity valueValidity = values.getLeafValidity();
+        boolean  mapHasNulls   = mapValidity.hasNulls();
+        boolean  valueHasNulls = valueValidity.hasNulls();
+
+        for (int r = 0; r < recordCount; r++) {
+            if (mapHasNulls && mapValidity.isNull(r)) continue;  // null map
+            int start = entryOffsets[r];
+            int end   = entryOffsets[r + 1];
+            for (int i = start; i < end; i++) {
+                int keyStart = keyOffsets[i];
+                int keyLen   = keyOffsets[i + 1] - keyStart;
+                String key   = new String(keyBytes, keyStart, keyLen, StandardCharsets.UTF_8);
+
+                if (valueHasNulls && valueValidity.isNull(i)) {
+                    // key present, value null
+                } else {
+                    process(key, valueInts[i]);
+                }
+            }
+        }
+    }
+}
+```
+
+Two orthogonal offset axes show up here, as in `list<string>`: `entryOffsets` walks map entries within a record (across the `getValueCount()` axis), `keyOffsets` walks byte spans within a single key (across the byte axis of `getBinaryValues()`).
+
+If the map sits under an `OPTIONAL` group — e.g. `optional group meta { map<string, int> tags }` — the chain gains a `STRUCT` layer on top. The same key/value lockstep walk applies, with `getLayerValidity(0)` for `meta`, `getLayerValidity(1)` plus `getLayerOffsets(1)` for the map, and `getLeafValidity()` for the value:
+
+```java
+Validity metaValidity  = reader.getLayerValidity(0);   // STRUCT layer for `meta`
+Validity mapValidity   = reader.getLayerValidity(1);   // REPEATED layer for the map
+int[]    entryOffsets  = reader.getLayerOffsets(1);
+```
+
+#### Real items only
+
+The leaf array and `getLayerOffsets` carry **real items only** — phantom slots from null/empty parents at any `REPEATED` layer are excluded. `getValueCount()` returns the real leaf count. `STRUCT` layers do not expand or contract the item stream — they carry a validity bitmap of the same length as their parent. Only `REPEATED` layers add cardinality, via their offsets.
+
+#### Counts at each layer
+
+Every per-layer buffer is sized to `count(k)`, defined recursively:
+
+- `count(0) == getRecordCount()`
+- For `k > 0`: `count(k)` equals `count(k-1)` if layer `k-1` is `STRUCT`, or `getLayerOffsets(k-1)[count(k-1)]` (the trailing sentinel) if layer `k-1` is `REPEATED`.
+
+The leaf array itself follows the same rule one step past the innermost layer, so `getValueCount()` matches `count(layerCount)`.
+
+Deeper nestings extend the same chain: at depth N you walk `getLayerOffsets(0)` through `getLayerOffsets(N - 1)`, checking `getLayerValidity(k)` (and, for `REPEATED` layers, the zero-length offsets diff that flags an empty container) at each step before descending.
 
 ## Reading Multiple Files
 

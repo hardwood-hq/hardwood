@@ -3095,3 +3095,83 @@ pq.write_table(
 )
 
 print("Generated wide_struct_test.parquet (#473): 13-field struct (primitive logical types + list + map; UUID/INTERVAL/VARIANT covered elsewhere)")
+
+# =====================================================================
+# Depth-1 optional struct around an optional leaf — the canonical #436
+# shape. Three rows pin all three states the layer model must
+# disambiguate: struct null, struct present with leaf null, both
+# present.
+# =====================================================================
+
+optional_struct_optional_leaf_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('point', pa.struct([
+        ('x', pa.int32()),
+    ])),
+])
+
+optional_struct_optional_leaf_data = [
+    {'id': 1, 'point': None},        # struct null
+    {'id': 2, 'point': {'x': None}}, # struct present, leaf null
+    {'id': 3, 'point': {'x': 42}},   # both present
+]
+
+optional_struct_optional_leaf_table = pa.Table.from_pylist(
+    optional_struct_optional_leaf_data,
+    schema=optional_struct_optional_leaf_schema,
+)
+pq.write_table(
+    optional_struct_optional_leaf_table,
+    'core/src/test/resources/optional_struct_optional_leaf_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated optional_struct_optional_leaf_test.parquet:")
+print("  - Schema: id, point: optional struct { optional int32 x }")
+print("  - Rows: struct=null / struct=present,x=null / struct=present,x=42")
+
+# =====================================================================
+# list<optional struct { optional int32 age }> — the element-wrapper
+# correctness gate. One record contains both a struct-null entry and a
+# struct-present-leaf-null entry inside the same list, so a consumer
+# must read getLayerValidity(structLayer) AND getLeafValidity()
+# independently to recover the difference. An implementation that
+# re-folded list-element struct nullability into the leaf would only
+# fail here.
+# =====================================================================
+
+list_of_optional_struct_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('items', pa.list_(pa.struct([
+        ('age', pa.int32()),
+    ]))),
+])
+
+list_of_optional_struct_data = [
+    # Row 0: 3 entries — leaf-present, leaf-null, struct-null
+    {'id': 1, 'items': [{'age': 10}, {'age': None}, None]},
+    # Row 1: empty list
+    {'id': 2, 'items': []},
+    # Row 2: null list
+    {'id': 3, 'items': None},
+    # Row 3: single leaf-present entry
+    {'id': 4, 'items': [{'age': 99}]},
+]
+
+list_of_optional_struct_table = pa.Table.from_pylist(
+    list_of_optional_struct_data,
+    schema=list_of_optional_struct_schema,
+)
+pq.write_table(
+    list_of_optional_struct_table,
+    'core/src/test/resources/list_of_optional_struct_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated list_of_optional_struct_test.parquet:")
+print("  - Schema: id, items: list<optional struct { optional int32 age }>")
+print("  - Rows: [{age=10},{age=null},null] / [] / null / [{age=99}]")

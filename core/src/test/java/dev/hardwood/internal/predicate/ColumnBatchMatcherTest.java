@@ -32,7 +32,7 @@ class ColumnBatchMatcherTest {
     private static BatchExchange.Batch longBatch(long[] values, BitSet nulls) {
         BatchExchange.Batch batch = new BatchExchange.Batch();
         batch.values = values;
-        batch.nulls = nulls;
+        batch.validity = toValidity(nulls, values.length);
         batch.recordCount = values.length;
         return batch;
     }
@@ -43,6 +43,16 @@ class ColumnBatchMatcherTest {
             b.set(row);
         }
         return b;
+    }
+
+    private static BitSet toValidity(BitSet nulls, int n) {
+        if (nulls == null) {
+            return null;
+        }
+        BitSet validity = new BitSet(n);
+        validity.set(0, n);
+        validity.andNot(nulls);
+        return validity;
     }
 
     private static long[] runMatcher(ColumnBatchMatcher matcher, BatchExchange.Batch batch) {
@@ -123,7 +133,7 @@ class ColumnBatchMatcherTest {
     private static BatchExchange.Batch doubleBatch(double[] values, BitSet nulls) {
         BatchExchange.Batch batch = new BatchExchange.Batch();
         batch.values = values;
-        batch.nulls = nulls;
+        batch.validity = toValidity(nulls, values.length);
         batch.recordCount = values.length;
         return batch;
     }

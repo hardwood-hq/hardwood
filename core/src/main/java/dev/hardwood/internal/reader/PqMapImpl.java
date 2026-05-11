@@ -212,13 +212,13 @@ final class PqMapImpl implements PqMap {
     private int indexOfStringKey(String key) {
         Objects.requireNonNull(key, "key");
         int keyProjCol = mapDesc.keyProjCol();
-        byte[][] keys = (byte[][]) batch.valueArrays[keyProjCol];
+        BinaryBatchValues keys = (BinaryBatchValues) batch.valueArrays[keyProjCol];
         byte[] needle = key.getBytes(StandardCharsets.UTF_8);
         for (int i = start; i < end; i++) {
             if (batch.isElementNull(keyProjCol, i)) {
                 continue;
             }
-            if (Arrays.equals(keys[i], needle)) {
+            if (Arrays.equals(keys.byteArrayAt(i), needle)) {
                 return i;
             }
         }
@@ -256,12 +256,12 @@ final class PqMapImpl implements PqMap {
     private int indexOfBinaryKey(byte[] key) {
         Objects.requireNonNull(key, "key");
         int keyProjCol = mapDesc.keyProjCol();
-        byte[][] keys = (byte[][]) batch.valueArrays[keyProjCol];
+        BinaryBatchValues keys = (BinaryBatchValues) batch.valueArrays[keyProjCol];
         for (int i = start; i < end; i++) {
             if (batch.isElementNull(keyProjCol, i)) {
                 continue;
             }
-            if (Arrays.equals(keys[i], key)) {
+            if (Arrays.equals(keys.byteArrayAt(i), key)) {
                 return i;
             }
         }
@@ -364,13 +364,13 @@ final class PqMapImpl implements PqMap {
         if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
             return null;
         }
-        byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[valueIdx];
+        byte[] metadataBytes = ((BinaryBatchValues) batch.valueArrays[variantDesc.metadataCol()]).byteArrayAt(valueIdx);
         int valueCol = variantDesc.valueCol();
         if (valueCol < 0) {
             throw new IllegalStateException(
                     "Variant map value requires its 'value' child in the projection");
         }
-        byte[] value = ((byte[][]) batch.valueArrays[valueCol])[valueIdx];
+        byte[] value = ((BinaryBatchValues) batch.valueArrays[valueCol]).byteArrayAt(valueIdx);
         return new PqVariantImpl(metadataBytes, value);
     }
 
@@ -476,8 +476,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
-            byte[] raw = ((byte[][]) batch.valueArrays[keyProjCol])[valueIdx];
-            return new String(raw, StandardCharsets.UTF_8);
+            return batch.getString(keyProjCol, valueIdx);
         }
 
         @Override
@@ -486,7 +485,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(keyProjCol, valueIdx)) {
                 return null;
             }
-            return ((byte[][]) batch.valueArrays[keyProjCol])[valueIdx];
+            return batch.getBinary(keyProjCol, valueIdx);
         }
 
         @Override
@@ -531,7 +530,7 @@ final class PqMapImpl implements PqMap {
                 // FLOAT16 path: FLBA(2) payload decoded to a single-precision
                 // float, matching PqStructImpl.getFloat and FlatRowReader.getFloat.
                 return LogicalTypeConverter.convertToFloat16(
-                        ((byte[][]) batch.valueArrays[valueProjCol])[valueIdx],
+                        ((BinaryBatchValues) batch.valueArrays[valueProjCol]).byteArrayAt(valueIdx),
                         primitive.type());
             }
             return ((float[]) batch.valueArrays[valueProjCol])[valueIdx];
@@ -561,8 +560,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 return null;
             }
-            byte[] raw = ((byte[][]) batch.valueArrays[valueProjCol])[valueIdx];
-            return new String(raw, StandardCharsets.UTF_8);
+            return batch.getString(valueProjCol, valueIdx);
         }
 
         @Override
@@ -571,7 +569,7 @@ final class PqMapImpl implements PqMap {
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 return null;
             }
-            return ((byte[][]) batch.valueArrays[valueProjCol])[valueIdx];
+            return batch.getBinary(valueProjCol, valueIdx);
         }
 
         @Override

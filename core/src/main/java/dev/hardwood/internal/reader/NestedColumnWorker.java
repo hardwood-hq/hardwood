@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column pipeline that decodes pages in parallel and assembles nested batches.
@@ -21,7 +22,7 @@ import dev.hardwood.schema.ColumnSchema;
 public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
     private final int maxRepetitionLevel;
-    private final int[] levelNullThresholds;
+    private final NestedLevelComputer.Layers layers;
 
     // --- Nested assembly state (drain thread only) ---
     private Object nestedValues;
@@ -42,22 +43,24 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// @param decompressorFactory for creating page decompressors
     /// @param decodeExecutor executor for decode tasks
     /// @param maxRows maximum rows to assemble (0 = unlimited)
-    /// @param levelNullThresholds per-level definition level thresholds (null if maxRepLevel == 0)
+    /// @param layers per-layer descriptor (kinds + def thresholds) for the
+    ///        column's schema chain, or `null` for non-repeated columns. The
+    ///        descriptor drives the layer-indexed `multiLevelOffsets` shape.
     public NestedColumnWorker(PageSource pageSource, BatchExchange<NestedBatch> exchange,
                               ColumnSchema column, int batchCapacity,
                               DecompressorFactory decompressorFactory,
                               Executor decodeExecutor, long maxRows,
-                              int[] levelNullThresholds) {
+                              NestedLevelComputer.Layers layers) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
               decodeExecutor, maxRows);
         this.maxRepetitionLevel = column.maxRepetitionLevel();
-        this.levelNullThresholds = levelNullThresholds;
+        this.layers = layers;
     }
 
     @Override
     void initDrainState() {
         int initialCapacity = batchCapacity * 2;
-        nestedValues = BatchExchange.allocateArray(physicalType, initialCapacity);
+        nestedValues = BatchExchange.allocateArray(column, initialCapacity);
         nestedDefLevels = new int[initialCapacity];
         nestedRepLevels = new int[initialCapacity];
         nestedRecordOffsets = new int[batchCapacity];
@@ -200,34 +203,40 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         nestedValueCount = 0;
     }
 
-    /// Computes index structures (element nulls, multi-level offsets, level nulls,
-    /// empty-list markers) on the batch before it is published.
+    /// Computes index structures (element validity and layer-indexed
+    /// multi-level offsets) on the batch before it is published. Set bits
+    /// indicate **present** values; `null` validity references mean every
+    /// item at that scope is present in this batch.
+    ///
+    /// `multiLevelOffsets` is indexed by **layer** (one slot per `STRUCT` /
+    /// `REPEATED` layer). `multiLevelOffsets[k]` is `null` for `STRUCT`
+    /// layers and sentinel-suffixed for `REPEATED` layers.
     private void computeIndex(NestedBatch batch) {
         int[] defLevels = batch.definitionLevels;
         int valueCount = batch.valueCount;
 
-        batch.elementNulls = NestedLevelComputer.computeElementNulls(
+        batch.elementValidity = NestedLevelComputer.computeElementValidity(
                 defLevels, valueCount, maxDefinitionLevel);
 
-        if (maxRepetitionLevel > 0 && batch.repetitionLevels != null && valueCount > 0) {
-            batch.multiLevelOffsets = NestedLevelComputer.computeMultiLevelOffsets(
-                    batch.repetitionLevels, valueCount, batch.recordCount, maxRepetitionLevel);
-            NestedLevelComputer.LevelBitmaps bitmaps = NestedLevelComputer.computeLevelBitmaps(
-                    defLevels, batch.repetitionLevels, valueCount,
-                    maxRepetitionLevel, levelNullThresholds);
-            batch.levelNulls = bitmaps.levelNulls();
-            batch.emptyListMarkers = bitmaps.emptyListMarkers();
+        if (layers != null && layers.count() > 0 && valueCount > 0) {
+            batch.multiLevelOffsets = NestedLevelComputer.computeLayerOffsets(
+                    batch.repetitionLevels, valueCount, batch.recordCount, layers);
         }
         else {
             batch.multiLevelOffsets = null;
-            batch.levelNulls = null;
-            batch.emptyListMarkers = null;
         }
     }
 
     // ==================== Nested Helpers ====================
 
+    private static final byte[] EMPTY_BYTES = new byte[0];
+
     /// Copies a single value from a page into the batch values array.
+    /// For byte-array physical types, the value is appended into the
+    /// shared bytes buffer of [BinaryBatchValues] and its offsets are
+    /// updated; null entries collapse to a zero-length span (or, for
+    /// `FIXED_LEN_BYTE_ARRAY`, leave the pre-filled trivial offsets
+    /// unchanged).
     private void copyOneValue(Page page, int srcIndex, Object destValues, int destIndex) {
         switch (page) {
             case Page.IntPage p -> ((int[]) destValues)[destIndex] = p.values()[srcIndex];
@@ -235,11 +244,27 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case Page.FloatPage p -> ((float[]) destValues)[destIndex] = p.values()[srcIndex];
             case Page.DoublePage p -> ((double[]) destValues)[destIndex] = p.values()[srcIndex];
             case Page.BooleanPage p -> ((boolean[]) destValues)[destIndex] = p.values()[srcIndex];
-            case Page.ByteArrayPage p -> ((byte[][]) destValues)[destIndex] = p.values()[srcIndex];
+            case Page.ByteArrayPage p -> {
+                byte[] val = p.values()[srcIndex];
+                BinaryBatchValues bbv = (BinaryBatchValues) destValues;
+                if (val != null) {
+                    bbv.appendAt(destIndex, val, 0, val.length);
+                }
+                else if (physicalType != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+                    // Variable-length null: zero-length span at this index.
+                    bbv.appendAt(destIndex, EMPTY_BYTES, 0, 0);
+                }
+                // FIXED_LEN null: trivial offsets stay; bytes content is undefined.
+            }
         }
     }
 
-    /// Grows a typed values array to the new capacity.
+    /// Grows a typed values array to the new capacity. For
+    /// [BinaryBatchValues], the offsets array is grown to `newCapacity + 1`
+    /// (re-filling the trivial `i * width` mapping for
+    /// `FIXED_LEN_BYTE_ARRAY`); the bytes buffer for variable-length types
+    /// grows lazily on overflow inside [BinaryBatchValues#appendAt], but for
+    /// fixed-width it grows here to keep `width * newCapacity`.
     private Object growValues(Object values, int newCapacity) {
         return switch (values) {
             case int[] a -> Arrays.copyOf(a, newCapacity);
@@ -247,12 +272,35 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case float[] a -> Arrays.copyOf(a, newCapacity);
             case double[] a -> Arrays.copyOf(a, newCapacity);
             case boolean[] a -> Arrays.copyOf(a, newCapacity);
-            case byte[][] a -> Arrays.copyOf(a, newCapacity);
+            case BinaryBatchValues bbv -> growBinaryBatchValues(bbv, newCapacity);
             default -> throw new IllegalStateException("Unexpected values array type: " + values.getClass());
         };
     }
 
-    /// Trims a typed values array to the exact size.
+    private BinaryBatchValues growBinaryBatchValues(BinaryBatchValues bbv, int newCapacity) {
+        int oldCapacity = bbv.offsets.length - 1;
+        if (newCapacity <= oldCapacity) {
+            return bbv;
+        }
+        int[] newOffsets = Arrays.copyOf(bbv.offsets, newCapacity + 1);
+        if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            int width = column.typeLength();
+            for (int i = oldCapacity + 1; i <= newCapacity; i++) {
+                newOffsets[i] = Math.multiplyExact(i, width);
+            }
+            byte[] newBytes = new byte[Math.multiplyExact(width, newCapacity)];
+            System.arraycopy(bbv.bytes, 0, newBytes, 0, bbv.bytes.length);
+            bbv.bytes = newBytes;
+        }
+        bbv.offsets = newOffsets;
+        return bbv;
+    }
+
+    /// Trims a typed values array to the exact size. For
+    /// [BinaryBatchValues] this trims the offsets array to `size + 1` and
+    /// publishes the (possibly capacity-sized) bytes buffer as-is — only
+    /// the prefix `[0, offsets[size])` is meaningful per the
+    /// capacity-sized contract.
     private Object trimValues(Object values, int size) {
         return switch (values) {
             case int[] a -> a.length == size ? a : Arrays.copyOf(a, size);
@@ -260,7 +308,13 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case float[] a -> a.length == size ? a : Arrays.copyOf(a, size);
             case double[] a -> a.length == size ? a : Arrays.copyOf(a, size);
             case boolean[] a -> a.length == size ? a : Arrays.copyOf(a, size);
-            case byte[][] a -> a.length == size ? a : Arrays.copyOf(a, size);
+            case BinaryBatchValues bbv -> {
+                if (bbv.offsets.length == size + 1) {
+                    yield bbv;
+                }
+                int[] trimmed = Arrays.copyOf(bbv.offsets, size + 1);
+                yield new BinaryBatchValues(bbv.bytes, trimmed);
+            }
             default -> throw new IllegalStateException("Unexpected values array type: " + values.getClass());
         };
     }

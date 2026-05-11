@@ -8,6 +8,7 @@
 package dev.hardwood.reader;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 import java.util.BitSet;
 import java.util.List;
 
@@ -16,6 +17,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.reader.FlatColumnWorker;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedBatch;
@@ -24,116 +26,99 @@ import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageSource;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
 
 /// Batch-oriented column reader for reading a single column across all row groups.
 ///
-/// Provides typed primitive arrays for zero-boxing access. For nested/repeated columns,
-/// multi-level offsets and per-level null bitmaps enable efficient traversal without
-/// per-row virtual dispatch.
+/// Exposes a column's batch as typed leaf values plus a layer-model view of
+/// the schema chain between root and leaf. Each non-leaf node along the chain
+/// contributes zero or one [LayerKind] layer:
 ///
-/// **This API is [Experimental]:** the shape of the batch accessors and nested-offset
-/// representation may change in future releases without prior deprecation.
+/// - `OPTIONAL` group → [LayerKind#STRUCT]
+/// - `LIST` / `MAP`-annotated group → [LayerKind#REPEATED]
+/// - `REQUIRED` group / synthetic LIST scaffolding → no layer
 ///
-/// **Flat column usage:**
-/// ```java
-/// try (ColumnReader reader = fileReader.columnReader("fare_amount")) {
-///     while (reader.nextBatch()) {
-///         int count = reader.getRecordCount();
-///         double[] values = reader.getDoubles();
-///         BitSet nulls = reader.getElementNulls();
-///         for (int i = 0; i < count; i++) {
-///             if (nulls == null || !nulls.get(i)) sum += values[i];
-///         }
-///     }
-/// }
-/// ```
+/// Layers are numbered `0..getLayerCount() - 1` outermost-to-innermost. A flat
+/// column (no enclosing nullable groups, no repetition) reports
+/// `getLayerCount() == 0` and is queried solely through [#getLeafValidity()]
+/// plus the typed value accessors.
 ///
-/// **Simple list usage (nestingDepth=1):** a list/repeated container has four
-/// states (null, empty, list-with-null-element(s), list-with-value(s));
-/// `getLevelNulls` and `getEmptyListMarkers` together disambiguate the first
-/// two from the rest, and `getElementNulls` distinguishes null elements from
-/// real values inside a non-empty list.
-/// ```java
-/// try (ColumnReader reader = fileReader.columnReader("fare_components")) {
-///     while (reader.nextBatch()) {
-///         int recordCount = reader.getRecordCount();
-///         int valueCount = reader.getValueCount();
-///         double[] values = reader.getDoubles();
-///         int[] offsets = reader.getOffsets(0);
-///         BitSet recordNulls = reader.getLevelNulls(0);
-///         BitSet emptyMarkers = reader.getEmptyListMarkers(0);
-///         BitSet elementNulls = reader.getElementNulls();
-///         for (int r = 0; r < recordCount; r++) {
-///             if (recordNulls != null && recordNulls.get(r)) continue;       // null list
-///             if (emptyMarkers != null && emptyMarkers.get(r)) continue;     // empty list
-///             int start = offsets[r];
-///             int end = (r + 1 < recordCount) ? offsets[r + 1] : valueCount;
-///             for (int i = start; i < end; i++) {
-///                 if (elementNulls == null || !elementNulls.get(i)) sum += values[i];
-///             }
-///         }
-///     }
-/// }
-/// ```
+/// **Polarity:** validity bitmaps carry **set bit = present** semantics. A
+/// `null` return is the sparse representation of "every item at that scope
+/// is present in the current batch."
+///
+/// **Real items only.** Layer offsets and the leaf array are sized to
+/// real-items-only counts. Phantom positions for null/empty parents are
+/// excluded; `getLayerOffsets(k)[i+1] - getLayerOffsets(k)[i] == 0`
+/// distinguishes empty from null at REPEATED layers (validity carries the
+/// null bit).
+///
+/// **This API is [Experimental]:** the shape of the batch accessors and
+/// layer representation may change in future releases without prior
+/// deprecation.
 @Experimental
 public class ColumnReader implements AutoCloseable {
 
     static final int DEFAULT_BATCH_SIZE = 262_144;
 
     private final ColumnSchema column;
-    private final int maxRepetitionLevel;
-    private final int maxDefinitionLevel;
     private final boolean nested;
+    private final NestedLevelComputer.Layers layers;
     private final BatchExchange<BatchExchange.Batch> flatBuffer;
     private final BatchExchange<NestedBatch> nestedBuffer;
     private final AutoCloseable columnWorker;
     private final RowGroupIterator rowGroupIterator;
-    private final int[] levelNullThresholds;
 
     // Current batch state (flat uses BatchExchange.Batch, nested uses NestedBatch)
     private BatchExchange.Batch currentFlatBatch;
     private NestedBatch currentNestedBatch;
     private int recordCount;
-    private int valueCount;
     private boolean exhausted;
 
-    // Computed nested data (lazily populated per batch)
-    private int[][] multiLevelOffsets;
-    private BitSet[] levelNulls;
-    private BitSet[] emptyListMarkers;
-    private BitSet elementNulls;
-    private boolean nestedDataComputed;
+    // Real-items-only view for nested batches, computed lazily and cached per
+    // batch. Invalidated in `nextBatch()`.
+    private NestedLevelComputer.RealView currentRealView;
+    private boolean realViewComputed;
+
+    // Cached real-items-only typed leaf arrays for nested batches. Allocated
+    // on first access and invalidated in `nextBatch()`.
+    private Object cachedRealValues;
+    private byte[] cachedRealBinaryBytes;
+    private int[] cachedRealBinaryOffsets;
+    private byte[][] cachedBinaries;
+    private String[] cachedStrings;
 
     // File name from the current batch — used for exception enrichment
     private String currentFileName;
 
     @SuppressWarnings("unchecked")
     private ColumnReader(ColumnSchema column, boolean nested,
+                         NestedLevelComputer.Layers layers,
                          BatchExchange<?> buffer, AutoCloseable columnWorker,
-                         RowGroupIterator rowGroupIterator, int[] levelNullThresholds) {
+                         RowGroupIterator rowGroupIterator) {
         this.column = column;
-        this.maxRepetitionLevel = column.maxRepetitionLevel();
-        this.maxDefinitionLevel = column.maxDefinitionLevel();
         this.nested = nested;
+        this.layers = layers;
         this.flatBuffer = nested ? null : (BatchExchange<BatchExchange.Batch>) buffer;
         this.nestedBuffer = nested ? (BatchExchange<NestedBatch>) buffer : null;
         this.columnWorker = columnWorker;
         this.rowGroupIterator = rowGroupIterator;
-        this.levelNullThresholds = levelNullThresholds;
     }
 
     static ColumnReader forFlat(ColumnSchema column, BatchExchange<BatchExchange.Batch> flatBuffer,
                                 AutoCloseable columnWorker, RowGroupIterator rowGroupIterator) {
-        return new ColumnReader(column, false, flatBuffer, columnWorker, rowGroupIterator, null);
+        return new ColumnReader(column, false,
+                NestedLevelComputer.Layers.of(new LayerKind[0], new int[0]),
+                flatBuffer, columnWorker, rowGroupIterator);
     }
 
-    static ColumnReader forNested(ColumnSchema column, BatchExchange<NestedBatch> nestedBuffer,
-                                  AutoCloseable columnWorker, RowGroupIterator rowGroupIterator,
-                                  int[] levelNullThresholds) {
-        return new ColumnReader(column, true, nestedBuffer, columnWorker, rowGroupIterator, levelNullThresholds);
+    static ColumnReader forNested(ColumnSchema column, NestedLevelComputer.Layers layers,
+                                  BatchExchange<NestedBatch> nestedBuffer,
+                                  AutoCloseable columnWorker, RowGroupIterator rowGroupIterator) {
+        return new ColumnReader(column, true, layers, nestedBuffer, columnWorker, rowGroupIterator);
     }
 
     // ==================== Batch Iteration ====================
@@ -151,10 +136,7 @@ public class ColumnReader implements AutoCloseable {
     /// [ParquetFileReader#buildColumnReaders(dev.hardwood.schema.ColumnProjection)]),
     /// which shares a single [dev.hardwood.internal.reader.RowGroupIterator] across all
     /// columns and exposes a single coordinated [ColumnReaders#nextBatch()] that drives
-    /// every reader and validates alignment in one call. Driving independent
-    /// `ColumnReader` instances by hand with the bitwise-and idiom
-    /// (`a.nextBatch() & b.nextBatch()`) is correct but loses the shared-iterator
-    /// efficiency and gives up the structural alignment guard.
+    /// every reader and validates alignment in one call.
     ///
     /// @return true if a batch is available, false if exhausted
     public boolean nextBatch() {
@@ -174,7 +156,6 @@ public class ColumnReader implements AutoCloseable {
             currentNestedBatch = batch;
             currentFlatBatch = null;
             recordCount = batch.recordCount;
-            valueCount = batch.valueCount;
             currentFileName = batch.fileName;
         }
         else {
@@ -189,23 +170,22 @@ public class ColumnReader implements AutoCloseable {
             currentFlatBatch = batch;
             currentNestedBatch = null;
             recordCount = batch.recordCount;
-            valueCount = batch.recordCount;
             currentFileName = batch.fileName;
         }
 
-        // Reset lazy nested computation
-        nestedDataComputed = false;
-        multiLevelOffsets = null;
-        levelNulls = null;
-        emptyListMarkers = null;
-        elementNulls = null;
+        // Invalidate per-batch caches.
+        realViewComputed = false;
+        currentRealView = null;
+        cachedRealValues = null;
+        cachedRealBinaryBytes = null;
+        cachedRealBinaryOffsets = null;
+        cachedBinaries = null;
+        cachedStrings = null;
 
         return true;
     }
 
-    /// Polls the flat [BatchExchange] for the next batch.
     private BatchExchange.Batch pollFlatBatch() {
-        currentFlatBatch = null;
         try {
             return flatBuffer.poll();
         }
@@ -215,9 +195,7 @@ public class ColumnReader implements AutoCloseable {
         }
     }
 
-    /// Polls the nested [BatchExchange] for the next batch.
     private NestedBatch pollNestedBatch() {
-        currentNestedBatch = null;
         try {
             return nestedBuffer.poll();
         }
@@ -233,18 +211,79 @@ public class ColumnReader implements AutoCloseable {
         return recordCount;
     }
 
-    /// Total number of leaf values in the current batch.
-    /// For flat columns, this equals [#getRecordCount()].
+    /// Total number of leaf values in the current batch — sized to real items
+    /// only (phantom slots from null/empty parents are excluded). For flat
+    /// columns this equals [#getRecordCount()].
     public int getValueCount() {
         checkBatchAvailable();
-        return valueCount;
+        if (!nested) {
+            return recordCount;
+        }
+        return ensureRealView().valueCount();
+    }
+
+    // ==================== Layer Metadata ====================
+
+    /// Number of layers in this column's schema chain. `0` for a flat column.
+    /// Stable for the lifetime of this reader and safe to call before the
+    /// first [#nextBatch()] — useful for sizing consumer-side buffers.
+    public int getLayerCount() {
+        return layers.count();
+    }
+
+    /// Layer kind at `layer`. Stable for the lifetime of this reader and
+    /// safe to call before the first [#nextBatch()].
+    public LayerKind getLayerKind(int layer) {
+        checkLayer(layer);
+        return layers.kinds()[layer];
+    }
+
+    // ==================== Per-Layer Buffers ====================
+
+    /// Validity at `layer`. Returns [Validity#NO_NULLS] when no item at
+    /// that layer is null in the current batch (the sparse fast path);
+    /// otherwise returns a wrapper over the per-item null bitmap.
+    public Validity getLayerValidity(int layer) {
+        checkBatchAvailable();
+        checkLayer(layer);
+        return Validity.of(ensureRealView().layerValidity()[layer]);
+    }
+
+    /// Offsets at `layer`. Length == count(layer) + 1, with `offsets[count(layer)]`
+    /// equal to count(layer + 1) (or to [#getValueCount()] for the innermost layer).
+    /// `offsets[i+1] - offsets[i] == 0` denotes an empty list/map.
+    ///
+    /// @throws IllegalStateException if `layer` is outside `[0, getLayerCount())`
+    ///         or if the layer is not [LayerKind#REPEATED]
+    public int[] getLayerOffsets(int layer) {
+        checkBatchAvailable();
+        checkLayer(layer);
+        if (layers.kinds()[layer] != LayerKind.REPEATED) {
+            throw new IllegalStateException(prefix() + "Layer " + layer
+                    + " is " + layers.kinds()[layer] + ", not REPEATED");
+        }
+        return ensureRealView().layerOffsets()[layer];
+    }
+
+    // ==================== Leaf Validity ====================
+
+    /// Validity over the leaf-value array, indexed `0..getValueCount()`.
+    /// Returns [Validity#NO_NULLS] when no leaf in the current batch is
+    /// null.
+    public Validity getLeafValidity() {
+        checkBatchAvailable();
+        BitSet raw = nested
+                ? ensureRealView().leafValidity()
+                : currentFlatBatch.validity;
+        return Validity.of(raw);
     }
 
     // ==================== Typed Value Arrays ====================
 
     public int[] getInts() {
         checkBatchAvailable();
-        if (!(currentValues() instanceof int[] a)) {
+        Object values = realLeafValues();
+        if (!(values instanceof int[] a)) {
             throw typeMismatch("int");
         }
         return a;
@@ -252,7 +291,8 @@ public class ColumnReader implements AutoCloseable {
 
     public long[] getLongs() {
         checkBatchAvailable();
-        if (!(currentValues() instanceof long[] a)) {
+        Object values = realLeafValues();
+        if (!(values instanceof long[] a)) {
             throw typeMismatch("long");
         }
         return a;
@@ -260,7 +300,8 @@ public class ColumnReader implements AutoCloseable {
 
     public float[] getFloats() {
         checkBatchAvailable();
-        if (!(currentValues() instanceof float[] a)) {
+        Object values = realLeafValues();
+        if (!(values instanceof float[] a)) {
             throw typeMismatch("float");
         }
         return a;
@@ -268,7 +309,8 @@ public class ColumnReader implements AutoCloseable {
 
     public double[] getDoubles() {
         checkBatchAvailable();
-        if (!(currentValues() instanceof double[] a)) {
+        Object values = realLeafValues();
+        if (!(values instanceof double[] a)) {
             throw typeMismatch("double");
         }
         return a;
@@ -276,110 +318,129 @@ public class ColumnReader implements AutoCloseable {
 
     public boolean[] getBooleans() {
         checkBatchAvailable();
-        if (!(currentValues() instanceof boolean[] a)) {
+        Object values = realLeafValues();
+        if (!(values instanceof boolean[] a)) {
             throw typeMismatch("boolean");
         }
         return a;
     }
 
-    public byte[][] getBinaries() {
+    // ==================== Varlength Leaf Buffers ====================
+
+    /// Backing byte buffer for a varlength leaf. Capacity-sized: only bytes
+    /// in the half-open range `[0, getBinaryOffsets()[getValueCount()])` are
+    /// valid; bytes beyond that position are unspecified.
+    ///
+    /// @throws IllegalStateException for non-byte-array leaves
+    public byte[] getBinaryValues() {
         checkBatchAvailable();
-        if (!(currentValues() instanceof byte[][] a)) {
-            throw typeMismatch("byte[]");
-        }
-        return a;
+        ensureRealBinary();
+        return cachedRealBinaryBytes;
     }
 
-    // ==================== Logical Type Accessors ====================
-
-    /// String values for STRING and JSON logical type columns.
-    /// Converts the underlying byte arrays to UTF-8 strings.
-    /// Null values are represented as null entries in the array.
-    /// BSON columns are not string-decoded; use [#getBinaries()] for those.
+    /// Sentinel-suffixed offsets into [#getBinaryValues()]. Length ==
+    /// `getValueCount() + 1`; the byte length of value `i` is
+    /// `offsets[i+1] - offsets[i]`. For `FIXED_LEN_BYTE_ARRAY` columns the
+    /// offsets are trivially `i * width`.
     ///
-    /// @return String array with converted values
-    /// @throws IllegalStateException if the column is not a BYTE_ARRAY type
-    public String[] getStrings() {
-        byte[][] raw = getBinaries();
-        BitSet nulls = getElementNulls();
-        String[] result = new String[valueCount];
-        for (int i = 0; i < valueCount; i++) {
-            if (nulls != null && nulls.get(i)) {
-                result[i] = null;
-            }
-            else {
-                result[i] = new String(raw[i], StandardCharsets.UTF_8);
-            }
+    /// @throws IllegalStateException for non-byte-array leaves
+    public int[] getBinaryOffsets() {
+        checkBatchAvailable();
+        ensureRealBinary();
+        return cachedRealBinaryOffsets;
+    }
+
+    // ==================== Convenience Accessors ====================
+
+    /// Materialises one `byte[]` per leaf value, copying out of the binary
+    /// buffer. Returns `null` at indexes where [#getLeafValidity()] is unset.
+    /// Allocates one byte array per leaf — hot loops should consult
+    /// [#getBinaryValues()] + [#getBinaryOffsets()] directly.
+    ///
+    /// The returned array has length [#getValueCount()] — i.e. the **real
+    /// leaf count**, not [#getRecordCount()]. For a flat column the two
+    /// coincide; for `list<binary>` and similar nested chains they
+    /// differ, and lookups must go through the appropriate layer offsets
+    /// rather than indexing by record.
+    public byte[][] getBinaries() {
+        checkBatchAvailable();
+        if (cachedBinaries != null) {
+            return cachedBinaries;
         }
+        ensureRealBinary();
+        int n = getValueCount();
+        Validity validity = getLeafValidity();
+        byte[][] result = new byte[n][];
+        for (int i = 0; i < n; i++) {
+            if (validity.isNull(i)) {
+                result[i] = null;
+                continue;
+            }
+            int start = cachedRealBinaryOffsets[i];
+            int len = cachedRealBinaryOffsets[i + 1] - start;
+            byte[] copy = new byte[len];
+            System.arraycopy(cachedRealBinaryBytes, start, copy, 0, len);
+            result[i] = copy;
+        }
+        cachedBinaries = result;
         return result;
     }
 
-    // ==================== Null Handling ====================
-
-    /// Null bitmap over leaf values. For flat columns this doubles as record-level nulls.
+    /// Convenience: materialises one `String` per leaf value by UTF-8 decoding
+    /// the slice of [#getBinaryValues()] for each entry. Returns `null` at
+    /// indexes where [#getLeafValidity()] is unset. BSON columns are not
+    /// string-decoded; use [#getBinaries()] / [#getBinaryValues()] for those.
     ///
-    /// @return BitSet where set bits indicate null values, or null if all elements are required
-    public BitSet getElementNulls() {
+    /// The returned array has length [#getValueCount()] — i.e. the **real
+    /// leaf count**, not [#getRecordCount()]. For a flat column the two
+    /// coincide; for `list<string>` and similar nested chains they
+    /// differ, and lookups must go through the appropriate layer offsets
+    /// rather than indexing by record.
+    public String[] getStrings() {
+        checkBatchAvailable();
+        if (cachedStrings != null) {
+            return cachedStrings;
+        }
+        ensureRealBinary();
+        int n = getValueCount();
+        Validity validity = getLeafValidity();
+        String[] result = new String[n];
+        for (int i = 0; i < n; i++) {
+            if (validity.isNull(i)) {
+                result[i] = null;
+                continue;
+            }
+            int start = cachedRealBinaryOffsets[i];
+            int len = cachedRealBinaryOffsets[i + 1] - start;
+            result[i] = new String(cachedRealBinaryBytes, start, len, StandardCharsets.UTF_8);
+        }
+        cachedStrings = result;
+        return result;
+    }
+
+    // ==================== Raw Levels (escape hatch) ====================
+
+    /// Raw definition levels for the current batch. Returns `null` for flat
+    /// columns; their validity is fully captured by [#getLeafValidity()].
+    public int[] getDefinitionLevels() {
         checkBatchAvailable();
         if (!nested) {
-            return currentFlatBatch.nulls;
+            return null;
         }
-        ensureNestedDataComputed();
-        return elementNulls;
+        return currentNestedBatch.definitionLevels;
     }
 
-    /// Null bitmap at a given nesting level. Only valid for nested columns
-    /// (`0 <= level < getNestingDepth()`).
-    ///
-    /// @param level the nesting level (0 = outermost group)
-    /// @return BitSet where set bits indicate null groups, or null if that level is required
-    public BitSet getLevelNulls(int level) {
+    /// Raw repetition levels for the current batch. Returns `null` for columns
+    /// whose `maxRepetitionLevel == 0`.
+    public int[] getRepetitionLevels() {
         checkBatchAvailable();
-        checkNestedLevel(level);
-        ensureNestedDataComputed();
-        return levelNulls[level];
-    }
-
-    /// Empty-list bitmap at a given nesting level. A set bit means the
-    /// container at that level is non-null but contains zero entries.
-    ///
-    /// Together with [#getLevelNulls(int)] this disambiguates the four
-    /// container states a list/map can be in: null, empty, non-empty with null
-    /// element(s), and non-empty with value(s). Specifically, this bitmap is
-    /// what lets a caller tell an empty list apart from a list containing a
-    /// single null element — in the underlying encoding both produce one
-    /// phantom entry that [#getElementNulls()] flags as null.
-    ///
-    /// A `null` return is the sparse representation of an all-zero bitmap
-    /// (no empty containers at this level in the current batch); callers
-    /// should treat it the same as an unset bit at every index.
-    ///
-    /// @param level the nesting level (0 = outermost group)
-    /// @return BitSet where set bits indicate empty containers, or null if no empties at that level
-    public BitSet getEmptyListMarkers(int level) {
-        checkBatchAvailable();
-        checkNestedLevel(level);
-        ensureNestedDataComputed();
-        return emptyListMarkers[level];
-    }
-
-    // ==================== Offsets for Repeated Columns ====================
-
-    /// Nesting depth: 0 for flat, maxRepetitionLevel for nested.
-    public int getNestingDepth() {
-        return maxRepetitionLevel;
-    }
-
-    /// Offset array for a given nesting level. Maps items at level k to positions
-    /// in the next level (or leaf values for the innermost level).
-    ///
-    /// @param level the nesting level (0-indexed)
-    /// @return offset array for the given level
-    public int[] getOffsets(int level) {
-        checkBatchAvailable();
-        checkNestedLevel(level);
-        ensureNestedDataComputed();
-        return multiLevelOffsets[level];
+        if (!nested) {
+            return null;
+        }
+        if (column.maxRepetitionLevel() == 0) {
+            return null;
+        }
+        return currentNestedBatch.repetitionLevels;
     }
 
     // ==================== Metadata ====================
@@ -409,12 +470,137 @@ public class ColumnReader implements AutoCloseable {
         return ExceptionContext.filePrefix(currentFileName);
     }
 
-    /// Returns the values array from the current batch (flat or nested).
-    private Object currentValues() {
-        if (currentFlatBatch != null) {
+    private NestedLevelComputer.RealView ensureRealView() {
+        if (realViewComputed) {
+            return currentRealView;
+        }
+        if (!nested) {
+            throw new IllegalStateException(prefix() + "Real view not available for flat columns");
+        }
+        currentRealView = NestedLevelComputer.computeRealView(
+                currentNestedBatch.definitionLevels,
+                currentNestedBatch.repetitionLevels,
+                currentNestedBatch.valueCount,
+                currentNestedBatch.recordCount,
+                column.maxDefinitionLevel(),
+                layers);
+        realViewComputed = true;
+        return currentRealView;
+    }
+
+    /// Returns the leaf-values backing array sized to [#getValueCount()].
+    /// For flat columns this is the underlying batch array; for nested
+    /// columns it's either pass-through (no compaction needed when the chain
+    /// has no `REPEATED` layers) or a freshly compacted typed array, cached
+    /// per batch.
+    private Object realLeafValues() {
+        if (!nested) {
             return currentFlatBatch.values;
         }
-        return currentNestedBatch.values;
+        if (cachedRealValues != null) {
+            return cachedRealValues;
+        }
+        NestedLevelComputer.RealView rv = ensureRealView();
+        Object raw = currentNestedBatch.values;
+        int[] map = rv.realToRawLeaf();
+        if (map == null) {
+            cachedRealValues = raw;   // pass-through: STRUCT-only chain
+        }
+        else {
+            cachedRealValues = compactPrimitive(raw, map);
+        }
+        return cachedRealValues;
+    }
+
+    private static Object compactPrimitive(Object raw, int[] map) {
+        int n = map.length;
+        return switch (raw) {
+            case int[] a -> {
+                int[] out = new int[n];
+                for (int i = 0; i < n; i++) out[i] = a[map[i]];
+                yield out;
+            }
+            case long[] a -> {
+                long[] out = new long[n];
+                for (int i = 0; i < n; i++) out[i] = a[map[i]];
+                yield out;
+            }
+            case float[] a -> {
+                float[] out = new float[n];
+                for (int i = 0; i < n; i++) out[i] = a[map[i]];
+                yield out;
+            }
+            case double[] a -> {
+                double[] out = new double[n];
+                for (int i = 0; i < n; i++) out[i] = a[map[i]];
+                yield out;
+            }
+            case boolean[] a -> {
+                boolean[] out = new boolean[n];
+                for (int i = 0; i < n; i++) out[i] = a[map[i]];
+                yield out;
+            }
+            case BinaryBatchValues bbv -> compactBinary(bbv, map);
+            default -> throw new IllegalStateException("Unexpected leaf array type: " + raw.getClass());
+        };
+    }
+
+    private static BinaryBatchValues compactBinary(BinaryBatchValues raw, int[] map) {
+        int n = map.length;
+        int totalBytes = 0;
+        int[] outOffsets = new int[n + 1];
+        for (int i = 0; i < n; i++) {
+            int rawIdx = map[i];
+            int len = raw.offsets[rawIdx + 1] - raw.offsets[rawIdx];
+            outOffsets[i] = totalBytes;
+            totalBytes += len;
+        }
+        outOffsets[n] = totalBytes;
+        byte[] outBytes = new byte[totalBytes];
+        for (int i = 0; i < n; i++) {
+            int rawIdx = map[i];
+            int rawStart = raw.offsets[rawIdx];
+            int len = raw.offsets[rawIdx + 1] - rawStart;
+            System.arraycopy(raw.bytes, rawStart, outBytes, outOffsets[i], len);
+        }
+        return new BinaryBatchValues(outBytes, outOffsets);
+    }
+
+    private void ensureRealBinary() {
+        if (cachedRealBinaryBytes != null) {
+            return;
+        }
+        Object raw;
+        BinaryBatchValues bbv;
+        if (!nested) {
+            raw = currentFlatBatch.values;
+            if (!(raw instanceof BinaryBatchValues)) {
+                throw typeMismatch("byte[]");
+            }
+            bbv = (BinaryBatchValues) raw;
+            cachedRealBinaryBytes = bbv.bytes;
+            cachedRealBinaryOffsets = trimOffsetsToLeafCount(bbv.offsets, recordCount);
+            return;
+        }
+        // Nested: realLeafValues() may compact, may pass through.
+        Object leaf = realLeafValues();
+        if (!(leaf instanceof BinaryBatchValues compacted)) {
+            throw typeMismatch("byte[]");
+        }
+        cachedRealBinaryBytes = compacted.bytes;
+        cachedRealBinaryOffsets = trimOffsetsToLeafCount(compacted.offsets, getValueCount());
+    }
+
+    /// The per-batch [BinaryBatchValues] is sized to the worker's batch
+    /// capacity; only the prefix `[0, valueCount + 1]` of the offsets is
+    /// meaningful at the public-API surface. Trim if needed (the bytes
+    /// buffer itself stays capacity-sized — the public contract documents
+    /// it that way).
+    private static int[] trimOffsetsToLeafCount(int[] offsets, int leafCount) {
+        if (offsets.length == leafCount + 1) {
+            return offsets;
+        }
+        return Arrays.copyOf(offsets, leafCount + 1);
     }
 
     private void checkBatchAvailable() {
@@ -423,13 +609,10 @@ public class ColumnReader implements AutoCloseable {
         }
     }
 
-    private void checkNestedLevel(int level) {
-        if (maxRepetitionLevel == 0) {
-            throw new IllegalStateException(prefix() + "Not valid for flat columns (nestingDepth=0)");
-        }
-        if (level < 0 || level >= maxRepetitionLevel) {
-            throw new IndexOutOfBoundsException(prefix()
-                    + "Level " + level + " out of range [0, " + maxRepetitionLevel + ")");
+    private void checkLayer(int layer) {
+        if (layer < 0 || layer >= layers.count()) {
+            throw new IllegalStateException(prefix()
+                    + "Layer " + layer + " out of range [0, " + layers.count() + ")");
         }
     }
 
@@ -438,77 +621,29 @@ public class ColumnReader implements AutoCloseable {
                 + "Column '" + column.name() + "' is " + column.type() + ", not " + expected);
     }
 
-    /// Reads pre-computed index structures from the [NestedBatch].
-    /// The drain thread computes these before publishing.
-    private void ensureNestedDataComputed() {
-        if (nestedDataComputed) {
-            return;
-        }
-        nestedDataComputed = true;
-
-        elementNulls = currentNestedBatch.elementNulls;
-        multiLevelOffsets = currentNestedBatch.multiLevelOffsets;
-        levelNulls = currentNestedBatch.levelNulls;
-        emptyListMarkers = currentNestedBatch.emptyListMarkers;
-
-        // Provide empty arrays when fields are null (non-repeated columns)
-        if (multiLevelOffsets == null) {
-            multiLevelOffsets = new int[maxRepetitionLevel][];
-        }
-        if (levelNulls == null) {
-            levelNulls = new BitSet[maxRepetitionLevel];
-        }
-        if (emptyListMarkers == null) {
-            emptyListMarkers = new BitSet[maxRepetitionLevel];
-        }
-    }
-
     // ==================== Factory ====================
 
-    /// Create a ColumnReader for a named column, scanning pages across all row groups.
-    static ColumnReader create(String columnName, FileSchema schema,
-                               InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context) {
-        ColumnSchema columnSchema = schema.getColumn(columnName);
-        return create(columnSchema, schema, inputFile, rowGroups, context, null);
-    }
-
-    /// Create a ColumnReader for a named column with page-level filtering.
-    ///
-    /// @param filter resolved predicate, or `null` for no filtering.
+    /// Create a ColumnReader for a named column with optional page-level
+    /// filtering. `filter` may be `null`.
     static ColumnReader create(String columnName, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context, ResolvedPredicate filter) {
-        ColumnSchema columnSchema = schema.getColumn(columnName);
-        return create(columnSchema, schema, inputFile, rowGroups, context, filter);
+        return create(schema.getColumn(columnName), schema, inputFile, rowGroups, context, filter);
     }
 
-    /// Create a ColumnReader for a column by index, scanning pages across all row groups.
-    static ColumnReader create(int columnIndex, FileSchema schema,
-                               InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context) {
-        ColumnSchema columnSchema = schema.getColumn(columnIndex);
-        return create(columnSchema, schema, inputFile, rowGroups, context, null);
-    }
-
-    /// Create a ColumnReader for a column by index with page-level filtering.
-    ///
-    /// @param filter resolved predicate, or `null` for no filtering.
+    /// Create a ColumnReader for a column by index with optional page-level
+    /// filtering. `filter` may be `null`.
     static ColumnReader create(int columnIndex, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
                                HardwoodContextImpl context, ResolvedPredicate filter) {
-        ColumnSchema columnSchema = schema.getColumn(columnIndex);
-        return create(columnSchema, schema, inputFile, rowGroups, context, filter);
+        return create(schema.getColumn(columnIndex), schema, inputFile, rowGroups, context, filter);
     }
 
-    /// Create a ColumnReader for a given ColumnSchema using the v3 pipeline.
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        InputFile inputFile, List<RowGroup> rowGroups,
                                        HardwoodContextImpl context, ResolvedPredicate filter) {
-        // Create a single-column projection using the full field path
-        // to avoid ambiguity with duplicate leaf names in nested schemas.
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema,
-                dev.hardwood.schema.ColumnProjection.columns(columnSchema.fieldPath().toString()));
+                ColumnProjection.columns(columnSchema.fieldPath().toString()));
 
         RowGroupIterator rowGroupIterator = new RowGroupIterator(
                 List.of(inputFile), context, 0);
@@ -521,40 +656,40 @@ public class ColumnReader implements AutoCloseable {
     /// Creates a ColumnReader from a pre-configured RowGroupIterator.
     /// Used by both single-file and multi-file paths.
     ///
-    /// @param projectedColumnIndex the column's index within the projected schema
-    /// @param ownedIterator if non-null, the ColumnReader takes ownership and closes
-    ///        it on [#close()]. Pass `null` when the caller manages the iterator lifecycle.
+    /// Routing rule: any column whose schema chain contributes at least one
+    /// `STRUCT` or `REPEATED` layer is driven by [NestedColumnWorker] (def
+    /// levels are needed to compute per-layer validity); only the
+    /// no-layers-at-all case takes the [FlatColumnWorker] fast path.
     static ColumnReader createFromIterator(ColumnSchema columnSchema, FileSchema schema,
                                            RowGroupIterator rowGroupIterator,
                                            HardwoodContextImpl context,
                                            int projectedColumnIndex,
                                            RowGroupIterator ownedIterator) {
-        boolean nested = columnSchema.maxRepetitionLevel() > 0;
+        NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
+                schema.getRootNode(), columnSchema.columnIndex());
+        boolean nested = layers.count() > 0 || columnSchema.maxRepetitionLevel() > 0;
 
         PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
-        dev.hardwood.metadata.PhysicalType physType = columnSchema.type();
 
         if (nested) {
             BatchExchange<NestedBatch> nestedBuf = BatchExchange.detaching(
                     columnSchema.name(), () -> {
                         NestedBatch b = new NestedBatch();
-                        b.values = BatchExchange.allocateArray(physType, DEFAULT_BATCH_SIZE);
+                        b.values = BatchExchange.allocateArray(columnSchema, DEFAULT_BATCH_SIZE);
                         return b;
                     });
-            int[] thresholds = NestedLevelComputer.computeLevelNullThresholds(
-                    schema.getRootNode(), columnSchema.columnIndex());
             NestedColumnWorker nestedWorker = new NestedColumnWorker(
                     pageSource, nestedBuf, columnSchema, DEFAULT_BATCH_SIZE,
                     context.decompressorFactory(), context.executor(), 0,
-                    thresholds);
+                    layers);
             nestedWorker.start();
-            return ColumnReader.forNested(columnSchema, nestedBuf, nestedWorker, ownedIterator, thresholds);
+            return ColumnReader.forNested(columnSchema, layers, nestedBuf, nestedWorker, ownedIterator);
         }
         else {
             BatchExchange<BatchExchange.Batch> flatBuf = BatchExchange.detaching(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(physType, DEFAULT_BATCH_SIZE);
+                        b.values = BatchExchange.allocateArray(columnSchema, DEFAULT_BATCH_SIZE);
                         return b;
                     });
             FlatColumnWorker flatWorker = new FlatColumnWorker(

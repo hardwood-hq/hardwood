@@ -12,6 +12,7 @@ import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column pipeline that decodes pages in parallel and assembles flat batches.
@@ -20,8 +21,13 @@ import dev.hardwood.schema.ColumnSchema;
 /// and null tracking via [BitSet].
 public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
-    private BitSet currentNulls;
+    private BitSet currentValidity;
     private final ColumnBatchMatcher columnFilter;
+    /// Tracks whether any absent (null) leaf has been seen in the current
+    /// batch; cleared by [#publishCurrentBatch]. When still false at publish
+    /// time, [BatchExchange.Batch#validity] is set to `null` to signal
+    /// "all leaves present in this batch."
+    private boolean currentBatchHasAbsents;
 
     /// Creates a new flat column worker.
     ///
@@ -48,7 +54,8 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     @Override
     void initDrainState() {
-        currentNulls = maxDefinitionLevel > 0 ? new BitSet(batchCapacity) : null;
+        currentValidity = maxDefinitionLevel > 0 ? new BitSet(batchCapacity) : null;
+        currentBatchHasAbsents = false;
     }
 
     @Override
@@ -116,8 +123,8 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             return;
         }
         currentBatch.recordCount = rowsInCurrentBatch;
-        currentBatch.nulls = (currentNulls != null && !currentNulls.isEmpty())
-                ? (BitSet) currentNulls.clone()
+        currentBatch.validity = (currentValidity != null && currentBatchHasAbsents)
+                ? (BitSet) currentValidity.clone()
                 : null;
         currentBatch.fileName = currentBatchFileName;
 
@@ -148,10 +155,13 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         batchesPublished++;
 
         rowsInCurrentBatch = 0;
-        if (currentNulls != null) {
-            currentNulls.clear();
+        if (currentValidity != null) {
+            currentValidity.clear();
         }
+        currentBatchHasAbsents = false;
     }
+
+    private static final byte[] EMPTY_BYTES = new byte[0];
 
     private void copyPageData(Page page, int srcPos, int destPos, int length) {
         Object values = currentBatch.values;
@@ -177,18 +187,59 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                 markNulls(p.definitionLevels(), srcPos, destPos, length);
             }
             case Page.ByteArrayPage p -> {
-                System.arraycopy(p.values(), srcPos, (byte[][]) values, destPos, length);
+                BinaryBatchValues bbv = (BinaryBatchValues) values;
+                byte[][] pageValues = p.values();
+                boolean fixedLen = physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY;
+                for (int i = 0; i < length; i++) {
+                    byte[] val = pageValues[srcPos + i];
+                    int dest = destPos + i;
+                    if (val != null) {
+                        bbv.appendAt(dest, val, 0, val.length);
+                    }
+                    else if (!fixedLen) {
+                        bbv.appendAt(dest, EMPTY_BYTES, 0, 0);
+                    }
+                    // FIXED_LEN null: pre-filled trivial offsets are kept;
+                    // bytes content at this slot is undefined scratch.
+                }
                 markNulls(p.definitionLevels(), srcPos, destPos, length);
             }
         }
     }
 
+    /// Records a validity bit for each value just copied. Set bit means the
+    /// leaf at that position is **present** (`def == maxDefinitionLevel`);
+    /// absent positions leave their bit clear.
+    ///
+    /// On the no-absents fast path the bitmap is left untouched — a `null`
+    /// validity at publish-time is the sparse representation of "every leaf
+    /// in this batch is present", so setting bits we'd then drop is wasted
+    /// work. The first absent encountered switches the bitmap on by
+    /// backfilling the bits for all previously-seen present values
+    /// (`[0, destPos + i)`); subsequent values then maintain the bitmap
+    /// normally. When `defLevels` is `null` the page has no def-level stream,
+    /// which implies every leaf in the page is present — only touch the
+    /// bitmap if it was already switched on by an earlier absent in the
+    /// batch.
     private void markNulls(int[] defLevels, int srcPos, int destPos, int length) {
-        if (currentNulls != null && defLevels != null) {
-            for (int i = 0; i < length; i++) {
-                if (defLevels[srcPos + i] < maxDefinitionLevel) {
-                    currentNulls.set(destPos + i);
+        if (currentValidity == null) {
+            return;
+        }
+        if (defLevels == null) {
+            if (currentBatchHasAbsents) {
+                currentValidity.set(destPos, destPos + length);
+            }
+            return;
+        }
+        for (int i = 0; i < length; i++) {
+            if (defLevels[srcPos + i] < maxDefinitionLevel) {
+                if (!currentBatchHasAbsents) {
+                    currentBatchHasAbsents = true;
+                    currentValidity.set(0, destPos + i);
                 }
+            }
+            else if (currentBatchHasAbsents) {
+                currentValidity.set(destPos + i);
             }
         }
     }
