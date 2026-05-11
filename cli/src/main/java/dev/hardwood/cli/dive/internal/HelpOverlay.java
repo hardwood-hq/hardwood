@@ -7,6 +7,7 @@
  */
 package dev.hardwood.cli.dive.internal;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.cli.internal.Version;
@@ -30,7 +31,7 @@ public final class HelpOverlay {
 
     public static void render(Buffer buffer, Rect screenArea) {
         int width = Math.min(60, screenArea.width() - 4);
-        int height = Math.min(31, screenArea.height() - 2);
+        int height = Math.min(33, screenArea.height() - 2);
         int x = screenArea.left() + (screenArea.width() - width) / 2;
         int y = screenArea.top() + (screenArea.height() - height) / 2;
         Rect area = new Rect(x, y, width, height);
@@ -40,7 +41,7 @@ public final class HelpOverlay {
 
         int descBudget = Math.max(1, (width - 2) - 20);
 
-        List<Line> lines = new java.util.ArrayList<>();
+        List<Line> lines = new ArrayList<>();
 
                 lines.add(Line.from(new Span("Navigation", Theme.accent().bold())));
                 lines.addAll(kv("↑ / ↓", "move selection", descBudget));
@@ -82,8 +83,8 @@ public final class HelpOverlay {
     }
 
     private static List<Line> kv(String key, String description, int descBudget) {
-        List<Line> result = new java.util.ArrayList<>();
-        List<String> wrappedDescription = wrapValue(description, descBudget);
+        List<Line> result = new ArrayList<>();
+        List<String> wrappedDescription = wrapValue(description, Math.max(1, descBudget - 1));
 
         result.add(Line.from(
                 Span.raw("  "),
@@ -106,7 +107,7 @@ public final class HelpOverlay {
     }
 
     private static List<String> wrapValue(String value, int width) {
-        List<String> out = new java.util.ArrayList<>();
+        List<String> out = new ArrayList<>();
         if (width <= 0) {
             out.add(value);
             return out;
@@ -116,12 +117,38 @@ public final class HelpOverlay {
                 out.add("");
                 continue;
             }
-            int i = 0;
-            while (i < line.length()) {
-                int end = Math.min(line.length(), i + width);
-                out.add(line.substring(i, end));
-                i = end;
+
+            String[] words = line.split(" ", -1);
+            StringBuilder currentLine = new StringBuilder();
+
+            for (String word : words) {
+                // If a single word is strictly longer than the whole width,
+                // we are forced to character-wrap it so it doesn't break the UI boundary.
+                while (word.length() > width) {
+                    if (!currentLine.isEmpty()) {
+                        out.add(currentLine.toString());
+                        currentLine.setLength(0);
+                    }
+                    out.add(word.substring(0, width));
+                    word = word.substring(width);
+                }
+
+                if (currentLine.isEmpty()) {
+                    currentLine.append(word);
+                } else if (currentLine.length() + 1 + word.length() <= width) {
+                    currentLine.append(" ").append(word);
+                } else {
+                    out.add(currentLine.toString());
+                    currentLine.setLength(0);
+                    currentLine.append(word);
+                }
+
             }
+
+            if (!currentLine.isEmpty()) {
+                out.add(currentLine.toString());
+            }
+
         }
         return out;
     }
