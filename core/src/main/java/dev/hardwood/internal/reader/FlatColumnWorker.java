@@ -11,6 +11,7 @@ import java.util.BitSet;
 import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Per-column pipeline that decodes pages in parallel and assembles flat batches.
@@ -20,6 +21,7 @@ import dev.hardwood.schema.ColumnSchema;
 public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     private BitSet currentNulls;
+    private final ColumnBatchMatcher columnFilter;
 
     /// Creates a new flat column worker.
     ///
@@ -30,12 +32,18 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     /// @param decompressorFactory for creating page decompressors
     /// @param decodeExecutor executor for decode tasks
     /// @param maxRows maximum rows to assemble (0 = unlimited)
+    /// @param columnFilter optional drain-side per-column filter that runs against every
+    ///                    published batch, writing matches into the batch's `matches`
+    ///                    array. `null` leaves the worker on the existing path — no
+    ///                    filter evaluation.
     public FlatColumnWorker(PageSource pageSource, BatchExchange<BatchExchange.Batch> exchange,
                             ColumnSchema column, int batchCapacity,
                             DecompressorFactory decompressorFactory,
-                            Executor decodeExecutor, long maxRows) {
+                            Executor decodeExecutor, long maxRows,
+                            ColumnBatchMatcher columnFilter) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
               decodeExecutor, maxRows);
+        this.columnFilter = columnFilter;
     }
 
     @Override
@@ -112,6 +120,12 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                 ? (BitSet) currentNulls.clone()
                 : null;
         currentBatch.fileName = currentBatchFileName;
+
+        if (columnFilter != null) {
+            // Drain-side filter: evaluate while the just-filled value array is hot in
+            // this drain core's L1. Writes into currentBatch.matches in place.
+            columnFilter.test(currentBatch, currentBatch.matches);
+        }
 
         long t0 = System.nanoTime();
         try {

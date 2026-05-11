@@ -25,7 +25,6 @@ import dev.hardwood.schema.FileSchema;
 public final class RecordFilterCompiler {
 
     static final String[] EMPTY_PATH = new String[0];
-    private static final int IN_LIST_BINARY_SEARCH_THRESHOLD = 16;
 
     private RecordFilterCompiler() {
     }
@@ -412,55 +411,36 @@ public final class RecordFilterCompiler {
     }
 
     private static RowMatcher intInLeaf(String[] path, String name, int[] values) {
-        int[] sorted = values.clone();
-        Arrays.sort(sorted);
-        if (sorted.length >= IN_LIST_BINARY_SEARCH_THRESHOLD) {
-            return row -> {
-                StructAccessor a = resolve(row, path);
-                if (a == null || a.isNull(name)) return false;
-                return Arrays.binarySearch(sorted, a.getInt(name)) >= 0;
-            };
-        }
         return row -> {
             StructAccessor a = resolve(row, path);
             if (a == null || a.isNull(name)) return false;
             int val = a.getInt(name);
-            for (int i = 0; i < sorted.length; i++) {
-                if (sorted[i] == val) return true;
+            for (int value : values) {
+                if (value == val) return true;
             }
             return false;
         };
     }
 
     private static RowMatcher longInLeaf(String[] path, String name, long[] values) {
-        long[] sorted = values.clone();
-        Arrays.sort(sorted);
-        if (sorted.length >= IN_LIST_BINARY_SEARCH_THRESHOLD) {
-            return row -> {
-                StructAccessor a = resolve(row, path);
-                if (a == null || a.isNull(name)) return false;
-                return Arrays.binarySearch(sorted, a.getLong(name)) >= 0;
-            };
-        }
         return row -> {
             StructAccessor a = resolve(row, path);
             if (a == null || a.isNull(name)) return false;
             long val = a.getLong(name);
-            for (int i = 0; i < sorted.length; i++) {
-                if (sorted[i] == val) return true;
+            for (long value : values) {
+                if (value == val) return true;
             }
             return false;
         };
     }
 
     private static RowMatcher binaryInLeaf(String[] path, String name, byte[][] values) {
-        byte[][] copy = values.clone();
         return row -> {
             StructAccessor a = resolve(row, path);
             if (a == null || a.isNull(name)) return false;
             byte[] val = a.getBinary(name);
-            for (int i = 0; i < copy.length; i++) {
-                if (Arrays.equals(val, copy[i])) return true;
+            for (byte[] value : values) {
+                if (Arrays.equals(val, value)) return true;
             }
             return false;
         };

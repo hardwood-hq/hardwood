@@ -17,6 +17,8 @@ import java.util.UUID;
 
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
@@ -65,11 +67,34 @@ public final class FlatRowReader implements RowReader {
     private int batchSize = 0;
     private boolean exhausted;
 
+    // Drain-side filter path: when drainSide is true, iterate via nextSetBit over
+    // combinedWords. When false, the original rowIndex++ path is taken.
+    private final boolean drainSide;
+    /// AND-merged per-row matches for the current batch. `null` when `!drainSide`.
+    /// Multi-column case: an owned buffer filled by [#intersectMatches]. Single-column
+    /// case: aliased per batch to the underlying [BatchExchange.Batch#matches] array
+    /// (no copy needed — there is nothing to intersect).
+    private long[] combinedWords;
+    /// Projected indices of columns that have a [ColumnBatchMatcher] column-filter installed.
+    /// Iterating this array in [#intersectMatches] avoids per-column null checks
+    /// on `Batch.matches` and skips columns without columnFilters entirely. `null`
+    /// when `!drainSide`.
+    private final int[] filteredColumns;
+    private int pendingRowIndex = -1;
+    /// Exclusive upper bound of the current run of consecutive-1 bits in
+    /// [#combinedWords] starting at or before `rowIndex + 1`. While
+    /// `rowIndex + 1 < runEndExclusive`, [#hasNext] can advance without
+    /// invoking [#nextSetBit] — replacing per-row mask + `numberOfTrailingZeros`
+    /// with a simple bound check, which is the win for match-all-like batches.
+    /// Reset to 0 each time a new batch loads.
+    private int runEndExclusive;
+
     // File name from the current batch — used for exception enrichment
     private String currentFileName;
 
     public FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, FlatColumnWorker[] columnWorkers,
-                         FileSchema fileSchema, ProjectedSchema projectedSchema) {
+                         FileSchema fileSchema, ProjectedSchema projectedSchema,
+                         boolean drainSide, int wordsLen, int[] filteredColumns) {
         this.exchanges = exchanges;
         this.columnWorkers = columnWorkers;
         this.columnCount = exchanges.length;
@@ -78,6 +103,14 @@ public final class FlatRowReader implements RowReader {
         this.flatValueArrays = new Object[columnCount];
         this.flatNulls = new BitSet[columnCount];
         this.previousBatches = new BatchExchange.Batch[columnCount];
+        this.drainSide = drainSide;
+        // Multi-column drain needs a private buffer for the AND-merged words.
+        // Single-column drain aliases the batch's matches array directly (see
+        // intersectMatches) so no allocation is needed here.
+        this.combinedWords = drainSide && filteredColumns != null && filteredColumns.length > 1
+                ? new long[wordsLen]
+                : null;
+        this.filteredColumns = filteredColumns;
 
         // Build name-to-index map and cache column metadata
         this.nameToIndex = new StringToIntMap(columnCount);
@@ -122,6 +155,16 @@ public final class FlatRowReader implements RowReader {
                                    long maxRows) {
         int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema);
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
+
+        // Try the drain-side path first. tryCompile returns null for any non-eligible
+        // predicate; null falls through to the existing FilteredRowReader path below.
+        ColumnBatchMatcher[] columnBatchMatchers = null;
+        if (filter != null) {
+            columnBatchMatchers = BatchFilterCompiler.tryCompile(filter, schema, projectedSchema::toProjectedIndex);
+        }
+        boolean drainSide = columnBatchMatchers != null;
+        final int wordsLen = (batchSize + 63) >>> 6;
+
         FlatColumnWorker[] workers = new FlatColumnWorker[projectedColumnCount];
         @SuppressWarnings("unchecked")
         BatchExchange<BatchExchange.Batch>[] buffers = new BatchExchange[projectedColumnCount];
@@ -133,23 +176,57 @@ public final class FlatRowReader implements RowReader {
             PageSource pageSource = new PageSource(rowGroupIterator, i);
 
             PhysicalType physType = columnSchema.type();
+            // Allocate matches[] only when this column actually has a filter installed.
+            // Other columns leave Batch.matches null (sentinel = all-ones in intersect).
+            final boolean allocateMatches =
+                    drainSide && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
             BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recycling(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
                         b.values = BatchExchange.allocateArray(physType, batchSize);
+                        if (allocateMatches) {
+                            b.matches = new long[wordsLen];
+                        }
                         return b;
                     });
+            ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
             FlatColumnWorker worker = new FlatColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), context.executor(), maxRows);
+                    context.decompressorFactory(), context.executor(), maxRows,
+                    columnFilter);
 
             buffers[i] = buffer;
             workers[i] = worker;
             worker.start();
         }
 
-        FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projectedSchema);
+        int[] filteredColumns = null;
+        if (drainSide) {
+            int len = columnBatchMatchers.length;
+            int[] tmp = new int[len];
+            int idx = 0;
+
+            for (int i = 0; i < len; i++) {
+                if (columnBatchMatchers[i] != null) {
+                    tmp[idx++] = i;
+                }
+            }
+
+            filteredColumns = java.util.Arrays.copyOf(tmp, idx);
+        }
+        if (filteredColumns == null || filteredColumns.length == 0) {
+            drainSide = false;
+        }
+
+        FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projectedSchema,
+                drainSide, wordsLen, filteredColumns);
         reader.initialize();
+
+        if (drainSide) {
+            // Drain-side path filters per-batch on the worker threads and iterates via
+            // nextSetBit; no consumer-side wrapper.
+            return reader;
+        }
         if (filter != null) {
             // Indexed compile path: for flat schemas, every leaf column is also
             // a top-level field, and the reader's `getInt(int)` etc. take a
@@ -168,6 +245,28 @@ public final class FlatRowReader implements RowReader {
         if (exhausted) {
             return false;
         }
+        if (drainSide) {
+            if (pendingRowIndex >= 0) {
+                return true;
+            }
+            // Fast path: still inside a known run of consecutive 1-bits — skip
+            // nextSetBit and just advance. This is the match-all/dense-batch win.
+            if (rowIndex + 1 < runEndExclusive) {
+                pendingRowIndex = rowIndex + 1;
+                return true;
+            }
+            while (true) {
+                int next = nextSetBit(combinedWords, rowIndex + 1, batchSize);
+                if (next >= 0) {
+                    pendingRowIndex = next;
+                    runEndExclusive = scanRunEnd(combinedWords, next, batchSize);
+                    return true;
+                }
+                if (!loadNextBatch()) {
+                    return false;
+                }
+            }
+        }
         if (rowIndex + 1 < batchSize) {
             return true;
         }
@@ -176,7 +275,77 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public void next() {
-        rowIndex++;
+        if (drainSide) {
+            if (pendingRowIndex < 0) {
+                throw new java.util.NoSuchElementException("No matching row available. Call hasNext() first.");
+            }
+            rowIndex = pendingRowIndex;
+            pendingRowIndex = -1;
+        }
+        else {
+            rowIndex++;
+        }
+    }
+
+    /// Finds the **exclusive** end of the run of consecutive 1-bits in `words`
+    /// starting at `from`, bounded above by `limit`. Returns the index of the
+    /// first 0-bit at or after `from`, or `limit` if every bit in `[from, limit)`
+    /// is set.
+    ///
+    /// Caller must have already established that bit `from` is set; this method
+    /// is used by [#hasNext] to amortize per-row `nextSetBit` calls when whole
+    /// batches (or large stretches) match
+    private static int scanRunEnd(long[] words, int from, int limit) {
+        int wordIdx = from >>> 6;
+        int endWord = (limit - 1) >>> 6;
+        int bitInWord = from & 63;
+        // Force the bits below `from` to 1 so they don't show up as the "next zero" — they're irrelevant.
+        long lowMask = ~(~0L << bitInWord);
+        long word = words[wordIdx] | lowMask;
+        long zeros = ~word;
+
+        if (zeros != 0L) {
+            int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(zeros);
+            return Math.min(bit, limit);
+        }
+
+        while (++wordIdx <= endWord) {
+            word = words[wordIdx];
+            if (word != ~0L) {
+                int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(~word);
+                return Math.min(bit, limit);
+            }
+        }
+        return limit;
+    }
+
+    /// Finds the next set bit in `words` at or above `from`, bounded above by `limit` (exclusive).
+    /// Returns `-1` if no such bit exists. Used by the drain-side iteration path so
+    /// `hasNext()`/`next()` stay monomorphic without a wrapping reader.
+    private static int nextSetBit(long[] words, int from, int limit) {
+        if (from >= limit) return -1;
+
+        // Word range that could contain bits in [from, limit)
+        int startWord = from >>> 6;
+        int endWord = (limit - 1) >>> 6;
+        int wordIdx = startWord;
+
+        // Mask first word to ignore bits before `from`
+        long word = words[wordIdx] & (~0L << (from & 63));
+
+        while (true) {
+            if (word != 0L) {
+                // Convert (word index + bit position) to get global bit index (row index)
+                int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(word);
+                return bit < limit ? bit : -1;
+            }
+
+            if (++wordIdx > endWord) {
+                return -1;
+            }
+
+            word = words[wordIdx];
+        }
     }
 
     // ==================== Null Check ====================
@@ -536,7 +705,65 @@ public final class FlatRowReader implements RowReader {
             }
         }
         rowIndex = -1;
+        if (drainSide) {
+            intersectMatches();
+            // pendingRowIndex is already -1 here: hasNext() only calls loadNextBatch
+            // after nextSetBit returns -1, which happens only when pendingRowIndex < 0;
+            // next() clears it before any further hasNext(); initialize() runs with the
+            // field's default -1.
+            runEndExclusive = 0;
+        }
         return true;
+    }
+
+    /// Intersects per-column [BatchExchange.Batch.matches] arrays into [combinedWords]
+    /// for the rows currently held by this reader.
+    ///
+    /// Iterates only the columns recorded in [#filteredColumns] (built once at
+    /// construction time), so there is no per-batch null check on `Batch.matches`.
+    /// Only the words covering `[0, batchSize)` are touched — bits past
+    /// `batchSize` are not read by the consumer (`nextSetBit` is bounded by
+    /// `batchSize`), so leaving them stale is safe and avoids the trailing
+    /// zero-fill the previous shape paid every batch.
+    ///
+    /// **Single-column fast path**: when only one column has a matcher there is
+    /// nothing to AND-merge, so [combinedWords] is aliased directly to the batch's
+    /// own `matches` array — no copy, no owned buffer. The alias is reseated each
+    /// batch; the array stays valid until the batch is recycled in the next
+    /// [#loadNextBatch].
+    private void intersectMatches() {
+        BatchExchange.Batch[] batches = previousBatches;
+
+        if (filteredColumns.length == 1) {
+            combinedWords = batches[filteredColumns[0]].matches;
+            return;
+        }
+
+        int activeWords = (batchSize + 63) >>> 6;
+        long[] combined = combinedWords;
+
+        // First column: bulk copy the words covering the active range.
+        long[] first = batches[filteredColumns[0]].matches;
+        System.arraycopy(first, 0, combined, 0, activeWords);
+
+        // Remaining columns: word-wise AND-merge. Track an OR across the merged
+        // words so we can bail out the moment a highly selective column drives
+        // the intersection to all-zero — skipping the remaining columns'
+        // AND-passes when the batch is already known to produce no rows.
+        for (int col = 1; col < filteredColumns.length; col++) {
+            long[] matches = batches[filteredColumns[col]].matches;
+            long anyBit = 0L;
+
+            for (int wIndex = 0; wIndex < activeWords; wIndex++) {
+                long merged = combined[wIndex] & matches[wIndex];
+                combined[wIndex] = merged;
+                anyBit |= merged;
+            }
+
+            if (anyBit == 0L) {
+                return;
+            }
+        }
     }
 
     // ==================== Close ====================

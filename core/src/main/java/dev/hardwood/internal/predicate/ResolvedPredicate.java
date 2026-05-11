@@ -45,20 +45,50 @@ public sealed interface ResolvedPredicate {
     record IsNullPredicate(int columnIndex) implements ResolvedPredicate {}
     record IsNotNullPredicate(int columnIndex) implements ResolvedPredicate {}
 
+    /// Conjunction of child predicates. Nested `And` children are flattened at
+    /// construction time so consumers can rely on a single flat level.
     record And(List<ResolvedPredicate> children) implements ResolvedPredicate {
         public And {
             if (children.isEmpty()) {
                 throw new IllegalArgumentException("AND requires at least one child predicate");
             }
+            children = flattenSameKind(children, And.class);
         }
     }
 
+    /// Disjunction of child predicates. Nested `Or` children are flattened at
+    /// construction time so consumers can rely on a single flat level.
     record Or(List<ResolvedPredicate> children) implements ResolvedPredicate {
         public Or {
             if (children.isEmpty()) {
                 throw new IllegalArgumentException("OR requires at least one child predicate");
             }
+            children = flattenSameKind(children, Or.class);
         }
+    }
+
+    private static <T extends ResolvedPredicate> List<ResolvedPredicate> flattenSameKind(
+            List<ResolvedPredicate> children, Class<T> sameKind) {
+        boolean hasNested = false;
+        for (ResolvedPredicate child : children) {
+            if (sameKind.isInstance(child)) {
+                hasNested = true;
+                break;
+            }
+        }
+        if (!hasNested) {
+            return children;
+        }
+        List<ResolvedPredicate> flat = new ArrayList<>(children.size());
+        for (ResolvedPredicate child : children) {
+            if (sameKind.isInstance(child)) {
+                List<ResolvedPredicate> nested = (child instanceof And a) ? a.children() : ((Or) child).children();
+                flat.addAll(nested);
+            } else {
+                flat.add(child);
+            }
+        }
+        return flat;
     }
 
     record GeospatialPredicate(int columnIndex, double xmin, double ymin,
