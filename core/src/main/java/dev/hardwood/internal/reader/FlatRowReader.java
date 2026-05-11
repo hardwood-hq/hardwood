@@ -695,7 +695,10 @@ public final class FlatRowReader implements RowReader {
         rowIndex = -1;
         if (drainSide) {
             intersectMatches();
-            pendingRowIndex = -1;
+            // pendingRowIndex is already -1 here: hasNext() only calls loadNextBatch
+            // after nextSetBit returns -1, which happens only when pendingRowIndex < 0;
+            // next() clears it before any further hasNext(); initialize() runs with the
+            // field's default -1.
             runEndExclusive = 0;
         }
         return true;
