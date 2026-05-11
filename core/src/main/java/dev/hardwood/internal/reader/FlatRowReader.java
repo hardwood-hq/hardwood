@@ -734,15 +734,22 @@ public final class FlatRowReader implements RowReader {
         long[] first = batches[filteredColumns[0]].matches;
         System.arraycopy(first, 0, combined, 0, activeWords);
 
-        // Remaining columns: word-wise AND-merge.
+        // Remaining columns: word-wise AND-merge. Track an OR across the merged
+        // words so we can bail out the moment a highly selective column drives
+        // the intersection to all-zero — skipping the remaining columns'
+        // AND-passes when the batch is already known to produce no rows.
         for (int col = 1; col < filteredColumns.length; col++) {
             long[] matches = batches[filteredColumns[col]].matches;
-            int wIndex = 0;
+            long anyBit = 0L;
 
-            while (wIndex < activeWords) {
-                long currentWord = combined[wIndex];
-                combined[wIndex] = currentWord & matches[wIndex];
-                wIndex++;
+            for (int wIndex = 0; wIndex < activeWords; wIndex++) {
+                long merged = combined[wIndex] & matches[wIndex];
+                combined[wIndex] = merged;
+                anyBit |= merged;
+            }
+
+            if (anyBit == 0L) {
+                return;
             }
         }
     }
