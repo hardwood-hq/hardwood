@@ -118,6 +118,10 @@ public class FilterPredicateResolver {
             case FloatColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
+                if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                        && cs.logicalType() instanceof LogicalType.Float16Type) {
+                    yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(), p.value());
+                }
                 validateType(p.column(), PhysicalType.FLOAT, cs);
                 yield new ResolvedPredicate.FloatPredicate(cs.columnIndex(), p.op(), p.value());
             }

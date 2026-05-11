@@ -48,6 +48,14 @@ public final class ValueConverter {
         if (rawValue == null) {
             return null;
         }
+        // Accept either physical FLOAT or FLBA(2) annotated FLOAT16; the latter
+        // decodes the half-precision payload to a single-precision Float so
+        // callers don't need to know the on-disk encoding.
+        if (schema instanceof SchemaNode.PrimitiveNode primitive
+                && primitive.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                && primitive.logicalType() instanceof LogicalType.Float16Type) {
+            return convertLogicalType(rawValue, schema, Float.class);
+        }
         validatePhysicalType(schema, PhysicalType.FLOAT);
         return (Float) rawValue;
     }
@@ -182,6 +190,9 @@ public final class ValueConverter {
         }
         else if (logicalType instanceof LogicalType.BsonType) {
             return convertToBinary(rawValue, schema);
+        }
+        else if (logicalType instanceof LogicalType.Float16Type) {
+            return convertToFloat(rawValue, schema);
         }
 
         // Fall back to physical type. BYTE_ARRAY without a STRING logical type is

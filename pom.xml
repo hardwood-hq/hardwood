@@ -300,8 +300,10 @@
                   <header>${maven.multiModuleProjectDirectory}/etc/license.txt</header>
                   <excludes>
                     <exclude>.claude/**</exclude>
+                    <exclude>_tmp/**</exclude>
                     <exclude>.venv/**</exclude>
                     <exclude>.docker-venv/**</exclude>
+                    <exclude>_tmp/**</exclude>
                     <exclude>.release-env</exclude>
                     <exclude>LICENSE.txt</exclude>
                     <exclude>etc/license-cc-by-sa.txt</exclude>

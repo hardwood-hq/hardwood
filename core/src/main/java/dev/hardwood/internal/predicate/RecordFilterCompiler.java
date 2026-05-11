@@ -72,6 +72,17 @@ public final class RecordFilterCompiler {
                         ? indexedFloatLeaf(idx, p.op(), p.value())
                         : floatLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
             }
+            case ResolvedPredicate.Float16Predicate p -> {
+                // FLOAT16 record-level eval reuses floatLeaf because `getFloat`
+                // dispatches on the column's logical type and decodes the 2-byte
+                // payload itself. The Float16Predicate distinction matters for
+                // stats pushdown (different decode width on min/max bytes), not
+                // for per-row reads.
+                int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
+                yield idx >= 0
+                        ? indexedFloatLeaf(idx, p.op(), p.value())
+                        : floatLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.op(), p.value());
+            }
             case ResolvedPredicate.DoublePredicate p -> {
                 int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
                 yield idx >= 0

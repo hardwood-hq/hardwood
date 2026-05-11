@@ -140,6 +140,22 @@ public class ColumnReader implements AutoCloseable {
 
     /// Advance to the next batch.
     ///
+    /// **Multi-column alignment.** Every [ColumnReader] over the same file produces
+    /// batches at the same row boundaries — call `nextBatch()` on each in turn and they
+    /// will report identical [#getRecordCount()]s for the matching batch. This holds
+    /// because the per-column drain workers all use the same internal batch capacity and
+    /// every reader observes the same total row count per row group.
+    ///
+    /// Consumers reading multiple columns in lockstep should generally prefer
+    /// [ColumnReaders] (obtained from
+    /// [ParquetFileReader#buildColumnReaders(dev.hardwood.schema.ColumnProjection)]),
+    /// which shares a single [dev.hardwood.internal.reader.RowGroupIterator] across all
+    /// columns and exposes a single coordinated [ColumnReaders#nextBatch()] that drives
+    /// every reader and validates alignment in one call. Driving independent
+    /// `ColumnReader` instances by hand with the bitwise-and idiom
+    /// (`a.nextBatch() & b.nextBatch()`) is correct but loses the shared-iterator
+    /// efficiency and gives up the structural alignment guard.
+    ///
     /// @return true if a batch is available, false if exhausted
     public boolean nextBatch() {
         if (exhausted) {

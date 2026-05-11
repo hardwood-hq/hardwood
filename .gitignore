@@ -38,6 +38,7 @@ nb-configuration.xml
 *.rej
 
 # Local environment
+.java-version
 .env
 .venv
 .docker-venv
@@ -59,3 +60,6 @@ hardwood-cli-early-access-*/
 # Claude
 .claude/worktrees/
 __pycache__/
+
+# Local scratch / non-source workspace
+_tmp/

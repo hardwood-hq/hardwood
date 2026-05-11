@@ -41,12 +41,14 @@ public interface FieldAccessor {
     /// @throws IllegalArgumentException if the field type is not INT64
     long getLong(String name);
 
-    /// Get a FLOAT field value by name.
+    /// Get a FLOAT field value by name. Also accepts FLOAT16 columns
+    /// (`FIXED_LEN_BYTE_ARRAY(2)` annotated `Float16Type`); the 2-byte payload is
+    /// losslessly widened to single-precision `float`.
     ///
     /// @param name the field name
     /// @return the float value
     /// @throws NullPointerException if the field is null
-    /// @throws IllegalArgumentException if the field type is not FLOAT
+    /// @throws IllegalArgumentException if the field type is neither FLOAT nor FLOAT16
     float getFloat(String name);
 
     /// Get a DOUBLE field value by name.

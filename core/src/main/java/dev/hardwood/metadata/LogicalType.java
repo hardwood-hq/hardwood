@@ -14,7 +14,7 @@ package dev.hardwood.metadata;
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public sealed
 interface LogicalType
-permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType,LogicalType.VariantType,LogicalType.GeometryType,LogicalType.GeographyType
+permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType,LogicalType.VariantType,LogicalType.GeometryType,LogicalType.GeographyType,LogicalType.Float16Type
 {
 
     /// UTF-8 encoded string.
@@ -37,6 +37,10 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
 
     /// Interval stored as a 12-byte fixed-length byte array (months, days, millis).
     record IntervalType() implements LogicalType {}
+
+    /// IEEE 754 half-precision (binary16) floating point, stored as a 2-byte
+    /// `FIXED_LEN_BYTE_ARRAY` in little-endian byte order.
+    record Float16Type() implements LogicalType {}
 
     /// Integer type with a specific bit width and signedness.
     ///

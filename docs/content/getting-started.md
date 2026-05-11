@@ -15,7 +15,9 @@ Hardwood runs on Java 21 or newer; Java 25 is recommended for best performance.
 
 If you just want to inspect or convert Parquet files from the command line, grab a pre-built native binary for Linux, macOS, or Windows from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}); see the [CLI](cli.md) page for details.
 
-## Using the BOM (Bill of Materials)
+## Dependency Management
+
+### Using the BOM (Bill of Materials)
 
 The `hardwood-bom` manages versions for all Hardwood modules and their optional runtime dependencies.
 Import it in your dependency management so you can declare Hardwood dependencies without specifying versions:
@@ -53,7 +55,7 @@ Then declare dependencies without versions:
 </dependency>
 ```
 
-## Adding the Core Dependency
+### Specifying the Version Directly
 
 If you prefer not to use the BOM, you can specify the version directly:
 
@@ -73,12 +75,14 @@ If you prefer not to use the BOM, you can specify the version directly:
 implementation 'dev.hardwood:hardwood-core:{{hardwood_version}}'
 ```
 
-## Logging
+## Optional Dependencies
+
+### Logging
 
 Hardwood uses the Java Platform Logging API (`System.Logger`).
 Bindings are available for all popular logger implementations, for instance for [log4j 2](https://mvnrepository.com/artifact/org.apache.logging.log4j/log4j-jpl).
 
-## Compression Libraries
+### Compression Libraries
 
 Hardwood supports reading Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4, and Brotli. The compression libraries are optional dependencies—add only the ones you need:
 

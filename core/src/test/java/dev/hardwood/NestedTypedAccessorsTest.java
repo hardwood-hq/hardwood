@@ -26,13 +26,14 @@ import dev.hardwood.row.PqMap;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Coverage for hardwood#445: typed accessors for INTERVAL inside
-/// [PqList] / [PqMap.Entry], TIME / DECIMAL map keys, and decoded `getValue()`
-/// for map entries.
-class TypedAccessorsIssue445Test {
+/// Typed accessors for logical types inside nested containers: INTERVAL
+/// elements / values via [PqList] and [PqMap.Entry], TIME / DECIMAL map keys,
+/// and the decoded-vs-raw `getValue()` / `getRawValue()` contract on map
+/// entries.
+class NestedTypedAccessorsTest {
 
     private static final Path FIXTURE =
-            Paths.get("src/test/resources/typed_accessors_issue_445.parquet");
+            Paths.get("src/test/resources/nested_typed_accessors_test.parquet");
 
     @Test
     void intervalsListSurfacesAsPqInterval() throws Exception {

@@ -214,7 +214,19 @@ public final class FlatRowReader implements RowReader {
         if (flatNulls[columnIndex].get(rowIndex)) {
             throwNull(columnIndex);
         }
-        return ((float[]) flatValueArrays[columnIndex])[rowIndex];
+        if (physicalTypes[columnIndex] == PhysicalType.FLOAT) {
+            return ((float[]) flatValueArrays[columnIndex])[rowIndex];
+        }
+        // FLOAT16 surfaces as FIXED_LEN_BYTE_ARRAY(2) annotated Float16Type;
+        // convertToFloat16 owns the physical-type and 2-byte-width validation.
+        try {
+            return LogicalTypeConverter.convertToFloat16(
+                    ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
+                    physicalTypes[columnIndex]);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
     }
 
     @Override
@@ -247,7 +259,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public float getFloat(String name) {
-        return getFloat(resolveAndValidate(name, PhysicalType.FLOAT));
+        return getFloat(resolveIndex(name));
     }
 
     @Override

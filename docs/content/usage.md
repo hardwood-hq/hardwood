@@ -11,6 +11,8 @@
 -->
 # Usage
 
+This page describes how to read Parquet files with Hardwood: choosing a reader, projecting columns, pushing predicates and row limits down to the file, reading columns in batches, working with Variant and geospatial columns, reading multiple files as one dataset, and accessing file metadata.
+
 For detailed class-level documentation, see the [JavaDoc](/api/latest/).
 
 ## Choosing a Reader
@@ -20,7 +22,15 @@ Hardwood provides two reader APIs:
 - **`RowReader`** — row-oriented access with typed getters, including nested structs, lists, and maps. Best for general-purpose reading where you process one row at a time.
 - **`ColumnReader`** — batch-oriented columnar access with typed primitive arrays. Best for analytical workloads where you process columns independently (e.g. summing a column, computing statistics).
 
-Both support column projection and predicate pushdown. For default reads, use the no-arg shortcuts (`reader.rowReader()`, `reader.columnReader("id")`, `reader.columnReaders(projection)`); for filtered or limited reads, use the builder forms (`reader.buildRowReader().…build()`, `reader.buildColumnReader("id").…build()`, `reader.buildColumnReaders(projection).…build()`). For reading multiple files as a single dataset with cross-file prefetching, open the `ParquetFileReader` with a list of `InputFile`s via the `Hardwood` class.
+Both support column projection and predicate pushdown. Each reader has a no-arg shortcut for default reads and a builder form for filtered or limited reads:
+
+| Reader | Shortcut | Builder |
+|--------|----------|---------|
+| `RowReader` | `reader.rowReader()` | `reader.buildRowReader().…build()` |
+| `ColumnReader` (single) | `reader.columnReader("id")` | `reader.buildColumnReader("id").…build()` |
+| `ColumnReaders` (multiple) | `reader.columnReaders(projection)` | `reader.buildColumnReaders(projection).…build()` |
+
+To read multiple files as a single dataset with cross-file prefetching, open the `ParquetFileReader` with a list of `InputFile`s via the `Hardwood` class.
 
 ## Row-Oriented Reading
 
@@ -138,7 +148,7 @@ All accessor methods are available in two forms:
 | `getBoolean` | BOOLEAN | | `boolean` |
 | `getInt` | INT32 | | `int` |
 | `getLong` | INT64 | | `long` |
-| `getFloat` | FLOAT | | `float` |
+| `getFloat` | FLOAT, or FIXED_LEN_BYTE_ARRAY(2) | FLOAT16 (optional) | `float` |
 | `getDouble` | DOUBLE | | `double` |
 | `getBinary` | BYTE_ARRAY | BSON (optional) | `byte[]` |
 | `getString` | BYTE_ARRAY | STRING or JSON | `String` |
@@ -158,29 +168,27 @@ All methods are available as both `method(name)` and `method(index)`, except `ge
 
 **INTERVAL columns:** `PqInterval` is a plain record with three `long` properties — `months()`, `days()`, and `milliseconds()`. Each holds an unsigned 32-bit value in the range `[0, 4_294_967_295]`, so no additional conversion is needed. The components are independent and not normalized. Files written by older parquet-mr / Spark / Hive writers that set only the legacy `converted_type=INTERVAL` annotation are handled transparently — no caller-side opt-in is required.
 
+**FLOAT16 columns:** `getFloat` accepts FLOAT16 columns (`FIXED_LEN_BYTE_ARRAY(2)` annotated with the `FLOAT16` logical type) and decodes the 2-byte IEEE 754 half-precision payload to a single-precision `float`. The widening is lossless — half-precision NaN, ±Infinity, and signed zero round-trip cleanly, and the original NaN bit pattern is preserved (the Parquet spec does not canonicalize NaNs on write). Use `Float.isNaN(value)` for NaN checks rather than equality. As with all primitive accessors, `isNull()` must be checked before `getFloat()` since FLOAT16 columns can be optional.
+
 **Bare `BYTE_ARRAY` columns:** `BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
 
-**Typed accessors on `PqList` and `PqMap.Entry`:** Both interfaces mirror the
-RowReader's typed accessor surface — `ints()` / `longs()` / `strings()` /
-`dates()` / `times()` / `timestamps()` / `decimals()` / `uuids()` /
-`intervals()` on `PqList`; `getStringKey()` / `getDateKey()` / `getTimeKey()` /
-`getDecimalKey()` / etc. and the matching `getStringValue()` / `getDateValue()`
-/ `getIntervalValue()` / etc. on `PqMap.Entry`. Use these in preference to the
-generic `getValue()` when iterating over a list / map of a known logical type
-to avoid the boxed `Object` return.
+**Typed accessors on `PqList` and `PqMap.Entry`:** Both interfaces mirror the RowReader's typed accessor surface. Prefer these to the generic `getValue()` when iterating over a list or map of a known logical type, to avoid the boxed `Object` return.
 
-**Decoded vs. raw generic access:** The generic fallback accessors return values decoded to their logical-type representation by default:
+| Interface | Accessor shape |
+|-----------|----------------|
+| `PqList` | `ints()`, `longs()`, `floats()`, `doubles()`, `booleans()`, `strings()`, `binaries()`, `dates()`, `times()`, `timestamps()`, `decimals()`, `uuids()`, `intervals()` — each returns an `Iterable` of the typed element |
+| `PqMap.Entry` keys | `getIntKey()`, `getLongKey()`, `getStringKey()`, `getBinaryKey()`, `getDateKey()`, `getTimeKey()`, `getTimestampKey()`, `getDecimalKey()`, `getUuidKey()` |
+| `PqMap.Entry` values | `getIntValue()`, `getLongValue()`, `getFloatValue()`, `getDoubleValue()`, `getBooleanValue()`, `getStringValue()`, `getBinaryValue()`, `getDateValue()`, `getTimeValue()`, `getTimestampValue()`, `getDecimalValue()`, `getUuidValue()`, `getIntervalValue()`, plus `getStructValue()` / `getListValue()` / `getMapValue()` for nested values |
 
-- `RowReader.getValue(name)` / `getValue(index)` — `Integer` / `Long` / `String` / `LocalDate` / `LocalTime` / `Instant` / `BigDecimal` / `UUID` / `PqInterval` / `PqVariant` / nested `PqStruct` / `PqList` / `PqMap`, with `byte[]` for un-annotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` columns.
-- `PqStruct.getValue(name)` — same decoded mapping for nested struct fields.
-- `PqMap.Entry.getKey()` / `getValue()` — same decoded mapping for map keys and values.
-- `PqList.get(index)` / `PqList.values()` — same decoded mapping for list elements.
+**Decoded vs. raw generic access:** When the column type isn't known at compile time, fall back to the generic accessors. Two parallel forms — decoded (logical type) and raw (physical type):
 
-To inspect the underlying physical storage instead — e.g. the raw `Long` micros backing a `TIMESTAMP`, or the unscaled `byte[]` backing a `DECIMAL` — call the parallel raw accessors:
-
-- `RowReader.getRawValue(name)` / `getRawValue(index)`
-- `PqStruct.getRawValue(name)`
-- `PqMap.Entry.getRawKey()` / `getRawValue()`
+| Accessor | Returns | Use when |
+|----------|---------|----------|
+| `RowReader.getValue(name \| index)` | decoded value: `Integer`, `Long`, `String`, `LocalDate`, `LocalTime`, `Instant`, `BigDecimal`, `UUID`, `PqInterval`, `PqVariant`, or `PqStruct` / `PqList` / `PqMap` for nested groups; `byte[]` for un-annotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` columns | You want the value in its canonical form, regardless of how it's stored on disk |
+| `RowReader.getRawValue(name \| index)` | raw physical value: underlying `Integer` / `Long` / `Float` / `Double` / `Boolean` / `byte[]` (e.g. `Long` micros for a `TIMESTAMP`, unscaled `byte[]` for a `DECIMAL`) | You need to inspect the on-disk encoding directly |
+| `PqStruct.getValue` / `getRawValue` | Same decoded / raw mapping for nested struct fields | |
+| `PqMap.Entry.getKey` / `getValue` / `getRawKey` / `getRawValue` | Same decoded / raw mapping for map keys and values | |
+| `PqList.get(index)` / `PqList.values()` | Same decoded mapping for list elements | `PqList` does not expose a separate raw accessor today — use the typed iterators (`ints()`, `binaries()`, etc.) for physical access |
 
 Nested groups (struct / list / map / variant) have no distinct "raw" form and are returned through their typed flyweight (`PqStruct` / `PqList` / `PqMap` / `PqVariant`) in both modes.
 
@@ -205,50 +213,6 @@ while (rowReader.hasNext()) {
 **Null handling:** Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
 
 **Type validation:** The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
-
-## Variant Columns
-
-A Parquet column annotated with the `VARIANT` logical type carries semi-structured, JSON-like data in a self-describing binary encoding. Physically it is a group of two required `BYTE_ARRAY` children, `metadata` and `value`, whose bytes together define a Variant value with its own type tag (object, array, string, int, etc.). `getVariant` reads both children and surfaces them through the [`PqVariant`](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) API.
-
-```java
-try (RowReader rowReader = fileReader.rowReader()) {
-    while (rowReader.hasNext()) {
-        rowReader.next();
-        PqVariant v = rowReader.getVariant("event");
-        if (v == null) {
-            continue;   // SQL NULL
-        }
-
-        // Type introspection
-        VariantType tag = v.type();         // OBJECT, ARRAY, STRING, INT32, ...
-        if (tag == VariantType.OBJECT) {
-            PqVariantObject obj = v.asObject();
-            String userId  = obj.getString("user_id");
-            int    age     = obj.getInt("age");
-            Instant ts     = obj.getTimestamp("ts");
-
-            // Nested Variant OBJECT / ARRAY — same vocabulary all the way down
-            PqVariantObject addr = obj.getObject("address");
-            PqVariantArray  tags = obj.getArray("tags");
-        }
-
-        // Raw canonical bytes (for round-tripping or hashing)
-        byte[] metadata = v.metadata();
-        byte[] value    = v.value();
-    }
-}
-```
-
-The `PqVariantObject` view exposes the same primitive getters as a Parquet struct (`getInt`, `getString`, `getTimestamp`, …), but its complex navigation uses `getObject` and `getArray` (Variant-spec terminology) rather than `getStruct` / `getList` / `getMap`. A `PqVariantArray` is iterable and indexed; elements are heterogeneous `PqVariant`s — inspect each element's `type()` and unwrap appropriately.
-
-**Primitive extraction on `PqVariant`:** When you already hold a `PqVariant` (e.g. an array element) use the `as*()` methods — `asInt`, `asString`, `asTimestamp`, and so on. Each throws `VariantTypeException` if the variant's type tag doesn't match.
-
-**Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value` for better compression and pushdown. Reassembly is transparent: `metadata()` and `value()` return canonical bytes regardless of whether the file was shredded, so `PqVariant` consumers see a single consistent representation.
-
-**Current limitations**
-
-- **No Variant-aware predicate pushdown.** Filter predicates against a Variant sub-path (e.g. `WHERE v.age > 30`) aren't yet understood by the pushdown pipeline. Filtering still works against the file's physical shredded columns if you know the layout — a `FilterPredicate.gt("v.typed_value.age", 30)` gets row-group and page skipping via ordinary column statistics — but that ties query code to the writer's shredding strategy and misses any rows where the payload sits in the opaque `value` blob instead. Tracked as [#309](https://github.com/hardwood-hq/hardwood/issues/309).
-- **No path projection optimization.** Reading only `v.age` from a Variant column still reassembles the whole Variant for each row rather than reading just the shredded `typed_value.age` column. Tracked as part of [#309](https://github.com/hardwood-hq/hardwood/issues/309).
 
 ## Predicate Pushdown (Filter)
 
@@ -291,7 +255,7 @@ Supported physical types: `int`, `long`, `float`, `double`, `boolean`, `String` 
 Supported logical types: `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` (comparison operators).
 Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions. All predicates, including those wrapped in `not`, are pushed down to the statistics level for row group and page skipping.
 
-### Null handling
+### Null Handling
 
 Comparison predicates (`eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`) follow SQL three-valued logic: any comparison against a null column value yields UNKNOWN, and rows whose predicate is UNKNOWN are not returned. Put differently, **rows where the tested column is null are never returned by a comparison predicate** — including `notEq`.
 
@@ -349,17 +313,77 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
 ### Limitations
 
 - **Record-level filtering only applies to flat schemas
-  ([#207](https://github.com/hardwood-hq/hardwood/issues/207)).** When the schema contains
+  ([#222](https://github.com/hardwood-hq/hardwood/issues/222)).** When the schema contains
   nested columns (structs, lists, or maps), record-level filtering is not active. Row-group
   and page-level statistics pushdown still apply, but non-matching rows within surviving pages
   will not be filtered out. A warning is logged when this occurs.
 - **Bloom filter pushdown is not supported
-  ([#180](https://github.com/hardwood-hq/hardwood/issues/180)).** Parquet files may contain
+  ([#105](https://github.com/hardwood-hq/hardwood/issues/105)).** Parquet files may contain
   Bloom filters for high-cardinality columns, but Hardwood does not currently use them for
   filter evaluation.
 - **Dictionary-based filtering is not supported
   ([#196](https://github.com/hardwood-hq/hardwood/issues/196)).** Dictionary-encoded columns
   are not checked for predicate matches before decoding.
+
+## Column Projection
+
+Column projection allows reading only a subset of columns from a Parquet file, improving performance by skipping I/O, decoding, and memory allocation for unneeded columns.
+
+```java
+import dev.hardwood.InputFile;
+import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.RowReader;
+
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     RowReader rowReader = fileReader.buildRowReader()
+             .projection(ColumnProjection.columns("id", "name", "created_at"))
+             .build()) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+
+        // Access projected columns normally
+        long id = rowReader.getLong("id");
+        String name = rowReader.getString("name");
+        Instant createdAt = rowReader.getTimestamp("created_at");
+
+        // Accessing non-projected columns throws IllegalArgumentException
+        // rowReader.getInt("age");  // throws "Column not in projection: age"
+    }
+}
+```
+
+**Projection options:**
+
+| Form | Description |
+|------|-------------|
+| `ColumnProjection.all()` | Read all columns (default) |
+| `ColumnProjection.columns("id", "name")` | Read specific columns by name |
+| `ColumnProjection.columns("address")` | Select an entire struct and all its children |
+| `ColumnProjection.columns("address.city")` | Select a specific nested field (dot notation) |
+
+### Combining Projection and Filters
+
+Column projection and predicate pushdown can be used together:
+
+```java
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     RowReader rowReader = fileReader.buildRowReader()
+             .projection(ColumnProjection.columns("id", "name", "salary"))
+             .filter(FilterPredicate.gtEq("salary", 50000L))
+             .build()) {
+
+    while (rowReader.hasNext()) {
+        rowReader.next();
+        long id = rowReader.getLong("id");
+        String name = rowReader.getString("name");
+        long salary = rowReader.getLong("salary");
+    }
+}
+```
+
+The filter column does not need to be in the projection — Hardwood reads the filter column's statistics for pushdown regardless.
 
 ## Row Limit
 
@@ -395,6 +419,51 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 ```
 
 When combined with a filter, the limit applies to the number of **matching** rows, not the total number of scanned rows.
+
+## Split-Aware Reading
+
+When you partition a file across parallel readers — Flink `BulkFormat`, Spark file source, MapReduce-style splits — each reader is assigned a byte range and is responsible for only the row groups owned by it. Express this with `RowGroupPredicate.byteRange(start, end)`, passed to any builder's `filter(...)`:
+
+```java
+import dev.hardwood.reader.RowGroupPredicate;
+
+// One reader subtask, owning the file's first quarter.
+try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
+     ColumnReader col = fileReader.buildColumnReader("price")
+             .filter(RowGroupPredicate.byteRange(splitStart, splitEnd))
+             .build()) {
+    while (col.nextBatch()) {
+        // Only batches from row groups owned by this split.
+    }
+}
+```
+
+A row group is included if and only if its **midpoint** — the start of its first column chunk plus half of its on-disk compressed size — falls in `[start, end)`. This is the standard Hadoop-input-format split convention: across a partitioning of the file into disjoint byte ranges, every row group lands in exactly one range, regardless of where the split boundary falls inside the row group itself.
+
+**Granularity is row-group, not row.** A row group whose midpoint is in `[0, 1000)` is read in full, including any rows whose data extends beyond byte 1000. If you need true row-level windowing, combine `RowGroupPredicate` with [`RowReaderBuilder.firstRow(...)`](#seeking-to-an-absolute-row) and [`head(...)`](#row-limit).
+
+`RowGroupPredicate` composes with [`FilterPredicate`](#predicate-pushdown-filter) via intersection — both apply, and a row group is read if and only if it passes both:
+
+```java
+ColumnReader col = fileReader.buildColumnReader("price")
+        .filter(FilterPredicate.gt("price", 100))                  // column-stats
+        .filter(RowGroupPredicate.byteRange(splitStart, splitEnd)) // layout
+        .build();
+```
+
+`RowGroupPredicate.and(...)` lets you intersect multiple row-group conditions:
+
+```java
+.filter(RowGroupPredicate.and(
+        RowGroupPredicate.byteRange(splitStart, splitEnd),
+        RowGroupPredicate.byteRange(otherStart, otherEnd)))
+```
+
+The same `filter(RowGroupPredicate)` overload is available on `RowReaderBuilder` and `ColumnReadersBuilder`. On `RowReaderBuilder`, `firstRow(N)` and `head(N)` index over the *row-group-filtered* sequence — `firstRow(N)` skips `N` rows of the kept set, `head(N)` caps reading at `N` rows of the kept set. Combining `RowGroupPredicate` with `tail(N)` is rejected: tail mode requires a known total row count, which row-group filtering invalidates.
+
+### Empty ranges
+
+`byteRange(start, end)` where `end < start` is a documented empty range — the reader yields zero rows. This matches callers that pass `splitStart + splitLength` and tolerate long overflow on tail splits (a tail split with `length = Long.MAX_VALUE` overflows to a negative end, which your reader will then treat as empty if no preceding split has already covered the rest of the file).
 
 ### Reading the Tail of a File
 
@@ -447,64 +516,6 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 Within the target row group, the reader still decodes the leading residue rows and discards them via `next()`. Page-level skip via the OffsetIndex is tracked separately.
 
-## Column Projection
-
-Column projection allows reading only a subset of columns from a Parquet file, improving performance by skipping I/O, decoding, and memory allocation for unneeded columns.
-
-```java
-import dev.hardwood.InputFile;
-import dev.hardwood.schema.ColumnProjection;
-import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.reader.RowReader;
-
-try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.buildRowReader()
-             .projection(ColumnProjection.columns("id", "name", "created_at"))
-             .build()) {
-
-    while (rowReader.hasNext()) {
-        rowReader.next();
-
-        // Access projected columns normally
-        long id = rowReader.getLong("id");
-        String name = rowReader.getString("name");
-        Instant createdAt = rowReader.getTimestamp("created_at");
-
-        // Accessing non-projected columns throws IllegalArgumentException
-        // rowReader.getInt("age");  // throws "Column not in projection: age"
-    }
-}
-```
-
-**Projection options:**
-
-- `ColumnProjection.all()` — read all columns (default)
-- `ColumnProjection.columns("id", "name")` — read specific columns by name
-- `ColumnProjection.columns("address")` — select an entire struct and all its children
-- `ColumnProjection.columns("address.city")` — select a specific nested field (dot notation)
-
-### Combining Projection and Filters
-
-Column projection and predicate pushdown can be used together:
-
-```java
-try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.buildRowReader()
-             .projection(ColumnProjection.columns("id", "name", "salary"))
-             .filter(FilterPredicate.gtEq("salary", 50000L))
-             .build()) {
-
-    while (rowReader.hasNext()) {
-        rowReader.next();
-        long id = rowReader.getLong("id");
-        String name = rowReader.getString("name");
-        long salary = rowReader.getLong("salary");
-    }
-}
-```
-
-The filter column does not need to be in the projection — Hardwood reads the filter column's statistics for pushdown regardless.
-
 ## Column-Oriented Reading (ColumnReader)
 
 The `ColumnReader` provides batch-oriented columnar access with typed primitive arrays, avoiding per-row method calls and boxing. This is the fastest way to consume Parquet data when you process columns independently.
@@ -542,32 +553,27 @@ Typed accessors are available for each physical type: `getInts()`, `getLongs()`,
 
 ### Reading Multiple Columns
 
-For reading multiple columns together, use `columnReaders(projection)` which returns a `ColumnReaders` collection:
+For reading multiple columns together, use `columnReaders(projection)` which returns a `ColumnReaders` collection. Drive every reader in lockstep with `ColumnReaders.nextBatch()`:
 
 ```java
 import dev.hardwood.Hardwood;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ColumnReaders;
-import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.schema.ColumnProjection;
 
 try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
-     ColumnReaders columns = parquet.columnReaders(
+     ColumnReaders columns = parquet.buildColumnReaders(
              ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))
              .build()) {
-
-    ColumnReader col0 = columns.getColumnReader("passenger_count");
-    ColumnReader col1 = columns.getColumnReader("trip_distance");
-    ColumnReader col2 = columns.getColumnReader("fare_amount");
 
     long passengerCount = 0;
     double tripDistance = 0, fareAmount = 0;
 
-    while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
-        int count = col0.getRecordCount();
-        double[] v0 = col0.getDoubles();
-        double[] v1 = col1.getDoubles();
-        double[] v2 = col2.getDoubles();
+    while (columns.nextBatch()) {
+        int count = columns.getRecordCount();
+        double[] v0 = columns.getColumnReader("passenger_count").getDoubles();
+        double[] v1 = columns.getColumnReader("trip_distance").getDoubles();
+        double[] v2 = columns.getColumnReader("fare_amount").getDoubles();
 
         for (int i = 0; i < count; i++) {
             passengerCount += (long) v0[i];
@@ -578,7 +584,22 @@ try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
+`ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when any reader is exhausted — partial advancement isn't possible because all readers consume from a shared `RowGroupIterator`. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-reader record counts throw `IllegalStateException`. Single-column consumers, or callers that need fine-grained per-reader cadence, can still call `ColumnReader.nextBatch()` directly on the readers returned by `getColumnReader(...)`.
+
 ### Nested and Repeated Columns
+
+#### Navigating nested groups in the schema
+
+Before opening a reader for a nested column, you usually need to walk the file's schema tree to find the leaf you want. `SchemaNode.GroupNode` exposes the structural primitives:
+
+- `isList()` / `isMap()` / `isStruct()` — disambiguate which kind of group a node is.
+- `getListElement()` — for LIST groups, returns the element node, applying Parquet's backward-compatibility rules for legacy 2-level encodings.
+- `getMapKey()` / `getMapValue()` — for MAP groups, returns the key and value nodes from the standard `map.key_value.key` / `map.key_value.value` encoding.
+- `children()` — for plain struct groups, iterate to get each field.
+
+All three navigation methods return `null` when the group isn't of the expected kind or its encoding is malformed. Callers decide whether `null` is fatal at their layer.
+
+#### Reading nested data
 
 For nested columns (lists, maps), `ColumnReader` provides multi-level offsets and per-level null bitmaps. A list/map container has four states, and three bitmaps together identify which one each record is in:
 
@@ -636,7 +657,7 @@ try (ColumnReader reader = fileReader.columnReader("tags")) {
 
 `getNestingDepth()` returns 0 for flat columns, or the number of offset levels for nested columns.
 
-#### Multi-level nesting
+#### Multi-Level Nesting
 
 For columns with `getNestingDepth() > 1` (e.g. `list<list<int>>`), every offset/bitmap method takes a `level` argument and you walk through the levels in turn. `getOffsets(k)` maps an item at level k to its starting index in level k+1, and the innermost level's offsets point into the leaf `values` array. `getLevelNulls(k)` and `getEmptyListMarkers(k)` describe the four container states at that level — same semantics as in the single-level case, just per nesting depth.
 
@@ -812,11 +833,55 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 }
 ```
 
+## Variant Columns
+
+A Parquet column annotated with the `VARIANT` logical type carries semi-structured, JSON-like data in a self-describing binary encoding. Physically it is a group of two required `BYTE_ARRAY` children, `metadata` and `value`, whose bytes together define a Variant value with its own type tag (object, array, string, int, etc.). `getVariant` reads both children and surfaces them through the [`PqVariant`](https://github.com/apache/parquet-format/blob/master/VariantEncoding.md) API.
+
+```java
+try (RowReader rowReader = fileReader.rowReader()) {
+    while (rowReader.hasNext()) {
+        rowReader.next();
+        PqVariant v = rowReader.getVariant("event");
+        if (v == null) {
+            continue;   // SQL NULL
+        }
+
+        // Type introspection
+        VariantType tag = v.type();         // OBJECT, ARRAY, STRING, INT32, ...
+        if (tag == VariantType.OBJECT) {
+            PqVariantObject obj = v.asObject();
+            String userId  = obj.getString("user_id");
+            int    age     = obj.getInt("age");
+            Instant ts     = obj.getTimestamp("ts");
+
+            // Nested Variant OBJECT / ARRAY — same vocabulary all the way down
+            PqVariantObject addr = obj.getObject("address");
+            PqVariantArray  tags = obj.getArray("tags");
+        }
+
+        // Raw canonical bytes (for round-tripping or hashing)
+        byte[] metadata = v.metadata();
+        byte[] value    = v.value();
+    }
+}
+```
+
+The `PqVariantObject` view exposes the same primitive getters as a Parquet struct (`getInt`, `getString`, `getTimestamp`, …), but its complex navigation uses `getObject` and `getArray` (Variant-spec terminology) rather than `getStruct` / `getList` / `getMap`. A `PqVariantArray` is iterable and indexed; elements are heterogeneous `PqVariant`s — inspect each element's `type()` and unwrap appropriately.
+
+**Primitive extraction on `PqVariant`:** When you already hold a `PqVariant` (e.g. an array element) use the `as*()` methods — `asInt`, `asString`, `asTimestamp`, and so on. Each throws `VariantTypeException` if the variant's type tag doesn't match.
+
+**Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value` for better compression and pushdown. Reassembly is transparent: `metadata()` and `value()` return canonical bytes regardless of whether the file was shredded, so `PqVariant` consumers see a single consistent representation.
+
+**Current limitations**
+
+- **No Variant-aware predicate pushdown.** Filter predicates against a Variant sub-path (e.g. `WHERE v.age > 30`) aren't yet understood by the pushdown pipeline. Filtering still works against the file's physical shredded columns if you know the layout — a `FilterPredicate.gt("v.typed_value.age", 30)` gets row-group and page skipping via ordinary column statistics — but that ties query code to the writer's shredding strategy and misses any rows where the payload sits in the opaque `value` blob instead. Tracked as [#309](https://github.com/hardwood-hq/hardwood/issues/309).
+- **No path projection optimization.** Reading only `v.age` from a Variant column still reassembles the whole Variant for each row rather than reading just the shredded `typed_value.age` column. Tracked as part of [#309](https://github.com/hardwood-hq/hardwood/issues/309).
+
 ## Geospatial Support
 
 Hardwood reads the Parquet geospatial metadata layer (GEOMETRY / GEOGRAPHY logical types and per-chunk / per-page `GeospatialStatistics`) and offers a bounding-box filter predicate that pushes spatial selectivity down to the row group and page level. Hardwood does not decode WKB payloads itself — geometry decoding is left to the caller, so the reader has no runtime geometry-library dependency. The de-facto standard Java library for this is the [JTS Topology Suite](https://locationtech.github.io/jts/) (`org.locationtech.jts:jts-core`); the snippets below assume JTS, but any WKB decoder works.
 
-### Identifying geospatial columns
+### Identifying Geospatial Columns
 
 GEOMETRY (planar) and GEOGRAPHY (geodesic on an ellipsoid) appear as `LogicalType.GeometryType` and `LogicalType.GeographyType` on the column schema. Both carry a CRS (defaulting to `OGC:CRS84`); GEOGRAPHY also carries an edge-interpolation algorithm.
 
@@ -841,7 +906,7 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 }
 ```
 
-### Bounding-box statistics
+### Bounding-Box Statistics
 
 Per-chunk geospatial statistics are exposed on `ColumnMetaData.geospatialStatistics()`. The `BoundingBox` carries `xmin/xmax/ymin/ymax` (always present) plus optional `zmin/zmax/mmin/mmax`. For GEOGRAPHY columns, `xmin > xmax` is legal and indicates a chunk that wraps the antimeridian. The same struct also appears per-page on `ColumnIndex.geospatialStatistics()` when the file was written with a Page Index.
 
@@ -868,7 +933,7 @@ for (RowGroup rowGroup : reader.getFileMetaData().rowGroups()) {
 }
 ```
 
-### Spatial filter pushdown
+### Spatial Filter Pushdown
 
 `FilterPredicate.intersects(column, xmin, ymin, xmax, ymax)` produces a predicate that drops row groups and pages whose stored bounding box does not overlap the query box. The argument order follows the GeoJSON / WKT convention (bottom-left corner, then top-right corner). Antimeridian wrapping is handled automatically.
 

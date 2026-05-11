@@ -1,7 +1,7 @@
 # General
 
 Avoid "not my department" thinking; if, for instance, there are build failures you consider unrelated to our current changes, still make an effort to fix them.
-Never add a Co-Authored-By trailer to commit messages.
+Never add Claude (or any Anthropic identity) as a Co-Authored-By trailer on commit messages. Human co-authors are fine.
 When a CLI tool is missing from the dev container (e.g. `cmp: command not found`), surface it to the user and propose adding the providing package to the `Dockerfile`'s `microdnf install` list — unless there is an obvious one-line alternative (e.g. `command -v` for `which`) or a Python equivalent that is just as terse. Do not silently work around it.
 
 # Maven
@@ -42,6 +42,8 @@ GitHub Actions should always referenced by SHA.
 
 # Documentation
 
+User-facing docs (`docs/content/*.md` and public-API JavaDoc) describe **what the API does and how to use it**. Do not include rationale for design decisions, comparisons to other internal APIs, or "we chose X to match Y" justifications — users don't need to know why two parts of the project share a convention, only that they do. Design rationale belongs in `_designs/*.md` (audience: maintainers and reviewers); user docs describe the end state directly.
+
 All JavaDoc comments must use Markdown `///` syntax (JEP 467), not the legacy `/** */` block comment style.
 Key rules for `///` Markdown JavaDoc:
 - Use backtick-fenced code blocks (e.g. ` ```java `) instead of `<pre>{@code ...}</pre>`.
@@ -63,6 +65,7 @@ Use Python 3.10–3.14 (PyArrow 24.0.0, pinned in `requirements.txt`, supports t
 Before starting new work, check whether a corresponding GitHub issue exists. If not, create one first so that all commits and pull requests can reference it.
 Commit messages must begin with the GitHub issue key (e.g. `#90 Include file name in all exceptions raised during reading`). This applies to every commit, including fixups and amendments.
 Focus the body on **why**, not **what** — the diff already shows the what. A short paragraph is usually enough; do not restate the change as a bullet list. See [CONTRIBUTING.md](CONTRIBUTING.md#commit-messages).
+A sentence belongs in the message only if it helps a future reader understand the diff. Drop ephemeral minutiae — slips caught and fixed within the same branch, transient process issues, references to interim states that won't survive in the final history, or commentary about how the change was developed rather than what it does.
 
 When filing an issue, apply the relevant labels from the repo's label set. Common ones:
 - `bug` — defect / something isn't working as documented or intended.

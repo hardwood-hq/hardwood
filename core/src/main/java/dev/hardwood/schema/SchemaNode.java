@@ -132,4 +132,35 @@ interface SchemaNode {
             // Rule 4: standard 3-level encoding — the repeated group's single child is the element.
             return innerGroup.children().get(0);
         }
+
+    /// For MAP groups, returns the key node from the standard encoding
+    /// (`map.key_value.key`).
+    ///
+    /// Returns `null` if this group is not a MAP, or if the structure does not
+    /// match the standard encoding (a single REPEATED `key_value` child group with
+    /// exactly two children). Symmetric with [#getListElement()] in returning
+    /// `null` rather than throwing — callers decide whether a malformed schema is
+    /// fatal at their layer.
+        public SchemaNode getMapKey() {
+            return mapChild(0);
+        }
+
+    /// For MAP groups, returns the value node from the standard encoding
+    /// (`map.key_value.value`). See [#getMapKey()] for null semantics.
+        public SchemaNode getMapValue() {
+            return mapChild(1);
+        }
+
+        private SchemaNode mapChild(int index) {
+            if (!isMap() || children.isEmpty()) {
+                return null;
+            }
+            SchemaNode keyValue = children.get(0);
+            if (!(keyValue instanceof GroupNode keyValueGroup)
+                    || keyValueGroup.repetitionType() != RepetitionType.REPEATED
+                    || keyValueGroup.children().size() != 2) {
+                return null;
+            }
+            return keyValueGroup.children().get(index);
+        }
 }}

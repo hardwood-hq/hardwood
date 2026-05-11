@@ -430,4 +430,107 @@ class ColumnReadersTest {
                     .isInstanceOf(IndexOutOfBoundsException.class);
         }
     }
+
+    // ==================== Coordinated nextBatch() ====================
+
+    @Test
+    void testCoordinatedNextBatchAdvancesAllReadersInLockstep() throws Exception {
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id", "value"))) {
+
+            assertThat(columns.nextBatch()).isTrue();
+            assertThat(columns.getRecordCount()).isEqualTo(3);
+            // Per-reader counts also reflect the same batch.
+            assertThat(columns.getColumnReader("id").getRecordCount()).isEqualTo(3);
+            assertThat(columns.getColumnReader("value").getRecordCount()).isEqualTo(3);
+            assertThat(columns.getColumnReader("id").getLongs()[0]).isEqualTo(1L);
+            assertThat(columns.getColumnReader("value").getLongs()[0]).isEqualTo(100L);
+
+            assertThat(columns.nextBatch()).isFalse();
+        }
+    }
+
+    @Test
+    void testCoordinatedNextBatchAcrossMultipleFiles() throws Exception {
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath, filePath, filePath);
+
+        long idSum = 0;
+        long valueSum = 0;
+        long rowCount = 0;
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id", "value"))) {
+
+            while (columns.nextBatch()) {
+                int count = columns.getRecordCount();
+                long[] ids = columns.getColumnReader("id").getLongs();
+                long[] values = columns.getColumnReader("value").getLongs();
+                for (int i = 0; i < count; i++) {
+                    idSum += ids[i];
+                    valueSum += values[i];
+                }
+                rowCount += count;
+            }
+        }
+
+        assertThat(rowCount).isEqualTo(9);
+        assertThat(idSum).isEqualTo(18L);
+        assertThat(valueSum).isEqualTo(1800L);
+    }
+
+    @Test
+    void testGetRecordCountBeforeNextBatchThrows() throws Exception {
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
+
+            assertThatThrownBy(columns::getRecordCount)
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("nextBatch()");
+        }
+    }
+
+    @Test
+    void testGetRecordCountAfterExhaustionThrows() throws Exception {
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
+
+            assertThat(columns.nextBatch()).isTrue();
+            assertThat(columns.nextBatch()).isFalse();
+
+            // After exhaustion, getRecordCount() should fail rather than return a stale value.
+            assertThatThrownBy(columns::getRecordCount)
+                    .isInstanceOf(IllegalStateException.class);
+        }
+    }
+
+    @Test
+    void testCoordinatedNextBatchOnMultiRowGroupFile() throws Exception {
+        // filter_pushdown_int.parquet has 3 row groups (id 1-100, 101-200, 201-300).
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
+
+            int batches = 0;
+            long totalRows = 0;
+            while (columns.nextBatch()) {
+                batches++;
+                totalRows += columns.getRecordCount();
+            }
+            assertThat(totalRows).isEqualTo(300);
+            assertThat(batches).isGreaterThanOrEqualTo(1);
+        }
+    }
 }

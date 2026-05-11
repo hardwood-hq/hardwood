@@ -141,6 +141,8 @@ public final class AvroSchemaConverter {
             case LogicalType.IntType i -> convertIntType(i);
             case LogicalType.IntervalType iv ->
                     Schema.createFixed("interval", null, null, 12);
+            case LogicalType.Float16Type f ->
+                    Schema.createFixed("float16", null, null, 2);
             case LogicalType.ListType l -> convertPhysicalType(physicalType, prim);
             case LogicalType.MapType m -> convertPhysicalType(physicalType, prim);
             case LogicalType.VariantType v -> throw new IllegalStateException(

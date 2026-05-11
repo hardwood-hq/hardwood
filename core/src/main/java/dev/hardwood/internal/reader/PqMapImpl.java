@@ -16,6 +16,8 @@ import java.util.AbstractList;
 import java.util.List;
 import java.util.UUID;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -273,6 +275,15 @@ final class PqMapImpl implements PqMap {
             int valueProjCol = mapDesc.valueProjCol();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
+            }
+            // FLOAT16 values are encoded as FLBA(2); decode without autoboxing.
+            // Mirrors PqStructImpl.getFloat for consistency with the typed
+            // FLOAT16-via-getFloat() contract introduced in #318.
+            if (valueSchema instanceof SchemaNode.PrimitiveNode prim
+                    && prim.logicalType() instanceof LogicalType.Float16Type) {
+                return LogicalTypeConverter.convertToFloat16(
+                        ((byte[][]) batch.valueArrays[valueProjCol])[valueIdx],
+                        prim.type());
             }
             return ((float[]) batch.valueArrays[valueProjCol])[valueIdx];
         }

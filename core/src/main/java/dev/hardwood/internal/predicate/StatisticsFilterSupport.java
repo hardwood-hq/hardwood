@@ -38,6 +38,9 @@ final class StatisticsFilterSupport {
             case ResolvedPredicate.FloatPredicate p -> canDropFloat(p.op(), p.value(),
                     StatisticsDecoder.decodeFloat(stats.minValue()),
                     StatisticsDecoder.decodeFloat(stats.maxValue()));
+            case ResolvedPredicate.Float16Predicate p -> canDropFloat(p.op(), p.value(),
+                    StatisticsDecoder.decodeFloat16(stats.minValue()),
+                    StatisticsDecoder.decodeFloat16(stats.maxValue()));
             case ResolvedPredicate.DoublePredicate p -> canDropDouble(p.op(), p.value(),
                     StatisticsDecoder.decodeDouble(stats.minValue()),
                     StatisticsDecoder.decodeDouble(stats.maxValue()));

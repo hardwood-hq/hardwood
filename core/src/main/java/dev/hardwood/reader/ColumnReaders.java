@@ -22,19 +22,22 @@ import dev.hardwood.schema.ProjectedSchema;
 /// transparently handles cross-file prefetching when more than one file is
 /// involved.
 ///
+/// Use [#nextBatch()] to advance every underlying reader in lockstep — this is
+/// the structurally-safe path for multi-column consumption: a single call drives
+/// every reader, returns false when any is exhausted, and validates that the
+/// readers report matching record counts.
+///
 /// ```java
 /// try (ParquetFileReader parquet = ParquetFileReader.openAll(files);
-///      ColumnReaders columns = parquet.columnReaders(
+///      ColumnReaders columns = parquet.buildColumnReaders(
 ///              ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))
 ///              .build()) {
 ///
-///     ColumnReader col0 = columns.getColumnReader("passenger_count");
-///     ColumnReader col1 = columns.getColumnReader("trip_distance");
-///     ColumnReader col2 = columns.getColumnReader("fare_amount");
-///
-///     while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
-///         int count = col0.getRecordCount();
-///         double[] v0 = col0.getDoubles();
+///     while (columns.nextBatch()) {
+///         int count = columns.getRecordCount();
+///         double[] v0 = columns.getColumnReader(0).getDoubles();
+///         double[] v1 = columns.getColumnReader(1).getDoubles();
+///         double[] v2 = columns.getColumnReader(2).getDoubles();
 ///         // ...
 ///     }
 /// }
@@ -43,6 +46,8 @@ public class ColumnReaders implements AutoCloseable {
 
     private final Map<String, ColumnReader> readersByName;
     private final ColumnReader[] readersByIndex;
+    private int recordCount;
+    private boolean batchAvailable;
 
     ColumnReaders(HardwoodContextImpl context,
                   RowGroupIterator rowGroupIterator,
@@ -89,6 +94,85 @@ public class ColumnReaders implements AutoCloseable {
     /// @return the ColumnReader at the given index
     public ColumnReader getColumnReader(int index) {
         return readersByIndex[index];
+    }
+
+    /// Advance every underlying [ColumnReader] to its next batch in lockstep.
+    ///
+    /// All readers share the same [RowGroupIterator], so they always publish batches at
+    /// the same row boundaries. This method drives every reader once and returns:
+    ///
+    /// - `true` when every reader produced a new batch — callers can then read values
+    ///   via the per-column accessors. The aligned record count is exposed through
+    ///   [#getRecordCount()].
+    /// - `false` when any reader is exhausted — partial advancement is impossible
+    ///   because all readers consume from the shared iterator, so once one is done they
+    ///   all are.
+    ///
+    /// As a defensive guard, a mismatch between the readers' published record counts
+    /// throws [IllegalStateException]. Under correct internal behavior this can't
+    /// happen — the guard exists to detect future regressions in the per-column drain
+    /// workers, not to be triggered in production.
+    ///
+    /// Single-column consumers, or consumers that need fine-grained control over the
+    /// per-reader cadence, can still call [ColumnReader#nextBatch()] directly on the
+    /// readers returned by [#getColumnReader(int)] / [#getColumnReader(String)].
+    ///
+    /// @return true if a new aligned batch is available across all readers, false if exhausted
+    /// @throws IllegalStateException if the readers report mismatched record counts
+    public boolean nextBatch() {
+        if (readersByIndex.length == 0) {
+            batchAvailable = false;
+            recordCount = 0;
+            return false;
+        }
+        boolean firstAdvanced = readersByIndex[0].nextBatch();
+        if (!firstAdvanced) {
+            batchAvailable = false;
+            recordCount = 0;
+            // Drain any remaining readers so the shared iterator finalizes cleanly.
+            for (int i = 1; i < readersByIndex.length; i++) {
+                readersByIndex[i].nextBatch();
+            }
+            return false;
+        }
+        int firstCount = readersByIndex[0].getRecordCount();
+        for (int i = 1; i < readersByIndex.length; i++) {
+            if (!readersByIndex[i].nextBatch()) {
+                throw new IllegalStateException(
+                        "ColumnReader '" + readersByIndex[i].getColumnSchema().name()
+                                + "' exhausted before peer column '"
+                                + readersByIndex[0].getColumnSchema().name()
+                                + "' — readers from the same projection should advance"
+                                + " in lockstep");
+            }
+            int count = readersByIndex[i].getRecordCount();
+            if (count != firstCount) {
+                throw new IllegalStateException(
+                        "ColumnReader batch sizes diverged: column '"
+                                + readersByIndex[0].getColumnSchema().name() + "' has "
+                                + firstCount + " records, column '"
+                                + readersByIndex[i].getColumnSchema().name() + "' has "
+                                + count);
+            }
+        }
+        recordCount = firstCount;
+        batchAvailable = true;
+        return true;
+    }
+
+    /// Number of records in the most recently published batch.
+    ///
+    /// Equal to every underlying reader's [ColumnReader#getRecordCount()] — alignment is
+    /// validated by [#nextBatch()].
+    ///
+    /// @throws IllegalStateException if no batch is currently available — call
+    ///         [#nextBatch()] first
+    public int getRecordCount() {
+        if (!batchAvailable) {
+            throw new IllegalStateException(
+                    "No batch available — call nextBatch() first, and check that it returned true");
+        }
+        return recordCount;
     }
 
     @Override

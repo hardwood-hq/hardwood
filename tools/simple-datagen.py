@@ -6,6 +6,7 @@
 #  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
 #
 
+import numpy
 import pyarrow as pa
 import pyarrow.parquet as pq
 from datetime import datetime, date, time, timezone
@@ -2222,11 +2223,49 @@ annotate_column_as_interval(
 print("\nGenerated interval_legacy_converted_type_test.parquet:")
 print("  - Same data, only the legacy converted_type=INTERVAL annotation set")
 
-# hardwood-hq/hardwood#445: typed accessors for INTERVAL inside list/map and
+# FLOAT16 logical type test
+# IEEE 754 half-precision (binary16): sign | 5-bit exponent | 10-bit mantissa,
+# stored as 2-byte FIXED_LEN_BYTE_ARRAY in little-endian. PyArrow's pa.float16()
+# emits the column with the FLOAT16 LogicalType union member already set, so no
+# post-hoc footer annotation is needed.
+float16_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('half', pa.float16(), True),
+])
+
+float16_table = pa.table({
+    'id': pa.array([1, 2, 3, 4, 5, 6, 7], type=pa.int32()),
+    'half': pa.array(
+        [
+            numpy.float16(0.0),
+            numpy.float16(1.0),
+            numpy.float16(-1.5),
+            numpy.float16(65504.0),               # max finite binary16
+            numpy.float16('inf'),
+            numpy.float16('nan'),
+            None,                                 # null
+        ],
+        type=pa.float16(),
+    ),
+}, schema=float16_schema)
+
+pq.write_table(
+    float16_table,
+    'core/src/test/resources/float16_logical_type_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated float16_logical_type_test.parquet:")
+print("  - Schema: id INT32, half FIXED_LEN_BYTE_ARRAY(2) annotated FLOAT16")
+print("  - 7 rows: 0, 1, -1.5, 65504 (max), +Inf, NaN, null")
+
+# Typed accessors for logical types inside nested containers (LIST element,
 # TIME / DECIMAL keyed maps. Each column carries data plus a logical-type
 # annotation written into the inner SchemaElement (list element or map key /
 # value), which PyArrow cannot emit directly.
-issue_445_schema = pa.schema([
+nested_typed_accessors_schema = pa.schema([
     ('id', pa.int32(), False),
     ('intervals', pa.list_(pa.binary(12))),
     ('interval_map', pa.map_(pa.string(), pa.binary(12))),
@@ -2234,7 +2273,7 @@ issue_445_schema = pa.schema([
     ('decimal_keyed', pa.map_(pa.binary(8), pa.int32())),
 ])
 
-issue_445_table = pa.table({
+nested_typed_accessors_table = pa.table({
     'id': [1, 2, 3],
     'intervals': [
         [_interval_bytes(1, 0, 0), _interval_bytes(0, 7, 0)],
@@ -2258,33 +2297,33 @@ issue_445_table = pa.table({
         [(struct.pack('>q', 99999), 2)],
         [],
     ],
-}, schema=issue_445_schema)
+}, schema=nested_typed_accessors_schema)
 
 pq.write_table(
-    issue_445_table,
-    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    nested_typed_accessors_table,
+    'core/src/test/resources/nested_typed_accessors_test.parquet',
     use_dictionary=False,
     compression=None,
     data_page_version='1.0',
 )
 annotate_element_at_path_as_interval(
-    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    'core/src/test/resources/nested_typed_accessors_test.parquet',
     ['intervals', 'list', 'element'])
 annotate_element_at_path_as_interval(
-    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    'core/src/test/resources/nested_typed_accessors_test.parquet',
     ['interval_map', 'key_value', 'value'])
 annotate_element_at_path_as_time(
-    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    'core/src/test/resources/nested_typed_accessors_test.parquet',
     ['time_keyed', 'key_value', 'key'],
     unit='MILLIS')
 annotate_element_at_path_as_decimal(
-    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    'core/src/test/resources/nested_typed_accessors_test.parquet',
     ['decimal_keyed', 'key_value', 'key'],
     precision=18, scale=2)
 
-print("\nGenerated typed_accessors_issue_445.parquet:")
-print("  - Fixture for hardwood#445: INTERVAL list, INTERVAL-value map,")
-print("    TIME-keyed map, DECIMAL-keyed map.")
+print("\nGenerated nested_typed_accessors_test.parquet:")
+print("  - INTERVAL list, INTERVAL-value map, TIME-keyed map, DECIMAL-keyed map")
+print("  - Exercises typed accessors for logical types inside LIST / MAP")
 
 # old_list_structure_test.parquet
 # Tests reading the pre-standard 2-level LIST encoding (see hardwood-hq/hardwood#282).

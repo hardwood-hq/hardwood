@@ -99,7 +99,8 @@ public interface RowReader extends StructAccessor, AutoCloseable {
     /// @throws NullPointerException if the field is null
     long getLong(int fieldIndex);
 
-    /// Get a FLOAT field value by field index.
+    /// Get a FLOAT field value by field index. Also accepts FLOAT16 columns
+    /// (`FIXED_LEN_BYTE_ARRAY(2)` annotated `Float16Type`).
     ///
     /// @throws NullPointerException if the field is null
     float getFloat(int fieldIndex);
