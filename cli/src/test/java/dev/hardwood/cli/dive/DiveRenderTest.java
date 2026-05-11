@@ -209,6 +209,29 @@ class DiveRenderTest {
         }
     }
 
+    @Test
+    void helpOverlayWrapsLongDescriptions() {
+        // At 80 width, the description budget is 38 chars.
+        // The longest description is 52 chars, so it should be forced to wrap.
+        Rect screenArea = new Rect(0, 0, 80, 40);
+        dev.tamboui.buffer.Buffer buffer = dev.tamboui.buffer.Buffer.empty(screenArea);
+
+        dev.hardwood.cli.dive.internal.HelpOverlay.render(buffer, screenArea);
+
+        StringBuilder sb = new StringBuilder();
+        for (int y = 0; y < screenArea.height(); y++) {
+            for (int x = 0; x < screenArea.width(); x++) {
+                String sym = buffer.get(x, y).symbol();
+                sb.append(sym == null || sym.isEmpty() ? ' ' : sym);
+            }
+            sb.append("\n");
+        }
+        String screenText = sb.toString();
+
+        assertThat(screenText).contains("enter filter mode (Schema, Column inde");
+        assertThat(screenText).contains("                    x, Dictionary)");
+    }
+
     static Stream<org.junit.jupiter.params.provider.Arguments> smokeMatrix() {
         // Pick a handful of fixtures that span the file-shape space:
         // CI present / absent, dict present / absent, nested, variant.
