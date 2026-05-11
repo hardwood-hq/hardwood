@@ -64,7 +64,7 @@ class ColumnBatchMatcherTest {
         long[] vals = {1L, 5L, 6L, 10L, 0L};
         BatchExchange.Batch batch = longBatch(vals, nullsAt(3));
         // Row 2 (6 > 5) matches. Row 3 (10 > 5) is NULL → excluded.
-        assertArrayEquals(new long[]{bits(2)}, runMatcher(new LongGtBatchMatcher(0, 5L), batch));
+        assertArrayEquals(new long[]{bits(2)}, runMatcher(new LongGtBatchMatcher(5L), batch));
     }
 
     @Test
@@ -72,21 +72,21 @@ class ColumnBatchMatcherTest {
         long[] vals = {1L, 5L, 6L, 10L, 0L};
         BatchExchange.Batch batch = longBatch(vals, nullsAt(0));
         // Row 0 (1<5) NULL → excluded. Row 4 (0<5) matches.
-        assertArrayEquals(new long[]{bits(4)}, runMatcher(new LongLtBatchMatcher(0, 5L), batch));
+        assertArrayEquals(new long[]{bits(4)}, runMatcher(new LongLtBatchMatcher(5L), batch));
     }
 
     @Test
     void longLtEq_includesEqual() {
         long[] vals = {1L, 5L, 6L, 10L, 0L};
         BatchExchange.Batch batch = longBatch(vals, null);
-        assertArrayEquals(new long[]{bits(0, 1, 4)}, runMatcher(new LongLtEqBatchMatcher(0, 5L), batch));
+        assertArrayEquals(new long[]{bits(0, 1, 4)}, runMatcher(new LongLtEqBatchMatcher(5L), batch));
     }
 
     @Test
     void longGtEq_includesEqual() {
         long[] vals = {1L, 5L, 6L, 10L, 0L};
         BatchExchange.Batch batch = longBatch(vals, null);
-        assertArrayEquals(new long[]{bits(1, 2, 3)}, runMatcher(new LongGtEqBatchMatcher(0, 5L), batch));
+        assertArrayEquals(new long[]{bits(1, 2, 3)}, runMatcher(new LongGtEqBatchMatcher(5L), batch));
     }
 
     @Test
@@ -94,7 +94,7 @@ class ColumnBatchMatcherTest {
         long[] vals = {5L, 5L, 6L, 5L, 0L};
         BatchExchange.Batch batch = longBatch(vals, nullsAt(1));
         // Row 1 is NULL → excluded even though stored value is 5.
-        assertArrayEquals(new long[]{bits(0, 3)}, runMatcher(new LongEqBatchMatcher(0, 5L), batch));
+        assertArrayEquals(new long[]{bits(0, 3)}, runMatcher(new LongEqBatchMatcher(5L), batch));
     }
 
     @Test
@@ -102,7 +102,7 @@ class ColumnBatchMatcherTest {
         long[] vals = {5L, 5L, 6L, 5L, 0L};
         BatchExchange.Batch batch = longBatch(vals, nullsAt(1));
         // Row 1 NULL → excluded (NULL != x is unknown → false). Row 2 (6 != 5) and row 4 (0 != 5) match.
-        assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new LongNotEqBatchMatcher(0, 5L), batch));
+        assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new LongNotEqBatchMatcher(5L), batch));
     }
 
     @Test
@@ -112,7 +112,7 @@ class ColumnBatchMatcherTest {
             vals[i] = i; // matches > 5 → rows 6..69
         }
         BatchExchange.Batch batch = longBatch(vals, null);
-        long[] out = runMatcher(new LongGtBatchMatcher(0, 5L), batch);
+        long[] out = runMatcher(new LongGtBatchMatcher(5L), batch);
         long w0 = 0;
         for (int b = 6; b < 64; b++) w0 |= 1L << b;
         long w1 = 0;
@@ -132,42 +132,42 @@ class ColumnBatchMatcherTest {
     void doubleGt_keepsValuesGreaterThanLiteralAndExcludesNulls() {
         double[] vals = {1.0, 5.0, 6.5, 10.0, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, nullsAt(3));
-        assertArrayEquals(new long[]{bits(2)}, runMatcher(new DoubleGtBatchMatcher(0, 5.0), batch));
+        assertArrayEquals(new long[]{bits(2)}, runMatcher(new DoubleGtBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleLt_excludesEqualAndNulls() {
         double[] vals = {1.0, 5.0, 6.0, 10.0, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, nullsAt(0));
-        assertArrayEquals(new long[]{bits(4)}, runMatcher(new DoubleLtBatchMatcher(0, 5.0), batch));
+        assertArrayEquals(new long[]{bits(4)}, runMatcher(new DoubleLtBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleLtEq_includesEqual() {
         double[] vals = {1.0, 5.0, 6.0, 10.0, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, null);
-        assertArrayEquals(new long[]{bits(0, 1, 4)}, runMatcher(new DoubleLtEqBatchMatcher(0, 5.0), batch));
+        assertArrayEquals(new long[]{bits(0, 1, 4)}, runMatcher(new DoubleLtEqBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleGtEq_includesEqual() {
         double[] vals = {1.0, 5.0, 6.0, 10.0, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, null);
-        assertArrayEquals(new long[]{bits(1, 2, 3)}, runMatcher(new DoubleGtEqBatchMatcher(0, 5.0), batch));
+        assertArrayEquals(new long[]{bits(1, 2, 3)}, runMatcher(new DoubleGtEqBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleEq_matchesOnlyExactValueAndExcludesNulls() {
         double[] vals = {5.0, 5.0, 6.0, 5.0, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, nullsAt(1));
-        assertArrayEquals(new long[]{bits(0, 3)}, runMatcher(new DoubleEqBatchMatcher(0, 5.0), batch));
+        assertArrayEquals(new long[]{bits(0, 3)}, runMatcher(new DoubleEqBatchMatcher(5.0), batch));
     }
 
     @Test
     void doubleNotEq_excludesNulls() {
         double[] vals = {5.0, 5.0, 6.0, 5.0, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, nullsAt(1));
-        assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new DoubleNotEqBatchMatcher(0, 5.0), batch));
+        assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new DoubleNotEqBatchMatcher(5.0), batch));
     }
 
     // NaN ordering follows Double.compare to mirror RecordFilterCompiler.indexedDoubleLeaf:
@@ -176,20 +176,20 @@ class ColumnBatchMatcherTest {
     void doubleGt_nanMatchesGreaterThanAnyFiniteLiteral() {
         double[] vals = {Double.NaN, Double.POSITIVE_INFINITY};
         BatchExchange.Batch batch = doubleBatch(vals, null);
-        assertArrayEquals(new long[]{bits(0, 1)}, runMatcher(new DoubleGtBatchMatcher(0, 1.0e9), batch));
+        assertArrayEquals(new long[]{bits(0, 1)}, runMatcher(new DoubleGtBatchMatcher(1.0e9), batch));
     }
 
     @Test
     void doubleEq_nanLiteralMatchesNaNValuesOnly() {
         double[] vals = {Double.NaN, 1.0, Double.NaN};
         BatchExchange.Batch batch = doubleBatch(vals, null);
-        assertArrayEquals(new long[]{bits(0, 2)}, runMatcher(new DoubleEqBatchMatcher(0, Double.NaN), batch));
+        assertArrayEquals(new long[]{bits(0, 2)}, runMatcher(new DoubleEqBatchMatcher(Double.NaN), batch));
     }
 
     @Test
     void doubleLt_nanIsNotLessThanAnything() {
         double[] vals = {Double.NaN, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, null);
-        assertArrayEquals(new long[]{bits(1)}, runMatcher(new DoubleLtBatchMatcher(0, 5.0), batch));
+        assertArrayEquals(new long[]{bits(1)}, runMatcher(new DoubleLtBatchMatcher(5.0), batch));
     }
 }

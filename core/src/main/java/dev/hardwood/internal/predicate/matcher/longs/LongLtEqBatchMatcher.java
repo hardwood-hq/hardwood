@@ -14,17 +14,10 @@ import dev.hardwood.internal.reader.BatchExchange;
 
 public final class LongLtEqBatchMatcher implements LongBatchMatcher {
 
-    private final int columnIndex;
     private final long literal;
 
-    public LongLtEqBatchMatcher(int columnIndex, long literal) {
-        this.columnIndex = columnIndex;
+    public LongLtEqBatchMatcher(long literal) {
         this.literal = literal;
-    }
-
-    @Override
-    public int columnIndex() {
-        return columnIndex;
     }
 
     @Override

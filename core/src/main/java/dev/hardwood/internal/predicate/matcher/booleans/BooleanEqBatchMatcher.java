@@ -14,17 +14,10 @@ import dev.hardwood.internal.reader.BatchExchange;
 
 public final class BooleanEqBatchMatcher implements BooleanBatchMatcher {
 
-    private final int columnIndex;
     private final boolean literal;
 
-    public BooleanEqBatchMatcher(int columnIndex, boolean literal) {
-        this.columnIndex = columnIndex;
+    public BooleanEqBatchMatcher(boolean literal) {
         this.literal = literal;
-    }
-
-    @Override
-    public int columnIndex() {
-        return columnIndex;
     }
 
     @Override

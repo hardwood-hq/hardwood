@@ -25,9 +25,4 @@ public sealed interface ColumnBatchMatcher
         BooleanBatchMatcher, NullBatchMatcher {
 
     void test(BatchExchange.Batch batch, long[] outWords);
-
-    /// Projected column index this fragment evaluates against. The compiler
-    /// installs the matcher on the [dev.hardwood.internal.reader.FlatColumnWorker]
-    /// for this projected index.
-    int columnIndex();
 }

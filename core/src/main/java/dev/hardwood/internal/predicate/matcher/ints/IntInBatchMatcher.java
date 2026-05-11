@@ -16,17 +16,10 @@ import dev.hardwood.internal.reader.BatchExchange;
 /// in practice have only a handful of entries.
 public final class IntInBatchMatcher implements IntBatchMatcher {
 
-    private final int columnIndex;
     private final int[] values;
 
-    public IntInBatchMatcher(int columnIndex, int[] values) {
-        this.columnIndex = columnIndex;
+    public IntInBatchMatcher(int[] values) {
         this.values = values;
-    }
-
-    @Override
-    public int columnIndex() {
-        return columnIndex;
     }
 
     @Override

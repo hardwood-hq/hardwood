@@ -14,17 +14,10 @@ import dev.hardwood.internal.reader.BatchExchange;
 
 public final class IntGtBatchMatcher implements IntBatchMatcher {
 
-    private final int columnIndex;
     private final int literal;
 
-    public IntGtBatchMatcher(int columnIndex, int literal) {
-        this.columnIndex = columnIndex;
+    public IntGtBatchMatcher(int literal) {
         this.literal = literal;
-    }
-
-    @Override
-    public int columnIndex() {
-        return columnIndex;
     }
 
     @Override

@@ -16,17 +16,10 @@ import dev.hardwood.internal.reader.BatchExchange;
 /// in practice have only a handful of entries.
 public final class LongInBatchMatcher implements LongBatchMatcher {
 
-    private final int columnIndex;
     private final long[] values;
 
-    public LongInBatchMatcher(int columnIndex, long[] values) {
-        this.columnIndex = columnIndex;
+    public LongInBatchMatcher(long[] values) {
         this.values = values;
-    }
-
-    @Override
-    public int columnIndex() {
-        return columnIndex;
     }
 
     @Override

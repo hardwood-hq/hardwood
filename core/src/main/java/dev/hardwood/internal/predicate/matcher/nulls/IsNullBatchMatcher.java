@@ -16,17 +16,6 @@ import dev.hardwood.internal.reader.BatchExchange;
 /// into the live range. No per-bit loop.
 public final class IsNullBatchMatcher implements NullBatchMatcher {
 
-    private final int columnIndex;
-
-    public IsNullBatchMatcher(int columnIndex) {
-        this.columnIndex = columnIndex;
-    }
-
-    @Override
-    public int columnIndex() {
-        return columnIndex;
-    }
-
     @Override
     public void test(BatchExchange.Batch batch, long[] outWords) {
         BitSet nulls = batch.nulls;

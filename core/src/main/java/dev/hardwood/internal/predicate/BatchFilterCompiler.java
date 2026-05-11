@@ -110,10 +110,7 @@ public final class BatchFilterCompiler {
                 return null;
             }
 
-            ColumnBatchMatcher matcher = compileLeaf(leaves.get(i), projected);
-            if (matcher == null) {
-                return null;
-            }
+            ColumnBatchMatcher matcher = compileLeaf(leaves.get(i));
 
             result[projected] = matcher;
         }
@@ -179,51 +176,51 @@ public final class BatchFilterCompiler {
         };
     }
 
-    private static ColumnBatchMatcher compileLeaf(ResolvedPredicate leaf, int projectedIdx) {
+    private static ColumnBatchMatcher compileLeaf(ResolvedPredicate leaf) {
         return switch (leaf) {
             case ResolvedPredicate.LongPredicate p -> switch (p.op()) {
-                case GT -> new LongGtBatchMatcher(projectedIdx, p.value());
-                case LT -> new LongLtBatchMatcher(projectedIdx, p.value());
-                case LT_EQ -> new LongLtEqBatchMatcher(projectedIdx, p.value());
-                case GT_EQ -> new LongGtEqBatchMatcher(projectedIdx, p.value());
-                case EQ -> new LongEqBatchMatcher(projectedIdx, p.value());
-                case NOT_EQ -> new LongNotEqBatchMatcher(projectedIdx, p.value());
+                case GT -> new LongGtBatchMatcher(p.value());
+                case LT -> new LongLtBatchMatcher(p.value());
+                case LT_EQ -> new LongLtEqBatchMatcher(p.value());
+                case GT_EQ -> new LongGtEqBatchMatcher(p.value());
+                case EQ -> new LongEqBatchMatcher(p.value());
+                case NOT_EQ -> new LongNotEqBatchMatcher(p.value());
             };
             case ResolvedPredicate.DoublePredicate p -> switch (p.op()) {
-                case GT -> new DoubleGtBatchMatcher(projectedIdx, p.value());
-                case LT -> new DoubleLtBatchMatcher(projectedIdx, p.value());
-                case LT_EQ -> new DoubleLtEqBatchMatcher(projectedIdx, p.value());
-                case GT_EQ -> new DoubleGtEqBatchMatcher(projectedIdx, p.value());
-                case EQ -> new DoubleEqBatchMatcher(projectedIdx, p.value());
-                case NOT_EQ -> new DoubleNotEqBatchMatcher(projectedIdx, p.value());
+                case GT -> new DoubleGtBatchMatcher(p.value());
+                case LT -> new DoubleLtBatchMatcher(p.value());
+                case LT_EQ -> new DoubleLtEqBatchMatcher(p.value());
+                case GT_EQ -> new DoubleGtEqBatchMatcher(p.value());
+                case EQ -> new DoubleEqBatchMatcher(p.value());
+                case NOT_EQ -> new DoubleNotEqBatchMatcher(p.value());
             };
             case ResolvedPredicate.IntPredicate p -> switch (p.op()) {
-                case GT -> new IntGtBatchMatcher(projectedIdx, p.value());
-                case LT -> new IntLtBatchMatcher(projectedIdx, p.value());
-                case LT_EQ -> new IntLtEqBatchMatcher(projectedIdx, p.value());
-                case GT_EQ -> new IntGtEqBatchMatcher(projectedIdx, p.value());
-                case EQ -> new IntEqBatchMatcher(projectedIdx, p.value());
-                case NOT_EQ -> new IntNotEqBatchMatcher(projectedIdx, p.value());
+                case GT -> new IntGtBatchMatcher(p.value());
+                case LT -> new IntLtBatchMatcher(p.value());
+                case LT_EQ -> new IntLtEqBatchMatcher(p.value());
+                case GT_EQ -> new IntGtEqBatchMatcher(p.value());
+                case EQ -> new IntEqBatchMatcher(p.value());
+                case NOT_EQ -> new IntNotEqBatchMatcher(p.value());
             };
             case ResolvedPredicate.FloatPredicate p -> switch (p.op()) {
-                case GT -> new FloatGtBatchMatcher(projectedIdx, p.value());
-                case LT -> new FloatLtBatchMatcher(projectedIdx, p.value());
-                case LT_EQ -> new FloatLtEqBatchMatcher(projectedIdx, p.value());
-                case GT_EQ -> new FloatGtEqBatchMatcher(projectedIdx, p.value());
-                case EQ -> new FloatEqBatchMatcher(projectedIdx, p.value());
-                case NOT_EQ -> new FloatNotEqBatchMatcher(projectedIdx, p.value());
+                case GT -> new FloatGtBatchMatcher(p.value());
+                case LT -> new FloatLtBatchMatcher(p.value());
+                case LT_EQ -> new FloatLtEqBatchMatcher(p.value());
+                case GT_EQ -> new FloatGtEqBatchMatcher(p.value());
+                case EQ -> new FloatEqBatchMatcher(p.value());
+                case NOT_EQ -> new FloatNotEqBatchMatcher(p.value());
             };
             case ResolvedPredicate.BooleanPredicate p -> switch (p.op()) {
-                case EQ -> new BooleanEqBatchMatcher(projectedIdx, p.value());
-                case NOT_EQ -> new BooleanNotEqBatchMatcher(projectedIdx, p.value());
+                case EQ -> new BooleanEqBatchMatcher(p.value());
+                case NOT_EQ -> new BooleanNotEqBatchMatcher(p.value());
                 default -> throw new IllegalStateException(
                         "Unsupported boolean operator reached compileLeaf: " + p.op()
                                 + " — isSupported should have rejected this");
             };
-            case ResolvedPredicate.IntInPredicate p -> new IntInBatchMatcher(projectedIdx, p.values());
-            case ResolvedPredicate.LongInPredicate p -> new LongInBatchMatcher(projectedIdx, p.values());
-            case ResolvedPredicate.IsNullPredicate p -> new IsNullBatchMatcher(projectedIdx);
-            case ResolvedPredicate.IsNotNullPredicate p -> new IsNotNullBatchMatcher(projectedIdx);
+            case ResolvedPredicate.IntInPredicate p -> new IntInBatchMatcher(p.values());
+            case ResolvedPredicate.LongInPredicate p -> new LongInBatchMatcher(p.values());
+            case ResolvedPredicate.IsNullPredicate p -> new IsNullBatchMatcher();
+            case ResolvedPredicate.IsNotNullPredicate p -> new IsNotNullBatchMatcher();
             default -> throw new IllegalStateException(
                     "Unsupported predicate type reached compileLeaf: " + leaf.getClass().getSimpleName()
                             + " — isSupported should have rejected this");

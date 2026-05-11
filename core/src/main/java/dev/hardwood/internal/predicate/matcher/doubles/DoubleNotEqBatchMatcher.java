@@ -14,17 +14,10 @@ import dev.hardwood.internal.reader.BatchExchange;
 
 public final class DoubleNotEqBatchMatcher implements DoubleBatchMatcher {
 
-    private final int columnIndex;
     private final double literal;
 
-    public DoubleNotEqBatchMatcher(int columnIndex, double literal) {
-        this.columnIndex = columnIndex;
+    public DoubleNotEqBatchMatcher(double literal) {
         this.literal = literal;
-    }
-
-    @Override
-    public int columnIndex() {
-        return columnIndex;
     }
 
     @Override

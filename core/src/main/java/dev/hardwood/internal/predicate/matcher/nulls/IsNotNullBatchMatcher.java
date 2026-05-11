@@ -16,17 +16,6 @@ import dev.hardwood.internal.reader.BatchExchange;
 /// underlying long-words across the live range.
 public final class IsNotNullBatchMatcher implements NullBatchMatcher {
 
-    private final int columnIndex;
-
-    public IsNotNullBatchMatcher(int columnIndex) {
-        this.columnIndex = columnIndex;
-    }
-
-    @Override
-    public int columnIndex() {
-        return columnIndex;
-    }
-
     @Override
     public void test(BatchExchange.Batch batch, long[] outWords) {
         BitSet nulls = batch.nulls;
