@@ -16,8 +16,7 @@ import java.util.AbstractList;
 import java.util.List;
 import java.util.UUID;
 
-import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc;
-import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.MapOf;
+import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
@@ -216,9 +215,21 @@ final class PqMapImpl implements PqMap {
         }
 
         @Override
+        public LocalTime getTimeKey() {
+            Object raw = readKey();
+            return ValueConverter.convertToTime(raw, keySchema);
+        }
+
+        @Override
         public Instant getTimestampKey() {
             Object raw = readKey();
             return ValueConverter.convertToTimestamp(raw, keySchema);
+        }
+
+        @Override
+        public BigDecimal getDecimalKey() {
+            Object raw = readKey();
+            return ValueConverter.convertToDecimal(raw, keySchema);
         }
 
         @Override
@@ -229,6 +240,11 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public Object getKey() {
+            return ValueConverter.convertValue(readKey(), keySchema);
+        }
+
+        @Override
+        public Object getRawKey() {
             return readKey();
         }
 
@@ -329,6 +345,12 @@ final class PqMapImpl implements PqMap {
         }
 
         @Override
+        public PqInterval getIntervalValue() {
+            Object raw = readValue();
+            return ValueConverter.convertToInterval(raw, valueSchema);
+        }
+
+        @Override
         public PqStruct getStructValue() {
             TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
             if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
@@ -369,7 +391,45 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public Object getValue() {
+            Object group = groupValueOrNull();
+            if (group != null) {
+                return group;
+            }
+            if (isValueNull()) {
+                return null;
+            }
+            return ValueConverter.convertValue(readValue(), valueSchema);
+        }
+
+        @Override
+        public Object getRawValue() {
+            Object group = groupValueOrNull();
+            if (group != null) {
+                return group;
+            }
+            if (isValueNull()) {
+                return null;
+            }
             return readValue();
+        }
+
+        /// Returns the typed flyweight ([PqStruct] / [PqList] / [PqMap]) when
+        /// the value is a nested group, or `null` for primitive-typed values
+        /// (so the caller can fall through to raw/decoded primitive handling).
+        /// A non-null group whose primitive descendants are all null still
+        /// yields the flyweight — the typed accessors handle null shape.
+        private Object groupValueOrNull() {
+            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+            if (vDesc instanceof TopLevelFieldMap.FieldDesc.Struct) {
+                return getStructValue();
+            }
+            if (vDesc instanceof TopLevelFieldMap.FieldDesc.ListOf) {
+                return getListValue();
+            }
+            if (vDesc instanceof TopLevelFieldMap.FieldDesc.MapOf) {
+                return getMapValue();
+            }
+            return null;
         }
 
         @Override

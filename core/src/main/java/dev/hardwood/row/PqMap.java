@@ -80,11 +80,23 @@ public interface PqMap {
         /// @throws IllegalArgumentException if the key type is not DATE
         LocalDate getDateKey();
 
+        /// Get the key as a TIME.
+        ///
+        /// @return the time key value
+        /// @throws IllegalArgumentException if the key type is not TIME
+        LocalTime getTimeKey();
+
         /// Get the key as a TIMESTAMP.
         ///
         /// @return the instant key value
         /// @throws IllegalArgumentException if the key type is not TIMESTAMP
         Instant getTimestampKey();
+
+        /// Get the key as a DECIMAL.
+        ///
+        /// @return the decimal key value
+        /// @throws IllegalArgumentException if the key type is not DECIMAL
+        BigDecimal getDecimalKey();
 
         /// Get the key as a UUID.
         ///
@@ -92,10 +104,24 @@ public interface PqMap {
         /// @throws IllegalArgumentException if the key type is not UUID
         UUID getUuidKey();
 
-        /// Get the key without type conversion.
+        /// Get the key, decoded to its logical-type representation.
+        ///
+        /// Returns the same form as the typed key accessors above
+        /// (`Integer`, `Long`, `String`, [LocalDate], [LocalTime], [Instant],
+        /// [BigDecimal], [UUID], etc.), with `byte[]` for un-annotated
+        /// BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY columns.
+        ///
+        /// Use [#getRawKey] to obtain the underlying physical value instead.
+        ///
+        /// @return the decoded key value
+        Object getKey();
+
+        /// Get the key as its raw physical representation, without logical-type
+        /// decoding (e.g. an INT64-backed TIMESTAMP returns `Long`, not [Instant];
+        /// a FIXED_LEN_BYTE_ARRAY-backed DECIMAL returns `byte[]`, not [BigDecimal]).
         ///
         /// @return the raw key value
-        Object getKey();
+        Object getRawKey();
 
         // ==================== Value Accessors - Primitives ====================
 
@@ -178,6 +204,12 @@ public interface PqMap {
         /// @throws IllegalArgumentException if the value type is not UUID
         UUID getUuidValue();
 
+        /// Get the value as an INTERVAL.
+        ///
+        /// @return the interval value, or null if the value is null
+        /// @throws IllegalArgumentException if the value type is not INTERVAL
+        PqInterval getIntervalValue();
+
         // ==================== Value Accessors - Nested Types ====================
 
         /// Get the value as a nested struct.
@@ -198,10 +230,27 @@ public interface PqMap {
         /// @throws IllegalArgumentException if the value type is not a map
         PqMap getMapValue();
 
-        /// Get the value without type conversion.
+        /// Get the value, decoded to its logical-type representation.
+        ///
+        /// Returns the same form as the typed value accessors above
+        /// (boxed primitive, `String`, [LocalDate], [LocalTime], [Instant],
+        /// [BigDecimal], [UUID], [PqInterval], [PqStruct], [PqList], [PqMap]),
+        /// with `byte[]` for un-annotated BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY
+        /// columns.
+        ///
+        /// Use [#getRawValue] to obtain the underlying physical value instead.
+        ///
+        /// @return the decoded value, or null if the value is null
+        Object getValue();
+
+        /// Get the value as its raw physical representation, without logical-type
+        /// decoding. Primitive values surface as the underlying `Integer` /
+        /// `Long` / `Float` / `Double` / `Boolean` / `byte[]`. Nested values
+        /// (struct / list / map) have no useful "raw" form and are still
+        /// returned as their typed flyweight ([PqStruct] / [PqList] / [PqMap]).
         ///
         /// @return the raw value, or null if the value is null
-        Object getValue();
+        Object getRawValue();
 
         /// Check if the value is null.
         ///

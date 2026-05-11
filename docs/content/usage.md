@@ -172,6 +172,30 @@ All methods are available as both `method(name)` and `method(index)`, except `ge
 
 **Bare `BYTE_ARRAY` columns:** `BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
 
+**Typed accessors on `PqList` and `PqMap.Entry`:** Both interfaces mirror the
+RowReader's typed accessor surface — `ints()` / `longs()` / `strings()` /
+`dates()` / `times()` / `timestamps()` / `decimals()` / `uuids()` /
+`intervals()` on `PqList`; `getStringKey()` / `getDateKey()` / `getTimeKey()` /
+`getDecimalKey()` / etc. and the matching `getStringValue()` / `getDateValue()`
+/ `getIntervalValue()` / etc. on `PqMap.Entry`. Use these in preference to the
+generic `getValue()` when iterating over a list / map of a known logical type
+to avoid the boxed `Object` return.
+
+**Decoded vs. raw generic access:** The generic fallback accessors return values decoded to their logical-type representation by default:
+
+- `RowReader.getValue(name)` / `getValue(index)` — `Integer` / `Long` / `String` / `LocalDate` / `LocalTime` / `Instant` / `BigDecimal` / `UUID` / `PqInterval` / `PqVariant` / nested `PqStruct` / `PqList` / `PqMap`, with `byte[]` for un-annotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` columns.
+- `PqStruct.getValue(name)` — same decoded mapping for nested struct fields.
+- `PqMap.Entry.getKey()` / `getValue()` — same decoded mapping for map keys and values.
+- `PqList.get(index)` / `PqList.values()` — same decoded mapping for list elements.
+
+To inspect the underlying physical storage instead — e.g. the raw `Long` micros backing a `TIMESTAMP`, or the unscaled `byte[]` backing a `DECIMAL` — call the parallel raw accessors:
+
+- `RowReader.getRawValue(name)` / `getRawValue(index)`
+- `PqStruct.getRawValue(name)`
+- `PqMap.Entry.getRawKey()` / `getRawValue()`
+
+Nested groups (struct / list / map / variant) have no distinct "raw" form and are returned through their typed flyweight (`PqStruct` / `PqList` / `PqMap` / `PqVariant`) in both modes.
+
 **Legacy INT96 timestamps:** Parquet files written by older versions of Apache Spark and Hive store timestamps in the deprecated INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` detects INT96 automatically and decodes it to an `Instant`; no caller-side handling is required.
 
 **Index-based access example:**

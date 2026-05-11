@@ -293,6 +293,8 @@ public final class NestedRowReader implements RowReader {
 
     @Override public Object getValue(int i) { return dataView.getValue(i); }
     @Override public Object getValue(String name) { return dataView.getValue(name); }
+    @Override public Object getRawValue(int i) { return dataView.getRawValue(i); }
+    @Override public Object getRawValue(String name) { return dataView.getRawValue(name); }
 
     @Override public PqStruct getStruct(String name) { return dataView.getStruct(name); }
     @Override public PqStruct getStruct(int i) { return dataView.getStruct(i); }

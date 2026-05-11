@@ -145,12 +145,33 @@ public interface FieldAccessor {
 
     // ==================== Generic Fallback ====================
 
-    /// Get a field value by name without type conversion.
-    /// Returns the raw value as stored internally.
+    /// Get a field value by name, decoded to its logical-type representation.
+    ///
+    /// Returns the value in the same form as the typed accessors above:
+    /// `Integer` / `Long` / `Float` / `Double` / `Boolean` for primitives,
+    /// `String` for STRING, [LocalDate] for DATE, [LocalTime] for TIME,
+    /// [Instant] for TIMESTAMP, [BigDecimal] for DECIMAL, [UUID] for UUID,
+    /// [PqInterval] for INTERVAL, [PqVariant] for VARIANT, and `byte[]` for
+    /// BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY with no logical-type annotation.
+    /// Nested groups surface as [PqStruct] / [PqList] / [PqMap].
+    ///
+    /// Use [#getRawValue] to obtain the underlying physical value instead.
+    ///
+    /// @param name the field name
+    /// @return the decoded value, or null if the field is null
+    Object getValue(String name);
+
+    /// Get a field value by name as its raw physical representation, without
+    /// logical-type decoding. Primitive leaves surface as the underlying
+    /// `Integer` / `Long` / `Float` / `Double` / `Boolean` / `byte[]`; e.g. a
+    /// TIMESTAMP returns the underlying `Long` rather than an [Instant], and a
+    /// DECIMAL returns the underlying `byte[]` / `Integer` / `Long`. Nested
+    /// groups (struct / list / map / variant) are still returned as their
+    /// typed flyweights since they have no useful "raw" form.
     ///
     /// @param name the field name
     /// @return the raw value, or null if the field is null
-    Object getValue(String name);
+    Object getRawValue(String name);
 
     // ==================== Metadata ====================
 

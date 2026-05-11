@@ -419,6 +419,7 @@ class RecordFilterCompilerTest {
             @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(); }
             @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
             @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
+            @Override public Object getRawValue(String name) { throw new UnsupportedOperationException(); }
             @Override public int getFieldCount() { return 2; }
             @Override public String getFieldName(int index) { return index == 0 ? name1 : name2; }
         };
@@ -460,6 +461,7 @@ class RecordFilterCompilerTest {
         @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(); }
         @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
+        @Override public Object getRawValue(String name) { throw new UnsupportedOperationException(); }
         @Override public int getFieldCount() { return 1; }
         @Override public String getFieldName(int index) { return fieldName; }
     }

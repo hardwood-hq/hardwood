@@ -615,6 +615,29 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public Object getValue(int columnIndex) {
+        Object raw = getRawValue(columnIndex);
+        if (raw == null) {
+            return null;
+        }
+        ColumnSchema col = columnSchemas[columnIndex];
+        if (physicalTypes[columnIndex] == PhysicalType.INT96) {
+            // INT96 has no LogicalType but is conventionally a TIMESTAMP.
+            return LogicalTypeConverter.int96ToInstant((byte[]) raw);
+        }
+        LogicalType lt = col.logicalType();
+        if (lt == null) {
+            return raw;
+        }
+        return LogicalTypeConverter.convert(raw, physicalTypes[columnIndex], lt);
+    }
+
+    @Override
+    public Object getValue(String name) {
+        return getValue(resolveIndex(name));
+    }
+
+    @Override
+    public Object getRawValue(int columnIndex) {
         if (isNull(columnIndex)) {
             return null;
         }
@@ -630,8 +653,8 @@ public final class FlatRowReader implements RowReader {
     }
 
     @Override
-    public Object getValue(String name) {
-        return getValue(resolveIndex(name));
+    public Object getRawValue(String name) {
+        return getRawValue(resolveIndex(name));
     }
 
     // ==================== Nested (not supported for flat) ====================

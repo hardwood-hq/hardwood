@@ -74,7 +74,10 @@ public final class RowValueFormatter {
         if (field instanceof SchemaNode.GroupNode) {
             // Nested group — render structurally rather than letting the JVM's
             // default `Object.toString()` print "dev.hardwood.internal...".
-            return formatNested(reader.getValue(fieldIndex), 0);
+            // `reader.getValue` and `getRawValue` return the same flyweight for
+            // groups; the toggle only changes how primitive leaves inside the
+            // group are rendered, which `formatNested` re-dispatches on.
+            return formatNested(reader.getValue(fieldIndex), 0, useLogicalType);
         }
         SchemaNode.PrimitiveNode prim = (SchemaNode.PrimitiveNode) field;
         if (!useLogicalType) {
@@ -106,7 +109,7 @@ public final class RowValueFormatter {
             long raw = switch (prim.type()) {
                 case INT32 -> Integer.toUnsignedLong(reader.getInt(fieldIndex));
                 case INT64 -> reader.getLong(fieldIndex);
-                default -> ((Number) reader.getValue(fieldIndex)).longValue();
+                default -> ((Number) reader.getRawValue(fieldIndex)).longValue();
             };
             return Long.toUnsignedString(raw);
         }
@@ -114,11 +117,11 @@ public final class RowValueFormatter {
             return formatInterval(reader.getInterval(fieldIndex));
         }
         // BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY / INT96 with no string-like logical
-        // type fall through here. `getValue` returns the raw byte[]; the default
-        // `String.valueOf(byte[])` would emit the JVM's array-hashcode form
-        // ([B@...). Render printable UTF-8 as text, else 0x-hex — mirrors how
-        // IndexValueFormatter handles raw-byte stats.
-        Object raw = reader.getValue(fieldIndex);
+        // type fall through here. `getRawValue` returns the underlying byte[];
+        // the default `String.valueOf(byte[])` would emit the JVM's
+        // array-hashcode form ([B@...). Render printable UTF-8 as text, else
+        // 0x-hex — mirrors how IndexValueFormatter handles raw-byte stats.
+        Object raw = reader.getRawValue(fieldIndex);
         if (raw instanceof byte[] bytes) {
             return formatRawBytes(bytes);
         }
@@ -135,54 +138,64 @@ public final class RowValueFormatter {
             return "null";
         }
         if (field instanceof SchemaNode.GroupNode) {
-            return formatNestedPretty(reader.getValue(fieldIndex), 0);
+            return formatNestedPretty(reader.getValue(fieldIndex), 0, useLogicalType);
         }
         // For primitive leaves the expanded form is identical to the
         // single-line logical / physical rendering.
         return format(reader, fieldIndex, field, useLogicalType);
     }
 
-    private static String formatNestedPretty(Object value, int indent) {
+    private static String formatNestedPretty(Object value, int indent, boolean useLogicalType) {
         if (value == null) {
             return "null";
         }
         if (value instanceof PqList list) {
-            return prettyList(list, indent);
+            return prettyList(list, indent, useLogicalType);
         }
         if (value instanceof PqStruct struct) {
-            return prettyStruct(struct, indent);
+            return prettyStruct(struct, indent, useLogicalType);
         }
         if (value instanceof PqMap map) {
-            return prettyMap(map, indent);
+            return prettyMap(map, indent, useLogicalType);
         }
         if (value instanceof PqVariant variant) {
-            return prettyVariant(variant, indent);
+            return prettyVariant(variant, indent, useLogicalType);
         }
         if (value instanceof byte[] bytes) {
             return formatRawBytes(bytes);
         }
+        if (value instanceof PqInterval interval) {
+            return formatInterval(interval);
+        }
+        if (value instanceof BigDecimal decimal) {
+            return decimal.toPlainString();
+        }
+        if (value instanceof Instant instant) {
+            return instant.toString();
+        }
         return String.valueOf(value);
     }
 
-    private static String prettyList(PqList list, int indent) {
+    private static String prettyList(PqList list, int indent, boolean useLogicalType) {
         if (list.isEmpty()) {
             return "[]";
         }
         StringBuilder sb = new StringBuilder("[\n");
         String childPad = pad(indent + 1);
-        boolean first = true;
-        for (Object element : list.values()) {
-            if (!first) {
+        // `list.values()` already returns logical values; for raw mode iterate
+        // by index and pull through size() entries with no logical decoding.
+        for (int i = 0; i < list.size(); i++) {
+            if (i > 0) {
                 sb.append(",\n");
             }
-            sb.append(childPad).append(formatNestedPretty(element, indent + 1));
-            first = false;
+            Object element = list.isNull(i) ? null : list.get(i);
+            sb.append(childPad).append(formatNestedPretty(element, indent + 1, useLogicalType));
         }
         sb.append("\n").append(pad(indent)).append("]");
         return sb.toString();
     }
 
-    private static String prettyStruct(PqStruct struct, int indent) {
+    private static String prettyStruct(PqStruct struct, int indent, boolean useLogicalType) {
         int count = struct.getFieldCount();
         if (count == 0) {
             return "{}";
@@ -191,9 +204,10 @@ public final class RowValueFormatter {
         String childPad = pad(indent + 1);
         for (int i = 0; i < count; i++) {
             String fieldName = struct.getFieldName(i);
-            Object fieldValue = struct.isNull(fieldName) ? null : struct.getValue(fieldName);
+            Object fieldValue = struct.isNull(fieldName) ? null
+                    : (useLogicalType ? struct.getValue(fieldName) : struct.getRawValue(fieldName));
             sb.append(childPad).append(fieldName).append(": ")
-                    .append(formatNestedPretty(fieldValue, indent + 1));
+                    .append(formatNestedPretty(fieldValue, indent + 1, useLogicalType));
             if (i < count - 1) {
                 sb.append(",");
             }
@@ -203,7 +217,7 @@ public final class RowValueFormatter {
         return sb.toString();
     }
 
-    private static String prettyMap(PqMap map, int indent) {
+    private static String prettyMap(PqMap map, int indent, boolean useLogicalType) {
         if (map.isEmpty()) {
             return "{}";
         }
@@ -212,10 +226,13 @@ public final class RowValueFormatter {
         java.util.List<PqMap.Entry> entries = map.getEntries();
         for (int i = 0; i < entries.size(); i++) {
             PqMap.Entry entry = entries.get(i);
+            Object key = useLogicalType ? entry.getKey() : entry.getRawKey();
+            Object value = entry.isValueNull() ? null
+                    : (useLogicalType ? entry.getValue() : entry.getRawValue());
             sb.append(childPad)
-                    .append(formatNestedPretty(entry.getKey(), indent + 1))
+                    .append(formatNestedPretty(key, indent + 1, useLogicalType))
                     .append(": ")
-                    .append(formatNestedPretty(entry.isValueNull() ? null : entry.getValue(), indent + 1));
+                    .append(formatNestedPretty(value, indent + 1, useLogicalType));
             if (i < entries.size() - 1) {
                 sb.append(",");
             }
@@ -225,17 +242,17 @@ public final class RowValueFormatter {
         return sb.toString();
     }
 
-    private static String prettyVariant(PqVariant variant, int indent) {
+    private static String prettyVariant(PqVariant variant, int indent, boolean useLogicalType) {
         VariantType type = variant.type();
         return switch (type) {
-            case OBJECT -> prettyVariantObject(variant.asObject(), indent);
-            case ARRAY -> prettyVariantArray(variant.asArray(), indent);
+            case OBJECT -> prettyVariantObject(variant.asObject(), indent, useLogicalType);
+            case ARRAY -> prettyVariantArray(variant.asArray(), indent, useLogicalType);
             // Primitives use the single-line form.
-            default -> formatVariant(variant, indent);
+            default -> formatVariant(variant, indent, useLogicalType);
         };
     }
 
-    private static String prettyVariantObject(PqVariantObject obj, int indent) {
+    private static String prettyVariantObject(PqVariantObject obj, int indent, boolean useLogicalType) {
         int count = obj.getFieldCount();
         if (count == 0) {
             return "{}";
@@ -245,7 +262,7 @@ public final class RowValueFormatter {
         for (int i = 0; i < count; i++) {
             String name = obj.getFieldName(i);
             sb.append(childPad).append(name).append(": ")
-                    .append(formatNestedPretty(obj.getVariant(name), indent + 1));
+                    .append(formatNestedPretty(obj.getVariant(name), indent + 1, useLogicalType));
             if (i < count - 1) {
                 sb.append(",");
             }
@@ -255,7 +272,7 @@ public final class RowValueFormatter {
         return sb.toString();
     }
 
-    private static String prettyVariantArray(PqVariantArray array, int indent) {
+    private static String prettyVariantArray(PqVariantArray array, int indent, boolean useLogicalType) {
         int size = array.size();
         if (size == 0) {
             return "[]";
@@ -263,7 +280,7 @@ public final class RowValueFormatter {
         StringBuilder sb = new StringBuilder("[\n");
         String childPad = pad(indent + 1);
         for (int i = 0; i < size; i++) {
-            sb.append(childPad).append(formatNestedPretty(array.get(i), indent + 1));
+            sb.append(childPad).append(formatNestedPretty(array.get(i), indent + 1, useLogicalType));
             if (i < size - 1) {
                 sb.append(",");
             }
@@ -282,7 +299,7 @@ public final class RowValueFormatter {
     /// off to inspect storage form. byte[]s still hex-render so cells aren't
     /// "[B@" — that's not "physical" rendering, just sane fallback.
     private static String formatPhysical(RowReader reader, int fieldIndex) {
-        Object raw = reader.getValue(fieldIndex);
+        Object raw = reader.getRawValue(fieldIndex);
         if (raw instanceof byte[] bytes) {
             return formatRawBytes(bytes);
         }
@@ -426,7 +443,7 @@ public final class RowValueFormatter {
     /// [#MAX_NESTED_ELEMENTS] visible entries per collection and
     /// [#MAX_NESTED_DEPTH] levels of recursion — the screen further truncates
     /// the result to the cell width budget.
-    private static String formatNested(Object value, int depth) {
+    private static String formatNested(Object value, int depth, boolean useLogicalType) {
         if (value == null) {
             return "null";
         }
@@ -434,45 +451,56 @@ public final class RowValueFormatter {
             return "…";
         }
         if (value instanceof PqList list) {
-            return formatList(list, depth);
+            return formatList(list, depth, useLogicalType);
         }
         if (value instanceof PqStruct struct) {
-            return formatStruct(struct, depth);
+            return formatStruct(struct, depth, useLogicalType);
         }
         if (value instanceof PqMap map) {
-            return formatMap(map, depth);
+            return formatMap(map, depth, useLogicalType);
         }
         if (value instanceof PqVariant variant) {
-            return formatVariant(variant, depth);
+            return formatVariant(variant, depth, useLogicalType);
         }
         if (value instanceof byte[] bytes) {
             return formatRawBytes(bytes);
         }
+        if (value instanceof PqInterval interval) {
+            return formatInterval(interval);
+        }
+        if (value instanceof BigDecimal decimal) {
+            return decimal.toPlainString();
+        }
+        if (value instanceof Instant instant) {
+            return instant.toString();
+        }
         return String.valueOf(value);
     }
 
-    private static String formatList(PqList list, int depth) {
+    private static String formatList(PqList list, int depth, boolean useLogicalType) {
         if (list.isEmpty()) {
             return "[]";
         }
         StringBuilder sb = new StringBuilder("[");
         int shown = 0;
-        for (Object element : list.values()) {
+        int size = list.size();
+        for (int i = 0; i < size; i++) {
             if (shown == MAX_NESTED_ELEMENTS) {
-                sb.append(", …+").append(list.size() - MAX_NESTED_ELEMENTS);
+                sb.append(", …+").append(size - MAX_NESTED_ELEMENTS);
                 break;
             }
             if (shown > 0) {
                 sb.append(", ");
             }
-            sb.append(formatNested(element, depth + 1));
+            Object element = list.isNull(i) ? null : list.get(i);
+            sb.append(formatNested(element, depth + 1, useLogicalType));
             shown++;
         }
         sb.append("]");
         return sb.toString();
     }
 
-    private static String formatStruct(PqStruct struct, int depth) {
+    private static String formatStruct(PqStruct struct, int depth, boolean useLogicalType) {
         int count = struct.getFieldCount();
         if (count == 0) {
             return "{}";
@@ -488,15 +516,16 @@ public final class RowValueFormatter {
                 sb.append(", ");
             }
             String fieldName = struct.getFieldName(i);
-            Object fieldValue = struct.isNull(fieldName) ? null : struct.getValue(fieldName);
-            sb.append(fieldName).append(": ").append(formatNested(fieldValue, depth + 1));
+            Object fieldValue = struct.isNull(fieldName) ? null
+                    : (useLogicalType ? struct.getValue(fieldName) : struct.getRawValue(fieldName));
+            sb.append(fieldName).append(": ").append(formatNested(fieldValue, depth + 1, useLogicalType));
             shown++;
         }
         sb.append("}");
         return sb.toString();
     }
 
-    private static String formatMap(PqMap map, int depth) {
+    private static String formatMap(PqMap map, int depth, boolean useLogicalType) {
         if (map.isEmpty()) {
             return "{}";
         }
@@ -511,16 +540,19 @@ public final class RowValueFormatter {
             if (shown > 0) {
                 sb.append(", ");
             }
-            sb.append(formatNested(entry.getKey(), depth + 1))
+            Object key = useLogicalType ? entry.getKey() : entry.getRawKey();
+            Object value = entry.isValueNull() ? null
+                    : (useLogicalType ? entry.getValue() : entry.getRawValue());
+            sb.append(formatNested(key, depth + 1, useLogicalType))
                     .append(": ")
-                    .append(formatNested(entry.isValueNull() ? null : entry.getValue(), depth + 1));
+                    .append(formatNested(value, depth + 1, useLogicalType));
             shown++;
         }
         sb.append("}");
         return sb.toString();
     }
 
-    private static String formatVariant(PqVariant variant, int depth) {
+    private static String formatVariant(PqVariant variant, int depth, boolean useLogicalType) {
         VariantType type = variant.type();
         return switch (type) {
             case NULL -> "null";
@@ -541,12 +573,12 @@ public final class RowValueFormatter {
             case STRING -> variant.asString();
             case BINARY -> formatRawBytes(variant.asBinary());
             case UUID -> variant.asUuid().toString();
-            case OBJECT -> formatVariantObject(variant.asObject(), depth);
-            case ARRAY -> formatVariantArray(variant.asArray(), depth);
+            case OBJECT -> formatVariantObject(variant.asObject(), depth, useLogicalType);
+            case ARRAY -> formatVariantArray(variant.asArray(), depth, useLogicalType);
         };
     }
 
-    private static String formatVariantObject(PqVariantObject obj, int depth) {
+    private static String formatVariantObject(PqVariantObject obj, int depth, boolean useLogicalType) {
         int count = obj.getFieldCount();
         if (count == 0) {
             return "{}";
@@ -562,14 +594,14 @@ public final class RowValueFormatter {
                 sb.append(", ");
             }
             String name = obj.getFieldName(i);
-            sb.append(name).append(": ").append(formatNested(obj.getVariant(name), depth + 1));
+            sb.append(name).append(": ").append(formatNested(obj.getVariant(name), depth + 1, useLogicalType));
             shown++;
         }
         sb.append("}");
         return sb.toString();
     }
 
-    private static String formatVariantArray(PqVariantArray array, int depth) {
+    private static String formatVariantArray(PqVariantArray array, int depth, boolean useLogicalType) {
         int size = array.size();
         if (size == 0) {
             return "[]";
@@ -584,7 +616,7 @@ public final class RowValueFormatter {
             if (shown > 0) {
                 sb.append(", ");
             }
-            sb.append(formatNested(array.get(i), depth + 1));
+            sb.append(formatNested(array.get(i), depth + 1, useLogicalType));
             shown++;
         }
         sb.append("]");

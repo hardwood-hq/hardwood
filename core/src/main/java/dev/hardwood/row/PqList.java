@@ -61,10 +61,18 @@ public interface PqList {
     /// @return true if the list has no elements
     boolean isEmpty();
 
-    /// Get a raw element by index without type conversion.
+    /// Get an element by index, decoded to its logical-type representation.
+    ///
+    /// Returns the value in the same form as the typed iterators below:
+    /// `Integer` / `Long` / `Float` / `Double` / `Boolean` for primitives,
+    /// `String` for STRING, [LocalDate] for DATE, [LocalTime] for TIME,
+    /// [Instant] for TIMESTAMP, [BigDecimal] for DECIMAL, [UUID] for UUID,
+    /// [PqInterval] for INTERVAL, and `byte[]` for BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY
+    /// with no logical-type annotation. Nested groups surface as
+    /// [PqStruct] / [PqList] / [PqMap].
     ///
     /// @param index the element index (0-based)
-    /// @return the raw element value, or null if the element is null
+    /// @return the decoded element value, or null if the element is null
     /// @throws IndexOutOfBoundsException if index is out of range
     Object get(int index);
 
@@ -74,7 +82,12 @@ public interface PqList {
     /// @return true if the element is null
     boolean isNull(int index);
 
-    /// Iterate over elements as raw objects without type conversion.
+    /// Iterate over elements, each decoded to its logical-type representation.
+    ///
+    /// Element types match [#get]: `Integer` / `String` / [LocalDate] /
+    /// [Instant] / [BigDecimal] / [UUID] / [PqInterval] / etc., with
+    /// `byte[]` for un-annotated BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY columns and
+    /// [PqStruct] / [PqList] / [PqMap] for nested groups.
     Iterable<Object> values();
 
     // ==================== Primitive Type Accessors ====================
@@ -116,6 +129,9 @@ public interface PqList {
 
     /// Iterate over elements as UUID values.
     Iterable<UUID> uuids();
+
+    /// Iterate over elements as [PqInterval] values.
+    Iterable<PqInterval> intervals();
 
     // ==================== Nested Type Accessors ====================
 

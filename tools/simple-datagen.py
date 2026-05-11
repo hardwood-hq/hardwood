@@ -16,7 +16,15 @@ import uuid
 import shutil
 from pathlib import Path
 
-from parquet_annotators import annotate_column_as_bson, annotate_group_as_variant, annotate_column_as_interval, strip_converted_type
+from parquet_annotators import (
+    annotate_column_as_bson,
+    annotate_group_as_variant,
+    annotate_column_as_interval,
+    annotate_element_at_path_as_interval,
+    annotate_element_at_path_as_time,
+    annotate_element_at_path_as_decimal,
+    strip_converted_type,
+)
 
 
 def _copy_if_exists(src: Path, dst: str, prereq_hint: str) -> bool:
@@ -2252,6 +2260,70 @@ pq.write_table(
 print("\nGenerated float16_logical_type_test.parquet:")
 print("  - Schema: id INT32, half FIXED_LEN_BYTE_ARRAY(2) annotated FLOAT16")
 print("  - 7 rows: 0, 1, -1.5, 65504 (max), +Inf, NaN, null")
+
+# hardwood-hq/hardwood#445: typed accessors for INTERVAL inside list/map and
+# TIME / DECIMAL keyed maps. Each column carries data plus a logical-type
+# annotation written into the inner SchemaElement (list element or map key /
+# value), which PyArrow cannot emit directly.
+issue_445_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('intervals', pa.list_(pa.binary(12))),
+    ('interval_map', pa.map_(pa.string(), pa.binary(12))),
+    ('time_keyed', pa.map_(pa.int32(), pa.int32())),
+    ('decimal_keyed', pa.map_(pa.binary(8), pa.int32())),
+])
+
+issue_445_table = pa.table({
+    'id': [1, 2, 3],
+    'intervals': [
+        [_interval_bytes(1, 0, 0), _interval_bytes(0, 7, 0)],
+        [_interval_bytes(2, 30, 1000)],
+        # Row 2 exercises a null INTERVAL element inside a non-null list.
+        [None, _interval_bytes(5, 0, 0)],
+    ],
+    'interval_map': [
+        [('a', _interval_bytes(0, 1, 0))],
+        [('b', _interval_bytes(3, 0, 0)), ('c', _interval_bytes(0, 0, 5000))],
+        # Row 2 exercises a null INTERVAL value (non-null key).
+        [('d', None)],
+    ],
+    'time_keyed': [
+        [(12345, 100)],
+        [(67890, 200), (11111, 300)],
+        [],
+    ],
+    'decimal_keyed': [
+        [(struct.pack('>q', 12345), 1)],
+        [(struct.pack('>q', 99999), 2)],
+        [],
+    ],
+}, schema=issue_445_schema)
+
+pq.write_table(
+    issue_445_table,
+    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+annotate_element_at_path_as_interval(
+    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    ['intervals', 'list', 'element'])
+annotate_element_at_path_as_interval(
+    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    ['interval_map', 'key_value', 'value'])
+annotate_element_at_path_as_time(
+    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    ['time_keyed', 'key_value', 'key'],
+    unit='MILLIS')
+annotate_element_at_path_as_decimal(
+    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    ['decimal_keyed', 'key_value', 'key'],
+    precision=18, scale=2)
+
+print("\nGenerated typed_accessors_issue_445.parquet:")
+print("  - Fixture for hardwood#445: INTERVAL list, INTERVAL-value map,")
+print("    TIME-keyed map, DECIMAL-keyed map.")
 
 # old_list_structure_test.parquet
 # Tests reading the pre-standard 2-level LIST encoding (see hardwood-hq/hardwood#282).
