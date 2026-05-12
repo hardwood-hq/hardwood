@@ -175,12 +175,17 @@ All methods are available as both `method(name)` and `method(index)`, except `ge
 **Typed accessors on `PqList` and `PqMap.Entry`:** Both interfaces mirror the
 RowReader's typed accessor surface — `strings()` / `dates()` / `times()` /
 `timestamps()` / `decimals()` / `uuids()` / `intervals()` / `floats()` /
-`booleans()` on `PqList` (each returning `List<T>`); `getStringKey()` /
-`getDateKey()` / `getTimeKey()` / `getDecimalKey()` / etc. and the matching
+`booleans()` on `PqList` (each returning `List<T>`); the matching
 `getStringValue()` / `getDateValue()` / `getIntervalValue()` / etc. on
 `PqMap.Entry`. Use these in preference to the generic `getValue()` when
 iterating over a list / map of a known logical type to avoid the boxed
 `Object` return.
+
+`PqMap.Entry`'s typed *key* accessor surface is intentionally narrower:
+`getStringKey()` / `getIntKey()` / `getLongKey()` / `getBinaryKey()` cover
+the four high-frequency map key types. Long-tail key types (DATE / TIME /
+TIMESTAMP / DECIMAL / UUID) fall through to `getKey()` (decoded) and
+`getRawKey()` (raw).
 
 `PqList.ints()` / `longs()` / `doubles()` return the specialized
 `PqIntList` / `PqLongList` / `PqDoubleList` types instead — these expose

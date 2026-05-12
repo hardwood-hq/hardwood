@@ -214,36 +214,6 @@ final class PqMapImpl implements PqMap {
         }
 
         @Override
-        public LocalDate getDateKey() {
-            Object raw = readKey();
-            return ValueConverter.convertToDate(raw, keySchema);
-        }
-
-        @Override
-        public LocalTime getTimeKey() {
-            Object raw = readKey();
-            return ValueConverter.convertToTime(raw, keySchema);
-        }
-
-        @Override
-        public Instant getTimestampKey() {
-            Object raw = readKey();
-            return ValueConverter.convertToTimestamp(raw, keySchema);
-        }
-
-        @Override
-        public BigDecimal getDecimalKey() {
-            Object raw = readKey();
-            return ValueConverter.convertToDecimal(raw, keySchema);
-        }
-
-        @Override
-        public UUID getUuidKey() {
-            Object raw = readKey();
-            return ValueConverter.convertToUuid(raw, keySchema);
-        }
-
-        @Override
         public Object getKey() {
             return ValueConverter.convertValue(readKey(), keySchema);
         }

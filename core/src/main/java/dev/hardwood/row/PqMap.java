@@ -44,6 +44,14 @@ public interface PqMap {
     boolean isEmpty();
 
     /// A single key-value entry in a map.
+    ///
+    /// The key-side accessor surface is intentionally narrower than the
+    /// value side: real-world Parquet map keys cluster on `String`, `Int`,
+    /// `Long`, and occasionally `Binary` (Avro maps are string-keyed by spec,
+    /// and ID-keyed maps account for nearly all numeric-keyed cases). Other
+    /// logical types are well-defined as keys but vanishingly rare in
+    /// practice — they fall back to [#getKey] (decoded) and [#getRawKey] (raw)
+    /// rather than each having a dedicated typed accessor.
     interface Entry {
 
         // ==================== Key Accessors - Primitives ====================
@@ -74,41 +82,13 @@ public interface PqMap {
         /// @throws IllegalArgumentException if the key type is not BINARY
         byte[] getBinaryKey();
 
-        /// Get the key as a DATE.
-        ///
-        /// @return the date key value
-        /// @throws IllegalArgumentException if the key type is not DATE
-        LocalDate getDateKey();
-
-        /// Get the key as a TIME.
-        ///
-        /// @return the time key value
-        /// @throws IllegalArgumentException if the key type is not TIME
-        LocalTime getTimeKey();
-
-        /// Get the key as a TIMESTAMP.
-        ///
-        /// @return the instant key value
-        /// @throws IllegalArgumentException if the key type is not TIMESTAMP
-        Instant getTimestampKey();
-
-        /// Get the key as a DECIMAL.
-        ///
-        /// @return the decimal key value
-        /// @throws IllegalArgumentException if the key type is not DECIMAL
-        BigDecimal getDecimalKey();
-
-        /// Get the key as a UUID.
-        ///
-        /// @return the UUID key value
-        /// @throws IllegalArgumentException if the key type is not UUID
-        UUID getUuidKey();
-
         /// Get the key, decoded to its logical-type representation.
         ///
         /// Returns the same form as the typed key accessors above
-        /// (`Integer`, `Long`, `String`, [LocalDate], [LocalTime], [Instant],
-        /// [BigDecimal], [UUID], etc.), with `byte[]` for un-annotated
+        /// (`Integer`, `Long`, `String`, `byte[]`) and additionally covers the
+        /// long-tail logical types not exposed individually — [LocalDate] for
+        /// DATE, [LocalTime] for TIME, [Instant] for TIMESTAMP, [BigDecimal]
+        /// for DECIMAL, [UUID] for UUID — with `byte[]` for un-annotated
         /// BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY columns.
         ///
         /// Use [#getRawKey] to obtain the underlying physical value instead.
