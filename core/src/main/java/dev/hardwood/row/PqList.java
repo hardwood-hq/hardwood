@@ -11,14 +11,15 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.List;
 import java.util.UUID;
 
 /// Type-safe list interface for reading Parquet list values.
 ///
 /// Provides type-specific accessor methods for iterating over list elements.
-/// For primitive int/long/double lists, use the dedicated types
-/// ([PqIntList], [PqLongList], [PqDoubleList]) via
-/// `rowReader.getListOfInts()`, etc.
+/// Primitive int/long/double element lists surface as the dedicated
+/// [PqIntList] / [PqLongList] / [PqDoubleList] types (with `PrimitiveIterator.OfInt`
+/// and friends — no boxing). All other typed accessors return [List].
 ///
 /// ```java
 /// // String list
@@ -31,6 +32,13 @@ import java.util.UUID;
 /// PqList items = rowReader.getList("items");
 /// for (PqStruct item : items.structs()) {
 ///     String name = item.getString("name");
+/// }
+///
+/// // Primitive int list — no boxing
+/// PqList scores = rowReader.getList("scores");
+/// PqIntList ints = scores.ints();
+/// for (var it = ints.iterator(); it.hasNext(); ) {
+///     int v = it.nextInt();
 /// }
 ///
 /// // Nested list (2D matrix)
@@ -63,7 +71,7 @@ public interface PqList {
 
     /// Get an element by index, decoded to its logical-type representation.
     ///
-    /// Returns the value in the same form as the typed iterators below:
+    /// Returns the value in the same form as the typed accessors below:
     /// `Integer` / `Long` / `Float` / `Double` / `Boolean` for primitives,
     /// `String` for STRING, [LocalDate] for DATE, [LocalTime] for TIME,
     /// [Instant] for TIMESTAMP, [BigDecimal] for DECIMAL, [UUID] for UUID,
@@ -82,13 +90,14 @@ public interface PqList {
     /// @return true if the element is null
     boolean isNull(int index);
 
-    /// Iterate over elements, each decoded to its logical-type representation.
+    /// View the elements as a [List], each decoded to its logical-type representation.
     ///
     /// Element types match [#get]: `Integer` / `String` / [LocalDate] /
     /// [Instant] / [BigDecimal] / [UUID] / [PqInterval] / etc., with
     /// `byte[]` for un-annotated BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY columns and
-    /// [PqStruct] / [PqList] / [PqMap] for nested groups.
-    Iterable<Object> values();
+    /// [PqStruct] / [PqList] / [PqMap] for nested groups. The returned list is
+    /// a live view: each `get(int)` decodes lazily on demand.
+    List<Object> values();
 
     /// Get an element by index in its underlying physical form, mirroring
     /// the `getRawValue` accessors on `RowReader` / [PqStruct] / [PqMap.Entry].
@@ -105,80 +114,80 @@ public interface PqList {
     /// @throws IndexOutOfBoundsException if index is out of range
     Object getRaw(int index);
 
-    /// Iterate over elements in their underlying physical form, as in [#getRaw].
-    Iterable<Object> rawValues();
+    /// View the elements as a [List] in their underlying physical form, as in [#getRaw].
+    List<Object> rawValues();
 
     // ==================== Primitive Type Accessors ====================
 
-    /// Iterate over elements as int values.
-    Iterable<Integer> ints();
+    /// View the elements as a [PqIntList] (no boxing).
+    PqIntList ints();
 
-    /// Iterate over elements as long values.
-    Iterable<Long> longs();
+    /// View the elements as a [PqLongList] (no boxing).
+    PqLongList longs();
 
-    /// Iterate over elements as float values.
-    Iterable<Float> floats();
+    /// View the elements as a [List] of float values.
+    List<Float> floats();
 
-    /// Iterate over elements as double values.
-    Iterable<Double> doubles();
+    /// View the elements as a [PqDoubleList] (no boxing).
+    PqDoubleList doubles();
 
-    /// Iterate over elements as boolean values.
-    Iterable<Boolean> booleans();
+    /// View the elements as a [List] of boolean values.
+    List<Boolean> booleans();
 
     // ==================== Object Type Accessors ====================
 
-    /// Iterate over elements as String values.
-    Iterable<String> strings();
+    /// View the elements as a [List] of String values.
+    List<String> strings();
 
-    /// Iterate over elements as binary (byte[]) values.
-    Iterable<byte[]> binaries();
+    /// View the elements as a [List] of binary (`byte[]`) values.
+    List<byte[]> binaries();
 
-    /// Iterate over elements as LocalDate values.
-    Iterable<LocalDate> dates();
+    /// View the elements as a [List] of [LocalDate] values.
+    List<LocalDate> dates();
 
-    /// Iterate over elements as LocalTime values.
-    Iterable<LocalTime> times();
+    /// View the elements as a [List] of [LocalTime] values.
+    List<LocalTime> times();
 
-    /// Iterate over elements as Instant (timestamp) values.
-    Iterable<Instant> timestamps();
+    /// View the elements as a [List] of [Instant] (timestamp) values.
+    List<Instant> timestamps();
 
-    /// Iterate over elements as BigDecimal values.
-    Iterable<BigDecimal> decimals();
+    /// View the elements as a [List] of [BigDecimal] values.
+    List<BigDecimal> decimals();
 
-    /// Iterate over elements as UUID values.
-    Iterable<UUID> uuids();
+    /// View the elements as a [List] of [UUID] values.
+    List<UUID> uuids();
 
-    /// Iterate over elements as [PqInterval] values.
-    Iterable<PqInterval> intervals();
+    /// View the elements as a [List] of [PqInterval] values.
+    List<PqInterval> intervals();
 
     // ==================== Nested Type Accessors ====================
 
-    /// Iterate over elements as nested structs.
-    Iterable<PqStruct> structs();
+    /// View the elements as a [List] of nested structs.
+    List<PqStruct> structs();
 
-    /// Iterate over elements as nested lists.
+    /// View the elements as a [List] of nested lists.
     /// Use this for list-of-list structures.
-    Iterable<PqList> lists();
+    List<PqList> lists();
 
-    /// Iterate over elements as nested int lists.
+    /// View the elements as a [List] of nested int lists.
     /// Use this for list-of-int-list structures (e.g., 2D int matrix).
-    Iterable<PqIntList> intLists();
+    List<PqIntList> intLists();
 
-    /// Iterate over elements as nested long lists.
+    /// View the elements as a [List] of nested long lists.
     /// Use this for list-of-long-list structures.
-    Iterable<PqLongList> longLists();
+    List<PqLongList> longLists();
 
-    /// Iterate over elements as nested double lists.
+    /// View the elements as a [List] of nested double lists.
     /// Use this for list-of-double-list structures.
-    Iterable<PqDoubleList> doubleLists();
+    List<PqDoubleList> doubleLists();
 
-    /// Iterate over elements as nested maps.
-    Iterable<PqMap> maps();
+    /// View the elements as a [List] of nested maps.
+    List<PqMap> maps();
 
-    /// Iterate over elements as [PqVariant] values.
+    /// View the elements as a [List] of [PqVariant] values.
     ///
     /// Only unshredded variants are supported in repeated contexts today;
     /// iterating a list of shredded variants throws
     /// [UnsupportedOperationException] on first access.
-    Iterable<PqVariant> variants();
+    List<PqVariant> variants();
 }
