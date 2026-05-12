@@ -542,5 +542,7 @@ class DrainSideOracleTest {
         @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(int idx) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
+        @Override public Object getRawValue(int idx) { throw new UnsupportedOperationException(); }
+        @Override public Object getRawValue(String name) { throw new UnsupportedOperationException(); }
     }
 }

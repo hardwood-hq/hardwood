@@ -26,6 +26,11 @@ public class LogicalTypeConverter {
 
     /// Convert a physical value to its logical type representation.
     /// Returns the original value if no conversion is needed.
+    ///
+    /// Exhaustive over the sealed [LogicalType] hierarchy: a new subtype
+    /// will fail to compile here until an explicit case is added, blocking
+    /// the silent fall-through that masked the missing `JsonType` arm in
+    /// earlier revisions.
     public static Object convert(Object physicalValue, PhysicalType physicalType, LogicalType logicalType) {
         if (physicalValue == null || logicalType == null) {
             return physicalValue;
@@ -43,10 +48,25 @@ public class LogicalTypeConverter {
             case LogicalType.BsonType t -> convertToBson(physicalValue, physicalType);
             case LogicalType.IntervalType t -> convertToInterval(physicalValue, physicalType);
             case LogicalType.Float16Type t -> convertToFloat16(physicalValue, physicalType);
-            // EnumType: pass through as-is (no conversion needed or not supported)
-            // ListType and MapType are structural types handled by RecordAssembler, not primitive conversions
-            default -> physicalValue;
+            // Enum is stored as raw BYTE_ARRAY; Geometry / Geography carry
+            // opaque WKB / WKT binary payloads with no decoder yet — pass
+            // each through unchanged.
+            case LogicalType.EnumType e -> physicalValue;
+            case LogicalType.GeometryType g -> physicalValue;
+            case LogicalType.GeographyType g -> physicalValue;
+            // Structural / self-describing logical types are carried on group
+            // nodes (handled by RecordAssembler / variant flyweights) and
+            // must never reach a primitive-typed conversion.
+            case LogicalType.ListType l -> throw structuralReached(logicalType);
+            case LogicalType.MapType m -> throw structuralReached(logicalType);
+            case LogicalType.VariantType v -> throw structuralReached(logicalType);
         };
+    }
+
+    private static IllegalStateException structuralReached(LogicalType logicalType) {
+        return new IllegalStateException(
+                "Structural logical type " + logicalType.getClass().getSimpleName()
+                        + " reached primitive-value conversion");
     }
 
     public static String convertToString(Object value, PhysicalType physicalType) {

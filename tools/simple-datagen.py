@@ -20,7 +20,9 @@ from parquet_annotators import (
     annotate_column_as_bson,
     annotate_group_as_variant,
     annotate_column_as_interval,
+    annotate_element_at_path_as_float16,
     annotate_element_at_path_as_interval,
+    annotate_element_at_path_as_json,
     annotate_element_at_path_as_time,
     annotate_element_at_path_as_decimal,
     strip_converted_type,
@@ -2271,6 +2273,22 @@ issue_445_schema = pa.schema([
     ('interval_map', pa.map_(pa.string(), pa.binary(12))),
     ('time_keyed', pa.map_(pa.int32(), pa.int32())),
     ('decimal_keyed', pa.map_(pa.binary(8), pa.int32())),
+    # Map<String, JSON> — exercises decoded vs raw on PqMap.Entry.getValue()
+    # for a BYTE_ARRAY column carrying the JSON logical-type annotation.
+    ('json_map', pa.map_(pa.string(), pa.binary())),
+    # Map<String, FLOAT16> — exercises PqMap.Entry.getFloatValue() on a
+    # FLBA(2) value column annotated as FLOAT16 (parity with PqStruct /
+    # PqList / FlatRowReader, all of which already handle this).
+    ('f16_map', pa.map_(pa.string(), pa.binary(2))),
+    # Struct{ts: TIMESTAMP(MICROS), payload: JSON, i8: INT_8} — exercises
+    # decoded vs raw on PqStruct.getValue() for INT64-backed, BYTE_ARRAY-backed,
+    # and narrowed-integer logical types (INT_8 surfaces as `Byte` decoded but
+    # `Integer` raw, matching the flat-reader path).
+    ('nested_struct', pa.struct([
+        ('ts', pa.timestamp('us', tz='UTC')),
+        ('payload', pa.binary()),
+        ('i8', pa.int8()),
+    ])),
 ])
 
 issue_445_table = pa.table({
@@ -2297,6 +2315,29 @@ issue_445_table = pa.table({
         [(struct.pack('>q', 99999), 2)],
         [],
     ],
+    'json_map': [
+        [('k1', b'{"a":1}')],
+        [('k2', b'[true,false]'), ('k3', b'"hello"')],
+        [],
+    ],
+    # struct.pack('<e', ...) writes IEEE 754 binary16 little-endian — the
+    # encoding Parquet's FLOAT16 logical type expects.
+    'f16_map': [
+        [('a', struct.pack('<e', 1.5))],
+        [('b', struct.pack('<e', -1.0)), ('c', struct.pack('<e', 2.0))],
+        [],
+    ],
+    'nested_struct': [
+        {'ts': pa.scalar(1, type=pa.timestamp('us', tz='UTC')).as_py(),
+         'payload': b'{"answer":42}',
+         'i8': 7},
+        {'ts': pa.scalar(2_000_000, type=pa.timestamp('us', tz='UTC')).as_py(),
+         'payload': b'[1,2,3]',
+         'i8': -1},
+        {'ts': pa.scalar(3_000_000, type=pa.timestamp('us', tz='UTC')).as_py(),
+         'payload': b'null',
+         'i8': 0},
+    ],
 }, schema=issue_445_schema)
 
 pq.write_table(
@@ -2320,10 +2361,20 @@ annotate_element_at_path_as_decimal(
     'core/src/test/resources/typed_accessors_issue_445.parquet',
     ['decimal_keyed', 'key_value', 'key'],
     precision=18, scale=2)
+annotate_element_at_path_as_json(
+    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    ['json_map', 'key_value', 'value'])
+annotate_element_at_path_as_json(
+    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    ['nested_struct', 'payload'])
+annotate_element_at_path_as_float16(
+    'core/src/test/resources/typed_accessors_issue_445.parquet',
+    ['f16_map', 'key_value', 'value'])
 
 print("\nGenerated typed_accessors_issue_445.parquet:")
 print("  - Fixture for hardwood#445: INTERVAL list, INTERVAL-value map,")
-print("    TIME-keyed map, DECIMAL-keyed map.")
+print("    TIME-keyed map, DECIMAL-keyed map, JSON-value map, FLOAT16-value map,")
+print("    struct{ts, JSON, INT_8}.")
 
 # old_list_structure_test.parquet
 # Tests reading the pre-standard 2-level LIST encoding (see hardwood-hq/hardwood#282).
