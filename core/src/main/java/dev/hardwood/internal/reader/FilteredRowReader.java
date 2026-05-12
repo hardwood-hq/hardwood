@@ -109,6 +109,7 @@ public final class FilteredRowReader implements RowReader {
     @Override public PqMap getMap(String name) { return delegate.getMap(name); }
     @Override public PqMap getMap(int i) { return delegate.getMap(i); }
     @Override public PqVariant getVariant(String name) { return delegate.getVariant(name); }
+    @Override public PqVariant getVariant(int i) { return delegate.getVariant(i); }
 
     @Override
     public void close() {

@@ -334,6 +334,7 @@ class RecordFilterIndexedTest {
         @Override public PqDoubleList getListOfDoubles(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqList getList(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqMap getMap(int idx) { throw new UnsupportedOperationException(); }
+        @Override public PqVariant getVariant(int idx) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(int idx) { throw new UnsupportedOperationException(); }
         @Override public Object getRawValue(int idx) { throw new UnsupportedOperationException(); }
     }

@@ -17,12 +17,14 @@ import java.util.List;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.SchemaNode;
 
 /// Flyweight [PqMap] that reads key-value entries directly from parallel column arrays.
@@ -402,6 +404,36 @@ final class PqMapImpl implements PqMap {
         }
 
         @Override
+        public PqVariant getVariantValue() {
+            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+            if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
+                throw new IllegalArgumentException("Value is not a variant");
+            }
+            if (variantDesc.root().typed() != null) {
+                // Shredded variants in repeated contexts need position-aware
+                // reassembly (tracked in hardwood#467); the unshredded path
+                // below works today.
+                throw new UnsupportedOperationException(
+                        "Shredded Variant inside a map value is not yet supported");
+            }
+            if (variantDesc.metadataCol() < 0) {
+                throw new IllegalStateException(
+                        "Variant map value requires its 'metadata' child in the projection");
+            }
+            if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
+                return null;
+            }
+            byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[valueIdx];
+            int valueCol = variantDesc.valueCol();
+            if (valueCol < 0) {
+                throw new IllegalStateException(
+                        "Variant map value requires its 'value' child in the projection");
+            }
+            byte[] value = ((byte[][]) batch.valueArrays[valueCol])[valueIdx];
+            return new PqVariantImpl(metadataBytes, value);
+        }
+
+        @Override
         public Object getValue() {
             Object group = groupValueOrNull();
             if (group != null) {
@@ -440,6 +472,9 @@ final class PqMapImpl implements PqMap {
             }
             if (vDesc instanceof TopLevelFieldMap.FieldDesc.MapOf) {
                 return getMapValue();
+            }
+            if (vDesc instanceof TopLevelFieldMap.FieldDesc.Variant) {
+                return getVariantValue();
             }
             return null;
         }

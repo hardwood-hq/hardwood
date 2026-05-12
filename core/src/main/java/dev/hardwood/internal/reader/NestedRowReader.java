@@ -309,6 +309,7 @@ public final class NestedRowReader implements RowReader {
     @Override public PqMap getMap(String name) { return dataView.getMap(name); }
     @Override public PqMap getMap(int i) { return dataView.getMap(i); }
     @Override public PqVariant getVariant(String name) { return dataView.getVariant(name); }
+    @Override public PqVariant getVariant(int i) { return dataView.getVariant(i); }
 
     // ==================== Metadata ====================
 

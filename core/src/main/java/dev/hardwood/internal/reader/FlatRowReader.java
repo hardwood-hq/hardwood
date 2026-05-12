@@ -672,6 +672,7 @@ public final class FlatRowReader implements RowReader {
     @Override public PqMap getMap(String name) { throw nestedUnsupported(); }
     @Override public PqMap getMap(int i) { throw nestedUnsupported(); }
     @Override public PqVariant getVariant(String name) { throw nestedUnsupported(); }
+    @Override public PqVariant getVariant(int i) { throw nestedUnsupported(); }
 
     // ==================== Metadata ====================
 

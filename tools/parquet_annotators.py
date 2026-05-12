@@ -358,6 +358,24 @@ def annotate_element_at_path_as_json(path: str, name_path) -> None:
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 
+def annotate_group_at_path_as_variant(path: str, name_path, spec_version: int = 1) -> None:
+    """Annotate the group SchemaElement at `name_path` as VARIANT.
+
+    Sibling of `annotate_group_as_variant` for variants nested inside a
+    list element or map value, where the target group can't be located
+    by a flat name search and must be walked via the schema's parent
+    chain. The group must already exist with the expected `metadata` /
+    `value` children — this helper only stamps the annotation.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    if el.num_children is None:
+        raise ValueError(f"Path {name_path!r} resolves to a leaf, expected a group")
+    el.logicalType = _parquet.LogicalType(
+        VARIANT=_parquet.VariantType(specification_version=spec_version))
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
 def annotate_element_at_path_as_float16(path: str, name_path) -> None:
     """Annotate the SchemaElement at `name_path` as FLOAT16 (FLBA(2) payload).
 

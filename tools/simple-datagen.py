@@ -19,6 +19,7 @@ from pathlib import Path
 from parquet_annotators import (
     annotate_column_as_bson,
     annotate_group_as_variant,
+    annotate_group_at_path_as_variant,
     annotate_column_as_interval,
     annotate_element_at_path_as_float16,
     annotate_element_at_path_as_interval,
@@ -2106,6 +2107,76 @@ annotate_group_as_variant('core/src/test/resources/variant_shredded_test.parquet
 print("\nGenerated variant_shredded_test.parquet:")
 print("  - 4 rows exercising the shredded reassembly paths")
 print("  - typed_value: int64 — shredded (rows 1, 4), unshredded (row 2), Variant NULL (row 3)")
+
+# ============================================================================
+# hardwood-hq/hardwood#464: VARIANT in repeated contexts (map values, list
+# elements). Exercises the unshredded path through PqMap.Entry.getVariantValue,
+# PqList.variants, and RowReader.getVariant(int). Shredded variants in
+# repeated contexts remain deferred (tracked in #467).
+# ============================================================================
+
+variant_in_repeated_schema = pa.schema([
+    ('id', pa.int32(), False),
+    # Top-level variant — exercises RowReader.getVariant(int).
+    ('top_var', pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), False),
+    ]), True),
+    # Map<String, Variant> — exercises PqMap.Entry.getVariantValue.
+    ('var_map', pa.map_(pa.string(), pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), False),
+    ]))),
+    # List<Variant> — exercises PqList.variants().
+    ('var_list', pa.list_(pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), False),
+    ]))),
+])
+
+# Variant payloads reused across columns: BOOLEAN_TRUE, INT32(7), short string "hi".
+_v_true = (_empty_metadata, bytes([0x04]))
+_v_int7 = (_empty_metadata, bytes([0x14, 7, 0, 0, 0]))
+_v_hi = (_empty_metadata, bytes([0x09, ord('h'), ord('i')]))
+
+variant_in_repeated_table = pa.table({
+    'id': [1, 2],
+    'top_var': [
+        {'metadata': _v_true[0], 'value': _v_true[1]},
+        {'metadata': _v_int7[0], 'value': _v_int7[1]},
+    ],
+    'var_map': [
+        [('a', {'metadata': _v_true[0], 'value': _v_true[1]}),
+         ('b', {'metadata': _v_int7[0], 'value': _v_int7[1]})],
+        [('c', {'metadata': _v_hi[0], 'value': _v_hi[1]})],
+    ],
+    'var_list': [
+        [{'metadata': _v_true[0], 'value': _v_true[1]},
+         {'metadata': _v_int7[0], 'value': _v_int7[1]},
+         {'metadata': _v_hi[0], 'value': _v_hi[1]}],
+        [{'metadata': _v_int7[0], 'value': _v_int7[1]}],
+    ],
+}, schema=variant_in_repeated_schema)
+
+pq.write_table(
+    variant_in_repeated_table,
+    'core/src/test/resources/variant_in_repeated_test.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant(
+    'core/src/test/resources/variant_in_repeated_test.parquet', 'top_var')
+annotate_group_at_path_as_variant(
+    'core/src/test/resources/variant_in_repeated_test.parquet',
+    ['var_map', 'key_value', 'value'])
+annotate_group_at_path_as_variant(
+    'core/src/test/resources/variant_in_repeated_test.parquet',
+    ['var_list', 'list', 'element'])
+
+print("\nGenerated variant_in_repeated_test.parquet:")
+print("  - 2 rows covering top-level Variant, Map<String, Variant>, List<Variant>")
+print("  - All unshredded; payloads: BOOLEAN_TRUE, INT32(7), short string 'hi'")
 
 # ============================================================================
 # Variant attributes example — EAV table backing the docs/tweet snippet

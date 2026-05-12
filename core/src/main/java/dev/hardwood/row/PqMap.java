@@ -230,6 +230,16 @@ public interface PqMap {
         /// @throws IllegalArgumentException if the value type is not a map
         PqMap getMapValue();
 
+        /// Get the value as a VARIANT.
+        ///
+        /// Only unshredded variants are supported in repeated contexts today;
+        /// shredded variant values throw [UnsupportedOperationException].
+        ///
+        /// @return the variant, or null if the value is null
+        /// @throws IllegalArgumentException if the value type is not a variant
+        /// @throws UnsupportedOperationException if the variant is shredded
+        PqVariant getVariantValue();
+
         /// Get the value, decoded to its logical-type representation.
         ///
         /// Returns the same form as the typed value accessors above

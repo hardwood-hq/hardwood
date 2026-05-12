@@ -174,4 +174,11 @@ public interface PqList {
 
     /// Iterate over elements as nested maps.
     Iterable<PqMap> maps();
+
+    /// Iterate over elements as [PqVariant] values.
+    ///
+    /// Only unshredded variants are supported in repeated contexts today;
+    /// iterating a list of shredded variants throws
+    /// [UnsupportedOperationException] on first access.
+    Iterable<PqVariant> variants();
 }

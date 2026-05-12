@@ -25,6 +25,7 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
@@ -184,6 +185,12 @@ public interface RowReader extends StructAccessor, AutoCloseable {
     ///
     /// @return the interval, or null if the field is null
     PqInterval getInterval(int fieldIndex);
+
+    /// Get a VARIANT field value by field index.
+    ///
+    /// @return the variant, or null if the field is null
+    /// @throws UnsupportedOperationException if the variant is shredded
+    PqVariant getVariant(int fieldIndex);
 
     /// Get a field value by field index, decoded to its logical-type
     /// representation. See [#getValue(String)] for the decoded type mapping.

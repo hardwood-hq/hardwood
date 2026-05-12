@@ -17,6 +17,7 @@ import java.util.UUID;
 import java.util.function.IntFunction;
 
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
+import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
@@ -24,6 +25,7 @@ import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.SchemaNode;
 
 /// Flyweight [PqList] that reads list elements directly from column arrays.
@@ -124,9 +126,11 @@ final class PqListImpl implements PqList {
         if (subLevel >= 0) {
             return getNestedElement(index);
         }
-        // Leaf level: check if element is a nested type (struct/list/map within a leaf-level list)
+        // Leaf level: check if element is a nested type (struct/list/map/variant within a leaf-level list)
         if (elementSchema instanceof SchemaNode.GroupNode group) {
-            if (group.isStruct()) {
+            if (group.isVariant()) {
+                return createInnerVariant(index);
+            } else if (group.isStruct()) {
                 return createInnerStruct(index);
             } else if (group.isList()) {
                 return createInnerGenericList(index);
@@ -171,7 +175,9 @@ final class PqListImpl implements PqList {
             return getNestedElement(index);
         }
         if (elementSchema instanceof SchemaNode.GroupNode group) {
-            if (group.isStruct()) {
+            if (group.isVariant()) {
+                return createInnerVariant(index);
+            } else if (group.isStruct()) {
                 return createInnerStruct(index);
             } else if (group.isList()) {
                 return createInnerGenericList(index);
@@ -294,6 +300,11 @@ final class PqListImpl implements PqList {
     @Override
     public Iterable<PqMap> maps() {
         return () -> new NestedListIterator<>(this::createInnerMap);
+    }
+
+    @Override
+    public Iterable<PqVariant> variants() {
+        return () -> new NestedListIterator<>(this::createInnerVariant);
     }
 
     // ==================== Internal: Range Computation ====================
@@ -495,6 +506,35 @@ final class PqListImpl implements PqList {
             return PqMapImpl.create(batch, builtDesc, -1, valueIdx);
         }
         return PqMapImpl.create(batch, innerMapDesc, -1, valueIdx);
+    }
+
+    private PqVariant createInnerVariant(int index) {
+        TopLevelFieldMap.FieldDesc elementDesc = listDesc.elementDesc();
+        if (!(elementDesc instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
+            throw new IllegalArgumentException("Element is not a variant");
+        }
+        if (variantDesc.root().typed() != null) {
+            // Shredded variants in repeated contexts need position-aware
+            // reassembly (tracked in hardwood#467).
+            throw new UnsupportedOperationException(
+                    "Shredded Variant inside a list element is not yet supported");
+        }
+        if (variantDesc.metadataCol() < 0) {
+            throw new IllegalStateException(
+                    "Variant list element requires its 'metadata' child in the projection");
+        }
+        int valueIdx = start + index;
+        if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
+            return null;
+        }
+        byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[valueIdx];
+        int valueCol = variantDesc.valueCol();
+        if (valueCol < 0) {
+            throw new IllegalStateException(
+                    "Variant list element requires its 'value' child in the projection");
+        }
+        byte[] value = ((byte[][]) batch.valueArrays[valueCol])[valueIdx];
+        return new PqVariantImpl(metadataBytes, value);
     }
 
     private boolean isStructElementNull(TopLevelFieldMap.FieldDesc.Struct structDesc, int valueIdx) {
