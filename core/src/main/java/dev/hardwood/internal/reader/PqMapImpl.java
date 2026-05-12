@@ -16,6 +16,9 @@ import java.util.AbstractList;
 import java.util.List;
 import java.util.UUID;
 
+import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -273,6 +276,15 @@ final class PqMapImpl implements PqMap {
             int valueProjCol = mapDesc.valueProjCol();
             if (batch.isElementNull(valueProjCol, valueIdx)) {
                 throw new NullPointerException("Value is null");
+            }
+            if (valueSchema instanceof SchemaNode.PrimitiveNode primitive
+                    && primitive.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                    && primitive.logicalType() instanceof LogicalType.Float16Type) {
+                // FLOAT16 path: FLBA(2) payload decoded to a single-precision
+                // float, matching PqStructImpl.getFloat and FlatRowReader.getFloat.
+                return LogicalTypeConverter.convertToFloat16(
+                        ((byte[][]) batch.valueArrays[valueProjCol])[valueIdx],
+                        primitive.type());
             }
             return ((float[]) batch.valueArrays[valueProjCol])[valueIdx];
         }

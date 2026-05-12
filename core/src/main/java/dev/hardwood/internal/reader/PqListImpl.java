@@ -163,6 +163,38 @@ final class PqListImpl implements PqList {
         return () -> new LeafIterator<>(raw -> ValueConverter.convertValue(raw, elementSchema));
     }
 
+    @Override
+    public Object getRaw(int index) {
+        checkBounds(index);
+        if (subLevel >= 0) {
+            // Nested-mode elements are always groups — same flyweight as get().
+            return getNestedElement(index);
+        }
+        if (elementSchema instanceof SchemaNode.GroupNode group) {
+            if (group.isStruct()) {
+                return createInnerStruct(index);
+            } else if (group.isList()) {
+                return createInnerGenericList(index);
+            } else if (group.isMap()) {
+                return createInnerMap(index);
+            }
+        }
+        int projCol = listDesc.firstLeafProjCol();
+        int valueIdx = start + index;
+        if (batch.isElementNull(projCol, valueIdx)) {
+            return null;
+        }
+        return batch.getValue(projCol, valueIdx);
+    }
+
+    @Override
+    public Iterable<Object> rawValues() {
+        if (elementSchema instanceof SchemaNode.GroupNode) {
+            return () -> new NestedListIterator<>(this::getRaw);
+        }
+        return () -> new LeafIterator<>(raw -> raw);
+    }
+
     // ==================== Primitive Type Accessors ====================
 
     @Override

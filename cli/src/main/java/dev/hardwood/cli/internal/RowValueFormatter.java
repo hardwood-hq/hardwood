@@ -182,8 +182,10 @@ public final class RowValueFormatter {
         }
         StringBuilder sb = new StringBuilder("[\n");
         String childPad = pad(indent + 1);
-        // `list.values()` already returns logical values; for raw mode iterate
-        // by index and pull through size() entries with no logical decoding.
+        // Indexed iteration so a null element is rendered as `null` via isNull(i)
+        // — `list.values()` skips that distinction. List elements have no raw
+        // form distinct from get(i), so `useLogicalType` only affects nested
+        // primitives reached through formatNestedPretty.
         for (int i = 0; i < list.size(); i++) {
             if (i > 0) {
                 sb.append(",\n");

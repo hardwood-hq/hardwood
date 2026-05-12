@@ -152,6 +152,12 @@ public final class ValueConverter {
 
     /// Convert a primitive value based on schema type.
     /// Group types (struct/list/map) are handled directly by flyweight implementations.
+    ///
+    /// Thin SchemaNode-aware shim over [LogicalTypeConverter#convert]: the
+    /// underlying decode table lives there so flat and nested reader paths
+    /// share a single source of truth. The shim only handles the SchemaNode
+    /// unwrap, the unannotated-INT96 → [Instant] convention, and short-circuits
+    /// group nodes for the flyweight path.
     static Object convertValue(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;
@@ -166,48 +172,12 @@ public final class ValueConverter {
         SchemaNode.PrimitiveNode primitive = (SchemaNode.PrimitiveNode) schema;
         LogicalType logicalType = primitive.logicalType();
 
-        // Handle logical types first
-        if (logicalType instanceof LogicalType.DateType) {
-            return convertToDate(rawValue, schema);
-        }
-        else if (logicalType instanceof LogicalType.TimeType) {
-            return convertToTime(rawValue, schema);
-        }
-        else if (logicalType instanceof LogicalType.TimestampType) {
-            return convertToTimestamp(rawValue, schema);
-        }
-        else if (logicalType instanceof LogicalType.DecimalType) {
-            return convertToDecimal(rawValue, schema);
-        }
-        else if (logicalType instanceof LogicalType.UuidType) {
-            return convertToUuid(rawValue, schema);
-        }
-        else if (logicalType instanceof LogicalType.IntervalType) {
-            return convertToInterval(rawValue, schema);
-        }
-        else if (logicalType instanceof LogicalType.StringType) {
-            return convertToString(rawValue, schema);
-        }
-        else if (logicalType instanceof LogicalType.BsonType) {
-            return convertToBinary(rawValue, schema);
-        }
-        else if (logicalType instanceof LogicalType.Float16Type) {
-            return convertToFloat(rawValue, schema);
+        if (logicalType == null && primitive.type() == PhysicalType.INT96) {
+            // INT96 carries no logical type but is conventionally a TIMESTAMP.
+            return LogicalTypeConverter.int96ToInstant((byte[]) rawValue);
         }
 
-        // Fall back to physical type. BYTE_ARRAY without a STRING logical type is
-        // surfaced as raw bytes: the column may contain arbitrary binary payloads
-        // (Protobuf, WKB, custom encodings) which UTF-8 decoding would corrupt.
-        return switch (primitive.type()) {
-            case INT32 -> convertToInt(rawValue, schema);
-            case INT64 -> convertToLong(rawValue, schema);
-            case FLOAT -> convertToFloat(rawValue, schema);
-            case DOUBLE -> convertToDouble(rawValue, schema);
-            case BOOLEAN -> convertToBoolean(rawValue, schema);
-            case BYTE_ARRAY -> convertToBinary(rawValue, schema);
-            case FIXED_LEN_BYTE_ARRAY -> convertToBinary(rawValue, schema);
-            case INT96 -> convertToTimestamp(rawValue, schema);
-        };
+        return LogicalTypeConverter.convert(rawValue, primitive.type(), logicalType);
     }
 
     // ==================== Validation Helpers ====================

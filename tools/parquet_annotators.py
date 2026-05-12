@@ -15,7 +15,9 @@ preserved byte-for-byte.
 
 Supported annotations:
 - BSON       — `annotate_column_as_bson`
+- FLOAT16    — `annotate_element_at_path_as_float16`
 - INTERVAL   — `annotate_column_as_interval`
+- JSON       — `annotate_element_at_path_as_json`
 - VARIANT    — `annotate_group_as_variant`
 
 Modern-only fixture helpers (strip legacy annotations so only `logicalType` remains):
@@ -344,6 +346,27 @@ def annotate_element_at_path_as_time(path: str, name_path, *,
         el.converted_type = _parquet.ConvertedType.TIME_MILLIS
     elif unit == "MICROS":
         el.converted_type = _parquet.ConvertedType.TIME_MICROS
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def annotate_element_at_path_as_json(path: str, name_path) -> None:
+    """Annotate the SchemaElement at `name_path` as JSON (BYTE_ARRAY payload)."""
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    el.logicalType = _parquet.LogicalType(JSON=_parquet.JsonType())
+    el.converted_type = _parquet.ConvertedType.JSON
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
+def annotate_element_at_path_as_float16(path: str, name_path) -> None:
+    """Annotate the SchemaElement at `name_path` as FLOAT16 (FLBA(2) payload).
+
+    PyArrow has no native FLOAT16 emitter; the underlying column must be
+    written as `pa.binary(2)` and post-annotated here.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+    el = _find_schema_element_by_path(file_metadata, list(name_path))
+    el.logicalType = _parquet.LogicalType(FLOAT16=_parquet.Float16Type())
     _write_parquet_footer(path, data_before_footer, file_metadata)
 
 

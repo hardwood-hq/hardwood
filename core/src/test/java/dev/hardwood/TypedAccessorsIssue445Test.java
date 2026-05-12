@@ -10,8 +10,10 @@ package dev.hardwood;
 import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
@@ -23,6 +25,7 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
+import dev.hardwood.row.PqStruct;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -61,6 +64,16 @@ class TypedAccessorsIssue445Test {
             // indexed accessor
             assertThat(intervals.get(0)).isEqualTo(new PqInterval(1, 0, 0));
             assertThat(intervals.get(1)).isEqualTo(new PqInterval(0, 7, 0));
+
+            // raw accessor exposes the underlying FLBA(12) bytes
+            assertThat(intervals.getRaw(0)).isInstanceOf(byte[].class);
+            assertThat((byte[]) intervals.getRaw(0)).hasSize(12);
+            List<Object> viaRaw = new ArrayList<>();
+            for (Object o : intervals.rawValues()) {
+                viaRaw.add(o);
+            }
+            assertThat(viaRaw).hasSize(2);
+            assertThat(viaRaw.get(0)).isInstanceOf(byte[].class);
         }
     }
 
@@ -177,9 +190,76 @@ class TypedAccessorsIssue445Test {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FIXTURE));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
-            // The id column has no logical type — both forms agree.
+            // id has no logical type — both forms agree (sanity check).
             assertThat(rowReader.getValue("id")).isEqualTo(1);
             assertThat(rowReader.getRawValue("id")).isEqualTo(1);
+
+            // nested_struct is a group — both forms return the same PqStruct flyweight.
+            assertThat(rowReader.getValue("nested_struct")).isInstanceOf(PqStruct.class);
+            assertThat(rowReader.getRawValue("nested_struct")).isInstanceOf(PqStruct.class);
+        }
+    }
+
+    @Test
+    void pqStructGetValueDecodesAndGetRawValueSurfacesPhysical() throws Exception {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FIXTURE));
+             RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            PqStruct nested = (PqStruct) rowReader.getValue("nested_struct");
+
+            // TIMESTAMP(MICROS) field: getValue decodes to Instant, getRawValue
+            // surfaces the underlying INT64 micros.
+            assertThat(nested.getValue("ts")).isEqualTo(Instant.ofEpochSecond(0, 1_000));
+            assertThat(nested.getRawValue("ts")).isEqualTo(1L);
+
+            // JSON-annotated BYTE_ARRAY: getValue decodes to String, getRawValue
+            // surfaces the raw payload bytes.
+            assertThat(nested.getValue("payload")).isEqualTo("{\"answer\":42}");
+            assertThat(nested.getRawValue("payload"))
+                    .isEqualTo("{\"answer\":42}".getBytes(StandardCharsets.UTF_8));
+
+            // INT_8-annotated INT32: getValue narrows to Byte (matching the
+            // flat-reader path through LogicalTypeConverter); getRawValue
+            // surfaces the underlying Integer.
+            assertThat(nested.getValue("i8")).isEqualTo((byte) 7);
+            assertThat(nested.getRawValue("i8")).isEqualTo(7);
+        }
+    }
+
+    @Test
+    void pqMapEntryGetValueDecodesJsonAnnotatedBytes() throws Exception {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FIXTURE));
+             RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            PqMap map = rowReader.getMap("json_map");
+            List<PqMap.Entry> entries = map.getEntries();
+            assertThat(entries).hasSize(1);
+
+            PqMap.Entry e = entries.get(0);
+            assertThat(e.getStringKey()).isEqualTo("k1");
+            // getValue decodes the JSON-annotated BYTE_ARRAY to String, matching
+            // the flat-reader path through LogicalTypeConverter.
+            assertThat(e.getValue()).isEqualTo("{\"a\":1}");
+            assertThat(e.getRawValue())
+                    .isEqualTo("{\"a\":1}".getBytes(StandardCharsets.UTF_8));
+        }
+    }
+
+    @Test
+    void pqMapEntryGetFloatValueDecodesFloat16() throws Exception {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FIXTURE));
+             RowReader rowReader = fileReader.rowReader()) {
+            rowReader.next();
+            PqMap map = rowReader.getMap("f16_map");
+            List<PqMap.Entry> entries = map.getEntries();
+            assertThat(entries).hasSize(1);
+
+            // FLOAT16 stored as FLBA(2); getFloatValue must widen to a
+            // single-precision float, matching the behaviour PqStruct.getFloat
+            // and FlatRowReader.getFloat already provide.
+            PqMap.Entry e = entries.get(0);
+            assertThat(e.getStringKey()).isEqualTo("a");
+            assertThat(e.getFloatValue()).isEqualTo(1.5f);
         }
     }
 }

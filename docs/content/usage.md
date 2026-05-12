@@ -193,6 +193,7 @@ To inspect the underlying physical storage instead — e.g. the raw `Long` micro
 - `RowReader.getRawValue(name)` / `getRawValue(index)`
 - `PqStruct.getRawValue(name)`
 - `PqMap.Entry.getRawKey()` / `getRawValue()`
+- `PqList.getRaw(index)` / `PqList.rawValues()`
 
 Nested groups (struct / list / map / variant) have no distinct "raw" form and are returned through their typed flyweight (`PqStruct` / `PqList` / `PqMap` / `PqVariant`) in both modes.
 

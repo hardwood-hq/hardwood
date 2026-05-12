@@ -90,6 +90,24 @@ public interface PqList {
     /// [PqStruct] / [PqList] / [PqMap] for nested groups.
     Iterable<Object> values();
 
+    /// Get an element by index in its underlying physical form, mirroring
+    /// the `getRawValue` accessors on `RowReader` / [PqStruct] / [PqMap.Entry].
+    ///
+    /// Returns `Integer` / `Long` / `Float` / `Double` / `Boolean` / `byte[]`
+    /// for the physical storage type — `Long` micros instead of [Instant]
+    /// for TIMESTAMP(MICROS), unscaled `byte[]` instead of [BigDecimal] for
+    /// DECIMAL, `byte[]` instead of `String` for STRING / JSON, etc. Nested
+    /// groups have no distinct raw form and surface as the same
+    /// [PqStruct] / [PqList] / [PqMap] flyweight returned by [#get].
+    ///
+    /// @param index the element index (0-based)
+    /// @return the raw element value, or null if the element is null
+    /// @throws IndexOutOfBoundsException if index is out of range
+    Object getRaw(int index);
+
+    /// Iterate over elements in their underlying physical form, as in [#getRaw].
+    Iterable<Object> rawValues();
+
     // ==================== Primitive Type Accessors ====================
 
     /// Iterate over elements as int values.
