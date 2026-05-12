@@ -13,7 +13,9 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.AbstractList;
+import java.util.Arrays;
 import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
@@ -137,6 +139,263 @@ final class PqMapImpl implements PqMap {
         return start >= end;
     }
 
+    // ==================== Key-Based Lookup ====================
+
+    @Override
+    public boolean containsKey(String key) {
+        return indexOfStringKey(key) >= 0;
+    }
+
+    @Override
+    public boolean containsKey(int key) {
+        return indexOfIntKey(key) >= 0;
+    }
+
+    @Override
+    public boolean containsKey(long key) {
+        return indexOfLongKey(key) >= 0;
+    }
+
+    @Override
+    public boolean containsKey(byte[] key) {
+        return indexOfBinaryKey(key) >= 0;
+    }
+
+    @Override
+    public Object getValue(String key) {
+        int idx = indexOfStringKey(key);
+        return idx < 0 ? null : valueAt(idx);
+    }
+
+    @Override
+    public Object getValue(int key) {
+        int idx = indexOfIntKey(key);
+        return idx < 0 ? null : valueAt(idx);
+    }
+
+    @Override
+    public Object getValue(long key) {
+        int idx = indexOfLongKey(key);
+        return idx < 0 ? null : valueAt(idx);
+    }
+
+    @Override
+    public Object getValue(byte[] key) {
+        int idx = indexOfBinaryKey(key);
+        return idx < 0 ? null : valueAt(idx);
+    }
+
+    @Override
+    public Object getRawValue(String key) {
+        int idx = indexOfStringKey(key);
+        return idx < 0 ? null : rawValueAt(idx);
+    }
+
+    @Override
+    public Object getRawValue(int key) {
+        int idx = indexOfIntKey(key);
+        return idx < 0 ? null : rawValueAt(idx);
+    }
+
+    @Override
+    public Object getRawValue(long key) {
+        int idx = indexOfLongKey(key);
+        return idx < 0 ? null : rawValueAt(idx);
+    }
+
+    @Override
+    public Object getRawValue(byte[] key) {
+        int idx = indexOfBinaryKey(key);
+        return idx < 0 ? null : rawValueAt(idx);
+    }
+
+    private int indexOfStringKey(String key) {
+        Objects.requireNonNull(key, "key");
+        int keyProjCol = mapDesc.keyProjCol();
+        byte[][] keys = (byte[][]) batch.valueArrays[keyProjCol];
+        byte[] needle = key.getBytes(StandardCharsets.UTF_8);
+        for (int i = start; i < end; i++) {
+            if (batch.isElementNull(keyProjCol, i)) {
+                continue;
+            }
+            if (Arrays.equals(keys[i], needle)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int indexOfIntKey(int key) {
+        int keyProjCol = mapDesc.keyProjCol();
+        int[] keys = (int[]) batch.valueArrays[keyProjCol];
+        for (int i = start; i < end; i++) {
+            if (batch.isElementNull(keyProjCol, i)) {
+                continue;
+            }
+            if (keys[i] == key) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int indexOfLongKey(long key) {
+        int keyProjCol = mapDesc.keyProjCol();
+        long[] keys = (long[]) batch.valueArrays[keyProjCol];
+        for (int i = start; i < end; i++) {
+            if (batch.isElementNull(keyProjCol, i)) {
+                continue;
+            }
+            if (keys[i] == key) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    private int indexOfBinaryKey(byte[] key) {
+        Objects.requireNonNull(key, "key");
+        int keyProjCol = mapDesc.keyProjCol();
+        byte[][] keys = (byte[][]) batch.valueArrays[keyProjCol];
+        for (int i = start; i < end; i++) {
+            if (batch.isElementNull(keyProjCol, i)) {
+                continue;
+            }
+            if (Arrays.equals(keys[i], key)) {
+                return i;
+            }
+        }
+        return -1;
+    }
+
+    // ==================== Value Readers (by leaf index) ====================
+
+    private Object valueAt(int valueIdx) {
+        Object group = groupValueAt(valueIdx);
+        if (group != null) {
+            return group;
+        }
+        if (isValueNullAt(valueIdx)) {
+            return null;
+        }
+        return ValueConverter.convertValue(readValueAt(valueIdx), valueSchema);
+    }
+
+    private Object rawValueAt(int valueIdx) {
+        Object group = groupValueAt(valueIdx);
+        if (group != null) {
+            return group;
+        }
+        if (isValueNullAt(valueIdx)) {
+            return null;
+        }
+        return readValueAt(valueIdx);
+    }
+
+    private Object groupValueAt(int valueIdx) {
+        TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+        if (vDesc instanceof TopLevelFieldMap.FieldDesc.Struct) {
+            return structValueAt(valueIdx);
+        }
+        if (vDesc instanceof TopLevelFieldMap.FieldDesc.ListOf) {
+            return listValueAt(valueIdx);
+        }
+        if (vDesc instanceof TopLevelFieldMap.FieldDesc.MapOf) {
+            return mapValueAt(valueIdx);
+        }
+        if (vDesc instanceof TopLevelFieldMap.FieldDesc.Variant) {
+            return variantValueAt(valueIdx);
+        }
+        return null;
+    }
+
+    private PqStruct structValueAt(int valueIdx) {
+        TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+        if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
+            throw new IllegalArgumentException("Value is not a struct");
+        }
+        // Null check against the value column. `mapDesc.valueProjCol()` may point
+        // to a leaf deeper than the struct's own primitives (e.g. a leaf inside a
+        // list inside the struct), so translate the entry index to the value
+        // column's leaf position before reading its def level.
+        int valueProjCol = mapDesc.valueProjCol();
+        if (valueProjCol >= 0) {
+            int valLeafIdx = resolveValueLeafIdx(valueIdx);
+            int defLevel = batch.getDefLevel(valueProjCol, valLeafIdx);
+            if (defLevel < structDesc.schema().maxDefinitionLevel()) {
+                return null;
+            }
+        }
+        return PqStructImpl.atPosition(batch, structDesc, valueIdx);
+    }
+
+    private PqList listValueAt(int valueIdx) {
+        TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+        if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.ListOf listDesc)) {
+            throw new IllegalArgumentException("Value is not a list");
+        }
+        return PqListImpl.createGenericList(batch, listDesc, -1, valueIdx);
+    }
+
+    private PqMap mapValueAt(int valueIdx) {
+        TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+        if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.MapOf innerMapDesc)) {
+            throw new IllegalArgumentException("Value is not a map");
+        }
+        return PqMapImpl.create(batch, innerMapDesc, -1, valueIdx);
+    }
+
+    private PqVariant variantValueAt(int valueIdx) {
+        TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
+        if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
+            throw new IllegalArgumentException("Value is not a variant");
+        }
+        if (variantDesc.root().typed() != null) {
+            // Shredded variants in repeated contexts need position-aware
+            // reassembly (tracked in hardwood#467); the unshredded path
+            // below works today.
+            throw new UnsupportedOperationException(
+                    "Shredded Variant inside a map value is not yet supported");
+        }
+        if (variantDesc.metadataCol() < 0) {
+            throw new IllegalStateException(
+                    "Variant map value requires its 'metadata' child in the projection");
+        }
+        if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
+            return null;
+        }
+        byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[valueIdx];
+        int valueCol = variantDesc.valueCol();
+        if (valueCol < 0) {
+            throw new IllegalStateException(
+                    "Variant map value requires its 'value' child in the projection");
+        }
+        byte[] value = ((byte[][]) batch.valueArrays[valueCol])[valueIdx];
+        return new PqVariantImpl(metadataBytes, value);
+    }
+
+    private boolean isValueNullAt(int valueIdx) {
+        int valueProjCol = mapDesc.valueProjCol();
+        if (valueProjCol < 0) {
+            return false;
+        }
+        // Compare against the value node's own max def level (not the leaf
+        // primitive's), so a non-null complex value with null primitive
+        // descendants is not misreported as null. The value column's leaf
+        // position must be resolved explicitly — see resolveValueLeafIdx.
+        int valLeafIdx = resolveValueLeafIdx(valueIdx);
+        int defLevel = batch.getDefLevel(valueProjCol, valLeafIdx);
+        return defLevel < valueSchema.maxDefinitionLevel();
+    }
+
+    private Object readValueAt(int valueIdx) {
+        int valueProjCol = mapDesc.valueProjCol();
+        if (batch.isElementNull(valueProjCol, valueIdx)) {
+            return null;
+        }
+        return batch.getValue(valueProjCol, valueIdx);
+    }
+
     /// Translates an entry index (expressed as a position in the key column's leaf
     /// space, which is what [ColumnarEntry] carries as `valueIdx`) to the
     /// corresponding leaf position in the value column.
@@ -163,6 +422,23 @@ final class PqMapImpl implements PqMap {
             return keyLeafIdx;
         }
         return valMl[valLevels - 1][keyLeafIdx];
+    }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("{");
+        boolean first = true;
+        for (Entry e : getEntries()) {
+            if (!first) {
+				sb.append(", ");
+			}
+            first = false;
+            FlyweightFormatter.appendValue(sb, e.getKey());
+            sb.append('=');
+            FlyweightFormatter.appendValue(sb, e.getValue());
+        }
+        sb.append('}');
+        return sb.toString();
     }
 
     // ==================== Flyweight Entry ====================
@@ -300,168 +576,73 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public LocalDate getDateValue() {
-            Object raw = readValue();
+            Object raw = readValueAt(valueIdx);
             return ValueConverter.convertToDate(raw, valueSchema);
         }
 
         @Override
         public LocalTime getTimeValue() {
-            Object raw = readValue();
+            Object raw = readValueAt(valueIdx);
             return ValueConverter.convertToTime(raw, valueSchema);
         }
 
         @Override
         public Instant getTimestampValue() {
-            Object raw = readValue();
+            Object raw = readValueAt(valueIdx);
             return ValueConverter.convertToTimestamp(raw, valueSchema);
         }
 
         @Override
         public BigDecimal getDecimalValue() {
-            Object raw = readValue();
+            Object raw = readValueAt(valueIdx);
             return ValueConverter.convertToDecimal(raw, valueSchema);
         }
 
         @Override
         public UUID getUuidValue() {
-            Object raw = readValue();
+            Object raw = readValueAt(valueIdx);
             return ValueConverter.convertToUuid(raw, valueSchema);
         }
 
         @Override
         public PqInterval getIntervalValue() {
-            Object raw = readValue();
+            Object raw = readValueAt(valueIdx);
             return ValueConverter.convertToInterval(raw, valueSchema);
         }
 
         @Override
         public PqStruct getStructValue() {
-            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
-            if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
-                throw new IllegalArgumentException("Value is not a struct");
-            }
-            // Null check against the value column. `mapDesc.valueProjCol()` may point
-            // to a leaf deeper than the struct's own primitives (e.g. a leaf inside a
-            // list inside the struct), so translate the entry index to the value
-            // column's leaf position before reading its def level.
-            int valueProjCol = mapDesc.valueProjCol();
-            if (valueProjCol >= 0) {
-                int valLeafIdx = resolveValueLeafIdx(valueIdx);
-                int defLevel = batch.getDefLevel(valueProjCol, valLeafIdx);
-                if (defLevel < structDesc.schema().maxDefinitionLevel()) {
-                    return null;
-                }
-            }
-            return PqStructImpl.atPosition(batch, structDesc, valueIdx);
+            return structValueAt(valueIdx);
         }
 
         @Override
         public PqList getListValue() {
-            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
-            if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.ListOf listDesc)) {
-                throw new IllegalArgumentException("Value is not a list");
-            }
-            return PqListImpl.createGenericList(batch, listDesc, -1, valueIdx);
+            return listValueAt(valueIdx);
         }
 
         @Override
         public PqMap getMapValue() {
-            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
-            if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.MapOf innerMapDesc)) {
-                throw new IllegalArgumentException("Value is not a map");
-            }
-            return PqMapImpl.create(batch, innerMapDesc, -1, valueIdx);
+            return mapValueAt(valueIdx);
         }
 
         @Override
         public PqVariant getVariantValue() {
-            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
-            if (!(vDesc instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
-                throw new IllegalArgumentException("Value is not a variant");
-            }
-            if (variantDesc.root().typed() != null) {
-                // Shredded variants in repeated contexts need position-aware
-                // reassembly (tracked in hardwood#467); the unshredded path
-                // below works today.
-                throw new UnsupportedOperationException(
-                        "Shredded Variant inside a map value is not yet supported");
-            }
-            if (variantDesc.metadataCol() < 0) {
-                throw new IllegalStateException(
-                        "Variant map value requires its 'metadata' child in the projection");
-            }
-            if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
-                return null;
-            }
-            byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[valueIdx];
-            int valueCol = variantDesc.valueCol();
-            if (valueCol < 0) {
-                throw new IllegalStateException(
-                        "Variant map value requires its 'value' child in the projection");
-            }
-            byte[] value = ((byte[][]) batch.valueArrays[valueCol])[valueIdx];
-            return new PqVariantImpl(metadataBytes, value);
+            return variantValueAt(valueIdx);
         }
 
         @Override
         public Object getValue() {
-            Object group = groupValueOrNull();
-            if (group != null) {
-                return group;
-            }
-            if (isValueNull()) {
-                return null;
-            }
-            return ValueConverter.convertValue(readValue(), valueSchema);
+            return valueAt(valueIdx);
         }
 
         @Override
         public Object getRawValue() {
-            Object group = groupValueOrNull();
-            if (group != null) {
-                return group;
-            }
-            if (isValueNull()) {
-                return null;
-            }
-            return readValue();
-        }
-
-        /// Returns the typed flyweight ([PqStruct] / [PqList] / [PqMap]) when
-        /// the value is a nested group, or `null` for primitive-typed values
-        /// (so the caller can fall through to raw/decoded primitive handling).
-        /// A non-null group whose primitive descendants are all null still
-        /// yields the flyweight — the typed accessors handle null shape.
-        private Object groupValueOrNull() {
-            TopLevelFieldMap.FieldDesc vDesc = mapDesc.valueDesc();
-            if (vDesc instanceof TopLevelFieldMap.FieldDesc.Struct) {
-                return getStructValue();
-            }
-            if (vDesc instanceof TopLevelFieldMap.FieldDesc.ListOf) {
-                return getListValue();
-            }
-            if (vDesc instanceof TopLevelFieldMap.FieldDesc.MapOf) {
-                return getMapValue();
-            }
-            if (vDesc instanceof TopLevelFieldMap.FieldDesc.Variant) {
-                return getVariantValue();
-            }
-            return null;
+            return rawValueAt(valueIdx);
         }
 
         @Override
         public boolean isValueNull() {
-            int valueProjCol = mapDesc.valueProjCol();
-            if (valueProjCol < 0) {
-                return false;
-            }
-            // Compare against the value node's own max def level (not the leaf
-            // primitive's), so a non-null complex value with null primitive
-            // descendants is not misreported as null. The value column's leaf
-            // position must be resolved explicitly — see resolveValueLeafIdx.
-            int valLeafIdx = resolveValueLeafIdx(valueIdx);
-            int defLevel = batch.getDefLevel(valueProjCol, valLeafIdx);
-            return defLevel < valueSchema.maxDefinitionLevel();
+            return isValueNullAt(valueIdx);
         }
 
         // ==================== Internal ====================
@@ -474,12 +655,13 @@ final class PqMapImpl implements PqMap {
             return batch.getValue(keyProjCol, valueIdx);
         }
 
-        private Object readValue() {
-            int valueProjCol = mapDesc.valueProjCol();
-            if (batch.isElementNull(valueProjCol, valueIdx)) {
-                return null;
-            }
-            return batch.getValue(valueProjCol, valueIdx);
+        @Override
+        public String toString() {
+            StringBuilder sb = new StringBuilder();
+            FlyweightFormatter.appendValue(sb, getKey());
+            sb.append('=');
+            FlyweightFormatter.appendValue(sb, getValue());
+            return sb.toString();
         }
     }
 }

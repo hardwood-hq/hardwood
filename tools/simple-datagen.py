@@ -3025,3 +3025,23 @@ annotate_element_at_path_as_float16(
     ['scores', 'list', 'element'])
 
 print("\nGenerated list_float16_test.parquet (#470): List<FLOAT16>")
+
+# 2. Map<int64,*> and Map<binary,*> — closes #463's long-key and byte[]-key
+#    coverage gaps in PqMapLookupTest.
+map_typed_keys_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('long_keyed', pa.map_(pa.int64(), pa.string())),
+    ('binary_keyed', pa.map_(pa.binary(), pa.int32())),
+])
+map_typed_keys_table = pa.table({
+    'id': [1],
+    'long_keyed': [[(100, 'one-hundred'), (200, 'two-hundred'), (300, 'three-hundred')]],
+    'binary_keyed': [[(b'\x01\x02', 10), (b'\x03\x04', 20)]],
+}, schema=map_typed_keys_schema)
+pq.write_table(
+    map_typed_keys_table,
+    'core/src/test/resources/map_typed_keys_test.parquet',
+    use_dictionary=False, compression=None, data_page_version='1.0',
+)
+
+print("Generated map_typed_keys_test.parquet (#463): Map<int64,*> + Map<binary,*>")

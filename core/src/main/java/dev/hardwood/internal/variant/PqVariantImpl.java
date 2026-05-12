@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.Arrays;
 import java.util.UUID;
 
 import dev.hardwood.row.PqVariant;
@@ -59,6 +60,31 @@ public final class PqVariantImpl implements PqVariant {
         byte[] out = new byte[src.length];
         System.arraycopy(src, 0, out, 0, src.length);
         return out;
+    }
+
+    @Override
+    public String toString() {
+        return switch (type()) {
+            case NULL -> "null";
+            case BOOLEAN_TRUE -> "true";
+            case BOOLEAN_FALSE -> "false";
+            case INT8, INT16, INT32 -> Integer.toString(asInt());
+            case INT64 -> Long.toString(asLong());
+            case FLOAT -> Float.toString(asFloat());
+            case DOUBLE -> Double.toString(asDouble());
+            case DECIMAL4, DECIMAL8, DECIMAL16 -> asDecimal().toString();
+            case DATE -> asDate().toString();
+            case TIME_NTZ -> asTime().toString();
+            case TIMESTAMP, TIMESTAMP_NTZ, TIMESTAMP_NANOS, TIMESTAMP_NTZ_NANOS -> asTimestamp().toString();
+            case BINARY -> Arrays.toString(asBinary());
+            case STRING -> '"' + asString() + '"';
+            case UUID -> asUuid().toString();
+            // Recursing into objects/arrays requires walking PqVariantObject /
+            // PqVariantArray contents — out of scope here; print a type marker
+            // so debug logs at least say what kind of Variant they have.
+            case OBJECT -> "<Variant OBJECT>";
+            case ARRAY -> "<Variant ARRAY>";
+        };
     }
 
     @Override

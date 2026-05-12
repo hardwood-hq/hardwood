@@ -568,6 +568,18 @@ final class PqListImpl implements PqList {
         return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("[");
+        int n = size();
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(", ");
+            FlyweightFormatter.appendValue(sb, get(i));
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
     // ==================== Internal: Bounds Check ====================
 
     private void checkBounds(int index) {

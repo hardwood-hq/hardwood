@@ -421,4 +421,18 @@ final class PqStructImpl implements PqStruct {
             case TopLevelFieldMap.FieldDesc.Variant v -> getVariant(v.schema().name());
         };
     }
+
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("PqStruct{");
+        int n = getFieldCount();
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(", ");
+            String name = getFieldName(i);
+            sb.append(name).append('=');
+            FlyweightFormatter.appendValue(sb, getValue(name));
+        }
+        sb.append('}');
+        return sb.toString();
+    }
 }

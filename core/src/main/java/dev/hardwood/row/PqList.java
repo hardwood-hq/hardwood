@@ -21,6 +21,11 @@ import java.util.UUID;
 /// [PqIntList] / [PqLongList] / [PqDoubleList] types (with `PrimitiveIterator.OfInt`
 /// and friends — no boxing). All other typed accessors return [List].
 ///
+/// A `PqList` is a flyweight over the underlying read batch — its `get(int)` and
+/// the lazy [List] views returned by the typed accessors resolve to column data
+/// on each call. The flyweight is valid for as long as the batch it was obtained
+/// from is current; it is not safe to hold across `rowReader.next()` calls.
+///
 /// ```java
 /// // String list
 /// PqList tags = rowReader.getList("tags");

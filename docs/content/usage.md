@@ -114,7 +114,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
                 }
             }
 
-            // Access maps (map<string, int>)
+            // Access maps (map<string, int>) — iterate all entries
             PqMap attributes = rowReader.getMap("attributes");
             if (attributes != null) {
                 for (PqMap.Entry entry : attributes.getEntries()) {
@@ -124,17 +124,30 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
                 }
             }
 
+            // Key-based lookup (no per-entry flyweight allocations)
+            PqMap attrs = rowReader.getMap("attributes");
+            if (attrs != null && attrs.containsKey("age")) {
+                Integer age = (Integer) attrs.getValue("age");
+            }
+
             // Access maps with struct values (map<string, struct>)
             PqMap people = rowReader.getMap("people");
             if (people != null) {
-                for (PqMap.Entry entry : people.getEntries()) {
-                    String personId = entry.getStringKey();
-                    PqStruct person = entry.getStructValue();
-                    String personName = person.getString("name");
-                    int personAge = person.getInt("age");
+                PqStruct alice = (PqStruct) people.getValue("alice");
+                if (alice != null) {
+                    String name = alice.getString("name");
+                    int age = alice.getInt("age");
                 }
             }
     ```
+
+    `PqMap.getValue(key)` returns `null` for both an absent key and a
+    present-but-null value — call `containsKey(key)` to disambiguate.
+    Lookup is supported by `String` / `int` / `long` / `byte[]` keys;
+    long-tail key types (DATE / TIMESTAMP / DECIMAL / UUID) are reachable
+    through `getEntries()` + `Entry.getKey()`. Parquet permits duplicate
+    keys; the lookup methods walk in entry order and surface the first
+    match.
 
 ### Typed Accessor Methods
 
