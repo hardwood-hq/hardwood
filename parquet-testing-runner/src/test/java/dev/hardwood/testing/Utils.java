@@ -449,25 +449,19 @@ public class Utils {
     }
 
     /// Read a leaf element at `index` from a [PqList], picking the typed accessor
-    /// matching the Avro element schema. Requires a full-iterator scan per call —
-    /// acceptable for test code where list sizes are small.
+    /// matching the Avro element schema.
     private static Object getLeafListElement(PqList list, int index, org.apache.avro.Schema elementSchema) {
-        Iterable<?> iterable = switch (elementSchema.getType()) {
-            case BOOLEAN -> list.booleans();
-            case INT -> list.ints();
-            case LONG -> list.longs();
-            case FLOAT -> list.floats();
-            case DOUBLE -> list.doubles();
-            case STRING, ENUM -> list.strings();
-            case BYTES, FIXED -> list.binaries();
+        return switch (elementSchema.getType()) {
+            case BOOLEAN -> list.booleans().get(index);
+            case INT -> list.ints().get(index);
+            case LONG -> list.longs().get(index);
+            case FLOAT -> list.floats().get(index);
+            case DOUBLE -> list.doubles().get(index);
+            case STRING, ENUM -> list.strings().get(index);
+            case BYTES, FIXED -> list.binaries().get(index);
             default -> throw new UnsupportedOperationException(
                     "Unsupported Avro list element type: " + elementSchema.getType());
         };
-        Iterator<?> it = iterable.iterator();
-        for (int i = 0; i < index; i++) {
-            it.next();
-        }
-        return it.next();
     }
 
     /// Compare an Avro map against a Hardwood [PqMap] entry-by-entry.

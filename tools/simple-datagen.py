@@ -2994,3 +2994,34 @@ print("\nGenerated nested_v1_no_index.parquet:")
 print(f"  - 1 row group, {NESTED_V1_ROWS} rows, Parquet v1, NO ColumnIndex/OffsetIndex")
 print("  - narrow INT32 (flat) + tags LIST<STRING> (nested, v1 pages)")
 print("  - Closes the row-group-wide mask gate; drives the fallback path")
+
+
+# ============================================================================
+# PR #471 Review Fixtures (#463 / #470 / #473)
+# ============================================================================
+
+import struct as _binstruct  # local alias to avoid clashing with pa.struct
+
+# 1. List<FLOAT16> — closes the test gap on PqListImpl.floats()'s FLBA(2)
+#    + Float16Type branch (#470).
+list_f16_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('scores', pa.list_(pa.binary(2))),
+])
+list_f16_table = pa.table({
+    'id': [1, 2],
+    'scores': [
+        [_binstruct.pack('<e', 1.5), _binstruct.pack('<e', -2.0), _binstruct.pack('<e', 0.0)],
+        [_binstruct.pack('<e', 100.0)],
+    ],
+}, schema=list_f16_schema)
+pq.write_table(
+    list_f16_table,
+    'core/src/test/resources/list_float16_test.parquet',
+    use_dictionary=False, compression=None, data_page_version='1.0',
+)
+annotate_element_at_path_as_float16(
+    'core/src/test/resources/list_float16_test.parquet',
+    ['scores', 'list', 'element'])
+
+print("\nGenerated list_float16_test.parquet (#470): List<FLOAT16>")

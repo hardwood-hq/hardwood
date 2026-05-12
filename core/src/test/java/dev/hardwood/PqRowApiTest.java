@@ -1546,9 +1546,7 @@ public class PqRowApiTest {
             List<List<Integer>> values = new ArrayList<>();
             for (PqList inner : outer.lists()) {
                 List<Integer> innerValues = new ArrayList<>();
-                for (int v : inner.ints()) {
-                    innerValues.add(v);
-                }
+                inner.ints().forEach((int v) -> innerValues.add(v));
                 values.add(innerValues);
             }
 

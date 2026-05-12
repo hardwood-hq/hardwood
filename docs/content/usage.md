@@ -173,13 +173,22 @@ All methods are available as both `method(name)` and `method(index)`, except `ge
 **Bare `BYTE_ARRAY` columns:** `BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
 
 **Typed accessors on `PqList` and `PqMap.Entry`:** Both interfaces mirror the
-RowReader's typed accessor surface — `ints()` / `longs()` / `strings()` /
-`dates()` / `times()` / `timestamps()` / `decimals()` / `uuids()` /
-`intervals()` on `PqList`; `getStringKey()` / `getDateKey()` / `getTimeKey()` /
-`getDecimalKey()` / etc. and the matching `getStringValue()` / `getDateValue()`
-/ `getIntervalValue()` / etc. on `PqMap.Entry`. Use these in preference to the
-generic `getValue()` when iterating over a list / map of a known logical type
-to avoid the boxed `Object` return.
+RowReader's typed accessor surface — `strings()` / `dates()` / `times()` /
+`timestamps()` / `decimals()` / `uuids()` / `intervals()` / `floats()` /
+`booleans()` on `PqList` (each returning `List<T>`); `getStringKey()` /
+`getDateKey()` / `getTimeKey()` / `getDecimalKey()` / etc. and the matching
+`getStringValue()` / `getDateValue()` / `getIntervalValue()` / etc. on
+`PqMap.Entry`. Use these in preference to the generic `getValue()` when
+iterating over a list / map of a known logical type to avoid the boxed
+`Object` return.
+
+`PqList.ints()` / `longs()` / `doubles()` return the specialized
+`PqIntList` / `PqLongList` / `PqDoubleList` types instead — these expose
+`PrimitiveIterator.OfInt` / `OfLong` / `OfDouble`, `int get(int)`, and
+`int[] toArray()` so primitive list iteration allocates no boxed wrappers.
+For nested `list<list<int>>` (or `<long>` / `<double>`), use
+`intLists()` / `longLists()` / `doubleLists()` to surface the inner lists as
+`PqIntList` / `PqLongList` / `PqDoubleList`.
 
 **Decoded vs. raw generic access:** The generic fallback accessors return values decoded to their logical-type representation by default:
 

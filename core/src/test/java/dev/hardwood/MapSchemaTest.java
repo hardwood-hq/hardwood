@@ -311,9 +311,7 @@ public class MapSchemaTest {
             PqList scoresA = row0Entries.get(0).getStructValue().getList("scores");
             assertThat(scoresA).isNotNull();
             List<Integer> scoresAValues = new ArrayList<>();
-            for (int s : scoresA.ints()) {
-                scoresAValues.add(s);
-            }
+            scoresA.ints().forEach((int s) -> scoresAValues.add(s));
             assertThat(scoresAValues).containsExactly(10, 20);
 
             // Row 1: entries={b: {scores=[30,40,50]}, c: {scores=[]}, d: null, e: {scores=null}}
@@ -330,9 +328,7 @@ public class MapSchemaTest {
             assertThat(row1Entries.get(0).isValueNull()).isFalse();
             PqList scoresB = row1Entries.get(0).getStructValue().getList("scores");
             List<Integer> scoresBValues = new ArrayList<>();
-            for (int s : scoresB.ints()) {
-                scoresBValues.add(s);
-            }
+            scoresB.ints().forEach((int s) -> scoresBValues.add(s));
             assertThat(scoresBValues).containsExactly(30, 40, 50);
 
             // Non-null value struct with an empty inner list
