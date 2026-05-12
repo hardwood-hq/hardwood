@@ -108,4 +108,20 @@ final class PqIntListImpl implements PqIntList {
             throw new IndexOutOfBoundsException("Index " + index + " out of range [0, " + size() + ")");
         }
     }
+
+    @Override
+    public String toString() {
+        int[] values = (int[]) batch.valueArrays[projectedCol];
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = start; i < end; i++) {
+            if (i > start) sb.append(", ");
+            if (batch.isElementNull(projectedCol, i)) {
+                sb.append("null");
+            } else {
+                sb.append(values[i]);
+            }
+        }
+        sb.append(']');
+        return sb.toString();
+    }
 }
