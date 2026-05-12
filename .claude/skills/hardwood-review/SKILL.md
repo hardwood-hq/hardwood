@@ -57,7 +57,71 @@ For every new behaviour or matcher, check that test coverage is breadth-first ac
 
 When a PR adds a design doc, JavaDoc, or user-facing `docs/content/*.md`, read at least the load-bearing claims (gate descriptions, eligibility rules, supported types) and grep the code to confirm the wording matches. Mismatches between "≥ 2 distinct columns" in the doc and `leaves.size() < 2` in the code are the dominant doc-bug class.
 
-### 6. Write the findings file
+### 6. Prune to signal
+
+Before writing the file, walk every candidate finding and apply the **inclusion bar**:
+
+> A finding describes something that is *wrong*: code that breaks, will regress under a plausible future change, violates a stated CLAUDE.md / design rule, or has a missing safety property the project relies on elsewhere.
+
+Cut anything that fails this bar. Common cuts:
+
+- **Non-findings.** "No public API change here, theme usage looks fine." If a pyramid tier has no findings, **omit the section entirely** — do not write a section header followed by a reassurance bullet.
+- **Taste calls without a stated rule.** "Consider renaming `kv` to `kvLines`", "prefer `Optional` over null here." If CLAUDE.md or a design doc doesn't mandate it and the existing code is correct, drop it.
+- **Micro-optimisations on cold paths.** Render-tier UI code, one-shot init, test fixtures. Flag allocations / branches only on paths that run thousands of times per second or are documented hot.
+- **Test-style polish when the test is correct.** A brittle-but-correct assertion is not a finding; a *missing* test for a real edge case is. **Worked cut:** a test that asserts exact substrings depending on a width / indent constant. The test passes today. "It will break if anyone touches the constant" is not a defect, it's a property of every assertion. Don't flag. (A *missing* test that would catch the height-overflow bug at a different breakpoint *is* a defect — that survives.)
+- **PR-process / description hygiene.** "The 'docs updated' checkbox is unchecked, please confirm." That belongs in a PR comment, not the review file.
+
+Self-edit prompt for each candidate: *"If the author shipped this exact line tomorrow, what specifically breaks, regresses, or fails a CI check / convention?"* If you can't answer concretely in one sentence, delete the finding.
+
+**Lift decisions out of the findings.** Some surviving items aren't pure fix-it work — they're forks the maintainer needs to answer. Move these to the `## Decisions` section instead of leaving them mixed in with defects. The tell-tale shapes:
+
+- **"Either X or Y" phrasing** ("drop the dead branch or move the helper", "document the `-1` or remove it").
+- **Trade-offs the maintainer owns** ("keep the per-class duplication for JIT specialisation or extract a shared helper" — project-wide pattern, not a local fix).
+- **Sub-pattern changes** ("constructor-inject the filter or keep the setter" — both work; the choice is policy).
+
+Decisions should be **selectable** — the maintainer can tick the option they pick and the file becomes a record of the answer. Format each as:
+
+```markdown
+- **Q:** <question, one line>
+  - [ ] **A.** <option, one clause — say what *changes* if this is picked>
+  - [ ] **B.** <option>
+  - [ ] **C.** <"keep as-is" — include this when the question implies a change, so disagreement has an explicit checkbox>
+  - **Rec:** <A/B/C> — <one-line justification>
+```
+
+Always include a `Rec:` line, even if it's "no strong opinion — A reads cleaner". Posing a decision without doing the analysis homework just defers the work. Two options are typical; three when "keep as-is" is plausible; rarely more.
+
+Worked example:
+
+```markdown
+- **Q:** The `split("\n", -1)` branch in `wrapValue` is unreachable — no description contains a newline. Drop it or move the helper somewhere multi-line is exercised?
+  - [ ] **A.** Drop the branch; `wrapValue` stays in `HelpOverlay`.
+  - [ ] **B.** Move `wrapValue` to a shared `Strings` helper and exercise the multi-line path there (also resolves the duplication with `DataPreviewScreen`).
+  - [ ] **C.** Keep as-is.
+  - **Rec:** B — collapses two findings into one fix.
+```
+
+Items that are unambiguous fixes (one right answer, just hasn't been done) stay in their tier section, not in Decisions.
+
+**A decision must have at least two defensible branches.** Some findings carry "either X or Y" phrasing but only one branch is a real fix — the other is just "document the magic / explain the constant", which is the lazy non-fix. These are **not** decisions. They stay under their tier (usually Implementation) as a defect.
+
+**Worked example:**
+
+> `wrapValue(description, Math.max(1, descBudget - 1))` — the `-1` is unexplained. Either drop it or add a one-liner why.
+
+The two branches are *fix it* vs *paper over it with a comment*. Only the first is a real answer. **Stays under Implementation semantics as a defect**, not a decision.
+
+Compare to a real decision:
+
+> Drop the dead `split("\n")` branch, or move `wrapValue` to a shared helper where the multi-line case is actually exercised?
+
+Both branches are defensible end-states — one shrinks the surface, the other widens reuse. **Goes to Decisions.**
+
+If lifting a finding to Decisions would make the underlying defect disappear (because the question is "should we fix this or not"), keep the defect under its tier and only raise a Decision for genuine forks in *how* to fix.
+
+Better to ship a short review with 5 real defects than a long one where the maintainer has to filter the signal out.
+
+### 7. Write the findings file
 
 Write to `_reviews/pr-<N>-review.md` (or `_reviews/branch-<name>-review.md` for non-PR runs). The `_reviews/` directory already exists; do not write findings to the repo root. Format:
 
@@ -74,34 +138,37 @@ Write to `_reviews/pr-<N>-review.md` (or `_reviews/branch-<name>-review.md` for 
 
 **Assessment:** <1–2 sentences. Headline verdict: ready to merge / ready with nits / needs work / not ready, and the single most load-bearing reason. The detail lives in the sections below; this is the elevator pitch.>
 
+## Decisions
+- **Q:** <question or fork — one line>
+  - [ ] **A.** <option 1 — what changes if you pick this>
+  - [ ] **B.** <option 2>
+  - [ ] **C.** <option 3 — typically "keep as-is" if a change is on the table>
+  - **Rec:** <A/B/C> — <one-line justification>
+
 ## Blockers
-Issues that must be addressed before merge. Pulls from any pyramid tier.
 - [ ] <item> — one-sentence why
 
 ## API semantics
-Public surface, breaking changes (classes / config / metrics / log formats), one-way-to-do-one-thing, least-surprise, internal-vs-public split.
 - [ ] ...
 
 ## Implementation semantics
-Correctness, concurrency, error handling, performance, observability, dependency weight + license.
 - [ ] ...
 
 ## Documentation
-Design docs, JavaDoc on public API, `docs/content/*.md` user docs, doc/code drift.
 - [ ] ...
 
 ## Tests
-Coverage breadth across (type, op) axes, boundary values, NFR / performance tests, oracle equivalence.
 - [ ] ...
 
 ## Nits
-Style and convention items. Author can address in passing; do not block on these.
 - [ ] ...
 ```
 
+**Emit only sections that have at least one entry.** A pyramid tier (or `Decisions` / `Blockers`) with nothing in it gets no section header — silence is the signal. The template above lists all seven possible sections; a real review usually has two or three.
+
 Use `[ ]` not `[x]` — the maintainer checks items off as they're addressed (per CLAUDE.md "Code Reviews" section).
 
-### 7. Hand back a short summary
+### 8. Hand back a short summary
 
 After writing the file, give the user a 3–5 sentence summary: what the PR does, the highest-priority finding(s), and the path to the findings file. Do not repeat the whole list inline — they can read the file.
 
@@ -114,7 +181,8 @@ After writing the file, give the user a 3–5 sentence summary: what the PR does
 ## Output discipline
 
 - Findings file uses `[ ]` checkboxes per CLAUDE.md.
-- Group by priority, not by file or by checklist section. The maintainer wants to know what to address first.
-- Each item is one sentence stating the issue and one sentence (or clause) on why it matters / what fails if ignored. No multi-paragraph justifications in the file.
+- Group by pyramid tier (see template). Sections with no findings are omitted entirely — do not write a section header followed by "looks fine" or a non-finding bullet.
+- Each item is one sentence stating the issue and one sentence (or clause) on why it matters / what fails if ignored. No multi-paragraph justifications.
 - Reference specific files / line ranges where useful. Don't fabricate line numbers from memory — if you're not sure, drop the number.
 - If a finding is judgment-dependent (e.g. "consider A/B-ing this duplication"), say so. Don't dress up an opinion as a defect.
+- A short review with five real defects beats a long one where the maintainer has to filter the signal out. When you find yourself reaching for noise to "look thorough", stop.
