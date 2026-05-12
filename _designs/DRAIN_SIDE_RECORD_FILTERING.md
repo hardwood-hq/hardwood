@@ -15,8 +15,8 @@ This design moves the eligible part of record-level filtering from the consumer 
 
 The architecture has four pieces:
 
-1. A `BatchMatcher` interface and per-`(type, op)` concrete classes that operate on a column's typed array + null `BitSet` and write a per-batch matches `long[]`.
-2. A `BatchFilterCompiler` that decomposes an eligible `ResolvedPredicate` into per-column `BatchMatcher`s and returns `null` for any non-eligible shape (full fallback to `FilteredRowReader`).
+1. A `ColumnBatchMatcher` interface and per-`(type, op)` concrete classes that operate on a column's typed array + null `BitSet` and write a per-batch matches `long[]`.
+2. A `BatchFilterCompiler` that decomposes an eligible `ResolvedPredicate` into per-column `ColumnBatchMatcher`s and returns `null` for any non-eligible shape (full fallback to `FilteredRowReader`).
 3. A `matches` field on `BatchExchange.Batch` and an extra step at the end of `FlatColumnWorker.publishCurrentBatch` to evaluate the column's matcher.
 4. Eligibility-gated changes in `FlatRowReader` to intersect per-column matches into a `combinedWords` array and iterate via `Long.numberOfTrailingZeros` instead of wrapping in `FilteredRowReader`.
 
@@ -29,8 +29,9 @@ Eligible queries take the drain-side path; ineligible queries fall back to `Filt
 A `ResolvedPredicate` is **eligible** iff:
 
 - It is either a single column-local leaf, or `ResolvedPredicate.And(children)` whose children are all column-local leaves, and
-- All leaves target **distinct** top-level projected columns (no two leaves on the same column), and
 - Every leaf has `(type, op)` supported by `BatchFilterCompiler`.
+
+Multiple leaves on the same projected column are allowed and compose via `AndBatchMatcher` (see below).
 
 A leaf is **column-local** iff:
 
@@ -54,16 +55,16 @@ There is no separate leaf-count gate. The v1 prototype carried an `if (leaves.si
 
 ---
 
-## `BatchMatcher` and per-`(type, op)` classes
+## `ColumnBatchMatcher` and per-`(type, op)` classes
 
 Sealed interface representing a per-column fragment over a single batch:
 
 ```java
-public sealed interface BatchMatcher
+public sealed interface ColumnBatchMatcher
         permits LongBatchMatcher, DoubleBatchMatcher, IntBatchMatcher,
-                FloatBatchMatcher, BooleanBatchMatcher, NullBatchMatcher {
+                FloatBatchMatcher, BooleanBatchMatcher, NullBatchMatcher,
+                AndBatchMatcher {
     void test(BatchExchange.Batch batch, long[] outWords);
-    int columnIndex();
 }
 ```
 
@@ -73,7 +74,6 @@ Per-`(type, op)` final classes implement the typed body. The optimised inner loo
 
 ```java
 final class LongGtBatchMatcher implements LongBatchMatcher {
-    private final int columnIndex;
     private final long literal;
     // ...
 
@@ -95,7 +95,7 @@ final class LongGtBatchMatcher implements LongBatchMatcher {
                 }
                 outWords[w] = word;
             }
-            // tail-word handling, then zero trailing slots past recordCount
+            // tail-word handling; bits past recordCount are left stale (see below)
         }
         // BitSet-null branch is structurally identical
     }
@@ -104,7 +104,7 @@ final class LongGtBatchMatcher implements LongBatchMatcher {
 
 Key shape choices:
 
-- **No `Arrays.fill`.** Each output word is written exactly once, in full, at the end of a 64-element block. Trailing slots past `recordCount` are zeroed in a small final loop.
+- **No `Arrays.fill`.** Each output word is written exactly once, in full, at the end of a 64-element block. Bits past `recordCount` in the tail word, and stale slots in words past `(recordCount + 63) >>> 6`, are intentionally left untouched — `nextSetBit` / `scanRunEnd` in `FlatRowReader` are bounded by `batchSize`, so any stale set bit at index `>= batchSize` is filtered by the `bit < limit` check.
 - **Branchless inner loop.** `(cond ? 1L : 0L) << b` lowers to `csel` on AArch64 / `setcc` on x86-64; the per-element cost stops depending on selectivity.
 - **Word-level accumulator.** `long word` lives in a register for 64 iterations — one store per 64 elements, not 64 read-modify-writes.
 - **Hoisted `literal`, `recordCount`, `fullWords`, `tail`.** The inner `for (b = 0; b < 64; b++)` is a constant-bound loop that the JIT unrolls.
@@ -112,7 +112,7 @@ Key shape choices:
 
 NULL semantics: each fragment writes "definitely matches" — false on NULL. Word-wise AND of per-column matches gives SQL three-valued AND because any `unknown` conjunct unsets the bit. This contract does not generalise to OR-spanning-columns; that case is excluded by the eligibility rule.
 
-`Null*BatchMatcher` short-circuits the per-bit loop entirely — `IsNullBatchMatcher.test` bulk-copies `nulls.toLongArray()` and masks off bits past `recordCount`; `IsNotNullBatchMatcher.test` bulk-inverts the same.
+`Null*BatchMatcher` short-circuits the per-bit loop entirely — `IsNullBatchMatcher.test` bulk-copies `nulls.toLongArray()`; `IsNotNullBatchMatcher.test` bulk-inverts the same. Like the typed matchers, bits past `recordCount` are left as-is and filtered by the consumer's `bit < limit` check.
 
 ---
 
@@ -120,15 +120,15 @@ NULL semantics: each fragment writes "definitely matches" — false on NULL. Wor
 
 `BatchExchange.Batch` gains a `long[] matches` field. Allocated once at construction (sized to `(batchCapacity + 63) >>> 6`) **only** for columns that actually have a fragment installed — other columns leave `matches == null`, which `FlatRowReader` interprets as "all-ones" during intersection.
 
-`FlatColumnWorker` gains a `BatchMatcher fragment` field and a `setFragment(BatchMatcher)` setter. At the end of `publishCurrentBatch`, immediately before pushing the batch onto the `readyQueue`:
+`FlatColumnWorker` gains a `final ColumnBatchMatcher columnFilter` field, constructor-injected so the contract is enforced by the type system rather than a "set before start" call order. At the end of `publishCurrentBatch`, immediately before pushing the batch onto the `readyQueue`:
 
 ```java
-if (fragment != null) {
-    fragment.test(currentBatch, currentBatch.matches);
+if (columnFilter != null) {
+    columnFilter.test(currentBatch, currentBatch.matches);
 }
 ```
 
-Cost is paid on the drain thread, on hot data, in parallel with peer drains. When `fragment == null`, `publishCurrentBatch` is unchanged.
+Cost is paid on the drain thread, on hot data, in parallel with peer drains. When `columnFilter == null`, `publishCurrentBatch` is unchanged.
 
 ---
 
@@ -145,17 +145,33 @@ The reader gains:
 
 ```java
 private void intersectMatches() {
-    int n = batchSize;
-    int activeWords = (n + 63) >>> 6;
-    int[] cols = fragmentColumns;
-    long[] combined = combinedWords;
+    BatchExchange.Batch[] batches = previousBatches;
 
-    long[] first = previousBatches[cols[0]].matches;
+    // Single-column fast path: nothing to AND-merge. Alias the batch's matches
+    // directly; no copy, no owned combinedWords buffer needed.
+    if (filteredColumns.length == 1) {
+        combinedWords = batches[filteredColumns[0]].matches;
+        return;
+    }
+
+    int activeWords = (batchSize + 63) >>> 6;
+    long[] combined = combinedWords;
+    long[] first = batches[filteredColumns[0]].matches;
     System.arraycopy(first, 0, combined, 0, activeWords);
-    for (int c = 1; c < cols.length; c++) {
-        long[] m = previousBatches[cols[c]].matches;
+
+    // Track an OR across merged words: as soon as a highly-selective column
+    // drives the intersection to all-zero, skip the remaining columns'
+    // AND-passes — the batch is already known to produce no rows.
+    for (int col = 1; col < filteredColumns.length; col++) {
+        long[] matches = batches[filteredColumns[col]].matches;
+        long anyBit = 0L;
         for (int w = 0; w < activeWords; w++) {
-            combined[w] &= m[w];
+            long merged = combined[w] & matches[w];
+            combined[w] = merged;
+            anyBit |= merged;
+        }
+        if (anyBit == 0L) {
+            return;
         }
     }
 }
@@ -242,7 +258,7 @@ These gaps close at higher leaf counts and disappear once the drains run in para
 - **NULL semantics under intersection.** Each fragment writes "matches" as false on NULL. Word-wise AND of per-column matches gives SQL three-valued AND because any `unknown` conjunct unsets the bit. Reinforced by the three-way oracle.
 - **`maxRows` semantics.** `FlatColumnWorker.copyPageRange` enforces `maxRows` as "rows scanned" — the drain stops assembling once `maxRows` rows have been copied. The drain-side filter runs after assembly, so `maxRows` continues to bound *scanned* rows, not *returned* rows. Behaviour matches the compiled path.
 - **Wasted decode.** A highly selective predicate on column A still requires column B to be fully decoded — drains are independent. The drain-side filter does not reduce decode cost; it only reduces filter cost.
-- **Word-array sizing.** `outWords.length = (batchCapacity + 63) >>> 6`, not `(recordCount + 63) >>> 6`. `Batch` recycles across pages of varying sizes; sizing to capacity avoids reallocation. The matcher zeroes trailing slots past `recordCount` so stale bits from the previous batch don't leak through `intersectMatches`.
+- **Word-array sizing.** `outWords.length = (batchCapacity + 63) >>> 6`, not `(recordCount + 63) >>> 6`. `Batch` recycles across pages of varying sizes; sizing to capacity avoids reallocation. Matchers leave bits past `recordCount` stale; the consumer's `bit < limit` check in `nextSetBit` and the `Math.min(bit, limit)` clamp in `scanRunEnd` are what filter stale set bits, not a per-batch zero-fill.
 - **Cast safety.** `LongGtBatchMatcher.test` casts `batch.values` to `long[]`. The cast is safe by construction: a `BatchFilterCompiler`-produced `LongBatchMatcher` is only installed on a `FlatColumnWorker` whose column was already typed as INT64 at projection time. A misuse fails fast with `ClassCastException`.
 
 ---

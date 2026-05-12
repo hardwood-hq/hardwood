@@ -51,12 +51,16 @@ import dev.hardwood.schema.FileSchema;
 /// - A single column-local leaf with a supported `(type, op)`, OR
 /// - `ResolvedPredicate.And(children)` where every child is a column-local leaf.
 ///
-/// Any other shape (`Or`, `Not`, intermediate-struct paths, unsupported `(type, op)`,
-/// two leaves on the same column) returns `null`. The caller falls back to the
-/// existing [dev.hardwood.internal.reader.FilteredRowReader] path on `null`.
+/// Any other shape (`Or`, `Not`, intermediate-struct paths, unsupported `(type, op)`)
+/// returns `null`. The caller falls back to the existing
+/// [dev.hardwood.internal.reader.FilteredRowReader] path on `null`. Multiple leaves on
+/// the same column compose into an [AndBatchMatcher] in the same slot.
 ///
-/// Supported `(type, op)` pairs in v1: `long` and `double` with comparison
-/// operators (`EQ`, `NOT_EQ`, `LT`, `LT_EQ`, `GT`, `GT_EQ`).
+/// Supported `(type, op)` pairs:
+/// - `long` / `double` / `int` / `float` × `{EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ}`
+/// - `boolean` × `{EQ, NOT_EQ}`
+/// - `IntIn` / `LongIn`
+/// - `IsNull` / `IsNotNull`
 public final class BatchFilterCompiler {
 
     private BatchFilterCompiler() {}

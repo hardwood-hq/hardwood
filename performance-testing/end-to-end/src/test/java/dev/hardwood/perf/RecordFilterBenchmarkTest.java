@@ -336,7 +336,7 @@ class RecordFilterBenchmarkTest {
         for (int i = 0; i < runs; i++) {
             double ms = run.times[i] / 1_000_000.0;
             System.out.printf("  %-50s %-26s %10.1f %,15d %,12.0f%n",
-                    name + " [" + (i + 1) + "]", "", ms, run.rows[i],
+                    name + " [" + (i + 1) + "]", path, ms, run.rows[i],
                     run.rows[i] / (ms / 1000.0));
         }
         double avgMs = avg(run.times) / 1_000_000.0;

@@ -12,7 +12,9 @@ import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
+import java.util.Arrays;
 import java.util.BitSet;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 
 import dev.hardwood.internal.ExceptionContext;
@@ -212,7 +214,7 @@ public final class FlatRowReader implements RowReader {
                 }
             }
 
-            filteredColumns = java.util.Arrays.copyOf(tmp, idx);
+            filteredColumns = Arrays.copyOf(tmp, idx);
         }
         if (filteredColumns == null || filteredColumns.length == 0) {
             drainSide = false;
@@ -277,7 +279,7 @@ public final class FlatRowReader implements RowReader {
     public void next() {
         if (drainSide) {
             if (pendingRowIndex < 0) {
-                throw new java.util.NoSuchElementException("No matching row available. Call hasNext() first.");
+                throw new NoSuchElementException("No matching row available. Call hasNext() first.");
             }
             rowIndex = pendingRowIndex;
             pendingRowIndex = -1;

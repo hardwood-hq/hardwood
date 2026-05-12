@@ -55,7 +55,10 @@ import static org.junit.jupiter.api.Assertions.assertNotNull;
 /// and in cross-type `And` compounds.
 class DrainSideOracleTest {
 
-    private static final int N = 256;
+    // 200 = 3 full 64-bit words + an 8-bit tail. Not a multiple of 64, so every
+    // oracle method exercises the matcher's `tail != 0` branch and the consumer's
+    // `bit < limit` / `Math.min(bit, limit)` clamps against stale trailing bits.
+    private static final int N = 200;
 
     // Projected column indices used throughout the test.
     private static final int COL_ID = 0;     // long
