@@ -15,11 +15,8 @@ import java.util.UUID;
 
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -98,12 +95,6 @@ public final class FilteredRowReader implements RowReader {
     @Override public String getFieldName(int i) { return delegate.getFieldName(i); }
     @Override public PqStruct getStruct(String name) { return delegate.getStruct(name); }
     @Override public PqStruct getStruct(int i) { return delegate.getStruct(i); }
-    @Override public PqIntList getListOfInts(String name) { return delegate.getListOfInts(name); }
-    @Override public PqIntList getListOfInts(int i) { return delegate.getListOfInts(i); }
-    @Override public PqLongList getListOfLongs(String name) { return delegate.getListOfLongs(name); }
-    @Override public PqLongList getListOfLongs(int i) { return delegate.getListOfLongs(i); }
-    @Override public PqDoubleList getListOfDoubles(String name) { return delegate.getListOfDoubles(name); }
-    @Override public PqDoubleList getListOfDoubles(int i) { return delegate.getListOfDoubles(i); }
     @Override public PqList getList(String name) { return delegate.getList(name); }
     @Override public PqList getList(int i) { return delegate.getList(i); }
     @Override public PqMap getMap(String name) { return delegate.getMap(name); }

@@ -28,11 +28,8 @@ import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -661,12 +658,6 @@ public final class FlatRowReader implements RowReader {
 
     @Override public PqStruct getStruct(String name) { throw nestedUnsupported(); }
     @Override public PqStruct getStruct(int i) { throw nestedUnsupported(); }
-    @Override public PqIntList getListOfInts(String name) { throw nestedUnsupported(); }
-    @Override public PqIntList getListOfInts(int i) { throw nestedUnsupported(); }
-    @Override public PqLongList getListOfLongs(String name) { throw nestedUnsupported(); }
-    @Override public PqLongList getListOfLongs(int i) { throw nestedUnsupported(); }
-    @Override public PqDoubleList getListOfDoubles(String name) { throw nestedUnsupported(); }
-    @Override public PqDoubleList getListOfDoubles(int i) { throw nestedUnsupported(); }
     @Override public PqList getList(String name) { throw nestedUnsupported(); }
     @Override public PqList getList(int i) { throw nestedUnsupported(); }
     @Override public PqMap getMap(String name) { throw nestedUnsupported(); }

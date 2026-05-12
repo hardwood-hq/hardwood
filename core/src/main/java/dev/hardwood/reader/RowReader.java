@@ -18,11 +18,8 @@ import dev.hardwood.internal.reader.FlatRowReader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -155,21 +152,6 @@ public interface RowReader extends StructAccessor, AutoCloseable {
     ///
     /// @return the struct value, or null if the field is null
     PqStruct getStruct(int fieldIndex);
-
-    /// Get an INT32 list field by field index.
-    ///
-    /// @return the list, or null if the field is null
-    PqIntList getListOfInts(int fieldIndex);
-
-    /// Get an INT64 list field by field index.
-    ///
-    /// @return the list, or null if the field is null
-    PqLongList getListOfLongs(int fieldIndex);
-
-    /// Get a DOUBLE list field by field index.
-    ///
-    /// @return the list, or null if the field is null
-    PqDoubleList getListOfDoubles(int fieldIndex);
 
     /// Get a LIST field value by field index.
     ///

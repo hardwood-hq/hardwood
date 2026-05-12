@@ -33,29 +33,6 @@ public interface StructAccessor extends FieldAccessor {
     /// @throws IllegalArgumentException if the field type is not a struct
     PqStruct getStruct(String name);
 
-    // ==================== Primitive List Types ====================
-
-    /// Get an INT32 list field by name.
-    ///
-    /// @param name the field name
-    /// @return the int list, or null if the field is null
-    /// @throws IllegalArgumentException if the field is not a list of INT32
-    PqIntList getListOfInts(String name);
-
-    /// Get an INT64 list field by name.
-    ///
-    /// @param name the field name
-    /// @return the long list, or null if the field is null
-    /// @throws IllegalArgumentException if the field is not a list of INT64
-    PqLongList getListOfLongs(String name);
-
-    /// Get a DOUBLE list field by name.
-    ///
-    /// @param name the field name
-    /// @return the double list, or null if the field is null
-    /// @throws IllegalArgumentException if the field is not a list of DOUBLE
-    PqDoubleList getListOfDoubles(String name);
-
     // ==================== Generic List ====================
 
     /// Get a LIST field value by name.
