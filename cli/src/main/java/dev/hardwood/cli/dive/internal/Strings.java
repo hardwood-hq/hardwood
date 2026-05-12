@@ -7,6 +7,9 @@
  */
 package dev.hardwood.cli.dive.internal;
 
+import java.util.ArrayList;
+import java.util.List;
+
 /// Small string helpers shared by `dive` screens. Kept here so the
 /// truncation/padding behavior — including the ellipsis character — stays
 /// consistent across every screen that draws columnar content.
@@ -36,5 +39,71 @@ public final class Strings {
             return s;
         }
         return ELLIPSIS + s.substring(s.length() - maxWidth + 1);
+    }
+
+    /// Word-wraps `value` so each returned line fits within `width` cells.
+    /// Hard line breaks in the source are preserved. Words longer than `width`
+    /// are character-chunked so they don't overflow the boundary.
+    public static List<String> wordWrap(String value, int width) {
+        List<String> out = new ArrayList<>();
+        if (width <= 0) {
+            out.add(value);
+            return out;
+        }
+        for (String line : value.split("\n", -1)) {
+            if (line.isEmpty()) {
+                out.add("");
+                continue;
+            }
+            String[] words = line.split(" ", -1);
+            StringBuilder currentLine = new StringBuilder();
+            for (String word : words) {
+                while (word.length() > width) {
+                    if (!currentLine.isEmpty()) {
+                        out.add(currentLine.toString());
+                        currentLine.setLength(0);
+                    }
+                    out.add(word.substring(0, width));
+                    word = word.substring(width);
+                }
+                if (currentLine.isEmpty()) {
+                    currentLine.append(word);
+                } else if (currentLine.length() + 1 + word.length() <= width) {
+                    currentLine.append(" ").append(word);
+                } else {
+                    out.add(currentLine.toString());
+                    currentLine.setLength(0);
+                    currentLine.append(word);
+                }
+            }
+            if (!currentLine.isEmpty()) {
+                out.add(currentLine.toString());
+            }
+        }
+        return out;
+    }
+
+    /// Splits `value` into display lines of at most `width` cells without
+    /// respecting word boundaries. Hard line breaks in the source are
+    /// preserved; each segment is then chunked at `width` if it's longer.
+    public static List<String> hardWrap(String value, int width) {
+        List<String> out = new ArrayList<>();
+        if (width <= 0) {
+            out.add(value);
+            return out;
+        }
+        for (String line : value.split("\n", -1)) {
+            if (line.isEmpty()) {
+                out.add("");
+                continue;
+            }
+            int i = 0;
+            while (i < line.length()) {
+                int end = Math.min(line.length(), i + width);
+                out.add(line.substring(i, end));
+                i = end;
+            }
+        }
+        return out;
     }
 }

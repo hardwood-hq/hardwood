@@ -220,6 +220,28 @@ class DiveRenderTest {
 
         HelpOverlay.render(buffer, screenArea);
 
+        assertThat(renderToString(buffer, screenArea))
+                .contains("enter filter mode (Schema, Column ")
+                .contains("               index, Dictionary) ");
+    }
+
+    @Test
+    void helpOverlayFitsAllKeybindingsAtNarrowWidth() {
+        // At 50×40 the overlay width drops to 46 (descBudget 24), so many more
+        // descriptions wrap onto a second line. The overlay's height must grow
+        // with the content; otherwise the bottom keybindings get clipped — the
+        // same failure mode that motivated #386, just at a different breakpoint.
+        Rect screenArea = new Rect(0, 0, 50, 40);
+        Buffer buffer = Buffer.empty(screenArea);
+
+        HelpOverlay.render(buffer, screenArea);
+
+        // The "Press ? or Esc to close" sentinel is the very last line of the
+        // overlay; if it renders, no content above it can have been clipped.
+        assertThat(renderToString(buffer, screenArea)).contains("Press ? or Esc to close");
+    }
+
+    private static String renderToString(Buffer buffer, Rect screenArea) {
         StringBuilder sb = new StringBuilder();
         for (int y = 0; y < screenArea.height(); y++) {
             for (int x = 0; x < screenArea.width(); x++) {
@@ -228,10 +250,7 @@ class DiveRenderTest {
             }
             sb.append("\n");
         }
-        String screenText = sb.toString();
-
-        assertThat(screenText).contains("enter filter mode (Schema, Column ");
-        assertThat(screenText).contains("               index, Dictionary) ");
+        return sb.toString();
     }
 
     static Stream<org.junit.jupiter.params.provider.Arguments> smokeMatrix() {
