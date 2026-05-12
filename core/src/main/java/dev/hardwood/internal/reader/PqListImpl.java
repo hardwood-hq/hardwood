@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -18,6 +19,8 @@ import java.util.function.IntFunction;
 
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
 import dev.hardwood.internal.variant.PqVariantImpl;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
@@ -202,72 +205,110 @@ final class PqListImpl implements PqList {
     }
 
     // ==================== Primitive Type Accessors ====================
+    //
+    // Each iterator validates `elementSchema` once at construction so the
+    // per-element lambda reduces to a cast (primitives) or a delegate to
+    // `convertLogicalType` (logical-typed objects). Wrong-type access
+    // throws field-named `IllegalArgumentException` from the iterator
+    // factory call rather than from the first element decode, so
+    // `pqList.dates()` on a STRING list fails fast even when the list
+    // happens to be empty.
 
     @Override
     public Iterable<Integer> ints() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToInt(raw, elementSchema));
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.INT32);
+        return () -> new LeafIterator<>(raw -> (Integer) raw);
     }
 
     @Override
     public Iterable<Long> longs() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToLong(raw, elementSchema));
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.INT64);
+        return () -> new LeafIterator<>(raw -> (Long) raw);
     }
 
     @Override
     public Iterable<Float> floats() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToFloat(raw, elementSchema));
+        // FLOAT16 (FLBA(2) + Float16Type) decodes per element via the typed
+        // converter; plain FLOAT is a direct cast.
+        if (elementSchema instanceof SchemaNode.PrimitiveNode prim
+                && prim.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                && prim.logicalType() instanceof LogicalType.Float16Type) {
+            return () -> new LeafIterator<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Float.class));
+        }
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.FLOAT);
+        return () -> new LeafIterator<>(raw -> (Float) raw);
     }
 
     @Override
     public Iterable<Double> doubles() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToDouble(raw, elementSchema));
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.DOUBLE);
+        return () -> new LeafIterator<>(raw -> (Double) raw);
     }
 
     @Override
     public Iterable<Boolean> booleans() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToBoolean(raw, elementSchema));
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.BOOLEAN);
+        return () -> new LeafIterator<>(raw -> (Boolean) raw);
     }
 
     // ==================== Object Type Accessors ====================
 
     @Override
     public Iterable<String> strings() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToString(raw, elementSchema));
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.BYTE_ARRAY);
+        return () -> new LeafIterator<>(raw -> {
+            if (raw == null) return null;
+            if (raw instanceof String s) return s;
+            return new String((byte[]) raw, StandardCharsets.UTF_8);
+        });
     }
 
     @Override
     public Iterable<byte[]> binaries() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToBinary(raw, elementSchema));
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
+        return () -> new LeafIterator<>(raw -> (byte[]) raw);
     }
 
     @Override
     public Iterable<LocalDate> dates() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToDate(raw, elementSchema));
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.DateType.class);
+        return () -> new LeafIterator<>(raw -> raw == null
+                ? null : ValueConverter.convertLogicalType(raw, elementSchema, LocalDate.class));
     }
 
     @Override
     public Iterable<LocalTime> times() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToTime(raw, elementSchema));
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.TimeType.class);
+        return () -> new LeafIterator<>(raw -> raw == null
+                ? null : ValueConverter.convertLogicalType(raw, elementSchema, LocalTime.class));
     }
 
     @Override
     public Iterable<Instant> timestamps() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToTimestamp(raw, elementSchema));
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.TimestampType.class);
+        return () -> new LeafIterator<>(raw -> raw == null
+                ? null : ValueConverter.convertLogicalType(raw, elementSchema, Instant.class));
     }
 
     @Override
     public Iterable<BigDecimal> decimals() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToDecimal(raw, elementSchema));
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.DecimalType.class);
+        return () -> new LeafIterator<>(raw -> raw == null
+                ? null : ValueConverter.convertLogicalType(raw, elementSchema, BigDecimal.class));
     }
 
     @Override
     public Iterable<UUID> uuids() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToUuid(raw, elementSchema));
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.UuidType.class);
+        return () -> new LeafIterator<>(raw -> raw == null
+                ? null : ValueConverter.convertLogicalType(raw, elementSchema, UUID.class));
     }
 
     @Override
     public Iterable<PqInterval> intervals() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToInterval(raw, elementSchema));
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.IntervalType.class);
+        return () -> new LeafIterator<>(raw -> raw == null
+                ? null : ValueConverter.convertLogicalType(raw, elementSchema, PqInterval.class));
     }
 
     // ==================== Nested Type Accessors ====================
