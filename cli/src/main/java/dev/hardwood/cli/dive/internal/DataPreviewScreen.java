@@ -277,7 +277,7 @@ public final class DataPreviewScreen {
             ownership[i] = all.size();
             if (isExpanded) {
                 String fullValue = i < expanded.size() ? expanded.get(i) : value;
-                List<String> wrapped = wrapValue(fullValue, valueBudget);
+                List<String> wrapped = Strings.hardWrap(fullValue, valueBudget);
                 if (wrapped.isEmpty()) {
                     wrapped.add("");
                 }
@@ -322,7 +322,7 @@ public final class DataPreviewScreen {
                 String shown;
                 if (isExpanded) {
                     String fullValue = fieldIdx < expanded.size() ? expanded.get(fieldIdx) : value;
-                    List<String> wrapped = wrapValue(fullValue, valueBudget);
+                    List<String> wrapped = Strings.hardWrap(fullValue, valueBudget);
                     shown = wrapped.isEmpty() ? "" : wrapped.get(0);
                 }
                 else {
@@ -334,7 +334,7 @@ public final class DataPreviewScreen {
             }
             else if (isExpanded) {
                 String fullValue = fieldIdx < expanded.size() ? expanded.get(fieldIdx) : value;
-                List<String> wrapped = wrapValue(fullValue, valueBudget);
+                List<String> wrapped = Strings.hardWrap(fullValue, valueBudget);
                 int contIdx = cursorLine - fieldFirstLine;
                 String text = contIdx < wrapped.size() ? wrapped.get(contIdx) : "";
                 all.set(cursorLine, Line.from(new Span(continuationIndent + text, selectionStyle)));
@@ -399,30 +399,6 @@ public final class DataPreviewScreen {
                 .left()
                 .build()
                 .render(area, buffer);
-    }
-
-    /// Splits a possibly multi-line value into display lines that each fit
-    /// within `width` cells. Hard line breaks in the source are preserved;
-    /// each segment is then chunked at `width` if it's longer.
-    private static List<String> wrapValue(String value, int width) {
-        List<String> out = new ArrayList<>();
-        if (width <= 0) {
-            out.add(value);
-            return out;
-        }
-        for (String line : value.split("\n", -1)) {
-            if (line.isEmpty()) {
-                out.add("");
-                continue;
-            }
-            int i = 0;
-            while (i < line.length()) {
-                int end = Math.min(line.length(), i + width);
-                out.add(line.substring(i, end));
-                i = end;
-            }
-        }
-        return out;
     }
 
     public static String keybarKeys(ScreenState.DataPreview state, ParquetModel model) {
