@@ -74,6 +74,15 @@ class RowValueFormatterTest {
     }
 
     @Test
+    void float16BytesDecodeToFloat() {
+        // Half-precision 1.5 = sign 0 | exponent 01111 (15) | fraction 1000000000
+        // = 0x3E00, little-endian → 0x00, 0x3E.
+        ColumnSchema col = column(PhysicalType.FIXED_LEN_BYTE_ARRAY, new LogicalType.Float16Type());
+        byte[] fp16 = { 0x00, 0x3E };
+        assertThat(RowValueFormatter.formatDictionaryValue(fp16, col)).isEqualTo("1.5");
+    }
+
+    @Test
     void rawLongFallbackWithoutLogicalType() {
         ColumnSchema col = column(PhysicalType.INT64, null);
         assertThat(RowValueFormatter.formatDictionaryValue(42L, col)).isEqualTo("42");

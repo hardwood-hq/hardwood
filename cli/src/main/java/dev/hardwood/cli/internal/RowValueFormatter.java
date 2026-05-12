@@ -67,6 +67,10 @@ public final class RowValueFormatter {
     /// value (e.g. `1735689600000000` instead of `2025-01-01T00:00:00Z`),
     /// useful for confirming the raw storage form. Nested groups always
     /// render structurally — the toggle only affects primitive leaves.
+    ///
+    /// Exhaustive over the sealed [LogicalType] hierarchy: a new subtype
+    /// fails to compile here until an explicit case is added, preventing
+    /// silent fall-through to the raw-bytes path.
     public static String format(RowReader reader, int fieldIndex, SchemaNode field, boolean useLogicalType) {
         if (reader.isNull(fieldIndex)) {
             return "null";
@@ -84,48 +88,54 @@ public final class RowValueFormatter {
             return formatPhysical(reader, fieldIndex);
         }
         LogicalType lt = prim.logicalType();
-        if (lt instanceof LogicalType.TimestampType ts) {
-            return formatTimestamp(reader.getTimestamp(fieldIndex), ts);
-        }
-        if (lt instanceof LogicalType.DateType) {
-            return reader.getDate(fieldIndex).toString();
-        }
-        if (lt instanceof LogicalType.TimeType) {
-            return reader.getTime(fieldIndex).toString();
-        }
-        if (lt instanceof LogicalType.DecimalType) {
-            return reader.getDecimal(fieldIndex).toPlainString();
-        }
-        if (lt instanceof LogicalType.UuidType) {
-            return reader.getUuid(fieldIndex).toString();
-        }
-        if (lt instanceof LogicalType.StringType
-                || lt instanceof LogicalType.EnumType
-                || lt instanceof LogicalType.JsonType
-                || lt instanceof LogicalType.BsonType) {
-            return reader.getString(fieldIndex);
-        }
-        if (lt instanceof LogicalType.IntType it && !it.isSigned()) {
-            long raw = switch (prim.type()) {
-                case INT32 -> Integer.toUnsignedLong(reader.getInt(fieldIndex));
-                case INT64 -> reader.getLong(fieldIndex);
-                default -> ((Number) reader.getRawValue(fieldIndex)).longValue();
-            };
-            return Long.toUnsignedString(raw);
-        }
-        if (lt instanceof LogicalType.IntervalType) {
-            return formatInterval(reader.getInterval(fieldIndex));
-        }
-        // BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY / INT96 with no string-like logical
-        // type fall through here. `getRawValue` returns the underlying byte[];
-        // the default `String.valueOf(byte[])` would emit the JVM's
-        // array-hashcode form ([B@...). Render printable UTF-8 as text, else
-        // 0x-hex — mirrors how IndexValueFormatter handles raw-byte stats.
-        Object raw = reader.getRawValue(fieldIndex);
-        if (raw instanceof byte[] bytes) {
-            return formatRawBytes(bytes);
-        }
-        return String.valueOf(raw);
+        return switch (lt) {
+            case null -> formatPhysical(reader, fieldIndex);
+            case LogicalType.TimestampType ts -> formatTimestamp(reader.getTimestamp(fieldIndex), ts);
+            case LogicalType.DateType d -> reader.getDate(fieldIndex).toString();
+            case LogicalType.TimeType t -> reader.getTime(fieldIndex).toString();
+            case LogicalType.DecimalType dec -> reader.getDecimal(fieldIndex).toPlainString();
+            case LogicalType.UuidType u -> reader.getUuid(fieldIndex).toString();
+            case LogicalType.StringType s -> reader.getString(fieldIndex);
+            case LogicalType.EnumType e -> reader.getString(fieldIndex);
+            case LogicalType.JsonType j -> reader.getString(fieldIndex);
+            case LogicalType.BsonType b -> reader.getString(fieldIndex);
+            case LogicalType.IntType it when !it.isSigned() -> formatUnsignedInt(reader, fieldIndex, prim);
+            // Signed IntType still goes through getRawValue / String.valueOf —
+            // matches the pre-refactor behavior.
+            case LogicalType.IntType it -> formatPhysical(reader, fieldIndex);
+            case LogicalType.IntervalType i -> formatInterval(reader.getInterval(fieldIndex));
+            // FLOAT16 was previously hex-rendered because nothing matched the
+            // logical type and getRawValue returns the FLBA(2) bytes; getFloat
+            // handles the half→single widening transparently so 1.5 prints as
+            // "1.5" instead of "0x003c".
+            case LogicalType.Float16Type f16 -> Float.toString(reader.getFloat(fieldIndex));
+            // Geometry / Geography carry opaque WKB / WKT binary payloads with
+            // no decoder yet — hex-render explicitly rather than relying on a
+            // raw-bytes fall-through.
+            case LogicalType.GeometryType g -> formatPhysical(reader, fieldIndex);
+            case LogicalType.GeographyType g -> formatPhysical(reader, fieldIndex);
+            // Structural / self-describing logical types are carried on group
+            // nodes and short-circuited above; reaching them here means the
+            // schema is malformed.
+            case LogicalType.ListType l -> throw structuralReached(field, lt);
+            case LogicalType.MapType m -> throw structuralReached(field, lt);
+            case LogicalType.VariantType v -> throw structuralReached(field, lt);
+        };
+    }
+
+    private static String formatUnsignedInt(RowReader reader, int fieldIndex, SchemaNode.PrimitiveNode prim) {
+        long raw = switch (prim.type()) {
+            case INT32 -> Integer.toUnsignedLong(reader.getInt(fieldIndex));
+            case INT64 -> reader.getLong(fieldIndex);
+            default -> ((Number) reader.getRawValue(fieldIndex)).longValue();
+        };
+        return Long.toUnsignedString(raw);
+    }
+
+    private static IllegalStateException structuralReached(SchemaNode field, LogicalType lt) {
+        return new IllegalStateException(
+                "Group logical type " + lt + " reached primitive formatter path on field '"
+                        + field.name() + "'");
     }
 
     /// Multi-line, fully-expanded variant — no element-count caps and no
@@ -335,50 +345,70 @@ public final class RowValueFormatter {
         };
     }
 
+    /// INT32 dictionary entries can only carry logical types backed by `INT32`:
+    /// `DATE`, `TIME(MILLIS)`, `DECIMAL(precision ≤ 9)`, and the `INT(8|16|32)`
+    /// family. The `default` arm fails fast on any other logical type — it's
+    /// either physically incompatible (the caller mismatched primitive/logical)
+    /// or a brand-new sealed subtype whose handling hasn't been considered.
     private static String formatInt(int raw, LogicalType lt) {
-        if (lt instanceof LogicalType.DateType) {
-            return LocalDate.ofEpochDay(raw).toString();
-        }
-        if (lt instanceof LogicalType.TimeType t) {
-            return formatTime(raw, t.unit());
-        }
-        if (lt instanceof LogicalType.IntType it && !it.isSigned()) {
-            return Long.toString(Integer.toUnsignedLong(raw));
-        }
-        return Integer.toString(raw);
+        return switch (lt) {
+            case null -> Integer.toString(raw);
+            case LogicalType.DateType d -> LocalDate.ofEpochDay(raw).toString();
+            case LogicalType.TimeType t -> formatTime(raw, t.unit());
+            case LogicalType.IntType it when !it.isSigned() -> Long.toString(Integer.toUnsignedLong(raw));
+            case LogicalType.IntType it -> Integer.toString(raw);
+            case LogicalType.DecimalType d -> new BigDecimal(BigInteger.valueOf(raw), d.scale()).toPlainString();
+            default -> throw notBackedBy(lt, "INT32");
+        };
     }
 
+    /// INT64 dictionary entries can only carry logical types backed by `INT64`:
+    /// `TIMESTAMP`, `TIME(MICROS|NANOS)`, `DECIMAL(10 ≤ precision ≤ 18)`, and the
+    /// `INT_64` logical type. See [#formatInt] for the `default` rationale.
     private static String formatLong(long raw, LogicalType lt) {
-        if (lt instanceof LogicalType.TimestampType ts) {
-            return formatTimestamp(rawToInstant(raw, ts.unit()), ts);
-        }
-        if (lt instanceof LogicalType.TimeType t) {
-            return formatTime(raw, t.unit());
-        }
-        if (lt instanceof LogicalType.IntType it && !it.isSigned()) {
-            return Long.toUnsignedString(raw);
-        }
-        return Long.toString(raw);
+        return switch (lt) {
+            case null -> Long.toString(raw);
+            case LogicalType.TimestampType ts -> formatTimestamp(rawToInstant(raw, ts.unit()), ts);
+            case LogicalType.TimeType t -> formatTime(raw, t.unit());
+            case LogicalType.IntType it when !it.isSigned() -> Long.toUnsignedString(raw);
+            case LogicalType.IntType it -> Long.toString(raw);
+            case LogicalType.DecimalType d -> new BigDecimal(BigInteger.valueOf(raw), d.scale()).toPlainString();
+            default -> throw notBackedBy(lt, "INT64");
+        };
     }
 
+    /// `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` dictionary entries can carry the
+    /// byte-backed logical types — strings, BSON, UUID(16), INTERVAL(12),
+    /// FLOAT16(2), DECIMAL, plus Geometry / Geography WKB. See [#formatInt]
+    /// for the `default` rationale.
     private static String formatBytes(byte[] raw, LogicalType lt) {
-        if (lt instanceof LogicalType.StringType
-                || lt instanceof LogicalType.EnumType
-                || lt instanceof LogicalType.JsonType
-                || lt instanceof LogicalType.BsonType) {
-            return new String(raw, StandardCharsets.UTF_8);
-        }
-        if (lt instanceof LogicalType.DecimalType d) {
-            return new BigDecimal(new BigInteger(raw), d.scale()).toPlainString();
-        }
-        if (lt instanceof LogicalType.UuidType && raw.length == 16) {
-            ByteBuffer bb = ByteBuffer.wrap(raw);
-            return new UUID(bb.getLong(), bb.getLong()).toString();
-        }
-        if (lt instanceof LogicalType.IntervalType && raw.length == 12) {
-            return formatIntervalBytes(raw);
-        }
-        return formatRawBytes(raw);
+        return switch (lt) {
+            case null -> formatRawBytes(raw);
+            case LogicalType.StringType s -> new String(raw, StandardCharsets.UTF_8);
+            case LogicalType.EnumType e -> new String(raw, StandardCharsets.UTF_8);
+            case LogicalType.JsonType j -> new String(raw, StandardCharsets.UTF_8);
+            case LogicalType.BsonType b -> new String(raw, StandardCharsets.UTF_8);
+            case LogicalType.DecimalType d -> new BigDecimal(new BigInteger(raw), d.scale()).toPlainString();
+            case LogicalType.UuidType u when raw.length == 16 -> {
+                ByteBuffer bb = ByteBuffer.wrap(raw);
+                yield new UUID(bb.getLong(), bb.getLong()).toString();
+            }
+            case LogicalType.UuidType u -> formatRawBytes(raw);
+            case LogicalType.IntervalType i when raw.length == 12 -> formatIntervalBytes(raw);
+            case LogicalType.IntervalType i -> formatRawBytes(raw);
+            case LogicalType.Float16Type f when raw.length == 2 ->
+                    Float.toString(LogicalTypeConverter.convertToFloat16(raw, PhysicalType.FIXED_LEN_BYTE_ARRAY));
+            case LogicalType.Float16Type f -> formatRawBytes(raw);
+            case LogicalType.GeometryType g -> formatRawBytes(raw);
+            case LogicalType.GeographyType g -> formatRawBytes(raw);
+            default -> throw notBackedBy(lt, "BYTE_ARRAY");
+        };
+    }
+
+    private static IllegalStateException notBackedBy(LogicalType lt, String physical) {
+        return new IllegalStateException(
+                "Logical type " + lt + " is not backed by " + physical
+                        + "; dictionary value of mismatched primitive type passed");
     }
 
     /// Decode a 12-byte FIXED_LEN_BYTE_ARRAY INTERVAL payload (as used in
