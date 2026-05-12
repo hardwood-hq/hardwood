@@ -19,11 +19,8 @@ import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -205,21 +202,6 @@ final class PqStructImpl implements PqStruct {
             return PqStructImpl.atPosition(batch, structDesc, valueIndex);
         }
         return new PqStructImpl(batch, structDesc, rowIndex);
-    }
-
-    @Override
-    public PqIntList getListOfInts(String name) {
-        return PqListImpl.createIntList(batch, lookupListChild(name), rowIndex, valueIndex);
-    }
-
-    @Override
-    public PqLongList getListOfLongs(String name) {
-        return PqListImpl.createLongList(batch, lookupListChild(name), rowIndex, valueIndex);
-    }
-
-    @Override
-    public PqDoubleList getListOfDoubles(String name) {
-        return PqListImpl.createDoubleList(batch, lookupListChild(name), rowIndex, valueIndex);
     }
 
     @Override

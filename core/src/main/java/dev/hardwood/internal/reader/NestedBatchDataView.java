@@ -21,11 +21,8 @@ import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -406,21 +403,6 @@ public final class NestedBatchDataView {
         return new PqStructImpl(batchIndex, structDesc, rowIndex);
     }
 
-    public PqIntList getListOfInts(String name) {
-        TopLevelFieldMap.FieldDesc.ListOf listDesc = lookupList(name);
-        return createIntList(listDesc);
-    }
-
-    public PqLongList getListOfLongs(String name) {
-        TopLevelFieldMap.FieldDesc.ListOf listDesc = lookupList(name);
-        return createLongList(listDesc);
-    }
-
-    public PqDoubleList getListOfDoubles(String name) {
-        TopLevelFieldMap.FieldDesc.ListOf listDesc = lookupList(name);
-        return createDoubleList(listDesc);
-    }
-
     public PqList getList(String name) {
         TopLevelFieldMap.FieldDesc.ListOf listDesc = lookupList(name);
         return createList(listDesc);
@@ -444,18 +426,6 @@ public final class NestedBatchDataView {
             return null;
         }
         return new PqStructImpl(batchIndex, structDesc, rowIndex);
-    }
-
-    public PqIntList getListOfInts(int projectedIndex) {
-        return createIntList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
-    }
-
-    public PqLongList getListOfLongs(int projectedIndex) {
-        return createLongList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
-    }
-
-    public PqDoubleList getListOfDoubles(int projectedIndex) {
-        return createDoubleList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
     }
 
     public PqList getList(int projectedIndex) {
@@ -565,18 +535,6 @@ public final class NestedBatchDataView {
             throw new IllegalArgumentException(prefix() + "Field '" + name + "' is not a list");
         }
         return listDesc;
-    }
-
-    private PqIntList createIntList(TopLevelFieldMap.FieldDesc.ListOf listDesc) {
-        return PqListImpl.createIntList(batchIndex, listDesc, rowIndex, -1);
-    }
-
-    private PqLongList createLongList(TopLevelFieldMap.FieldDesc.ListOf listDesc) {
-        return PqListImpl.createLongList(batchIndex, listDesc, rowIndex, -1);
-    }
-
-    private PqDoubleList createDoubleList(TopLevelFieldMap.FieldDesc.ListOf listDesc) {
-        return PqListImpl.createDoubleList(batchIndex, listDesc, rowIndex, -1);
     }
 
     private PqList createList(TopLevelFieldMap.FieldDesc.ListOf listDesc) {

@@ -74,36 +74,6 @@ final class PqListImpl implements PqList {
                 range.start, range.end, range.subLevel);
     }
 
-    static PqIntList createIntList(NestedBatchIndex batch,
-                                   TopLevelFieldMap.FieldDesc.ListOf listDesc,
-                                   int rowIndex, int valueIndex) {
-        ListRange range = computeRange(batch, listDesc, rowIndex, valueIndex);
-        if (range == null) {
-            return null;
-        }
-        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(), range.start, range.end);
-    }
-
-    static PqLongList createLongList(NestedBatchIndex batch,
-                                     TopLevelFieldMap.FieldDesc.ListOf listDesc,
-                                     int rowIndex, int valueIndex) {
-        ListRange range = computeRange(batch, listDesc, rowIndex, valueIndex);
-        if (range == null) {
-            return null;
-        }
-        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(), range.start, range.end);
-    }
-
-    static PqDoubleList createDoubleList(NestedBatchIndex batch,
-                                         TopLevelFieldMap.FieldDesc.ListOf listDesc,
-                                         int rowIndex, int valueIndex) {
-        ListRange range = computeRange(batch, listDesc, rowIndex, valueIndex);
-        if (range == null) {
-            return null;
-        }
-        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(), range.start, range.end);
-    }
-
     static boolean isListNull(NestedBatchIndex batch,
                               TopLevelFieldMap.FieldDesc.ListOf listDesc,
                               int rowIndex, int valueIndex) {

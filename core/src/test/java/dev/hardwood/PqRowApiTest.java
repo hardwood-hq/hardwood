@@ -166,7 +166,7 @@ public class PqRowApiTest {
             }
             assertThat(tagValues0).containsExactly("a", "b", "c");
 
-            PqIntList scores0 = rowReader.getListOfInts("scores");
+            PqIntList scores0 = rowReader.getList("scores").ints();
             assertThat(scores0).isNotNull();
             assertThat(scores0.size()).isEqualTo(3);
             List<Integer> scoreValues0 = new ArrayList<>();
@@ -186,7 +186,7 @@ public class PqRowApiTest {
             rowReader.next();
             assertThat(rowReader.getInt("id")).isEqualTo(3);
             assertThat(rowReader.getList("tags")).isNull();
-            PqIntList scores2 = rowReader.getListOfInts("scores");
+            PqIntList scores2 = rowReader.getList("scores").ints();
             assertThat(scores2).isNotNull();
             List<Integer> scoreValues2 = new ArrayList<>();
             for (int i = 0; i < scores2.size(); i++) {
@@ -204,7 +204,7 @@ public class PqRowApiTest {
                 tagValues3.add(tag);
             }
             assertThat(tagValues3).containsExactly("single");
-            assertThat(rowReader.getListOfInts("scores")).isNull();
+            assertThat(rowReader.getList("scores")).isNull();
 
             assertThat(rowReader.hasNext()).isFalse();
         }
@@ -1181,7 +1181,7 @@ public class PqRowApiTest {
             rowReader.next();
             assertThat(rowReader.getInt("id")).isEqualTo(1);
 
-            PqLongList longList0 = rowReader.getListOfLongs("long_list");
+            PqLongList longList0 = rowReader.getList("long_list").longs();
             assertThat(longList0).isNotNull();
             assertThat(longList0.size()).isEqualTo(3);
             assertThat(longList0.get(0)).isEqualTo(100L);
@@ -1190,18 +1190,18 @@ public class PqRowApiTest {
 
             // Row 1: long_list=[1000]
             rowReader.next();
-            PqLongList longList1 = rowReader.getListOfLongs("long_list");
+            PqLongList longList1 = rowReader.getList("long_list").longs();
             assertThat(longList1.size()).isEqualTo(1);
             assertThat(longList1.get(0)).isEqualTo(1000L);
 
             // Row 2: long_list=[1, 2, 3, 4, 5]
             rowReader.next();
-            PqLongList longList2 = rowReader.getListOfLongs("long_list");
+            PqLongList longList2 = rowReader.getList("long_list").longs();
             assertThat(longList2.size()).isEqualTo(5);
 
             // Row 3: long_list=null
             rowReader.next();
-            assertThat(rowReader.getListOfLongs("long_list")).isNull();
+            assertThat(rowReader.getList("long_list")).isNull();
 
             assertThat(rowReader.hasNext()).isFalse();
         }
@@ -1218,7 +1218,7 @@ public class PqRowApiTest {
             rowReader.next();
             assertThat(rowReader.getInt("id")).isEqualTo(1);
 
-            PqDoubleList doubleList0 = rowReader.getListOfDoubles("double_list");
+            PqDoubleList doubleList0 = rowReader.getList("double_list").doubles();
             assertThat(doubleList0).isNotNull();
             assertThat(doubleList0.size()).isEqualTo(3);
             assertThat(doubleList0.get(0)).isEqualTo(1.1);
@@ -1227,20 +1227,20 @@ public class PqRowApiTest {
 
             // Row 1: double_list=[10.5, 20.5]
             rowReader.next();
-            PqDoubleList doubleList1 = rowReader.getListOfDoubles("double_list");
+            PqDoubleList doubleList1 = rowReader.getList("double_list").doubles();
             assertThat(doubleList1.size()).isEqualTo(2);
             assertThat(doubleList1.get(0)).isEqualTo(10.5);
             assertThat(doubleList1.get(1)).isEqualTo(20.5);
 
             // Row 2: double_list=[]
             rowReader.next();
-            PqDoubleList doubleList2 = rowReader.getListOfDoubles("double_list");
+            PqDoubleList doubleList2 = rowReader.getList("double_list").doubles();
             assertThat(doubleList2).isNotNull();
             assertThat(doubleList2.isEmpty()).isTrue();
 
             // Row 3: double_list=null
             rowReader.next();
-            assertThat(rowReader.getListOfDoubles("double_list")).isNull();
+            assertThat(rowReader.getList("double_list")).isNull();
 
             assertThat(rowReader.hasNext()).isFalse();
         }
@@ -1303,8 +1303,8 @@ public class PqRowApiTest {
             assertThat(tags0).isNotNull();
             assertThat(tags0.size()).isEqualTo(3);
 
-            // getListOfInts by index
-            PqIntList scores0 = rowReader.getListOfInts(scoresIdx);
+            // ints() on getList(index)
+            PqIntList scores0 = rowReader.getList(scoresIdx).ints();
             assertThat(scores0).isNotNull();
             assertThat(scores0.size()).isEqualTo(3);
             assertThat(scores0.get(0)).isEqualTo(10);
@@ -1334,20 +1334,20 @@ public class PqRowApiTest {
                 }
             }
 
-            // getListOfInts by index
-            PqIntList intList = rowReader.getListOfInts(intListIdx);
+            // ints() on getList(index)
+            PqIntList intList = rowReader.getList(intListIdx).ints();
             assertThat(intList).isNotNull();
             assertThat(intList.size()).isEqualTo(3);
             assertThat(intList.get(0)).isEqualTo(1);
 
-            // getListOfLongs by index
-            PqLongList longList = rowReader.getListOfLongs(longListIdx);
+            // longs() on getList(index)
+            PqLongList longList = rowReader.getList(longListIdx).longs();
             assertThat(longList).isNotNull();
             assertThat(longList.size()).isEqualTo(3);
             assertThat(longList.get(0)).isEqualTo(100L);
 
-            // getListOfDoubles by index
-            PqDoubleList doubleList = rowReader.getListOfDoubles(doubleListIdx);
+            // doubles() on getList(index)
+            PqDoubleList doubleList = rowReader.getList(doubleListIdx).doubles();
             assertThat(doubleList).isNotNull();
             assertThat(doubleList.size()).isEqualTo(3);
             assertThat(doubleList.get(0)).isEqualTo(1.1);
