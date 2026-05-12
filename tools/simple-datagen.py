@@ -3045,3 +3045,53 @@ pq.write_table(
 )
 
 print("Generated map_typed_keys_test.parquet (#463): Map<int64,*> + Map<binary,*>")
+
+# 3. Wide-schema struct (one field per primitive logical type) — backs the
+#    parametric by-index test in #473. UUID, INTERVAL, and VARIANT by-index
+#    are covered separately by their dedicated fixtures
+#    (logical_types_test / typed_accessors_issue_445 /
+#    variant_in_repeated_test); inlining them here trips
+#    `pa.table(..., schema=struct_with_extension_type)` on PyArrow 24.
+wide_struct_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('fields', pa.struct([
+        ('a_int', pa.int32()),
+        ('b_long', pa.int64()),
+        ('c_float', pa.float32()),
+        ('d_double', pa.float64()),
+        ('e_bool', pa.bool_()),
+        ('f_string', pa.string()),
+        ('g_binary', pa.binary()),
+        ('h_date', pa.date32()),
+        ('i_time', pa.time32('ms')),
+        ('j_timestamp', pa.timestamp('us', tz='UTC')),
+        ('k_decimal', pa.decimal128(10, 2)),
+        ('m_list', pa.list_(pa.int32())),
+        ('n_map', pa.map_(pa.string(), pa.int32())),
+    ])),
+])
+wide_struct_table = pa.table({
+    'id': [1],
+    'fields': [{
+        'a_int': 42,
+        'b_long': 12345678901234,
+        'c_float': 1.5,
+        'd_double': 2.5,
+        'e_bool': True,
+        'f_string': 'hello',
+        'g_binary': b'\xde\xad\xbe\xef',
+        'h_date': date(2026, 1, 15),
+        'i_time': time(12, 30, 45),
+        'j_timestamp': pa.scalar(1_000_000, type=pa.timestamp('us', tz='UTC')).as_py(),
+        'k_decimal': Decimal('123.45'),
+        'm_list': [1, 2, 3],
+        'n_map': [('alpha', 10), ('beta', 20)],
+    }],
+}, schema=wide_struct_schema)
+pq.write_table(
+    wide_struct_table,
+    'core/src/test/resources/wide_struct_test.parquet',
+    use_dictionary=False, compression=None, data_page_version='1.0',
+)
+
+print("Generated wide_struct_test.parquet (#473): 13-field struct (primitive logical types + list + map; UUID/INTERVAL/VARIANT covered elsewhere)")

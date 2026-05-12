@@ -328,6 +328,7 @@ public class RecordFilterMicroBenchmark {
         @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(); }
         @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
+        @Override public Object getRawValue(String name) { throw new UnsupportedOperationException(); }
         @Override public int getFieldCount() { return 4; }
         @Override public String getFieldName(int index) {
             return switch (index) {
@@ -338,5 +339,25 @@ public class RecordFilterMicroBenchmark {
                 default -> throw new IndexOutOfBoundsException(index);
             };
         }
+        @Override public int getInt(int i) { throw new UnsupportedOperationException(); }
+        @Override public long getLong(int i) { throw new UnsupportedOperationException(); }
+        @Override public float getFloat(int i) { throw new UnsupportedOperationException(); }
+        @Override public double getDouble(int i) { throw new UnsupportedOperationException(); }
+        @Override public boolean getBoolean(int i) { throw new UnsupportedOperationException(); }
+        @Override public String getString(int i) { throw new UnsupportedOperationException(); }
+        @Override public byte[] getBinary(int i) { throw new UnsupportedOperationException(); }
+        @Override public LocalDate getDate(int i) { throw new UnsupportedOperationException(); }
+        @Override public LocalTime getTime(int i) { throw new UnsupportedOperationException(); }
+        @Override public Instant getTimestamp(int i) { throw new UnsupportedOperationException(); }
+        @Override public BigDecimal getDecimal(int i) { throw new UnsupportedOperationException(); }
+        @Override public UUID getUuid(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqInterval getInterval(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqStruct getStruct(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqList getList(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqMap getMap(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqVariant getVariant(int i) { throw new UnsupportedOperationException(); }
+        @Override public Object getValue(int i) { throw new UnsupportedOperationException(); }
+        @Override public Object getRawValue(int i) { throw new UnsupportedOperationException(); }
+        @Override public boolean isNull(int i) { throw new UnsupportedOperationException(); }
     }
 }
