@@ -19,7 +19,15 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Configuration: configuration.md
-  - Usage: usage.md
+  - Usage:
+    - Overview: usage.md
+    - Row-Oriented Reading: usage/row-reader.md
+    - Column-Oriented Reading: usage/column-reader.md
+    - Predicate Pushdown, Projection, Limits, Splits: usage/query-controls.md
+    - Reading Multiple Files: usage/multi-file.md
+    - Accessing File Metadata: usage/metadata.md
+    - Variant Columns: usage/variant.md
+    - Geospatial Support: usage/geospatial.md
   - CLI: cli.md
   - Modules:
     - S3: s3.md
