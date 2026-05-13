@@ -246,7 +246,9 @@ public class RecordFilterMicroBenchmark {
     private static BatchExchange.Batch batch(Object values, int recordCount) {
         BatchExchange.Batch b = new BatchExchange.Batch();
         b.values = values;
-        b.nulls = null; // schema is REQUIRED across all columns — no nulls.
+        // Schema is REQUIRED across all columns; `validity = null` is the
+        // sparse representation of "every leaf in this batch is present."
+        b.validity = null;
         b.recordCount = recordCount;
         return b;
     }
