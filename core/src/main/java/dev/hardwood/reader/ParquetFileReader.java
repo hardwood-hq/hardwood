@@ -11,6 +11,8 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.AadPrefixProvider;
+import dev.hardwood.DecryptionKeyProvider;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
@@ -66,16 +68,72 @@ public class ParquetFileReader implements AutoCloseable {
     private final boolean ownsContext;
     private final boolean ownsInputFiles;
     private final List<RowGroupIterator> rowGroupIterators = new ArrayList<>();
+    private final DecryptionKeyProvider keyProvider;
+    private final AadPrefixProvider aadPrefixProvider;
+
+    /// Builder for creating a [ParquetFileReader] with optional crypto and context configuration.
+    public static class Builder {
+        private final InputFile inputFile;
+        private HardwoodContext context;
+        private DecryptionKeyProvider keyProvider;
+        private AadPrefixProvider aadPrefixProvider;
+
+        private Builder(InputFile inputFile) {
+            this.inputFile = inputFile;
+        }
+
+        /// Sets the decryption key provider for reading encrypted files.
+        public Builder keyProvider(DecryptionKeyProvider keyProvider) {
+            this.keyProvider = keyProvider;
+            return this;
+        }
+
+        /// Sets the AAD prefix provider for reading encrypted files that require caller-supplied AAD prefix.
+        public Builder aadPrefixProvider(AadPrefixProvider aadPrefixProvider) {
+            this.aadPrefixProvider = aadPrefixProvider;
+            return this;
+        }
+
+        /// Sets a shared context. If not set, a dedicated context is created.
+        public Builder context(HardwoodContext context) {
+            this.context = context;
+            return this;
+        }
+
+        /// Opens the Parquet file with the configured options.
+        public ParquetFileReader open() throws IOException {
+            HardwoodContextImpl ctx = context != null
+                    ? (HardwoodContextImpl) context
+                    : HardwoodContextImpl.create();
+            boolean ownsContext = context == null;
+            inputFile.open();
+            try {
+                return openInternal(List.of(inputFile), ctx, ownsContext, keyProvider, aadPrefixProvider);
+            }
+            catch (Exception e) {
+                try { inputFile.close(); } catch (IOException ce) { e.addSuppressed(ce); }
+                throw e;
+            }
+        }
+    }
+
+    /// Create a builder for opening a Parquet file with optional crypto and context configuration.
+    public static Builder builder(InputFile inputFile) {
+        return new Builder(inputFile);
+    }
 
     private ParquetFileReader(List<InputFile> inputFiles, FileMetaData firstFileMetaData,
                               FileSchema schema, HardwoodContextImpl context,
-                              boolean ownsContext, boolean ownsInputFiles) {
+                              boolean ownsContext, boolean ownsInputFiles,
+                              DecryptionKeyProvider keyProvider, AadPrefixProvider aadPrefixProvider) {
         this.inputFiles = inputFiles;
         this.firstFileMetaData = firstFileMetaData;
         this.schema = schema;
         this.context = context;
         this.ownsContext = ownsContext;
         this.ownsInputFiles = ownsInputFiles;
+        this.keyProvider = keyProvider;
+        this.aadPrefixProvider = aadPrefixProvider;
     }
 
     /// Open a single Parquet file with a dedicated context.
@@ -100,16 +158,31 @@ public class ParquetFileReader implements AutoCloseable {
     /// files. Files are opened on demand by the iterator; the first file is
     /// opened eagerly so any I/O or metadata error surfaces immediately.
     public static ParquetFileReader openAll(List<InputFile> inputFiles) throws IOException {
-        return openInternal(inputFiles, HardwoodContextImpl.create(), true);
+        return openInternal(inputFiles, HardwoodContextImpl.create(), true, null, null);
+    }
+
+    /// Open multiple Parquet files with a shared key provider for encrypted files.
+    public static ParquetFileReader openAll(List<InputFile> inputFiles,
+                                            DecryptionKeyProvider keyProvider) throws IOException {
+        return openInternal(inputFiles, HardwoodContextImpl.create(), true, keyProvider, null);
+    }
+
+    /// Open multiple Parquet files with a shared key provider and AAD prefix provider.
+    public static ParquetFileReader openAll(List<InputFile> inputFiles,
+                                            DecryptionKeyProvider keyProvider,
+                                            AadPrefixProvider aadPrefixProvider) throws IOException {
+        return openInternal(inputFiles, HardwoodContextImpl.create(), true, keyProvider, aadPrefixProvider);
     }
 
     /// Open multiple Parquet files with a shared context.
     public static ParquetFileReader openAll(List<InputFile> inputFiles, HardwoodContext context) throws IOException {
-        return openInternal(inputFiles, (HardwoodContextImpl) context, false);
+        return openInternal(inputFiles, (HardwoodContextImpl) context, false, null, null);
     }
 
     private static ParquetFileReader openInternal(List<InputFile> inputFiles, HardwoodContextImpl context,
-                                                   boolean ownsContext) throws IOException {
+                                                  boolean ownsContext,
+                                                  DecryptionKeyProvider keyProvider,
+                                                  AadPrefixProvider aadPrefixProvider) throws IOException {
         if (inputFiles == null || inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
@@ -119,7 +192,7 @@ public class ParquetFileReader implements AutoCloseable {
         try {
             FileMetaData firstFileMetaData;
             try {
-                firstFileMetaData = ParquetMetadataReader.readMetadata(first);
+                firstFileMetaData = ParquetMetadataReader.readMetadata(first, keyProvider, aadPrefixProvider);
             }
             catch (RuntimeException e) {
                 // Thrift parsing throws RuntimeExceptions (e.g. ThriftEnumLookup for
@@ -137,7 +210,8 @@ public class ParquetFileReader implements AutoCloseable {
             fileOpenedEvent.columnCount = schema.getColumnCount();
             fileOpenedEvent.commit();
 
-            return new ParquetFileReader(files, firstFileMetaData, schema, context, ownsContext, true);
+            return new ParquetFileReader(files, firstFileMetaData, schema, context, ownsContext, true,
+                    keyProvider, aadPrefixProvider);
         }
         catch (Exception e) {
             try {
@@ -149,6 +223,36 @@ public class ParquetFileReader implements AutoCloseable {
             throw e;
         }
     }
+
+    /*private static ParquetFileReader openInternal(InputFile inputFile, HardwoodContextImpl context,
+                                                   boolean ownsContext, boolean ownsInputFile,
+                                                   DecryptionKeyProvider keyProvider,
+                                                   AadPrefixProvider aadPrefixProvider) throws IOException {
+        FileOpenedEvent fileOpenedEvent = new FileOpenedEvent();
+        fileOpenedEvent.begin();
+
+        FileMetaData fileMetaData;
+        try {
+            fileMetaData = ParquetMetadataReader.readMetadata(inputFile, keyProvider, aadPrefixProvider);
+        }
+        catch (RuntimeException e) {
+            // Thrift parsing throws RuntimeExceptions (e.g. ThriftEnumLookup for
+            // corrupt enum values) that escape the IOException-only contract of
+            // readMetadata — enrich them with file context so they're attributable.
+            throw ExceptionContext.addFileContext(inputFile.name(), e);
+        }
+        FileSchema fileSchema = FileSchema.fromSchemaElements(fileMetaData.schema());
+
+        fileOpenedEvent.file = inputFile.name();
+        fileOpenedEvent.fileSize = inputFile.length();
+        fileOpenedEvent.rowGroupCount = fileMetaData.rowGroups().size();
+        fileOpenedEvent.columnCount = fileSchema.getColumnCount();
+        fileOpenedEvent.commit();
+
+        //return new ParquetFileReader(List.of(inputFile), fileMetaData, fileSchema, context, ownsContext, ownsInputFile,keyProvider, aadPrefixProvider);
+        return openInternal(List.of(inputFile), fileMetaData, fileSchema, context, ownsContext,
+                ownsInputFile,keyProvider, aadPrefixProvider);
+    }*/
 
     /// File metadata of the first input file. For multi-file readers,
     /// per-file metadata for files beyond the first is not exposed; open
@@ -309,8 +413,8 @@ public class ParquetFileReader implements AutoCloseable {
         // where canFastSkipTail and computeFetchPlans both ran the same
         // page-format check per row group.
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
-        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0L, 0L);
-        iterator.setFirstFile(schema, subset);
+        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0L, 0L, null, null);
+        iterator.setFirstFile(schema, null, subset);
         iterator.initialize(projectedSchema, null);
         rowGroupIterators.add(iterator);
 
@@ -349,10 +453,12 @@ public class ParquetFileReader implements AutoCloseable {
 
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
 
-        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, maxRows, tailSkip);
-        iterator.setFirstFile(schema, firstFileRowGroups);
+        RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, maxRows, tailSkip,
+                keyProvider, aadPrefixProvider);
+        iterator.setFirstFile(schema, firstFileMetaData, firstFileRowGroups);
         iterator.initialize(projectedSchema, resolved);
         rowGroupIterators.add(iterator);
+        //rowGroupIterators.add(rowGroupIterator);
 
         return RowReader.create(iterator, schema, projectedSchema, context, resolved, maxRows);
     }
@@ -368,7 +474,7 @@ public class ParquetFileReader implements AutoCloseable {
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
         List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
-        return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, resolved);
+        return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, resolved, firstFileMetaData);
     }
 
     ColumnReader buildColumnReader(int columnIndex, FilterPredicate filter) {
@@ -382,7 +488,7 @@ public class ParquetFileReader implements AutoCloseable {
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
         List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
-        return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, resolved);
+        return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, resolved, firstFileMetaData);
     }
 
     ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) {
@@ -398,7 +504,7 @@ public class ParquetFileReader implements AutoCloseable {
         List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
 
         RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0);
-        iterator.setFirstFile(schema, rowGroups);
+        iterator.setFirstFile(schema, firstFileMetaData, rowGroups);
         ProjectedSchema projected = iterator.initialize(projection, resolved);
         rowGroupIterators.add(iterator);
         return new ColumnReaders(context, iterator, schema, projected);

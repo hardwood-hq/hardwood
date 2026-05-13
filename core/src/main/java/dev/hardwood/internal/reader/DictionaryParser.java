@@ -55,6 +55,21 @@ public final class DictionaryParser {
                 header.uncompressedPageSize(), columnSchema, metaData.codec(), context);
     }
 
+    /// Parse a dictionary from already-decrypted header and data buffers.
+    /// Used for encrypted column chunks where header and data are decrypted separately.
+    public static Dictionary parse(ByteBuffer decryptedHeader, ByteBuffer decryptedData,
+                                   ColumnSchema columnSchema, ColumnMetaData metaData,
+                                   HardwoodContextImpl context) throws IOException {
+        ThriftCompactReader headerReader = new ThriftCompactReader(decryptedHeader, 0);
+        PageHeader header = PageHeaderReader.read(headerReader);
+
+        if (header.type() != PageHeader.PageType.DICTIONARY_PAGE) {
+            return null;
+        }
+        return decompress(decryptedData, header.dictionaryPageHeader().numValues(),
+                header.uncompressedPageSize(), columnSchema, metaData.codec(), context);
+    }
+
     /// Parses a dictionary from a buffer given the chunk layout. Locates the
     /// dictionary region between `dictAreaStart` and `firstDataPageOffset`,
     /// slices it from the buffer, and parses.

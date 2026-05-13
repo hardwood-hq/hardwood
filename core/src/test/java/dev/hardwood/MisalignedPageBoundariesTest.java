@@ -57,7 +57,7 @@ class MisalignedPageBoundariesTest {
     void fixtureHasDivergentPageBoundaries() throws Exception {
         try (InputFile file = InputFile.of(MISALIGNED_FILE)) {
             file.open();
-            FileMetaData meta = ParquetMetadataReader.readMetadata(file);
+            FileMetaData meta = ParquetMetadataReader.readMetadata(file, null, null);
             RowGroup rg = meta.rowGroups().get(0);
             RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(file, rg);
 

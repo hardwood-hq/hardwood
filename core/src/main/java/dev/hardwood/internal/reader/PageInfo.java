@@ -39,21 +39,22 @@ public class PageInfo {
     private final Dictionary dictionary;
     private final int placeholderNumValues;
     private final PageRowMask mask;
+    private final ColumnDecryptor columnDecryptor;
 
     public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                     ColumnMetaData columnMetaData, Dictionary dictionary) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0, PageRowMask.ALL);
+        this(pageData, columnSchema, columnMetaData, dictionary, 0, PageRowMask.ALL, null);
     }
 
     public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                     ColumnMetaData columnMetaData, Dictionary dictionary,
-                    PageRowMask mask) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask);
+                    PageRowMask mask, ColumnDecryptor columnDecryptor) {
+        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask, columnDecryptor);
     }
 
     private PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                      ColumnMetaData columnMetaData, Dictionary dictionary,
-                     int placeholderNumValues, PageRowMask mask) {
+                     int placeholderNumValues, PageRowMask mask, ColumnDecryptor columnDecryptor) {
         if (mask == null) {
             throw new IllegalArgumentException("mask must not be null; use PageRowMask.ALL");
         }
@@ -63,6 +64,7 @@ public class PageInfo {
         this.dictionary = dictionary;
         this.placeholderNumValues = placeholderNumValues;
         this.mask = mask;
+        this.columnDecryptor = columnDecryptor;
     }
 
     /// Creates a null-placeholder `PageInfo` representing `numValues` rows whose
@@ -74,7 +76,7 @@ public class PageInfo {
         if (numValues <= 0) {
             throw new IllegalArgumentException("placeholder numValues must be positive: " + numValues);
         }
-        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL);
+        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL, null);
     }
 
     /// Returns the page data buffer (header + compressed data), or `null` if this
@@ -108,5 +110,9 @@ public class PageInfo {
     /// every row; otherwise a tighter mask coming from filter pushdown.
     public PageRowMask mask() {
         return mask;
+    }
+
+    public ColumnDecryptor columnDecryptor() {
+        return columnDecryptor;
     }
 }

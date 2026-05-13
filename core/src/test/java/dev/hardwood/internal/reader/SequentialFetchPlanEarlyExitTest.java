@@ -75,13 +75,13 @@ class SequentialFetchPlanEarlyExitTest extends AbstractJfrRecorderTest {
             SequentialFetchPlan allPlan = SequentialFetchPlan.build(
                     fileForAll, columnSchema, columnChunk, context,
                     RG_INDEX_ALL, fileForAll.name(), 0L,
-                    List.of(), RowRanges.ALL, TOTAL_ROWS);
+                    List.of(), RowRanges.ALL, TOTAL_ROWS, null);
             drain(allPlan.pages());
 
             SequentialFetchPlan boundedPlan = SequentialFetchPlan.build(
                     fileForBounded, columnSchema, columnChunk, context,
                     RG_INDEX_BOUNDED, fileForBounded.name(), 0L,
-                    List.of(), RowRanges.range(0, BOUNDED_END), TOTAL_ROWS);
+                    List.of(), RowRanges.range(0, BOUNDED_END), TOTAL_ROWS, null);
             drain(boundedPlan.pages());
         }
 

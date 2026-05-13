@@ -467,8 +467,8 @@ class ColumnWorkerTest {
 
         ParquetFileReader reader = ParquetFileReader.open(inputFile);
         RowGroupIterator iterator = new RowGroupIterator(
-                java.util.List.of(inputFile), context, 0);
-        iterator.setFirstFile(schema, reader.getFileMetaData().rowGroups());
+                java.util.List.of(inputFile), context, 0, 0, null, null);
+        iterator.setFirstFile(schema, reader.getFileMetaData(), reader.getFileMetaData().rowGroups());
         iterator.initialize(
                 ProjectedSchema.create(schema, dev.hardwood.schema.ColumnProjection.all()), null);
         reader.close();
