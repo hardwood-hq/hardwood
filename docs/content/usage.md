@@ -11,7 +11,7 @@
 -->
 # Usage
 
-This page describes how to read Parquet files with Hardwood: choosing a reader, projecting columns, pushing predicates and row limits down to the file, reading columns in batches, working with Variant and geospatial columns, reading multiple files as one dataset, and accessing file metadata.
+This page describes how to read Parquet files with Hardwood: choosing a reader, row-oriented reading, predicate pushdown, column projection, row limits, split-aware reading, column-oriented (batch) reading, reading multiple files as one dataset, accessing file metadata, and working with Variant and geospatial columns.
 
 For detailed class-level documentation, see the [JavaDoc](/api/latest/).
 
@@ -179,54 +179,17 @@ All accessor methods are available in two forms:
 
 All methods are available as both `method(name)` and `method(index)`, except `getStruct`, `getList`, `getMap`, and `getVariant` which are name-based only.
 
-**INTERVAL columns:** `PqInterval` is a plain record with three `long` properties — `months()`, `days()`, and `milliseconds()`. Each holds an unsigned 32-bit value in the range `[0, 4_294_967_295]`, so no additional conversion is needed. The components are independent and not normalized. Files written by older parquet-mr / Spark / Hive writers that set only the legacy `converted_type=INTERVAL` annotation are handled transparently — no caller-side opt-in is required.
+#### Null handling
 
-**FLOAT16 columns:** `getFloat` accepts FLOAT16 columns (`FIXED_LEN_BYTE_ARRAY(2)` annotated with the `FLOAT16` logical type) and decodes the 2-byte IEEE 754 half-precision payload to a single-precision `float`. The widening is lossless — half-precision NaN, ±Infinity, and signed zero round-trip cleanly, and the original NaN bit pattern is preserved (the Parquet spec does not canonicalize NaNs on write). Use `Float.isNaN(value)` for NaN checks rather than equality. As with all primitive accessors, `isNull()` must be checked before `getFloat()` since FLOAT16 columns can be optional.
+Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
 
-**Bare `BYTE_ARRAY` columns:** `BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
+#### Type validation
 
-**Typed accessors on `PqList` and `PqMap.Entry`:** Both interfaces mirror the
-RowReader's typed accessor surface — `strings()` / `dates()` / `times()` /
-`timestamps()` / `decimals()` / `uuids()` / `intervals()` / `floats()` /
-`booleans()` on `PqList` (each returning `List<T>`); the matching
-`getStringValue()` / `getDateValue()` / `getIntervalValue()` / etc. on
-`PqMap.Entry`. Use these in preference to the generic `getValue()` when
-iterating over a list / map of a known logical type to avoid the boxed
-`Object` return.
+The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
 
-`PqMap.Entry`'s typed *key* accessor surface is intentionally narrower:
-`getStringKey()` / `getIntKey()` / `getLongKey()` / `getBinaryKey()` cover
-the four high-frequency map key types. Long-tail key types (DATE / TIME /
-TIMESTAMP / DECIMAL / UUID) fall through to `getKey()` (decoded) and
-`getRawKey()` (raw).
+#### Index-based access
 
-`PqList.ints()` / `longs()` / `doubles()` return the specialized
-`PqIntList` / `PqLongList` / `PqDoubleList` types instead — these expose
-`PrimitiveIterator.OfInt` / `OfLong` / `OfDouble`, `int get(int)`, and
-`int[] toArray()` so primitive list iteration allocates no boxed wrappers.
-For nested `list<list<int>>` (or `<long>` / `<double>`), use
-`intLists()` / `longLists()` / `doubleLists()` to surface the inner lists as
-`PqIntList` / `PqLongList` / `PqDoubleList`.
-
-**Decoded vs. raw generic access:** The generic fallback accessors return values decoded to their logical-type representation by default:
-
-- `RowReader.getValue(name)` / `getValue(index)` — `Integer` / `Long` / `String` / `LocalDate` / `LocalTime` / `Instant` / `BigDecimal` / `UUID` / `PqInterval` / `PqVariant` / nested `PqStruct` / `PqList` / `PqMap`, with `byte[]` for un-annotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` columns.
-- `PqStruct.getValue(name)` — same decoded mapping for nested struct fields.
-- `PqMap.Entry.getKey()` / `getValue()` — same decoded mapping for map keys and values.
-- `PqList.get(index)` / `PqList.values()` — same decoded mapping for list elements.
-
-To inspect the underlying physical storage instead — e.g. the raw `Long` micros backing a `TIMESTAMP`, or the unscaled `byte[]` backing a `DECIMAL` — call the parallel raw accessors:
-
-- `RowReader.getRawValue(name)` / `getRawValue(index)`
-- `PqStruct.getRawValue(name)`
-- `PqMap.Entry.getRawKey()` / `getRawValue()`
-- `PqList.getRaw(index)` / `PqList.rawValues()`
-
-Nested groups (struct / list / map / variant) have no distinct "raw" form and are returned through their typed flyweight (`PqStruct` / `PqList` / `PqMap` / `PqVariant`) in both modes.
-
-**Legacy INT96 timestamps:** Parquet files written by older versions of Apache Spark and Hive store timestamps in the deprecated INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` detects INT96 automatically and decodes it to an `Instant`; no caller-side handling is required.
-
-**Index-based access example:**
+For hot loops, look up column indices once outside the loop and pass them to the accessors instead of names:
 
 ```java
 // Get column indices once (before the loop)
@@ -242,13 +205,68 @@ while (rowReader.hasNext()) {
 }
 ```
 
-**Null handling:** Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
+#### INTERVAL columns
 
-**Type validation:** The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
+`PqInterval` is a plain record with three `long` properties — `months()`, `days()`, and `milliseconds()`. Each holds an unsigned 32-bit value in the range `[0, 4_294_967_295]`, so no additional conversion is needed. The components are independent and not normalized. Files written by older parquet-mr / Spark / Hive writers that set only the legacy `converted_type=INTERVAL` annotation are handled transparently — no caller-side opt-in is required.
+
+#### FLOAT16 columns
+
+`getFloat` accepts FLOAT16 columns (`FIXED_LEN_BYTE_ARRAY(2)` annotated with the `FLOAT16` logical type) and decodes the 2-byte IEEE 754 half-precision payload to a single-precision `float`. The widening is lossless — half-precision NaN, ±Infinity, and signed zero round-trip cleanly, and the original NaN bit pattern is preserved (the Parquet spec does not canonicalize NaNs on write). Use `Float.isNaN(value)` for NaN checks rather than equality. As with all primitive accessors, `isNull()` must be checked before `getFloat()` since FLOAT16 columns can be optional.
+
+#### Legacy INT96 timestamps
+
+Parquet files written by older versions of Apache Spark and Hive store timestamps in the deprecated INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` detects INT96 automatically and decodes it to an `Instant`; no caller-side handling is required.
+
+#### Bare `BYTE_ARRAY` columns
+
+`BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
+
+#### Typed accessors on `PqList` and `PqMap.Entry`
+
+Both interfaces mirror the RowReader's typed accessor surface — `strings()` / `dates()` / `times()` / `timestamps()` / `decimals()` / `uuids()` / `intervals()` / `floats()` / `booleans()` on `PqList` (each returning `List<T>`); the matching `getStringValue()` / `getDateValue()` / `getIntervalValue()` / etc. on `PqMap.Entry`. Use these in preference to the generic `getValue()` when iterating over a list / map of a known logical type to avoid the boxed `Object` return.
+
+`PqMap.Entry`'s typed *key* accessor surface is intentionally narrower: `getStringKey()` / `getIntKey()` / `getLongKey()` / `getBinaryKey()` cover the four high-frequency map key types. Long-tail key types (DATE / TIME / TIMESTAMP / DECIMAL / UUID) fall through to `getKey()` (decoded) and `getRawKey()` (raw).
+
+`PqList.ints()` / `longs()` / `doubles()` return the specialized `PqIntList` / `PqLongList` / `PqDoubleList` types instead — these expose `PrimitiveIterator.OfInt` / `OfLong` / `OfDouble`, `int get(int)`, and `int[] toArray()` so primitive list iteration allocates no boxed wrappers. For nested `list<list<int>>` (or `<long>` / `<double>`), use `intLists()` / `longLists()` / `doubleLists()` to surface the inner lists as `PqIntList` / `PqLongList` / `PqDoubleList`.
+
+#### Reading the physical value
+
+When you want the raw physical value rather than the decoded logical-type representation — e.g. the INT64 micros backing a `TIMESTAMP`, the INT32 days backing a `DATE`, or the unscaled INT32 / INT64 / `byte[]` backing a `DECIMAL` — call the **typed primitive accessor that matches the column's physical type**:
+
+```java
+// TIMESTAMP column backed by INT64 micros
+long micros = rowReader.getLong("created_at");
+
+// DATE column backed by INT32 days since epoch
+int daysSinceEpoch = rowReader.getInt("birth_date");
+
+// DECIMAL(precision, scale) column backed by INT64
+long unscaled = rowReader.getLong("amount");
+```
+
+`getInt` / `getLong` / `getFloat` / `getDouble` / `getBoolean` / `getBinary` accept any column whose physical type matches, regardless of the logical-type annotation — they read the underlying value directly. Use this whenever you already know the column's physical encoding and want to skip logical-type decoding.
+
+#### Decoded generic access
+
+When the column type isn't known ahead of time — e.g. generic projection-driven readers, dump tools, schema-introspecting frameworks — the generic fallback accessors return values decoded to their logical-type representation:
+
+- `RowReader.getValue(name)` / `getValue(index)` — `Integer` / `Long` / `String` / `LocalDate` / `LocalTime` / `Instant` / `BigDecimal` / `UUID` / `PqInterval` / `PqVariant` / nested `PqStruct` / `PqList` / `PqMap`, with `byte[]` for un-annotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` columns.
+- `PqStruct.getValue(name)` — same decoded mapping for nested struct fields.
+- `PqMap.Entry.getKey()` / `getValue()` — same decoded mapping for map keys and values.
+- `PqList.get(index)` / `PqList.values()` — same decoded mapping for list elements.
+
+A parallel `getRawValue` family (`RowReader.getRawValue`, `PqStruct.getRawValue`, `PqMap.Entry.getRawKey` / `getRawValue`, `PqList.getRaw` / `rawValues`) returns the boxed physical value when even the physical type isn't known statically. In hot loops, prefer the typed primitive accessor described above — it avoids the boxing and the dispatch overhead.
+
+Nested groups (struct / list / map / variant) have no distinct "raw" form and are returned through their typed flyweight (`PqStruct` / `PqList` / `PqMap` / `PqVariant`) in both modes.
 
 ## Predicate Pushdown (Filter)
 
-Filter predicates enable three levels of predicate pushdown. At the row-group level, entire row groups whose statistics prove no rows can match are skipped. Within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, reducing network I/O. Finally, record-level filtering evaluates the predicate against each decoded row, so `buildRowReader().filter(filter).build()` returns only rows that actually match.
+Filter predicates apply at four levels, in this order:
+
+1. **Row group** — entire row groups whose statistics prove no rows can match are skipped.
+2. **Page** — within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding.
+3. **Network** — on remote backends like S3, only the matching pages are fetched, reducing network I/O.
+4. **Record** — `buildRowReader().filter(filter).build()` evaluates the predicate against each decoded row and returns only rows that actually match.
 
 For spatial filtering on GEOMETRY / GEOGRAPHY columns, see [Geospatial Support](#geospatial-support).
 
@@ -282,10 +300,16 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-Supported operators: `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq`, `in`, `inStrings`, `isNull`, `isNotNull`.
-Supported physical types: `int`, `long`, `float`, `double`, `boolean`, `String` (comparison operators); `int`, `long`, `String` (`in`/`inStrings`); any type (`isNull`/`isNotNull`).
-Supported logical types: `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` (comparison operators).
-Logical combinators: `and`, `or`, `not`; the `and` and `or` combinators also accept varargs for three or more conditions. All predicates, including those wrapped in `not`, are pushed down to the statistics level for row group and page skipping.
+| Category | Supported |
+|---|---|
+| Comparison operators | `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` |
+| Set operators | `in` (int, long), `inStrings` |
+| Null operators | `isNull`, `isNotNull` (any type) |
+| Physical types (comparison) | `int`, `long`, `float`, `double`, `boolean`, `String` |
+| Logical types (comparison) | `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` |
+| Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
+
+All predicates, including those wrapped in `not`, are pushed down to the statistics level for row-group and page skipping.
 
 ### Null Handling
 
@@ -544,7 +568,10 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-`firstRow == 0` is the no-op default. `firstRow == totalRows` produces an empty reader; `firstRow > totalRows` throws `IllegalArgumentException`. For multi-file readers, `firstRow` indexes into the *first* file's rows only — cross-file `firstRow` is out of scope. Mutually exclusive with `tail(N)`.
+`firstRow == 0` is the no-op default. `firstRow == totalRows` produces an empty reader; `firstRow > totalRows` throws `IllegalArgumentException`. Mutually exclusive with `tail(N)`.
+
+!!! warning "Multi-file readers: first file only"
+    For multi-file readers, `firstRow(N)` indexes into the **first** file's rows only — it does not seek across file boundaries. To skip whole files, omit them from the input list; to skip within a non-first file, open it separately.
 
 Within the target row group, the reader still decodes the leading residue rows and discards them via `next()`. Page-level skip via the OffsetIndex is tracked separately.
 
@@ -907,11 +934,21 @@ The `PqVariantObject` view exposes the same primitive getters as a Parquet struc
 **Current limitations**
 
 - **No Variant-aware predicate pushdown.** Filter predicates against a Variant sub-path (e.g. `WHERE v.age > 30`) aren't yet understood by the pushdown pipeline. Filtering still works against the file's physical shredded columns if you know the layout — a `FilterPredicate.gt("v.typed_value.age", 30)` gets row-group and page skipping via ordinary column statistics — but that ties query code to the writer's shredding strategy and misses any rows where the payload sits in the opaque `value` blob instead. Tracked as [#309](https://github.com/hardwood-hq/hardwood/issues/309).
-- **No path projection optimization.** Reading only `v.age` from a Variant column still reassembles the whole Variant for each row rather than reading just the shredded `typed_value.age` column. Tracked as part of [#309](https://github.com/hardwood-hq/hardwood/issues/309).
+- **No path projection optimization.** Reading only `v.age` from a Variant column still reassembles the whole Variant for each row rather than reading just the shredded `typed_value.age` column. Requires the same variant-aware planning as #309; no separate issue filed yet.
 
 ## Geospatial Support
 
-Hardwood reads the Parquet geospatial metadata layer (GEOMETRY / GEOGRAPHY logical types and per-chunk / per-page `GeospatialStatistics`) and offers a bounding-box filter predicate that pushes spatial selectivity down to the row group and page level. Hardwood does not decode WKB payloads itself — geometry decoding is left to the caller, so the reader has no runtime geometry-library dependency. The de-facto standard Java library for this is the [JTS Topology Suite](https://locationtech.github.io/jts/) (`org.locationtech.jts:jts-core`); the snippets below assume JTS, but any WKB decoder works.
+Hardwood reads the Parquet geospatial metadata layer (GEOMETRY / GEOGRAPHY logical types and per-chunk / per-page `GeospatialStatistics`) and offers a bounding-box filter predicate that pushes spatial selectivity down to the row group and page level. Hardwood does not decode WKB payloads itself — geometry decoding is left to the caller, so the reader has no runtime geometry-library dependency. The de-facto standard Java library for this is the [JTS Topology Suite](https://locationtech.github.io/jts/); the snippets below assume JTS, but any WKB decoder works.
+
+To use JTS in the examples below, add the `jts-core` dependency:
+
+```xml
+<dependency>
+    <groupId>org.locationtech.jts</groupId>
+    <artifactId>jts-core</artifactId>
+    <version>1.20.0</version>
+</dependency>
+```
 
 ### Identifying Geospatial Columns
 
@@ -1012,7 +1049,7 @@ Hardwood throws specific exceptions for common error conditions:
 
 | Exception | When |
 |-----------|------|
-| `IOException` | File is not a valid Parquet file (invalid magic number, corrupt footer) |
+| `IOException` | Any I/O error: invalid Parquet file (bad magic number, corrupt footer), local-disk read errors, S3 transport failures (after retry exhaustion — see [S3](s3.md)) |
 | `UnsupportedOperationException` | Compression codec library not on classpath — the message names the required dependency |
 | `IllegalArgumentException` | Accessing a column not in the projection, type mismatch on accessor, or invalid column name |
 | `NullPointerException` | Calling a primitive accessor (`getInt`, `getLong`, etc.) on a null field without checking `isNull()` first |

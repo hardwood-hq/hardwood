@@ -13,6 +13,9 @@
 
 If you have existing code that uses Apache parquet-java's `ParquetReader<Group>` API and want to switch to Hardwood without rewriting it, the `hardwood-parquet-java-compat` module provides a drop-in replacement. It implements the same `org.apache.parquet.*` interfaces backed by Hardwood's reader, so you get Hardwood's performance with minimal code changes.
 
+!!! warning "Mutually exclusive with parquet-java"
+    This module provides its own type shims in the `org.apache.parquet.*` namespace. It **cannot** be used alongside `parquet-java` on the same classpath — pick one or the other.
+
 **Features:**
 
 - Provides `org.apache.parquet.*` namespace classes compatible with parquet-java
@@ -82,6 +85,3 @@ try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(),
     // only rows from matching row groups are returned
 }
 ```
-
-!!! warning
-    This module provides its own type shims in the `org.apache.parquet.*` namespace. It cannot be used alongside parquet-java on the same classpath.
