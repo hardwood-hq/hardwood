@@ -83,7 +83,8 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
             // Access nested lists (list<list<int>>) using primitive int lists
             PqList matrix = rowReader.getList("matrix");
             if (matrix != null) {
-                for (PqIntList innerList : matrix.intLists()) {
+                for (PqList row : matrix.lists()) {
+                    PqIntList innerList = row.ints();
                     for (var it = innerList.iterator(); it.hasNext(); ) {
                         int val = it.nextInt();
                         System.out.println("Value: " + val);
@@ -204,7 +205,7 @@ Both interfaces mirror the RowReader's typed accessor surface — `strings()` / 
 
 `PqMap.Entry`'s typed *key* accessor surface is intentionally narrower: `getStringKey()` / `getIntKey()` / `getLongKey()` / `getBinaryKey()` cover the four high-frequency map key types. Long-tail key types (DATE / TIME / TIMESTAMP / DECIMAL / UUID) fall through to `getKey()` (decoded) and `getRawKey()` (raw).
 
-`PqList.ints()` / `longs()` / `doubles()` return the specialized `PqIntList` / `PqLongList` / `PqDoubleList` types instead — these expose `PrimitiveIterator.OfInt` / `OfLong` / `OfDouble`, `int get(int)`, and `int[] toArray()` so primitive list iteration allocates no boxed wrappers. For nested `list<list<int>>` (or `<long>` / `<double>`), use `intLists()` / `longLists()` / `doubleLists()` to surface the inner lists as `PqIntList` / `PqLongList` / `PqDoubleList`.
+`PqList.ints()` / `longs()` / `doubles()` return the specialized `PqIntList` / `PqLongList` / `PqDoubleList` types instead — these expose `PrimitiveIterator.OfInt` / `OfLong` / `OfDouble`, `int get(int)`, and `int[] toArray()` so primitive list iteration allocates no boxed wrappers. For nested `list<list<int>>` (or `<long>` / `<double>`), iterate the outer list via `lists()` and call `ints()` / `longs()` / `doubles()` on each inner `PqList`; primitive element access stays unboxed at any nesting depth.
 
 #### Reading the physical value
 

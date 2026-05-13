@@ -277,7 +277,8 @@ public class PqRowApiTest {
             assertThat(matrix0.size()).isEqualTo(3);
 
             List<List<Integer>> matrixValues0 = new ArrayList<>();
-            for (PqIntList innerList : matrix0.intLists()) {
+            for (PqList row : matrix0.lists()) {
+                PqIntList innerList = row.ints();
                 List<Integer> innerValues = new ArrayList<>();
                 for (int i = 0; i < innerList.size(); i++) {
                     innerValues.add(innerList.get(i));
@@ -298,7 +299,8 @@ public class PqRowApiTest {
             assertThat(matrix1.size()).isEqualTo(1);
 
             List<List<Integer>> matrixValues1 = new ArrayList<>();
-            for (PqIntList innerList : matrix1.intLists()) {
+            for (PqList row : matrix1.lists()) {
+                PqIntList innerList = row.ints();
                 List<Integer> innerValues = new ArrayList<>();
                 for (int i = 0; i < innerList.size(); i++) {
                     innerValues.add(innerList.get(i));
@@ -315,7 +317,8 @@ public class PqRowApiTest {
             assertThat(matrix2.size()).isEqualTo(3);
 
             List<List<Integer>> matrixValues2 = new ArrayList<>();
-            for (PqIntList innerList : matrix2.intLists()) {
+            for (PqList row : matrix2.lists()) {
+                PqIntList innerList = row.ints();
                 List<Integer> innerValues = new ArrayList<>();
                 for (int i = 0; i < innerList.size(); i++) {
                     innerValues.add(innerList.get(i));
@@ -734,7 +737,8 @@ public class PqRowApiTest {
             List<List<List<Integer>>> cubeValues0 = new ArrayList<>();
             for (PqList plane : cube0.lists()) {
                 List<List<Integer>> middleValues = new ArrayList<>();
-                for (PqIntList intRow : plane.intLists()) {
+                for (PqList rowList : plane.lists()) {
+                    PqIntList intRow = rowList.ints();
                     List<Integer> innerValues = new ArrayList<>();
                     for (int i = 0; i < intRow.size(); i++) {
                         innerValues.add(intRow.get(i));
@@ -760,7 +764,8 @@ public class PqRowApiTest {
             List<List<List<Integer>>> cubeValues1 = new ArrayList<>();
             for (PqList plane : cube1.lists()) {
                 List<List<Integer>> middleValues = new ArrayList<>();
-                for (PqIntList intRow : plane.intLists()) {
+                for (PqList rowList : plane.lists()) {
+                    PqIntList intRow = rowList.ints();
                     List<Integer> innerValues = new ArrayList<>();
                     for (int i = 0; i < intRow.size(); i++) {
                         innerValues.add(intRow.get(i));
@@ -785,7 +790,8 @@ public class PqRowApiTest {
             List<List<List<Integer>>> cubeValues2 = new ArrayList<>();
             for (PqList plane : cube2.lists()) {
                 List<List<Integer>> middleValues = new ArrayList<>();
-                for (PqIntList intRow : plane.intLists()) {
+                for (PqList rowList : plane.lists()) {
+                    PqIntList intRow = rowList.ints();
                     List<Integer> innerValues = new ArrayList<>();
                     for (int i = 0; i < intRow.size(); i++) {
                         innerValues.add(intRow.get(i));

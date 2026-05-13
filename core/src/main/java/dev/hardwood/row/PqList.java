@@ -48,8 +48,9 @@ import java.util.UUID;
 ///
 /// // Nested list (2D matrix)
 /// PqList matrix = rowReader.getList("matrix");
-/// for (PqIntList innerList : matrix.intLists()) {
-///     for (var it = innerList.iterator(); it.hasNext(); ) {
+/// for (PqList row : matrix.lists()) {
+///     PqIntList ints = row.ints();
+///     for (var it = ints.iterator(); it.hasNext(); ) {
 ///         int value = it.nextInt();
 ///     }
 /// }
@@ -57,7 +58,8 @@ import java.util.UUID;
 /// // Triple nested list (3D cube)
 /// PqList cube = rowReader.getList("cube");
 /// for (PqList plane : cube.lists()) {
-///     for (PqIntList innerList : plane.intLists()) {
+///     for (PqList row : plane.lists()) {
+///         PqIntList ints = row.ints();
 ///         // ...
 ///     }
 /// }
@@ -171,20 +173,9 @@ public interface PqList {
     List<PqStruct> structs();
 
     /// View the elements as a [List] of nested lists.
-    /// Use this for list-of-list structures.
+    /// Use this for list-of-list structures; call [#ints] / [#longs] / [#doubles]
+    /// on the inner [PqList] for primitive-typed inner lists.
     List<PqList> lists();
-
-    /// View the elements as a [List] of nested int lists.
-    /// Use this for list-of-int-list structures (e.g., 2D int matrix).
-    List<PqIntList> intLists();
-
-    /// View the elements as a [List] of nested long lists.
-    /// Use this for list-of-long-list structures.
-    List<PqLongList> longLists();
-
-    /// View the elements as a [List] of nested double lists.
-    /// Use this for list-of-double-list structures.
-    List<PqDoubleList> doubleLists();
 
     /// View the elements as a [List] of nested maps.
     List<PqMap> maps();

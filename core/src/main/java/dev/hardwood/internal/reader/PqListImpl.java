@@ -288,21 +288,6 @@ final class PqListImpl implements PqList {
     }
 
     @Override
-    public List<PqIntList> intLists() {
-        return new NestedList<>(this::createInnerIntList);
-    }
-
-    @Override
-    public List<PqLongList> longLists() {
-        return new NestedList<>(this::createInnerLongList);
-    }
-
-    @Override
-    public List<PqDoubleList> doubleLists() {
-        return new NestedList<>(this::createInnerDoubleList);
-    }
-
-    @Override
     public List<PqMap> maps() {
         return new NestedList<>(this::createInnerMap);
     }
@@ -469,33 +454,6 @@ final class PqListImpl implements PqList {
         }
         return new PqListImpl(batch, innerListDesc, innerElement,
                 innerStart, innerEnd, innerSubLevel);
-    }
-
-    private PqIntList createInnerIntList(int index) {
-        PqList inner = createInnerGenericList(index);
-        if (inner == null) {
-            return null;
-        }
-        PqListImpl innerList = (PqListImpl) inner;
-        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(), innerList.start, innerList.end);
-    }
-
-    private PqLongList createInnerLongList(int index) {
-        PqList inner = createInnerGenericList(index);
-        if (inner == null) {
-            return null;
-        }
-        PqListImpl innerList = (PqListImpl) inner;
-        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(), innerList.start, innerList.end);
-    }
-
-    private PqDoubleList createInnerDoubleList(int index) {
-        PqList inner = createInnerGenericList(index);
-        if (inner == null) {
-            return null;
-        }
-        PqListImpl innerList = (PqListImpl) inner;
-        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(), innerList.start, innerList.end);
     }
 
     private PqMap createInnerMap(int index) {
