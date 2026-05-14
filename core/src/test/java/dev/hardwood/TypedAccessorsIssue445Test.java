@@ -148,7 +148,7 @@ class TypedAccessorsIssue445Test {
     }
 
     @Test
-    void timeKeyedMapSupportsGetTimeKey() throws Exception {
+    void timeKeyedMapDecodesKeyViaGetKey() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FIXTURE));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
@@ -157,9 +157,7 @@ class TypedAccessorsIssue445Test {
             assertThat(entries).hasSize(1);
 
             PqMap.Entry e = entries.get(0);
-            assertThat(e.getTimeKey()).isEqualTo(LocalTime.ofNanoOfDay(12345L * 1_000_000));
-            // getKey() now decodes the key, mirroring getTimeKey()
-            assertThat(e.getKey()).isEqualTo(e.getTimeKey());
+            assertThat(e.getKey()).isEqualTo(LocalTime.ofNanoOfDay(12345L * 1_000_000));
             // getRawKey() exposes the underlying Integer millis
             assertThat(e.getRawKey()).isEqualTo(12345);
             assertThat(e.getIntValue()).isEqualTo(100);
@@ -167,7 +165,7 @@ class TypedAccessorsIssue445Test {
     }
 
     @Test
-    void decimalKeyedMapSupportsGetDecimalKey() throws Exception {
+    void decimalKeyedMapDecodesKeyViaGetKey() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FIXTURE));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
@@ -177,8 +175,6 @@ class TypedAccessorsIssue445Test {
 
             PqMap.Entry e = entries.get(0);
             BigDecimal expected = new BigDecimal(java.math.BigInteger.valueOf(12345), 2);
-            assertThat(e.getDecimalKey()).isEqualTo(expected);
-            // getKey() now decodes the key, mirroring getDecimalKey()
             assertThat(e.getKey()).isEqualTo(expected);
             assertThat(e.getRawKey()).isInstanceOf(byte[].class);
             assertThat(e.getIntValue()).isEqualTo(1);

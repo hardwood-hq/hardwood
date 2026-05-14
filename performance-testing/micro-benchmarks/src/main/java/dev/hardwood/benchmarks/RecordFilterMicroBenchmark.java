@@ -40,11 +40,8 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.FilterPredicate.Operator;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -249,7 +246,9 @@ public class RecordFilterMicroBenchmark {
     private static BatchExchange.Batch batch(Object values, int recordCount) {
         BatchExchange.Batch b = new BatchExchange.Batch();
         b.values = values;
-        b.nulls = null; // schema is REQUIRED across all columns — no nulls.
+        // Schema is REQUIRED across all columns; `validity = null` is the
+        // sparse representation of "every leaf in this batch is present."
+        b.validity = null;
         b.recordCount = recordCount;
         return b;
     }
@@ -327,13 +326,11 @@ public class RecordFilterMicroBenchmark {
         @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(); }
         @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(); }
         @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(); }
-        @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(); }
-        @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(); }
-        @Override public PqDoubleList getListOfDoubles(String name) { throw new UnsupportedOperationException(); }
         @Override public PqList getList(String name) { throw new UnsupportedOperationException(); }
         @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(); }
         @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(); }
         @Override public Object getValue(String name) { throw new UnsupportedOperationException(); }
+        @Override public Object getRawValue(String name) { throw new UnsupportedOperationException(); }
         @Override public int getFieldCount() { return 4; }
         @Override public String getFieldName(int index) {
             return switch (index) {
@@ -344,5 +341,25 @@ public class RecordFilterMicroBenchmark {
                 default -> throw new IndexOutOfBoundsException(index);
             };
         }
+        @Override public int getInt(int i) { throw new UnsupportedOperationException(); }
+        @Override public long getLong(int i) { throw new UnsupportedOperationException(); }
+        @Override public float getFloat(int i) { throw new UnsupportedOperationException(); }
+        @Override public double getDouble(int i) { throw new UnsupportedOperationException(); }
+        @Override public boolean getBoolean(int i) { throw new UnsupportedOperationException(); }
+        @Override public String getString(int i) { throw new UnsupportedOperationException(); }
+        @Override public byte[] getBinary(int i) { throw new UnsupportedOperationException(); }
+        @Override public LocalDate getDate(int i) { throw new UnsupportedOperationException(); }
+        @Override public LocalTime getTime(int i) { throw new UnsupportedOperationException(); }
+        @Override public Instant getTimestamp(int i) { throw new UnsupportedOperationException(); }
+        @Override public BigDecimal getDecimal(int i) { throw new UnsupportedOperationException(); }
+        @Override public UUID getUuid(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqInterval getInterval(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqStruct getStruct(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqList getList(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqMap getMap(int i) { throw new UnsupportedOperationException(); }
+        @Override public PqVariant getVariant(int i) { throw new UnsupportedOperationException(); }
+        @Override public Object getValue(int i) { throw new UnsupportedOperationException(); }
+        @Override public Object getRawValue(int i) { throw new UnsupportedOperationException(); }
+        @Override public boolean isNull(int i) { throw new UnsupportedOperationException(); }
     }
 }

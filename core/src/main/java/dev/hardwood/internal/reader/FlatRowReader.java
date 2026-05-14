@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -28,11 +27,8 @@ import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -48,7 +44,18 @@ import dev.hardwood.schema.ProjectedSchema;
 /// string), and both name-based and index-based access.
 public final class FlatRowReader implements RowReader {
 
-    private static final BitSet NO_NULLS = new BitSet(0);
+    /// Sentinel for "every leaf in the batch is present" — replaces the
+    /// nullable validity reference on the hot path so the per-row check
+    /// stays a single `BitSet.get` call. Pre-set to the largest batch
+    /// [BatchSizing] will produce, so any in-range row index reads as
+    /// present.
+    private static final BitSet ALL_PRESENT = allPresentSentinel();
+
+    private static BitSet allPresentSentinel() {
+        BitSet bs = new BitSet();
+        bs.set(0, BatchSizing.MAX_BATCH);
+        return bs;
+    }
 
     private final BatchExchange<BatchExchange.Batch>[] exchanges;
     private final FlatColumnWorker[] columnWorkers;
@@ -61,9 +68,12 @@ public final class FlatRowReader implements RowReader {
     private final PhysicalType[] physicalTypes;
     private final ColumnSchema[] columnSchemas;
 
-    // Hot fields — directly owned, no inheritance
+    // Hot fields — directly owned, no inheritance.
+    // `flatValidity[col].get(rowIndex)` is true iff the leaf is present;
+    // `flatValidity[col]` is `ALL_PRESENT` when every leaf for this column in
+    // the current batch is present, so the per-row check needs no null guard.
     private Object[] flatValueArrays;
-    private BitSet[] flatNulls;
+    private BitSet[] flatValidity;
     private BatchExchange.Batch[] previousBatches;
     private int rowIndex = -1;
     private int batchSize = 0;
@@ -103,7 +113,7 @@ public final class FlatRowReader implements RowReader {
         this.fileSchema = fileSchema;
         this.projectedSchema = projectedSchema;
         this.flatValueArrays = new Object[columnCount];
-        this.flatNulls = new BitSet[columnCount];
+        this.flatValidity = new BitSet[columnCount];
         this.previousBatches = new BatchExchange.Batch[columnCount];
         this.drainSide = drainSide;
         // Multi-column drain needs a private buffer for the AND-merged words.
@@ -177,7 +187,6 @@ public final class FlatRowReader implements RowReader {
 
             PageSource pageSource = new PageSource(rowGroupIterator, i);
 
-            PhysicalType physType = columnSchema.type();
             // Allocate matches[] only when this column actually has a filter installed.
             // Other columns leave Batch.matches null (sentinel = all-ones in intersect).
             final boolean allocateMatches =
@@ -185,7 +194,7 @@ public final class FlatRowReader implements RowReader {
             BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recycling(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(physType, batchSize);
+                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
                         if (allocateMatches) {
                             b.matches = new long[wordsLen];
                         }
@@ -354,7 +363,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public boolean isNull(int columnIndex) {
-        return flatNulls[columnIndex].get(rowIndex);
+        return !flatValidity[columnIndex].get(rowIndex);
     }
 
     @Override
@@ -366,7 +375,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public int getInt(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
+        if (!flatValidity[columnIndex].get(rowIndex)) {
             throwNull(columnIndex);
         }
         return ((int[]) flatValueArrays[columnIndex])[rowIndex];
@@ -374,7 +383,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public long getLong(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
+        if (!flatValidity[columnIndex].get(rowIndex)) {
             throwNull(columnIndex);
         }
         return ((long[]) flatValueArrays[columnIndex])[rowIndex];
@@ -382,7 +391,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public float getFloat(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
+        if (!flatValidity[columnIndex].get(rowIndex)) {
             throwNull(columnIndex);
         }
         if (physicalTypes[columnIndex] == PhysicalType.FLOAT) {
@@ -392,7 +401,7 @@ public final class FlatRowReader implements RowReader {
         // convertToFloat16 owns the physical-type and 2-byte-width validation.
         try {
             return LogicalTypeConverter.convertToFloat16(
-                    ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
+                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
                     physicalTypes[columnIndex]);
         }
         catch (RuntimeException e) {
@@ -402,7 +411,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public double getDouble(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
+        if (!flatValidity[columnIndex].get(rowIndex)) {
             throwNull(columnIndex);
         }
         return ((double[]) flatValueArrays[columnIndex])[rowIndex];
@@ -410,7 +419,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public boolean getBoolean(int columnIndex) {
-        if (flatNulls[columnIndex].get(rowIndex)) {
+        if (!flatValidity[columnIndex].get(rowIndex)) {
             throwNull(columnIndex);
         }
         return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
@@ -450,7 +459,7 @@ public final class FlatRowReader implements RowReader {
         if (isNull(columnIndex)) {
             return null;
         }
-        return new String(((byte[][]) flatValueArrays[columnIndex])[rowIndex], StandardCharsets.UTF_8);
+        return ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
     }
 
     @Override
@@ -463,7 +472,7 @@ public final class FlatRowReader implements RowReader {
         if (isNull(columnIndex)) {
             return null;
         }
-        return ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
+        return ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
     }
 
     @Override
@@ -527,7 +536,7 @@ public final class FlatRowReader implements RowReader {
         ColumnSchema col = columnSchemas[columnIndex];
         try {
             if (col.type() == PhysicalType.INT96) {
-                byte[] rawValue = ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
+                byte[] rawValue = ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
                 return LogicalTypeConverter.int96ToInstant(rawValue);
             }
             long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
@@ -553,7 +562,8 @@ public final class FlatRowReader implements RowReader {
         Object rawValue = switch (col.type()) {
             case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
             case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
+                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
             default -> throw new IllegalArgumentException(prefix()
                     + "Unexpected physical type for DECIMAL: " + col.type());
         };
@@ -578,7 +588,7 @@ public final class FlatRowReader implements RowReader {
         }
         try {
             return LogicalTypeConverter.convertToUuid(
-                    ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
+                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
                     physicalTypes[columnIndex]);
         }
         catch (RuntimeException e) {
@@ -598,7 +608,7 @@ public final class FlatRowReader implements RowReader {
         }
         try {
             return LogicalTypeConverter.convertToInterval(
-                    ((byte[][]) flatValueArrays[columnIndex])[rowIndex],
+                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
                     physicalTypes[columnIndex]);
         }
         catch (RuntimeException e) {
@@ -648,7 +658,7 @@ public final class FlatRowReader implements RowReader {
             case DOUBLE -> ((double[]) flatValueArrays[columnIndex])[rowIndex];
             case BOOLEAN -> ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 ->
-                    ((byte[][]) flatValueArrays[columnIndex])[rowIndex];
+                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
         };
     }
 
@@ -661,12 +671,6 @@ public final class FlatRowReader implements RowReader {
 
     @Override public PqStruct getStruct(String name) { throw nestedUnsupported(); }
     @Override public PqStruct getStruct(int i) { throw nestedUnsupported(); }
-    @Override public PqIntList getListOfInts(String name) { throw nestedUnsupported(); }
-    @Override public PqIntList getListOfInts(int i) { throw nestedUnsupported(); }
-    @Override public PqLongList getListOfLongs(String name) { throw nestedUnsupported(); }
-    @Override public PqLongList getListOfLongs(int i) { throw nestedUnsupported(); }
-    @Override public PqDoubleList getListOfDoubles(String name) { throw nestedUnsupported(); }
-    @Override public PqDoubleList getListOfDoubles(int i) { throw nestedUnsupported(); }
     @Override public PqList getList(String name) { throw nestedUnsupported(); }
     @Override public PqList getList(int i) { throw nestedUnsupported(); }
     @Override public PqMap getMap(String name) { throw nestedUnsupported(); }
@@ -723,7 +727,7 @@ public final class FlatRowReader implements RowReader {
                 return false;
             }
             flatValueArrays[i] = batch.values;
-            flatNulls[i] = batch.nulls != null ? batch.nulls : NO_NULLS;
+            flatValidity[i] = batch.validity != null ? batch.validity : ALL_PRESENT;
             previousBatches[i] = batch;
             if (i == 0) {
                 batchSize = batch.recordCount;

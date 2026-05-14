@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.nio.charset.StandardCharsets;
 import java.util.BitSet;
 
 import dev.hardwood.schema.ColumnSchema;
@@ -27,16 +26,22 @@ final class NestedBatchIndex {
     final int[] valueCounts;       // [projectedCol] -> number of values
     final int[] recordCounts;      // [projectedCol] -> number of records
     final int[][] offsets;         // [projectedCol] -> record-level offsets
-    final int[][][] multiOffsets;  // [projectedCol] -> int[][] multi-level offsets (for repeated cols)
-    final BitSet[][] levelNulls;   // [projectedCol][level] -> null bitmap
-    final BitSet[] elementNulls;   // [projectedCol] -> leaf null bitmap
+    /// `[projectedCol] -> int[repCount][]`, **rep-level-indexed** offsets
+    /// compacted from the layer-indexed [NestedBatch#multiLevelOffsets]
+    /// produced by the worker. `STRUCT`-layer slots (`null`) are dropped so
+    /// the remaining `REPEATED`-layer offsets are addressable by the
+    /// 0-indexed rep level used by internal consumers
+    /// ([PqListImpl] / [PqMapImpl] / [PqStructImpl]). Each per-rep-level
+    /// `int[]` is sentinel-suffixed (length `count + 1`).
+    final int[][][] multiOffsets;
+    final BitSet[] elementValidity; // [projectedCol] -> leaf validity bitmap (set bit = present)
     final ProjectedSchema projectedSchema;
 
     private NestedBatchIndex(Object[] valueArrays, int[][] defLevels,
                              ColumnSchema[] columnSchemas, int[] valueCounts,
                              int[] recordCounts, int[][] offsets,
-                             int[][][] multiOffsets, BitSet[][] levelNulls,
-                             BitSet[] elementNulls, ProjectedSchema projectedSchema) {
+                             int[][][] multiOffsets,
+                             BitSet[] elementValidity, ProjectedSchema projectedSchema) {
         this.valueArrays = valueArrays;
         this.defLevels = defLevels;
         this.columnSchemas = columnSchemas;
@@ -44,8 +49,7 @@ final class NestedBatchIndex {
         this.recordCounts = recordCounts;
         this.offsets = offsets;
         this.multiOffsets = multiOffsets;
-        this.levelNulls = levelNulls;
-        this.elementNulls = elementNulls;
+        this.elementValidity = elementValidity;
         this.projectedSchema = projectedSchema;
     }
 
@@ -61,8 +65,7 @@ final class NestedBatchIndex {
         int[] recordCounts = new int[colCount];
         int[][] offsets = new int[colCount][];
         int[][][] multiOffsets = new int[colCount][][];
-        BitSet[][] levelNulls = new BitSet[colCount][];
-        BitSet[] elementNulls = new BitSet[colCount];
+        BitSet[] elementValidity = new BitSet[colCount];
 
         for (int col = 0; col < colCount; col++) {
             NestedBatch batch = batches[col];
@@ -71,14 +74,40 @@ final class NestedBatchIndex {
             valueCounts[col] = batch.valueCount;
             recordCounts[col] = batch.recordCount;
             offsets[col] = batch.recordOffsets;
-            multiOffsets[col] = batch.multiLevelOffsets;
-            levelNulls[col] = batch.levelNulls;
-            elementNulls[col] = batch.elementNulls;
+            multiOffsets[col] = compactToRepLevelOffsets(batch.multiLevelOffsets);
+            elementValidity[col] = batch.elementValidity;
         }
 
         return new NestedBatchIndex(valueArrays, defLevels, columnSchemas,
-                valueCounts, recordCounts, offsets, multiOffsets, levelNulls,
-                elementNulls, projectedSchema);
+                valueCounts, recordCounts, offsets, multiOffsets,
+                elementValidity, projectedSchema);
+    }
+
+    /// Compact a layer-indexed offsets array (length `layerCount`, with
+    /// `null` at `STRUCT`-layer positions) into a rep-level-indexed array
+    /// (length `repCount`) by dropping the `null` slots while preserving
+    /// order. `null` input passes through unchanged.
+    private static int[][] compactToRepLevelOffsets(int[][] layerIndexed) {
+        if (layerIndexed == null) {
+            return null;
+        }
+        int repCount = 0;
+        for (int[] o : layerIndexed) {
+            if (o != null) {
+                repCount++;
+            }
+        }
+        if (repCount == layerIndexed.length) {
+            return layerIndexed;
+        }
+        int[][] compact = new int[repCount][];
+        int j = 0;
+        for (int[] o : layerIndexed) {
+            if (o != null) {
+                compact[j++] = o;
+            }
+        }
+        return compact;
     }
 
     // ==================== Value Access ====================
@@ -95,6 +124,8 @@ final class NestedBatchIndex {
     }
 
     /// Get the boxed value at the given index (for generic access paths).
+    /// For byte-array physical types this materialises a fresh `byte[]`
+    /// copy out of [BinaryBatchValues].
     Object getValue(int projectedCol, int valueIndex) {
         Object arr = valueArrays[projectedCol];
         return switch (arr) {
@@ -103,15 +134,19 @@ final class NestedBatchIndex {
             case float[] a -> a[valueIndex];
             case double[] a -> a[valueIndex];
             case boolean[] a -> a[valueIndex];
-            case byte[][] a -> a[valueIndex];
+            case BinaryBatchValues bbv -> bbv.byteArrayAt(valueIndex);
             default -> throw new IllegalStateException("Unexpected array type: " + arr.getClass());
         };
     }
 
-    /// Get a string value at the given index.
+    /// Get a fresh byte[] copy of value `valueIndex` for a varlength column.
+    byte[] getBinary(int projectedCol, int valueIndex) {
+        return ((BinaryBatchValues) valueArrays[projectedCol]).byteArrayAt(valueIndex);
+    }
+
+    /// Get a UTF-8 decoded string for value `valueIndex` of a varlength column.
     String getString(int projectedCol, int valueIndex) {
-        byte[] raw = ((byte[][]) valueArrays[projectedCol])[valueIndex];
-        return new String(raw, StandardCharsets.UTF_8);
+        return ((BinaryBatchValues) valueArrays[projectedCol]).stringAt(valueIndex);
     }
 
     // ==================== Index Navigation ====================
@@ -132,7 +167,9 @@ final class NestedBatchIndex {
         return ml[0][recordIndex];
     }
 
-    /// Get the end index (exclusive) for a repeated column's list at the given record.
+    /// Get the end index (exclusive) for a repeated column's list at the
+    /// given record. With sentinel-suffixed `multiOffsets[k]` (length
+    /// `count + 1`) the last record's end is just `ml[0][recordIndex + 1]`.
     int getListEnd(int projectedCol, int recordIndex) {
         int[][] ml = multiOffsets[projectedCol];
         if (ml == null) {
@@ -144,13 +181,7 @@ final class NestedBatchIndex {
                     ? recordOffsets[recordIndex + 1]
                     : valueCounts[projectedCol];
         }
-        if (recordIndex + 1 < ml[0].length) {
-            return ml[0][recordIndex + 1];
-        }
-        if (ml.length > 1) {
-            return ml[1].length;
-        }
-        return valueCounts[projectedCol];
+        return ml[0][recordIndex + 1];
     }
 
     /// Get the start index at a given multi-level offset level.
@@ -159,20 +190,18 @@ final class NestedBatchIndex {
     }
 
     /// Get the end index (exclusive) at a given multi-level offset level.
+    /// `multiOffsets[level]` is sentinel-suffixed (length `count + 1`), so
+    /// the next slot is always available.
     int getLevelEnd(int projectedCol, int level, int itemIndex) {
-        int[][] ml = multiOffsets[projectedCol];
-        if (itemIndex + 1 < ml[level].length) {
-            return ml[level][itemIndex + 1];
-        }
-        if (level + 1 < ml.length) {
-            return ml[level + 1].length;
-        }
-        return valueCounts[projectedCol];
+        return multiOffsets[projectedCol][level][itemIndex + 1];
     }
 
     /// Check if a value at the given position is null at the leaf level.
+    /// Validity polarity is **set bit = present**, so a null leaf is
+    /// indicated by a clear bit (or a `null` validity reference means every
+    /// leaf in the batch is present).
     boolean isElementNull(int projectedCol, int valueIndex) {
-        BitSet nulls = elementNulls[projectedCol];
-        return nulls != null && nulls.get(valueIndex);
+        BitSet validity = elementValidity[projectedCol];
+        return validity != null && !validity.get(valueIndex);
     }
 }

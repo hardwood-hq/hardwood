@@ -25,11 +25,8 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -304,9 +301,6 @@ class RecordFilterIndexedTest {
         @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(name); }
-        @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(name); }
-        @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(name); }
-        @Override public PqDoubleList getListOfDoubles(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqList getList(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqMap getMap(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqVariant getVariant(String name) { throw new UnsupportedOperationException(name); }
@@ -329,9 +323,6 @@ class RecordFilterIndexedTest {
         @Override public UUID getUuid(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqInterval getInterval(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqStruct getStruct(int idx) { throw new UnsupportedOperationException(); }
-        @Override public PqIntList getListOfInts(int idx) { throw new UnsupportedOperationException(); }
-        @Override public PqLongList getListOfLongs(int idx) { throw new UnsupportedOperationException(); }
-        @Override public PqDoubleList getListOfDoubles(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqList getList(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqMap getMap(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqVariant getVariant(int idx) { throw new UnsupportedOperationException(); }

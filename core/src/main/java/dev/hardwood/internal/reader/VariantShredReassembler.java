@@ -112,9 +112,9 @@ public final class VariantShredReassembler {
             case FLOAT -> pos = VariantValueEncoder.writeFloat(scratch, pos, ((float[]) arr)[idx]);
             case DOUBLE -> pos = VariantValueEncoder.writeDouble(scratch, pos, ((double[]) arr)[idx]);
             case BOOLEAN -> pos = VariantValueEncoder.writeBoolean(scratch, pos, ((boolean[]) arr)[idx]);
-            case BYTE_ARRAY -> encodeBinary((byte[][]) arr, idx, logical);
-            case FIXED_LEN_BYTE_ARRAY -> encodeFixedLen((byte[][]) arr, idx, logical);
-            case INT96 -> encodeInt96((byte[][]) arr, idx);
+            case BYTE_ARRAY -> encodeBinary((BinaryBatchValues) arr, idx, logical);
+            case FIXED_LEN_BYTE_ARRAY -> encodeFixedLen((BinaryBatchValues) arr, idx, logical);
+            case INT96 -> encodeInt96(idx);
         }
     }
 
@@ -160,8 +160,8 @@ public final class VariantShredReassembler {
         pos = VariantValueEncoder.writeInt64(scratch, pos, v);
     }
 
-    private void encodeBinary(byte[][] values, int idx, LogicalType logical) {
-        byte[] raw = values[idx];
+    private void encodeBinary(BinaryBatchValues values, int idx, LogicalType logical) {
+        byte[] raw = values.byteArrayAt(idx);
         ensureCapacity(raw.length + 8);
         if (logical instanceof LogicalType.StringType
                 || logical instanceof LogicalType.JsonType
@@ -176,8 +176,8 @@ public final class VariantShredReassembler {
         pos = VariantValueEncoder.writeBinary(scratch, pos, raw);
     }
 
-    private void encodeFixedLen(byte[][] values, int idx, LogicalType logical) {
-        byte[] raw = values[idx];
+    private void encodeFixedLen(BinaryBatchValues values, int idx, LogicalType logical) {
+        byte[] raw = values.byteArrayAt(idx);
         ensureCapacity(raw.length + 8);
         if (logical instanceof LogicalType.UuidType) {
             long msb = bytesToLongBE(raw, 0);
@@ -198,7 +198,7 @@ public final class VariantShredReassembler {
         pos = VariantValueEncoder.writeBinary(scratch, pos, raw);
     }
 
-    private void encodeInt96(byte[][] values, int idx) {
+    private void encodeInt96(int idx) {
         // INT96 is a deprecated legacy timestamp encoding with no direct
         // Variant equivalent. Writers that want a shredded timestamp should use
         // INT64 + TIMESTAMP(MICROS/NANOS); silently mistyping an INT96 as
@@ -597,7 +597,7 @@ public final class VariantShredReassembler {
 
 
     private static byte[] rawBytes(NestedBatchIndex batch, int valueCol, int valueIdx) {
-        return ((byte[][]) batch.valueArrays[valueCol])[valueIdx];
+        return batch.getBinary(valueCol, valueIdx);
     }
 
     private static long bytesToLongBE(byte[] buf, int offset) {

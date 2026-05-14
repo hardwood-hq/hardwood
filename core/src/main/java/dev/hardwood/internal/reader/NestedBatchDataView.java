@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -21,11 +20,8 @@ import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -60,7 +56,9 @@ public final class NestedBatchDataView {
     private final TopLevelFieldMap.FieldDesc[] fieldDescs;     // projFieldIdx → FieldDesc
     private final int[] fieldToProjCol;                        // projFieldIdx → projectedColumnIdx (-1 for non-primitives)
     private Object[] fieldValueArrays;                         // projFieldIdx → raw value array (int[], long[], etc.)
-    private BitSet[] fieldElementNulls;                        // projFieldIdx → element null BitSet
+    /// Per projected field index → leaf validity bitmap (set bit = present).
+    /// `null` means every leaf for that field in the current batch is present.
+    private BitSet[] fieldElementValidity;
 
     public NestedBatchDataView(FileSchema schema, ProjectedSchema projectedSchema) {
         this.schema = schema;
@@ -74,7 +72,7 @@ public final class NestedBatchDataView {
         this.fieldDescs = new TopLevelFieldMap.FieldDesc[fieldCount];
         this.fieldToProjCol = new int[fieldCount];
         this.fieldValueArrays = new Object[fieldCount];
-        this.fieldElementNulls = new BitSet[fieldCount];
+        this.fieldElementValidity = new BitSet[fieldCount];
         for (int f = 0; f < fieldCount; f++) {
             TopLevelFieldMap.FieldDesc desc = fieldMap.getByOriginalIndex(projectedFieldToOriginal[f]);
             fieldDescs[f] = desc;
@@ -138,8 +136,8 @@ public final class NestedBatchDataView {
         int projCol = fieldToProjCol[projectedIndex];
         if (projCol >= 0) {
             int valueIdx = cachedValueIndex[projCol];
-            BitSet nulls = fieldElementNulls[projectedIndex];
-            return nulls != null && nulls.get(valueIdx);
+            BitSet validity = fieldElementValidity[projectedIndex];
+            return validity != null && !validity.get(valueIdx);
         }
         return isFieldNull(fieldDescs[projectedIndex]);
     }
@@ -228,7 +226,7 @@ public final class NestedBatchDataView {
         // returns Object and would box.
         try {
             return LogicalTypeConverter.convertToFloat16(
-                    ((byte[][]) batchIndex.valueArrays[projCol])[valueIdx],
+                    ((BinaryBatchValues) batchIndex.valueArrays[projCol]).byteArrayAt(valueIdx),
                     p.schema().type());
         }
         catch (RuntimeException e) {
@@ -260,8 +258,8 @@ public final class NestedBatchDataView {
 
     public int getInt(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet nulls = fieldElementNulls[projectedIndex];
-        if (nulls != null && nulls.get(valueIdx)) {
+        BitSet validity = fieldElementValidity[projectedIndex];
+        if (validity != null && !validity.get(valueIdx)) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         return ((int[]) fieldValueArrays[projectedIndex])[valueIdx];
@@ -269,8 +267,8 @@ public final class NestedBatchDataView {
 
     public long getLong(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet nulls = fieldElementNulls[projectedIndex];
-        if (nulls != null && nulls.get(valueIdx)) {
+        BitSet validity = fieldElementValidity[projectedIndex];
+        if (validity != null && !validity.get(valueIdx)) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         return ((long[]) fieldValueArrays[projectedIndex])[valueIdx];
@@ -278,8 +276,8 @@ public final class NestedBatchDataView {
 
     public float getFloat(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet nulls = fieldElementNulls[projectedIndex];
-        if (nulls != null && nulls.get(valueIdx)) {
+        BitSet validity = fieldElementValidity[projectedIndex];
+        if (validity != null && !validity.get(valueIdx)) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
@@ -288,7 +286,7 @@ public final class NestedBatchDataView {
         }
         try {
             return LogicalTypeConverter.convertToFloat16(
-                    ((byte[][]) fieldValueArrays[projectedIndex])[valueIdx],
+                    ((BinaryBatchValues) fieldValueArrays[projectedIndex]).byteArrayAt(valueIdx),
                     p.schema().type());
         }
         catch (RuntimeException e) {
@@ -298,8 +296,8 @@ public final class NestedBatchDataView {
 
     public double getDouble(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet nulls = fieldElementNulls[projectedIndex];
-        if (nulls != null && nulls.get(valueIdx)) {
+        BitSet validity = fieldElementValidity[projectedIndex];
+        if (validity != null && !validity.get(valueIdx)) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         return ((double[]) fieldValueArrays[projectedIndex])[valueIdx];
@@ -307,8 +305,8 @@ public final class NestedBatchDataView {
 
     public boolean getBoolean(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet nulls = fieldElementNulls[projectedIndex];
-        if (nulls != null && nulls.get(valueIdx)) {
+        BitSet validity = fieldElementValidity[projectedIndex];
+        if (validity != null && !validity.get(valueIdx)) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         return ((boolean[]) fieldValueArrays[projectedIndex])[valueIdx];
@@ -352,21 +350,20 @@ public final class NestedBatchDataView {
 
     public String getString(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet nulls = fieldElementNulls[projectedIndex];
-        if (nulls != null && nulls.get(valueIdx)) {
+        BitSet validity = fieldElementValidity[projectedIndex];
+        if (validity != null && !validity.get(valueIdx)) {
             return null;
         }
-        byte[] raw = ((byte[][]) fieldValueArrays[projectedIndex])[valueIdx];
-        return new String(raw, StandardCharsets.UTF_8);
+        return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).stringAt(valueIdx);
     }
 
     public byte[] getBinary(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet nulls = fieldElementNulls[projectedIndex];
-        if (nulls != null && nulls.get(valueIdx)) {
+        BitSet validity = fieldElementValidity[projectedIndex];
+        if (validity != null && !validity.get(valueIdx)) {
             return null;
         }
-        return ((byte[][]) fieldValueArrays[projectedIndex])[valueIdx];
+        return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).byteArrayAt(valueIdx);
     }
 
     public LocalDate getDate(int projectedIndex) {
@@ -406,21 +403,6 @@ public final class NestedBatchDataView {
         return new PqStructImpl(batchIndex, structDesc, rowIndex);
     }
 
-    public PqIntList getListOfInts(String name) {
-        TopLevelFieldMap.FieldDesc.ListOf listDesc = lookupList(name);
-        return createIntList(listDesc);
-    }
-
-    public PqLongList getListOfLongs(String name) {
-        TopLevelFieldMap.FieldDesc.ListOf listDesc = lookupList(name);
-        return createLongList(listDesc);
-    }
-
-    public PqDoubleList getListOfDoubles(String name) {
-        TopLevelFieldMap.FieldDesc.ListOf listDesc = lookupList(name);
-        return createDoubleList(listDesc);
-    }
-
     public PqList getList(String name) {
         TopLevelFieldMap.FieldDesc.ListOf listDesc = lookupList(name);
         return createList(listDesc);
@@ -444,18 +426,6 @@ public final class NestedBatchDataView {
             return null;
         }
         return new PqStructImpl(batchIndex, structDesc, rowIndex);
-    }
-
-    public PqIntList getListOfInts(int projectedIndex) {
-        return createIntList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
-    }
-
-    public PqLongList getListOfLongs(int projectedIndex) {
-        return createLongList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
-    }
-
-    public PqDoubleList getListOfDoubles(int projectedIndex) {
-        return createDoubleList((TopLevelFieldMap.FieldDesc.ListOf) fieldDescs[projectedIndex]);
     }
 
     public PqList getList(int projectedIndex) {
@@ -511,7 +481,7 @@ public final class NestedBatchDataView {
             int projCol = fieldToProjCol[f];
             if (projCol >= 0) {
                 fieldValueArrays[f] = batchIndex.valueArrays[projCol];
-                fieldElementNulls[f] = batchIndex.elementNulls[projCol];
+                fieldElementValidity[f] = batchIndex.elementValidity[projCol];
             }
         }
     }
@@ -522,8 +492,7 @@ public final class NestedBatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        byte[] raw = ((byte[][]) batchIndex.valueArrays[projCol])[valueIdx];
-        return new String(raw, StandardCharsets.UTF_8);
+        return batchIndex.getString(projCol, valueIdx);
     }
 
     private byte[] getBinary(TopLevelFieldMap.FieldDesc.Primitive p) {
@@ -532,7 +501,7 @@ public final class NestedBatchDataView {
         if (batchIndex.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        return ((byte[][]) batchIndex.valueArrays[projCol])[valueIdx];
+        return batchIndex.getBinary(projCol, valueIdx);
     }
 
     private <T> T readLogicalType(TopLevelFieldMap.FieldDesc.Primitive p,
@@ -565,18 +534,6 @@ public final class NestedBatchDataView {
             throw new IllegalArgumentException(prefix() + "Field '" + name + "' is not a list");
         }
         return listDesc;
-    }
-
-    private PqIntList createIntList(TopLevelFieldMap.FieldDesc.ListOf listDesc) {
-        return PqListImpl.createIntList(batchIndex, listDesc, rowIndex, -1);
-    }
-
-    private PqLongList createLongList(TopLevelFieldMap.FieldDesc.ListOf listDesc) {
-        return PqListImpl.createLongList(batchIndex, listDesc, rowIndex, -1);
-    }
-
-    private PqDoubleList createDoubleList(TopLevelFieldMap.FieldDesc.ListOf listDesc) {
-        return PqListImpl.createDoubleList(batchIndex, listDesc, rowIndex, -1);
     }
 
     private PqList createList(TopLevelFieldMap.FieldDesc.ListOf listDesc) {
@@ -640,7 +597,7 @@ public final class NestedBatchDataView {
                     + "Variant column '" + desc.schema().name() + "' requires its 'metadata' child in the projection");
         }
         int metaIdx = cachedValueIndex[desc.metadataCol()];
-        byte[] metadataBytes = ((byte[][]) batchIndex.valueArrays[desc.metadataCol()])[metaIdx];
+        byte[] metadataBytes = batchIndex.getBinary(desc.metadataCol(), metaIdx);
 
         // Shredded when the top-level ShredLevel has a typed_value component.
         if (desc.root().typed() != null) {
@@ -663,7 +620,7 @@ public final class NestedBatchDataView {
                     + "Variant column '" + desc.schema().name() + "' requires its 'value' child in the projection");
         }
         int valIdx = cachedValueIndex[valueCol];
-        byte[] value = ((byte[][]) batchIndex.valueArrays[valueCol])[valIdx];
+        byte[] value = batchIndex.getBinary(valueCol, valIdx);
         return new PqVariantImpl(metadataBytes, value);
     }
 }

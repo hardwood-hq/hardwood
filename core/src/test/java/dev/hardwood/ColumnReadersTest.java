@@ -9,7 +9,6 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.BitSet;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -17,6 +16,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.Validity;
 import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -134,15 +134,15 @@ class ColumnReadersTest {
 
             // id column — required, no nulls
             assertThat(idReader.getRecordCount()).isEqualTo(3);
-            assertThat(idReader.getElementNulls()).isNull();
+            assertThat(idReader.getLeafValidity().hasNulls()).isFalse();
 
             // name column — optional, row 1 is null
             assertThat(nameReader.getRecordCount()).isEqualTo(3);
-            BitSet nulls = nameReader.getElementNulls();
-            assertThat(nulls).isNotNull();
-            assertThat(nulls.get(0)).isFalse();
-            assertThat(nulls.get(1)).isTrue();
-            assertThat(nulls.get(2)).isFalse();
+            Validity validity = nameReader.getLeafValidity();
+            assertThat(validity.hasNulls()).isTrue();
+            assertThat(validity.isNotNull(0)).isTrue();
+            assertThat(validity.isNull(1)).isTrue();
+            assertThat(validity.isNotNull(2)).isTrue();
 
             String[] names = nameReader.getStrings();
             assertThat(names[0]).isEqualTo("alice");
@@ -294,10 +294,10 @@ class ColumnReadersTest {
 
             while (nameReader.nextBatch()) {
                 int count = nameReader.getRecordCount();
-                BitSet nulls = nameReader.getElementNulls();
+                Validity validity = nameReader.getLeafValidity();
 
                 for (int i = 0; i < count; i++) {
-                    if (nulls != null && nulls.get(i)) {
+                    if (validity.isNull(i)) {
                         nullCount++;
                     }
                 }
@@ -341,7 +341,7 @@ class ColumnReadersTest {
     }
 
     @Test
-    void testNestingDepthIsFlat() throws Exception {
+    void testLayerCountIsZeroForFlat() throws Exception {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
@@ -349,17 +349,17 @@ class ColumnReadersTest {
              ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("id"))) {
 
             ColumnReader reader = columns.getColumnReader("id");
-            assertThat(reader.getNestingDepth()).isEqualTo(0);
+            assertThat(reader.getLayerCount()).isEqualTo(0);
         }
     }
 
     /// `primitive_lists_test.parquet` row 2 has `int_list = []` (empty) and
-    /// row 3 has `int_list = null`. This pins the public-API contract that
-    /// `getEmptyListMarkers` and `getLevelNulls` together separate the two
-    /// states — the underlying computer is covered by `NestedLevelComputerTest`,
-    /// here we only check that the bitmaps reach a caller through `ColumnReader`.
+    /// row 3 has `int_list = null`. The layer model encodes "empty" as
+    /// equal-offsets at the REPEATED layer (`offsets[r+1] - offsets[r] == 0`)
+    /// and "null" as a cleared validity bit; this pins that both states are
+    /// reachable independently through the public `ColumnReader` API.
     @Test
-    void testGetEmptyListMarkersDistinguishesEmptyFromNull() throws Exception {
+    void testEmptyAndNullListsAreDistinguishable() throws Exception {
         Path filePath = Paths.get("src/test/resources/primitive_lists_test.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
@@ -370,23 +370,23 @@ class ColumnReadersTest {
             assertThat(reader.nextBatch()).isTrue();
             assertThat(reader.getRecordCount()).isEqualTo(4);
 
-            BitSet levelNulls = reader.getLevelNulls(0);
-            BitSet emptyMarkers = reader.getEmptyListMarkers(0);
+            Validity listValidity = reader.getLayerValidity(0);
+            int[] offsets = reader.getLayerOffsets(0);
+            assertThat(offsets).hasSize(reader.getRecordCount() + 1);
 
-            assertThat(levelNulls).isNotNull();
-            assertThat(levelNulls.get(3)).as("row 3 is null").isTrue();
-            assertThat(levelNulls.get(2)).as("row 2 is empty, not null").isFalse();
+            assertThat(listValidity.hasNulls()).isTrue();
+            assertThat(listValidity.isNull(3)).as("row 3 is null list").isTrue();
+            assertThat(listValidity.isNotNull(2)).as("row 2 is empty (present), not null").isTrue();
 
-            assertThat(emptyMarkers).isNotNull();
-            assertThat(emptyMarkers.get(2)).as("row 2 is empty").isTrue();
-            assertThat(emptyMarkers.get(3)).as("row 3 is null, not empty").isFalse();
-            assertThat(emptyMarkers.get(0)).as("row 0 has values").isFalse();
-            assertThat(emptyMarkers.get(1)).as("row 1 has values").isFalse();
+            assertThat(offsets[3] - offsets[2]).as("row 2 has zero items (empty)").isEqualTo(0);
+            assertThat(offsets[4] - offsets[3]).as("row 3 has zero items (null)").isEqualTo(0);
+            assertThat(offsets[1] - offsets[0]).as("row 0 has values").isGreaterThan(0);
+            assertThat(offsets[2] - offsets[1]).as("row 1 has values").isGreaterThan(0);
         }
     }
 
     @Test
-    void testGetEmptyListMarkersThrowsBeforeNextBatch() throws Exception {
+    void testGetLayerOffsetsThrowsBeforeNextBatch() throws Exception {
         Path filePath = Paths.get("src/test/resources/primitive_lists_test.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
@@ -394,14 +394,14 @@ class ColumnReadersTest {
              ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("int_list.list.element"))) {
 
             ColumnReader reader = columns.getColumnReader("int_list.list.element");
-            assertThatThrownBy(() -> reader.getEmptyListMarkers(0))
+            assertThatThrownBy(() -> reader.getLayerOffsets(0))
                     .isInstanceOf(IllegalStateException.class)
                     .hasMessageContaining("No batch available");
         }
     }
 
     @Test
-    void testGetEmptyListMarkersThrowsForFlatColumn() throws Exception {
+    void testGetLayerOffsetsThrowsForFlatColumn() throws Exception {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
@@ -410,14 +410,14 @@ class ColumnReadersTest {
 
             ColumnReader reader = columns.getColumnReader("id");
             assertThat(reader.nextBatch()).isTrue();
-            assertThatThrownBy(() -> reader.getEmptyListMarkers(0))
+            assertThatThrownBy(() -> reader.getLayerOffsets(0))
                     .isInstanceOf(IllegalStateException.class)
-                    .hasMessageContaining("flat columns");
+                    .hasMessageContaining("out of range");
         }
     }
 
     @Test
-    void testGetEmptyListMarkersThrowsForLevelOutOfRange() throws Exception {
+    void testGetLayerOffsetsThrowsForLayerOutOfRange() throws Exception {
         Path filePath = Paths.get("src/test/resources/primitive_lists_test.parquet");
 
         try (Hardwood hardwood = Hardwood.create();
@@ -426,8 +426,9 @@ class ColumnReadersTest {
 
             ColumnReader reader = columns.getColumnReader("int_list.list.element");
             assertThat(reader.nextBatch()).isTrue();
-            assertThatThrownBy(() -> reader.getEmptyListMarkers(5))
-                    .isInstanceOf(IndexOutOfBoundsException.class);
+            assertThatThrownBy(() -> reader.getLayerOffsets(5))
+                    .isInstanceOf(IllegalStateException.class)
+                    .hasMessageContaining("out of range");
         }
     }
 

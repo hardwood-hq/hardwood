@@ -12,30 +12,32 @@ import java.util.BitSet;
 import dev.hardwood.internal.predicate.NullBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 
-/// IS NOT NULL: bit `i` is set iff row `i` is not null. Bulk-inverts the BitSet's
-/// underlying long-words across the live range.
+/// IS NOT NULL: bit `i` is set iff row `i` is not null. Bulk-copies the
+/// validity bitmap (set bit = present) across the live range.
 public final class IsNotNullBatchMatcher implements NullBatchMatcher {
 
     @Override
     public void test(BatchExchange.Batch batch, long[] outWords) {
-        BitSet nulls = batch.nulls;
+        BitSet validity = batch.validity;
         int n = batch.recordCount;
         int wordsForN = (n + 63) >>> 6;
 
-        if (nulls == null) {
-            // Every row is non-null — set every bit in the live range.
+        if (validity == null) {
+            // Every row is present — set every bit in the live range.
             for (int w = 0; w < wordsForN; w++) {
                 outWords[w] = -1L;
             }
             return;
         }
-        long[] nullBits = nulls.toLongArray();
-        int copy = Math.min(nullBits.length, wordsForN);
+        long[] validityBits = validity.toLongArray();
+        int copy = Math.min(validityBits.length, wordsForN);
         for (int w = 0; w < copy; w++) {
-            outWords[w] = ~nullBits[w];
+            outWords[w] = validityBits[w];
         }
+        // Words past validity's backing array hold no set bits — every leaf at
+        // those positions is absent, so IS NOT NULL does not match.
         for (int w = copy; w < wordsForN; w++) {
-            outWords[w] = -1L;
+            outWords[w] = 0L;
         }
         // Bits past `n` (in the last live word and in stale trailing words) are
         // intentionally left as-is — the consumer (FlatRowReader#intersectMatches)

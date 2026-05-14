@@ -14,7 +14,6 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.Collection;
 import java.util.Iterator;
 import java.util.List;
@@ -39,8 +38,10 @@ import org.assertj.core.api.ThrowableAssert;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.reader.Validity;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
@@ -449,25 +450,19 @@ public class Utils {
     }
 
     /// Read a leaf element at `index` from a [PqList], picking the typed accessor
-    /// matching the Avro element schema. Requires a full-iterator scan per call —
-    /// acceptable for test code where list sizes are small.
+    /// matching the Avro element schema.
     private static Object getLeafListElement(PqList list, int index, org.apache.avro.Schema elementSchema) {
-        Iterable<?> iterable = switch (elementSchema.getType()) {
-            case BOOLEAN -> list.booleans();
-            case INT -> list.ints();
-            case LONG -> list.longs();
-            case FLOAT -> list.floats();
-            case DOUBLE -> list.doubles();
-            case STRING, ENUM -> list.strings();
-            case BYTES, FIXED -> list.binaries();
+        return switch (elementSchema.getType()) {
+            case BOOLEAN -> list.booleans().get(index);
+            case INT -> list.ints().get(index);
+            case LONG -> list.longs().get(index);
+            case FLOAT -> list.floats().get(index);
+            case DOUBLE -> list.doubles().get(index);
+            case STRING, ENUM -> list.strings().get(index);
+            case BYTES, FIXED -> list.binaries().get(index);
             default -> throw new UnsupportedOperationException(
                     "Unsupported Avro list element type: " + elementSchema.getType());
         };
-        Iterator<?> it = iterable.iterator();
-        for (int i = 0; i < index; i++) {
-            it.next();
-        }
-        return it.next();
     }
 
     /// Compare an Avro map against a Hardwood [PqMap] entry-by-entry.
@@ -647,7 +642,7 @@ public class Utils {
 
         while (columnReader.nextBatch()) {
             int count = columnReader.getRecordCount();
-            BitSet nulls = columnReader.getElementNulls();
+            Validity validity = columnReader.getLeafValidity();
 
             for (int i = 0; i < count; i++) {
                 assertThat(rowIdx)
@@ -656,14 +651,15 @@ public class Utils {
                 GenericRecord refRow = referenceRows.get(rowIdx);
                 Object refValue = getRefColumnValue(refRow, colName);
 
+                boolean isNull = validity.isNull(i);
                 if (refValue == null || refValue == SkipMarker.INSTANCE) {
                     if (refValue == null) {
-                        assertThat(nulls != null && nulls.get(i))
+                        assertThat(isNull)
                                 .as("Row %d, column '%s' should be null", rowIdx, colName)
                                 .isTrue();
                     }
                 }
-                else if (nulls != null && nulls.get(i)) {
+                else if (isNull) {
                     assertThat(refValue)
                             .as("Row %d, column '%s' should not be null", rowIdx, colName)
                             .isNull();
@@ -759,27 +755,30 @@ public class Utils {
     }
 
     /// Reconstruct one container's value from a nested [ColumnReader]'s
-    /// offsets / level-nulls / empty-list markers / element-nulls. Returns
-    /// `null` when the container at `level` is null, an empty `List` when the
-    /// container is present-but-empty, or a populated `List` otherwise.
+    /// per-layer validity / offsets / leaf validity. Returns `null` when the
+    /// container at `level` is null, an empty `List` when the container is
+    /// present-but-empty, or a populated `List` otherwise.
+    ///
+    /// The `level` argument is a 0-indexed Parquet repetition level; it maps
+    /// to the corresponding `REPEATED` layer index, skipping any
+    /// intervening `STRUCT` layers along the column's chain.
     private static Object reconstructNested(ColumnReader reader, int level, int idx, int maxRep) {
-        BitSet levelNulls = reader.getLevelNulls(level);
-        if (levelNulls != null && levelNulls.get(idx)) {
+        int layer = layerForRepLevel(reader, level);
+        Validity listValidity = reader.getLayerValidity(layer);
+        if (listValidity.isNull(idx)) {
             return null;
         }
-        BitSet emptyMarkers = reader.getEmptyListMarkers(level);
-        if (emptyMarkers != null && emptyMarkers.get(idx)) {
+        int[] offsets = reader.getLayerOffsets(layer);
+        int start = offsets[idx];
+        int end = offsets[idx + 1];
+        if (start == end) {
             return List.of();
         }
-        int[] offsets = reader.getOffsets(level);
-        int start = offsets[idx];
-        int end = (idx + 1 < offsets.length) ? offsets[idx + 1]
-                : (level + 1 == maxRep ? reader.getValueCount() : reader.getOffsets(level + 1).length);
         if (level + 1 == maxRep) {
-            BitSet elementNulls = reader.getElementNulls();
+            Validity leafValidity = reader.getLeafValidity();
             List<Object> leaves = new ArrayList<>(end - start);
             for (int v = start; v < end; v++) {
-                leaves.add(elementNulls != null && elementNulls.get(v)
+                leaves.add(leafValidity.isNull(v)
                         ? null : convertToComparable(getColumnReaderValue(reader, v)));
             }
             return leaves;
@@ -789,6 +788,25 @@ public class Utils {
             items.add(reconstructNested(reader, level + 1, j, maxRep));
         }
         return items;
+    }
+
+    /// Map a 0-indexed Parquet repetition level to the matching `REPEATED`
+    /// layer index in [ColumnReader#getLayerCount]'s 0..count-1 range. Skips
+    /// `STRUCT` layers in the chain.
+    private static int layerForRepLevel(ColumnReader reader, int repLevel) {
+        int seen = 0;
+        int layerCount = reader.getLayerCount();
+        for (int k = 0; k < layerCount; k++) {
+            if (reader.getLayerKind(k) == LayerKind.REPEATED) {
+                if (seen == repLevel) {
+                    return k;
+                }
+                seen++;
+            }
+        }
+        throw new IllegalStateException(
+                "No REPEATED layer at repetition level " + repLevel
+                        + " for column " + reader.getColumnSchema().name());
     }
 
     /// Path components that name Parquet structural groups Avro elides when it

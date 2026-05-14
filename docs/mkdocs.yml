@@ -7,7 +7,7 @@
 #
 
 site_name: Hardwood
-site_description: A zero-dependency Java Parquet file reader
+site_description: A lightweight Java Parquet reader — zero transitive dependencies, GraalVM-friendly, S3 without Hadoop
 site_url: https://hardwood.dev/
 repo_url: https://github.com/hardwood-hq/hardwood
 repo_name: hardwood-hq/hardwood
@@ -19,11 +19,20 @@ nav:
   - Home: index.md
   - Getting Started: getting-started.md
   - Configuration: configuration.md
-  - Usage: usage.md
-  - S3: s3.md
-  - Avro: avro.md
+  - Usage:
+    - Overview: usage.md
+    - Row-Oriented Reading: usage/row-reader.md
+    - Column-Oriented Reading: usage/column-reader.md
+    - Predicate Pushdown, Projection, Limits, Splits: usage/query-controls.md
+    - Reading Multiple Files: usage/multi-file.md
+    - Accessing File Metadata: usage/metadata.md
+    - Variant Columns: usage/variant.md
+    - Geospatial Support: usage/geospatial.md
   - CLI: cli.md
-  - Parquet-Java Compatibility: compat.md
+  - Modules:
+    - S3: s3.md
+    - Avro: avro.md
+    - Parquet-Java Compatibility: compat.md
   - API Reference: /api/latest/
   - Release Notes: release-notes.md
   - Contributing: contributing.md

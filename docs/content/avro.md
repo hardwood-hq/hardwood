@@ -77,3 +77,11 @@ AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
 Values are stored in Avro's standard representations: timestamps as `Long` (millis/micros since epoch), dates as `Integer` (days since epoch), decimals as `ByteBuffer`, binary data as `ByteBuffer`. This matches the behavior of parquet-java's `AvroReadSupport`.
 
 A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()` columns) maps to a bare Avro `null` field — not the usual `union [null, T]` nullable wrap, which is illegal when `T` is itself `null`. The same collapse applies inside lists and maps: a `list<null>` element or `map<string, null>` value position becomes a bare `null` in the corresponding Avro `array` / `map` schema.
+
+## Lifecycle
+
+`AvroRowReader` does **not** take ownership of the `ParquetFileReader` it wraps — closing the `AvroRowReader` releases the inner readers and column workers, but the underlying `ParquetFileReader` must be closed separately by the caller. The two-`try`-with-resources pattern in the examples above reflects this.
+
+## Schema overrides
+
+Hardwood derives the Avro schema directly from the Parquet schema via `AvroSchemaConverter`. There is no equivalent of parquet-java's `AvroReadSupport.setRequestedProjection(...)` or `setAvroReadSchema(...)` — supplying an explicit Avro reader schema (for schema-evolution promotions, renames, or alias resolution) is not supported. Column projection (`ColumnProjection.columns(...)`) is the only way to narrow what is read; the Avro schema returned by `getSchema()` always matches the projected Parquet schema's converted form.

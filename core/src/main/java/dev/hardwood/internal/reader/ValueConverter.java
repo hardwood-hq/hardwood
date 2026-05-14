@@ -243,7 +243,12 @@ public final class ValueConverter {
         }
     }
 
-    private static <T> T convertLogicalType(Object rawValue, SchemaNode schema, Class<T> expectedClass) {
+    /// Package-private decode helper that skips schema validation. Intended for
+    /// hot-path call sites (typed [dev.hardwood.row.PqList] iterators) that
+    /// have already validated `schema` against the expected logical type — pre-flight
+    /// validation hoists out of the per-element lambda, leaving each lambda call
+    /// at one `instanceof` short-circuit plus a delegate to [LogicalTypeConverter].
+    static <T> T convertLogicalType(Object rawValue, SchemaNode schema, Class<T> expectedClass) {
         // If already converted (e.g., by RecordAssembler for nested structures), return as-is
         if (expectedClass.isInstance(rawValue)) {
             return expectedClass.cast(rawValue);

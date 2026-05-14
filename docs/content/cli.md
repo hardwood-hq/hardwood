@@ -62,7 +62,7 @@ hardwood convert --format csv -f data.parquet
 # Show dictionary entries for a column (first 50 entries per row group by default)
 hardwood inspect dictionary -f data.parquet -c category
 
-# Show all dictionary entries for a column
+# Show all dictionary entries for a column (--limit 0 means unlimited)
 hardwood inspect dictionary -f data.parquet -c category --limit 0
 
 # Convert first 100 rows to JSON
@@ -201,7 +201,9 @@ hardwood schema -f s3://my-bucket/data.parquet
 hardwood print -n 10 -f s3://my-bucket/data.parquet
 ```
 
-The CLI resolves credentials via the standard AWS credential chain (environment variables, `~/.aws/credentials`, SSO, instance profiles, etc.).
+The CLI resolves credentials via the standard AWS credential chain (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` environment variables, `~/.aws/credentials`, SSO, EC2/ECS instance profiles, web identity). See the [S3 module page](s3.md) for the resolution order and provider details.
+
+The CLI additionally reads these environment variables:
 
 | Environment Variable | Description |
 |----------------------|-------------|

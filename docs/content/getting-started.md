@@ -46,13 +46,15 @@ dependencies {
 }
 ```
 
-Then declare dependencies without versions:
+Then declare dependencies inside your project's `<dependencies>` block without specifying a version:
 
 ```xml
-<dependency>
-    <groupId>dev.hardwood</groupId>
-    <artifactId>hardwood-core</artifactId>
-</dependency>
+<dependencies>
+    <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-core</artifactId>
+    </dependency>
+</dependencies>
 ```
 
 ### Specifying the Version Directly
@@ -84,7 +86,7 @@ Bindings are available for all popular logger implementations, for instance for 
 
 ### Compression Libraries
 
-Hardwood supports reading Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4, and Brotli. The compression libraries are optional dependencies—add only the ones you need:
+Hardwood supports reading Parquet files compressed with GZIP (built into Java), Snappy, ZSTD, LZ4, and Brotli. The compression libraries are optional dependencies—add only the ones you need. Snappy and ZSTD are the codecs most commonly seen in the wild; LZ4 and Brotli are rarer.
 
 | Codec | Group ID | Artifact ID |
 |-------|----------|-------------|

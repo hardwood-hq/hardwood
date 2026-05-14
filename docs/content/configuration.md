@@ -15,13 +15,15 @@
 
 Hardwood can use [libdeflate](https://github.com/ebiggers/libdeflate) for GZIP decompression, which is significantly faster than the built-in Java implementation. This feature requires **Java 22 or newer** (it uses the Foreign Function & Memory API which became stable in Java 22).
 
-Allow native access in order to use libdeflate:
+Enabling libdeflate is two steps: a JVM flag to allow native access, plus the native library installed on the system.
+
+**1. JVM flag** (allow Hardwood to bind native functions):
 
 ```bash
 --enable-native-access=ALL-UNNAMED
 ```
 
-libdeflate is a native library that must be installed on your system:
+**2. Native library** — install on your system:
 
 === "macOS"
 

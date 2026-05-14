@@ -19,13 +19,9 @@ import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.metadata.FieldPath;
-import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -116,21 +112,18 @@ public final class NestedRowReader implements RowReader {
 
             PageSource pageSource = new PageSource(rowGroupIterator, i);
 
-            PhysicalType physType = columnSchema.type();
             BatchExchange<NestedBatch> buffer = BatchExchange.recycling(
                     columnSchema.name(), () -> {
                         NestedBatch b = new NestedBatch();
-                        b.values = BatchExchange.allocateArray(physType, batchSize);
+                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
                         return b;
                     });
-            int[] levelNullThresholds = columnSchema.maxRepetitionLevel() > 0
-                    ? NestedLevelComputer.computeLevelNullThresholds(
-                            schema.getRootNode(), columnSchema.columnIndex())
-                    : null;
+            NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
+                    schema.getRootNode(), columnSchema.columnIndex());
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), maxRows,
-                    levelNullThresholds);
+                    layers);
 
             buffers[i] = buffer;
             workers[i] = worker;
@@ -298,12 +291,6 @@ public final class NestedRowReader implements RowReader {
 
     @Override public PqStruct getStruct(String name) { return dataView.getStruct(name); }
     @Override public PqStruct getStruct(int i) { return dataView.getStruct(i); }
-    @Override public PqIntList getListOfInts(String name) { return dataView.getListOfInts(name); }
-    @Override public PqIntList getListOfInts(int i) { return dataView.getListOfInts(i); }
-    @Override public PqLongList getListOfLongs(String name) { return dataView.getListOfLongs(name); }
-    @Override public PqLongList getListOfLongs(int i) { return dataView.getListOfLongs(i); }
-    @Override public PqDoubleList getListOfDoubles(String name) { return dataView.getListOfDoubles(name); }
-    @Override public PqDoubleList getListOfDoubles(int i) { return dataView.getListOfDoubles(i); }
     @Override public PqList getList(String name) { return dataView.getList(name); }
     @Override public PqList getList(int i) { return dataView.getList(i); }
     @Override public PqMap getMap(String name) { return dataView.getMap(name); }

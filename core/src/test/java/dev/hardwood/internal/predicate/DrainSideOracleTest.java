@@ -29,11 +29,8 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.FilterPredicate.Operator;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.row.PqDoubleList;
-import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
-import dev.hardwood.row.PqLongList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
@@ -408,28 +405,38 @@ class DrainSideOracleTest {
             switch (projectedIdx) {
                 case COL_ID -> {
                     b.values = ids;
-                    b.nulls = idNulls.isEmpty() ? null : idNulls;
+                    b.validity = nullsToValidity(idNulls);
                 }
                 case COL_VALUE -> {
                     b.values = values;
-                    b.nulls = valueNulls.isEmpty() ? null : valueNulls;
+                    b.validity = nullsToValidity(valueNulls);
                 }
                 case COL_TAG -> {
                     b.values = tags;
-                    b.nulls = tagNulls.isEmpty() ? null : tagNulls;
+                    b.validity = nullsToValidity(tagNulls);
                 }
                 case COL_SCORE -> {
                     b.values = scores;
-                    b.nulls = scoreNulls.isEmpty() ? null : scoreNulls;
+                    b.validity = nullsToValidity(scoreNulls);
                 }
                 case COL_FLAG -> {
                     b.values = flags;
-                    b.nulls = flagNulls.isEmpty() ? null : flagNulls;
+                    b.validity = nullsToValidity(flagNulls);
                 }
                 default -> throw new IllegalArgumentException("col " + projectedIdx);
             }
             b.recordCount = N;
             return b;
+        }
+
+        private static BitSet nullsToValidity(BitSet nulls) {
+            if (nulls.isEmpty()) {
+                return null;
+            }
+            BitSet validity = new BitSet(N);
+            validity.set(0, N);
+            validity.andNot(nulls);
+            return validity;
         }
     }
 
@@ -529,12 +536,6 @@ class DrainSideOracleTest {
         @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(); }
         @Override public PqStruct getStruct(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqStruct getStruct(String name) { throw new UnsupportedOperationException(); }
-        @Override public PqIntList getListOfInts(int idx) { throw new UnsupportedOperationException(); }
-        @Override public PqIntList getListOfInts(String name) { throw new UnsupportedOperationException(); }
-        @Override public PqLongList getListOfLongs(int idx) { throw new UnsupportedOperationException(); }
-        @Override public PqLongList getListOfLongs(String name) { throw new UnsupportedOperationException(); }
-        @Override public PqDoubleList getListOfDoubles(int idx) { throw new UnsupportedOperationException(); }
-        @Override public PqDoubleList getListOfDoubles(String name) { throw new UnsupportedOperationException(); }
         @Override public PqList getList(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqList getList(String name) { throw new UnsupportedOperationException(); }
         @Override public PqMap getMap(int idx) { throw new UnsupportedOperationException(); }

@@ -107,4 +107,20 @@ final class PqLongListImpl implements PqLongList {
             throw new IndexOutOfBoundsException("Index " + index + " out of range [0, " + size() + ")");
         }
     }
+
+    @Override
+    public String toString() {
+        long[] values = (long[]) batch.valueArrays[projectedCol];
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = start; i < end; i++) {
+            if (i > start) sb.append(", ");
+            if (batch.isElementNull(projectedCol, i)) {
+                sb.append("null");
+            } else {
+                sb.append(values[i]);
+            }
+        }
+        sb.append(']');
+        return sb.toString();
+    }
 }

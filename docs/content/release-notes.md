@@ -15,8 +15,27 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## Unreleased
 
-- `RowGroupPredicate` for split-aware row group selection. Pass `RowGroupPredicate.byteRange(start, end)` to any reader builder's `filter(...)` to restrict reading to the row groups whose midpoint falls in the given file byte range — the standard split convention used by Hadoop-style integrations (Flink `BulkFormat`, Spark file source, …). Combines with `FilterPredicate` via intersection. See [Split-Aware Reading](usage.md#split-aware-reading) and [#431](https://github.com/hardwood-hq/hardwood/issues/431).
-- Coordinated `ColumnReaders.nextBatch()` and `ColumnReaders.getRecordCount()` for multi-column reads. A single call advances every underlying reader in lockstep, returns `false` when any is exhausted, and validates that the readers' record counts agree. Replaces the prior `col0.nextBatch() & col1.nextBatch() & …` idiom and gives consumers structural alignment instead of an implicit invariant. See [Reading Multiple Columns](usage.md#reading-multiple-columns), [#434](https://github.com/hardwood-hq/hardwood/issues/434), and the related contract gap [#61](https://github.com/hardwood-hq/hardwood/issues/61).
+- **Breaking:** `ColumnReader` rebuilt around a layer model. Each non-leaf node along the schema chain contributes zero or one layer — `OPTIONAL` groups become `STRUCT` layers, `LIST`/`MAP`-annotated groups become `REPEATED` layers — and the API is structured per-layer rather than per-Parquet-repetition-level. Validity is returned as a dedicated [Validity](/api/latest/dev/hardwood/reader/Validity.html) sealed type with two implementations: a `Validity.NO_NULLS` singleton for the O(1) no-nulls fast path, and a `BitSet`-backed wrapper otherwise. Predicates are `isNull(i)` / `isNotNull(i)` / `hasNulls()`. `LIST`/`MAP` layers encode "empty" as `offsets[r+1] - offsets[r] == 0` and "null" as a cleared validity bit, dropping the separate empty-marker bitmap. The leaf array and layer offsets are sized to **real items only** — phantom slots from null/empty parents are excluded. Permitted by `ColumnReader`'s existing `@Experimental` annotation; no deprecation cycle is run. Subsumes [#436](https://github.com/hardwood-hq/hardwood/issues/436)'s struct-null-vs-leaf-null disambiguation. See the [Layer Model](usage/column-reader.md#reading-nested-data-the-layer-model) section and [#430](https://github.com/hardwood-hq/hardwood/issues/430).
+
+    Migration table:
+
+    | Before | After |
+    |---|---|
+    | `BitSet nulls = reader.getElementNulls();` | `Validity v = reader.getLeafValidity();` |
+    | `if (nulls != null && nulls.get(i)) skip;` | `if (v.isNull(i)) skip;` |
+    | `if (nulls == null \|\| !nulls.get(i)) keep;` | `if (v.isNotNull(i)) keep;` |
+    | `nulls == null` ⇒ no nulls in batch | `!v.hasNulls()` ⇒ no nulls in batch |
+    | `reader.getLevelNulls(level)` (returns `BitSet`, set bit = null) | `reader.getLayerValidity(layer)` (returns `Validity`) |
+    | `reader.getEmptyListMarkers(level)` | encoded as `offsets[i+1] - offsets[i] == 0` |
+    | `reader.getOffsets(level)` | `reader.getLayerOffsets(layer)` (sentinel-suffixed; length `count + 1`) |
+    | `reader.getNestingDepth()` | `reader.getLayerCount()` |
+    | `byte[][] reader.getBinaries()` (primary) | `byte[] reader.getBinaryValues()` + `int[] reader.getBinaryOffsets()` (primary). `getBinaries()` is retained as a convenience accessor that allocates per row. |
+    | `reader.getStrings()` (primary) | retained as a convenience accessor; hot loops should consult `getBinaryValues()` + `getBinaryOffsets()` directly. |
+    | `getBinaries()[recordIndex]` / `getStrings()[recordIndex]` | the returned array is sized to `getValueCount()` (real leaf count), not `getRecordCount()`. For flat columns the two coincide; under nesting (e.g. `list<string>`) they differ — index through the appropriate layer offsets rather than by record. |
+
+    Layer indexing also changes shape: a column whose chain is `optional group a { list<list<int>> b }` moves from "two repetition levels" to "three layers" (one `STRUCT` for `a`, two `REPEATED` for `b`). Callers that index numerically must be re-keyed.
+- `RowGroupPredicate` for split-aware row group selection. Pass `RowGroupPredicate.byteRange(start, end)` to any reader builder's `filter(...)` to restrict reading to the row groups whose midpoint falls in the given file byte range — the standard split convention used by Hadoop-style integrations (Flink `BulkFormat`, Spark file source, …). Combines with `FilterPredicate` via intersection. See [Split-Aware Reading](usage/query-controls.md#split-aware-reading) and [#431](https://github.com/hardwood-hq/hardwood/issues/431).
+- Coordinated `ColumnReaders.nextBatch()` and `ColumnReaders.getRecordCount()` for multi-column reads. A single call advances every underlying reader in lockstep, returns `false` when any is exhausted, and validates that the readers' record counts agree. Replaces the prior `col0.nextBatch() & col1.nextBatch() & …` idiom and gives consumers structural alignment instead of an implicit invariant. See [Reading Multiple Columns](usage/column-reader.md#reading-multiple-columns), [#434](https://github.com/hardwood-hq/hardwood/issues/434), and the related contract gap [#61](https://github.com/hardwood-hq/hardwood/issues/61).
 - `SchemaNode.GroupNode.getMapKey()` / `getMapValue()` for navigating MAP groups, symmetric with the existing `getListElement()`. Returns the key and value nodes from the standard `map.key_value.key` / `map.key_value.value` encoding; returns `null` for non-MAP or malformed groups, matching `getListElement()`'s behavior. See [#435](https://github.com/hardwood-hq/hardwood/issues/435).
 
 ## 1.0.0.Beta2 (2026-04-29)

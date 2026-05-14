@@ -8,16 +8,21 @@
 package dev.hardwood.internal.reader;
 
 import java.math.BigDecimal;
+import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.Iterator;
-import java.util.NoSuchElementException;
+import java.util.AbstractList;
+import java.util.List;
+import java.util.Objects;
 import java.util.UUID;
+import java.util.function.Function;
 import java.util.function.IntFunction;
 
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
 import dev.hardwood.internal.variant.PqVariantImpl;
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqInterval;
@@ -67,36 +72,6 @@ final class PqListImpl implements PqList {
         }
         return new PqListImpl(batch, listDesc, listDesc.elementSchema(),
                 range.start, range.end, range.subLevel);
-    }
-
-    static PqIntList createIntList(NestedBatchIndex batch,
-                                   TopLevelFieldMap.FieldDesc.ListOf listDesc,
-                                   int rowIndex, int valueIndex) {
-        ListRange range = computeRange(batch, listDesc, rowIndex, valueIndex);
-        if (range == null) {
-            return null;
-        }
-        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(), range.start, range.end);
-    }
-
-    static PqLongList createLongList(NestedBatchIndex batch,
-                                     TopLevelFieldMap.FieldDesc.ListOf listDesc,
-                                     int rowIndex, int valueIndex) {
-        ListRange range = computeRange(batch, listDesc, rowIndex, valueIndex);
-        if (range == null) {
-            return null;
-        }
-        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(), range.start, range.end);
-    }
-
-    static PqDoubleList createDoubleList(NestedBatchIndex batch,
-                                         TopLevelFieldMap.FieldDesc.ListOf listDesc,
-                                         int rowIndex, int valueIndex) {
-        ListRange range = computeRange(batch, listDesc, rowIndex, valueIndex);
-        if (range == null) {
-            return null;
-        }
-        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(), range.start, range.end);
     }
 
     static boolean isListNull(NestedBatchIndex batch,
@@ -159,12 +134,11 @@ final class PqListImpl implements PqList {
     }
 
     @Override
-    public Iterable<Object> values() {
+    public List<Object> values() {
         if (elementSchema instanceof SchemaNode.GroupNode) {
-            // For nested types, use index-based access
-            return () -> new NestedListIterator<>(i -> get(i));
+            return new NestedList<>(this::get);
         }
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertValue(raw, elementSchema));
+        return new LeafList<>(raw -> ValueConverter.convertValue(raw, elementSchema));
     }
 
     @Override
@@ -194,117 +168,133 @@ final class PqListImpl implements PqList {
     }
 
     @Override
-    public Iterable<Object> rawValues() {
+    public List<Object> rawValues() {
         if (elementSchema instanceof SchemaNode.GroupNode) {
-            return () -> new NestedListIterator<>(this::getRaw);
+            return new NestedList<>(this::getRaw);
         }
-        return () -> new LeafIterator<>(raw -> raw);
+        return new LeafList<>(raw -> raw);
     }
 
     // ==================== Primitive Type Accessors ====================
+    //
+    // Each accessor validates `elementSchema` once at construction so the
+    // per-element decode reduces to a cast (primitives) or a delegate to
+    // `convertLogicalType` (logical-typed objects). Wrong-type access
+    // throws field-named `IllegalArgumentException` from the accessor
+    // call rather than from the first element decode, so
+    // `pqList.dates()` on a STRING list fails fast even when the list
+    // happens to be empty.
 
     @Override
-    public Iterable<Integer> ints() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToInt(raw, elementSchema));
+    public PqIntList ints() {
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.INT32);
+        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(), start, end);
     }
 
     @Override
-    public Iterable<Long> longs() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToLong(raw, elementSchema));
+    public PqLongList longs() {
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.INT64);
+        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(), start, end);
     }
 
     @Override
-    public Iterable<Float> floats() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToFloat(raw, elementSchema));
+    public List<Float> floats() {
+        // FLOAT16 (FLBA(2) + Float16Type) decodes per element via the typed
+        // converter; plain FLOAT is a direct cast.
+        if (elementSchema instanceof SchemaNode.PrimitiveNode prim
+                && prim.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                && prim.logicalType() instanceof LogicalType.Float16Type) {
+            return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Float.class));
+        }
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.FLOAT);
+        return new LeafList<>(raw -> (Float) raw);
     }
 
     @Override
-    public Iterable<Double> doubles() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToDouble(raw, elementSchema));
+    public PqDoubleList doubles() {
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.DOUBLE);
+        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(), start, end);
     }
 
     @Override
-    public Iterable<Boolean> booleans() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToBoolean(raw, elementSchema));
+    public List<Boolean> booleans() {
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.BOOLEAN);
+        return new LeafList<>(raw -> (Boolean) raw);
     }
 
     // ==================== Object Type Accessors ====================
 
     @Override
-    public Iterable<String> strings() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToString(raw, elementSchema));
+    public List<String> strings() {
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.BYTE_ARRAY);
+        return new LeafList<>(raw -> {
+            if (raw instanceof String s) return s;
+            return new String((byte[]) raw, StandardCharsets.UTF_8);
+        });
     }
 
     @Override
-    public Iterable<byte[]> binaries() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToBinary(raw, elementSchema));
+    public List<byte[]> binaries() {
+        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
+        return new LeafList<>(raw -> (byte[]) raw);
     }
 
     @Override
-    public Iterable<LocalDate> dates() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToDate(raw, elementSchema));
+    public List<LocalDate> dates() {
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.DateType.class);
+        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalDate.class));
     }
 
     @Override
-    public Iterable<LocalTime> times() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToTime(raw, elementSchema));
+    public List<LocalTime> times() {
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.TimeType.class);
+        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalTime.class));
     }
 
     @Override
-    public Iterable<Instant> timestamps() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToTimestamp(raw, elementSchema));
+    public List<Instant> timestamps() {
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.TimestampType.class);
+        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Instant.class));
     }
 
     @Override
-    public Iterable<BigDecimal> decimals() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToDecimal(raw, elementSchema));
+    public List<BigDecimal> decimals() {
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.DecimalType.class);
+        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, BigDecimal.class));
     }
 
     @Override
-    public Iterable<UUID> uuids() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToUuid(raw, elementSchema));
+    public List<UUID> uuids() {
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.UuidType.class);
+        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, UUID.class));
     }
 
     @Override
-    public Iterable<PqInterval> intervals() {
-        return () -> new LeafIterator<>(raw -> ValueConverter.convertToInterval(raw, elementSchema));
+    public List<PqInterval> intervals() {
+        ValueConverter.validateLogicalType(elementSchema, LogicalType.IntervalType.class);
+        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, PqInterval.class));
     }
 
     // ==================== Nested Type Accessors ====================
 
     @Override
-    public Iterable<PqStruct> structs() {
-        return () -> new StructIterator();
+    public List<PqStruct> structs() {
+        return new NestedList<>(this::createInnerStruct);
     }
 
     @Override
-    public Iterable<PqList> lists() {
-        return () -> new NestedListIterator<>(this::createInnerGenericList);
+    public List<PqList> lists() {
+        return new NestedList<>(this::createInnerGenericList);
     }
 
     @Override
-    public Iterable<PqIntList> intLists() {
-        return () -> new NestedListIterator<>(this::createInnerIntList);
+    public List<PqMap> maps() {
+        return new NestedList<>(this::createInnerMap);
     }
 
     @Override
-    public Iterable<PqLongList> longLists() {
-        return () -> new NestedListIterator<>(this::createInnerLongList);
-    }
-
-    @Override
-    public Iterable<PqDoubleList> doubleLists() {
-        return () -> new NestedListIterator<>(this::createInnerDoubleList);
-    }
-
-    @Override
-    public Iterable<PqMap> maps() {
-        return () -> new NestedListIterator<>(this::createInnerMap);
-    }
-
-    @Override
-    public Iterable<PqVariant> variants() {
-        return () -> new NestedListIterator<>(this::createInnerVariant);
+    public List<PqVariant> variants() {
+        return new NestedList<>(this::createInnerVariant);
     }
 
     // ==================== Internal: Range Computation ====================
@@ -466,33 +456,6 @@ final class PqListImpl implements PqList {
                 innerStart, innerEnd, innerSubLevel);
     }
 
-    private PqIntList createInnerIntList(int index) {
-        PqList inner = createInnerGenericList(index);
-        if (inner == null) {
-            return null;
-        }
-        PqListImpl innerList = (PqListImpl) inner;
-        return new PqIntListImpl(batch, listDesc.firstLeafProjCol(), innerList.start, innerList.end);
-    }
-
-    private PqLongList createInnerLongList(int index) {
-        PqList inner = createInnerGenericList(index);
-        if (inner == null) {
-            return null;
-        }
-        PqListImpl innerList = (PqListImpl) inner;
-        return new PqLongListImpl(batch, listDesc.firstLeafProjCol(), innerList.start, innerList.end);
-    }
-
-    private PqDoubleList createInnerDoubleList(int index) {
-        PqList inner = createInnerGenericList(index);
-        if (inner == null) {
-            return null;
-        }
-        PqListImpl innerList = (PqListImpl) inner;
-        return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(), innerList.start, innerList.end);
-    }
-
     private PqMap createInnerMap(int index) {
         if (!(elementSchema instanceof SchemaNode.GroupNode group) || !group.isMap()) {
             throw new IllegalArgumentException("Element is not a map");
@@ -527,13 +490,13 @@ final class PqListImpl implements PqList {
         if (batch.isElementNull(variantDesc.metadataCol(), valueIdx)) {
             return null;
         }
-        byte[] metadataBytes = ((byte[][]) batch.valueArrays[variantDesc.metadataCol()])[valueIdx];
+        byte[] metadataBytes = ((BinaryBatchValues) batch.valueArrays[variantDesc.metadataCol()]).byteArrayAt(valueIdx);
         int valueCol = variantDesc.valueCol();
         if (valueCol < 0) {
             throw new IllegalStateException(
                     "Variant list element requires its 'value' child in the projection");
         }
-        byte[] value = ((byte[][]) batch.valueArrays[valueCol])[valueIdx];
+        byte[] value = ((BinaryBatchValues) batch.valueArrays[valueCol]).byteArrayAt(valueIdx);
         return new PqVariantImpl(metadataBytes, value);
     }
 
@@ -563,6 +526,18 @@ final class PqListImpl implements PqList {
         return defLevel < structDesc.schema().maxDefinitionLevel();
     }
 
+    @Override
+    public String toString() {
+        StringBuilder sb = new StringBuilder("[");
+        int n = size();
+        for (int i = 0; i < n; i++) {
+            if (i > 0) sb.append(", ");
+            FlyweightFormatter.appendValue(sb, get(i));
+        }
+        sb.append(']');
+        return sb.toString();
+    }
+
     // ==================== Internal: Bounds Check ====================
 
     private void checkBounds(int index) {
@@ -571,72 +546,53 @@ final class PqListImpl implements PqList {
         }
     }
 
-    // ==================== Internal: Iterators ====================
+    // ==================== Internal: Lazy List Views ====================
 
-    private class LeafIterator<T> implements Iterator<T> {
-        private final java.util.function.Function<Object, T> converter;
-        private int pos = start;
+    /// Lazy [List] view over the list's leaf-column values. `size()` is the
+    /// list length; `get(int)` decodes one element on demand via `converter`,
+    /// short-circuiting nulls before the converter runs.
+    private final class LeafList<T> extends AbstractList<T> {
+        private final Function<Object, T> converter;
 
-        LeafIterator(java.util.function.Function<Object, T> converter) {
+        LeafList(Function<Object, T> converter) {
             this.converter = converter;
         }
 
         @Override
-        public boolean hasNext() {
-            return pos < end;
+        public int size() {
+            return end - start;
         }
 
         @Override
-        public T next() {
-            if (!hasNext()) {
-                throw new NoSuchElementException();
-            }
+        public T get(int index) {
+            Objects.checkIndex(index, size());
             int projCol = listDesc.firstLeafProjCol();
+            int pos = start + index;
             if (batch.isElementNull(projCol, pos)) {
-                pos++;
                 return null;
             }
-            Object raw = batch.getValue(projCol, pos++);
-            return converter.apply(raw);
+            return converter.apply(batch.getValue(projCol, pos));
         }
     }
 
-    private class StructIterator implements Iterator<PqStruct> {
-        private int pos = 0;
-
-        @Override
-        public boolean hasNext() {
-            return pos < size();
-        }
-
-        @Override
-        public PqStruct next() {
-            if (!hasNext()) {
-                throw new NoSuchElementException();
-            }
-            return createInnerStruct(pos++);
-        }
-    }
-
-    private class NestedListIterator<T> implements Iterator<T> {
+    /// Lazy [List] view over nested elements (structs / inner lists / maps /
+    /// variants). `get(int)` defers to a per-element flyweight factory.
+    private final class NestedList<T> extends AbstractList<T> {
         private final IntFunction<T> creator;
-        private int pos = 0;
 
-        NestedListIterator(IntFunction<T> creator) {
+        NestedList(IntFunction<T> creator) {
             this.creator = creator;
         }
 
         @Override
-        public boolean hasNext() {
-            return pos < size();
+        public int size() {
+            return end - start;
         }
 
         @Override
-        public T next() {
-            if (!hasNext()) {
-                throw new NoSuchElementException();
-            }
-            return creator.apply(pos++);
+        public T get(int index) {
+            Objects.checkIndex(index, size());
+            return creator.apply(index);
         }
     }
 }

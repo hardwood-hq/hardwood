@@ -3016,3 +3016,184 @@ print("\nGenerated nested_v1_no_index.parquet:")
 print(f"  - 1 row group, {NESTED_V1_ROWS} rows, Parquet v1, NO ColumnIndex/OffsetIndex")
 print("  - narrow INT32 (flat) + tags LIST<STRING> (nested, v1 pages)")
 print("  - Closes the row-group-wide mask gate; drives the fallback path")
+
+
+# ============================================================================
+# PR #471 Review Fixtures (#463 / #470 / #473)
+# ============================================================================
+
+import struct as _binstruct  # local alias to avoid clashing with pa.struct
+
+# 1. List<FLOAT16> — closes the test gap on PqListImpl.floats()'s FLBA(2)
+#    + Float16Type branch (#470).
+list_f16_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('scores', pa.list_(pa.binary(2))),
+])
+list_f16_table = pa.table({
+    'id': [1, 2],
+    'scores': [
+        [_binstruct.pack('<e', 1.5), _binstruct.pack('<e', -2.0), _binstruct.pack('<e', 0.0)],
+        [_binstruct.pack('<e', 100.0)],
+    ],
+}, schema=list_f16_schema)
+pq.write_table(
+    list_f16_table,
+    'core/src/test/resources/list_float16_test.parquet',
+    use_dictionary=False, compression=None, data_page_version='1.0',
+)
+annotate_element_at_path_as_float16(
+    'core/src/test/resources/list_float16_test.parquet',
+    ['scores', 'list', 'element'])
+
+print("\nGenerated list_float16_test.parquet (#470): List<FLOAT16>")
+
+# 2. Map<int64,*> and Map<binary,*> — closes #463's long-key and byte[]-key
+#    coverage gaps in PqMapLookupTest.
+map_typed_keys_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('long_keyed', pa.map_(pa.int64(), pa.string())),
+    ('binary_keyed', pa.map_(pa.binary(), pa.int32())),
+])
+map_typed_keys_table = pa.table({
+    'id': [1],
+    'long_keyed': [[(100, 'one-hundred'), (200, 'two-hundred'), (300, 'three-hundred')]],
+    'binary_keyed': [[(b'\x01\x02', 10), (b'\x03\x04', 20)]],
+}, schema=map_typed_keys_schema)
+pq.write_table(
+    map_typed_keys_table,
+    'core/src/test/resources/map_typed_keys_test.parquet',
+    use_dictionary=False, compression=None, data_page_version='1.0',
+)
+
+print("Generated map_typed_keys_test.parquet (#463): Map<int64,*> + Map<binary,*>")
+
+# 3. Wide-schema struct (one field per primitive logical type) — backs the
+#    parametric by-index test in #473. UUID, INTERVAL, and VARIANT by-index
+#    are covered separately by their dedicated fixtures
+#    (logical_types_test / typed_accessors_issue_445 /
+#    variant_in_repeated_test); inlining them here trips
+#    `pa.table(..., schema=struct_with_extension_type)` on PyArrow 24.
+wide_struct_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('fields', pa.struct([
+        ('a_int', pa.int32()),
+        ('b_long', pa.int64()),
+        ('c_float', pa.float32()),
+        ('d_double', pa.float64()),
+        ('e_bool', pa.bool_()),
+        ('f_string', pa.string()),
+        ('g_binary', pa.binary()),
+        ('h_date', pa.date32()),
+        ('i_time', pa.time32('ms')),
+        ('j_timestamp', pa.timestamp('us', tz='UTC')),
+        ('k_decimal', pa.decimal128(10, 2)),
+        ('m_list', pa.list_(pa.int32())),
+        ('n_map', pa.map_(pa.string(), pa.int32())),
+    ])),
+])
+wide_struct_table = pa.table({
+    'id': [1],
+    'fields': [{
+        'a_int': 42,
+        'b_long': 12345678901234,
+        'c_float': 1.5,
+        'd_double': 2.5,
+        'e_bool': True,
+        'f_string': 'hello',
+        'g_binary': b'\xde\xad\xbe\xef',
+        'h_date': date(2026, 1, 15),
+        'i_time': time(12, 30, 45),
+        'j_timestamp': pa.scalar(1_000_000, type=pa.timestamp('us', tz='UTC')).as_py(),
+        'k_decimal': Decimal('123.45'),
+        'm_list': [1, 2, 3],
+        'n_map': [('alpha', 10), ('beta', 20)],
+    }],
+}, schema=wide_struct_schema)
+pq.write_table(
+    wide_struct_table,
+    'core/src/test/resources/wide_struct_test.parquet',
+    use_dictionary=False, compression=None, data_page_version='1.0',
+)
+
+print("Generated wide_struct_test.parquet (#473): 13-field struct (primitive logical types + list + map; UUID/INTERVAL/VARIANT covered elsewhere)")
+
+# =====================================================================
+# Depth-1 optional struct around an optional leaf — the canonical #436
+# shape. Three rows pin all three states the layer model must
+# disambiguate: struct null, struct present with leaf null, both
+# present.
+# =====================================================================
+
+optional_struct_optional_leaf_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('point', pa.struct([
+        ('x', pa.int32()),
+    ])),
+])
+
+optional_struct_optional_leaf_data = [
+    {'id': 1, 'point': None},        # struct null
+    {'id': 2, 'point': {'x': None}}, # struct present, leaf null
+    {'id': 3, 'point': {'x': 42}},   # both present
+]
+
+optional_struct_optional_leaf_table = pa.Table.from_pylist(
+    optional_struct_optional_leaf_data,
+    schema=optional_struct_optional_leaf_schema,
+)
+pq.write_table(
+    optional_struct_optional_leaf_table,
+    'core/src/test/resources/optional_struct_optional_leaf_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated optional_struct_optional_leaf_test.parquet:")
+print("  - Schema: id, point: optional struct { optional int32 x }")
+print("  - Rows: struct=null / struct=present,x=null / struct=present,x=42")
+
+# =====================================================================
+# list<optional struct { optional int32 age }> — the element-wrapper
+# correctness gate. One record contains both a struct-null entry and a
+# struct-present-leaf-null entry inside the same list, so a consumer
+# must read getLayerValidity(structLayer) AND getLeafValidity()
+# independently to recover the difference. An implementation that
+# re-folded list-element struct nullability into the leaf would only
+# fail here.
+# =====================================================================
+
+list_of_optional_struct_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('items', pa.list_(pa.struct([
+        ('age', pa.int32()),
+    ]))),
+])
+
+list_of_optional_struct_data = [
+    # Row 0: 3 entries — leaf-present, leaf-null, struct-null
+    {'id': 1, 'items': [{'age': 10}, {'age': None}, None]},
+    # Row 1: empty list
+    {'id': 2, 'items': []},
+    # Row 2: null list
+    {'id': 3, 'items': None},
+    # Row 3: single leaf-present entry
+    {'id': 4, 'items': [{'age': 99}]},
+]
+
+list_of_optional_struct_table = pa.Table.from_pylist(
+    list_of_optional_struct_data,
+    schema=list_of_optional_struct_schema,
+)
+pq.write_table(
+    list_of_optional_struct_table,
+    'core/src/test/resources/list_of_optional_struct_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated list_of_optional_struct_test.parquet:")
+print("  - Schema: id, items: list<optional struct { optional int32 age }>")
+print("  - Rows: [{age=10},{age=null},null] / [] / null / [{age=99}]")

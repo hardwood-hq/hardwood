@@ -53,7 +53,7 @@ class ColumnWorkerTest {
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
@@ -85,7 +85,7 @@ class ColumnWorkerTest {
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
@@ -140,7 +140,7 @@ class ColumnWorkerTest {
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
@@ -151,7 +151,8 @@ class ColumnWorkerTest {
             boolean sawNulls = false;
             BatchExchange.Batch batch;
             while ((batch = exchange.poll()) != null) {
-                if (batch.nulls != null && !batch.nulls.isEmpty()) {
+                if (batch.validity != null
+                        && batch.validity.cardinality() < batch.recordCount) {
                     sawNulls = true;
                 }
                 exchange.recycle(batch);
@@ -182,7 +183,7 @@ class ColumnWorkerTest {
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
@@ -254,18 +255,18 @@ class ColumnWorkerTest {
             ColumnSchema column = schema.getColumn(nestedCol);
             int batchCapacity = 1024;
 
-            int[] thresholds = NestedLevelComputer.computeLevelNullThresholds(
+            NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                     schema.getRootNode(), column.columnIndex());
 
             BatchExchange<NestedBatch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
                         NestedBatch b = new NestedBatch();
-                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity * 2);
+                        b.values = BatchExchange.allocateArray(column, batchCapacity * 2);
                         return b;
                     });
             NestedColumnWorker worker = new NestedColumnWorker(
                     new PageSource(iterator, nestedCol), exchange, column, batchCapacity,
-                    context.decompressorFactory(), context.executor(), 0, thresholds);
+                    context.decompressorFactory(), context.executor(), 0, layers);
             worker.start();
 
             long totalRows = 0;
@@ -275,8 +276,8 @@ class ColumnWorkerTest {
                 totalRows += batch.recordCount;
 
                 // Verify pre-computed index fields are present
-                assertThat(batch.elementNulls)
-                        .as("elementNulls should be pre-computed by drain")
+                assertThat(batch.elementValidity)
+                        .as("elementValidity should be pre-computed by drain")
                         .isNotNull();
                 if (batch.multiLevelOffsets != null) {
                     sawPreComputedIndex = true;
@@ -333,7 +334,7 @@ class ColumnWorkerTest {
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
@@ -389,7 +390,7 @@ class ColumnWorkerTest {
             BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity);
+                        b.values = BatchExchange.allocateArray(column, batchCapacity);
                         return b;
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
@@ -433,7 +434,7 @@ class ColumnWorkerTest {
             BatchExchange<NestedBatch> exchange = BatchExchange.recycling(
                     column.name(), () -> {
                         NestedBatch b = new NestedBatch();
-                        b.values = BatchExchange.allocateArray(column.type(), batchCapacity * 2);
+                        b.values = BatchExchange.allocateArray(column, batchCapacity * 2);
                         return b;
                     });
             NestedColumnWorker worker = new NestedColumnWorker(

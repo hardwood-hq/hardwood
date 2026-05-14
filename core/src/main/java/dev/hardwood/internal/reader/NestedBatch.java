@@ -18,9 +18,15 @@ import java.util.BitSet;
 /// Nested batches are allocated and managed by [NestedColumnWorker]'s drain
 /// thread and published through a `BatchExchange<NestedBatch>`.
 ///
-/// The drain computes index structures (element nulls, multi-level offsets,
-/// level nulls, empty-list markers) before publishing, so the consumer thread
-/// does not need to perform any expensive index computation.
+/// **Polarity:** validity bitmaps carry set-bit-= -present semantics. A
+/// `null` reference is the sparse representation of "every item at that
+/// scope is present in this batch."
+///
+/// `multiLevelOffsets[k]` is **layer-indexed** — one slot per `STRUCT` /
+/// `REPEATED` layer, with `STRUCT` slots holding `null` (no offsets) and
+/// `REPEATED` slots holding sentinel-suffixed offsets: length
+/// `count(k) + 1`, with the final entry equal to the count at the next
+/// inner level (or [#valueCount] for the innermost).
 public final class NestedBatch {
     // Raw arrays (filled by drain assembly)
     public Object values;
@@ -33,9 +39,9 @@ public final class NestedBatch {
     // File name of the originating file (set by drain before publish)
     public String fileName;
 
-    // Pre-computed index (computed by drain before publish)
-    public BitSet elementNulls;
+    // Pre-computed index (computed by drain before publish). Validity bit set
+    // iff present. Null means "all items at that layer are present in this
+    // batch."
+    public BitSet elementValidity;
     public int[][] multiLevelOffsets;
-    public BitSet[] levelNulls;
-    public BitSet[] emptyListMarkers;
 }

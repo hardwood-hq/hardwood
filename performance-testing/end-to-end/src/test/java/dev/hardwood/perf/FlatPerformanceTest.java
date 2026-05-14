@@ -13,7 +13,6 @@ import java.nio.file.Path;
 import java.time.YearMonth;
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.EnumSet;
 import java.util.List;
 import java.util.Set;
@@ -47,6 +46,7 @@ import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.reader.Validity;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.SchemaNode;
 
@@ -531,18 +531,22 @@ class FlatPerformanceTest {
                             long[] v0 = col0.getLongs();
                             double[] v1 = col1.getDoubles();
                             double[] v2 = col2.getDoubles();
-                            BitSet n0 = col0.getElementNulls();
-                            BitSet n1 = col1.getElementNulls();
-                            BitSet n2 = col2.getElementNulls();
+                            Validity v0Valid = col0.getLeafValidity();
+                            Validity v1Valid = col1.getLeafValidity();
+                            Validity v2Valid = col2.getLeafValidity();
+
+                            boolean v0HasNulls = v0Valid.hasNulls();
+                            boolean v1HasNulls = v1Valid.hasNulls();
+                            boolean v2HasNulls = v2Valid.hasNulls();
 
                             for (int i = 0; i < count; i++) {
-                                if (n0 == null || !n0.get(i)) {
+                                if (!v0HasNulls || v0Valid.isNotNull(i)) {
                                     passengerCount += v0[i];
                                 }
-                                if (n1 == null || !n1.get(i)) {
+                                if (!v1HasNulls || v1Valid.isNotNull(i)) {
                                     tripDistance += v1[i];
                                 }
-                                if (n2 == null || !n2.get(i)) {
+                                if (!v2HasNulls || v2Valid.isNotNull(i)) {
                                     fareAmount += v2[i];
                                 }
                             }
@@ -555,18 +559,22 @@ class FlatPerformanceTest {
                             double[] v0 = col0.getDoubles();
                             double[] v1 = col1.getDoubles();
                             double[] v2 = col2.getDoubles();
-                            BitSet n0 = col0.getElementNulls();
-                            BitSet n1 = col1.getElementNulls();
-                            BitSet n2 = col2.getElementNulls();
+                            Validity v0Valid = col0.getLeafValidity();
+                            Validity v1Valid = col1.getLeafValidity();
+                            Validity v2Valid = col2.getLeafValidity();
+
+                            boolean v0HasNulls = v0Valid.hasNulls();
+                            boolean v1HasNulls = v1Valid.hasNulls();
+                            boolean v2HasNulls = v2Valid.hasNulls();
 
                             for (int i = 0; i < count; i++) {
-                                if (n0 == null || !n0.get(i)) {
+                                if (!v0HasNulls || v0Valid.isNotNull(i)) {
                                     passengerCount += (long) v0[i];
                                 }
-                                if (n1 == null || !n1.get(i)) {
+                                if (!v1HasNulls || v1Valid.isNotNull(i)) {
                                     tripDistance += v1[i];
                                 }
-                                if (n2 == null || !n2.get(i)) {
+                                if (!v2HasNulls || v2Valid.isNotNull(i)) {
                                     fareAmount += v2[i];
                                 }
                             }
