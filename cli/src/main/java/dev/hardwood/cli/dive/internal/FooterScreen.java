@@ -326,8 +326,8 @@ public final class FooterScreen {
                 Sizes.dualFormat(stats.offsetIndexBytes()) + "  ("
                         + coverage(stats.offsetIndexCount(), stats.totalChunks()) + ")"));
         lines.add(fact("  Bloom filters",
-                Sizes.dualFormat(stats.bloomFilterBytes()) + "  ("
-                        + coverage(stats.bloomFilterCount(), stats.totalChunks()) + ")"));
+                Sizes.dualFormat(stats.bloomFilterIndexBytes()) + "  ("
+                        + coverage(stats.bloomFilterIndexCount(), stats.totalChunks()) + ")"));
 
         lines.add(Line.empty());
         lines.add(Line.from(new Span(" Dictionary ", Theme.accent().bold())));
@@ -397,14 +397,14 @@ public final class FooterScreen {
     }
 
     private record FooterStats(
-            long minDataOffset, long maxDataEnd,
-            int totalChunks,
-            int columnIndexCount, long columnIndexBytes,
-            int offsetIndexCount, long offsetIndexBytes,
-            int bloomFilterCount, long bloomFilterBytes,
-            int dictionaryCount,
-            Map<Encoding, Integer> encodingHistogram,
-            Map<CompressionCodec, Integer> codecHistogram) {
+        long minDataOffset, long maxDataEnd,
+        int totalChunks,
+        int columnIndexCount, long columnIndexBytes,
+        int offsetIndexCount, long offsetIndexBytes,
+        int bloomFilterIndexCount, long bloomFilterIndexBytes,
+        int dictionaryCount,
+        Map<Encoding, Integer> encodingHistogram,
+        Map<CompressionCodec, Integer> codecHistogram) {
     }
 
     private static FooterStats computeStats(ParquetModel model) {
@@ -441,9 +441,9 @@ public final class FooterScreen {
                     offsetIndexCount++;
                     offsetIndexBytes += cc.offsetIndexLength();
                 }
-                if (cmd.bloomFilterLength() != null) {
+                if (cmd.bloomFilterIndexLength() != null) {
                     bloomFilterCount++;
-                    bloomFilterBytes += cmd.bloomFilterLength();
+                    bloomFilterBytes += cmd.bloomFilterIndexLength();
                 }
                 if (dict != null) {
                     dictionaryCount++;
