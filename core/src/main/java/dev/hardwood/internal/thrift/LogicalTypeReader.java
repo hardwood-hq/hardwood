@@ -67,6 +67,10 @@ public class LogicalTypeReader {
                         yield new LogicalType.IntervalType();
                     }
                     case 10 -> readIntType(reader);
+                    case 11 -> { // NULL
+                        reader.skipField(header.type()); // Empty struct
+                        yield new LogicalType.NullType();
+                    }
                     case 12 -> { // JSON
                         reader.skipField(header.type()); // Empty struct
                         yield new LogicalType.JsonType();
@@ -86,7 +90,6 @@ public class LogicalTypeReader {
                     case 16 -> readVariantType(reader);
                     case 17 -> readGeometryType(reader);
                     case 18 -> readGeographyType(reader);
-                    // NullType (case 11) is the only currently-unsupported member (see #444)
                     default -> {
                         reader.skipField(header.type());
                         yield null;

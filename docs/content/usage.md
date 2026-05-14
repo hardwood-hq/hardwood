@@ -170,6 +170,8 @@ All methods are available as both `method(name)` and `method(index)`, except `ge
 
 **FLOAT16 columns:** `getFloat` accepts FLOAT16 columns (`FIXED_LEN_BYTE_ARRAY(2)` annotated with the `FLOAT16` logical type) and decodes the 2-byte IEEE 754 half-precision payload to a single-precision `float`. The widening is lossless — half-precision NaN, ±Infinity, and signed zero round-trip cleanly, and the original NaN bit pattern is preserved (the Parquet spec does not canonicalize NaNs on write). Use `Float.isNaN(value)` for NaN checks rather than equality. As with all primitive accessors, `isNull()` must be checked before `getFloat()` since FLOAT16 columns can be optional.
 
+**NULL columns:** A column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()`) holds a null value at every row. `column.logicalType()` returns `LogicalType.NullType`; `isNull(name)` is always `true` and the typed/generic accessors return `null` accordingly. No separate accessor is needed.
+
 **Bare `BYTE_ARRAY` columns:** `BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
 
 **Typed accessors on `PqList` and `PqMap.Entry`:** Both interfaces mirror the

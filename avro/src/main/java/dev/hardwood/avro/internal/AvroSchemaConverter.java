@@ -42,7 +42,10 @@ public final class AvroSchemaConverter {
         List<Schema.Field> fields = new ArrayList<>();
         for (SchemaNode child : group.children()) {
             Schema fieldSchema = convertNode(child);
-            if (child.repetitionType() == RepetitionType.OPTIONAL) {
+            // Wrap OPTIONAL fields in [null, T] — unless T is already the
+            // NULL type, since Avro unions disallow duplicate branches.
+            if (child.repetitionType() == RepetitionType.OPTIONAL
+                    && fieldSchema.getType() != Schema.Type.NULL) {
                 fieldSchema = nullable(fieldSchema);
             }
             fields.add(new Schema.Field(child.name(), fieldSchema, null, null));
@@ -91,7 +94,8 @@ public final class AvroSchemaConverter {
             return Schema.createArray(Schema.create(Schema.Type.NULL));
         }
         Schema elementSchema = convertNode(element);
-        if (element.repetitionType() == RepetitionType.OPTIONAL) {
+        if (element.repetitionType() == RepetitionType.OPTIONAL
+                && elementSchema.getType() != Schema.Type.NULL) {
             elementSchema = nullable(elementSchema);
         }
         return Schema.createArray(elementSchema);
@@ -106,7 +110,8 @@ public final class AvroSchemaConverter {
         if (inner instanceof SchemaNode.GroupNode kvGroup && kvGroup.children().size() >= 2) {
             SchemaNode valueNode = kvGroup.children().get(1);
             Schema valueSchema = convertNode(valueNode);
-            if (valueNode.repetitionType() == RepetitionType.OPTIONAL) {
+            if (valueNode.repetitionType() == RepetitionType.OPTIONAL
+                    && valueSchema.getType() != Schema.Type.NULL) {
                 valueSchema = nullable(valueSchema);
             }
             return Schema.createMap(valueSchema);
@@ -150,6 +155,7 @@ public final class AvroSchemaConverter {
             // Avro has no geospatial type — round-trip the raw WKB payload as bytes.
             case LogicalType.GeometryType g -> Schema.create(Schema.Type.BYTES);
             case LogicalType.GeographyType g -> Schema.create(Schema.Type.BYTES);
+            case LogicalType.NullType n -> Schema.create(Schema.Type.NULL);
         };
     }
 

@@ -55,6 +55,91 @@ class AvroSchemaConverterTest {
         assertThat(varRecord.getField("typed_value")).isNull();
     }
 
+    /// `pa.null()` columns carry the NULL logical type on an OPTIONAL primitive.
+    /// The Avro schema must be a bare `NULL` — not `union [null, null]`, which
+    /// the Avro spec forbids.
+    @Test
+    void nullLogicalTypeBecomesBareAvroNull() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement nothing = new SchemaElement("nothing", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, new LogicalType.NullType());
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, nothing));
+
+        Schema avroSchema = AvroSchemaConverter.convert(schema);
+        Schema.Field field = avroSchema.getField("nothing");
+        assertThat(field).isNotNull();
+        assertThat(field.schema().getType()).isEqualTo(Schema.Type.NULL);
+        // Guard against regressing to `union [null, null]` — still NULL on the
+        // top branch but illegal Avro that would throw at schema construction.
+        assertThat(field.schema().isUnion()).isFalse();
+    }
+
+    /// `list<null>` with an OPTIONAL element must produce `array<null>`, not
+    /// `array<union [null, null]>`.
+    @Test
+    void listOfNullElementsBecomesArrayOfBareNull() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement listGroup = new SchemaElement("nulls", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, new LogicalType.ListType());
+        SchemaElement listInner = new SchemaElement("list", null, null, RepetitionType.REPEATED,
+                1, null, null, null, null, null);
+        SchemaElement element = new SchemaElement("element", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, new LogicalType.NullType());
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, listGroup, listInner, element));
+
+        Schema avroSchema = AvroSchemaConverter.convert(schema);
+        Schema listField = pickArrayBranch(avroSchema.getField("nulls").schema());
+        Schema elementSchema = listField.getElementType();
+        assertThat(elementSchema.getType()).isEqualTo(Schema.Type.NULL);
+        assertThat(elementSchema.isUnion()).isFalse();
+    }
+
+    /// `map<string, null>` with OPTIONAL values must produce `map<null>`, not
+    /// `map<union [null, null]>`.
+    @Test
+    void mapWithNullValuesBecomesMapOfBareNull() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement mapGroup = new SchemaElement("m", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, new LogicalType.MapType());
+        SchemaElement kv = new SchemaElement("key_value", null, null, RepetitionType.REPEATED,
+                2, null, null, null, null, null);
+        SchemaElement key = new SchemaElement("key", PhysicalType.BYTE_ARRAY, null,
+                RepetitionType.REQUIRED, null, null, null, null, null, new LogicalType.StringType());
+        SchemaElement value = new SchemaElement("value", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, new LogicalType.NullType());
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, mapGroup, kv, key, value));
+
+        Schema avroSchema = AvroSchemaConverter.convert(schema);
+        Schema mapField = pickMapBranch(avroSchema.getField("m").schema());
+        Schema valueSchema = mapField.getValueType();
+        assertThat(valueSchema.getType()).isEqualTo(Schema.Type.NULL);
+        assertThat(valueSchema.isUnion()).isFalse();
+    }
+
+    private static Schema pickArrayBranch(Schema fieldSchema) {
+        if (fieldSchema.getType() == Schema.Type.ARRAY) {
+            return fieldSchema;
+        }
+        for (Schema sub : fieldSchema.getTypes()) {
+            if (sub.getType() == Schema.Type.ARRAY) {
+                return sub;
+            }
+        }
+        throw new AssertionError("No array branch in union: " + fieldSchema);
+    }
+
+    private static Schema pickMapBranch(Schema fieldSchema) {
+        if (fieldSchema.getType() == Schema.Type.MAP) {
+            return fieldSchema;
+        }
+        for (Schema sub : fieldSchema.getTypes()) {
+            if (sub.getType() == Schema.Type.MAP) {
+                return sub;
+            }
+        }
+        throw new AssertionError("No map branch in union: " + fieldSchema);
+    }
+
     private static Schema pickRecordBranch(Schema fieldSchema) {
         if (fieldSchema.getType() == Schema.Type.RECORD) {
             return fieldSchema;

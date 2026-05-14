@@ -2334,6 +2334,28 @@ print("\nGenerated float16_logical_type_test.parquet:")
 print("  - Schema: id INT32, half FIXED_LEN_BYTE_ARRAY(2) annotated FLOAT16")
 print("  - 7 rows: 0, 1, -1.5, 65504 (max), +Inf, NaN, null")
 
+# NULL logical type test (hardwood-hq/hardwood#444). PyArrow's pa.null() column
+# is written as an INT32 column annotated with the NullType union member
+# (LogicalType field id 11); every row is null.
+null_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('nothing', pa.null(), True),
+])
+null_table = pa.table({
+    'id': pa.array([1, 2, 3], type=pa.int32()),
+    'nothing': pa.array([None, None, None], type=pa.null()),
+}, schema=null_schema)
+pq.write_table(
+    null_table,
+    'core/src/test/resources/null_logical_type_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated null_logical_type_test.parquet:")
+print("  - Schema: id INT32, nothing INT32 annotated NULL (all rows null)")
+
 # hardwood-hq/hardwood#445: typed accessors for INTERVAL inside list/map and
 # TIME / DECIMAL keyed maps. Each column carries data plus a logical-type
 # annotation written into the inner SchemaElement (list element or map key /
