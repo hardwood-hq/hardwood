@@ -54,6 +54,11 @@ public class LogicalTypeConverter {
             case LogicalType.EnumType e -> physicalValue;
             case LogicalType.GeometryType g -> physicalValue;
             case LogicalType.GeographyType g -> physicalValue;
+            // NullType columns must have all-null values; the null short-circuit
+            // at the top of this method means this arm is unreachable for a
+            // well-formed file.
+            case LogicalType.NullType n -> throw new IllegalStateException(
+                    "Non-null physical value on NULL-typed column: " + physicalValue);
             // Structural / self-describing logical types are carried on group
             // nodes (handled by RecordAssembler / variant flyweights) and
             // must never reach a primitive-typed conversion.

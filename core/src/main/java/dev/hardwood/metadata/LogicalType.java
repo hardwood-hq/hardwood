@@ -14,11 +14,15 @@ package dev.hardwood.metadata;
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public sealed
 interface LogicalType
-permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType,LogicalType.VariantType,LogicalType.GeometryType,LogicalType.GeographyType,LogicalType.Float16Type
+permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,LogicalType.IntType,LogicalType.DecimalType,LogicalType.DateType,LogicalType.TimeType,LogicalType.TimestampType,LogicalType.IntervalType,LogicalType.JsonType,LogicalType.BsonType,LogicalType.ListType,LogicalType.MapType,LogicalType.VariantType,LogicalType.GeometryType,LogicalType.GeographyType,LogicalType.Float16Type,LogicalType.NullType
 {
 
     /// UTF-8 encoded string.
     record StringType() implements LogicalType {}
+
+    /// Column whose every value is null. Carries no parameters; the value of
+    /// every row in such a column is SQL NULL.
+    record NullType() implements LogicalType {}
 
     /// Enum stored as a UTF-8 string.
     record EnumType() implements LogicalType {}

@@ -114,6 +114,9 @@ public final class RowValueFormatter {
             // raw-bytes fall-through.
             case LogicalType.GeometryType g -> formatPhysical(reader, fieldIndex);
             case LogicalType.GeographyType g -> formatPhysical(reader, fieldIndex);
+            // NullType columns are all-null; the `isNull` short-circuit above
+            // means a non-null value here would be a malformed-file signal.
+            case LogicalType.NullType n -> throw structuralReached(field, lt);
             // Structural / self-describing logical types are carried on group
             // nodes and short-circuited above; reaching them here means the
             // schema is malformed.

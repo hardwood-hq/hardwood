@@ -287,6 +287,26 @@ class AvroRowReaderTest {
                 + (avroBinary == null ? "null" : avroBinary.getClass()));
     }
 
+    @Test
+    void readNullLogicalTypeColumn() throws Exception {
+        // null_logical_type_test.parquet: id INT32, nothing INT32 annotated NULL
+        // — every row's `nothing` is null. Avro schema field must be bare NULL.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("null_logical_type_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema.Field nothing = reader.getSchema().getField("nothing");
+            assertThat(nothing.schema().getType()).isEqualTo(Schema.Type.NULL);
+            assertThat(nothing.schema().isUnion()).isFalse();
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(3);
+            for (GenericRecord record : records) {
+                assertThat(record.get("nothing")).isNull();
+            }
+        }
+    }
+
     private static List<GenericRecord> readAll(AvroRowReader reader) {
         List<GenericRecord> records = new ArrayList<>();
         while (reader.hasNext()) {

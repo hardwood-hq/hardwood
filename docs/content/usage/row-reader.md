@@ -195,6 +195,10 @@ while (rowReader.hasNext()) {
 
 Parquet files written by older versions of Apache Spark and Hive store timestamps in the deprecated INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` detects INT96 automatically and decodes it to an `Instant`; no caller-side handling is required.
 
+#### NULL columns
+
+A column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()`) holds a null value at every row. `column.logicalType()` returns `LogicalType.NullType`; `isNull(name)` is always `true` and the typed/generic accessors return `null` accordingly. No separate accessor is needed.
+
 #### Bare `BYTE_ARRAY` columns
 
 `BYTE_ARRAY` columns without a `STRING` logical type annotation may hold arbitrary binary payloads (Protobuf, WKB, custom encodings). Generic accessors such as `PqList.get` and `PqList.iterator` surface these as `byte[]` rather than silently UTF-8 decoding them — invalid byte sequences would otherwise be replaced with `U+FFFD`. Call `getString` explicitly when the column is known to contain UTF-8 text from an older writer that omitted the `STRING` annotation.
