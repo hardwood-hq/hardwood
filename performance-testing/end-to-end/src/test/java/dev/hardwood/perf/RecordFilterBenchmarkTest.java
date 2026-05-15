@@ -32,10 +32,28 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// Benchmark for record-level filtering overhead.
 ///
-/// REQUIRED-column scenarios run once against a single file. The nullable-column
-/// scenarios (`Nullable IS NOT NULL`, `Nullable selective`, `Scan nullable column`)
-/// run once per density in [#NULL_PERCENTS] to expose how validity-bitmap handling
-/// behaves at scarce / mixed / sparse densities.
+/// Compares RowReader performance across:
+/// - **Baseline**: no filter at all (raw scan throughput).
+/// - **Match-all / compound match-all**: predicates that keep every row — worst case
+///   overhead because the filter is evaluated for each row but never prunes.
+/// - **Selective**: predicates that drop most rows — real-world wins.
+/// - **Drain-eligible compound ANDs** (2/3/4 leaves across `id`, `value`, `tag`, `flag`):
+///   exercise the column-local AND fast path.
+/// - **Fallback shapes** (single-leaf, OR, same-column range, IN-list): trip the
+///   drain-eligibility gate so [FilteredRowReader] handles them. See [BatchFilterCompiler].
+/// - **Page+record**: id range that prunes ~99% of pages via column-index min/max,
+///   then a per-row `value<500` filter on the survivors.
+/// - **Nullable scenarios**: `IS NOT NULL`, `score<100`, and per-row column scan
+///   over an OPTIONAL `score` column. Run once per density in [#NULL_PERCENTS]
+///   so the validity-bitmap path is exercised at scarce / mixed / sparse populations.
+///
+/// Schema: `id` (long, sequential 0..N), `value` (double uniform 0..1000),
+/// `tag` (int uniform 0..99), `flag` (boolean uniform), `score` (double uniform
+/// 0..1000, OPTIONAL with the configured null density).
+///
+/// Run:
+///   ./mvnw test -Pperformance-test -pl performance-testing/end-to-end \
+///     -Dtest="RecordFilterBenchmarkTest" -Dperf.runs=5
 class RecordFilterBenchmarkTest {
 
     private static final int TOTAL_ROWS = 10_000_000;
