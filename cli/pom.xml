@@ -13,6 +13,10 @@
   <properties>
       <executable-suffix />
       <dist.qualifier>early-access</dist.qualifier>
+      <screenshots.parquetFile>${maven.multiModuleProjectDirectory}/cli/src/test/resources/dive_screenshots_fixture.parquet</screenshots.parquetFile>
+      <screenshots.defaultParquetFile>${maven.multiModuleProjectDirectory}/cli/src/test/resources/dive_screenshots_fixture.parquet</screenshots.defaultParquetFile>
+      <screenshots.tapeFile>${maven.multiModuleProjectDirectory}/docs/content/img/screenshots/dive-screenshots.tape</screenshots.tapeFile>
+      <screenshots.castFile>${project.build.directory}/dive-screenshots.cast</screenshots.castFile>
       <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
       <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
       <quarkus.platform.version>3.27.2</quarkus.platform.version>
@@ -207,6 +211,67 @@
   </dependencies>
 
   <profiles>
+    <profile>
+      <id>screenshots</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-enforcer-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>require-screenshot-inputs</id>
+                <phase>validate</phase>
+                <goals>
+                  <goal>enforce</goal>
+                </goals>
+                <configuration>
+                  <rules>
+                    <requireFilesExist>
+                      <files>
+                        <file>${screenshots.parquetFile}</file>
+                        <file>${screenshots.tapeFile}</file>
+                      </files>
+                      <message>Screenshot regeneration requires the fixture parquet file and tape file to exist.</message>
+                    </requireFilesExist>
+                  </rules>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+          <plugin>
+            <groupId>org.codehaus.mojo</groupId>
+            <artifactId>exec-maven-plugin</artifactId>
+            <executions>
+              <execution>
+                <id>regenerate-dive-screenshots</id>
+                <phase>package</phase>
+                <goals>
+                  <goal>exec</goal>
+                </goals>
+                <configuration>
+                  <workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
+                  <executable>java</executable>
+                  <arguments>
+                    <argument>-Djava.util.logging.manager=org.jboss.logmanager.LogManager</argument>
+                    <argument>-Dtamboui.record=${screenshots.castFile}</argument>
+                    <argument>-Dtamboui.record.config=${screenshots.tapeFile}</argument>
+                    <argument>-Dtamboui.record.width=120</argument>
+                    <argument>-Dtamboui.record.height=40</argument>
+                    <argument>-Dtamboui.record.fps=30</argument>
+                    <argument>-jar</argument>
+                    <argument>${project.build.directory}/quarkus-app/quarkus-run.jar</argument>
+                    <argument>dive</argument>
+                    <argument>-f</argument>
+                    <argument>${screenshots.parquetFile}</argument>
+                  </arguments>
+                </configuration>
+              </execution>
+            </executions>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
     <profile>
       <id>native</id>
       <activation>
