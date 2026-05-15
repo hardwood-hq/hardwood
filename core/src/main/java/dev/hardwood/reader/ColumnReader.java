@@ -686,10 +686,14 @@ public class ColumnReader implements AutoCloseable {
             return ColumnReader.forNested(columnSchema, layers, nestedBuf, nestedWorker, ownedIterator);
         }
         else {
+            final boolean nullable = columnSchema.maxDefinitionLevel() > 0;
             BatchExchange<BatchExchange.Batch> flatBuf = BatchExchange.detaching(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
                         b.values = BatchExchange.allocateArray(columnSchema, DEFAULT_BATCH_SIZE);
+                        if (nullable) {
+                            b.validityBuffer = new BitSet(DEFAULT_BATCH_SIZE);
+                        }
                         return b;
                     });
             FlatColumnWorker flatWorker = new FlatColumnWorker(

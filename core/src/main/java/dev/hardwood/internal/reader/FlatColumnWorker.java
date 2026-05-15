@@ -21,7 +21,6 @@ import dev.hardwood.schema.ColumnSchema;
 /// and null tracking via [BitSet].
 public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
-    private BitSet currentValidity;
     private final ColumnBatchMatcher columnFilter;
     /// Tracks whether any absent (null) leaf has been seen in the current
     /// batch; cleared by [#publishCurrentBatch]. When still false at publish
@@ -54,7 +53,8 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     @Override
     void initDrainState() {
-        currentValidity = maxDefinitionLevel > 0 ? new BitSet(batchCapacity) : null;
+        // currentBatch.validityBuffer is pre-allocated by the BatchExchange factory
+        // for nullable columns; the worker only resets the hasAbsents flag here.
         currentBatchHasAbsents = false;
     }
 
@@ -123,9 +123,11 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             return;
         }
         currentBatch.recordCount = rowsInCurrentBatch;
-        currentBatch.validity = (currentValidity != null && currentBatchHasAbsents)
-                ? (BitSet) currentValidity.clone()
-                : null;
+        // Publish the pre-allocated validityBuffer directly when any absent was
+        // recorded; otherwise publish `null` so matchers and the consumer skip the
+        // validity-handling path entirely. No clone — the buffer belongs to this
+        // Batch and is recycled with it.
+        currentBatch.validity = currentBatchHasAbsents ? currentBatch.validityBuffer : null;
         currentBatch.fileName = currentBatchFileName;
 
         if (columnFilter != null) {
@@ -155,8 +157,8 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         batchesPublished++;
 
         rowsInCurrentBatch = 0;
-        if (currentValidity != null) {
-            currentValidity.clear();
+        if (currentBatch.validityBuffer != null) {
+            currentBatch.validityBuffer.clear();
         }
         currentBatchHasAbsents = false;
     }
@@ -222,12 +224,13 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     /// bitmap if it was already switched on by an earlier absent in the
     /// batch.
     private void markNulls(int[] defLevels, int srcPos, int destPos, int length) {
-        if (currentValidity == null) {
+        BitSet validity = currentBatch.validityBuffer;
+        if (validity == null) {
             return;
         }
         if (defLevels == null) {
             if (currentBatchHasAbsents) {
-                currentValidity.set(destPos, destPos + length);
+                validity.set(destPos, destPos + length);
             }
             return;
         }
@@ -235,11 +238,11 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             if (defLevels[srcPos + i] < maxDefinitionLevel) {
                 if (!currentBatchHasAbsents) {
                     currentBatchHasAbsents = true;
-                    currentValidity.set(0, destPos + i);
+                    validity.set(0, destPos + i);
                 }
             }
             else if (currentBatchHasAbsents) {
-                currentValidity.set(destPos + i);
+                validity.set(destPos + i);
             }
         }
     }

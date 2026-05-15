@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.nio.file.Path;
+import java.util.BitSet;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.Executor;
 import java.util.concurrent.TimeUnit;
@@ -141,6 +142,9 @@ class ColumnWorkerTest {
                     column.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
                         b.values = BatchExchange.allocateArray(column, batchCapacity);
+                        if (column.maxDefinitionLevel() > 0) {
+                            b.validityBuffer = new BitSet(batchCapacity);
+                        }
                         return b;
                     });
             FlatColumnWorker worker = new FlatColumnWorker(
