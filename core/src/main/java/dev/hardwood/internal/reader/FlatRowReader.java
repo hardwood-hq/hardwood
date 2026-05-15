@@ -67,11 +67,15 @@ public final class FlatRowReader implements RowReader {
     private int batchSize = 0;
     private boolean exhausted;
 
-    // One-slot name → index cache. By-name accessors typically receive an intern'd
-    // String literal at each call site, so reference equality against the last
-    // seen name short-circuits a hash + probe on every row of a tight scan loop.
-    private String lastResolvedName;
-    private int lastResolvedIndex;
+    // Direct-mapped name → index cache. By-name accessors typically receive an
+    // intern'd String literal at each call site, so reference equality against
+    // the slot's stored name short-circuits a hash + probe on every row of a
+    // tight scan loop. The slot is picked by `identityHashCode(name) & slotMask`
+    // so multi-column row materialization (different name per accessor call)
+    // also hits, not just the same-name-twice pattern.
+    private final int nameCacheSlotMask;
+    private final String[] nameCacheNames;
+    private final int[] nameCacheIndices;
 
     // One-slot isNull cache. A scan loop typically pairs `isNull("X")` with
     // `getX("X")`; the accessor's internal check repeats the work of the
@@ -136,6 +140,15 @@ public final class FlatRowReader implements RowReader {
             physicalTypes[i] = col.type();
             columnSchemas[i] = col;
         }
+
+        // Sized to next-power-of-2 ≥ 2 × columnCount (min 4) so the direct-mapped
+        // cache stays sparse (< 50% load) — keeps collisions rare for typical
+        // projections while costing only a few dozen bytes for wide schemas.
+        int desired = Math.max(columnCount * 2, 4);
+        int slots = Integer.highestOneBit(desired - 1) << 1;
+        this.nameCacheSlotMask = slots - 1;
+        this.nameCacheNames = new String[slots];
+        this.nameCacheIndices = new int[slots];
     }
 
     /// Eagerly loads the first batch. Must be called after construction.
@@ -836,17 +849,20 @@ public final class FlatRowReader implements RowReader {
     }
 
     private int resolveIndex(String name) {
-        // Reference-equality fast path: literal field names from user code reach
-        // this method as the same intern'd String each call.
-        if (name == lastResolvedName) {
-            return lastResolvedIndex;
+        // Direct-mapped fast path keyed on the name's identity hash. Intern'd
+        // String literals from user code reach this method as the same reference
+        // each call, so a reference-equality compare on the slot's stored name
+        // short-circuits the StringToIntMap probe.
+        int slot = System.identityHashCode(name) & nameCacheSlotMask;
+        if (nameCacheNames[slot] == name) {
+            return nameCacheIndices[slot];
         }
         int index = nameToIndex.get(name);
         if (index < 0) {
             throw new IllegalArgumentException(prefix() + "Column not in projection: " + name);
         }
-        lastResolvedName = name;
-        lastResolvedIndex = index;
+        nameCacheNames[slot] = name;
+        nameCacheIndices[slot] = index;
         return index;
     }
 
