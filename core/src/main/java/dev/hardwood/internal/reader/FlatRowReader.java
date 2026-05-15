@@ -141,11 +141,13 @@ public final class FlatRowReader implements RowReader {
             columnSchemas[i] = col;
         }
 
-        // Sized to next-power-of-2 ≥ 2 × columnCount (min 4) so the direct-mapped
-        // cache stays sparse (< 50% load) — keeps collisions rare for typical
+        // Sized to next-power-of-2 ≥ 2 × columnCount so the direct-mapped cache
+        // stays sparse (< 50% load) — keeps collisions rare for typical
         // projections while costing only a few dozen bytes for wide schemas.
-        int desired = Math.max(columnCount * 2, 4);
-        int slots = Integer.highestOneBit(desired - 1) << 1;
+        // The `columnCount == 0` branch keeps slot arithmetic well-defined for
+        // empty projections (no names will ever be resolved, but the field
+        // initializers must not divide by zero).
+        int slots = columnCount == 0 ? 1 : Integer.highestOneBit(columnCount * 2 - 1) << 1;
         this.nameCacheSlotMask = slots - 1;
         this.nameCacheNames = new String[slots];
         this.nameCacheIndices = new int[slots];
