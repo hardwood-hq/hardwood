@@ -44,19 +44,6 @@ import dev.hardwood.schema.ProjectedSchema;
 /// string), and both name-based and index-based access.
 public final class FlatRowReader implements RowReader {
 
-    /// Sentinel for "every leaf in the batch is present" — replaces the
-    /// nullable validity reference on the hot path so the per-row check
-    /// stays a single `BitSet.get` call. Pre-set to the largest batch
-    /// [BatchSizing] will produce, so any in-range row index reads as
-    /// present.
-    private static final BitSet ALL_PRESENT = allPresentSentinel();
-
-    private static BitSet allPresentSentinel() {
-        BitSet bs = new BitSet();
-        bs.set(0, BatchSizing.MAX_BATCH);
-        return bs;
-    }
-
     private final BatchExchange<BatchExchange.Batch>[] exchanges;
     private final FlatColumnWorker[] columnWorkers;
     private final int columnCount;
@@ -69,15 +56,33 @@ public final class FlatRowReader implements RowReader {
     private final ColumnSchema[] columnSchemas;
 
     // Hot fields — directly owned, no inheritance.
-    // `flatValidity[col].get(rowIndex)` is true iff the leaf is present;
-    // `flatValidity[col]` is `ALL_PRESENT` when every leaf for this column in
-    // the current batch is present, so the per-row check needs no null guard.
+    // `flatValidity[col].get(rowIndex)` is true iff the leaf is present.
+    // `flatValidity[col] == null` is the sparse "every leaf in this batch is
+    // present" representation: every accessor short-circuits past the bitmap
+    // touch on a single null compare.
     private Object[] flatValueArrays;
     private BitSet[] flatValidity;
     private BatchExchange.Batch[] previousBatches;
     private int rowIndex = -1;
     private int batchSize = 0;
     private boolean exhausted;
+
+    // Direct-mapped name → index cache. By-name accessors typically receive an
+    // intern'd String literal at each call site, so reference equality against
+    // the slot's stored name short-circuits a hash + probe on every row of a
+    // tight scan loop. The slot is picked by `identityHashCode(name) & slotMask`
+    // so multi-column row materialization (different name per accessor call)
+    // also hits, not just the same-name-twice pattern.
+    private final int nameCacheSlotMask;
+    private final String[] nameCacheNames;
+    private final int[] nameCacheIndices;
+
+    // One-slot isNull cache. A scan loop typically pairs `isNull("X")` with
+    // `getX("X")`; the accessor's internal check repeats the work of the
+    // user-level call. The cache makes the second call a constant compare.
+    private int lastIsNullColumn = -1;
+    private int lastIsNullRow = -1;
+    private boolean lastIsNullResult;
 
     // Drain-side filter path: when drainSide is true, iterate via nextSetBit over
     // combinedWords. When false, the original rowIndex++ path is taken.
@@ -135,6 +140,17 @@ public final class FlatRowReader implements RowReader {
             physicalTypes[i] = col.type();
             columnSchemas[i] = col;
         }
+
+        // Sized to next-power-of-2 ≥ 2 × columnCount so the direct-mapped cache
+        // stays sparse (< 50% load) — keeps collisions rare for typical
+        // projections while costing only a few dozen bytes for wide schemas.
+        // The `columnCount == 0` branch keeps slot arithmetic well-defined for
+        // empty projections (no names will ever be resolved, but the field
+        // initializers must not divide by zero).
+        int slots = columnCount == 0 ? 1 : Integer.highestOneBit(columnCount * 2 - 1) << 1;
+        this.nameCacheSlotMask = slots - 1;
+        this.nameCacheNames = new String[slots];
+        this.nameCacheIndices = new int[slots];
     }
 
     /// Eagerly loads the first batch. Must be called after construction.
@@ -191,10 +207,14 @@ public final class FlatRowReader implements RowReader {
             // Other columns leave Batch.matches null (sentinel = all-ones in intersect).
             final boolean allocateMatches =
                     drainSide && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
+            final boolean nullable = columnSchema.maxDefinitionLevel() > 0;
             BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recycling(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
                         b.values = BatchExchange.allocateArray(columnSchema, batchSize);
+                        if (nullable) {
+                            b.validityBuffer = new BitSet(batchSize);
+                        }
                         if (allocateMatches) {
                             b.matches = new long[wordsLen];
                         }
@@ -363,7 +383,16 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public boolean isNull(int columnIndex) {
-        return !flatValidity[columnIndex].get(rowIndex);
+        int row = rowIndex;
+        if (lastIsNullColumn == columnIndex && lastIsNullRow == row) {
+            return lastIsNullResult;
+        }
+        BitSet validity = flatValidity[columnIndex];
+        boolean result = validity != null && !validity.get(row);
+        lastIsNullColumn = columnIndex;
+        lastIsNullRow = row;
+        lastIsNullResult = result;
+        return result;
     }
 
     @Override
@@ -375,7 +404,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public int getInt(int columnIndex) {
-        if (!flatValidity[columnIndex].get(rowIndex)) {
+        if (isNull(columnIndex)) {
             throwNull(columnIndex);
         }
         return ((int[]) flatValueArrays[columnIndex])[rowIndex];
@@ -383,7 +412,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public long getLong(int columnIndex) {
-        if (!flatValidity[columnIndex].get(rowIndex)) {
+        if (isNull(columnIndex)) {
             throwNull(columnIndex);
         }
         return ((long[]) flatValueArrays[columnIndex])[rowIndex];
@@ -391,7 +420,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public float getFloat(int columnIndex) {
-        if (!flatValidity[columnIndex].get(rowIndex)) {
+        if (isNull(columnIndex)) {
             throwNull(columnIndex);
         }
         if (physicalTypes[columnIndex] == PhysicalType.FLOAT) {
@@ -411,7 +440,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public double getDouble(int columnIndex) {
-        if (!flatValidity[columnIndex].get(rowIndex)) {
+        if (isNull(columnIndex)) {
             throwNull(columnIndex);
         }
         return ((double[]) flatValueArrays[columnIndex])[rowIndex];
@@ -419,7 +448,7 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public boolean getBoolean(int columnIndex) {
-        if (!flatValidity[columnIndex].get(rowIndex)) {
+        if (isNull(columnIndex)) {
             throwNull(columnIndex);
         }
         return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
@@ -727,7 +756,8 @@ public final class FlatRowReader implements RowReader {
                 return false;
             }
             flatValueArrays[i] = batch.values;
-            flatValidity[i] = batch.validity != null ? batch.validity : ALL_PRESENT;
+            // `null` carries through — accessors treat it as the sparse "all present" form.
+            flatValidity[i] = batch.validity;
             previousBatches[i] = batch;
             if (i == 0) {
                 batchSize = batch.recordCount;
@@ -821,10 +851,20 @@ public final class FlatRowReader implements RowReader {
     }
 
     private int resolveIndex(String name) {
+        // Direct-mapped fast path keyed on the name's identity hash. Intern'd
+        // String literals from user code reach this method as the same reference
+        // each call, so a reference-equality compare on the slot's stored name
+        // short-circuits the StringToIntMap probe.
+        int slot = System.identityHashCode(name) & nameCacheSlotMask;
+        if (nameCacheNames[slot] == name) {
+            return nameCacheIndices[slot];
+        }
         int index = nameToIndex.get(name);
         if (index < 0) {
             throw new IllegalArgumentException(prefix() + "Column not in projection: " + name);
         }
+        nameCacheNames[slot] = name;
+        nameCacheIndices[slot] = index;
         return index;
     }
 

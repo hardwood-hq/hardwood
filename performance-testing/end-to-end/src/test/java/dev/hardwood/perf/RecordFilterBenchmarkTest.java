@@ -43,18 +43,24 @@ import static org.assertj.core.api.Assertions.assertThat;
 ///   drain-eligibility gate so [FilteredRowReader] handles them. See [BatchFilterCompiler].
 /// - **Page+record**: id range that prunes ~99% of pages via column-index min/max,
 ///   then a per-row `value<500` filter on the survivors.
+/// - **Nullable scenarios**: `IS NOT NULL`, `score<100`, and per-row column scan
+///   over an OPTIONAL `score` column. Run once per density in [#NULL_PERCENTS]
+///   so the validity-bitmap path is exercised at scarce / mixed / sparse populations.
 ///
 /// Schema: `id` (long, sequential 0..N), `value` (double uniform 0..1000),
-/// `tag` (int uniform 0..99), `flag` (boolean uniform).
+/// `tag` (int uniform 0..99), `flag` (boolean uniform), `score` (double uniform
+/// 0..1000, OPTIONAL with the configured null density).
 ///
 /// Run:
 ///   ./mvnw test -Pperformance-test -pl performance-testing/end-to-end \
 ///     -Dtest="RecordFilterBenchmarkTest" -Dperf.runs=5
 class RecordFilterBenchmarkTest {
 
-    private static final Path BENCHMARK_FILE = Path.of("target/record_filter_benchmark.parquet");
     private static final int TOTAL_ROWS = 10_000_000;
     private static final int DEFAULT_RUNS = 5;
+    /// Null densities at which the `score` column is regenerated and the three
+    /// nullable scenarios are timed.
+    private static final int[] NULL_PERCENTS = {1, 50, 90};
 
     private static final String PATH_DRAIN = "(Drain Side filtration)";
     private static final String PATH_CONSUMER = "(Consumer Side Filtration)";
@@ -62,59 +68,68 @@ class RecordFilterBenchmarkTest {
 
     private record Run(long[] times, long[] rows) {}
 
+    private static Path benchmarkFile(int nullPercent) {
+        return Path.of("target/record_filter_benchmark_v2_n" + nullPercent + ".parquet");
+    }
+
     @Test
     void compareRecordFilterOverhead() throws Exception {
-        ensureBenchmarkFileExists();
+        // Generate (if missing) a file per density up front so the row-group / page
+        // structure is identical across the comparison.
+        for (int p : NULL_PERCENTS) {
+            ensureBenchmarkFileExists(benchmarkFile(p), p);
+        }
+
+        // REQUIRED-column scenarios are score-independent; pick the first density's file.
+        Path requiredFile = benchmarkFile(NULL_PERCENTS[0]);
 
         int runs = Integer.parseInt(System.getProperty("perf.runs", String.valueOf(DEFAULT_RUNS)));
 
         System.out.println("\n=== Record Filter Benchmark ===");
-        System.out.println("File: " + BENCHMARK_FILE + " (" + Files.size(BENCHMARK_FILE) / (1024 * 1024) + " MB)");
+        System.out.println("File (REQUIRED scenarios): " + requiredFile
+                + " (" + Files.size(requiredFile) / (1024 * 1024) + " MB)");
         System.out.println("Total rows: " + String.format("%,d", TOTAL_ROWS));
         System.out.println("Runs per contender: " + runs);
+        System.out.print("Nullable densities: ");
+        for (int p : NULL_PERCENTS) System.out.print(p + "% ");
+        System.out.println();
 
         // Warmup
         System.out.println("\nWarmup...");
-        runNoFilter();
+        runNoFilter(requiredFile);
 
         // ----- Baseline ---------------------
-        Run noFilter = timeNoFilter(runs);
+        Run noFilter = timeNoFilter(requiredFile, runs);
 
-        Run matchAll = timeFilter(
-                // id >= 0 matches every row — worst case for per-row evaluation overhead.
+        Run matchAll = timeFilter(requiredFile,
                 FilterPredicate.gtEq("id", 0L),
                 runs);
 
-        Run selective = timeFilter(
-                // id < 1% of range — should return ~100K rows out of 10M.
+        Run selective = timeFilter(requiredFile,
                 FilterPredicate.lt("id", (long) (TOTAL_ROWS / 100)),
                 runs);
 
-        Run compound = timeFilter(
-                // Two-leaf AND that matches every row — exercises tree recursion + per-leaf dispatch.
+        Run compound = timeFilter(requiredFile,
                 FilterPredicate.and(
                         FilterPredicate.gtEq("id", 0L),
                         FilterPredicate.lt("value", Double.MAX_VALUE)),
                 runs);
 
-        Run pageRecord = timeFilter(
-                // id BETWEEN 9.9M and 10M — only the last few data pages overlap, so
-                // column-index min/max should drop ~99% of pages before any row is decoded.
-                // Then `value<500` runs as a per-row filter on the surviving ~100K rows.
+        Run pageRecord = timeFilter(requiredFile,
                 FilterPredicate.and(
                         FilterPredicate.gtEq("id", (long) (TOTAL_ROWS - TOTAL_ROWS / 100)),
                         FilterPredicate.lt("id", (long) (TOTAL_ROWS - TOTAL_ROWS / 100) + (TOTAL_ROWS / 100)),
                         FilterPredicate.lt("value", 500.0)),
                 runs);
 
-        Run and3 = timeFilter(
+        Run and3 = timeFilter(requiredFile,
                 FilterPredicate.and(
                         FilterPredicate.gtEq("id", 0L),
                         FilterPredicate.lt("value", Double.MAX_VALUE),
                         FilterPredicate.gtEq("tag", 0)),
                 runs);
 
-        Run and4 = timeFilter(
+        Run and4 = timeFilter(requiredFile,
                 FilterPredicate.and(
                         FilterPredicate.gtEq("id", 0L),
                         FilterPredicate.lt("value", Double.MAX_VALUE),
@@ -122,51 +137,57 @@ class RecordFilterBenchmarkTest {
                         FilterPredicate.notEq("flag", false)),
                 runs);
 
-        Run compoundSelective = timeFilter(
+        Run compoundSelective = timeFilter(requiredFile,
                 FilterPredicate.and(
                         FilterPredicate.lt("id", 10_000L),
                         FilterPredicate.lt("value", Double.MAX_VALUE)),
                 runs);
 
-        Run compoundMid = timeFilter(
+        Run compoundMid = timeFilter(requiredFile,
                 FilterPredicate.and(
                         FilterPredicate.gtEq("id", 0L),
                         FilterPredicate.lt("value", 500.0)),
                 runs);
 
-        Run sortedCluster = timeFilter(
-                // ~50% selectivity but on a **sorted** column — every batch's bitset
-                // is one long run of 1s followed by 0s (or all 0s after id crosses
-                // TOTAL/2). Pairs with `compoundMid` to isolate the run-structure
-                // effect: same drain shape, same selectivity, very different runs.
+        Run sortedCluster = timeFilter(requiredFile,
                 FilterPredicate.and(
                         FilterPredicate.lt("id", (long) (TOTAL_ROWS / 2)),
                         FilterPredicate.gtEq("tag", 0)),
                 runs);
 
-        Run empty = timeFilter(
+        Run empty = timeFilter(requiredFile,
                 FilterPredicate.and(
                         FilterPredicate.lt("id", 0L),
                         FilterPredicate.lt("value", Double.MAX_VALUE)),
                 runs);
 
-        Run orFilter = timeFilter(
+        Run orFilter = timeFilter(requiredFile,
                 FilterPredicate.or(
                         FilterPredicate.lt("id", 0L),
                         FilterPredicate.lt("value", 500.0)),
                 runs);
 
-        Run rangeDup = timeFilter(
-                // Same-column range on `id` is not drain-eligible (duplicate column).
+        Run rangeDup = timeFilter(requiredFile,
                 FilterPredicate.and(
                         FilterPredicate.gtEq("id", 1_000_000L),
                         FilterPredicate.lt("id", 2_000_000L),
                         FilterPredicate.lt("value", Double.MAX_VALUE)),
                 runs);
 
-        Run intIn = timeFilter(
+        Run intIn = timeFilter(requiredFile,
                 FilterPredicate.in("tag", new int[] {1, 5, 10, 25, 50}),
                 runs);
+
+        // Nullable scenarios per density.
+        Run[] nullableMatchAll = new Run[NULL_PERCENTS.length];
+        Run[] nullableSelective = new Run[NULL_PERCENTS.length];
+        Run[] scanNullable = new Run[NULL_PERCENTS.length];
+        for (int i = 0; i < NULL_PERCENTS.length; i++) {
+            Path file = benchmarkFile(NULL_PERCENTS[i]);
+            nullableMatchAll[i] = timeFilter(file, FilterPredicate.isNotNull("score"), runs);
+            nullableSelective[i] = timeFilter(file, FilterPredicate.lt("score", 100.0), runs);
+            scanNullable[i] = timeScanScoreColumn(file, runs);
+        }
 
         // ----- Print results ------------------------------------------------
         System.out.println("\nResults:");
@@ -202,6 +223,16 @@ class RecordFilterBenchmarkTest {
         System.out.println();
         printResults("intIn (tag IN [1,5,10,25,50])", PATH_DRAIN, intIn, runs);
 
+        for (int i = 0; i < NULL_PERCENTS.length; i++) {
+            int p = NULL_PERCENTS[i];
+            System.out.println();
+            printResults("Nullable IS NOT NULL (score, " + p + "% null)", PATH_DRAIN, nullableMatchAll[i], runs);
+            System.out.println();
+            printResults("Nullable selective (score<100, " + p + "% null)", PATH_DRAIN, nullableSelective[i], runs);
+            System.out.println();
+            printResults("Scan nullable column (read score, " + p + "% null)", PATH_NONE, scanNullable[i], runs);
+        }
+
         // ----- Derived ratios vs no-filter baseline -------------------------
         double avgNoFilter = avg(noFilter.times) / 1_000_000.0;
         double avgMatchAll = avg(matchAll.times) / 1_000_000.0;
@@ -223,49 +254,56 @@ class RecordFilterBenchmarkTest {
         assertThat(matchAll.rows[0]).isEqualTo(TOTAL_ROWS);
         assertThat(selective.rows[0]).isEqualTo(TOTAL_ROWS / 100L);
         assertThat(compound.rows[0]).isEqualTo(TOTAL_ROWS);
-        // Page+record: id range narrows to ~100K rows, value<500 keeps roughly half.
         assertThat(pageRecord.rows[0]).isGreaterThan(0L).isLessThan(TOTAL_ROWS / 50L);
         assertThat(and3.rows[0]).isEqualTo(TOTAL_ROWS);
-        // and4 with `flag != false` is uniform-random, expect ~50%.
         assertThat(and4.rows[0]).isBetween((long) (TOTAL_ROWS * 0.4), (long) (TOTAL_ROWS * 0.6));
         assertThat(compoundSelective.rows[0]).isEqualTo(10_000L);
-        // Compound mid: value uniform [0, 1000) so value<500 keeps ~50%.
         assertThat(compoundMid.rows[0]).isBetween((long) (TOTAL_ROWS * 0.4), (long) (TOTAL_ROWS * 0.6));
-        // Sorted cluster: id<N/2 is exactly N/2 rows, tag>=0 always true.
         assertThat(sortedCluster.rows[0]).isEqualTo(TOTAL_ROWS / 2L);
         assertThat(empty.rows[0]).isEqualTo(0L);
-        // OR: id<0 is empty so the result is the value<500 half.
         assertThat(orFilter.rows[0]).isBetween((long) (TOTAL_ROWS * 0.4), (long) (TOTAL_ROWS * 0.6));
         assertThat(rangeDup.rows[0]).isEqualTo(1_000_000L);
-        // intIn: 5 of 100 values, expect ~5%.
         assertThat(intIn.rows[0]).isBetween((long) (TOTAL_ROWS * 0.03), (long) (TOTAL_ROWS * 0.07));
+        for (int i = 0; i < NULL_PERCENTS.length; i++) {
+            int p = NULL_PERCENTS[i];
+            double nonNullFrac = (100.0 - p) / 100.0;
+            long expectedNonNull = (long) (TOTAL_ROWS * nonNullFrac);
+            // ±2pp tolerance for the random null mask.
+            assertThat(nullableMatchAll[i].rows[0])
+                    .isBetween((long) (TOTAL_ROWS * (nonNullFrac - 0.02)),
+                            (long) (TOTAL_ROWS * (nonNullFrac + 0.02)));
+            // score<100 over the present rows with score uniform [0,1000) → ~10% of present.
+            assertThat(nullableSelective[i].rows[0])
+                    .isBetween((long) (expectedNonNull * 0.08), (long) (expectedNonNull * 0.12));
+            assertThat(scanNullable[i].rows[0]).isEqualTo(nullableMatchAll[i].rows[0]);
+        }
     }
 
-    private Run timeNoFilter(int runs) throws Exception {
+    private Run timeNoFilter(Path file, int runs) throws Exception {
         long[] times = new long[runs];
         long[] rows = new long[runs];
         for (int i = 0; i < runs; i++) {
             long start = System.nanoTime();
-            rows[i] = runNoFilter();
+            rows[i] = runNoFilter(file);
             times[i] = System.nanoTime() - start;
         }
         return new Run(times, rows);
     }
 
-    private Run timeFilter(FilterPredicate filter, int runs) throws Exception {
+    private Run timeFilter(Path file, FilterPredicate filter, int runs) throws Exception {
         long[] times = new long[runs];
         long[] rows = new long[runs];
         for (int i = 0; i < runs; i++) {
             long start = System.nanoTime();
-            rows[i] = runFilter(filter);
+            rows[i] = runFilter(file, filter);
             times[i] = System.nanoTime() - start;
         }
         return new Run(times, rows);
     }
 
-    private long runNoFilter() throws Exception {
+    private long runNoFilter(Path file) throws Exception {
         long count = 0;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
              RowReader rows = reader.rowReader()) {
             while (rows.hasNext()) {
                 rows.next();
@@ -275,9 +313,36 @@ class RecordFilterBenchmarkTest {
         return count;
     }
 
-    private long runFilter(FilterPredicate filter) throws Exception {
+    private long runScanScoreColumn(Path file) throws Exception {
+        long nonNullCount = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+             RowReader rows = reader.rowReader()) {
+            while (rows.hasNext()) {
+                rows.next();
+                if (!rows.isNull("score")) {
+                    if (rows.getDouble("score") >= 0.0) {
+                        nonNullCount++;
+                    }
+                }
+            }
+        }
+        return nonNullCount;
+    }
+
+    private Run timeScanScoreColumn(Path file, int runs) throws Exception {
+        long[] times = new long[runs];
+        long[] rowsCount = new long[runs];
+        for (int i = 0; i < runs; i++) {
+            long start = System.nanoTime();
+            rowsCount[i] = runScanScoreColumn(file);
+            times[i] = System.nanoTime() - start;
+        }
+        return new Run(times, rowsCount);
+    }
+
+    private long runFilter(Path file, FilterPredicate filter) throws Exception {
         long count = 0;
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
              RowReader rows = reader.buildRowReader().filter(filter).build()) {
             while (rows.hasNext()) {
                 rows.next();
@@ -287,12 +352,13 @@ class RecordFilterBenchmarkTest {
         return count;
     }
 
-    private void ensureBenchmarkFileExists() throws IOException {
-        if (Files.exists(BENCHMARK_FILE) && Files.size(BENCHMARK_FILE) > 0) {
+    private void ensureBenchmarkFileExists(Path file, int nullPercent) throws IOException {
+        if (Files.exists(file) && Files.size(file) > 0) {
             return;
         }
 
-        System.out.println("Generating benchmark file (" + TOTAL_ROWS / 1_000_000 + "M rows, 4 columns)...");
+        System.out.println("Generating " + file + " (" + TOTAL_ROWS / 1_000_000
+                + "M rows, 5 columns, ~" + nullPercent + "% nulls on score)...");
 
         Schema schema = SchemaBuilder.record("benchmark")
                 .fields()
@@ -300,36 +366,41 @@ class RecordFilterBenchmarkTest {
                 .requiredDouble("value")
                 .requiredInt("tag")
                 .requiredBoolean("flag")
+                .optionalDouble("score")
                 .endRecord();
 
         Configuration conf = new Configuration();
         conf.set("parquet.writer.version", "v2");
 
-        org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path(BENCHMARK_FILE.toAbsolutePath().toString());
+        org.apache.hadoop.fs.Path hadoopPath = new org.apache.hadoop.fs.Path(file.toAbsolutePath().toString());
 
         try (ParquetWriter<GenericRecord> writer = AvroParquetWriter.<GenericRecord>builder(hadoopPath)
                 .withSchema(schema)
                 .withConf(conf)
                 .withCompressionCodec(CompressionCodecName.SNAPPY)
-                // Byte budget (not a row count): TOTAL_ROWS * 16 bytes/row is a generous
-                // ceiling that forces a single row group for the whole dataset.
                 .withRowGroupSize((long) TOTAL_ROWS * 16)
                 .withWriteMode(ParquetFileWriter.Mode.OVERWRITE)
                 .withPageWriteChecksumEnabled(false)
                 .build()) {
 
-            Random rng = new Random(42);
+            Random rng = new Random(42 + nullPercent);
             for (int i = 0; i < TOTAL_ROWS; i++) {
                 GenericRecord record = new GenericData.Record(schema);
                 record.put("id", (long) i);
                 record.put("value", rng.nextDouble() * 1000.0);
                 record.put("tag", rng.nextInt(100));
                 record.put("flag", rng.nextBoolean());
+                if (rng.nextInt(100) < nullPercent) {
+                    record.put("score", null);
+                }
+                else {
+                    record.put("score", rng.nextDouble() * 1000.0);
+                }
                 writer.write(record);
             }
         }
 
-        System.out.println("Generated " + BENCHMARK_FILE + " (" + Files.size(BENCHMARK_FILE) / (1024 * 1024) + " MB)");
+        System.out.println("Generated " + file + " (" + Files.size(file) / (1024 * 1024) + " MB)");
     }
 
     private static void printResults(String name, String path, Run run, int runs) {

@@ -52,7 +52,18 @@ public class BatchExchange<B> {
     /// types.
     public static final class Batch {
         public Object values;
+        /// Public per-batch validity bitmap. Set-bit-= -present polarity; `null` is
+        /// the sparse "every leaf present" form. When non-null, references
+        /// [#validityBuffer]; consumers must treat it as read-only.
         public BitSet validity;
+        /// Pre-allocated scratch BitSet used by the drain to record per-row
+        /// presence without per-batch allocation. Allocated once by the
+        /// [BatchExchange] factory for nullable columns; `null` for REQUIRED
+        /// columns. The drain calls `validityBuffer.clear()` between batches and
+        /// switches it on lazily when the first absent is observed. At publish
+        /// time, [#validity] is assigned to this buffer iff at least one absent
+        /// was recorded; otherwise [#validity] is set to `null`.
+        public BitSet validityBuffer;
         public int recordCount;
         public String fileName;
         /// Per-batch matches mask, populated by [dev.hardwood.internal.predicate.ColumnBatchMatcher]
