@@ -48,7 +48,7 @@ Hardwood throws specific exceptions for common error conditions:
 |-----------|------|
 | `IOException` | Any I/O error: invalid Parquet file (bad magic number, corrupt footer), local-disk read errors, S3 transport failures (after retry exhaustion — see [S3](s3.md)) |
 | `UnsupportedOperationException` | Compression codec library not on classpath — the message names the required dependency |
-| `IllegalArgumentException` | Accessing a column not in the projection, type mismatch on accessor, or invalid column name |
+| `IllegalArgumentException` | Accessing a column not in the projection, or invalid column name |
 | `NullPointerException` | Calling a primitive accessor (`getInt`, `getLong`, etc.) on a null field without checking `isNull()` first |
 | `NoSuchElementException` | Calling `next()` on a `RowReader` when `hasNext()` returns `false` |
 | `IllegalStateException` | Calling `ColumnReader` accessors before `nextBatch()`, or calling nested-column methods on a flat column |

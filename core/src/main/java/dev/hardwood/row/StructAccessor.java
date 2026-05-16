@@ -39,7 +39,6 @@ public interface StructAccessor extends FieldAccessor {
     ///
     /// @param name the field name
     /// @return the nested struct, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not a struct
     PqStruct getStruct(String name);
 
     // ==================== Generic List ====================
@@ -48,14 +47,12 @@ public interface StructAccessor extends FieldAccessor {
     ///
     /// @param name the field name
     /// @return the list, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not a list
     PqList getList(String name);
 
     /// Get a MAP field value by name.
     ///
     /// @param name the field name
     /// @return the map, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not a map
     PqMap getMap(String name);
 
     // ==================== Accessors by Index ====================

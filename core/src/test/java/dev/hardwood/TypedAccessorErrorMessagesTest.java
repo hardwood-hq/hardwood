@@ -19,26 +19,24 @@ import dev.hardwood.row.PqList;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
-/// Coverage for the `PqList` typed-iterator validation hoist
-/// (hardwood#469): wrong-type iteration must fail at iterator construction
-/// with a field-named error, not lazily on the first element decode.
+/// Coverage for `PqList` typed-iterator behavior on wrong element types
+/// (hardwood#460): wrong-type access surfaces as a [ClassCastException] from
+/// the element decode rather than a typed pre-flight validation.
 class TypedAccessorErrorMessagesTest {
 
     private static final Path FIXTURE =
             Paths.get("src/test/resources/typed_accessors_issue_445.parquet");
 
     @Test
-    void pqListTypedIteratorValidatesAtConstructionNotFirstElement() throws Exception {
+    void pqListWrongElementTypeFailsOnElementDecode() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(FIXTURE));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
-            // `intervals` is a List<INTERVAL>; calling .dates() on it must
-            // throw immediately at iterator construction with a field-named
-            // error, not later when the first element is decoded.
+            // `intervals` is a List<INTERVAL>; iterating it as dates fails on the
+            // first element decode rather than at iterator construction.
             PqList intervals = rowReader.getList("intervals");
-            assertThatThrownBy(intervals::dates)
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("DateType");
+            assertThatThrownBy(() -> intervals.dates().get(0))
+                    .isInstanceOf(ClassCastException.class);
         }
     }
 

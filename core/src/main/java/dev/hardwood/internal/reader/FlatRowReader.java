@@ -429,12 +429,12 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public int getInt(String name) {
-        return getInt(resolveAndValidate(name, PhysicalType.INT32));
+        return getInt(resolveIndex(name));
     }
 
     @Override
     public long getLong(String name) {
-        return getLong(resolveAndValidate(name, PhysicalType.INT64));
+        return getLong(resolveIndex(name));
     }
 
     @Override
@@ -444,12 +444,12 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public double getDouble(String name) {
-        return getDouble(resolveAndValidate(name, PhysicalType.DOUBLE));
+        return getDouble(resolveIndex(name));
     }
 
     @Override
     public boolean getBoolean(String name) {
-        return getBoolean(resolveAndValidate(name, PhysicalType.BOOLEAN));
+        return getBoolean(resolveIndex(name));
     }
 
     // ==================== String / Binary ====================
@@ -824,16 +824,6 @@ public final class FlatRowReader implements RowReader {
         int index = nameToIndex.get(name);
         if (index < 0) {
             throw new IllegalArgumentException(prefix() + "Column not in projection: " + name);
-        }
-        return index;
-    }
-
-    private int resolveAndValidate(String name, PhysicalType expectedType) {
-        int index = resolveIndex(name);
-        if (physicalTypes[index] != expectedType) {
-            throw new IllegalArgumentException(prefix()
-                    + "Field '" + name + "' has physical type " + physicalTypes[index]
-                    + ", expected " + expectedType);
         }
         return index;
     }

@@ -155,15 +155,15 @@ All accessor methods are available in two forms:
 | `getVariant` | BYTE_ARRAY pair | VARIANT | `PqVariant` |
 | `isNull` | Any | Any | `boolean` |
 
-All methods are available as both `method(name)` and `method(index)`, except `getStruct`, `getList`, `getMap`, and `getVariant` which are name-based only.
+All methods are available as both `method(name)` and `method(index)`.
 
 #### Null handling
 
 Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
 
-#### Type validation
+#### Type mismatches
 
-The API validates at runtime that the requested type matches the schema. Mismatches throw `IllegalArgumentException` with a descriptive message.
+Requesting the wrong type for a column (e.g. `getInt` on a `LONG` column, `getDate` on a `STRING` column) is a programming error; the call fails at runtime with an unchecked exception. The specific exception type is unspecified and may change between releases — do not catch it as part of normal control flow. Check the schema up front if the column type isn't known statically.
 
 #### Index-based access
 

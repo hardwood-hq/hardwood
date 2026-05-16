@@ -61,24 +61,18 @@ public interface PqMap {
     /// True if this map contains an entry with the given STRING key.
     ///
     /// @throws NullPointerException if `key` is null
-    /// @throws ClassCastException if the map's key column is not STRING / BYTE_ARRAY
     boolean containsKey(String key);
 
     /// True if this map contains an entry with the given INT32 key.
-    ///
-    /// @throws ClassCastException if the map's key column is not INT32
     boolean containsKey(int key);
 
     /// True if this map contains an entry with the given INT64 key.
-    ///
-    /// @throws ClassCastException if the map's key column is not INT64
     boolean containsKey(long key);
 
     /// True if this map contains an entry with the given byte-array key.
     /// Byte equality follows [java.util.Arrays#equals(byte[], byte[])].
     ///
     /// @throws NullPointerException if `key` is null
-    /// @throws ClassCastException if the map's key column is not BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY
     boolean containsKey(byte[] key);
 
     /// Look up the decoded value for a STRING key.
@@ -89,19 +83,16 @@ public interface PqMap {
     ///
     /// @return the decoded value, or `null` if the key is absent or its value is null
     /// @throws NullPointerException if `key` is null
-    /// @throws ClassCastException if the map's key column is not STRING / BYTE_ARRAY
     Object getValue(String key);
 
     /// Look up the decoded value for an INT32 key.
     ///
     /// @return the decoded value, or `null` if the key is absent or its value is null
-    /// @throws ClassCastException if the map's key column is not INT32
     Object getValue(int key);
 
     /// Look up the decoded value for an INT64 key.
     ///
     /// @return the decoded value, or `null` if the key is absent or its value is null
-    /// @throws ClassCastException if the map's key column is not INT64
     Object getValue(long key);
 
     /// Look up the decoded value for a byte-array key.
@@ -109,26 +100,22 @@ public interface PqMap {
     ///
     /// @return the decoded value, or `null` if the key is absent or its value is null
     /// @throws NullPointerException if `key` is null
-    /// @throws ClassCastException if the map's key column is not BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY
     Object getValue(byte[] key);
 
     /// Look up the raw physical value for a STRING key — mirrors [Entry#getRawValue].
     ///
     /// @return the raw value, or `null` if the key is absent or its value is null
     /// @throws NullPointerException if `key` is null
-    /// @throws ClassCastException if the map's key column is not STRING / BYTE_ARRAY
     Object getRawValue(String key);
 
     /// Look up the raw physical value for an INT32 key — mirrors [Entry#getRawValue].
     ///
     /// @return the raw value, or `null` if the key is absent or its value is null
-    /// @throws ClassCastException if the map's key column is not INT32
     Object getRawValue(int key);
 
     /// Look up the raw physical value for an INT64 key — mirrors [Entry#getRawValue].
     ///
     /// @return the raw value, or `null` if the key is absent or its value is null
-    /// @throws ClassCastException if the map's key column is not INT64
     Object getRawValue(long key);
 
     /// Look up the raw physical value for a byte-array key — mirrors [Entry#getRawValue].
@@ -136,7 +123,6 @@ public interface PqMap {
     ///
     /// @return the raw value, or `null` if the key is absent or its value is null
     /// @throws NullPointerException if `key` is null
-    /// @throws ClassCastException if the map's key column is not BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY
     Object getRawValue(byte[] key);
 
     /// A single key-value entry in a map.
@@ -155,13 +141,11 @@ public interface PqMap {
         /// Get the key as an INT32.
         ///
         /// @return the int key value
-        /// @throws IllegalArgumentException if the key type is not INT32
         int getIntKey();
 
         /// Get the key as an INT64.
         ///
         /// @return the long key value
-        /// @throws IllegalArgumentException if the key type is not INT64
         long getLongKey();
 
         // ==================== Key Accessors - Objects ====================
@@ -169,13 +153,11 @@ public interface PqMap {
         /// Get the key as a STRING.
         ///
         /// @return the string key value
-        /// @throws IllegalArgumentException if the key type is not STRING
         String getStringKey();
 
         /// Get the key as a BINARY.
         ///
         /// @return the byte array key value
-        /// @throws IllegalArgumentException if the key type is not BINARY
         byte[] getBinaryKey();
 
         /// Get the key, decoded to its logical-type representation.
@@ -205,35 +187,30 @@ public interface PqMap {
         ///
         /// @return the int value
         /// @throws NullPointerException if the value is null
-        /// @throws IllegalArgumentException if the value type is not INT32
         int getIntValue();
 
         /// Get the value as an INT64.
         ///
         /// @return the long value
         /// @throws NullPointerException if the value is null
-        /// @throws IllegalArgumentException if the value type is not INT64
         long getLongValue();
 
         /// Get the value as a FLOAT.
         ///
         /// @return the float value
         /// @throws NullPointerException if the value is null
-        /// @throws IllegalArgumentException if the value type is not FLOAT
         float getFloatValue();
 
         /// Get the value as a DOUBLE.
         ///
         /// @return the double value
         /// @throws NullPointerException if the value is null
-        /// @throws IllegalArgumentException if the value type is not DOUBLE
         double getDoubleValue();
 
         /// Get the value as a BOOLEAN.
         ///
         /// @return the boolean value
         /// @throws NullPointerException if the value is null
-        /// @throws IllegalArgumentException if the value type is not BOOLEAN
         boolean getBooleanValue();
 
         // ==================== Value Accessors - Objects ====================
@@ -241,49 +218,41 @@ public interface PqMap {
         /// Get the value as a STRING.
         ///
         /// @return the string value, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not STRING
         String getStringValue();
 
         /// Get the value as a BINARY.
         ///
         /// @return the byte array value, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not BINARY
         byte[] getBinaryValue();
 
         /// Get the value as a DATE.
         ///
         /// @return the date value, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not DATE
         LocalDate getDateValue();
 
         /// Get the value as a TIME.
         ///
         /// @return the time value, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not TIME
         LocalTime getTimeValue();
 
         /// Get the value as a TIMESTAMP.
         ///
         /// @return the instant value, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not TIMESTAMP
         Instant getTimestampValue();
 
         /// Get the value as a DECIMAL.
         ///
         /// @return the decimal value, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not DECIMAL
         BigDecimal getDecimalValue();
 
         /// Get the value as a UUID.
         ///
         /// @return the UUID value, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not UUID
         UUID getUuidValue();
 
         /// Get the value as an INTERVAL.
         ///
         /// @return the interval value, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not INTERVAL
         PqInterval getIntervalValue();
 
         // ==================== Value Accessors - Nested Types ====================
@@ -291,19 +260,16 @@ public interface PqMap {
         /// Get the value as a nested struct.
         ///
         /// @return the nested struct, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not a struct
         PqStruct getStructValue();
 
         /// Get the value as a LIST.
         ///
         /// @return the list value, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not a list
         PqList getListValue();
 
         /// Get the value as a MAP.
         ///
         /// @return the nested map, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not a map
         PqMap getMapValue();
 
         /// Get the value as a VARIANT.
@@ -312,7 +278,6 @@ public interface PqMap {
         /// shredded variant values throw [UnsupportedOperationException].
         ///
         /// @return the variant, or null if the value is null
-        /// @throws IllegalArgumentException if the value type is not a variant
         /// @throws UnsupportedOperationException if the variant is shredded
         PqVariant getVariantValue();
 
