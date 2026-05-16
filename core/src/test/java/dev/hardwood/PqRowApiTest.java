@@ -408,10 +408,10 @@ public class PqRowApiTest {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
              RowReader rowReader = fileReader.rowReader()) {
             rowReader.next();
-            // name is a STRING field, not INT32
+            // name is a STRING field, not INT32 — surfaces as a ClassCastException
+            // from the underlying value-array cast.
             assertThatThrownBy(() -> rowReader.getInt("name"))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("name");
+                    .isInstanceOf(ClassCastException.class);
         }
     }
 

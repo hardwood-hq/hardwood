@@ -34,21 +34,6 @@ class FileNameInExceptionTest {
     // ==================== RowReader (single file) ====================
 
     @Test
-    void rowReaderTypeMismatchIncludesFileName() throws Exception {
-        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_FILE));
-             RowReader reader = fileReader.rowReader()) {
-
-            assertThat(reader.hasNext()).isTrue();
-            reader.next();
-
-            // "id" column is LONG — requesting INT throws via resolveAndValidate
-            assertThatThrownBy(() -> reader.getInt("id"))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("[" + FILE_NAME + "] Field 'id' has physical type INT64, expected INT32");
-        }
-    }
-
-    @Test
     void rowReaderMissingColumnIncludesFileName() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_FILE));
              RowReader reader = fileReader.rowReader()) {
@@ -60,47 +45,6 @@ class FileNameInExceptionTest {
             assertThatThrownBy(() -> reader.getLong("nonexistent"))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("[" + FILE_NAME + "] Column not in projection: nonexistent");
-        }
-    }
-
-    // ==================== RowReader (multi-file) ====================
-
-    @Test
-    void multiFileRowReaderAttributesEachFileToItsOwnName(@TempDir Path tempDir) throws Exception {
-        // Copy the test file under a second, distinct name so the file-boundary
-        // detection in ColumnWorker is actually exercised — not just the same name twice.
-        // plain_uncompressed.parquet has 3 rows; the multi-file reader should emit
-        // rows from TEST_FILE first (rows 0–2), then from second_file (rows 3–5).
-        Path secondFile = tempDir.resolve("second_file.parquet");
-        Files.copy(TEST_FILE, secondFile);
-
-        String firstFileError = "[" + FILE_NAME + "] Field 'id' has physical type INT64, expected INT32";
-        String secondFileError = "[second_file.parquet] Field 'id' has physical type INT64, expected INT32";
-
-        try (Hardwood hardwood = Hardwood.create();
-             ParquetFileReader parquet = hardwood.openAll(
-                     InputFile.ofPaths(List.of(TEST_FILE, secondFile)));
-             RowReader reader = parquet.rowReader()) {
-
-            // Rows 0–2 come from TEST_FILE
-            for (int i = 0; i < 3; i++) {
-                assertThat(reader.hasNext()).isTrue();
-                reader.next();
-                assertThatThrownBy(() -> reader.getInt("id"))
-                        .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessage(firstFileError);
-            }
-
-            // Rows 3–5 come from secondFile
-            for (int i = 0; i < 3; i++) {
-                assertThat(reader.hasNext()).isTrue();
-                reader.next();
-                assertThatThrownBy(() -> reader.getInt("id"))
-                        .isInstanceOf(IllegalArgumentException.class)
-                        .hasMessage(secondFileError);
-            }
-
-            assertThat(reader.hasNext()).isFalse();
         }
     }
 

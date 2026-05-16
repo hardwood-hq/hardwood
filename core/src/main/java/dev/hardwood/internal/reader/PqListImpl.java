@@ -176,24 +176,14 @@ final class PqListImpl implements PqList {
     }
 
     // ==================== Primitive Type Accessors ====================
-    //
-    // Each accessor validates `elementSchema` once at construction so the
-    // per-element decode reduces to a cast (primitives) or a delegate to
-    // `convertLogicalType` (logical-typed objects). Wrong-type access
-    // throws field-named `IllegalArgumentException` from the accessor
-    // call rather than from the first element decode, so
-    // `pqList.dates()` on a STRING list fails fast even when the list
-    // happens to be empty.
 
     @Override
     public PqIntList ints() {
-        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.INT32);
         return new PqIntListImpl(batch, listDesc.firstLeafProjCol(), start, end);
     }
 
     @Override
     public PqLongList longs() {
-        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.INT64);
         return new PqLongListImpl(batch, listDesc.firstLeafProjCol(), start, end);
     }
 
@@ -206,19 +196,16 @@ final class PqListImpl implements PqList {
                 && prim.logicalType() instanceof LogicalType.Float16Type) {
             return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Float.class));
         }
-        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.FLOAT);
         return new LeafList<>(raw -> (Float) raw);
     }
 
     @Override
     public PqDoubleList doubles() {
-        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.DOUBLE);
         return new PqDoubleListImpl(batch, listDesc.firstLeafProjCol(), start, end);
     }
 
     @Override
     public List<Boolean> booleans() {
-        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.BOOLEAN);
         return new LeafList<>(raw -> (Boolean) raw);
     }
 
@@ -226,7 +213,6 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<String> strings() {
-        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.BYTE_ARRAY);
         return new LeafList<>(raw -> {
             if (raw instanceof String s) return s;
             return new String((byte[]) raw, StandardCharsets.UTF_8);
@@ -235,43 +221,36 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<byte[]> binaries() {
-        ValueConverter.validatePhysicalType(elementSchema, PhysicalType.BYTE_ARRAY, PhysicalType.FIXED_LEN_BYTE_ARRAY);
         return new LeafList<>(raw -> (byte[]) raw);
     }
 
     @Override
     public List<LocalDate> dates() {
-        ValueConverter.validateLogicalType(elementSchema, LogicalType.DateType.class);
         return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalDate.class));
     }
 
     @Override
     public List<LocalTime> times() {
-        ValueConverter.validateLogicalType(elementSchema, LogicalType.TimeType.class);
         return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalTime.class));
     }
 
     @Override
     public List<Instant> timestamps() {
-        ValueConverter.validateLogicalType(elementSchema, LogicalType.TimestampType.class);
         return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Instant.class));
     }
 
     @Override
     public List<BigDecimal> decimals() {
-        ValueConverter.validateLogicalType(elementSchema, LogicalType.DecimalType.class);
         return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, BigDecimal.class));
     }
 
     @Override
     public List<UUID> uuids() {
-        ValueConverter.validateLogicalType(elementSchema, LogicalType.UuidType.class);
         return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, UUID.class));
     }
 
     @Override
     public List<PqInterval> intervals() {
-        ValueConverter.validateLogicalType(elementSchema, LogicalType.IntervalType.class);
         return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, PqInterval.class));
     }
 
