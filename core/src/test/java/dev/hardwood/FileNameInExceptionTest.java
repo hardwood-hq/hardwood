@@ -65,28 +65,41 @@ class FileNameInExceptionTest {
     // ==================== RowReader (multi-file) ====================
 
     @Test
-    void multiFileRowReaderTypeMismatchThrowsClassCastException(@TempDir Path tempDir) throws Exception {
-        // Copy the test file under a second name so the file-boundary detection in
-        // ColumnWorker is actually exercised. plain_uncompressed.parquet has 3 rows;
-        // the multi-file reader emits rows 0–2 from TEST_FILE then rows 3–5 from
-        // the copy. Every row must still surface a ClassCastException for a wrong-
-        // type access, regardless of which file the current row came from.
+    void multiFileRowReaderAttributesNullErrorsToTheirOwnFileName(@TempDir Path tempDir) throws Exception {
+        // Copy the optional-column fixture under a second, distinct name so the
+        // file-boundary detection in ColumnWorker is actually exercised — not
+        // just the same name twice. Within each 100-row file, `optional_value`
+        // is null on every third row (0-indexed positions 2, 5, 8, …). Reading
+        // the same null offset from both files surfaces a file-prefixed NPE
+        // attributed to whichever file the current row came from.
+        Path firstFile = Paths.get("src/test/resources/delta_binary_packed_optional_test.parquet");
+        String firstFileName = "delta_binary_packed_optional_test.parquet";
         Path secondFile = tempDir.resolve("second_file.parquet");
-        Files.copy(TEST_FILE, secondFile);
+        Files.copy(firstFile, secondFile);
 
         try (Hardwood hardwood = Hardwood.create();
              ParquetFileReader parquet = hardwood.openAll(
-                     InputFile.ofPaths(List.of(TEST_FILE, secondFile)));
+                     InputFile.ofPaths(List.of(firstFile, secondFile)));
              RowReader reader = parquet.rowReader()) {
 
-            for (int i = 0; i < 6; i++) {
+            // Advance to position 2 (first null row in the first file)
+            for (int i = 0; i < 3; i++) {
                 assertThat(reader.hasNext()).isTrue();
                 reader.next();
-                assertThatThrownBy(() -> reader.getInt("id"))
-                        .isInstanceOf(ClassCastException.class);
             }
+            assertThatThrownBy(() -> reader.getInt("optional_value"))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("[" + firstFileName + "]");
 
-            assertThat(reader.hasNext()).isFalse();
+            // Advance through the rest of file 1 and to position 102 (first
+            // null row of file 2)
+            for (int i = 3; i < 103; i++) {
+                assertThat(reader.hasNext()).isTrue();
+                reader.next();
+            }
+            assertThatThrownBy(() -> reader.getInt("optional_value"))
+                    .isInstanceOf(NullPointerException.class)
+                    .hasMessageContaining("[second_file.parquet]");
         }
     }
 
