@@ -113,18 +113,11 @@ public final class NestedBatchDataView {
     }
 
     private TopLevelFieldMap.FieldDesc.Primitive lookupPrimitive(String name) {
-        TopLevelFieldMap.FieldDesc desc = lookupField(name);
-        if (!(desc instanceof TopLevelFieldMap.FieldDesc.Primitive prim)) {
-            throw new IllegalArgumentException(prefix() + "Field '" + name + "' is not a primitive type");
-        }
-        return prim;
+        return (TopLevelFieldMap.FieldDesc.Primitive) lookupField(name);
     }
 
     private TopLevelFieldMap.FieldDesc.Primitive lookupPrimitiveByIndex(int projectedIndex) {
-        if (!(fieldDescs[projectedIndex] instanceof TopLevelFieldMap.FieldDesc.Primitive prim)) {
-            throw new IllegalArgumentException(prefix() + "Field at index " + projectedIndex + " is not a primitive type");
-        }
-        return prim;
+        return (TopLevelFieldMap.FieldDesc.Primitive) fieldDescs[projectedIndex];
     }
 
     public boolean isNull(String name) {
@@ -393,10 +386,7 @@ public final class NestedBatchDataView {
     // ==================== Nested Type Accessors (by name) ====================
 
     public PqStruct getStruct(String name) {
-        TopLevelFieldMap.FieldDesc desc = lookupField(name);
-        if (!(desc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
-            throw new IllegalArgumentException(prefix() + "Field '" + name + "' is not a struct");
-        }
+        TopLevelFieldMap.FieldDesc.Struct structDesc = (TopLevelFieldMap.FieldDesc.Struct) lookupField(name);
         if (isStructNull(structDesc)) {
             return null;
         }
@@ -404,24 +394,17 @@ public final class NestedBatchDataView {
     }
 
     public PqList getList(String name) {
-        TopLevelFieldMap.FieldDesc.ListOf listDesc = lookupList(name);
-        return createList(listDesc);
+        return createList((TopLevelFieldMap.FieldDesc.ListOf) lookupField(name));
     }
 
     public PqMap getMap(String name) {
-        TopLevelFieldMap.FieldDesc desc = lookupField(name);
-        if (!(desc instanceof TopLevelFieldMap.FieldDesc.MapOf mapDesc)) {
-            throw new IllegalArgumentException(prefix() + "Field '" + name + "' is not a map");
-        }
-        return createMap(mapDesc);
+        return createMap((TopLevelFieldMap.FieldDesc.MapOf) lookupField(name));
     }
 
     // ==================== Nested Type Accessors (by index) ====================
 
     public PqStruct getStruct(int projectedIndex) {
-        if (!(fieldDescs[projectedIndex] instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
-            throw new IllegalArgumentException(prefix() + "Field at index " + projectedIndex + " is not a struct");
-        }
+        TopLevelFieldMap.FieldDesc.Struct structDesc = (TopLevelFieldMap.FieldDesc.Struct) fieldDescs[projectedIndex];
         if (isStructNull(structDesc)) {
             return null;
         }
@@ -433,10 +416,7 @@ public final class NestedBatchDataView {
     }
 
     public PqMap getMap(int projectedIndex) {
-        if (!(fieldDescs[projectedIndex] instanceof TopLevelFieldMap.FieldDesc.MapOf mapDesc)) {
-            throw new IllegalArgumentException(prefix() + "Field at index " + projectedIndex + " is not a map");
-        }
-        return createMap(mapDesc);
+        return createMap((TopLevelFieldMap.FieldDesc.MapOf) fieldDescs[projectedIndex]);
     }
 
     // ==================== Generic Value Access ====================
@@ -528,14 +508,6 @@ public final class NestedBatchDataView {
         }
     }
 
-    private TopLevelFieldMap.FieldDesc.ListOf lookupList(String name) {
-        TopLevelFieldMap.FieldDesc desc = lookupField(name);
-        if (!(desc instanceof TopLevelFieldMap.FieldDesc.ListOf listDesc)) {
-            throw new IllegalArgumentException(prefix() + "Field '" + name + "' is not a list");
-        }
-        return listDesc;
-    }
-
     private PqList createList(TopLevelFieldMap.FieldDesc.ListOf listDesc) {
         return PqListImpl.createGenericList(batchIndex, listDesc, rowIndex, -1);
     }
@@ -569,18 +541,11 @@ public final class NestedBatchDataView {
     // ==================== Variant accessor ====================
 
     public PqVariant getVariant(String name) {
-        TopLevelFieldMap.FieldDesc desc = lookupField(name);
-        if (!(desc instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
-            throw new IllegalArgumentException(prefix() + "Field '" + name + "' is not annotated as VARIANT");
-        }
-        return createVariant(variantDesc);
+        return createVariant((TopLevelFieldMap.FieldDesc.Variant) lookupField(name));
     }
 
     public PqVariant getVariant(int projectedIndex) {
-        if (!(fieldDescs[projectedIndex] instanceof TopLevelFieldMap.FieldDesc.Variant variantDesc)) {
-            throw new IllegalArgumentException(prefix() + "Field at index " + projectedIndex + " is not annotated as VARIANT");
-        }
-        return createVariant(variantDesc);
+        return createVariant((TopLevelFieldMap.FieldDesc.Variant) fieldDescs[projectedIndex]);
     }
 
     private final VariantShredReassembler variantReassembler = new VariantShredReassembler();

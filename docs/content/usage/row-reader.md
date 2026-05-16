@@ -155,7 +155,7 @@ All accessor methods are available in two forms:
 | `getVariant` | BYTE_ARRAY pair | VARIANT | `PqVariant` |
 | `isNull` | Any | Any | `boolean` |
 
-All methods are available as both `method(name)` and `method(index)`, except `getStruct`, `getList`, `getMap`, and `getVariant` which are name-based only.
+All methods are available as both `method(name)` and `method(index)`.
 
 #### Null handling
 
