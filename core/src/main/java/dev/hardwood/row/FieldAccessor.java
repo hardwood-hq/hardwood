@@ -30,7 +30,6 @@ public interface FieldAccessor {
     /// @param name the field name
     /// @return the int value
     /// @throws NullPointerException if the field is null
-    /// @throws IllegalArgumentException if the field type is not INT32
     int getInt(String name);
 
     /// Get an INT64 field value by name.
@@ -38,7 +37,6 @@ public interface FieldAccessor {
     /// @param name the field name
     /// @return the long value
     /// @throws NullPointerException if the field is null
-    /// @throws IllegalArgumentException if the field type is not INT64
     long getLong(String name);
 
     /// Get a FLOAT field value by name. Also accepts FLOAT16 columns
@@ -48,7 +46,6 @@ public interface FieldAccessor {
     /// @param name the field name
     /// @return the float value
     /// @throws NullPointerException if the field is null
-    /// @throws IllegalArgumentException if the field type is neither FLOAT nor FLOAT16
     float getFloat(String name);
 
     /// Get a DOUBLE field value by name.
@@ -56,7 +53,6 @@ public interface FieldAccessor {
     /// @param name the field name
     /// @return the double value
     /// @throws NullPointerException if the field is null
-    /// @throws IllegalArgumentException if the field type is not DOUBLE
     double getDouble(String name);
 
     /// Get a BOOLEAN field value by name.
@@ -64,7 +60,6 @@ public interface FieldAccessor {
     /// @param name the field name
     /// @return the boolean value
     /// @throws NullPointerException if the field is null
-    /// @throws IllegalArgumentException if the field type is not BOOLEAN
     boolean getBoolean(String name);
 
     // ==================== Object Types ====================
@@ -73,49 +68,42 @@ public interface FieldAccessor {
     ///
     /// @param name the field name
     /// @return the string value, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not STRING
     String getString(String name);
 
     /// Get a BINARY field value by name.
     ///
     /// @param name the field name
     /// @return the byte array, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not BINARY
     byte[] getBinary(String name);
 
     /// Get a DATE field value by name.
     ///
     /// @param name the field name
     /// @return the date value, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not DATE
     LocalDate getDate(String name);
 
     /// Get a TIME field value by name.
     ///
     /// @param name the field name
     /// @return the time value, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not TIME
     LocalTime getTime(String name);
 
     /// Get a TIMESTAMP field value by name.
     ///
     /// @param name the field name
     /// @return the instant value, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not TIMESTAMP
     Instant getTimestamp(String name);
 
     /// Get a DECIMAL field value by name.
     ///
     /// @param name the field name
     /// @return the decimal value, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not DECIMAL
     BigDecimal getDecimal(String name);
 
     /// Get a UUID field value by name.
     ///
     /// @param name the field name
     /// @return the UUID value, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not UUID
     UUID getUuid(String name);
 
     /// Get an INTERVAL field value by name.
@@ -127,7 +115,6 @@ public interface FieldAccessor {
     ///
     /// @param name the field name
     /// @return the interval value, or null if the field is null
-    /// @throws IllegalArgumentException if the field type is not INTERVAL
     PqInterval getInterval(String name);
 
     // ==================== Variant ====================
@@ -140,7 +127,6 @@ public interface FieldAccessor {
     ///
     /// @param name the field name
     /// @return the Variant accessor, or null if the field is null
-    /// @throws IllegalArgumentException if the field is not annotated as VARIANT
     PqVariant getVariant(String name);
 
     // ==================== Generic Fallback ====================

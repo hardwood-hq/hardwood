@@ -34,6 +34,20 @@ class FileNameInExceptionTest {
     // ==================== RowReader (single file) ====================
 
     @Test
+    void rowReaderTypeMismatchThrowsClassCastException() throws Exception {
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_FILE));
+             RowReader reader = fileReader.rowReader()) {
+
+            assertThat(reader.hasNext()).isTrue();
+            reader.next();
+
+            // "id" is LONG — requesting INT fails via the underlying long[]→int[] cast.
+            assertThatThrownBy(() -> reader.getInt("id"))
+                    .isInstanceOf(ClassCastException.class);
+        }
+    }
+
+    @Test
     void rowReaderMissingColumnIncludesFileName() throws Exception {
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(TEST_FILE));
              RowReader reader = fileReader.rowReader()) {
@@ -45,6 +59,34 @@ class FileNameInExceptionTest {
             assertThatThrownBy(() -> reader.getLong("nonexistent"))
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("[" + FILE_NAME + "] Column not in projection: nonexistent");
+        }
+    }
+
+    // ==================== RowReader (multi-file) ====================
+
+    @Test
+    void multiFileRowReaderTypeMismatchThrowsClassCastException(@TempDir Path tempDir) throws Exception {
+        // Copy the test file under a second name so the file-boundary detection in
+        // ColumnWorker is actually exercised. plain_uncompressed.parquet has 3 rows;
+        // the multi-file reader emits rows 0–2 from TEST_FILE then rows 3–5 from
+        // the copy. Every row must still surface a ClassCastException for a wrong-
+        // type access, regardless of which file the current row came from.
+        Path secondFile = tempDir.resolve("second_file.parquet");
+        Files.copy(TEST_FILE, secondFile);
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(
+                     InputFile.ofPaths(List.of(TEST_FILE, secondFile)));
+             RowReader reader = parquet.rowReader()) {
+
+            for (int i = 0; i < 6; i++) {
+                assertThat(reader.hasNext()).isTrue();
+                reader.next();
+                assertThatThrownBy(() -> reader.getInt("id"))
+                        .isInstanceOf(ClassCastException.class);
+            }
+
+            assertThat(reader.hasNext()).isFalse();
         }
     }
 
