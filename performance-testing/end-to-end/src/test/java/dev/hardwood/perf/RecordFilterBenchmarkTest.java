@@ -24,9 +24,16 @@ import org.apache.parquet.hadoop.metadata.CompressionCodecName;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.predicate.BatchFilterCompiler;
+import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.predicate.FilterPredicateResolver;
+import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.ProjectedSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -60,7 +67,7 @@ class RecordFilterBenchmarkTest {
     private static final String PATH_CONSUMER = "(Consumer Side Filtration)";
     private static final String PATH_NONE = "";
 
-    private record Run(long[] times, long[] rows) {}
+    private record Run(long[] times, long[] rows, String path) {}
 
     @Test
     void compareRecordFilterOverhead() throws Exception {
@@ -174,33 +181,33 @@ class RecordFilterBenchmarkTest {
                 "Contender", "Path", "Time (ms)", "Rows", "Records/sec");
         System.out.println("  " + "-".repeat(117));
 
-        printResults("No filter (baseline)", PATH_NONE, noFilter, runs);
+        printResults("No filter (baseline)", noFilter, runs);
         System.out.println();
-        printResults("Match-all (id>=0)", PATH_DRAIN, matchAll, runs);
+        printResults("Match-all (id>=0)", matchAll, runs);
         System.out.println();
-        printResults("Selective (id<1%)", PATH_DRAIN, selective, runs);
+        printResults("Selective (id<1%)", selective, runs);
         System.out.println();
-        printResults("Compound match-all (id>=0 AND value<+inf)", PATH_DRAIN, compound, runs);
+        printResults("Compound match-all (id>=0 AND value<+inf)", compound, runs);
         System.out.println();
-        printResults("Page+record (id top 1% AND value<500)", PATH_CONSUMER, pageRecord, runs);
+        printResults("Page+record (id top 1% AND value<500)", pageRecord, runs);
         System.out.println();
-        printResults("And3 match-all (id+value+tag)", PATH_DRAIN, and3, runs);
+        printResults("And3 match-all (id+value+tag)", and3, runs);
         System.out.println();
-        printResults("And4 ~50% (id+value+tag+!flag)", PATH_DRAIN, and4, runs);
+        printResults("And4 ~50% (id+value+tag+!flag)", and4, runs);
         System.out.println();
-        printResults("Compound selective (id<10K AND value<+inf)", PATH_DRAIN, compoundSelective, runs);
+        printResults("Compound selective (id<10K AND value<+inf)", compoundSelective, runs);
         System.out.println();
-        printResults("Compound mid 50% (id>=0 AND value<500)", PATH_DRAIN, compoundMid, runs);
+        printResults("Compound mid 50% (id>=0 AND value<500)", compoundMid, runs);
         System.out.println();
-        printResults("Sorted cluster 50% (id<N/2 AND tag>=0)", PATH_DRAIN, sortedCluster, runs);
+        printResults("Sorted cluster 50% (id<N/2 AND tag>=0)", sortedCluster, runs);
         System.out.println();
-        printResults("Empty result (id<0 AND value<+inf)", PATH_DRAIN, empty, runs);
+        printResults("Empty result (id<0 AND value<+inf)", empty, runs);
         System.out.println();
-        printResults("OR fallback (id<0 OR value<500)", PATH_CONSUMER, orFilter, runs);
+        printResults("OR fallback (id<0 OR value<500)", orFilter, runs);
         System.out.println();
-        printResults("Range+value (id BETWEEN 1M..2M)", PATH_CONSUMER, rangeDup, runs);
+        printResults("Range+value (id BETWEEN 1M..2M)", rangeDup, runs);
         System.out.println();
-        printResults("intIn (tag IN [1,5,10,25,50])", PATH_DRAIN, intIn, runs);
+        printResults("intIn (tag IN [1,5,10,25,50])", intIn, runs);
 
         // ----- Derived ratios vs no-filter baseline -------------------------
         double avgNoFilter = avg(noFilter.times) / 1_000_000.0;
@@ -249,10 +256,13 @@ class RecordFilterBenchmarkTest {
             rows[i] = runNoFilter();
             times[i] = System.nanoTime() - start;
         }
-        return new Run(times, rows);
+        return new Run(times, rows, PATH_NONE);
     }
 
     private Run timeFilter(FilterPredicate filter, int runs) throws Exception {
+        // Probe the actual path the reader will take, **outside** the timing loop, so
+        // the resolve + tryCompile work is not counted in the numbers.
+        String path = probePath(filter);
         long[] times = new long[runs];
         long[] rows = new long[runs];
         for (int i = 0; i < runs; i++) {
@@ -260,7 +270,31 @@ class RecordFilterBenchmarkTest {
             rows[i] = runFilter(filter);
             times[i] = System.nanoTime() - start;
         }
-        return new Run(times, rows);
+        return new Run(times, rows, path);
+    }
+
+    /// Probes whether `filter` is drain-eligible by calling [BatchFilterCompiler.tryCompile]
+    /// once against the file schema. Mirrors the gate in [dev.hardwood.internal.reader.FlatRowReader]:
+    /// `tryCompile` returns `null` → consumer-side; all-null matcher array → consumer-side;
+    /// otherwise → drain-side.
+    private String probePath(FilterPredicate filter) throws IOException {
+        FileSchema schema;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE))) {
+            schema = reader.getFileSchema();
+        }
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
+        ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
+        ColumnBatchMatcher[] matchers = BatchFilterCompiler.tryCompile(
+                resolved, schema, projected::toProjectedIndex);
+        if (matchers == null) {
+            return PATH_CONSUMER;
+        }
+        for (ColumnBatchMatcher matcher : matchers) {
+            if (matcher != null) {
+                return PATH_DRAIN;
+            }
+        }
+        return PATH_CONSUMER;
     }
 
     private long runNoFilter() throws Exception {
@@ -332,16 +366,16 @@ class RecordFilterBenchmarkTest {
         System.out.println("Generated " + BENCHMARK_FILE + " (" + Files.size(BENCHMARK_FILE) / (1024 * 1024) + " MB)");
     }
 
-    private static void printResults(String name, String path, Run run, int runs) {
+    private static void printResults(String name, Run run, int runs) {
         for (int i = 0; i < runs; i++) {
             double ms = run.times[i] / 1_000_000.0;
             System.out.printf("  %-50s %-26s %10.1f %,15d %,12.0f%n",
-                    name + " [" + (i + 1) + "]", path, ms, run.rows[i],
+                    name + " [" + (i + 1) + "]", run.path, ms, run.rows[i],
                     run.rows[i] / (ms / 1000.0));
         }
         double avgMs = avg(run.times) / 1_000_000.0;
         System.out.printf("  %-50s %-26s %10.1f %,15d %,12.0f%n",
-                name + " [AVG]", path, avgMs, run.rows[0],
+                name + " [AVG]", run.path, avgMs, run.rows[0],
                 run.rows[0] / (avgMs / 1000.0));
     }
 
