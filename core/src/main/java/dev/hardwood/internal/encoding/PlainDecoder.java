@@ -10,6 +10,10 @@ package dev.hardwood.internal.encoding;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
+import java.nio.DoubleBuffer;
+import java.nio.FloatBuffer;
+import java.nio.IntBuffer;
+import java.nio.LongBuffer;
 import java.util.Arrays;
 
 import dev.hardwood.metadata.PhysicalType;
@@ -66,7 +70,7 @@ public class PlainDecoder implements ValueDecoder {
             if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading INT64 values");
             }
-            var longBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer();
+            LongBuffer longBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asLongBuffer();
             pos += numBytes;
             for (int i = 0; i < output.length; i++) {
                 if (definitionLevels[i] == maxDefLevel) {
@@ -98,7 +102,7 @@ public class PlainDecoder implements ValueDecoder {
             if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading DOUBLE values");
             }
-            var doubleBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer();
+            DoubleBuffer doubleBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asDoubleBuffer();
             pos += numBytes;
             for (int i = 0; i < output.length; i++) {
                 if (definitionLevels[i] == maxDefLevel) {
@@ -130,7 +134,7 @@ public class PlainDecoder implements ValueDecoder {
             if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading INT32 values");
             }
-            var intBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
+            IntBuffer intBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asIntBuffer();
             pos += numBytes;
             for (int i = 0; i < output.length; i++) {
                 if (definitionLevels[i] == maxDefLevel) {
@@ -162,7 +166,7 @@ public class PlainDecoder implements ValueDecoder {
             if (pos + numBytes > data.length) {
                 throw new IOException("Unexpected EOF while reading FLOAT values");
             }
-            var floatBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
+            FloatBuffer floatBuffer = ByteBuffer.wrap(data, pos, numBytes).order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer();
             pos += numBytes;
             for (int i = 0; i < output.length; i++) {
                 if (definitionLevels[i] == maxDefLevel) {

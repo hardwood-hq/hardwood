@@ -114,12 +114,12 @@ public class SimpleGroup extends Group {
     }
 
     private boolean isListType(GroupType groupType) {
-        var originalType = groupType.getOriginalType();
+        org.apache.parquet.schema.OriginalType originalType = groupType.getOriginalType();
         return originalType == org.apache.parquet.schema.OriginalType.LIST;
     }
 
     private boolean isMapType(GroupType groupType) {
-        var originalType = groupType.getOriginalType();
+        org.apache.parquet.schema.OriginalType originalType = groupType.getOriginalType();
         return originalType == org.apache.parquet.schema.OriginalType.MAP
                 || originalType == org.apache.parquet.schema.OriginalType.MAP_KEY_VALUE;
     }

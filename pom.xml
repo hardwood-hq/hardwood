@@ -46,6 +46,7 @@
   </scm>
 
   <modules>
+    <module>error-prone-checks</module>
     <module>bom</module>
     <module>test-bom</module>
     <module>test-support</module>
@@ -60,6 +61,8 @@
   </modules>
 
   <properties>
+    <auto-service.version>1.1.1</auto-service.version>
+    <error-prone.version>2.49.0</error-prone.version>
     <hadoop.version>3.4.3</hadoop.version>
     <java.version>21</java.version>
     <java.version.build>25</java.version.build>
@@ -153,6 +156,24 @@
           <version>3.14.1</version>
           <configuration>
             <parameters>true</parameters>
+            <compilerArgs>
+              <arg>-XDcompilePolicy=simple</arg>
+              <arg>--should-stop=ifError=FLOW</arg>
+              <arg>-Xplugin:ErrorProne -XepDisableAllChecks -Xep:NoVar:ERROR -Xep:NoLegacyJavadoc:ERROR</arg>
+              <arg>-XDaddTypeAnnotationsToSymbol=true</arg>
+            </compilerArgs>
+            <annotationProcessorPaths>
+              <path>
+                <groupId>com.google.errorprone</groupId>
+                <artifactId>error_prone_core</artifactId>
+                <version>${error-prone.version}</version>
+              </path>
+              <path>
+                <groupId>dev.hardwood</groupId>
+                <artifactId>hardwood-error-prone-checks</artifactId>
+                <version>${project.version}</version>
+              </path>
+            </annotationProcessorPaths>
           </configuration>
         </plugin>
         <plugin>

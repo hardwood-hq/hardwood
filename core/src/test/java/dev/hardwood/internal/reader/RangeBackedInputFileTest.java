@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -165,7 +166,7 @@ class RangeBackedInputFileTest {
     }
 
     private static long countCacheFiles(Path dir) throws IOException {
-        try (var stream = Files.list(dir)) {
+        try (Stream<Path> stream = Files.list(dir)) {
             return stream.filter(p -> p.getFileName().toString().startsWith("hardwood-range-")).count();
         }
     }
