@@ -14,6 +14,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.EnumSet;
 import java.util.List;
+import java.util.Map;
 import java.util.Set;
 import java.util.function.Supplier;
 import java.util.stream.Collectors;
@@ -868,7 +869,7 @@ class NestedPerformanceTest {
             System.out.println("Correctness Verification:");
             System.out.println(String.format("  %-25s %10s %10s %10s %12s %12s %10s",
                     "", "min_ver", "max_ver", "rows", "websites", "sources", "addresses"));
-            for (var entry : results.entrySet()) {
+            for (Map.Entry<Contender, List<Result>> entry : results.entrySet()) {
                 Result r = entry.getValue().get(0);
                 System.out.println(String.format("  %-25s %,10d %,10d %,10d %,12d %,12d %,10d",
                         entry.getKey().displayName(),
@@ -884,7 +885,7 @@ class NestedPerformanceTest {
                 "Contender", "Time (s)", "Records/sec", "Records/sec/core", "MB/sec"));
         System.out.println("  " + "-".repeat(95));
 
-        for (var entry : results.entrySet()) {
+        for (Map.Entry<Contender, List<Result>> entry : results.entrySet()) {
             Contender c = entry.getKey();
             List<Result> contenderResults = entry.getValue();
             int cores = isHardwood(c) ? cpuCores : 1;
@@ -931,11 +932,11 @@ class NestedPerformanceTest {
             return;
         }
 
-        var first = results.entrySet().iterator().next();
+        Map.Entry<Contender, List<Result>> first = results.entrySet().iterator().next();
         Result reference = first.getValue().get(0);
         String referenceName = first.getKey().displayName();
 
-        for (var entry : results.entrySet()) {
+        for (Map.Entry<Contender, List<Result>> entry : results.entrySet()) {
             if (entry.getKey() == first.getKey()) continue;
             Result other = entry.getValue().get(0);
             String otherName = entry.getKey().displayName();

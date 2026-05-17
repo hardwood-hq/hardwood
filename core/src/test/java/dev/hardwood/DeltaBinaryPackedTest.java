@@ -12,6 +12,7 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -32,8 +33,8 @@ class DeltaBinaryPackedTest {
             // Verify all columns use DELTA_BINARY_PACKED encoding
             RowGroup rowGroup = reader.getFileMetaData().rowGroups().get(0);
             for (int i = 0; i < reader.getFileSchema().getColumnCount(); i++) {
-                var columnChunk = rowGroup.columns().get(i);
-                var columnName = reader.getFileSchema().getColumn(i).name();
+                ColumnChunk columnChunk = rowGroup.columns().get(i);
+                String columnName = reader.getFileSchema().getColumn(i).name();
                 assertThat(columnChunk.metaData().encodings())
                         .as("Column '%s' should use DELTA_BINARY_PACKED encoding", columnName)
                         .contains(Encoding.DELTA_BINARY_PACKED);
@@ -72,8 +73,8 @@ class DeltaBinaryPackedTest {
             // Verify all columns use DELTA_BINARY_PACKED encoding
             RowGroup rowGroup = reader.getFileMetaData().rowGroups().get(0);
             for (int i = 0; i < reader.getFileSchema().getColumnCount(); i++) {
-                var columnChunk = rowGroup.columns().get(i);
-                var columnName = reader.getFileSchema().getColumn(i).name();
+                ColumnChunk columnChunk = rowGroup.columns().get(i);
+                String columnName = reader.getFileSchema().getColumn(i).name();
                 assertThat(columnChunk.metaData().encodings())
                         .as("Column '%s' should use DELTA_BINARY_PACKED encoding", columnName)
                         .contains(Encoding.DELTA_BINARY_PACKED);
@@ -114,8 +115,8 @@ class DeltaBinaryPackedTest {
 
             // Verify string columns use DELTA_LENGTH_BYTE_ARRAY encoding
             RowGroup rowGroup = reader.getFileMetaData().rowGroups().get(0);
-            var nameColumn = rowGroup.columns().get(1); // name is column 1
-            var descColumn = rowGroup.columns().get(2); // description is column 2
+            ColumnChunk nameColumn = rowGroup.columns().get(1); // name is column 1
+            ColumnChunk descColumn = rowGroup.columns().get(2); // description is column 2
             assertThat(nameColumn.metaData().encodings())
                     .as("Column 'name' should use DELTA_LENGTH_BYTE_ARRAY encoding")
                     .contains(Encoding.DELTA_LENGTH_BYTE_ARRAY);
