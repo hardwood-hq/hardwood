@@ -118,4 +118,17 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Skip enforcer on Java 21 since this module only builds the Error Prone checks. -->
+    <profile>
+      <id>java21</id>
+      <activation>
+        <jdk>[21,25)</jdk>
+      </activation>
+      <properties>
+        <enforcer.skip>true</enforcer.skip>
+      </properties>
+    </profile>
+  </profiles>
 </project>
