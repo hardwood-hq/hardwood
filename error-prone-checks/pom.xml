@@ -103,6 +103,19 @@
           </argLine>
         </configuration>
       </plugin>
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-install-plugin</artifactId>
+        <executions>
+          <execution>
+            <id>install-for-reactor-compiler-plugin-resolution</id>
+            <phase>package</phase>
+            <goals>
+              <goal>install</goal>
+            </goals>
+          </execution>
+        </executions>
+      </plugin>
     </plugins>
   </build>
 </project>
