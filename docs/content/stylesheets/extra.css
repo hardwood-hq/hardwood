@@ -9,13 +9,13 @@
  */
 :root,
 [data-md-color-scheme="default"] {
-  --md-primary-fg-color: #0b6e29;
-  --md-primary-fg-color--light: #2e9e4e;
-  --md-primary-fg-color--dark: #085a21;
+  --md-primary-fg-color: #1e3a5f;
+  --md-primary-fg-color--light: #2c5282;
+  --md-primary-fg-color--dark: #142b46;
 }
 
 [data-md-color-scheme="slate"] {
-  --md-primary-fg-color: #0b6e29;
-  --md-primary-fg-color--light: #2e9e4e;
-  --md-primary-fg-color--dark: #085a21;
+  --md-primary-fg-color: #1e3a5f;
+  --md-primary-fg-color--light: #2c5282;
+  --md-primary-fg-color--dark: #142b46;
 }

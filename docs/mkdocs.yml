@@ -40,6 +40,8 @@ nav:
 theme:
   name: material
   custom_dir: overrides
+  logo: assets/hardwood.svg
+  favicon: assets/hardwood.svg
   palette:
     - scheme: default
       toggle:
