@@ -24,7 +24,7 @@ Set-bit-= -present polarity is unchanged. The word at index `w` covers rows `[w*
 
 ### The public API exposes the word array
 
-A new accessor `Validity.words()` returns the backing `long[]`. For `Backed`, the array is a defensive copy — callers may mutate the returned array freely. For `NoNulls`, `words()` returns `null` (mirroring the sparse representation; the caller branches on the result or uses the existing `isNull(i)` path which is a no-op for `NoNulls`). Bits at indices `>= count` are undefined and must not be read.
+A new accessor `Validity.words()` returns the backing `long[]`. For `Backed`, the array is returned directly — no copy. Callers must not mutate it; this mirrors the inbound contract on `Validity.of(long[])`, where the `Validity` takes ownership of the bitmap. For `NoNulls`, `words()` returns `null` (mirroring the sparse representation; the caller branches on the result or uses the existing `isNull(i)` path which is a no-op for `NoNulls`). Bits at indices `>= count` are undefined and must not be read.
 
 This gives perf-sensitive consumers three loop shapes against the same `Validity` value: per-row `isNull(i)` (idiomatic, JIT-inlinable), inlined word/mask reading directly from `words()` (avoids the method call), and a word-wise outer loop that iterates set bits via `Long.numberOfTrailingZeros` plus the `present &= present - 1` clear-lowest-bit trick. The third lets callers skip null-dense regions in O(words-with-runs) instead of O(rows) and gives the JIT a vectorizable inner loop.
 
@@ -47,7 +47,7 @@ This gives perf-sensitive consumers three loop shapes against the same `Validity
 
 The new accessor:
 
-- `long[] words()`: on `Backed`, returns `words.clone()` — a defensive copy that callers may freely mutate. On `NoNulls`, returns `null`.
+- `long[] words()`: on `Backed`, returns the backing `long[]` directly — callers must not mutate it. On `NoNulls`, returns `null`.
 
 The factory:
 

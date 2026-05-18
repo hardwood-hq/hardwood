@@ -25,7 +25,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
     | `if (nulls != null && nulls.get(i)) skip;` | `if (v.isNull(i)) skip;` |
     | `if (nulls == null \|\| !nulls.get(i)) keep;` | `if (v.isNotNull(i)) keep;` |
     | `nulls == null` ⇒ no nulls in batch | `!v.hasNulls()` ⇒ no nulls in batch |
-    | `nulls.toLongArray()` for word-wise scans | `v.words()` (defensive copy, set bit = present, safe to mutate) |
+    | `nulls.toLongArray()` for word-wise scans | `v.words()` (backing array, set bit = present, do not mutate) |
     | `reader.getLevelNulls(level)` (returns `BitSet`, set bit = null) | `reader.getLayerValidity(layer)` (returns `Validity`) |
     | `reader.getEmptyListMarkers(level)` | encoded as `offsets[i+1] - offsets[i] == 0` |
     | `reader.getOffsets(level)` | `reader.getLayerOffsets(layer)` (sentinel-suffixed; length `count + 1`) |

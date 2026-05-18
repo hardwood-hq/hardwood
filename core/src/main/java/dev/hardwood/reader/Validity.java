@@ -88,9 +88,10 @@ public sealed interface Validity permits Validity.NoNulls, Validity.Backed {
     int nextNotNull(int from, int count);
 
     /// The word array (set-bit = present polarity). Returns `null` for
-    /// [NoNulls]. For [Backed], a defensive copy is returned, so callers
-    /// may mutate it freely. Bits at indices `>= count` are undefined
-    /// and must not be read.
+    /// [NoNulls]. For [Backed], returns the backing array directly — no
+    /// copy. Callers must not mutate it; mirroring the inbound contract
+    /// on [#of(long[])], the `Validity` owns the bitmap once handed in.
+    /// Bits at indices `>= count` are undefined and must not be read.
     long[] words();
 
     /// Every item at this scope is non-null in the current batch. Use
@@ -180,14 +181,17 @@ public sealed interface Validity permits Validity.NoNulls, Validity.Backed {
             if (from >= count) return -1;
             int wordIdx = from >>> 6;
             int endWord = (count - 1) >>> 6;
+            int tail = count & 63;
+            long endMask = tail == 0 ? ~0L : (1L << tail) - 1L;
             long word = ~words[wordIdx] & (~0L << from);
+            if (wordIdx == endWord) word &= endMask;
             while (true) {
                 if (word != 0L) {
-                    int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(word);
-                    return bit < count ? bit : -1;
+                    return (wordIdx << 6) + Long.numberOfTrailingZeros(word);
                 }
                 if (++wordIdx > endWord) return -1;
                 word = ~words[wordIdx];
+                if (wordIdx == endWord) word &= endMask;
             }
         }
 
@@ -196,20 +200,23 @@ public sealed interface Validity permits Validity.NoNulls, Validity.Backed {
             if (from >= count) return -1;
             int wordIdx = from >>> 6;
             int endWord = (count - 1) >>> 6;
+            int tail = count & 63;
+            long endMask = tail == 0 ? ~0L : (1L << tail) - 1L;
             long word = words[wordIdx] & (~0L << from);
+            if (wordIdx == endWord) word &= endMask;
             while (true) {
                 if (word != 0L) {
-                    int bit = (wordIdx << 6) + Long.numberOfTrailingZeros(word);
-                    return bit < count ? bit : -1;
+                    return (wordIdx << 6) + Long.numberOfTrailingZeros(word);
                 }
                 if (++wordIdx > endWord) return -1;
                 word = words[wordIdx];
+                if (wordIdx == endWord) word &= endMask;
             }
         }
 
         @Override
         public long[] words() {
-            return words.clone();
+            return words;
         }
     }
 }

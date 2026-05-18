@@ -182,7 +182,7 @@ if (words == null) {
 }
 ```
 
-The returned array is a defensive copy, so callers may mutate it freely. Bits at indices `>= count` are undefined and must not be read. For null-sparse columns this gives no measurable win over the hoisted-`hasNulls()` form above; the payoff is on null-dense columns where skipping clear bits via `tzcnt` is faster than scanning every position.
+The returned array is the `Validity`'s backing storage — no copy. Callers must not mutate it. Bits at indices `>= count` are undefined and must not be read. For null-sparse columns this gives no measurable win over the hoisted-`hasNulls()` form above; the payoff is on null-dense columns where skipping clear bits via `tzcnt` is faster than scanning every position.
 
 #### Flat column
 

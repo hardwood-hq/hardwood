@@ -141,13 +141,79 @@ class ValidityTest {
     }
 
     @Test
-    void backedWordsReturnsDefensiveCopy() {
+    void backedWordsReturnsBackingArray() {
         long[] backing = wordsWith(5, 0, 1, 3, 4);
         Validity v = Validity.of(backing);
-        long[] returned = v.words();
-        assertThat(returned).isNotSameAs(backing);
-        assertThat(returned).containsExactly(backing);
-        returned[0] = 0L;
-        assertThat(v.words()).containsExactly(backing);
+        assertThat(v.words()).isSameAs(backing);
+    }
+
+    // ==================== Multi-word coverage ====================
+    //
+    // The hand-rolled scan loops in nextNull / nextNotNull / nullCount
+    // span words; these tests exercise the cross-word, fully-null-word,
+    // and exact-64-boundary paths.
+
+    @Test
+    void backedNullCountAcrossMultipleWords() {
+        // count = 128 → fullWords = 2, tail = 0. Mark indices 70 (word 1)
+        // and 5 (word 0) as null; all others present.
+        long[] words = new long[2];
+        for (int i = 0; i < 128; i++) {
+            if (i != 5 && i != 70) {
+                words[i >>> 6] |= 1L << i;
+            }
+        }
+        Validity v = Validity.of(words);
+        assertThat(v.nullCount(128)).isEqualTo(2);
+    }
+
+    @Test
+    void backedNullCountWithPartialTail() {
+        // count = 130 → fullWords = 2, tail = 2. Null at 129 (tail) only.
+        long[] words = new long[3];
+        for (int i = 0; i < 130; i++) {
+            if (i != 129) words[i >>> 6] |= 1L << i;
+        }
+        Validity v = Validity.of(words);
+        assertThat(v.nullCount(130)).isEqualTo(1);
+    }
+
+    @Test
+    void backedNextNullCrossesWordBoundary() {
+        // Word 0 fully present, null at index 70 (word 1).
+        long[] words = new long[3];
+        words[0] = ~0L;
+        for (int i = 64; i < 130; i++) {
+            if (i != 70) words[i >>> 6] |= 1L << i;
+        }
+        Validity v = Validity.of(words);
+        assertThat(v.nextNull(0, 130)).isEqualTo(70);
+        assertThat(v.nextNull(64, 130)).isEqualTo(70);
+        assertThat(v.nextNull(71, 130)).isEqualTo(-1);
+    }
+
+    @Test
+    void backedNextNotNullSkipsFullyNullWord() {
+        // Word 0 entirely null, first present bit at index 100 (word 1).
+        long[] words = new long[3];
+        words[1] = 1L << (100 - 64);
+        Validity v = Validity.of(words);
+        assertThat(v.nextNotNull(0, 130)).isEqualTo(100);
+        assertThat(v.nextNotNull(50, 130)).isEqualTo(100);
+        assertThat(v.nextNotNull(101, 130)).isEqualTo(-1);
+    }
+
+    @Test
+    void backedScanAtExact64Boundary() {
+        // count == 64 → tail == 0 branch in nullCount; endWord == 0 and
+        // endMask == ~0L in nextNull / nextNotNull. Null at index 17 only.
+        long[] words = new long[1];
+        for (int i = 0; i < 64; i++) {
+            if (i != 17) words[0] |= 1L << i;
+        }
+        Validity v = Validity.of(words);
+        assertThat(v.nullCount(64)).isEqualTo(1);
+        assertThat(v.nextNull(0, 64)).isEqualTo(17);
+        assertThat(v.nextNotNull(17, 64)).isEqualTo(18);
     }
 }
