@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="_assets/hardwood.svg" alt="Hardwood logo" width="96" height="96" />
+</p>
+
 # Hardwood
 
 _A parser for the Apache Parquet file format, optimized for minimal dependencies and great performance.
