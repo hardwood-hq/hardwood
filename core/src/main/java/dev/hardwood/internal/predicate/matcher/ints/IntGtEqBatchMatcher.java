@@ -47,9 +47,6 @@ public final class IntGtEqBatchMatcher implements IntBatchMatcher {
             outWords[fullWords] = word;
         }
 
-        // Clear bits at absent positions. Bits past `n` are intentionally left stale —
-        // the consumer (FlatRowReader#intersectMatches) only touches the words
-        // covering `[0, n)`, so the trailing zero-fill would be dead work.
         long[] validity = batch.validity;
         if (validity != null) {
             int activeWords = (n + 63) >>> 6;

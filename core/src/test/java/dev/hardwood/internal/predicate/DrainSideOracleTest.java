@@ -11,11 +11,7 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.ArrayList;
-import java.util.BitSet;
-import java.util.List;
-import java.util.Random;
-import java.util.UUID;
+import java.util.*;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
@@ -438,7 +434,7 @@ class DrainSideOracleTest {
             validity.andNot(nulls);
             int wordsLen = (N + 63) >>> 6;
             long[] words = validity.toLongArray();
-            return words.length < wordsLen ? java.util.Arrays.copyOf(words, wordsLen) : words;
+            return words.length < wordsLen ? Arrays.copyOf(words, wordsLen) : words;
         }
     }
 
