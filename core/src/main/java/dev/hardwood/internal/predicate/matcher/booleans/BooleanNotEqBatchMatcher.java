@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.predicate.matcher.booleans;
 
-import java.util.BitSet;
-
 import dev.hardwood.internal.predicate.BooleanBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 
@@ -52,10 +50,11 @@ public final class BooleanNotEqBatchMatcher implements BooleanBatchMatcher {
         // Clear bits at absent positions. Bits past `n` are intentionally left stale —
         // the consumer (FlatRowReader#intersectMatches) only touches the words
         // covering `[0, n)`, so the trailing zero-fill would be dead work.
-        BitSet validity = batch.validity;
+        long[] validity = batch.validity;
         if (validity != null) {
-            for (int i = validity.nextClearBit(0); i < n; i = validity.nextClearBit(i + 1)) {
-                outWords[i >>> 6] &= ~(1L << (i & 63));
+            int activeWords = (n + 63) >>> 6;
+            for (int w = 0; w < activeWords; w++) {
+                outWords[w] &= validity[w];
             }
         }
     }

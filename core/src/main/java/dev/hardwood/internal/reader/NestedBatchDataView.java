@@ -11,7 +11,6 @@ import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
-import java.util.BitSet;
 import java.util.UUID;
 
 import dev.hardwood.internal.ExceptionContext;
@@ -58,7 +57,7 @@ public final class NestedBatchDataView {
     private Object[] fieldValueArrays;                         // projFieldIdx → raw value array (int[], long[], etc.)
     /// Per projected field index → leaf validity bitmap (set bit = present).
     /// `null` means every leaf for that field in the current batch is present.
-    private BitSet[] fieldElementValidity;
+    private long[][] fieldElementValidity;
 
     public NestedBatchDataView(FileSchema schema, ProjectedSchema projectedSchema) {
         this.schema = schema;
@@ -72,7 +71,7 @@ public final class NestedBatchDataView {
         this.fieldDescs = new TopLevelFieldMap.FieldDesc[fieldCount];
         this.fieldToProjCol = new int[fieldCount];
         this.fieldValueArrays = new Object[fieldCount];
-        this.fieldElementValidity = new BitSet[fieldCount];
+        this.fieldElementValidity = new long[fieldCount][];
         for (int f = 0; f < fieldCount; f++) {
             TopLevelFieldMap.FieldDesc desc = fieldMap.getByOriginalIndex(projectedFieldToOriginal[f]);
             fieldDescs[f] = desc;
@@ -136,8 +135,8 @@ public final class NestedBatchDataView {
         int projCol = fieldToProjCol[projectedIndex];
         if (projCol >= 0) {
             int valueIdx = cachedValueIndex[projCol];
-            BitSet validity = fieldElementValidity[projectedIndex];
-            return validity != null && !validity.get(valueIdx);
+            long[] validity = fieldElementValidity[projectedIndex];
+            return validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L;
         }
         return isFieldNull(fieldDescs[projectedIndex]);
     }
@@ -258,8 +257,8 @@ public final class NestedBatchDataView {
 
     public int getInt(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet validity = fieldElementValidity[projectedIndex];
-        if (validity != null && !validity.get(valueIdx)) {
+        long[] validity = fieldElementValidity[projectedIndex];
+        if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         return ((int[]) fieldValueArrays[projectedIndex])[valueIdx];
@@ -267,8 +266,8 @@ public final class NestedBatchDataView {
 
     public long getLong(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet validity = fieldElementValidity[projectedIndex];
-        if (validity != null && !validity.get(valueIdx)) {
+        long[] validity = fieldElementValidity[projectedIndex];
+        if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         return ((long[]) fieldValueArrays[projectedIndex])[valueIdx];
@@ -276,8 +275,8 @@ public final class NestedBatchDataView {
 
     public float getFloat(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet validity = fieldElementValidity[projectedIndex];
-        if (validity != null && !validity.get(valueIdx)) {
+        long[] validity = fieldElementValidity[projectedIndex];
+        if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
@@ -296,8 +295,8 @@ public final class NestedBatchDataView {
 
     public double getDouble(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet validity = fieldElementValidity[projectedIndex];
-        if (validity != null && !validity.get(valueIdx)) {
+        long[] validity = fieldElementValidity[projectedIndex];
+        if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         return ((double[]) fieldValueArrays[projectedIndex])[valueIdx];
@@ -305,8 +304,8 @@ public final class NestedBatchDataView {
 
     public boolean getBoolean(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet validity = fieldElementValidity[projectedIndex];
-        if (validity != null && !validity.get(valueIdx)) {
+        long[] validity = fieldElementValidity[projectedIndex];
+        if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
             throw new NullPointerException(prefix() + "Column " + projectedIndex + " is null");
         }
         return ((boolean[]) fieldValueArrays[projectedIndex])[valueIdx];
@@ -350,8 +349,8 @@ public final class NestedBatchDataView {
 
     public String getString(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet validity = fieldElementValidity[projectedIndex];
-        if (validity != null && !validity.get(valueIdx)) {
+        long[] validity = fieldElementValidity[projectedIndex];
+        if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
             return null;
         }
         return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).stringAt(valueIdx);
@@ -359,8 +358,8 @@ public final class NestedBatchDataView {
 
     public byte[] getBinary(int projectedIndex) {
         int valueIdx = cachedValueIndex[fieldToProjCol[projectedIndex]];
-        BitSet validity = fieldElementValidity[projectedIndex];
-        if (validity != null && !validity.get(valueIdx)) {
+        long[] validity = fieldElementValidity[projectedIndex];
+        if (validity != null && (validity[valueIdx >>> 6] & (1L << valueIdx)) == 0L) {
             return null;
         }
         return ((BinaryBatchValues) fieldValueArrays[projectedIndex]).byteArrayAt(valueIdx);
@@ -474,7 +473,7 @@ public final class NestedBatchDataView {
 
     // ==================== Internal Helpers ====================
 
-    /// Populate per-field cached value arrays and null BitSets from the current batch.
+    /// Populate per-field cached value arrays and null bitmaps from the current batch.
     /// Called once per setBatchData() to enable direct-access by-index primitive accessors.
     private void cacheFieldArrays() {
         for (int f = 0; f < fieldToProjCol.length; f++) {

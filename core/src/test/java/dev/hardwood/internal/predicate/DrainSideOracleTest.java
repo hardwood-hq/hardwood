@@ -429,14 +429,16 @@ class DrainSideOracleTest {
             return b;
         }
 
-        private static BitSet nullsToValidity(BitSet nulls) {
+        private static long[] nullsToValidity(BitSet nulls) {
             if (nulls.isEmpty()) {
                 return null;
             }
             BitSet validity = new BitSet(N);
             validity.set(0, N);
             validity.andNot(nulls);
-            return validity;
+            int wordsLen = (N + 63) >>> 6;
+            long[] words = validity.toLongArray();
+            return words.length < wordsLen ? java.util.Arrays.copyOf(words, wordsLen) : words;
         }
     }
 

@@ -9,7 +9,6 @@ package dev.hardwood.reader;
 
 import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.Experimental;
@@ -272,7 +271,7 @@ public class ColumnReader implements AutoCloseable {
     /// null.
     public Validity getLeafValidity() {
         checkBatchAvailable();
-        BitSet raw = nested
+        long[] raw = nested
                 ? ensureRealView().leafValidity()
                 : currentFlatBatch.validity;
         return Validity.of(raw);

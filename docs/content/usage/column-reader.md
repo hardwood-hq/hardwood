@@ -159,6 +159,31 @@ for (int i = 0; i < count; i++) {
 
 Extracting the check once per batch is meaningfully faster than calling it per element on no-nulls data, which is the common analytical-workload case. Examples below show the hoist applied; for cold paths (small batches, schema introspection, debug code) the direct `isNull(i)` / `isNotNull(i)` form is fine and reads better.
 
+#### Word-wise iteration via `Validity.words()`
+
+For null-dense regions where most elements are null, scanning bit-by-bit via `isNotNull(i)` does work proportional to the count. `Validity.words()` exposes the backing `long[]` (set-bit = present polarity) so callers can iterate only the present positions via `Long.numberOfTrailingZeros`:
+
+```java
+Validity validity = col.getLeafValidity();
+long[] words = validity.words();
+if (words == null) {
+    // Validity.NO_NULLS — tight loop over every position.
+    for (int i = 0; i < count; i++) sum += values[i];
+} else {
+    int wordCount = (count + 63) >>> 6;
+    for (int w = 0; w < wordCount; w++) {
+        long present = words[w];
+        while (present != 0L) {
+            int bit = Long.numberOfTrailingZeros(present);
+            sum += values[(w << 6) + bit];
+            present &= present - 1L;
+        }
+    }
+}
+```
+
+The returned array is a defensive copy, so callers may mutate it freely. Bits at indices `>= count` are undefined and must not be read. For null-sparse columns this gives no measurable win over the hoisted-`hasNulls()` form above; the payoff is on null-dense columns where skipping clear bits via `tzcnt` is faster than scanning every position.
+
 #### Flat column
 
 ```java

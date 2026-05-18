@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.BitSet;
+import java.util.Arrays;
 import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
@@ -18,10 +18,10 @@ import dev.hardwood.schema.ColumnSchema;
 /// Per-column pipeline that decodes pages in parallel and assembles flat batches.
 ///
 /// Extends [ColumnWorker] with flat-specific assembly: arraycopy of typed values
-/// and null tracking via [BitSet].
+/// and null tracking via a packed `long[]` validity bitmap (set-bit-= -present).
 public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
-    private BitSet currentValidity;
+    private long[] currentValidity;
     private final ColumnBatchMatcher columnFilter;
     /// Tracks whether any absent (null) leaf has been seen in the current
     /// batch; cleared by [#publishCurrentBatch]. When still false at publish
@@ -54,7 +54,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     @Override
     void initDrainState() {
-        currentValidity = maxDefinitionLevel > 0 ? new BitSet(batchCapacity) : null;
+        currentValidity = maxDefinitionLevel > 0 ? new long[(batchCapacity + 63) >>> 6] : null;
         currentBatchHasAbsents = false;
     }
 
@@ -124,7 +124,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         }
         currentBatch.recordCount = rowsInCurrentBatch;
         currentBatch.validity = (currentValidity != null && currentBatchHasAbsents)
-                ? (BitSet) currentValidity.clone()
+                ? Arrays.copyOf(currentValidity, (rowsInCurrentBatch + 63) >>> 6)
                 : null;
         currentBatch.fileName = currentBatchFileName;
 
@@ -156,7 +156,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
         rowsInCurrentBatch = 0;
         if (currentValidity != null) {
-            currentValidity.clear();
+            Arrays.fill(currentValidity, 0L);
         }
         currentBatchHasAbsents = false;
     }
@@ -227,7 +227,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         }
         if (defLevels == null) {
             if (currentBatchHasAbsents) {
-                currentValidity.set(destPos, destPos + length);
+                setBitRange(currentValidity, destPos, destPos + length);
             }
             return;
         }
@@ -235,12 +235,33 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             if (defLevels[srcPos + i] < maxDefinitionLevel) {
                 if (!currentBatchHasAbsents) {
                     currentBatchHasAbsents = true;
-                    currentValidity.set(0, destPos + i);
+                    setBitRange(currentValidity, 0, destPos + i);
                 }
             }
             else if (currentBatchHasAbsents) {
-                currentValidity.set(destPos + i);
+                int bit = destPos + i;
+                currentValidity[bit >>> 6] |= 1L << bit;
             }
         }
+    }
+
+    /// Sets bits `[fromInclusive, toExclusive)` in `words`. Matches
+    /// `BitSet.set(int, int)` semantics for the set-bit-= -present polarity
+    /// used by [BatchExchange.Batch#validity].
+    private static void setBitRange(long[] words, int fromInclusive, int toExclusive) {
+        if (fromInclusive >= toExclusive) {
+            return;
+        }
+        int firstWord = fromInclusive >>> 6;
+        int lastWord = (toExclusive - 1) >>> 6;
+        long firstMask = ~0L << fromInclusive;
+        long lastMask = ~0L >>> -toExclusive;
+        if (firstWord == lastWord) {
+            words[firstWord] |= firstMask & lastMask;
+            return;
+        }
+        words[firstWord] |= firstMask;
+        Arrays.fill(words, firstWord + 1, lastWord, ~0L);
+        words[lastWord] |= lastMask;
     }
 }

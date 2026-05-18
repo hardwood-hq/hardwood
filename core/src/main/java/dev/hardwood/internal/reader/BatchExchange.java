@@ -7,7 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.BitSet;
 import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
@@ -43,8 +42,10 @@ public class BatchExchange<B> {
     /// A mutable batch holder for flat columns. Pre-allocated and reused — no per-batch allocation.
     /// The drain writes into it, the consumer reads from it.
     ///
-    /// `validity` carries set-bit-= -present semantics (a set bit means the
-    /// leaf value at that position is present); `null` is the sparse
+    /// `validity` carries set-bit-= -present semantics: a set bit at position
+    /// `i` means the leaf value at that position is present. Packed into
+    /// `long[]` of length `(recordCount + 63) >>> 6` (each word covers 64
+    /// consecutive rows, low bit = lowest row). `null` is the sparse
     /// representation of "every leaf in this batch is present."
     ///
     /// `values` is a typed primitive array (`int[]`, `long[]`, …) for
@@ -52,7 +53,7 @@ public class BatchExchange<B> {
     /// types.
     public static final class Batch {
         public Object values;
-        public BitSet validity;
+        public long[] validity;
         public int recordCount;
         public String fileName;
         /// Per-batch matches mask, populated by [dev.hardwood.internal.predicate.ColumnBatchMatcher]

@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.BitSet;
-
 /// Batch holder for nested schemas, used by [NestedColumnWorker].
 ///
 /// This is a separate class from [BatchExchange.Batch] (not a subclass) so
@@ -42,6 +40,6 @@ public final class NestedBatch {
     // Pre-computed index (computed by drain before publish). Validity bit set
     // iff present. Null means "all items at that layer are present in this
     // batch."
-    public BitSet elementValidity;
+    public long[] elementValidity;
     public int[][] multiLevelOffsets;
 }

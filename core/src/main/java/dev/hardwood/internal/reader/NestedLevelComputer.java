@@ -9,7 +9,6 @@ package dev.hardwood.internal.reader;
 
 import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.BitSet;
 import java.util.List;
 
 import dev.hardwood.metadata.RepetitionType;
@@ -29,24 +28,44 @@ public final class NestedLevelComputer {
     ///
     /// Returns `null` when every leaf in the batch is present
     /// (sparse-all-present representation, mirroring the omitted-validity
-    /// convention used at the API surface).
-    public static BitSet computeElementValidity(int[] defLevels, int valueCount, int maxDefLevel) {
+    /// convention used at the API surface). When non-null, the array has
+    /// length `(valueCount + 63) >>> 6` words.
+    public static long[] computeElementValidity(int[] defLevels, int valueCount, int maxDefLevel) {
         if (defLevels == null || maxDefLevel == 0) {
             return null;
         }
-        BitSet validity = null;
+        long[] validity = null;
         for (int i = 0; i < valueCount; i++) {
             if (defLevels[i] < maxDefLevel) {
                 if (validity == null) {
-                    validity = new BitSet(valueCount);
-                    validity.set(0, i);
+                    validity = new long[(valueCount + 63) >>> 6];
+                    setBitRange(validity, 0, i);
                 }
             }
             else if (validity != null) {
-                validity.set(i);
+                validity[i >>> 6] |= 1L << i;
             }
         }
         return validity;
+    }
+
+    /// Sets bits `[fromInclusive, toExclusive)` in `words`. Set-bit-= -present
+    /// polarity, matching the validity of bitmaps elsewhere in the pipeline.
+    private static void setBitRange(long[] words, int fromInclusive, int toExclusive) {
+        if (fromInclusive >= toExclusive) {
+            return;
+        }
+        int firstWord = fromInclusive >>> 6;
+        int lastWord = (toExclusive - 1) >>> 6;
+        long firstMask = ~0L << fromInclusive;
+        long lastMask = ~0L >>> -toExclusive;
+        if (firstWord == lastWord) {
+            words[firstWord] |= firstMask & lastMask;
+            return;
+        }
+        words[firstWord] |= firstMask;
+        Arrays.fill(words, firstWord + 1, lastWord, ~0L);
+        words[lastWord] |= lastMask;
     }
 
     /// Compute multi-level offsets with a trailing sentinel.
@@ -325,8 +344,8 @@ public final class NestedLevelComputer {
     /// 1-to-1 correspondence with the raw value stream — i.e. the chain has
     /// no `REPEATED` layers — and the raw values array can pass through
     /// without compaction.
-    public record RealView(int[][] layerOffsets, BitSet[] layerValidity,
-                           BitSet leafValidity, int valueCount,
+    public record RealView(int[][] layerOffsets, long[][] layerValidity,
+                           long[] leafValidity, int valueCount,
                            int[] realToRawLeaf) {}
 
     /// Builds the real-items-only view from raw def/rep arrays. Phantom
@@ -347,14 +366,14 @@ public final class NestedLevelComputer {
                 offsets[k] = new int[rawValueCount + 1];
             }
         }
-        BitSet[] layerValidity = new BitSet[layerCount];
+        long[][] layerValidity = new long[layerCount][];
         boolean[] layerHasAbsent = new boolean[layerCount];
         int[] realCount = new int[layerCount + 1];
 
         boolean leafCompacts = layerCount > 0 && itemDef[layerCount] > 0;
         int[] realToRaw = leafCompacts ? new int[rawValueCount] : null;
 
-        BitSet leafValidity = null;
+        long[] leafValidity = null;
         boolean leafAnyAbsent = false;
 
         for (int i = 0; i < rawValueCount; i++) {
@@ -370,13 +389,13 @@ public final class NestedLevelComputer {
                     boolean present = def >= layers.defThresholds()[k];
                     if (!present) {
                         if (layerValidity[k] == null) {
-                            layerValidity[k] = new BitSet();
-                            layerValidity[k].set(0, slot);
+                            layerValidity[k] = new long[(rawValueCount + 63) >>> 6];
+                            setBitRange(layerValidity[k], 0, slot);
                         }
                         layerHasAbsent[k] = true;
                     }
                     else if (layerValidity[k] != null) {
-                        layerValidity[k].set(slot);
+                        layerValidity[k][slot >>> 6] |= 1L << slot;
                     }
                     realCount[k]++;
                 }
@@ -395,13 +414,13 @@ public final class NestedLevelComputer {
                 boolean leafPresent = def >= maxDefLevel;
                 if (!leafPresent) {
                     if (leafValidity == null) {
-                        leafValidity = new BitSet();
-                        leafValidity.set(0, slot);
+                        leafValidity = new long[(rawValueCount + 63) >>> 6];
+                        setBitRange(leafValidity, 0, slot);
                     }
                     leafAnyAbsent = true;
                 }
                 else if (leafValidity != null) {
-                    leafValidity.set(slot);
+                    leafValidity[slot >>> 6] |= 1L << slot;
                 }
                 realCount[layerCount]++;
             }
@@ -417,10 +436,23 @@ public final class NestedLevelComputer {
             if (!layerHasAbsent[k]) {
                 layerValidity[k] = null;
             }
+            else if (layerValidity[k] != null) {
+                int n = realCount[k];
+                int wordsNeeded = (n + 63) >>> 6;
+                if (wordsNeeded < layerValidity[k].length) {
+                    layerValidity[k] = Arrays.copyOf(layerValidity[k], wordsNeeded);
+                }
+            }
         }
 
         if (!leafAnyAbsent) {
             leafValidity = null;
+        }
+        else if (leafValidity != null) {
+            int wordsNeeded = (realCount[layerCount] + 63) >>> 6;
+            if (wordsNeeded < leafValidity.length) {
+                leafValidity = Arrays.copyOf(leafValidity, wordsNeeded);
+            }
         }
         int realLeafCount = realCount[layerCount];
         int[] trimmedRealToRaw = null;

@@ -25,6 +25,7 @@ import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
 
+import static java.util.Arrays.copyOf;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
 
 class ColumnBatchMatcherTest {
@@ -45,14 +46,16 @@ class ColumnBatchMatcherTest {
         return b;
     }
 
-    private static BitSet toValidity(BitSet nulls, int n) {
+    private static long[] toValidity(BitSet nulls, int n) {
         if (nulls == null) {
             return null;
         }
         BitSet validity = new BitSet(n);
         validity.set(0, n);
         validity.andNot(nulls);
-        return validity;
+        int wordsLen = (n + 63) >>> 6;
+        long[] words = validity.toLongArray();
+        return words.length < wordsLen ? copyOf(words, wordsLen) : words;
     }
 
     private static long[] runMatcher(ColumnBatchMatcher matcher, BatchExchange.Batch batch) {

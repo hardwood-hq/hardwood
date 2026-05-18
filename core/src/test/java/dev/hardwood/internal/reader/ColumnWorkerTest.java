@@ -152,7 +152,7 @@ class ColumnWorkerTest {
             BatchExchange.Batch batch;
             while ((batch = exchange.poll()) != null) {
                 if (batch.validity != null
-                        && batch.validity.cardinality() < batch.recordCount) {
+                        && popcount(batch.validity) < batch.recordCount) {
                     sawNulls = true;
                 }
                 exchange.recycle(batch);
@@ -486,5 +486,13 @@ class ColumnWorkerTest {
         }
         exchange.checkError();
         return totalRows;
+    }
+
+    private static int popcount(long[] words) {
+        int sum = 0;
+        for (long w : words) {
+            sum += Long.bitCount(w);
+        }
+        return sum;
     }
 }

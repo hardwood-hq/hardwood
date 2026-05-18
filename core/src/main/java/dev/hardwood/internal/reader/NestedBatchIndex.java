@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.util.BitSet;
-
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.ProjectedSchema;
@@ -34,14 +32,14 @@ final class NestedBatchIndex {
     /// ([PqListImpl] / [PqMapImpl] / [PqStructImpl]). Each per-rep-level
     /// `int[]` is sentinel-suffixed (length `count + 1`).
     final int[][][] multiOffsets;
-    final BitSet[] elementValidity; // [projectedCol] -> leaf validity bitmap (set bit = present)
+    final long[][] elementValidity; // [projectedCol] -> leaf validity bitmap (set bit = present)
     final ProjectedSchema projectedSchema;
 
     private NestedBatchIndex(Object[] valueArrays, int[][] defLevels,
                              ColumnSchema[] columnSchemas, int[] valueCounts,
                              int[] recordCounts, int[][] offsets,
                              int[][][] multiOffsets,
-                             BitSet[] elementValidity, ProjectedSchema projectedSchema) {
+                             long[][] elementValidity, ProjectedSchema projectedSchema) {
         this.valueArrays = valueArrays;
         this.defLevels = defLevels;
         this.columnSchemas = columnSchemas;
@@ -65,7 +63,7 @@ final class NestedBatchIndex {
         int[] recordCounts = new int[colCount];
         int[][] offsets = new int[colCount][];
         int[][][] multiOffsets = new int[colCount][][];
-        BitSet[] elementValidity = new BitSet[colCount];
+        long[][] elementValidity = new long[colCount][];
 
         for (int col = 0; col < colCount; col++) {
             NestedBatch batch = batches[col];
@@ -201,7 +199,7 @@ final class NestedBatchIndex {
     /// indicated by a clear bit (or a `null` validity reference means every
     /// leaf in the batch is present).
     boolean isElementNull(int projectedCol, int valueIndex) {
-        BitSet validity = elementValidity[projectedCol];
-        return validity != null && !validity.get(valueIndex);
+        long[] validity = elementValidity[projectedCol];
+        return validity != null && (validity[valueIndex >>> 6] & (1L << valueIndex)) == 0L;
     }
 }
