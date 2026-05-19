@@ -19,3 +19,18 @@
   --md-primary-fg-color--light: #2c5282;
   --md-primary-fg-color--dark: #142b46;
 }
+
+.md-header__topic:not([data-md-component="header-topic"]) {
+  display: none;
+}
+
+.md-header__button.md-logo img {
+  width: auto;
+  height: 1.6rem;
+}
+
+@media screen and (max-width: 76.1875em) {
+  .md-header__button.md-logo {
+    display: inline-flex;
+  }
+}
