@@ -258,10 +258,18 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 fileNameBuffer[slot] = pageSource.getCurrentFileName();
                 PageInfo pi = pageInfo;
                 PageDecoder rdr = pageDecoder;
-                CompletableFuture<Void> f = CompletableFuture.runAsync(
-                        () -> decode(slot, pi, rdr), decodeExecutor);
-                inFlightDecodes.add(f);
-                f.whenComplete((v, t) -> inFlightDecodes.remove(f));
+                // Pre-register a ticket *before* submitting to the executor so that
+                // close() can never miss an in-flight task. If the task completed and
+                // called remove() before add() ran, the ticket would vanish from the
+                // set and close() could return with tasks still executing — causing a
+                // use-after-free on the mapped buffers that InputFile.close() releases.
+                CompletableFuture<Void> ticket = new CompletableFuture<>();
+                inFlightDecodes.add(ticket);
+                CompletableFuture.runAsync(() -> decode(slot, pi, rdr), decodeExecutor)
+                        .whenComplete((v, t) -> {
+                            ticket.complete(null);
+                            inFlightDecodes.remove(ticket);
+                        });
             }
 
             if (!done) {
