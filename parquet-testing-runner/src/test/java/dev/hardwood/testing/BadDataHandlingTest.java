@@ -91,6 +91,14 @@ class BadDataHandlingTest {
     }
 
     @Test
+    void rejectArrowGH47662() throws IOException {
+        // Schema declares flba_field as required fixed_len_byte_array(4) with
+        // 1000 values, but the page data runs out at value 92.
+        assertBadDataRejected("ARROW-GH-47662.parquet",
+                "[ARROW-GH-47662.parquet] Unexpected EOF while reading fixed-length byte array");
+    }
+
+    @Test
     void rejectCorruptChecksum() throws IOException {
         // Intentionally corrupted CRC checksums in data pages.
         // The CRC IOException is wrapped in UncheckedIOException with file context

@@ -68,7 +68,6 @@ public class Utils {
             "hadoop_lz4_compressed.parquet", // Empty field name in schema
 
             // parquet-java Avro reader decoding issues
-            "fixed_length_byte_array.parquet", // ParquetDecodingException
             "large_string_map.brotli.parquet", // ParquetDecodingException (block -1)
             "non_hadoop_lz4_compressed.parquet", // ParquetDecodingException (block -1)
             "nation.dict-malformed.parquet", // EOF error (intentionally malformed)
@@ -108,7 +107,8 @@ public class Utils {
             "ARROW-RS-GH-6229-LEVELS.parquet",
             "ARROW-GH-41317.parquet",
             "ARROW-GH-41321.parquet",
-            "ARROW-GH-45185.parquet"
+            "ARROW-GH-45185.parquet",
+            "ARROW-GH-47662.parquet"
     );
 
     /// Returns a GitHub issue reference blocking row-level nested comparison for
