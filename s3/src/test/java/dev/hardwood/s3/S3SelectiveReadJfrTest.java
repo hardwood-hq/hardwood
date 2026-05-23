@@ -215,18 +215,24 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
 
     @Test
     void projectionTransfersFewerBytes() throws Exception {
-        // page_index_test.parquet is 170 KB (> 64 KB tail cache), so column chunk
-        // reads go to the network and are observable via jdk.SocketRead. Use
-        // the file size as the full-read baseline — a full read can't transfer
-        // more than the file itself.
-        long oneColumnBytes = readAndMeasureSocketBytes(PAGE_INDEX_FILE,
-                ColumnProjection.columns("id"), null);
+        // page_index_test.parquet is 170 KB (> 64 KB tail cache), so column chunks
+        // reads go to the network.
+        S3InputFile s3File = (S3InputFile) source.inputFile("test-bucket", PAGE_INDEX_FILE);
+        try (ParquetFileReader reader = ParquetFileReader.open(s3File);
+             RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id")).build()) {
+            while (rows.hasNext()) {
+                rows.next();
+            }
+        }
+        long oneColumnBytes = s3File.networkBytesFetched();
 
         assertThat(oneColumnBytes)
                 .as("Reading 1 of 3 columns should still transfer some bytes (file > tail cache)")
                 .isGreaterThan(0);
         assertThat(oneColumnBytes)
-                .as("Reading 1 of 3 columns should transfer fewer bytes than the file size")
+                .as("Reading 1 of 3 columns should transfer fewer bytes than the file size; "
+                        + "oneColumn=%,d bytes, fileSize=%,d bytes"
+                                .formatted(oneColumnBytes, pageIndexFileSize))
                 .isLessThan(pageIndexFileSize);
     }
 
@@ -547,29 +553,4 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
                 .isLessThan(10);
     }
 
-    // ==================== Helpers ====================
-
-    /// Reads `file` with the given projection/filter and returns the total
-    /// `jdk.SocketRead.bytesRead` captured during the read. Starts the test
-    /// recording itself, so the caller must not have called `enable(...)`.
-    private long readAndMeasureSocketBytes(String file, ColumnProjection projection,
-            FilterPredicate filter) throws Exception {
-        enable("jdk.SocketRead");
-        try (ParquetFileReader reader = ParquetFileReader.open(
-                source.inputFile("test-bucket", file))) {
-            try (RowReader rows = filter != null
-                    ? reader.buildRowReader().projection(projection).filter(filter).build()
-                    : reader.buildRowReader().projection(projection).build()) {
-                while (rows.hasNext()) {
-                    rows.next();
-                }
-            }
-        }
-
-        awaitEvents();
-
-        return events("jdk.SocketRead")
-                .mapToLong(e -> e.getLong("bytesRead"))
-                .sum();
-    }
 }
