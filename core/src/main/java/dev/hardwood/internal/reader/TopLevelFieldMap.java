@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.util.Arrays;
 import java.util.List;
 
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -96,11 +97,14 @@ final class TopLevelFieldMap {
     private final StringToIntMap nameToIndex;
     private final FieldDesc[] byIndex;
     private final FieldDesc[] byOriginalIndex;
+    private final int[] topLevelFieldByColumnIndex;
 
-    private TopLevelFieldMap(StringToIntMap nameToIndex, FieldDesc[] byIndex, FieldDesc[] byOriginalIndex) {
+    private TopLevelFieldMap(StringToIntMap nameToIndex, FieldDesc[] byIndex, FieldDesc[] byOriginalIndex,
+                             int[] topLevelFieldByColumnIndex) {
         this.nameToIndex = nameToIndex;
         this.byIndex = byIndex;
         this.byOriginalIndex = byOriginalIndex;
+        this.topLevelFieldByColumnIndex = topLevelFieldByColumnIndex;
     }
 
     FieldDesc getByName(String name) {
@@ -118,6 +122,31 @@ final class TopLevelFieldMap {
         return byOriginalIndex[originalFieldIndex];
     }
 
+    FieldDesc getByProjectedIndex(int projectedIndex) {
+        if (projectedIndex < 0 || projectedIndex >= byIndex.length) {
+            return null;
+        }
+        return byIndex[projectedIndex];
+    }
+
+    int topLevelFieldIndexForColumn(int originalColumnIndex) {
+        if (originalColumnIndex < 0 || originalColumnIndex >= topLevelFieldByColumnIndex.length) {
+            return -1;
+        }
+        return topLevelFieldByColumnIndex[originalColumnIndex];
+    }
+
+    int topLevelFieldCount() {
+        return byIndex.length;
+    }
+
+    boolean hasStructFields() {
+        for (FieldDesc desc : byIndex) {
+            if (desc instanceof FieldDesc.Struct) return true;
+        }
+        return false;
+    }
+
     static TopLevelFieldMap build(FileSchema schema, ProjectedSchema projectedSchema) {
         List<SchemaNode> rootChildren = schema.getRootNode().children();
         int[] projectedFieldIndices = projectedSchema.getProjectedFieldIndices();
@@ -129,6 +158,9 @@ final class TopLevelFieldMap {
         int maxOriginalIndex = rootChildren.size();
         FieldDesc[] byOriginalIndex = new FieldDesc[maxOriginalIndex];
 
+        int[] topLevelFieldByColumnIndex = new int[schema.getColumnCount()];
+        Arrays.fill(topLevelFieldByColumnIndex, -1);
+
         for (int i = 0; i < fieldCount; i++) {
             int projFieldIdx = projectedFieldIndices[i];
             SchemaNode topLevelNode = rootChildren.get(projFieldIdx);
@@ -138,9 +170,27 @@ final class TopLevelFieldMap {
             nameToIndex.put(topLevelNode.name(), i);
             byIndex[i] = desc;
             byOriginalIndex[projFieldIdx] = desc;
+            collectColumnMappings(topLevelNode, i, topLevelFieldByColumnIndex);
         }
 
-        return new TopLevelFieldMap(nameToIndex, byIndex, byOriginalIndex);
+        return new TopLevelFieldMap(nameToIndex, byIndex, byOriginalIndex, topLevelFieldByColumnIndex);
+    }
+
+    private static void collectColumnMappings(
+            SchemaNode node,
+            int topLevelFieldIndex,
+            int[] mapping)
+    {
+        switch (node) {
+            case SchemaNode.PrimitiveNode prim ->
+                    mapping[prim.columnIndex()] = topLevelFieldIndex;
+
+            case SchemaNode.GroupNode group -> {
+                for (SchemaNode child : group.children()) {
+                    collectColumnMappings(child, topLevelFieldIndex, mapping);
+                }
+            }
+        }
     }
 
     private static FieldDesc buildDesc(SchemaNode node, FileSchema schema, ProjectedSchema projectedSchema) {
