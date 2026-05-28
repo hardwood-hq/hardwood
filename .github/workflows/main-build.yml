@@ -51,7 +51,7 @@ jobs:
           fi
 
       - name: 'Build and install BOMs, test-support, core and avro'
-        run: ./mvnw -B clean install -pl :hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -108,7 +108,7 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Build and install s3 and aws-auth'
-        run: ./mvnw -B clean install -pl :hardwood-s3,:hardwood-aws-auth
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-s3,:hardwood-aws-auth
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -161,7 +161,7 @@ jobs:
           merge-multiple: true
 
       - name: 'Build and install cli'
-        run: ./mvnw -B clean install -pl :hardwood-cli
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-cli
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -212,7 +212,7 @@ jobs:
           merge-multiple: true
 
       - name: 'Build and install parquet-java-compat'
-        run: ./mvnw -B clean install -pl :hardwood-parquet-java-compat
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-parquet-java-compat
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -255,7 +255,7 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Build and install parquet-testing-runner'
-        run: ./mvnw -B clean install -pl :hardwood-parquet-testing-runner
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-parquet-testing-runner
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -336,7 +336,7 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Run integration tests'
-        run: ./mvnw -B verify -pl :hardwood-integration-test
+        run: ./mvnw -B verify -pl :hardwood-error-prone-checks,:hardwood-integration-test
 
   api-change-report:
     needs: build-core
@@ -374,7 +374,7 @@ jobs:
         run: |
           JAPICMP_OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
           echo "Comparing against ${JAPICMP_OLD_VERSION}"
-          ./mvnw -ntp -B package japicmp:cmp -pl :hardwood-core -DskipTests -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
+          ./mvnw -ntp -B package japicmp:cmp -pl :hardwood-error-prone-checks,:hardwood-core -DskipTests -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
 
       - name: 'Upload API change report'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7

@@ -51,7 +51,7 @@ jobs:
           fi
 
       - name: 'Build and install BOMs, test-support, core and avro'
-        run: ./mvnw -B clean install -pl :hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-bom,:hardwood-test-bom,:hardwood-test-support,:hardwood-core,:hardwood-avro
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -108,7 +108,7 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Build and install s3 and aws-auth'
-        run: ./mvnw -B clean install -pl :hardwood-s3,:hardwood-aws-auth
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-s3,:hardwood-aws-auth
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -161,7 +161,7 @@ jobs:
           merge-multiple: true
 
       - name: 'Build and install cli'
-        run: ./mvnw -B clean install -pl :hardwood-cli
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-cli
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -212,7 +212,7 @@ jobs:
           merge-multiple: true
 
       - name: 'Build and install parquet-java-compat'
-        run: ./mvnw -B clean install -pl :hardwood-parquet-java-compat
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-parquet-java-compat
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -255,7 +255,7 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
 
       - name: 'Build and install parquet-testing-runner'
-        run: ./mvnw -B clean install -pl :hardwood-parquet-testing-runner
+        run: ./mvnw -B clean install -pl :hardwood-error-prone-checks,:hardwood-parquet-testing-runner
 
       - name: 'Upload built artifacts'
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
@@ -372,15 +372,15 @@ jobs:
 
       - name: 'Run integration tests (Java 21)'
         if: ${{ !matrix.install_libdeflate && !matrix.enable_incubating }}
-        run: ./mvnw -B verify -pl :hardwood-integration-test
+        run: ./mvnw -B verify -pl :hardwood-error-prone-checks,:hardwood-integration-test
 
       - name: 'Run integration tests (with libdeflate)'
         if: ${{ matrix.install_libdeflate && !matrix.enable_incubating }}
-        run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED"
+        run: ./mvnw -B verify -pl :hardwood-error-prone-checks,:hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED"
 
       - name: 'Run integration tests (with incubating APIs)'
         if: ${{ matrix.install_libdeflate && matrix.enable_incubating }}
-        run: ./mvnw -B verify -pl :hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector"
+        run: ./mvnw -B verify -pl :hardwood-error-prone-checks,:hardwood-integration-test -Dlibdeflate.required=true -DargLine="--enable-native-access=ALL-UNNAMED --add-modules jdk.incubator.vector"
 
   # Verify the native CLI build on PRs
   native-build-check:
@@ -429,4 +429,4 @@ jobs:
         # -DskipSurefire=true skips the JVM @QuarkusMainTest suite (already run
         # in the `build-cli` job); Failsafe still runs the native smoke ITs during
         # integration-test.
-        run: ./mvnw -ntp -B -Dnative verify -pl cli -DskipSurefire=true
+        run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-error-prone-checks,:hardwood-cli -DskipSurefire=true

@@ -66,12 +66,26 @@
         <configuration>
           <annotationProcessorPaths>
             <path>
+              <groupId>com.google.errorprone</groupId>
+              <artifactId>error_prone_core</artifactId>
+              <version>${error-prone.version}</version>
+            </path>
+            <path>
+              <groupId>dev.hardwood</groupId>
+              <artifactId>hardwood-error-prone-checks</artifactId>
+              <version>${project.version}</version>
+            </path>
+            <path>
               <groupId>org.openjdk.jmh</groupId>
               <artifactId>jmh-generator-annprocess</artifactId>
               <version>${jmh.version}</version>
             </path>
           </annotationProcessorPaths>
           <compilerArgs>
+            <arg>-XDcompilePolicy=simple</arg>
+            <arg>--should-stop=ifError=FLOW</arg>
+            <arg>-Xplugin:ErrorProne -XepDisableAllChecks -Xep:NoVar:ERROR -Xep:NoLegacyJavadoc:ERROR</arg>
+            <arg>-XDaddTypeAnnotationsToSymbol=true</arg>
             <arg>--add-modules</arg>
             <arg>jdk.incubator.vector</arg>
           </compilerArgs>

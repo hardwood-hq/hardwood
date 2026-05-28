@@ -63,7 +63,7 @@ jobs:
           cache: maven
 
       - name: 'Build Native Image'
-        run: ./mvnw -ntp -B -Dnative package -pl cli -am -DskipTests "-Ddist.qualifier=${{ inputs.release-version }}"
+        run: ./mvnw -ntp -B -Dnative package -pl :hardwood-error-prone-checks,:hardwood-cli -am -DskipTests "-Ddist.qualifier=${{ inputs.release-version }}"
 
       - name: 'Upload build artifact (tar.gz)'
         if: ${{ runner.os != 'Windows' }}
