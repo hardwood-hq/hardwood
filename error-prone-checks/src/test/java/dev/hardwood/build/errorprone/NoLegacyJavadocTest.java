@@ -22,7 +22,7 @@ final class NoLegacyJavadocTest {
                 .addSourceLines(
                         "src/main/java/dev/hardwood/Test.java",
                         "package dev.hardwood;",
-                        "// BUG: Diagnostic contains: CLAUDE.md:47.",
+                        "// BUG: Diagnostic contains: Markdown",
                         "/**",
                         " * Legacy JavaDoc.",
                         " */",
@@ -44,10 +44,24 @@ final class NoLegacyJavadocTest {
     }
 
     @Test
-    void ignoresSourcesOutsideConventionalJavaRoots() {
+    void rejectsLegacyJavadocInMultiReleaseSourceRoot() {
         compilationHelper
                 .addSourceLines(
                         "src/main/java22/dev/hardwood/Test.java",
+                        "package dev.hardwood;",
+                        "// BUG: Diagnostic contains: Markdown",
+                        "/**",
+                        " * Legacy JavaDoc.",
+                        " */",
+                        "final class Test {}")
+                .doTest();
+    }
+
+    @Test
+    void ignoresSourcesOutsideConventionalJavaRoots() {
+        compilationHelper
+                .addSourceLines(
+                        "target/generated-sources/annotations/dev/hardwood/Test.java",
                         "package dev.hardwood;",
                         "/**",
                         " * Legacy JavaDoc.",

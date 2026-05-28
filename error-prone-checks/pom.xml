@@ -89,20 +89,16 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
-          <argLine>
-            --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED
-            --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
-            --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
-          </argLine>
+          <!-- Reuse the Maven JVM's jdk.compiler exports/opens; CompilationTestHelper invokes javac in-process. -->
+          <argLine>@${maven.multiModuleProjectDirectory}/.mvn/jvm.config</argLine>
         </configuration>
       </plugin>
+      <!--
+        Install this artifact at the `package` phase (not the default `install` phase) so
+        that later modules in the same reactor can resolve it as an annotation processor
+        via maven-compiler-plugin's `<annotationProcessorPaths>`. Annotation processor
+        paths are looked up from the local Maven repository, not from the in-flight reactor.
+      -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-install-plugin</artifactId>

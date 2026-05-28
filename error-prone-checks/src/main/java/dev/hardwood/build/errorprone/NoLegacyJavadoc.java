@@ -21,7 +21,7 @@ import com.sun.tools.javac.tree.JCTree;
 @AutoService(BugChecker.class)
 @BugPattern(
         name = "NoLegacyJavadoc",
-        summary = "JavaDoc must use Markdown /// syntax, not /** */; see CLAUDE.md:47.",
+        summary = "JavaDoc must use Markdown /// syntax, not /** */; see CLAUDE.md.",
         severity = BugPattern.SeverityLevel.ERROR)
 public final class NoLegacyJavadoc extends BugChecker implements BugChecker.CompilationUnitTreeMatcher {
 

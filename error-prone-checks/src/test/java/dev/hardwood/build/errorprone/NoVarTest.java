@@ -23,7 +23,7 @@ final class NoVarTest {
                         "package dev.hardwood;",
                         "final class Test {",
                         "  void test() {",
-                        "    // BUG: Diagnostic contains: Do not use var; see CLAUDE.md:40.",
+                        "    // BUG: Diagnostic contains: Do not use var",
                         "    var value = \"value\";",
                         "  }",
                         "}")
@@ -39,7 +39,7 @@ final class NoVarTest {
                         "import java.util.List;",
                         "final class Test {",
                         "  void test(List<String> values) {",
-                        "    // BUG: Diagnostic contains: Do not use var; see CLAUDE.md:40.",
+                        "    // BUG: Diagnostic contains: Do not use var",
                         "    for (var value : values) {",
                         "      value.length();",
                         "    }",
@@ -57,7 +57,7 @@ final class NoVarTest {
                         "import java.io.StringReader;",
                         "final class Test {",
                         "  void test() throws Exception {",
-                        "    // BUG: Diagnostic contains: Do not use var; see CLAUDE.md:40.",
+                        "    // BUG: Diagnostic contains: Do not use var",
                         "    try (var reader = new StringReader(\"value\")) {",
                         "      reader.read();",
                         "    }",
@@ -84,10 +84,25 @@ final class NoVarTest {
     }
 
     @Test
-    void ignoresSourcesOutsideConventionalJavaRoots() {
+    void rejectsLocalVariableTypeInferenceInMultiReleaseSourceRoot() {
         compilationHelper
                 .addSourceLines(
                         "src/main/java22/dev/hardwood/Test.java",
+                        "package dev.hardwood;",
+                        "final class Test {",
+                        "  void test() {",
+                        "    // BUG: Diagnostic contains: Do not use var",
+                        "    var value = \"value\";",
+                        "  }",
+                        "}")
+                .doTest();
+    }
+
+    @Test
+    void ignoresSourcesOutsideConventionalJavaRoots() {
+        compilationHelper
+                .addSourceLines(
+                        "target/generated-sources/annotations/dev/hardwood/Test.java",
                         "package dev.hardwood;",
                         "final class Test {",
                         "  void test() {",

@@ -37,14 +37,14 @@ Avoid fully-qualified class names within the code, always add imports.
 Avoid object access and boxing as much as possible. Always prefer primitive access also if it means several similar methods.
 Before writing new code, search for existing patterns in the same class/package that accomplish the same thing (e.g., the DRY principle). Extract repeated logic into helper methods within the same class rather than duplicating it. When a pattern appears multiple times, consider consolidating it into a single well-named method with overloads if needed.
 Be conservative with base class refactoring. Do not pull implementation details up into abstract base classes unless the logic is truly identical across all subclasses with no foreseeable divergence. Shared helpers are better than shared template methods when subclasses may need different control flow.
-Never use `var` syntax.
+Never use `var` syntax. Enforced by the `NoVar` Error Prone check in `error-prone-checks/`.
 GitHub Actions should always referenced by SHA.
 
 # Documentation
 
 User-facing docs (`docs/content/*.md` and public-API JavaDoc) describe **what the API does and how to use it**. Do not include rationale for design decisions, comparisons to other internal APIs, or "we chose X to match Y" justifications — users don't need to know why two parts of the project share a convention, only that they do. Design rationale belongs in `_designs/*.md` (audience: maintainers and reviewers); user docs describe the end state directly.
 
-All JavaDoc comments must use Markdown `///` syntax (JEP 467), not the legacy `/** */` block comment style.
+All JavaDoc comments must use Markdown `///` syntax (JEP 467), not the legacy `/** */` block comment style. Enforced by the `NoLegacyJavadoc` Error Prone check in `error-prone-checks/`.
 Key rules for `///` Markdown JavaDoc:
 - Use backtick-fenced code blocks (e.g. ` ```java `) instead of `<pre>{@code ...}</pre>`.
 - Use `[ClassName]` reference links instead of `{@link ClassName}`.

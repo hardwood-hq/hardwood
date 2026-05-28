@@ -13,6 +13,7 @@ import java.util.Map;
 import org.apache.parquet.example.data.Group;
 import org.apache.parquet.io.api.Binary;
 import org.apache.parquet.schema.GroupType;
+import org.apache.parquet.schema.OriginalType;
 import org.apache.parquet.schema.Type;
 
 import dev.hardwood.reader.RowReader;
@@ -114,14 +115,13 @@ public class SimpleGroup extends Group {
     }
 
     private boolean isListType(GroupType groupType) {
-        org.apache.parquet.schema.OriginalType originalType = groupType.getOriginalType();
-        return originalType == org.apache.parquet.schema.OriginalType.LIST;
+        OriginalType originalType = groupType.getOriginalType();
+        return originalType == OriginalType.LIST;
     }
 
     private boolean isMapType(GroupType groupType) {
-        org.apache.parquet.schema.OriginalType originalType = groupType.getOriginalType();
-        return originalType == org.apache.parquet.schema.OriginalType.MAP
-                || originalType == org.apache.parquet.schema.OriginalType.MAP_KEY_VALUE;
+        OriginalType originalType = groupType.getOriginalType();
+        return originalType == OriginalType.MAP || originalType == OriginalType.MAP_KEY_VALUE;
     }
 
     private Object capturePrimitiveFromRowReader(RowReader rowReader, String fieldName, Type fieldType) {

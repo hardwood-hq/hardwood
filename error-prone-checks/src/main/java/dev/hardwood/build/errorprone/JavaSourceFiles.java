@@ -7,17 +7,18 @@
  */
 package dev.hardwood.build.errorprone;
 
+import java.util.regex.Pattern;
+
 import com.google.errorprone.VisitorState;
 
 final class JavaSourceFiles {
 
-    private static final String MAIN_JAVA = "/src/main/java/";
-    private static final String TEST_JAVA = "/src/test/java/";
+    private static final Pattern CONVENTIONAL_SOURCE_ROOT = Pattern.compile("/src/(main|test)/java\\d*/");
 
     private JavaSourceFiles() {}
 
     static boolean isConventionalJavaSource(VisitorState state) {
         String path = state.getPath().getCompilationUnit().getSourceFile().toUri().getPath().replace('\\', '/');
-        return path.contains(MAIN_JAVA) || path.contains(TEST_JAVA);
+        return CONVENTIONAL_SOURCE_ROOT.matcher(path).find();
     }
 }

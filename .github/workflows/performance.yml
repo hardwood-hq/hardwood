@@ -88,4 +88,4 @@ jobs:
           MAVEN_OPTS: '--add-modules jdk.incubator.vector'
           PERF_RUNS: ${{ inputs.perf_runs || '5' }}
           TESTS: ${{ inputs.tests || 'FlatPerformanceTest,NestedPerformanceTest' }}
-        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-error-prone-checks,:hardwood-performance-testing -amd -Dperf.start="$PERF_START" -Dperf.end="$PERF_END" -Dperf.runs="$PERF_RUNS" -Dtest="$TESTS" -Dsurefire.failIfNoSpecifiedTests=false
+        run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start="$PERF_START" -Dperf.end="$PERF_END" -Dperf.runs="$PERF_RUNS" -Dtest="$TESTS" -Dsurefire.failIfNoSpecifiedTests=false
