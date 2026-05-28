@@ -106,19 +106,23 @@ public class FileSchema {
         throw new IllegalArgumentException("Field not found: " + name);
     }
 
-    /// Returns true if this schema supports direct columnar access.
-    /// For such schemas, enabling direct columnar access without record assembly.
+    /// Returns true if this schema supports the flat row reader path.
     ///
-    /// A schema supports columnar access if all top-level fields are primitives
-    /// (no nested structs, lists, or maps) and no columns have repetition.
+    /// A schema is considered flat if:
+    /// - No column has a repetition level greater than 0 (no repeated columns, lists, or maps)
+    /// - No top-level or nested field is annotated as a Variant
+    ///
+    /// Flat schemas enable direct columnar access without record assembly overhead.
+    /// Non-repeated structs at any nesting depth are supported on the flat path.
     public boolean isFlatSchema() {
-        // Check that all top-level fields are primitives (no nested structs)
+        // variant columns are to be handled by NestedRowReader
         for (SchemaNode child : rootNode.children()) {
-            if (child instanceof SchemaNode.GroupNode) {
+            if (hasVariant(child)) {
                 return false;
             }
         }
-        // Also check repetition levels
+
+        // Check repetition levels
         for (ColumnSchema col : columns) {
             if (col.maxRepetitionLevel() > 0) {
                 return false;
@@ -370,5 +374,18 @@ public class FileSchema {
                 sb.append(";\n");
             }
         }
+    }
+
+    private static boolean hasVariant(SchemaNode node) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode p -> false;
+            case SchemaNode.GroupNode g -> {
+                if (g.isVariant()) yield true;
+                for (SchemaNode child : g.children()) {
+                    if (hasVariant(child)) yield true;
+                }
+                yield false;
+            }
+        };
     }
 }

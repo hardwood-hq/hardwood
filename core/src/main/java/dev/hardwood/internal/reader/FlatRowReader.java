@@ -65,11 +65,10 @@ public final class FlatRowReader implements RowReader {
     private final int columnCount;
 
     // Schema info for name lookup and logical type conversion
-    private final FileSchema fileSchema;
-    private final ProjectedSchema projectedSchema;
     private final StringToIntMap nameToIndex;
     private final PhysicalType[] physicalTypes;
     private final ColumnSchema[] columnSchemas;
+    private final TopLevelFieldMap fieldMap;
 
     // Hot fields — directly owned, no inheritance.
     // `flatValidity[col]` is a packed bitmap (set bit = leaf is present); the
@@ -130,6 +129,10 @@ public final class FlatRowReader implements RowReader {
     // File name from the current batch — used for exception enrichment
     private String currentFileName;
 
+    private int[][] flatDefLevels;
+
+    private boolean hasStructFields;
+
     public FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, FlatColumnWorker[] columnWorkers,
                          FileSchema fileSchema, ProjectedSchema projectedSchema,
                          boolean drainSide, int wordsLen, MergePlan mergePlan, long maxMatchedRows) {
@@ -137,8 +140,6 @@ public final class FlatRowReader implements RowReader {
         this.exchanges = exchanges;
         this.columnWorkers = columnWorkers;
         this.columnCount = exchanges.length;
-        this.fileSchema = fileSchema;
-        this.projectedSchema = projectedSchema;
         this.flatValueArrays = new Object[columnCount];
         this.flatValidity = new long[columnCount][];
         this.previousBatches = new BatchExchange.Batch[columnCount];
@@ -154,17 +155,23 @@ public final class FlatRowReader implements RowReader {
         this.perColumnMatches = needsOwnedBuffer ? new long[columnCount][] : null;
         this.referencedColumns = needsOwnedBuffer ? referencedColumns(mergePlan, columnCount) : null;
 
+        this.fieldMap = TopLevelFieldMap.build(fileSchema, projectedSchema);
         // Build name-to-index map and cache column metadata
         this.nameToIndex = new StringToIntMap(columnCount);
         this.physicalTypes = new PhysicalType[columnCount];
         this.columnSchemas = new ColumnSchema[columnCount];
+        for (int i = 0; i < fieldMap.topLevelFieldCount(); i++) {
+            nameToIndex.put(fieldMap.getByProjectedIndex(i).name(), i);
+        }
         for (int i = 0; i < columnCount; i++) {
             int originalIndex = projectedSchema.toOriginalIndex(i);
             ColumnSchema col = fileSchema.getColumn(originalIndex);
-            nameToIndex.put(col.name(), i);
             physicalTypes[i] = col.type();
             columnSchemas[i] = col;
         }
+        this.flatDefLevels = new int[columnCount][];
+        // cache this value so that fieldMap is not accessed every time
+        this.hasStructFields = fieldMap.hasStructFields();
     }
 
     /// Eagerly loads the first batch. Must be called after construction.
@@ -269,10 +276,11 @@ public final class FlatRowReader implements RowReader {
             return reader;
         }
         if (filter != null) {
-            // Indexed compile path: for flat schemas, every leaf column is also
-            // a top-level field, and the reader's `getInt(int)` etc. take a
-            // projected leaf-column index. Map directly through the projection.
-            RowMatcher matcher = RecordFilterCompiler.compile(filter, schema, projectedSchema::toProjectedIndex);
+            // Indexed compile path: for flat schemas, the reader's `getInt(int)` etc.
+            // take a top-level field index. Map original column index to field index
+            // via the field map (for schemas with structs, leaf columns are not
+            // top-level fields).
+            RowMatcher matcher = RecordFilterCompiler.compile(filter, schema, reader.fieldMap::topLevelFieldIndexForColumn);
             return new FilteredRowReader(reader, matcher, maxRows);
         }
         return reader;
@@ -397,47 +405,65 @@ public final class FlatRowReader implements RowReader {
     // ==================== Null Check ====================
 
     @Override
-    public boolean isNull(int columnIndex) {
-        return (flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L;
+    public boolean isNull(int fieldIndex) {
+        TopLevelFieldMap.FieldDesc desc = fieldMap.getByProjectedIndex(fieldIndex);
+        if (desc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc) {
+            return isStructNull(structDesc);
+        }
+        else if (desc instanceof TopLevelFieldMap.FieldDesc.Primitive prim) {
+            return !isValid(prim.projectedCol(), rowIndex);
+        }
+        throw new IllegalArgumentException("Field at index " + fieldIndex + " is not a primitive or struct");
     }
 
     @Override
     public boolean isNull(String name) {
-        return isNull(resolveIndex(name));
+        TopLevelFieldMap.FieldDesc desc = fieldMap.getByName(name);
+        if (desc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc) {
+            return isStructNull(structDesc);
+        }
+        else if((desc instanceof TopLevelFieldMap.FieldDesc.Primitive)) {
+            return isNull(resolveIndex(name));
+        }
+
+        throw new IllegalArgumentException("Field '" + name + "' is not a primitive or struct");
     }
 
     // ==================== Primitive Accessors by Index ====================
 
     @Override
-    public int getInt(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
-            throwNull(columnIndex);
+    public int getInt(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
+            throwNull(fieldIndex);
         }
-        return ((int[]) flatValueArrays[columnIndex])[rowIndex];
+        return ((int[]) flatValueArrays[projCol])[rowIndex];
     }
 
     @Override
-    public long getLong(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
-            throwNull(columnIndex);
+    public long getLong(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
+            throwNull(fieldIndex);
         }
-        return ((long[]) flatValueArrays[columnIndex])[rowIndex];
+        return ((long[]) flatValueArrays[projCol])[rowIndex];
     }
 
     @Override
     public float getFloat(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
+        int projCol = resolvePrimitiveProjCol(columnIndex);
+        if(!isValid(projCol, rowIndex)) {
             throwNull(columnIndex);
         }
-        if (physicalTypes[columnIndex] == PhysicalType.FLOAT) {
-            return ((float[]) flatValueArrays[columnIndex])[rowIndex];
+        if (physicalTypes[projCol] == PhysicalType.FLOAT) {
+            return ((float[]) flatValueArrays[projCol])[rowIndex];
         }
         // FLOAT16 surfaces as FIXED_LEN_BYTE_ARRAY(2) annotated Float16Type;
         // convertToFloat16 owns the physical-type and 2-byte-width validation.
         try {
             return LogicalTypeConverter.convertToFloat16(
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
-                    physicalTypes[columnIndex]);
+                    ((BinaryBatchValues) flatValueArrays[projCol]).byteArrayAt(rowIndex),
+                    physicalTypes[projCol]);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -445,19 +471,21 @@ public final class FlatRowReader implements RowReader {
     }
 
     @Override
-    public double getDouble(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
-            throwNull(columnIndex);
+    public double getDouble(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
+            throwNull(fieldIndex);
         }
-        return ((double[]) flatValueArrays[columnIndex])[rowIndex];
+        return ((double[]) flatValueArrays[projCol])[rowIndex];
     }
 
     @Override
-    public boolean getBoolean(int columnIndex) {
-        if ((flatValidity[columnIndex][rowIndex >>> 6] & (1L << rowIndex)) == 0L) {
-            throwNull(columnIndex);
+    public boolean getBoolean(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
+            throwNull(fieldIndex);
         }
-        return ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
+        return ((boolean[]) flatValueArrays[projCol])[rowIndex];
     }
 
     // ==================== Primitive Accessors by Name ====================
@@ -490,11 +518,12 @@ public final class FlatRowReader implements RowReader {
     // ==================== String / Binary ====================
 
     @Override
-    public String getString(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public String getString(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
             return null;
         }
-        return ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
+        return ((BinaryBatchValues) flatValueArrays[projCol]).stringAt(rowIndex);
     }
 
     @Override
@@ -503,11 +532,12 @@ public final class FlatRowReader implements RowReader {
     }
 
     @Override
-    public byte[] getBinary(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public byte[] getBinary(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
             return null;
         }
-        return ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
+        return ((BinaryBatchValues) flatValueArrays[projCol]).byteArrayAt(rowIndex);
     }
 
     @Override
@@ -518,13 +548,14 @@ public final class FlatRowReader implements RowReader {
     // ==================== Logical Type Accessors ====================
 
     @Override
-    public LocalDate getDate(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public LocalDate getDate(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
             return null;
         }
-        int rawValue = ((int[]) flatValueArrays[columnIndex])[rowIndex];
+        int rawValue = ((int[]) flatValueArrays[projCol])[rowIndex];
         try {
-            return LogicalTypeConverter.convertToDate(rawValue, physicalTypes[columnIndex]);
+            return LogicalTypeConverter.convertToDate(rawValue, physicalTypes[projCol]);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -537,17 +568,18 @@ public final class FlatRowReader implements RowReader {
     }
 
     @Override
-    public LocalTime getTime(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public LocalTime getTime(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = columnSchemas[projCol];
         Object rawValue;
         if (col.type() == PhysicalType.INT32) {
-            rawValue = ((int[]) flatValueArrays[columnIndex])[rowIndex];
+            rawValue = ((int[]) flatValueArrays[projCol])[rowIndex];
         }
         else {
-            rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
+            rawValue = ((long[]) flatValueArrays[projCol])[rowIndex];
         }
         try {
             return LogicalTypeConverter.convertToTime(rawValue, col.type(),
@@ -564,18 +596,19 @@ public final class FlatRowReader implements RowReader {
     }
 
     @Override
-    public Instant getTimestamp(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public Instant getTimestamp(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = columnSchemas[projCol];
         try {
             if (col.type() == PhysicalType.INT96) {
-                byte[] rawValue = ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
+                byte[] rawValue = ((BinaryBatchValues) flatValueArrays[projCol]).byteArrayAt(rowIndex);
                 return LogicalTypeConverter.int96ToInstant(rawValue);
             }
             TimestampAccessorKind.require(col.name(), col.logicalType(), true);
-            long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
+            long rawValue = ((long[]) flatValueArrays[projCol])[rowIndex];
             return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(),
                     (LogicalType.TimestampType) col.logicalType());
         }
@@ -612,16 +645,17 @@ public final class FlatRowReader implements RowReader {
     }
 
     @Override
-    public BigDecimal getDecimal(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public BigDecimal getDecimal(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
+        ColumnSchema col = columnSchemas[projCol];
         Object rawValue = switch (col.type()) {
-            case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
-            case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
+            case INT32 -> ((int[]) flatValueArrays[projCol])[rowIndex];
+            case INT64 -> ((long[]) flatValueArrays[projCol])[rowIndex];
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY ->
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
+                    ((BinaryBatchValues) flatValueArrays[projCol]).byteArrayAt(rowIndex);
             default -> throw new IllegalArgumentException(prefix()
                     + "Unexpected physical type for DECIMAL: " + col.type());
         };
@@ -640,14 +674,15 @@ public final class FlatRowReader implements RowReader {
     }
 
     @Override
-    public UUID getUuid(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public UUID getUuid(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
             return null;
         }
         try {
             return LogicalTypeConverter.convertToUuid(
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
-                    physicalTypes[columnIndex]);
+                    ((BinaryBatchValues) flatValueArrays[projCol]).byteArrayAt(rowIndex),
+                    physicalTypes[projCol]);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -660,14 +695,15 @@ public final class FlatRowReader implements RowReader {
     }
 
     @Override
-    public PqInterval getInterval(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public PqInterval getInterval(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
             return null;
         }
         try {
             return LogicalTypeConverter.convertToInterval(
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex),
-                    physicalTypes[columnIndex]);
+                    ((BinaryBatchValues) flatValueArrays[projCol]).byteArrayAt(rowIndex),
+                    physicalTypes[projCol]);
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(currentFileName, e);
@@ -682,71 +718,142 @@ public final class FlatRowReader implements RowReader {
     // ==================== Generic Value ====================
 
     @Override
-    public Object getValue(int columnIndex) {
-        Object raw = getRawValue(columnIndex);
-        if (raw == null) {
-            return null;
+    public Object getValue(int fieldIndex) {
+        TopLevelFieldMap.FieldDesc desc = fieldMap.getByProjectedIndex(fieldIndex);
+        if (desc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc) {
+            if (isStructNull(structDesc)) {
+                return null;
+            }
+            return new FlatPqStructImpl(flatValueArrays, flatValidity, flatDefLevels, structDesc, rowIndex);
         }
-        ColumnSchema col = columnSchemas[columnIndex];
-        if (physicalTypes[columnIndex] == PhysicalType.INT96) {
-            // INT96 has no LogicalType but is conventionally a TIMESTAMP.
-            return LogicalTypeConverter.int96ToInstant((byte[]) raw);
+        else if (desc instanceof TopLevelFieldMap.FieldDesc.Primitive prim) {
+            return getValueByProjCol(prim.projectedCol());
         }
-        LogicalType lt = col.logicalType();
-        if (lt == null) {
-            return raw;
-        }
-        return LogicalTypeConverter.convert(raw, physicalTypes[columnIndex], lt);
+        throw new IllegalArgumentException("Field index out of range: " + fieldIndex);
     }
 
     @Override
     public Object getValue(String name) {
-        return getValue(resolveIndex(name));
+        TopLevelFieldMap.FieldDesc desc = fieldMap.getByName(name);
+        if (desc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc) {
+            if (isStructNull(structDesc)) {
+                return null;
+            }
+            return new FlatPqStructImpl(flatValueArrays, flatValidity, flatDefLevels, structDesc, rowIndex);
+        }
+        else if (desc instanceof TopLevelFieldMap.FieldDesc.Primitive prim) {
+            return getValueByProjCol(prim.projectedCol());
+        }
+        throw new IllegalArgumentException("Field '" + name + "' is not a primitive or struct");
+    }
+
+    private Object getValueByProjCol(int projCol) {
+        Object raw = getRawValue(projCol);
+        if (raw == null) return null;
+        ColumnSchema col = columnSchemas[projCol];
+        if (physicalTypes[projCol] == PhysicalType.INT96) {
+            return LogicalTypeConverter.int96ToInstant((byte[]) raw);
+        }
+        LogicalType lt = col.logicalType();
+        if (lt == null) return raw;
+        return LogicalTypeConverter.convert(raw, physicalTypes[projCol], lt);
     }
 
     @Override
-    public Object getRawValue(int columnIndex) {
-        if (isNull(columnIndex)) {
+    public Object getRawValue(int fieldIndex) {
+        int projCol = resolvePrimitiveProjCol(fieldIndex);
+        if(!isValid(projCol, rowIndex)) {
             return null;
         }
-        return switch (physicalTypes[columnIndex]) {
-            case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
-            case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
-            case FLOAT -> ((float[]) flatValueArrays[columnIndex])[rowIndex];
-            case DOUBLE -> ((double[]) flatValueArrays[columnIndex])[rowIndex];
-            case BOOLEAN -> ((boolean[]) flatValueArrays[columnIndex])[rowIndex];
+        return switch (physicalTypes[projCol]) {
+            case INT32 -> ((int[]) flatValueArrays[projCol])[rowIndex];
+            case INT64 -> ((long[]) flatValueArrays[projCol])[rowIndex];
+            case FLOAT -> ((float[]) flatValueArrays[projCol])[rowIndex];
+            case DOUBLE -> ((double[]) flatValueArrays[projCol])[rowIndex];
+            case BOOLEAN -> ((boolean[]) flatValueArrays[projCol])[rowIndex];
             case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY, INT96 ->
-                    ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
+                    ((BinaryBatchValues) flatValueArrays[projCol]).byteArrayAt(rowIndex);
         };
     }
 
     @Override
     public Object getRawValue(String name) {
-        return getRawValue(resolveIndex(name));
+        TopLevelFieldMap.FieldDesc desc = fieldMap.getByName(name);
+        if (desc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc) {
+            if (isStructNull(structDesc)) {
+                return null;
+            }
+            return new FlatPqStructImpl(flatValueArrays, flatValidity, flatDefLevels, structDesc, rowIndex);
+        }
+        else if (desc instanceof TopLevelFieldMap.FieldDesc.Primitive prim) {
+            return getRawValue(prim.projectedCol());
+        }
+        throw new IllegalArgumentException("Field '" + name + "' is not a primitive or struct");
+    }
+
+    @Override
+    public PqStruct getStruct(String name) {
+        TopLevelFieldMap.FieldDesc desc = fieldMap.getByName(name);
+        if(!(desc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
+            throw new IllegalArgumentException("Field " + name + " is not a struct.");
+        }
+        if (isStructNull(structDesc)) {
+            return null;
+        }
+        return new FlatPqStructImpl(flatValueArrays, flatValidity, flatDefLevels, structDesc, rowIndex);
+    }
+
+    @Override public PqStruct getStruct(int i) {
+        TopLevelFieldMap.FieldDesc desc = fieldMap.getByProjectedIndex(i);
+        if (desc == null) {
+            throw new IllegalArgumentException("Field index out of range: " + i);
+        }
+        if(!(desc instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
+            throw new IllegalArgumentException("Field " + desc.name() + " is not a struct.");
+        }
+        if (isStructNull(structDesc)) {
+            return null;
+        }
+        return new FlatPqStructImpl(flatValueArrays, flatValidity, flatDefLevels, structDesc, rowIndex);
     }
 
     // ==================== Nested (not supported for flat) ====================
 
-    @Override public PqStruct getStruct(String name) { throw nestedUnsupported(); }
-    @Override public PqStruct getStruct(int i) { throw nestedUnsupported(); }
-    @Override public PqList getList(String name) { throw nestedUnsupported(); }
-    @Override public PqList getList(int i) { throw nestedUnsupported(); }
-    @Override public PqMap getMap(String name) { throw nestedUnsupported(); }
-    @Override public PqMap getMap(int i) { throw nestedUnsupported(); }
-    @Override public PqVariant getVariant(String name) { throw nestedUnsupported(); }
-    @Override public PqVariant getVariant(int i) { throw nestedUnsupported(); }
+
+    @Override public PqList getList(String name) {
+        throw nestedUnsupported();
+    }
+
+    @Override public PqList getList(int i) {
+        throw nestedUnsupported();
+    }
+
+    @Override public PqMap getMap(String name) {
+        throw nestedUnsupported();
+    }
+
+    @Override public PqMap getMap(int i) {
+        throw nestedUnsupported();
+    }
+
+    @Override public PqVariant getVariant(String name) {
+        throw nestedUnsupported();
+    }
+
+    @Override public PqVariant getVariant(int i) {
+        throw nestedUnsupported();
+    }
 
     // ==================== Metadata ====================
 
     @Override
     public int getFieldCount() {
-        return columnCount;
+        return fieldMap.topLevelFieldCount();
     }
 
     @Override
     public String getFieldName(int index) {
-        int originalIndex = projectedSchema.toOriginalIndex(index);
-        return fileSchema.getColumn(originalIndex).name();
+        return fieldMap.getByProjectedIndex(index).name();
     }
 
     // ==================== Batch Loading ====================
@@ -791,7 +898,11 @@ public final class FlatRowReader implements RowReader {
                 batchSize = batch.recordCount;
                 currentFileName = batch.fileName;
             }
+
+            // populate def levels for the column
+            flatDefLevels[i] = batch.defLevels;
         }
+
         rowIndex = -1;
         if (drainSide) {
             intersectMatches();
@@ -902,6 +1013,38 @@ public final class FlatRowReader implements RowReader {
     private void throwNull(int columnIndex) {
         String name = getFieldName(columnIndex);
         throw new NullPointerException(prefix() + "Column '" + name + "' is null at row " + rowIndex);
+    }
+
+    private int resolvePrimitiveProjCol(int fieldIndex) {
+        if (!this.hasStructFields) {
+            return fieldIndex;
+        }
+
+        TopLevelFieldMap.FieldDesc desc = fieldMap.getByProjectedIndex(fieldIndex);
+        if (!(desc instanceof TopLevelFieldMap.FieldDesc.Primitive prim)) {
+            throw new IllegalArgumentException("Field at index " + fieldIndex + " is not a primitive");
+        }
+        return prim.projectedCol();
+    }
+
+    private boolean isValid(int projCol, int rowIndex) {
+        return (flatValidity[projCol][rowIndex >>> 6] & (1L << (rowIndex & 63))) != 0;
+    }
+
+    private int getFirstProjectedColumn(TopLevelFieldMap.FieldDesc.Struct structDesc) {
+        int checkCol = structDesc.firstPrimitiveCol() >= 0
+                ? structDesc.firstPrimitiveCol()
+                : structDesc.firstLeafProjCol();
+
+        return checkCol;
+    }
+
+    private int getDefLevel(int projCol) {
+        return flatDefLevels[projCol] != null ? flatDefLevels[projCol][rowIndex] : Integer.MAX_VALUE;
+    }
+
+    private boolean isStructNull(TopLevelFieldMap.FieldDesc.Struct structDesc) {
+        return getDefLevel(getFirstProjectedColumn(structDesc)) < structDesc.schema().maxDefinitionLevel();
     }
 
     private static UnsupportedOperationException nestedUnsupported() {
