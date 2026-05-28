@@ -28,6 +28,12 @@ import static org.junit.jupiter.api.Assertions.assertNull;
 
 class BatchFilterCompilerTest {
 
+    private static ColumnBatchMatcher[] compileMatchers(ResolvedPredicate predicate, FileSchema schema,
+            IntUnaryOperator projection) {
+        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(predicate, schema, projection);
+        return compiled == null ? null : compiled.columnMatchers();
+    }
+
     private static FileSchema schema(SchemaElement... columns) {
         SchemaElement root = new SchemaElement("root", null, null, null, columns.length,
                 null, null, null, null, null);
@@ -53,7 +59,7 @@ class BatchFilterCompilerTest {
                 new ResolvedPredicate.DoublePredicate(1, Operator.LT, 500.0)
         ));
 
-        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = compileMatchers(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);
@@ -67,7 +73,7 @@ class BatchFilterCompilerTest {
         FileSchema schema = schema(leaf("id", PhysicalType.INT64));
         ResolvedPredicate predicate = new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L);
 
-        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = compileMatchers(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);
@@ -80,7 +86,7 @@ class BatchFilterCompilerTest {
         FileSchema schema = schema(leaf("flag", PhysicalType.BOOLEAN));
         ResolvedPredicate predicate = new ResolvedPredicate.BooleanPredicate(0, Operator.EQ, true);
 
-        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = compileMatchers(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);
@@ -93,7 +99,7 @@ class BatchFilterCompilerTest {
         FileSchema schema = schema(leaf("id", PhysicalType.INT64));
         ResolvedPredicate predicate = new ResolvedPredicate.LongInPredicate(0, new long[]{1L, 2L, 3L});
 
-        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = compileMatchers(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);
@@ -106,7 +112,7 @@ class BatchFilterCompilerTest {
         FileSchema schema = schema(leaf("id", PhysicalType.INT64));
         ResolvedPredicate predicate = new ResolvedPredicate.IsNullPredicate(0);
 
-        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = compileMatchers(
                 predicate, schema, IntUnaryOperator.identity());
 
         assertNotNull(result);
@@ -116,16 +122,6 @@ class BatchFilterCompilerTest {
 
     @Nested
     class IneligibleShapes {
-
-        @Test
-        void or_atRoot_returnsNull() {
-            FileSchema schema = longDoubleSchema();
-            ResolvedPredicate predicate = new ResolvedPredicate.Or(List.of(
-                    new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
-                    new ResolvedPredicate.DoublePredicate(1, Operator.LT, 500.0)
-            ));
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
-        }
 
         @Test
         void andWithNestedAnd_isFlattenedAndCompiles() {
@@ -138,23 +134,10 @@ class BatchFilterCompilerTest {
                             new ResolvedPredicate.DoublePredicate(1, Operator.LT, 500.0)
                     ))
             ));
-            ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
+            ColumnBatchMatcher[] result = compileMatchers(
                     predicate, schema, IntUnaryOperator.identity());
             assertNotNull(result);
             assertEquals(2, result.length);
-        }
-
-        @Test
-        void andWithOrChild_returnsNull() {
-            FileSchema schema = longDoubleSchema();
-            ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
-                    new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
-                    new ResolvedPredicate.Or(List.of(
-                            new ResolvedPredicate.DoublePredicate(1, Operator.LT, 500.0),
-                            new ResolvedPredicate.DoublePredicate(1, Operator.GT, 1000.0)
-                    ))
-            ));
-            assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 
         @Test
@@ -213,10 +196,116 @@ class BatchFilterCompilerTest {
                 new ResolvedPredicate.LongPredicate(0, Operator.GT_EQ, 5L),
                 new ResolvedPredicate.LongPredicate(0, Operator.LT_EQ, 100L)
         ));
-        ColumnBatchMatcher[] result = BatchFilterCompiler.tryCompile(
+        ColumnBatchMatcher[] result = compileMatchers(
                 predicate, schema, IntUnaryOperator.identity());
         assertNotNull(result);
         assertEquals(1, result.length);
         assertInstanceOf(AndBatchMatcher.class, result[0]);
+    }
+
+    @Test
+    void twoLeavesOnSameColumn_underOr_composeIntoOrMatcher() {
+        // Same-column OR: `id < -5 OR id > 5` folds into a single OrBatchMatcher
+        // in one column slot, and the MergePlan is a single Column node.
+        FileSchema schema = schema(leaf("id", PhysicalType.INT64));
+        ResolvedPredicate predicate = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.LongPredicate(0, Operator.LT, -5L),
+                new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L)
+        ));
+        CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+        assertNotNull(result);
+        assertEquals(1, result.columnMatchers().length);
+        assertInstanceOf(OrBatchMatcher.class, result.columnMatchers()[0]);
+        assertInstanceOf(MergePlan.Column.class, result.mergePlan());
+    }
+
+    @Test
+    void orOfLongAndDoubleLeaves_compilesAsOr() {
+        FileSchema schema = longDoubleSchema();
+        ResolvedPredicate predicate = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
+                new ResolvedPredicate.DoublePredicate(1, Operator.LT, 500.0)
+        ));
+        CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+        assertNotNull(result);
+        assertInstanceOf(LongBatchMatcher.class, result.columnMatchers()[0]);
+        assertInstanceOf(DoubleBatchMatcher.class, result.columnMatchers()[1]);
+        assertInstanceOf(MergePlan.Or.class, result.mergePlan());
+    }
+
+    @Test
+    void andOfLeafAndOrOnDistinctColumn_compilesAsMixedTree() {
+        // `id > 5 AND (value < 0 OR value > 1000)` — the OR subtree is fully
+        // contained on the `value` column and folds into a single OrBatchMatcher
+        // slot, while the outer AND becomes a MergePlan.And.
+        FileSchema schema = longDoubleSchema();
+        ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
+                new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
+                new ResolvedPredicate.Or(List.of(
+                        new ResolvedPredicate.DoublePredicate(1, Operator.LT, 0.0),
+                        new ResolvedPredicate.DoublePredicate(1, Operator.GT, 1000.0)
+                ))
+        ));
+        CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+        assertNotNull(result);
+        assertInstanceOf(LongBatchMatcher.class, result.columnMatchers()[0]);
+        assertInstanceOf(OrBatchMatcher.class, result.columnMatchers()[1]);
+        assertInstanceOf(MergePlan.And.class, result.mergePlan());
+    }
+
+    @Test
+    void andWithSingleMixedChild_compilesAsThatChildsCombine() {
+        // ResolvedPredicate.And/Or accept a single child (only empty is rejected).
+        // A 1-child And wrapping a mixed-column Or is semantically the Or itself;
+        // ensure the compiler unwraps rather than producing a 1-element compound
+        // (which throws "requires at least two children").
+        FileSchema schema = longDoubleSchema();
+        ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
+                new ResolvedPredicate.Or(List.of(
+                        new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
+                        new ResolvedPredicate.DoublePredicate(1, Operator.LT, 0.0)))
+        ));
+        CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+        assertNotNull(result);
+        assertInstanceOf(MergePlan.Or.class, result.mergePlan());
+    }
+
+    @Test
+    void andWithSingleSameColumnChild_compilesAsSingleColumn() {
+        // 1-child And wrapping a same-column Or (`id < -5 OR id > 5`) should
+        // unwrap to that subtree's single-column composite — no MergePlan.And
+        // wrapper, since it would have only one child.
+        FileSchema schema = schema(leaf("id", PhysicalType.INT64));
+        ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
+                new ResolvedPredicate.Or(List.of(
+                        new ResolvedPredicate.LongPredicate(0, Operator.LT, -5L),
+                        new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L)))
+        ));
+        CompiledBatchFilter result = BatchFilterCompiler.tryCompile(
+                predicate, schema, IntUnaryOperator.identity());
+        assertNotNull(result);
+        assertInstanceOf(OrBatchMatcher.class, result.columnMatchers()[0]);
+        assertInstanceOf(MergePlan.Column.class, result.mergePlan());
+    }
+
+    @Test
+    void columnAppearingInTwoSiblingSubtrees_returnsNull() {
+        // (a > 5 AND b > 5) OR (a < 0 AND b < 0): column `a` lives in both OR
+        // branches. The per-column matcher model can't carry two distinct
+        // predicates for `a`, so the compile rejects.
+        FileSchema schema = longDoubleSchema();
+        ResolvedPredicate predicate = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.And(List.of(
+                        new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
+                        new ResolvedPredicate.DoublePredicate(1, Operator.GT, 5.0))),
+                new ResolvedPredicate.And(List.of(
+                        new ResolvedPredicate.LongPredicate(0, Operator.LT, 0L),
+                        new ResolvedPredicate.DoublePredicate(1, Operator.LT, 0.0)))
+        ));
+        assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
     }
 }

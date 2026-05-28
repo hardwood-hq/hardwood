@@ -206,6 +206,80 @@ class DrainSideOracleTest {
         assertSurvivorsAgree(p, w);
     }
 
+    // ---------- OR / mixed AND-OR coverage ----------
+
+    @Test
+    void orSameColumn_bothWaysAgree() {
+        Workload w = workload(0x05A1ECE);
+        ResolvedPredicate p = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.LongPredicate(COL_ID, Operator.LT, -5L),
+                new ResolvedPredicate.LongPredicate(COL_ID, Operator.GT, 5L)
+        ));
+        assertSurvivorsAgree(p, w);
+    }
+
+    @ParameterizedTest(name = "or(id {0} 100, value {1} 0.5)")
+    @MethodSource("opPairs")
+    void orOfLongAndDouble_bothWaysAgree(Operator opA, Operator opB) {
+        Workload w = workload(0x07ED7);
+        ResolvedPredicate p = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.LongPredicate(COL_ID, opA, 100L),
+                new ResolvedPredicate.DoublePredicate(COL_VALUE, opB, 0.5)
+        ));
+        assertSurvivorsAgree(p, w);
+    }
+
+    @Test
+    void orOfIntAndBoolean_bothWaysAgree() {
+        Workload w = workload(0x017E50);
+        ResolvedPredicate p = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.IntPredicate(COL_TAG, Operator.GT, 0),
+                new ResolvedPredicate.BooleanPredicate(COL_FLAG, Operator.EQ, true)
+        ));
+        assertSurvivorsAgree(p, w);
+    }
+
+    @Test
+    void andOfLeafAndOrOnDistinctColumn_bothWaysAgree() {
+        // `id > 0 AND (value < 0 OR value > 0.5)` — exercises mixed AND/OR with
+        // the OR subtree folding into a same-column OrBatchMatcher.
+        Workload w = workload(0xA10C04);
+        ResolvedPredicate p = new ResolvedPredicate.And(List.of(
+                new ResolvedPredicate.LongPredicate(COL_ID, Operator.GT, 0L),
+                new ResolvedPredicate.Or(List.of(
+                        new ResolvedPredicate.DoublePredicate(COL_VALUE, Operator.LT, 0.0),
+                        new ResolvedPredicate.DoublePredicate(COL_VALUE, Operator.GT, 0.5)
+                ))
+        ));
+        assertSurvivorsAgree(p, w);
+    }
+
+    @Test
+    void orOfAndAndLeafOnDistinctColumns_bothWaysAgree() {
+        // `(id > 0 AND value > 0) OR tag < 0` — cross-column AND inside an OR
+        // beside a leaf on a third column; the MergePlan is Or(And(...), leaf).
+        Workload w = workload(0x07AC1);
+        ResolvedPredicate p = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.And(List.of(
+                        new ResolvedPredicate.LongPredicate(COL_ID, Operator.GT, 0L),
+                        new ResolvedPredicate.DoublePredicate(COL_VALUE, Operator.GT, 0.0))),
+                new ResolvedPredicate.IntPredicate(COL_TAG, Operator.LT, 0)
+        ));
+        assertSurvivorsAgree(p, w);
+    }
+
+    @Test
+    void orWithIsNotNullSibling_bothWaysAgree() {
+        // Mixes a null-check leaf into the OR — the matcher and MergePlan
+        // both have to respect "definitely matches" semantics.
+        Workload w = workload(0x05077);
+        ResolvedPredicate p = new ResolvedPredicate.Or(List.of(
+                new ResolvedPredicate.LongPredicate(COL_ID, Operator.EQ, 100L),
+                new ResolvedPredicate.IsNullPredicate(COL_VALUE)
+        ));
+        assertSurvivorsAgree(p, w);
+    }
+
     private static Stream<Arguments> opPairs() {
         Operator[] ops = Operator.values();
         List<Arguments> pairs = new ArrayList<>();
@@ -244,9 +318,9 @@ class DrainSideOracleTest {
     }
 
     private static BitSet drainSideSurvivors(ResolvedPredicate predicate, Workload w) {
-        ColumnBatchMatcher[] fragments = BatchFilterCompiler.tryCompile(predicate, w.schema,
+        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(predicate, w.schema,
                 w.projection::toProjectedIndex);
-        if (fragments == null) {
+        if (compiled == null) {
             // Predicate not eligible for drain-side compilation. Callers in this file
             // intentionally use eligible predicates, so `assertSurvivorsAgree` will
             // fail loudly on a null return rather than silently skipping.
@@ -254,31 +328,25 @@ class DrainSideOracleTest {
         }
 
         int wordsLen = (N + 63) >>> 6;
-        long[] combined = new long[wordsLen];
-        boolean initialised = false;
-        for (int col = 0; col < fragments.length; col++) {
-            ColumnBatchMatcher m = fragments[col];
+        long[][] perColumn = new long[compiled.columnMatchers().length][];
+        for (int col = 0; col < compiled.columnMatchers().length; col++) {
+            ColumnBatchMatcher m = compiled.columnMatchers()[col];
             if (m == null) {
                 continue;
             }
-            BatchExchange.Batch batch = w.batch(col);
             long[] colWords = new long[wordsLen];
-            m.test(batch, colWords);
-            if (!initialised) {
-                System.arraycopy(colWords, 0, combined, 0, wordsLen);
-                initialised = true;
-            }
-            else {
-                for (int wi = 0; wi < wordsLen; wi++) {
-                    combined[wi] &= colWords[wi];
-                }
-            }
+            m.test(w.batch(col), colWords);
+            perColumn[col] = colWords;
         }
-        if (!initialised) {
-            // No fragments installed — universal "all-ones" up to N.
-            for (int i = 0; i < N; i++) {
-                combined[i >>> 6] |= 1L << i;
-            }
+
+        long[] combined = new long[wordsLen];
+        MergePlan plan = compiled.mergePlan();
+        if (plan instanceof MergePlan.Column c) {
+            // Mirror the production single-column fast path (aliasing).
+            System.arraycopy(perColumn[c.projectedIndex()], 0, combined, 0, wordsLen);
+        }
+        else {
+            new MergePlanEvaluator(wordsLen).eval(plan, combined, wordsLen, perColumn);
         }
 
         BitSet out = new BitSet(N);

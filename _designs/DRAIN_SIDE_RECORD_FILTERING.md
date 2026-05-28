@@ -26,12 +26,7 @@ Eligible queries take the drain-side path; ineligible queries fall back to `Filt
 
 ## Eligibility
 
-A `ResolvedPredicate` is **eligible** iff:
-
-- It is either a single column-local leaf, or `ResolvedPredicate.And(children)` whose children are all column-local leaves, and
-- Every leaf has `(type, op)` supported by `BatchFilterCompiler`.
-
-Multiple leaves on the same projected column are allowed and compose via `AndBatchMatcher` (see below).
+A `ResolvedPredicate` is **eligible** iff every leaf in the tree is column-local and supported, and no column appears in more than one independent subtree. `And` and `Or` may nest freely.
 
 A leaf is **column-local** iff:
 
@@ -39,17 +34,27 @@ A leaf is **column-local** iff:
 - Its column maps to a non-negative projected index, and
 - Its `(type, op)` is one of: `long` / `double` / `int` / `float` × `{EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ}`, `boolean` × `{EQ, NOT_EQ}`, `IntIn` / `LongIn`, `IsNull` / `IsNotNull`.
 
-`Or`, `Not`, intermediate-struct paths, geospatial predicates, `Binary*` leaves, and any leaf on a fragment-less column make the entire query non-eligible. Multiple leaves on the same column (e.g. `id >= x AND id <= y`) are folded into a single `AndBatchMatcher` per column that runs both children and word-AND merges their bitmaps. A dedicated fused range matcher would be tighter, but the general composite already moves the `range` shape onto the drain-side path.
+`Not` is lowered to leaf-level operator inversion at resolution time (`ResolvedPredicate.negate`, De Morgan for compounds), so the batch compiler only sees `And` / `Or`. Intermediate-struct paths, geospatial predicates, `Binary*` leaves, and any leaf on a fragment-less column make the entire query non-eligible.
 
-Per-column composition is enforced positionally: `BatchFilterCompiler.tryCompile` allocates a `ColumnBatchMatcher[]` slot per projected column index and folds any further leaf for that column into an `AndBatchMatcher` over the existing slot occupant:
+The compiler walks the predicate tree bottom-up:
 
-```java
-result[projected] = result[projected] == null
-        ? matcher
-        : new AndBatchMatcher(result[projected], matcher);
-```
+- A subtree that lives entirely on one projected column collapses into a single `ColumnBatchMatcher` slot. Same-column leaves under an `And` chain through `AndBatchMatcher`; under an `Or` they chain through `OrBatchMatcher`. `id >= x AND id <= y` and `id < -5 OR id > 5` both end up as one composite in one column slot.
+- A subtree that spans multiple columns produces a `MergePlan` (`And` / `Or`) whose children are either `MergePlan.Column(projectedIndex)` references — for child subtrees that resolved to a single column — or nested merge plans.
 
-`AndBatchMatcher` runs both children against the same batch, writing the first child's bits into the caller's `outWords` and the second into a per-instance scratch buffer, then word-ANDs the active range. The composite is type-agnostic — both children handle their own `batch.values` cast.
+`tryCompile` returns a `CompiledBatchFilter(columnMatchers[], mergePlan)`: per-projected-column matcher slots (workers populate `Batch.matches` from these) plus a `MergePlan` the consumer walks to merge the per-column bitmaps. A subtree where the **same** column appears across two independent siblings (e.g. `(a > 5 AND b > 5) OR (a < 0 AND b < 0)`, where column `a` would need two different per-row predicates encoded in one `matches` array) is rejected — the per-column matcher model cannot represent it.
+
+### Why `Or` is safe under "definitely matches" semantics
+
+Each matcher emits bit `i` set iff row `i` **definitely** satisfies the leaf (NULL → unset). For `WHERE A OR B` under SQL three-valued logic, the row should be included iff `A OR B` is definitely true:
+
+| A     | B     | `A OR B` (SQL) | `def(A) \| def(B)` |
+|-------|-------|----------------|-------------------:|
+| true  | true  | true           | 1 ✓                |
+| true  | null  | true           | 1 ✓                |
+| false | null  | null → exclude | 0 ✓                |
+| null  | null  | null → exclude | 0 ✓                |
+
+Word-wise OR of the existing per-leaf bitmaps is the correct combine for both `OrBatchMatcher` (within one column) and the `MergePlan.Or` consumer walk (across columns) — no auxiliary null tracking, no extra passes.
 
 There is no separate leaf-count gate. The v1 prototype carried an `if (leaves.size() < 2) return null;` short-circuit on the theory that single-fragment queries pay drain-side overhead with no parallelism payoff; in practice the single-leaf drain-side path is within noise of the compiled path on the end-to-end benchmark (see the `single` row in the table below) and strictly wins once a matcher gains a vectorised body, so the gate was removed.
 
@@ -63,7 +68,7 @@ Sealed interface representing a per-column fragment over a single batch:
 public sealed interface ColumnBatchMatcher
         permits LongBatchMatcher, DoubleBatchMatcher, IntBatchMatcher,
                 FloatBatchMatcher, BooleanBatchMatcher, NullBatchMatcher,
-                AndBatchMatcher {
+                AndBatchMatcher, OrBatchMatcher {
     void test(BatchExchange.Batch batch, long[] outWords);
 }
 ```
@@ -110,7 +115,7 @@ Key shape choices:
 - **Hoisted `literal`, `recordCount`, `fullWords`, `tail`.** The inner `for (b = 0; b < 64; b++)` is a constant-bound loop that the JIT unrolls.
 - **`nulls == null` specialised outside the per-word loops.** One branch per call, not per element.
 
-NULL semantics: each fragment writes "definitely matches" — false on NULL. Word-wise AND of per-column matches gives SQL three-valued AND because any `unknown` conjunct unsets the bit. This contract does not generalise to OR-spanning-columns; that case is excluded by the eligibility rule.
+NULL semantics: each fragment writes "definitely matches" — false on NULL. Word-wise AND of per-column matches gives SQL three-valued AND because any `unknown` conjunct unsets the bit; the same contract handles OR cleanly via word-wise OR (see the truth table under [Eligibility](#why-or-is-safe-under-definitely-matches-semantics)).
 
 `Null*BatchMatcher` short-circuits the per-bit loop entirely — `IsNullBatchMatcher.test` bulk-copies `nulls.toLongArray()`; `IsNotNullBatchMatcher.test` bulk-inverts the same. Like the typed matchers, bits past `recordCount` are left as-is and filtered by the consumer's `bit < limit` check.
 
@@ -132,50 +137,41 @@ Cost is paid on the drain thread, on hot data, in parallel with peer drains. Whe
 
 ---
 
-## Intersection and iteration in `FlatRowReader`
+## Combine and iteration in `FlatRowReader`
 
-`FlatRowReader.create` calls `BatchFilterCompiler.tryCompile`. A non-null result drives the drain-side path; otherwise the existing branch (`FilteredRowReader` if a filter is set, plain reader if not) is used.
+`FlatRowReader.create` calls `BatchFilterCompiler.tryCompile`. A non-null `CompiledBatchFilter` drives the drain-side path; otherwise the existing branch (`FilteredRowReader` if a filter is set, plain reader if not) is used.
 
 The reader gains:
 
 - `long[] combinedWords` — the per-batch combined match mask.
-- `int[] fragmentColumns` — the projected indices of columns with a fragment, computed once at construction. Iterating this array in the hot path avoids the per-batch null check on `Batch.matches`.
+- `MergePlan mergePlan` — the consumer-side plan returned by the compiler. A top-level `MergePlan.Column` is the single-column fast path; everything else is evaluated by a shared evaluator (below).
+- `MergePlanEvaluator mergeEvaluator` — owns the depth-indexed scratch pool used by compound subtrees. Constructed once per reader; reused across all batches (zero allocations after warm-up).
+- `long[][] perColumnMatches` — preallocated `long[columnCount][]` whose entries are reseated each batch from `previousBatches[i].matches` and passed to the evaluator. Avoids coupling `MergePlanEvaluator` to the reader's `BatchExchange.Batch` type.
 
 `loadNextBatch`, after polling all column batches and when `drainSide` is true, calls `intersectMatches`:
 
 ```java
 private void intersectMatches() {
-    BatchExchange.Batch[] batches = previousBatches;
-
-    // Single-column fast path: nothing to AND-merge. Alias the batch's matches
-    // directly; no copy, no owned combinedWords buffer needed.
-    if (filteredColumns.length == 1) {
-        combinedWords = batches[filteredColumns[0]].matches;
+    // Single-column fast path: alias the batch's matches array directly.
+    // No copy, no evaluator call, no owned combinedWords buffer needed.
+    if (mergePlan instanceof MergePlan.Column c) {
+        combinedWords = previousBatches[c.projectedIndex()].matches;
         return;
     }
-
-    int activeWords = (batchSize + 63) >>> 6;
-    long[] combined = combinedWords;
-    long[] first = batches[filteredColumns[0]].matches;
-    System.arraycopy(first, 0, combined, 0, activeWords);
-
-    // Track an OR across merged words: as soon as a highly-selective column
-    // drives the intersection to all-zero, skip the remaining columns'
-    // AND-passes — the batch is already known to produce no rows.
-    for (int col = 1; col < filteredColumns.length; col++) {
-        long[] matches = batches[filteredColumns[col]].matches;
-        long anyBit = 0L;
-        for (int w = 0; w < activeWords; w++) {
-            long merged = combined[w] & matches[w];
-            combined[w] = merged;
-            anyBit |= merged;
-        }
-        if (anyBit == 0L) {
-            return;
-        }
+    // Multi-column: snapshot per-column matches references for this batch
+    // (one pointer per column — references shared, no data copied), then
+    // hand off to the shared evaluator.
+    for (int i = 0; i < columnCount; i++) {
+        perColumnMatches[i] = previousBatches[i].matches;
     }
+    int activeWords = (batchSize + 63) >>> 6;
+    mergeEvaluator.eval(mergePlan, combinedWords, activeWords, perColumnMatches);
 }
 ```
+
+`MergePlanEvaluator.eval` is a recursive walk: a `Column` node arraycopies the column's bitmap into the output; an `And` node merges its children word-wise with the same all-zero short-circuit the previous shape used (skipping later children once the intersection collapses); an `Or` node word-ORs. Column children of an And/Or bypass scratch and merge directly from their `matches` array; only compound children get a depth-indexed scratch buffer. Sibling frames at the same depth reuse one buffer (their lives don't overlap), but a frame at depth+1 gets a distinct buffer (depth's is still in use). Pool entries persist across calls.
+
+The evaluator is also used by `DrainSideOracleTest`'s drain-side path so the two implementations of the merge semantics can't drift; the oracle's independence comes from the **per-row** compile path (`RecordFilterCompiler` + `RowMatcher.test`), not from a duplicate evaluator.
 
 Only the words covering `[0, batchSize)` are touched — bits past `batchSize` are not read by the consumer (`nextSetBit` is bounded), so leaving them stale is safe and avoids the trailing zero-fill the original shape paid every batch.
 
@@ -289,24 +285,6 @@ One read of `vals[]`, one bitmap, no intersect. Strictly cheaper than two single
 **Payoff.** Unlocks the `Page+record`-shaped predicate (the most common compound after match-all in real workloads — `id BETWEEN a AND b AND value op c`). The benchmark's `range` row should move from the "fallback" pile into the "drain wins" pile.
 
 **Difficulty.** Low. Two new matcher classes plus a grouping pass in `BatchFilterCompiler.tryCompile`. No changes to drain plumbing or intersect logic.
-
-### Cross-column `Or` (`or`, `nested`)
-
-**Why it falls back today.** Two stacked reasons:
-
-1. **Intersect helper is AND-only.** `FlatRowReader.intersectMatches` does `combined[w] &= m[w]`. A cross-column OR would need word-wise `|`. The structural change is small but the helper currently has no notion of "this query is an OR."
-2. **Bitmap can't represent NULL distinctly.** Each `BatchMatcher` writes "definitely matches" — bit unset means either "doesn't match" or "is null." That's correct for AND (SQL `null ∧ x` is false; an unset bit gives the same result). For OR it's wrong: `null ∨ true` is `true`, but the bitmap encoding can't distinguish a null 0-bit from a non-match 0-bit, so cross-column OR would silently drop rows that should pass via the non-null disjunct.
-
-**What to build.** Either:
-
-- **Two-bit-per-row encoding**: alongside `matches`, carry `notNull` per column. Word-wise: `combined = (notNull0 & matches0) | (notNull1 & matches1)`. Doubles the bitmap memory and adds one AND per column per word, but expressively complete.
-- **Per-column tri-state**: `matches` semantics flip to "true / false / unknown," with separate `definitelyTrue` / `definitelyFalse` long[]s. Cleaner three-valued semantics, but invasive — every matcher writes two outputs.
-
-The simpler path is `notNullWords` per column (which the codebase wants anyway for autovectorisation reasons — see below) plus a `BatchScan` that knows the predicate tree shape and chooses `&` vs `|` per node.
-
-**Payoff.** Unlocks `or` and any `nested` shape with column-spanning OR. The compiled per-row path's main remaining moat.
-
-**Difficulty.** Medium. The intersect change is mechanical; the NULL fix is plumbing across every matcher and the `Batch` type. Has to land on top of the `notNullWords` migration to be efficient.
 
 ### `BitSet nulls` → `long[] notNullWords`
 

@@ -32,6 +32,8 @@ import org.openjdk.jmh.infra.Blackhole;
 
 import dev.hardwood.internal.predicate.BatchFilterCompiler;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.predicate.CompiledBatchFilter;
+import dev.hardwood.internal.predicate.MergePlanEvaluator;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
@@ -85,11 +87,14 @@ public class RecordFilterMicroBenchmark {
     private StructAccessor[] rows;
     private RowMatcher compiled;
 
-    // Drain-side state — populated for eligible shapes (single, and2). null otherwise.
-    private ColumnBatchMatcher[] drainFragments;
+    // Drain-side state — populated whenever the predicate is drain-eligible.
+    private CompiledBatchFilter drainCompiled;
     private BatchExchange.Batch[] drainBatches;
     private long[] drainCombined;
-    private long[] drainColumnScratch; // reused per-column matches workspace
+    // Per-column match bitmaps, indexed by projected column; entries for
+    // columns with no matcher stay null. Reused across invocations.
+    private long[][] drainPerColumnMatches;
+    private MergePlanEvaluator drainMergeEvaluator;
 
     @Setup
     public void setup() {
@@ -99,13 +104,20 @@ public class RecordFilterMicroBenchmark {
         compiled = RecordFilterCompiler.compile(predicate, schema);
 
         ProjectedSchema projection = ProjectedSchema.create(schema, ColumnProjection.all());
-        drainFragments = BatchFilterCompiler.tryCompile(predicate, schema,
+        drainCompiled = BatchFilterCompiler.tryCompile(predicate, schema,
                 projection::toProjectedIndex);
-        if (drainFragments != null) {
-            drainBatches = buildDrainBatches(rows, drainFragments.length);
+        if (drainCompiled != null) {
+            ColumnBatchMatcher[] fragments = drainCompiled.columnMatchers();
+            drainBatches = buildDrainBatches(rows, fragments.length);
             int wordsLen = (BATCH_SIZE + 63) >>> 6;
             drainCombined = new long[wordsLen];
-            drainColumnScratch = new long[wordsLen];
+            drainPerColumnMatches = new long[fragments.length][];
+            for (int c = 0; c < fragments.length; c++) {
+                if (fragments[c] != null) {
+                    drainPerColumnMatches[c] = new long[wordsLen];
+                }
+            }
+            drainMergeEvaluator = new MergePlanEvaluator(wordsLen);
         }
     }
 
@@ -118,41 +130,35 @@ public class RecordFilterMicroBenchmark {
         }
     }
 
-    /// Drain-side variant: per-column [ColumnBatchMatcher] writes a long[] of matches,
-    /// the columns are intersected, surviving rows are iterated via
+    /// Drain-side variant: mirrors the production pipeline — per-column
+    /// [ColumnBatchMatcher]s write per-column long[] match bitmaps, then the
+    /// shared [MergePlanEvaluator] combines them via the compiled [MergePlan]
+    /// into one survivor mask. Surviving rows are then iterated via
     /// `Long.numberOfTrailingZeros`. Single-threaded — measures codegen quality
     /// against the value array, isolated from the parallelism story which
     /// requires the full reader pipeline.
     ///
-    /// Skipped (no-op) for shapes that are not eligible (`or2`, `nested`, `intIn*`,
-    /// and `and3`/`and4` because they include an INT32 leaf).
+    /// Skipped (no-op) only when the predicate isn't drain-eligible at all
+    /// (`BatchFilterCompiler.tryCompile` returns `null`).
     @Benchmark
     public void drainSide(Blackhole bh) {
-        ColumnBatchMatcher[] fragments = drainFragments;
-        if (fragments == null) {
-            return; // shape not eligible — see class javadoc.
+        CompiledBatchFilter cf = drainCompiled;
+        if (cf == null) {
+            return;
         }
+        ColumnBatchMatcher[] fragments = cf.columnMatchers();
         BatchExchange.Batch[] batches = drainBatches;
-        long[] combined = drainCombined;
-        long[] scratch = drainColumnScratch;
-
-        boolean initialised = false;
-        for (int col = 0; col < fragments.length; col++) {
-            ColumnBatchMatcher m = fragments[col];
-            if (m == null) {
-                continue;
-            }
-            m.test(batches[col], scratch);
-            if (!initialised) {
-                System.arraycopy(scratch, 0, combined, 0, combined.length);
-                initialised = true;
-            }
-            else {
-                for (int wi = 0; wi < combined.length; wi++) {
-                    combined[wi] &= scratch[wi];
-                }
+        long[][] perColumn = drainPerColumnMatches;
+        for (int c = 0; c < fragments.length; c++) {
+            ColumnBatchMatcher m = fragments[c];
+            if (m != null) {
+                m.test(batches[c], perColumn[c]);
             }
         }
+        long[] combined = drainCombined;
+        int activeWords = (BATCH_SIZE + 63) >>> 6;
+        drainMergeEvaluator.eval(cf.mergePlan(), combined, activeWords, perColumn);
+
         // Iterate surviving rows. Each call to Blackhole defeats DCE.
         int n = BATCH_SIZE;
         int rowIdx = -1;

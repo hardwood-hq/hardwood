@@ -26,6 +26,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.predicate.BatchFilterCompiler;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
+import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.reader.FilterPredicate;
@@ -163,6 +164,21 @@ class RecordFilterBenchmarkTest {
                         FilterPredicate.lt("value", 500.0)),
                 runs);
 
+        Run mixedAndOr = timeFilter(
+                // Outer AND narrows by `flag`, inner OR picks rows from either
+                // end of the `id`/`tag` distributions — three distinct columns
+                // so all branches stay drain-eligible. Roughly:
+                //   flag!=false: ~50%
+                //   (id<N/4 OR tag<25): id<N/4 is exactly 25%, tag<25 ~25% uniform,
+                //                       independent OR ≈ 43.75%
+                //   combined AND: ~22%
+                FilterPredicate.and(
+                        FilterPredicate.notEq("flag", false),
+                        FilterPredicate.or(
+                                FilterPredicate.lt("id", (long) (TOTAL_ROWS / 4)),
+                                FilterPredicate.lt("tag", 25))),
+                runs);
+
         Run rangeDup = timeFilter(
                 // Same-column range on `id` is not drain-eligible (duplicate column).
                 FilterPredicate.and(
@@ -203,7 +219,9 @@ class RecordFilterBenchmarkTest {
         System.out.println();
         printResults("Empty result (id<0 AND value<+inf)", empty, runs);
         System.out.println();
-        printResults("OR fallback (id<0 OR value<500)", orFilter, runs);
+        printResults("OR (id<0 OR value<500)", orFilter, runs);
+        System.out.println();
+        printResults("Mixed AND/OR (flag!=false AND (id<N/4 OR tag<25))", mixedAndOr, runs);
         System.out.println();
         printResults("Range+value (id BETWEEN 1M..2M)", rangeDup, runs);
         System.out.println();
@@ -243,6 +261,8 @@ class RecordFilterBenchmarkTest {
         assertThat(empty.rows[0]).isEqualTo(0L);
         // OR: id<0 is empty so the result is the value<500 half.
         assertThat(orFilter.rows[0]).isBetween((long) (TOTAL_ROWS * 0.4), (long) (TOTAL_ROWS * 0.6));
+        // Mixed AND/OR: expected ~22%; allow 15-30% to absorb tag's random jitter.
+        assertThat(mixedAndOr.rows[0]).isBetween((long) (TOTAL_ROWS * 0.15), (long) (TOTAL_ROWS * 0.30));
         assertThat(rangeDup.rows[0]).isEqualTo(1_000_000L);
         // intIn: 5 of 100 values, expect ~5%.
         assertThat(intIn.rows[0]).isBetween((long) (TOTAL_ROWS * 0.03), (long) (TOTAL_ROWS * 0.07));
@@ -284,12 +304,12 @@ class RecordFilterBenchmarkTest {
         }
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
         ProjectedSchema projected = ProjectedSchema.create(schema, ColumnProjection.all());
-        ColumnBatchMatcher[] matchers = BatchFilterCompiler.tryCompile(
+        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
                 resolved, schema, projected::toProjectedIndex);
-        if (matchers == null) {
+        if (compiled == null) {
             return PATH_CONSUMER;
         }
-        for (ColumnBatchMatcher matcher : matchers) {
+        for (ColumnBatchMatcher matcher : compiled.columnMatchers()) {
             if (matcher != null) {
                 return PATH_DRAIN;
             }
