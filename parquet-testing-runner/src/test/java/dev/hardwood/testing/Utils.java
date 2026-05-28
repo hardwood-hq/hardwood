@@ -21,6 +21,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.stream.Stream;
 
+import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 import org.apache.avro.util.Utf8;
@@ -913,7 +914,7 @@ public class Utils {
 
     /// Get reference value for a flat column from a GenericRecord.
     private static Object getRefColumnValue(GenericRecord record, String fieldName) {
-        var field = record.getSchema().getField(fieldName);
+        Schema.Field field = record.getSchema().getField(fieldName);
         if (field == null) {
             return SkipMarker.INSTANCE;
         }
@@ -921,9 +922,9 @@ public class Utils {
         if (value == null) {
             return null;
         }
-        var fieldSchema = field.schema();
+        Schema fieldSchema = field.schema();
         if (fieldSchema.getType() == org.apache.avro.Schema.Type.UNION) {
-            for (var subSchema : fieldSchema.getTypes()) {
+            for (Schema subSchema : fieldSchema.getTypes()) {
                 if (subSchema.getType() != org.apache.avro.Schema.Type.NULL) {
                     fieldSchema = subSchema;
                     break;
@@ -971,7 +972,7 @@ public class Utils {
 
     /// Get a value from the ColumnReader at a batch index, using the appropriate typed array.
     private static Object getColumnReaderValue(ColumnReader reader, int index) {
-        var colSchema = reader.getColumnSchema();
+        ColumnSchema colSchema = reader.getColumnSchema();
         return switch (colSchema.type()) {
             case INT32 -> reader.getInts()[index];
             case INT64 -> reader.getLongs()[index];

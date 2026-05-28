@@ -20,6 +20,7 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -32,29 +33,29 @@ public class MapSchemaTest {
         Path parquetFile = Paths.get("src/test/resources/simple_map_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            var schema = fileReader.getFileSchema();
-            var root = schema.getRootNode();
+            FileSchema schema = fileReader.getFileSchema();
+            SchemaNode.GroupNode root = schema.getRootNode();
 
             // Root should have 3 children: id, name, attributes
             assertThat(root.children()).hasSize(3);
 
             // Check attributes MAP
-            var attributesNode = root.children().get(2);
+            SchemaNode attributesNode = root.children().get(2);
             assertThat(attributesNode).isInstanceOf(SchemaNode.GroupNode.class);
-            var attributesGroup = (SchemaNode.GroupNode) attributesNode;
+            SchemaNode.GroupNode attributesGroup = (SchemaNode.GroupNode) attributesNode;
             assertThat(attributesGroup.name()).isEqualTo("attributes");
             assertThat(attributesGroup.isMap()).isTrue();
             assertThat(attributesGroup.convertedType()).isEqualTo(ConvertedType.MAP);
 
             // MAP has structure: attributes (MAP) -> key_value (REPEATED) -> key, value
             assertThat(attributesGroup.children()).hasSize(1);
-            var keyValueGroup = (SchemaNode.GroupNode) attributesGroup.children().get(0);
+            SchemaNode.GroupNode keyValueGroup = (SchemaNode.GroupNode) attributesGroup.children().get(0);
             assertThat(keyValueGroup.children()).hasSize(2); // key and value
 
-            var keyNode = (SchemaNode.PrimitiveNode) keyValueGroup.children().get(0);
+            SchemaNode.PrimitiveNode keyNode = (SchemaNode.PrimitiveNode) keyValueGroup.children().get(0);
             assertThat(keyNode.name()).isEqualTo("key");
 
-            var valueNode = (SchemaNode.PrimitiveNode) keyValueGroup.children().get(1);
+            SchemaNode.PrimitiveNode valueNode = (SchemaNode.PrimitiveNode) keyValueGroup.children().get(1);
             assertThat(valueNode.name()).isEqualTo("value");
         }
     }
@@ -122,24 +123,24 @@ public class MapSchemaTest {
         Path parquetFile = Paths.get("src/test/resources/map_of_maps_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            var schema = fileReader.getFileSchema();
-            var root = schema.getRootNode();
+            FileSchema schema = fileReader.getFileSchema();
+            SchemaNode.GroupNode root = schema.getRootNode();
 
             // Root should have 3 children: id, name, nested_map
             assertThat(root.children()).hasSize(3);
 
             // Check nested_map MAP<string, MAP<string, int32>>
-            var nestedMapNode = (SchemaNode.GroupNode) root.children().get(2);
+            SchemaNode.GroupNode nestedMapNode = (SchemaNode.GroupNode) root.children().get(2);
             assertThat(nestedMapNode.name()).isEqualTo("nested_map");
             assertThat(nestedMapNode.isMap()).isTrue();
 
             // Navigate to inner map
-            var outerKeyValue = (SchemaNode.GroupNode) nestedMapNode.children().get(0);
+            SchemaNode.GroupNode outerKeyValue = (SchemaNode.GroupNode) nestedMapNode.children().get(0);
             assertThat(outerKeyValue.children()).hasSize(2); // key and value
 
-            var valueNode = outerKeyValue.children().get(1);
+            SchemaNode valueNode = outerKeyValue.children().get(1);
             assertThat(valueNode).isInstanceOf(SchemaNode.GroupNode.class);
-            var innerMapGroup = (SchemaNode.GroupNode) valueNode;
+            SchemaNode.GroupNode innerMapGroup = (SchemaNode.GroupNode) valueNode;
             assertThat(innerMapGroup.isMap()).isTrue();
         }
     }

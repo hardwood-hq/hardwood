@@ -16,6 +16,7 @@ import org.junit.jupiter.api.Assumptions;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.compression.GzipDecompressor;
 import dev.hardwood.metadata.CompressionCodec;
@@ -111,7 +112,7 @@ class LibdeflateDecompressorIT {
     @Test
     void factorySelectsLibdeflateWhenAvailable() {
         DecompressorFactory factory = new DecompressorFactory(pool);
-        var decompressor = factory.getDecompressor(CompressionCodec.GZIP);
+        Decompressor decompressor = factory.getDecompressor(CompressionCodec.GZIP);
 
         assertThat(decompressor).isInstanceOf(LibdeflateDecompressor.class);
     }

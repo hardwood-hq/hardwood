@@ -13,6 +13,7 @@ import java.util.Map;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -98,7 +99,7 @@ class KeyValueMetadataTest {
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             RowGroup rowGroup = reader.getFileMetaData().rowGroups().get(0);
-            for (var chunk : rowGroup.columns()) {
+            for (ColumnChunk chunk : rowGroup.columns()) {
                 assertThat(chunk.metaData().keyValueMetadata()).isEmpty();
             }
         }

@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -25,7 +26,7 @@ public class LogicalTypesMetadataTest {
         Path parquetFile = Paths.get("src/test/resources/logical_types_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            var schema = fileReader.getFileSchema();
+            FileSchema schema = fileReader.getFileSchema();
 
             // Verify logical types are parsed correctly
             assertThat(schema.getColumn("name").logicalType()).isInstanceOf(
@@ -74,66 +75,66 @@ public class LogicalTypesMetadataTest {
                     LogicalType.BsonType.class);
 
             // Verify TIMESTAMP units are correctly parsed
-            var timestampMillis = (LogicalType.TimestampType) schema
+            LogicalType.TimestampType timestampMillis = (LogicalType.TimestampType) schema
                     .getColumn("created_at_millis").logicalType();
             assertThat(timestampMillis.unit()).isEqualTo(
                     LogicalType.TimestampType.TimeUnit.MILLIS);
             assertThat(timestampMillis.isAdjustedToUTC()).isTrue();
 
-            var timestampMicros = (LogicalType.TimestampType) schema
+            LogicalType.TimestampType timestampMicros = (LogicalType.TimestampType) schema
                     .getColumn("created_at_micros").logicalType();
             assertThat(timestampMicros.unit()).isEqualTo(
                     LogicalType.TimestampType.TimeUnit.MICROS);
             assertThat(timestampMicros.isAdjustedToUTC()).isTrue();
 
-            var timestampNanos = (LogicalType.TimestampType) schema
+            LogicalType.TimestampType timestampNanos = (LogicalType.TimestampType) schema
                     .getColumn("created_at_nanos").logicalType();
             assertThat(timestampNanos.unit()).isEqualTo(
                     LogicalType.TimestampType.TimeUnit.NANOS);
             assertThat(timestampNanos.isAdjustedToUTC()).isTrue();
 
             // Verify TIME units are correctly parsed
-            var timeMillis = (LogicalType.TimeType) schema
+            LogicalType.TimeType timeMillis = (LogicalType.TimeType) schema
                     .getColumn("wake_time_millis").logicalType();
             assertThat(timeMillis.unit()).isEqualTo(
                     LogicalType.TimeType.TimeUnit.MILLIS);
 
-            var timeMicros = (LogicalType.TimeType) schema
+            LogicalType.TimeType timeMicros = (LogicalType.TimeType) schema
                     .getColumn("wake_time_micros").logicalType();
             assertThat(timeMicros.unit()).isEqualTo(
                     LogicalType.TimeType.TimeUnit.MICROS);
 
-            var timeNanos = (LogicalType.TimeType) schema
+            LogicalType.TimeType timeNanos = (LogicalType.TimeType) schema
                     .getColumn("wake_time_nanos").logicalType();
             assertThat(timeNanos.unit()).isEqualTo(
                     LogicalType.TimeType.TimeUnit.NANOS);
 
-            var decimalType = (LogicalType.DecimalType) schema.getColumn("balance")
+            LogicalType.DecimalType decimalType = (LogicalType.DecimalType) schema.getColumn("balance")
                     .logicalType();
             assertThat(decimalType.scale()).isEqualTo(2);
             assertThat(decimalType.precision()).isEqualTo(10);
 
-            var intType = (LogicalType.IntType) schema.getColumn("tiny_int").logicalType();
+            LogicalType.IntType intType = (LogicalType.IntType) schema.getColumn("tiny_int").logicalType();
             assertThat(intType.bitWidth()).isEqualTo(8);
             assertThat(intType.isSigned()).isTrue();
 
             // Verify unsigned integer types
-            var tinyUintType = (LogicalType.IntType) schema.getColumn("tiny_uint")
+            LogicalType.IntType tinyUintType = (LogicalType.IntType) schema.getColumn("tiny_uint")
                     .logicalType();
             assertThat(tinyUintType.bitWidth()).isEqualTo(8);
             assertThat(tinyUintType.isSigned()).isFalse();
 
-            var smallUintType = (LogicalType.IntType) schema.getColumn("small_uint")
+            LogicalType.IntType smallUintType = (LogicalType.IntType) schema.getColumn("small_uint")
                     .logicalType();
             assertThat(smallUintType.bitWidth()).isEqualTo(16);
             assertThat(smallUintType.isSigned()).isFalse();
 
-            var mediumUintType = (LogicalType.IntType) schema.getColumn("medium_uint")
+            LogicalType.IntType mediumUintType = (LogicalType.IntType) schema.getColumn("medium_uint")
                     .logicalType();
             assertThat(mediumUintType.bitWidth()).isEqualTo(32);
             assertThat(mediumUintType.isSigned()).isFalse();
 
-            var bigUintType = (LogicalType.IntType) schema.getColumn("big_uint")
+            LogicalType.IntType bigUintType = (LogicalType.IntType) schema.getColumn("big_uint")
                     .logicalType();
             assertThat(bigUintType.bitWidth()).isEqualTo(64);
             assertThat(bigUintType.isSigned()).isFalse();
@@ -145,7 +146,7 @@ public class LogicalTypesMetadataTest {
         Path parquetFile = Paths.get("src/test/resources/interval_logical_type_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            var schema = fileReader.getFileSchema();
+            FileSchema schema = fileReader.getFileSchema();
             assertThat(schema.getColumn("duration").logicalType()).isInstanceOf(
                     LogicalType.IntervalType.class);
         }

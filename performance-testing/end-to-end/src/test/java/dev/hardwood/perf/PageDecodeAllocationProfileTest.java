@@ -84,7 +84,7 @@ public class PageDecodeAllocationProfileTest {
                 "File", "Pages", "Total Alloc", "Avg/Page", "Uncompressed");
         System.out.println("-".repeat(100));
 
-        for (var entry : allResults.entrySet()) {
+        for (Map.Entry<String, FileResult> entry : allResults.entrySet()) {
             FileResult r = entry.getValue();
             System.out.printf("%-45s %8d %11.1f KB %11.1f KB %11.1f KB%n",
                     entry.getKey(),
@@ -100,7 +100,7 @@ public class PageDecodeAllocationProfileTest {
         // Print allocation ratio (allocated / uncompressed data = overhead multiplier)
         System.out.printf("%-45s %8s %14s%n", "File", "Pages", "Alloc Ratio");
         System.out.println("-".repeat(70));
-        for (var entry : allResults.entrySet()) {
+        for (Map.Entry<String, FileResult> entry : allResults.entrySet()) {
             FileResult r = entry.getValue();
             double ratio = r.totalUncompressedBytes > 0
                     ? (double) r.totalAllocatedBytes / r.totalUncompressedBytes
@@ -215,7 +215,7 @@ public class PageDecodeAllocationProfileTest {
             totals[2]++;
         }
 
-        for (var entry : columnTotals.entrySet()) {
+        for (Map.Entry<String, long[]> entry : columnTotals.entrySet()) {
             long[] totals = entry.getValue();
             double ratio = totals[1] > 0 ? (double) totals[0] / totals[1] : 0;
             PageProfile sample = pageProfiles.stream()

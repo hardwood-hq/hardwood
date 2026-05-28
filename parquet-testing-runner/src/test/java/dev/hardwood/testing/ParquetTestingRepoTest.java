@@ -24,6 +24,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.schema.ColumnSchema;
 
 /// Test reading files from the apache/parquet-testing repository.
 /// This test helps identify which files we can currently parse.
@@ -154,7 +155,7 @@ class ParquetTestingRepoTest {
             // Read ALL columns using batch API to verify we can parse everything
             int totalValuesRead = 0;
             for (int colIdx = 0; colIdx < reader.getFileSchema().getColumnCount(); colIdx++) {
-                var column = reader.getFileSchema().getColumn(colIdx);
+                ColumnSchema column = reader.getFileSchema().getColumn(colIdx);
 
                 if (colIdx == 0) {
                     System.out.println("Column " + colIdx + ": " + column.name() + " (" + column.type() + ")");

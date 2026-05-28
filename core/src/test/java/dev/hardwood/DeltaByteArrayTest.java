@@ -12,6 +12,7 @@ import java.nio.file.Paths;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
@@ -31,8 +32,8 @@ class DeltaByteArrayTest {
 
             // Verify string columns use DELTA_BYTE_ARRAY encoding
             RowGroup rowGroup = reader.getFileMetaData().rowGroups().get(0);
-            var prefixColumn = rowGroup.columns().get(1); // prefix_strings is column 1
-            var varyingColumn = rowGroup.columns().get(2); // varying_strings is column 2
+            ColumnChunk prefixColumn = rowGroup.columns().get(1); // prefix_strings is column 1
+            ColumnChunk varyingColumn = rowGroup.columns().get(2); // varying_strings is column 2
             assertThat(prefixColumn.metaData().encodings())
                     .as("Column 'prefix_strings' should use DELTA_BYTE_ARRAY encoding")
                     .contains(Encoding.DELTA_BYTE_ARRAY);
