@@ -21,10 +21,25 @@
   <name>Hardwood Error Prone Checks</name>
 
   <properties>
+    <!-- javac rejects the release flag combined with add-exports on system modules. Clear the
+         parent's maven.compiler.release and fall back to source/target so the jdk.compiler
+         exports required by Error Prone's javac AST imports compile. -->
     <maven.compiler.release/>
     <maven.compiler.source>${java.version}</maven.compiler.source>
     <maven.compiler.target>${java.version}</maven.compiler.target>
   </properties>
+
+  <dependencyManagement>
+    <dependencies>
+      <dependency>
+        <groupId>dev.hardwood</groupId>
+        <artifactId>hardwood-test-bom</artifactId>
+        <version>${project.version}</version>
+        <type>pom</type>
+        <scope>import</scope>
+      </dependency>
+    </dependencies>
+  </dependencyManagement>
 
   <dependencies>
     <dependency>
@@ -46,14 +61,7 @@
     </dependency>
     <dependency>
       <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-api</artifactId>
-      <version>5.14.1</version>
-      <scope>test</scope>
-    </dependency>
-    <dependency>
-      <groupId>org.junit.jupiter</groupId>
-      <artifactId>junit-jupiter-engine</artifactId>
-      <version>5.14.1</version>
+      <artifactId>junit-jupiter</artifactId>
       <scope>test</scope>
     </dependency>
   </dependencies>
@@ -89,34 +97,23 @@
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-surefire-plugin</artifactId>
         <configuration>
-          <argLine>
-            --add-exports=jdk.compiler/com.sun.tools.javac.api=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.file=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.main=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.model=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.parser=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.processing=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.tree=ALL-UNNAMED
-            --add-exports=jdk.compiler/com.sun.tools.javac.util=ALL-UNNAMED
-            --add-opens=jdk.compiler/com.sun.tools.javac.code=ALL-UNNAMED
-            --add-opens=jdk.compiler/com.sun.tools.javac.comp=ALL-UNNAMED
-          </argLine>
+          <!-- Reuse the Maven JVM's jdk.compiler exports/opens; CompilationTestHelper invokes javac in-process. -->
+          <argLine>@${maven.multiModuleProjectDirectory}/.mvn/jvm.config</argLine>
         </configuration>
       </plugin>
       <plugin>
-        <groupId>org.apache.maven.plugins</groupId>
-        <artifactId>maven-install-plugin</artifactId>
-        <executions>
-          <execution>
-            <id>install-for-reactor-compiler-plugin-resolution</id>
-            <phase>package</phase>
-            <goals>
-              <goal>install</goal>
-            </goals>
-          </execution>
-        </executions>
+        <!-- The empty maven.compiler.release above leaves impsort's auto-detection blank, so
+             tell it the source level explicitly so it can parse text blocks. -->
+        <groupId>net.revelc.code</groupId>
+        <artifactId>impsort-maven-plugin</artifactId>
+        <configuration>
+          <compliance>${java.version}</compliance>
+        </configuration>
       </plugin>
       <plugin>
+        <!-- The empty maven.compiler.release crashes javadoc's offline-link auto-detection
+             (charAt(0) on empty string in getDefaultJavadocApiLink); skip the goal for this
+             build-only module. -->
         <groupId>org.apache.maven.plugins</groupId>
         <artifactId>maven-javadoc-plugin</artifactId>
         <configuration>
@@ -125,17 +122,4 @@
       </plugin>
     </plugins>
   </build>
-
-  <profiles>
-    <!-- Skip enforcer on Java 21 since this module only builds the Error Prone checks. -->
-    <profile>
-      <id>java21</id>
-      <activation>
-        <jdk>[21,25)</jdk>
-      </activation>
-      <properties>
-        <enforcer.skip>true</enforcer.skip>
-      </properties>
-    </profile>
-  </profiles>
 </project>

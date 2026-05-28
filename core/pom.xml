@@ -121,7 +121,7 @@
                 <compileSourceRoot>${project.basedir}/src/main/java22</compileSourceRoot>
               </compileSourceRoots>
               <multiReleaseOutput>true</multiReleaseOutput>
-              <compilerArgs>
+              <compilerArgs combine.children="append">
                 <arg>--add-modules</arg>
                 <arg>jdk.incubator.vector</arg>
               </compilerArgs>

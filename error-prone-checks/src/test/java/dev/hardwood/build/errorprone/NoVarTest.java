@@ -20,13 +20,15 @@ final class NoVarTest {
         compilationHelper
                 .addSourceLines(
                         "src/main/java/dev/hardwood/Test.java",
-                        "package dev.hardwood;",
-                        "final class Test {",
-                        "  void test() {",
-                        "    // BUG: Diagnostic contains: Do not use var; see CLAUDE.md:40.",
-                        "    var value = \"value\";",
-                        "  }",
-                        "}")
+                        """
+                        package dev.hardwood;
+                        final class Test {
+                          void test() {
+                            // BUG: Diagnostic contains: Do not use var
+                            var value = "value";
+                          }
+                        }
+                        """)
                 .doTest();
     }
 
@@ -35,16 +37,18 @@ final class NoVarTest {
         compilationHelper
                 .addSourceLines(
                         "src/test/java/dev/hardwood/Test.java",
-                        "package dev.hardwood;",
-                        "import java.util.List;",
-                        "final class Test {",
-                        "  void test(List<String> values) {",
-                        "    // BUG: Diagnostic contains: Do not use var; see CLAUDE.md:40.",
-                        "    for (var value : values) {",
-                        "      value.length();",
-                        "    }",
-                        "  }",
-                        "}")
+                        """
+                        package dev.hardwood;
+                        import java.util.List;
+                        final class Test {
+                          void test(List<String> values) {
+                            // BUG: Diagnostic contains: Do not use var
+                            for (var value : values) {
+                              value.length();
+                            }
+                          }
+                        }
+                        """)
                 .doTest();
     }
 
@@ -53,16 +57,18 @@ final class NoVarTest {
         compilationHelper
                 .addSourceLines(
                         "src/test/java/dev/hardwood/Test.java",
-                        "package dev.hardwood;",
-                        "import java.io.StringReader;",
-                        "final class Test {",
-                        "  void test() throws Exception {",
-                        "    // BUG: Diagnostic contains: Do not use var; see CLAUDE.md:40.",
-                        "    try (var reader = new StringReader(\"value\")) {",
-                        "      reader.read();",
-                        "    }",
-                        "  }",
-                        "}")
+                        """
+                        package dev.hardwood;
+                        import java.io.StringReader;
+                        final class Test {
+                          void test() throws Exception {
+                            // BUG: Diagnostic contains: Do not use var
+                            try (var reader = new StringReader("value")) {
+                              reader.read();
+                            }
+                          }
+                        }
+                        """)
                 .doTest();
     }
 
@@ -71,15 +77,34 @@ final class NoVarTest {
         compilationHelper
                 .addSourceLines(
                         "src/main/java/dev/hardwood/Test.java",
-                        "package dev.hardwood;",
-                        "final class Test {",
-                        "  void test() {",
-                        "    String value = \"var\";",
-                        "    // var is allowed in comments.",
-                        "    String var = value;",
-                        "    var.length();",
-                        "  }",
-                        "}")
+                        """
+                        package dev.hardwood;
+                        final class Test {
+                          void test() {
+                            String value = "var";
+                            // var is allowed in comments.
+                            String var = value;
+                            var.length();
+                          }
+                        }
+                        """)
+                .doTest();
+    }
+
+    @Test
+    void rejectsLocalVariableTypeInferenceInMultiReleaseSourceRoot() {
+        compilationHelper
+                .addSourceLines(
+                        "src/main/java22/dev/hardwood/Test.java",
+                        """
+                        package dev.hardwood;
+                        final class Test {
+                          void test() {
+                            // BUG: Diagnostic contains: Do not use var
+                            var value = "value";
+                          }
+                        }
+                        """)
                 .doTest();
     }
 
@@ -87,13 +112,15 @@ final class NoVarTest {
     void ignoresSourcesOutsideConventionalJavaRoots() {
         compilationHelper
                 .addSourceLines(
-                        "src/main/java22/dev/hardwood/Test.java",
-                        "package dev.hardwood;",
-                        "final class Test {",
-                        "  void test() {",
-                        "    var value = \"value\";",
-                        "  }",
-                        "}")
+                        "target/generated-sources/annotations/dev/hardwood/Test.java",
+                        """
+                        package dev.hardwood;
+                        final class Test {
+                          void test() {
+                            var value = "value";
+                          }
+                        }
+                        """)
                 .doTest();
     }
 }

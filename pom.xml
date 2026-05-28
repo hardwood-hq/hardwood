@@ -156,24 +156,6 @@
           <version>3.14.1</version>
           <configuration>
             <parameters>true</parameters>
-            <compilerArgs>
-              <arg>-XDcompilePolicy=simple</arg>
-              <arg>--should-stop=ifError=FLOW</arg>
-              <arg>-Xplugin:ErrorProne -XepDisableAllChecks -Xep:NoVar:ERROR -Xep:NoLegacyJavadoc:ERROR</arg>
-              <arg>-XDaddTypeAnnotationsToSymbol=true</arg>
-            </compilerArgs>
-            <annotationProcessorPaths>
-              <path>
-                <groupId>com.google.errorprone</groupId>
-                <artifactId>error_prone_core</artifactId>
-                <version>${error-prone.version}</version>
-              </path>
-              <path>
-                <groupId>dev.hardwood</groupId>
-                <artifactId>hardwood-error-prone-checks</artifactId>
-                <version>${project.version}</version>
-              </path>
-            </annotationProcessorPaths>
           </configuration>
         </plugin>
         <plugin>
@@ -307,6 +289,30 @@
       </activation>
       <build>
         <plugins>
+          <plugin>
+            <groupId>org.apache.maven.plugins</groupId>
+            <artifactId>maven-compiler-plugin</artifactId>
+            <configuration>
+              <compilerArgs combine.children="append">
+                <arg>-XDcompilePolicy=simple</arg>
+                <arg>--should-stop=ifError=FLOW</arg>
+                <arg>-Xplugin:ErrorProne -XepDisableAllChecks -Xep:NoVar:ERROR -Xep:NoLegacyJavadoc:ERROR</arg>
+                <arg>-XDaddTypeAnnotationsToSymbol=true</arg>
+              </compilerArgs>
+              <annotationProcessorPaths combine.children="append">
+                <path>
+                  <groupId>com.google.errorprone</groupId>
+                  <artifactId>error_prone_core</artifactId>
+                  <version>${error-prone.version}</version>
+                </path>
+                <path>
+                  <groupId>dev.hardwood</groupId>
+                  <artifactId>hardwood-error-prone-checks</artifactId>
+                  <version>${project.version}</version>
+                </path>
+              </annotationProcessorPaths>
+            </configuration>
+          </plugin>
           <plugin>
             <groupId>com.mycila</groupId>
             <artifactId>license-maven-plugin</artifactId>

@@ -19,7 +19,7 @@ import com.sun.tools.javac.tree.JCTree.JCVariableDecl;
 @AutoService(BugChecker.class)
 @BugPattern(
         name = "NoVar",
-        summary = "Do not use var; see CLAUDE.md:40.",
+        summary = "Do not use var; CLAUDE.md requires explicit types.",
         severity = BugPattern.SeverityLevel.ERROR)
 public final class NoVar extends BugChecker implements BugChecker.VariableTreeMatcher {
 
