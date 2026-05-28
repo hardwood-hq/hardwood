@@ -4006,7 +4006,6 @@ corrupt_data_page_offset_negative(_negative_offset_path)
 print("\nGenerated negative_data_page_offset.parquet:")
 print("  - valid footer with data_page_offset = -1 (controlled-rejection fixture)")
 
-
 # Key-only map (set) fixture (#657).
 # Spec: the MAP value field "can be required, optional, or omitted"; if omitted
 # "it can be represented as a map with all null values or as a set of keys."
@@ -4027,3 +4026,56 @@ import os
 os.remove(_map_base)
 print("\nGenerated map_key_only_test.parquet:")
 print("  - id=[1, 2], tags MAP<STRING, (missing value)>")
+
+
+# ============================================================================
+# Generates a Parquet file for benchmarking the flat reader path with non-repeated struct columns.
+# ============================================================================
+#
+# Schema: id (int64), location{lat, lon} (struct of doubles), metrics{value1, value2, count}
+#         (struct of doubles + int64), score (double), category (string)
+#
+# The file is used by FlatStructPerformanceTest to measure the performance of
+# the flat row reader when accessing struct fields, compared to the nested reader
+# path used by main. Structs contain only primitive fields (no lists or maps),
+# keeping the schema on the flat reader path.
+#
+# Output: performance-testing/test-data-setup/target/flat-struct-perf-data/flat_struct_perf.parquet
+#
+N = 10_000_000  # 10 million rows
+flat_struct_perf_schema = pa.schema([
+    ('id', pa.int64()),
+    ('location', pa.struct([
+        ('lat', pa.float64()),
+        ('lon', pa.float64()),
+    ])),
+    ('metrics', pa.struct([
+        ('value1', pa.float64()),
+        ('value2', pa.float64()),
+        ('count', pa.int64()),
+    ])),
+    ('score', pa.float64()),
+    ('category', pa.string()),
+])
+
+flat_struct_perf_table = pa.table({
+    'id': numpy.arange(N, dtype=numpy.int64),
+    'location': [{'lat': float(i % 90), 'lon': float(i % 180)} for i in range(N)],
+    'metrics': [{'value1': float(i), 'value2': float(i * 2), 'count': i % 100} for i in range(N)],
+    'score': numpy.random.uniform(0, 100, N),
+    'category': numpy.where(numpy.arange(N) % 2 == 0, 'type_a', 'type_b'),
+}, schema=flat_struct_perf_schema)
+
+output_dir = Path('performance-testing/test-data-setup/target/flat-struct-perf-data')
+output_dir.mkdir(parents=True, exist_ok=True)
+output_path = output_dir / 'flat_struct_perf.parquet'
+
+pq.write_table(
+    flat_struct_perf_table,
+    output_path,
+    use_dictionary=False,
+    compression='snappy',
+    data_page_version='1.0',
+)
+print("\nGenerated flat_struct_perf.parquet:")
+print(f"  - {N} rows with structs containing only primitive fields")
