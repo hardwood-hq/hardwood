@@ -39,7 +39,7 @@ public final class NestedLevelComputer {
             if (defLevels[i] < maxDefLevel) {
                 if (validity == null) {
                     validity = new long[(valueCount + 63) >>> 6];
-                    setBitRange(validity, 0, i);
+                    BitmapWords.setRange(validity, 0, i);
                 }
             }
             else if (validity != null) {
@@ -47,25 +47,6 @@ public final class NestedLevelComputer {
             }
         }
         return validity;
-    }
-
-    /// Sets bits `[fromInclusive, toExclusive)` in `words`. Set-bit-= -present
-    /// polarity, matching the validity of bitmaps elsewhere in the pipeline.
-    private static void setBitRange(long[] words, int fromInclusive, int toExclusive) {
-        if (fromInclusive >= toExclusive) {
-            return;
-        }
-        int firstWord = fromInclusive >>> 6;
-        int lastWord = (toExclusive - 1) >>> 6;
-        long firstMask = ~0L << fromInclusive;
-        long lastMask = ~0L >>> -toExclusive;
-        if (firstWord == lastWord) {
-            words[firstWord] |= firstMask & lastMask;
-            return;
-        }
-        words[firstWord] |= firstMask;
-        Arrays.fill(words, firstWord + 1, lastWord, ~0L);
-        words[lastWord] |= lastMask;
     }
 
     /// Compute multi-level offsets with a trailing sentinel.
@@ -390,7 +371,7 @@ public final class NestedLevelComputer {
                     if (!present) {
                         if (layerValidity[k] == null) {
                             layerValidity[k] = new long[(rawValueCount + 63) >>> 6];
-                            setBitRange(layerValidity[k], 0, slot);
+                            BitmapWords.setRange(layerValidity[k], 0, slot);
                         }
                         layerHasAbsent[k] = true;
                     }
@@ -415,7 +396,7 @@ public final class NestedLevelComputer {
                 if (!leafPresent) {
                     if (leafValidity == null) {
                         leafValidity = new long[(rawValueCount + 63) >>> 6];
-                        setBitRange(leafValidity, 0, slot);
+                        BitmapWords.setRange(leafValidity, 0, slot);
                     }
                     leafAnyAbsent = true;
                 }

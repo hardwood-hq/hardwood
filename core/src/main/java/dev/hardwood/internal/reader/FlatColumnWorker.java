@@ -227,7 +227,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
         }
         if (defLevels == null) {
             if (currentBatchHasAbsents) {
-                setBitRange(currentValidity, destPos, destPos + length);
+                BitmapWords.setRange(currentValidity, destPos, destPos + length);
             }
             return;
         }
@@ -235,7 +235,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             if (defLevels[srcPos + i] < maxDefinitionLevel) {
                 if (!currentBatchHasAbsents) {
                     currentBatchHasAbsents = true;
-                    setBitRange(currentValidity, 0, destPos + i);
+                    BitmapWords.setRange(currentValidity, 0, destPos + i);
                 }
             }
             else if (currentBatchHasAbsents) {
@@ -243,25 +243,5 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                 currentValidity[bit >>> 6] |= 1L << bit;
             }
         }
-    }
-
-    /// Sets bits `[fromInclusive, toExclusive)` in `words`. Matches
-    /// `BitSet.set(int, int)` semantics for the set-bit-= -present polarity
-    /// used by [BatchExchange.Batch#validity].
-    private static void setBitRange(long[] words, int fromInclusive, int toExclusive) {
-        if (fromInclusive >= toExclusive) {
-            return;
-        }
-        int firstWord = fromInclusive >>> 6;
-        int lastWord = (toExclusive - 1) >>> 6;
-        long firstMask = ~0L << fromInclusive;
-        long lastMask = ~0L >>> -toExclusive;
-        if (firstWord == lastWord) {
-            words[firstWord] |= firstMask & lastMask;
-            return;
-        }
-        words[firstWord] |= firstMask;
-        Arrays.fill(words, firstWord + 1, lastWord, ~0L);
-        words[lastWord] |= lastMask;
     }
 }

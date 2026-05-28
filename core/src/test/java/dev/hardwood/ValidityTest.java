@@ -190,6 +190,9 @@ class ValidityTest {
         assertThat(v.nextNull(0, 130)).isEqualTo(70);
         assertThat(v.nextNull(64, 130)).isEqualTo(70);
         assertThat(v.nextNull(71, 130)).isEqualTo(-1);
+        // Multi-word fixture covering the `from >= count` early-return.
+        assertThat(v.nextNull(130, 130)).isEqualTo(-1);
+        assertThat(v.nextNotNull(130, 130)).isEqualTo(-1);
     }
 
     @Test

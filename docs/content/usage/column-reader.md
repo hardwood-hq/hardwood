@@ -143,6 +143,18 @@ Two rules generate this table:
 1. **STRUCT keeps cardinality.** Items at layer `k+1` equal items at layer `k`. STRUCT layers carry validity, no offsets.
 2. **REPEATED expands cardinality.** Items at layer `k+1` equal `getLayerOffsets(k)[count(k)]`. REPEATED layers carry both validity and offsets.
 
+#### Picking a null-check loop shape
+
+`Validity` supports three loop shapes against the same value. Pick by workload:
+
+| Loop shape | Use when |
+|---|---|
+| `isNull(i)` / `isNotNull(i)` direct | Cold paths — debug output, schema introspection, small batches. Reads best. |
+| Hoisted `hasNulls()` + `isNotNull(i)` | Default for hot inner loops on analytical data, where most batches hit the `NO_NULLS` fast path. |
+| `words()` word-wise + `Long.numberOfTrailingZeros` | Null-dense regions where you want to skip whole runs of clear bits instead of scanning every position. |
+
+The two hot-path shapes are described below.
+
 #### Hot loops: hoist `hasNulls()` outside the loop
 
 `Validity.NO_NULLS` is the common case on analytical workloads — most columns are non-null in most batches — and the API is designed to make checking for it O(1). In a per-element inner loop, **call `hasNulls()` once outside the loop and use a local boolean inside**, rather than calling `isNotNull(i)` directly per element:
