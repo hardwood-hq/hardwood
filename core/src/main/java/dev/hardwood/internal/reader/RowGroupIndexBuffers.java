@@ -12,6 +12,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 
@@ -69,7 +70,13 @@ public class RowGroupIndexBuffers {
             return new RowGroupIndexBuffers(result);
         }
 
-        ByteBuffer indexRegion = inputFile.readRange(minOffset, Math.toIntExact(maxEnd - minOffset));
+        long indexRegionSize = maxEnd - minOffset;
+        if (indexRegionSize > Integer.MAX_VALUE) {
+            throw new IOException(ExceptionContext.filePrefix(inputFile.name())
+                    + "Row-group index region too large (" + indexRegionSize
+                    + " bytes) — split the file into smaller row groups");
+        }
+        ByteBuffer indexRegion = inputFile.readRange(minOffset, Math.toIntExact(indexRegionSize));
 
         for (int i = 0; i < allColumns.size(); i++) {
             ColumnChunk col = allColumns.get(i);
