@@ -51,6 +51,11 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 See the [Getting Started](https://hardwood.dev/latest/getting-started/) guide for detailed setup instructions.
 
+## Limitations
+
+- **Local files** (memory-mapped via `InputFile.of(Path)`) may be arbitrarily large; each individual column chunk must be at most 2 GB of compressed data.
+- **In-memory** (`InputFile.of(ByteBuffer)`) and **object-store** sources are limited to 2 GB per file. Split larger datasets across multiple files and read them with `Hardwood.openAll(...)` or `ParquetFileReader.openAll(...)`.
+
 ---
 
 ## Repository Documentation

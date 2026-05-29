@@ -53,8 +53,8 @@ See [Getting Started](getting-started.md) for installation and setup.
 
 This is Beta quality software, under active development.
 
-!!! warning "2 GB single-file limit"
-    Individual Parquet files must currently be at most **2 GB**. Larger datasets should be split across multiple files and read by passing a list of `InputFile`s to `Hardwood.openAll(...)` or `ParquetFileReader.openAll(...)`. Tracked as [#75](https://github.com/hardwood-hq/hardwood/issues/75).
+!!! warning "2 GB column-chunk limit"
+    For local (memory-mapped) files, the file itself may be arbitrarily large, but each individual **column chunk** must be at most **2 GB** of compressed data. The in-memory (`ByteBuffer`) and object-store backends have a 2 GB limit on the whole file; for those, larger datasets should be split across multiple files and read by passing a list of `InputFile`s to `Hardwood.openAll(...)` or `ParquetFileReader.openAll(...)`. Tracked as [#75](https://github.com/hardwood-hq/hardwood/issues/75).
 
 ## Roadmap
 
