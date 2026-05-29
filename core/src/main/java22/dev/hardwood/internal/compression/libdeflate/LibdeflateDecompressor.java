@@ -23,6 +23,7 @@ import dev.hardwood.internal.compression.Decompressor;
 /// Performance: libdeflate is typically 2-4x faster than zlib for decompression.
 public final class LibdeflateDecompressor implements Decompressor {
 
+    private static final ThreadLocal<MemorySegment> NATIVE_INPUT = new ThreadLocal<>();
     private static final ThreadLocal<MemorySegment> NATIVE_OUTPUT = new ThreadLocal<>();
     private static final ThreadLocal<MemorySegment> IN_SIZE_PTR = new ThreadLocal<>();
     private static final ThreadLocal<MemorySegment> OUT_SIZE_PTR = new ThreadLocal<>();
@@ -42,8 +43,18 @@ public final class LibdeflateDecompressor implements Decompressor {
 
             int compressedSize = compressed.remaining();
 
+            // The FFM downcall requires a native MemorySegment for its pointer
+            // arguments. A direct buffer already maps to native memory, but a
+            // heap-backed buffer (e.g. ByteBuffer.allocate) yields a heap
+            // segment that the downcall rejects, so copy it into a reusable
+            // native scratch segment first.
             MemorySegment input = MemorySegment.ofBuffer(compressed);
-            MemorySegment output = borrowNativeOutput(uncompressedSize);
+            if (!compressed.isDirect()) {
+                MemorySegment scratch = borrowNative(NATIVE_INPUT, compressedSize);
+                MemorySegment.copy(input, 0, scratch, 0, compressedSize);
+                input = scratch;
+            }
+            MemorySegment output = borrowNative(NATIVE_OUTPUT, uncompressedSize);
             MemorySegment actualInSizePtr = borrowSizePtr(IN_SIZE_PTR);
             MemorySegment actualOutSizePtr = borrowSizePtr(OUT_SIZE_PTR);
 
@@ -94,11 +105,11 @@ public final class LibdeflateDecompressor implements Decompressor {
         }
     }
 
-    private static MemorySegment borrowNativeOutput(int minSize) {
-        MemorySegment seg = NATIVE_OUTPUT.get();
+    private static MemorySegment borrowNative(ThreadLocal<MemorySegment> tl, int minSize) {
+        MemorySegment seg = tl.get();
         if (seg == null || seg.byteSize() < minSize) {
             seg = Arena.ofAuto().allocate(minSize);
-            NATIVE_OUTPUT.set(seg);
+            tl.set(seg);
         }
         return seg;
     }

@@ -86,6 +86,40 @@ class LibdeflateDecompressorIT {
     }
 
     @Test
+    void decompressHeapBackedInput() throws Exception {
+        byte[] original = "Heap-backed input for libdeflate".getBytes();
+        byte[] compressed = gzipCompress(original);
+
+        LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
+        ByteBuffer buffer = createHeapBuffer(compressed);
+
+        byte[] result = decompressor.decompress(buffer, original.length);
+
+        assertThat(result).startsWith(original);
+    }
+
+    @Test
+    void decompressHeapBackedInputAtNonZeroPosition() throws Exception {
+        // The real heap-backed sources (ByteBufferInputFile slices, reassembled
+        // S3 chunks) hand the decompressor a buffer positioned partway into its
+        // backing array. The native copy must honour position/remaining, not
+        // start at the array's offset 0.
+        byte[] original = "Heap-backed input at a non-zero position".getBytes();
+        byte[] compressed = gzipCompress(original);
+
+        int prefix = 7;
+        ByteBuffer buffer = ByteBuffer.allocate(prefix + compressed.length);
+        buffer.position(prefix);
+        buffer.put(compressed);
+        buffer.position(prefix);
+
+        LibdeflateDecompressor decompressor = new LibdeflateDecompressor(pool);
+        byte[] result = decompressor.decompress(buffer, original.length);
+
+        assertThat(result).startsWith(original);
+    }
+
+    @Test
     void decompressConcatenatedGzipMembers() throws Exception {
         byte[] part1 = "First GZIP member".getBytes();
         byte[] part2 = "Second GZIP member".getBytes();
@@ -130,5 +164,9 @@ class LibdeflateDecompressorIT {
         direct.put(data);
         direct.flip();
         return direct;
+    }
+
+    private static ByteBuffer createHeapBuffer(byte[] data) {
+        return ByteBuffer.wrap(data);
     }
 }
