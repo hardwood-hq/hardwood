@@ -30,7 +30,7 @@ public class ByteBufferInputFile implements InputFile {
 
     @Override
     public ByteBuffer readRange(long offset, int length) {
-        return buffer.slice((int) offset, length);
+        return buffer.slice(Math.toIntExact(offset), length);
     }
 
     @Override

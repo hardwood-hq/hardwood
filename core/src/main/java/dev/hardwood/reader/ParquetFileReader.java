@@ -51,9 +51,10 @@ import dev.hardwood.schema.ProjectedSchema;
 /// }
 /// ```
 ///
-/// **Limitation:** When using the default memory-mapped [InputFile],
-/// individual files must be at most 2 GB ([Integer#MAX_VALUE] bytes).
-/// Larger datasets should be split across multiple files.
+/// **Limitation:** When using the default memory-mapped [InputFile], the file
+/// itself may be arbitrarily large, but each individual column chunk must be at
+/// most 2 GB ([Integer#MAX_VALUE] bytes) of compressed data. The in-memory and
+/// object-store backends have a 2 GB limit on the whole file.
 public class ParquetFileReader implements AutoCloseable {
 
     private final List<InputFile> inputFiles;
