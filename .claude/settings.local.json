@@ -124,7 +124,8 @@
       "Bash(gh run *)",
       "WebFetch(domain:www.youtube.com)",
       "Bash(git -C /workspace status --short)",
-      "Bash(git -C /workspace log --oneline -5)"
+      "Bash(git -C /workspace log --oneline -5)",
+      "Bash(git rm *)"
     ]
   }
 }
