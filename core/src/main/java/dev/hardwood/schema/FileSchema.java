@@ -142,7 +142,9 @@ public class FileSchema {
         List<ColumnSchema> columns = new ArrayList<>();
         int[] columnIndex = { 0 }; // Mutable counter for column indexing
 
-        List<SchemaNode> rootChildren = buildChildren(elements, 1, root.numChildren() != null ? root.numChildren() : 0, 0, 0, List.of(), columns, columnIndex);
+        // Shared read position into the flat element list; start past the root at index 0.
+        int[] cursor = { 1 };
+        List<SchemaNode> rootChildren = buildChildren(elements, cursor, root.numChildren() != null ? root.numChildren() : 0, 0, 0, List.of(), columns, columnIndex);
 
         SchemaNode.GroupNode rootNode = new SchemaNode.GroupNode(
                 root.name(),
@@ -160,7 +162,7 @@ public class FileSchema {
     /// Build children nodes from schema elements.
     private static List<SchemaNode> buildChildren(
                                                   List<SchemaElement> elements,
-                                                  int startIndex,
+                                                  int[] cursor,
                                                   int numChildren,
                                                   int parentDefLevel,
                                                   int parentRepLevel,
@@ -169,10 +171,9 @@ public class FileSchema {
                                                   int[] columnIndex) {
 
         List<SchemaNode> children = new ArrayList<>();
-        int currentIndex = startIndex;
 
         for (int i = 0; i < numChildren; i++) {
-            SchemaElement element = elements.get(currentIndex);
+            SchemaElement element = elements.get(cursor[0]);
             RepetitionType repType = element.repetitionType() != null ? element.repetitionType() : RepetitionType.OPTIONAL;
 
             // Calculate levels for this node
@@ -207,14 +208,16 @@ public class FileSchema {
                         defLevel,
                         repLevel));
 
-                currentIndex++;
+                cursor[0]++;
             }
             else {
                 // Group node - recurse into children
                 int groupNumChildren = element.numChildren() != null ? element.numChildren() : 0;
+                cursor[0]++; // Consume the group header; cursor now points at its first child
+
                 List<SchemaNode> groupChildren = buildChildren(
                         elements,
-                        currentIndex + 1,
+                        cursor,
                         groupNumChildren,
                         defLevel,
                         repLevel,
@@ -234,9 +237,6 @@ public class FileSchema {
                     validateVariantGroup(groupNode);
                 }
                 children.add(groupNode);
-
-                // Skip over this group and all its descendants
-                currentIndex = currentIndex + 1 + countDescendants(elements, currentIndex + 1, groupNumChildren);
             }
         }
 
