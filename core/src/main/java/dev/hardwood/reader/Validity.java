@@ -8,51 +8,54 @@
 package dev.hardwood.reader;
 
 import dev.hardwood.Experimental;
+import dev.hardwood.internal.reader.BackedValidity;
+import dev.hardwood.internal.reader.NoNullsValidity;
 
 /// Per-item null bitmap at a [ColumnReader] scope (a `STRUCT` /
 /// `REPEATED` layer or the leaf).
 ///
 /// A `Validity` is one of two shapes:
 ///
-/// - [NoNulls] — every item at that scope is non-null in the current
+/// - **No nulls** — every item at that scope is non-null in the current
 ///   batch. The [#NO_NULLS] singleton, returned for the no-nulls fast
 ///   path; no per-batch allocation.
-/// - [Backed] — a packed `long[]` bitmap with **set-bit-= -present**
+/// - **Backed** — a packed `long[]` bitmap with **set-bit = present**
 ///   polarity: bit `i` is set iff item `i` is present (non-null). Word
 ///   `w` covers items `[w*64, w*64+64)`, low bit = lowest item.
 ///
 /// Consumer-side predicates (`isNull(i)` / `isNotNull(i)` / `hasNulls()`)
-/// describe nullability; the storage uses set-bit-= -present internally
-/// to match Arrow's layout. The sealed-type shape makes the no-nulls
-/// fast path explicit:
+/// describe nullability; the storage uses set-bit = present internally
+/// to match Arrow's layout. [#hasNulls()] makes the no-nulls fast path
+/// explicit:
 /// ```java
-/// switch (validity) {
-///     case NoNulls n -> // tight loop, skip per-item check
-///     case Backed b  -> // checked loop
+/// if (!validity.hasNulls()) {
+///     // tight loop, skip per-item check
+/// } else {
+///     // checked loop
 /// }
 /// ```
 ///
 /// **This API is [Experimental]:** the shape may change in future releases.
 @Experimental
-public sealed interface Validity permits Validity.NoNulls, Validity.Backed {
+public interface Validity {
 
     /// Singleton signalling "no item at this scope is null in the
     /// current batch." Identity-stable across calls.
-    Validity NO_NULLS = new NoNulls();
+    Validity NO_NULLS = NoNullsValidity.INSTANCE;
 
-    /// Wraps a packed `long[]` bitmap (set-bit-= -present storage).
+    /// Wraps a packed `long[]` bitmap (set-bit = present storage).
     /// Returns [#NO_NULLS] when `words` is `null` (the sparse "no nulls"
     /// representation produced by the internal pipeline); otherwise
-    /// returns a fresh [Backed] holding the given bitmap. The wrapper
-    /// does not copy — callers must not mutate the bitmap after handing
-    /// it to a `Validity`.
+    /// returns a fresh backed instance holding the given bitmap. The
+    /// wrapper does not copy — callers must not mutate the bitmap after
+    /// handing it to a `Validity`.
     ///
     /// The caller is responsible for sizing the array to at least
     /// `(count + 63) >>> 6` words for any `count` they later pass to
     /// [#nullCount] / [#nextNull] / [#nextNotNull], and for keeping
     /// indices into [#isNull] / [#isNotNull] within the same bound.
     static Validity of(long[] words) {
-        return words == null ? NO_NULLS : new Backed(words);
+        return words == null ? NO_NULLS : new BackedValidity(words);
     }
 
     /// `true` iff at least one item at this scope is null in the current
@@ -73,7 +76,7 @@ public sealed interface Validity permits Validity.NoNulls, Validity.Backed {
     boolean isNotNull(int i);
 
     /// Number of null items in this batch. `count` is the total item
-    /// count at this scope — required because [NoNulls] has no
+    /// count at this scope — required because the no-nulls shape has no
     /// intrinsic length.
     int nullCount(int count);
 
@@ -83,140 +86,14 @@ public sealed interface Validity permits Validity.NoNulls, Validity.Backed {
 
     /// Index of the next non-null item in `[from, count)`, or `-1` if
     /// every item in that range is null. `count` is the total item count
-    /// at this scope — required because [NoNulls] has no intrinsic
-    /// length.
+    /// at this scope — required because the no-nulls shape has no
+    /// intrinsic length.
     int nextNotNull(int from, int count);
 
-    /// The word array (set-bit = present polarity). Returns `null` for
-    /// [NoNulls]. For [Backed], returns the backing array directly — no
-    /// copy. Callers must not mutate it; mirroring the inbound contract
+    /// The word array (set-bit = present polarity). Returns `null` when
+    /// there are no nulls. Otherwise returns the backing array directly —
+    /// no copy. Callers must not mutate it; mirroring the inbound contract
     /// on [#of(long[])], the `Validity` owns the bitmap once handed in.
     /// Bits at indices `>= count` are undefined and must not be read.
     long[] words();
-
-    /// Every item at this scope is non-null in the current batch. Use
-    /// [#NO_NULLS] — the constructor is private so identity comparison
-    /// against the singleton is stable.
-    final class NoNulls implements Validity {
-        private NoNulls() {}
-
-        @Override
-        public boolean hasNulls() {
-            return false;
-        }
-
-        @Override
-        public boolean isNull(int i) {
-            return false;
-        }
-
-        @Override
-        public boolean isNotNull(int i) {
-            return true;
-        }
-
-        @Override
-        public int nullCount(int count) {
-            return 0;
-        }
-
-        @Override
-        public int nextNull(int from, int count) {
-            return -1;
-        }
-
-        @Override
-        public int nextNotNull(int from, int count) {
-            return from < count ? from : -1;
-        }
-
-        @Override
-        public long[] words() {
-            return null;
-        }
-    }
-
-    /// A `Validity` whose per-item nullability is stored in a packed
-    /// `long[]` (set bit = item is present). Constructed by [Validity#of]
-    /// when at least one item is null in the batch.
-    final class Backed implements Validity {
-        private final long[] words;
-
-        Backed(long[] words) {
-            this.words = words;
-        }
-
-        @Override
-        public boolean hasNulls() {
-            return true;
-        }
-
-        @Override
-        public boolean isNull(int i) {
-            return (words[i >>> 6] & (1L << i)) == 0L;
-        }
-
-        @Override
-        public boolean isNotNull(int i) {
-            return (words[i >>> 6] & (1L << i)) != 0L;
-        }
-
-        @Override
-        public int nullCount(int count) {
-            int fullWords = count >>> 6;
-            int total = 0;
-            for (int w = 0; w < fullWords; w++) {
-                total += Long.bitCount(~words[w]);
-            }
-            int tail = count & 63;
-            if (tail != 0) {
-                long mask = (1L << tail) - 1L;
-                total += Long.bitCount(~words[fullWords] & mask);
-            }
-            return total;
-        }
-
-        @Override
-        public int nextNull(int from, int count) {
-            if (from >= count) return -1;
-            int wordIdx = from >>> 6;
-            int endWord = (count - 1) >>> 6;
-            int tail = count & 63;
-            long endMask = tail == 0 ? ~0L : (1L << tail) - 1L;
-            long word = ~words[wordIdx] & (~0L << from);
-            if (wordIdx == endWord) word &= endMask;
-            while (true) {
-                if (word != 0L) {
-                    return (wordIdx << 6) + Long.numberOfTrailingZeros(word);
-                }
-                if (++wordIdx > endWord) return -1;
-                word = ~words[wordIdx];
-                if (wordIdx == endWord) word &= endMask;
-            }
-        }
-
-        @Override
-        public int nextNotNull(int from, int count) {
-            if (from >= count) return -1;
-            int wordIdx = from >>> 6;
-            int endWord = (count - 1) >>> 6;
-            int tail = count & 63;
-            long endMask = tail == 0 ? ~0L : (1L << tail) - 1L;
-            long word = words[wordIdx] & (~0L << from);
-            if (wordIdx == endWord) word &= endMask;
-            while (true) {
-                if (word != 0L) {
-                    return (wordIdx << 6) + Long.numberOfTrailingZeros(word);
-                }
-                if (++wordIdx > endWord) return -1;
-                word = words[wordIdx];
-                if (wordIdx == endWord) word &= endMask;
-            }
-        }
-
-        @Override
-        public long[] words() {
-            return words;
-        }
-    }
 }

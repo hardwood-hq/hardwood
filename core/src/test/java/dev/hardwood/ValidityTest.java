@@ -79,7 +79,9 @@ class ValidityTest {
     @Test
     void backedHasNullsTrue() {
         Validity v = Validity.of(wordsWith(5, 0, 1, 2, 3, 4));
-        assertThat(v).isInstanceOf(Validity.Backed.class);
+        // A bitmap-backed validity exposes its backing array; the no-nulls
+        // shape returns null from words().
+        assertThat(v.words()).isNotNull();
         assertThat(v.hasNulls()).isTrue();
     }
 
