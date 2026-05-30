@@ -15,13 +15,18 @@
 9. **More resources for slower columns.** Columns can be differently complex to decompress and decode. More resources are given to slower columns so they don't slow down fast columns.
 10. **I/O-decode overlap for remote files.** Fetching chunk N+1 overlaps with decoding pages from chunk N. The consumer sees the first decoded rows while later chunks are still downloading.
 11. **Minimize over-fetching.** When `maxRows` is set, byte ranges are narrowed to only the needed pages before fetching. When the consumer stops advancing the cursor, back-pressure and cancellation ensure unfetched chunks are never downloaded.
-12. **Simplicity.** One thread pool. No cross-pool scheduling. Minimal synchronization primitives.
+12. **Simplicity.** Decode runs on a single shared bounded pool; per-column coordination uses cheap virtual threads. Minimal synchronization primitives.
 
 ## Architecture
 
-### Single Pool
+### Threading Model
 
-All virtual threads use the JVM's default virtual thread scheduler, which carries them on an internal `ForkJoinPool`. This pool is shared with other virtual threads in the process. Since virtual threads unmount from carriers during blocking operations (I/O, queue waits, `LockSupport.park()`), carrier sharing is cooperative — Hardwood's decode work does not monopolize carriers even under heavy load. No separate executor is needed.
+Work is split across two tiers:
+
+- **Decode pool.** CPU-bound page decoding — decompression plus value decode (`PageDecoder.decodePage`) — runs as short-lived tasks on a single shared, bounded **platform-thread** pool owned by the `HardwoodContext` (a fixed-size `ExecutorService`, default `availableProcessors()`). Every column submits to this one pool, so it is the dial that bounds decode parallelism and CPU.
+- **Per-column coordinators.** Each `ColumnWorker` runs two long-lived **virtual threads** — a retriever (blocking page I/O) and a drain (batch assembly). One pair per column is cheap, and they unmount their carrier during blocking operations (I/O, `LockSupport.park()`, queue waits), so the JVM's default virtual-thread scheduler (an internal `ForkJoinPool` of `availableProcessors()` carriers) runs them without dedicated threads.
+
+Decode is deliberately *not* run on the virtual-thread carriers: it is CPU-bound and high-frequency (one task per page), so it belongs on a bounded, reusable pool the caller can size via `HardwoodContext.create(n)` — not on carriers shared process-wide.
 
 ### Components
 
@@ -154,7 +159,7 @@ RowGroupIterator                     PageSource               PageSource        
                                                        │                       │
                                                 Consumer (user thread)
 
-All virtual threads run on the JVM's default virtual thread scheduler.
+Retriever and drain are virtual threads (JVM default scheduler); decode tasks run on the shared HardwoodContext pool.
 ```
 
 ### Data Flow
@@ -173,26 +178,24 @@ RowGroupIterator ──→ PageSource ──→ ColumnWorker ──→ Decode Ta
 | Decode task | up to K per column | Short (one page) | Decodes one page, stores result, unparks drain |
 | Consumer | 1 (user's thread) | User-managed | Takes batches from BatchExchanges |
 
-For 3 columns: 6 long-lived VThreads (3 retriever + 3 drain) + short-lived decode tasks. All VThreads share `availableProcessors()` carrier threads.
+For 3 columns: 6 long-lived VThreads (3 retriever + 3 drain), sharing the JVM's `availableProcessors()` carriers, plus short-lived decode tasks running on the separate shared `HardwoodContext` pool.
 
 ### Slow/Fast Column Balancing
 
-All columns share `ForkJoinPool.commonPool()` carriers with work-stealing.
+Every column submits its decode tasks to the one shared decode pool, so balancing falls out of that shared queue plus per-column back-pressure — no explicit balancing logic.
 
 When column A is slow (2ms/page decode):
-- A's decode tasks hold carriers for 2ms each.
-- A's retriever is ahead — it has submitted pages that are waiting for carriers.
+- A's decode tasks occupy pool threads for 2ms each.
+- A's retriever stays ahead, keeping up to `MAX_INFLIGHT_PAGES` tasks queued for the pool.
 
 When column B is fast (0.1ms/page decode):
-- B's decode tasks complete quickly, freeing carriers.
-- B's drain processes pages fast, batches fill up, the BatchExchange fills.
-- B's drain blocks on `readyQueue.offer()`. The VThread unmounts from its carrier.
-- B's retriever hits the `MAX_INFLIGHT_PAGES` threshold and parks, freeing its carrier.
-- Carriers freed by B become available for A's decode work.
+- B's decode tasks finish quickly and B's drain fills batches fast.
+- The BatchExchange fills; B's drain blocks on `readyQueue.offer()` and its retriever hits the `MAX_INFLIGHT_PAGES` threshold and parks. B stops submitting decode tasks.
+- With B no longer submitting, the shared pool's capacity flows to A's queued tasks.
 
-When the consumer consumes B's batch, B's drain unblocks, processes accumulated pages in a burst, and the pipeline resumes.
+When the consumer consumes B's batch, B's drain unblocks, processes accumulated pages in a burst, and B resumes submitting.
 
-Net effect: slow columns hold carriers longer, naturally claiming more CPU. Fast columns self-limit through BatchExchange back-pressure. The pool's work-stealing ensures no carrier sits idle when there's work available. No explicit balancing logic.
+Net effect: a slow column keeps more tasks in the shared pool and so naturally claims more of its threads; a fast column self-limits through `MAX_INFLIGHT_PAGES` and BatchExchange back-pressure, ceding pool capacity. No carrier is involved in decode — balancing is the shared bounded pool draining a mix of per-column tasks under back-pressure.
 
 ### Back-Pressure Chain
 
@@ -203,7 +206,7 @@ Consumer doesn't take from readyQueue
   → Decoded pages accumulate in reorder buffer
   → Retriever hits MAX_INFLIGHT_PAGES threshold, parks
   → PageSource stops yielding (retriever not pulling)
-  → Carriers freed by parked/blocked VThreads become available for other columns
+  → Retriever stops submitting decode tasks, so the shared pool serves other columns' tasks
 
 Consumer takes from readyQueue, returns batch to freeQueue
   → Drain unblocks, publishes, takes next free batch
@@ -370,7 +373,8 @@ When the consumer calls `close()`:
 | BatchExchange ready queue | 2 | Two queued batches + one being filled |
 | BatchExchange free pool (recycling) | 3 | `READY_QUEUE_CAPACITY + 1` — one filling, up to two queued |
 | MAX_INFLIGHT_PAGES | 8 (default) | Bounds decoded page retention and GC pressure. Configurable via `hardwood.internal.maxOutstanding` |
-| Carrier threads | `availableProcessors()` | One per core, managed by the JVM's virtual thread scheduler |
+| Decode pool threads | `availableProcessors()` default; `HardwoodContext.create(n)` | Shared bounded platform-thread pool that runs page decode — the dial for decode parallelism and CPU |
+| Carrier threads | `availableProcessors()` | One per core, managed by the JVM's virtual thread scheduler; runs the retriever/drain virtual threads |
 | Batch size | L2-cache-adaptive | `6 MB / bytesPerRow`, clamped to [16K, 512K] rows |
 | Within-column page coalescing gap | 1 MB | Matching pages within 1 MB are merged into a single `ChunkHandle` |
 | Maximum coalesced group size | 128 MB (configurable via `hardwood.internal.maxCoalescedBytes`) | Coalesced groups exceeding this are split for bounded `readRange()` calls |
