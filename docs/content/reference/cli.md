@@ -153,23 +153,23 @@ Available screens:
 
 A tour through the main screens (click any shot to open it full size):
 
-<figure markdown="span">[![Overview screen](assets/cli/01-landing-overview.svg){ width="720" }](assets/cli/01-landing-overview.svg)<figcaption>Overview</figcaption></figure>
+<figure markdown="span">[![Overview screen](../assets/cli/01-landing-overview.svg){ width="720" }](../assets/cli/01-landing-overview.svg)<figcaption>Overview</figcaption></figure>
 
-<figure markdown="span">[![Schema screen](assets/cli/02-schema-tree.svg){ width="720" }](assets/cli/02-schema-tree.svg)<figcaption>Schema — expandable tree of groups and leaves</figcaption></figure>
+<figure markdown="span">[![Schema screen](../assets/cli/02-schema-tree.svg){ width="720" }](../assets/cli/02-schema-tree.svg)<figcaption>Schema — expandable tree of groups and leaves</figcaption></figure>
 
-<figure markdown="span">[![Row groups screen](assets/cli/03-1-rg.svg){ width="720" }](assets/cli/03-1-rg.svg)<figcaption>Row groups</figcaption></figure>
+<figure markdown="span">[![Row groups screen](../assets/cli/03-1-rg.svg){ width="720" }](../assets/cli/03-1-rg.svg)<figcaption>Row groups</figcaption></figure>
 
-<figure markdown="span">[![Row group detail screen](assets/cli/03-2-rg-detail.svg){ width="720" }](assets/cli/03-2-rg-detail.svg)<figcaption>Row group detail</figcaption></figure>
+<figure markdown="span">[![Row group detail screen](../assets/cli/03-2-rg-detail.svg){ width="720" }](../assets/cli/03-2-rg-detail.svg)<figcaption>Row group detail</figcaption></figure>
 
-<figure markdown="span">[![Column chunks screen](assets/cli/03-3-rg-column-chunks.svg){ width="720" }](assets/cli/03-3-rg-column-chunks.svg)<figcaption>Column chunks</figcaption></figure>
+<figure markdown="span">[![Column chunks screen](../assets/cli/03-3-rg-column-chunks.svg){ width="720" }](../assets/cli/03-3-rg-column-chunks.svg)<figcaption>Column chunks</figcaption></figure>
 
-<figure markdown="span">[![Column chunk detail screen](assets/cli/03-4-rg-column-chunk-detail.svg){ width="720" }](assets/cli/03-4-rg-column-chunk-detail.svg)<figcaption>Column chunk detail — facts pane plus drill menu</figcaption></figure>
+<figure markdown="span">[![Column chunk detail screen](../assets/cli/03-4-rg-column-chunk-detail.svg){ width="720" }](../assets/cli/03-4-rg-column-chunk-detail.svg)<figcaption>Column chunk detail — facts pane plus drill menu</figcaption></figure>
 
-<figure markdown="span">[![Pages screen with page-header modal](assets/cli/04-pages-header-modal.svg){ width="720" }](assets/cli/04-pages-header-modal.svg)<figcaption>Pages — page-header modal on Enter</figcaption></figure>
+<figure markdown="span">[![Pages screen with page-header modal](../assets/cli/04-pages-header-modal.svg){ width="720" }](../assets/cli/04-pages-header-modal.svg)<figcaption>Pages — page-header modal on Enter</figcaption></figure>
 
-<figure markdown="span">[![Dictionary screen with inline search](assets/cli/05-dict-search.svg){ width="720" }](assets/cli/05-dict-search.svg)<figcaption>Dictionary — <code>/</code> inline search</figcaption></figure>
+<figure markdown="span">[![Dictionary screen with inline search](../assets/cli/05-dict-search.svg){ width="720" }](../assets/cli/05-dict-search.svg)<figcaption>Dictionary — <code>/</code> inline search</figcaption></figure>
 
-<figure markdown="span">[![Data preview screen scrolled right](assets/cli/06-data-scrolled-right.svg){ width="720" }](assets/cli/06-data-scrolled-right.svg)<figcaption>Data preview — scrolled right across the column window</figcaption></figure>
+<figure markdown="span">[![Data preview screen scrolled right](../assets/cli/06-data-scrolled-right.svg){ width="720" }](../assets/cli/06-data-scrolled-right.svg)<figcaption>Data preview — scrolled right across the column window</figcaption></figure>
 
 Every screen shares a four-region layout — a top bar with file identity, a
 breadcrumb showing the navigation stack, the active screen body, and a keybar
@@ -216,7 +216,7 @@ hardwood schema -f s3://my-bucket/data.parquet
 hardwood print -n 10 -f s3://my-bucket/data.parquet
 ```
 
-The CLI resolves credentials via the standard AWS credential chain (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` environment variables, `~/.aws/credentials`, SSO, EC2/ECS instance profiles, web identity). See the [S3 module page](s3.md) for the resolution order and provider details.
+The CLI resolves credentials via the standard AWS credential chain (`AWS_ACCESS_KEY_ID` / `AWS_SECRET_ACCESS_KEY` / `AWS_SESSION_TOKEN` environment variables, `~/.aws/credentials`, SSO, EC2/ECS instance profiles, web identity). See the [S3 module page](../how-to/s3.md) for the resolution order and provider details.
 
 The CLI additionally reads these environment variables:
 

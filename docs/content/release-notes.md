@@ -17,7 +17,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 Highlights of this release:
 
-- **Breaking:** `ColumnReader` rebuilt around a layer model, with per-layer validity, offsets, and real-item-only sizing for nested data (see the [Layer Model](usage/column-reader.md#reading-nested-data-the-layer-model) docs); `ColumnReader` is now marked `@Experimental`
+- **Breaking:** `ColumnReader` rebuilt around a layer model, with per-layer validity, offsets, and real-item-only sizing for nested data (see the [Layer Model](how-to/column-reader.md#reading-nested-data-the-layer-model) docs); `ColumnReader` is now marked `@Experimental`
 - More performant evaluation of multi-column filter expressions
 - Split-aware reading via `RowGroupPredicate.byteRange(...)`, for Hadoop-style split integrations
 - Coordinated multi-column reads via `ColumnReaders.nextBatch()` / `getRecordCount()`

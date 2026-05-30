@@ -42,7 +42,9 @@ GitHub Actions should always referenced by SHA.
 
 # Documentation
 
-User-facing docs (`docs/content/*.md` and public-API JavaDoc) describe **what the API does and how to use it**. Do not include rationale for design decisions, comparisons to other internal APIs, or "we chose X to match Y" justifications — users don't need to know why two parts of the project share a convention, only that they do. Design rationale belongs in `_designs/*.md` (audience: maintainers and reviewers); user docs describe the end state directly.
+User-facing docs (`docs/content/*.md` and public-API JavaDoc) describe **what the API does and how to use it**. Do not include rationale for design decisions, comparisons to other internal APIs, or "we chose X to match Y" justifications — users don't need to know why two parts of the project share a convention, only that they do. Design rationale belongs in `_designs/*.md` (audience: maintainers and reviewers); user docs describe the end state directly. The one exception is the `concepts/` directory described below, which is the designated home for reader-facing rationale (the *why* behind the API, not the *why* behind internal design choices).
+
+User-facing docs follow the [Diátaxis](https://diataxis.fr/) model, one directory per kind under `docs/content/`: `tutorial/` (learning-oriented lessons), `how-to/` (goal-oriented guides), `reference/` (look-it-up facts), `concepts/` (understanding and rationale — the Diátaxis *explanation* quadrant). Put a new page in the directory matching its kind and keep the kinds unmixed: tutorials show one working path with no option matrices, how-to guides don't explain rationale, reference doesn't narrate, and concepts pages give no step-by-step instructions. The full structure and rationale live in [_designs/DOCS_DIATAXIS_STRUCTURE.md](_designs/DOCS_DIATAXIS_STRUCTURE.md).
 
 All JavaDoc comments must use Markdown `///` syntax (JEP 467), not the legacy `/** */` block comment style. Enforced by the `NoLegacyJavadoc` Error Prone check in `error-prone-checks/`.
 Key rules for `///` Markdown JavaDoc:

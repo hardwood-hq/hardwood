@@ -341,6 +341,7 @@
                     <exclude>**/license-merges.txt</exclude>
                     <exclude>**/*.ftl</exclude>
                     <exclude>docs/content/**</exclude>
+                    <exclude>docs/site/**</exclude>
                     <exclude>hardwood-cli-early-access-*/**</exclude>
                   </excludes>
                 </licenseSet>

@@ -18,24 +18,33 @@ docs_dir: content
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
-  - Configuration: configuration.md
-  - Usage:
-    - Overview: usage.md
-    - Row-Oriented Reading: usage/row-reader.md
-    - Column-Oriented Reading: usage/column-reader.md
-    - Predicate Pushdown, Projection, Limits, Splits: usage/query-controls.md
-    - Reading Multiple Files: usage/multi-file.md
-    - Accessing File Metadata: usage/metadata.md
-    - Variant Columns: usage/variant.md
-    - Geospatial Support: usage/geospatial.md
-  - CLI: cli.md
-  - Modules:
-    - S3: s3.md
-    - Avro: avro.md
-    - Parquet-Java Compatibility: compat.md
-  - API Reference: /api/latest/
-  - Release Notes: release-notes.md
+  - Tutorial:
+    - Read Your First Parquet File: tutorial/first-read.md
+  - How-to Guides:
+    - Overview: how-to/index.md
+    - Read Row by Row: how-to/row-reader.md
+    - Read Column by Column: how-to/column-reader.md
+    - Filter, Project, Limit, and Split: how-to/query-controls.md
+    - Read Multiple Files as One Dataset: how-to/multi-file.md
+    - Read into Avro GenericRecords: how-to/avro.md
+    - Read from S3: how-to/s3.md
+    - Read with the parquet-java API: how-to/compat.md
+    - Read Variant Columns: how-to/variant.md
+    - Read Geospatial Columns: how-to/geospatial.md
+    - Inspect File Metadata: how-to/metadata.md
+  - Concepts:
+    - How a Parquet File Is Laid Out: concepts/parquet-layout.md
+    - The Concurrency Model: concepts/concurrency-model.md
+    - RowReader vs. ColumnReader: concepts/reader-models.md
+    - Compatibility Philosophy: concepts/compatibility-philosophy.md
+  - Reference:
+    - Configuration: reference/configuration.md
+    - Error Handling: reference/error-handling.md
+    - CLI: reference/cli.md
+    - Package Structure: reference/packages.md
+    - API (JavaDoc): /api/latest/
   - Contributing: contributing.md
+  - Release Notes: release-notes.md
 
 theme:
   name: material

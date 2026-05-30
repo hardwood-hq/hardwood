@@ -125,7 +125,9 @@
       "WebFetch(domain:www.youtube.com)",
       "Bash(git -C /workspace status --short)",
       "Bash(git -C /workspace log --oneline -5)",
-      "Bash(git rm *)"
+      "Bash(git rm *)",
+      "Bash(/workspace/.docker-venv/bin/mkdocs build *)",
+      "Bash(git check-ignore *)"
     ]
   }
 }

@@ -163,7 +163,7 @@ Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`)
 
 #### Type mismatches
 
-Requesting the wrong type for a column (e.g. `getInt` on a `LONG` column, `getDate` on a `STRING` column) is a programming error; the call fails at runtime with an unchecked exception. The specific exception type is unspecified and may change between releases — do not catch it as part of normal control flow. Check the schema up front if the column type isn't known statically.
+Requesting the wrong type for a column (e.g. `getInt` on a `LONG` column, `getDate` on a `STRING` column) is a programming error; the call fails at runtime with an unchecked exception. The specific exception type is unspecified and may change between releases — do not catch it as part of normal control flow. If the column type isn't known statically, check it up front via `reader.getFileSchema().getColumn(name)` and inspect the returned `ColumnSchema`'s `type()` / `logicalType()` — see [Inspect File Metadata](metadata.md).
 
 #### Index-based access
 

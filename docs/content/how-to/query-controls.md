@@ -194,7 +194,7 @@ The filter column does not need to be in the projection — Hardwood reads the f
 
 ## Row Limit
 
-A row limit instructs the reader to stop after the specified number of rows, avoiding unnecessary I/O and decoding. On remote backends like S3, this can reduce network transfers significantly — only the row groups and pages needed to satisfy the limit are fetched.
+A row limit instructs the reader to stop after the specified number of rows, avoiding unnecessary I/O and decoding. On remote backends like S3, only the row groups and pages needed to satisfy the limit are fetched.
 
 ```java
 // Read at most 100 rows
@@ -274,7 +274,7 @@ The same `filter(RowGroupPredicate)` overload is available on `RowReaderBuilder`
 
 ### Reading the Tail of a File
 
-The `tail(N)` builder method reads the trailing rows of the file instead of the leading ones. Row groups that do not overlap the tail are skipped entirely, so pages for earlier row groups are never fetched or decoded — especially useful on remote backends like S3, where unneeded row groups avoid HTTP range requests altogether.
+The `tail(N)` builder method reads the trailing rows of the file instead of the leading ones. Row groups that do not overlap the tail are skipped entirely, so pages for earlier row groups are never fetched or decoded.
 
 ```java
 // Read the last 10 rows; earlier row groups are skipped.

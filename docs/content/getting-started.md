@@ -13,7 +13,7 @@
 
 Hardwood runs on Java 21 or newer; Java 25 is recommended for best performance.
 
-If you just want to inspect or convert Parquet files from the command line, grab a pre-built native binary for Linux, macOS, or Windows from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}); see the [CLI](cli.md) page for details.
+If you just want to inspect or convert Parquet files from the command line, grab a pre-built native binary for Linux, macOS, or Windows from the [release page](https://github.com/hardwood-hq/hardwood/releases/tag/{{cli_release_tag}}); see the [CLI](reference/cli.md) page for details.
 
 ## Dependency Management
 
@@ -146,26 +146,8 @@ implementation 'org.xerial.snappy:snappy-java'
 
 If you attempt to read a file using a compression codec whose library is not on the classpath, Hardwood will throw an exception with a message indicating which dependency to add.
 
-## First Read
+## Read a File
 
-With the core dependency in place, read a Parquet file:
+With the core dependency in place, you're ready to read. The [Read Your First Parquet File](tutorial/first-read.md) tutorial walks through it end-to-end against a real dataset — printing the schema, reading rows with typed accessors, narrowing the read with a projection and a filter, and summing a column the columnar way.
 
-```java
-import dev.hardwood.InputFile;
-import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.reader.RowReader;
-
-try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-    RowReader rowReader = fileReader.rowReader()) {
-
-    while (rowReader.hasNext()) {
-        rowReader.next();
-
-        long id = rowReader.getLong("id");
-        String name = rowReader.getString("name");
-        System.out.println(id + ": " + name);
-    }
-}
-```
-
-See [Usage](usage.md) for the full API reference including column projection, predicate pushdown, column-oriented reading, and more.
+For the full API — column projection, predicate pushdown, column-oriented reading, and more — see the [How-to Guides](how-to/index.md).

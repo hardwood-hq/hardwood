@@ -12,19 +12,17 @@
 # Hardwood
 
 _A lightweight Java reader for the [Apache Parquet](https://parquet.apache.org/) file format.
-Available as a Java library and a [command-line tool](cli.md)._
+Available as a Java library and a [command-line tool](reference/cli.md)._
 
 ## Why Hardwood
 
-Hardwood is built for applications that want Parquet read support without pulling in Hadoop, Avro, or the wider [parquet-java](https://github.com/apache/parquet-java) dependency tree. Use it when you need any of: a small runtime (zero transitive dependencies in the core), fast startup (suitable for native CLIs and short-lived processes), multi-threaded decode out of the box (pages decoded in parallel across a shared thread pool), direct S3 access (without `hadoop-aws`), or drop-in replacement of `parquet-java`'s `ParquetReader<Group>` API via the [compat module](compat.md).
+Hardwood gives applications Parquet read support without pulling in Hadoop, Avro, or the wider [parquet-java](https://github.com/apache/parquet-java) dependency tree:
 
-## Goals
-
-* **Light-weight** — implement the Parquet format with zero transitive dependencies beyond optional compression libraries (Snappy, ZSTD, LZ4, Brotli).
-* **Compatible** — read every file that `parquet-java` reads, with documented divergences where Hardwood applies stricter semantics (e.g. SQL three-valued `notEq`).
-* **Fast** — match or exceed `parquet-java`'s read throughput; remain competitive in native-image builds and short-lived JVMs.
+* **Light-weight** — zero transitive dependencies beyond optional compression libraries (Snappy, ZSTD, LZ4, Brotli).
+* **Compatible** — reads every file that `parquet-java` reads, with documented divergences where Hardwood applies stricter semantics (e.g. SQL three-valued `notEq`).
+* **Fast** — matches or exceeds `parquet-java`'s read throughput; competitive in native-image builds and short-lived JVMs.
 * **Concurrent** — multi-threaded at the core: pages decode in parallel on a shared thread pool, with cross-file prefetching for multi-file reads.
-* **Embeddable** — usable from native CLIs, S3-only pipelines, and Avro / Spark consumers via thin shim modules.
+* **Embeddable** — usable from native CLIs, S3-only pipelines (without `hadoop-aws`), and Avro / Spark consumers via thin shim modules, including a [drop-in `parquet-java` replacement](how-to/compat.md).
 
 ## Quick Example
 
@@ -47,19 +45,19 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-See [Getting Started](getting-started.md) for installation and setup.
+Ready? [Install Hardwood](getting-started.md), then read [your first file end-to-end](tutorial/first-read.md).
 
 ## Status
 
 This is Beta quality software, under active development.
 
-!!! warning "2 GB column-chunk limit"
-    For local (memory-mapped) files, the file itself may be arbitrarily large, but each individual **column chunk** must be at most **2 GB** of compressed data. The in-memory (`ByteBuffer`) and object-store backends have a 2 GB limit on the whole file; for those, larger datasets should be split across multiple files and read by passing a list of `InputFile`s to `Hardwood.openAll(...)` or `ParquetFileReader.openAll(...)`. Tracked as [#75](https://github.com/hardwood-hq/hardwood/issues/75).
+Reading from S3 or an in-memory `ByteBuffer` currently caps a file at 2 GB; split larger datasets across multiple files (local memory-mapped reads have no whole-file size limit). See [Parquet file layout](concepts/parquet-layout.md).
 
 ## Roadmap
 
 Forward-looking items tracked for post-1.0. None are committed to a specific release.
 
+- **Finalize `ColumnReader` API** — stabilize the API for columnar access and move it out of "Experimental" state. ([#522](https://github.com/hardwood-hq/hardwood/issues/522))
 - **Writer support** — write Parquet files in addition to reading; today Hardwood is reader-only. ([#9](https://github.com/hardwood-hq/hardwood/issues/9))
 - **Bloom filter predicate pushdown** — use per-chunk bloom filters for equality-predicate skipping on high-cardinality columns, where min/max statistics can't help. ([#105](https://github.com/hardwood-hq/hardwood/issues/105))
 - **Parquet Modular Encryption** — read files encrypted under the Parquet [Modular Encryption spec](https://github.com/apache/parquet-format/blob/master/Encryption.md): encrypted footer, per-column keys, AES-GCM and AES-GCM-CTR. ([#128](https://github.com/hardwood-hq/hardwood/issues/128))
@@ -70,19 +68,8 @@ Forward-looking items tracked for post-1.0. None are committed to a specific rel
 - **Questions, ideas, design discussion** — [GitHub Discussions](https://github.com/hardwood-hq/hardwood/discussions). The best first stop for "how do I…", "is X possible…", or "what's the right way to…".
 - **Bug reports and feature requests** — the [GitHub issue tracker](https://github.com/hardwood-hq/hardwood/issues). Please check whether a similar issue already exists.
 
-## Package Structure
+## Talks & posts
 
-Hardwood is organized into public API packages and internal implementation packages. Application code should import only from the public packages; `dev.hardwood.internal.*` and its subpackages are implementation details and may change without notice.
-
-| Package | Visibility | Purpose |
-|---------|-----------|---------|
-| [`dev.hardwood`](/api/latest/dev/hardwood/package-summary.html) | **Public API** | Entry point for creating readers and managing shared resources (thread pool, decompressor pool). |
-| [`dev.hardwood.reader`](/api/latest/dev/hardwood/reader/package-summary.html) | **Public API** | Single-file and multi-file readers for row-oriented and column-oriented access. |
-| [`dev.hardwood.metadata`](/api/latest/dev/hardwood/metadata/package-summary.html) | **Public API** | Parquet file metadata: row groups, column chunks, physical/logical types, and compression codecs. |
-| [`dev.hardwood.schema`](/api/latest/dev/hardwood/schema/package-summary.html) | **Public API** | Schema representation: file schema, column schemas, and column projection. |
-| [`dev.hardwood.row`](/api/latest/dev/hardwood/row/package-summary.html) | **Public API** | Value types for nested data access: structs, lists, and maps. |
-| [`dev.hardwood.avro`](/api/latest/dev/hardwood/avro/package-summary.html) | **Public API** | Avro GenericRecord support: schema conversion and row materialization (`hardwood-avro` module). |
-| [`dev.hardwood.s3`](/api/latest/dev/hardwood/s3/package-summary.html) | **Public API** | S3 object storage support: `S3Source`, `S3InputFile`, `S3Credentials`, `S3CredentialsProvider` (`hardwood-s3` module, zero external dependencies). |
-| [`dev.hardwood.aws.auth`](/api/latest/dev/hardwood/aws/auth/package-summary.html) | **Public API** | Bridges the AWS SDK credential chain to Hardwood's `S3CredentialsProvider` (`hardwood-aws-auth` module, optional). |
-| [`dev.hardwood.jfr`](/api/latest/dev/hardwood/jfr/package-summary.html) | **Public API** | JFR event types emitted during file reading, decoding, and pipeline operations. |
-| `dev.hardwood.internal.*` | **Internal** | Implementation details — not part of the public API and may change without notice. |
+- [Hardwood: A New Parser for Apache Parquet](https://www.morling.dev/blog/hardwood-new-parser-for-apache-parquet/) — project announcement.
+- [Open Source Friday with Gunnar Morling](https://www.youtube.com/watch?v=teqFSSQEtCw) — GitHub Open Source Friday.
+- [Chasing Efficient Java Development: From 1BRC to Developing Hardwood AI Natively](https://www.infoq.com/podcasts/chasing-efficient-java-development/) — InfoQ podcast on building Hardwood.

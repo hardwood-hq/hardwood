@@ -45,6 +45,7 @@ nb-configuration.xml
 .release-env
 __pycache__/
 docs/hooks/__pycache__/
+docs/site/
 
 # JReleaser
 out/

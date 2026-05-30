@@ -34,3 +34,27 @@
     display: inline-flex;
   }
 }
+
+/*
+ * Links: keep them clearly distinguishable from body text. The brand primary
+ * is a dark navy that, used as the link color, reads almost like body text, so
+ * give links their own brighter colour per scheme and underline them (don't
+ * rely on colour alone). Heading permalinks and image links are excluded.
+ */
+[data-md-color-scheme="default"] {
+  --md-typeset-a-color: #2c5282;
+}
+
+[data-md-color-scheme="slate"] {
+  --md-typeset-a-color: #7eb6e8;
+}
+
+.md-typeset a:not(.headerlink):not(:has(img)) {
+  text-decoration: underline;
+  text-underline-offset: 0.15em;
+  text-decoration-thickness: 1px;
+}
+
+.md-typeset a:not(.headerlink):not(:has(img)):hover {
+  text-decoration-thickness: 2px;
+}
