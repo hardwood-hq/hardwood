@@ -27,8 +27,10 @@ public final class VariantMetadata {
     private final int dictionarySize;
     private final int offsetsStart;   // offset of the offset-table start in `buf`
     private final int stringsStart;   // offset of the strings section in `buf`
+    private final String currentFileName;
 
-    public VariantMetadata(byte[] buf) {
+    public VariantMetadata(byte[] buf, String currentFileName) {
+        this.currentFileName = currentFileName;
         if (buf == null || buf.length < 1) {
             throw new IllegalArgumentException("Variant metadata buffer is empty");
         }
@@ -63,6 +65,10 @@ public final class VariantMetadata {
     /// Returns the raw metadata buffer (unmodified, same reference as passed in).
     public byte[] buffer() {
         return buf;
+    }
+
+    public String getCurrentFileName() {
+        return currentFileName;
     }
 
     /// Number of entries in the dictionary.

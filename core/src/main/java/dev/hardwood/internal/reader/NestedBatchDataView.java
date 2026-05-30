@@ -565,7 +565,7 @@ public final class NestedBatchDataView {
 
         // Shredded when the top-level ShredLevel has a typed_value component.
         if (desc.root().typed() != null) {
-            VariantMetadata meta = new VariantMetadata(metadataBytes);
+            VariantMetadata meta = new VariantMetadata(metadataBytes, batchIndex.currentFileName);
             variantReassembler.setCurrentMetadata(meta);
             byte[] value = variantReassembler.reassemble(desc.root(), batchIndex, rowIndex);
             if (value == null) {
@@ -585,6 +585,6 @@ public final class NestedBatchDataView {
         }
         int valIdx = cachedValueIndex[valueCol];
         byte[] value = batchIndex.getBinary(valueCol, valIdx);
-        return new PqVariantImpl(metadataBytes, value);
+        return new PqVariantImpl(metadataBytes, value, batchIndex.currentFileName);
     }
 }

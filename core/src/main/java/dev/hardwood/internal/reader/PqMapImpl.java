@@ -376,7 +376,7 @@ final class PqMapImpl implements PqMap {
                     "Variant map value requires its 'value' child in the projection");
         }
         byte[] value = ((BinaryBatchValues) batch.valueArrays[valueCol]).byteArrayAt(valueIdx);
-        return new PqVariantImpl(metadataBytes, value);
+        return new PqVariantImpl(metadataBytes, value, batch.currentFileName);
     }
 
     private boolean isValueNullAt(int valueIdx) {

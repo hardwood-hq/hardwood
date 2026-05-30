@@ -24,7 +24,7 @@ class VariantMetadataTest {
     @Test
     void emptyDictionary() throws IOException {
         byte[] bytes = readResource("/variant/primitive_int32.metadata");
-        VariantMetadata metadata = new VariantMetadata(bytes);
+        VariantMetadata metadata = new VariantMetadata(bytes,"");
         assertThat(metadata.size()).isZero();
         assertThat(metadata.findField("anything")).isEqualTo(-1);
     }
@@ -32,7 +32,7 @@ class VariantMetadataTest {
     @Test
     void objectPrimitiveDictionary() throws IOException {
         byte[] bytes = readResource("/variant/object_primitive.metadata");
-        VariantMetadata metadata = new VariantMetadata(bytes);
+        VariantMetadata metadata = new VariantMetadata(bytes,"");
         // object_primitive has 7 fields:
         //   boolean_false_field, boolean_true_field, double_field, int_field,
         //   null_field, string_field, timestamp_field
@@ -62,14 +62,14 @@ class VariantMetadataTest {
     @Test
     void truncatedBufferRejected() {
         byte[] bytes = { 0x01 }; // header only, no dictionary size bytes
-        assertThatThrownBy(() -> new VariantMetadata(bytes))
+        assertThatThrownBy(() -> new VariantMetadata(bytes,""))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("truncated");
     }
 
     @Test
     void emptyBufferRejected() {
-        assertThatThrownBy(() -> new VariantMetadata(new byte[0]))
+        assertThatThrownBy(() -> new VariantMetadata(new byte[0],""))
                 .isInstanceOf(IllegalArgumentException.class);
     }
 

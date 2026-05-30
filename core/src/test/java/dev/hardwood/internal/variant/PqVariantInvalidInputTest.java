@@ -61,7 +61,7 @@ class PqVariantInvalidInputTest {
     @Test
     void metadataGetFieldOutOfRangeThrows() throws IOException {
         VariantMetadata metadata = new VariantMetadata(
-                readResource("/variant/object_primitive.metadata"));
+                readResource("/variant/object_primitive.metadata"),"");
         assertThatThrownBy(() -> metadata.getField(metadata.size()))
                 .isInstanceOf(IndexOutOfBoundsException.class)
                 .hasMessageContaining("out of range");
@@ -75,7 +75,7 @@ class PqVariantInvalidInputTest {
         // version 1; future versions should fail-fast rather than risk
         // misinterpreting the layout.
         byte[] bytes = { 0x02 };
-        assertThatThrownBy(() -> new VariantMetadata(bytes))
+        assertThatThrownBy(() -> new VariantMetadata(bytes,""))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Unsupported Variant metadata version");
     }
@@ -83,7 +83,7 @@ class PqVariantInvalidInputTest {
     private static PqVariant load(String caseName) throws IOException {
         byte[] metadata = readResource("/variant/" + caseName + ".metadata");
         byte[] value = readResource("/variant/" + caseName + ".value");
-        return new PqVariantImpl(metadata, value);
+        return new PqVariantImpl(metadata, value, "");
     }
 
     private static byte[] readResource(String name) throws IOException {

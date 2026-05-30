@@ -39,7 +39,7 @@ class VariantValueDecoderTest {
     private static PqVariant load(String caseName) throws IOException {
         byte[] metadata = readResource("/variant/" + caseName + ".metadata");
         byte[] value = readResource("/variant/" + caseName + ".value");
-        return new PqVariantImpl(metadata, value);
+        return new PqVariantImpl(metadata, value, "");
     }
 
     private static byte[] readResource(String name) throws IOException {

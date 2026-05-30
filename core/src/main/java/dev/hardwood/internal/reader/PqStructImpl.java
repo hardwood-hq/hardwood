@@ -418,7 +418,7 @@ final class PqStructImpl implements PqStruct {
                         "Shredded Variant inside a repeated context (list/map element) "
                                 + "is not yet supported; field '" + fieldName + "'");
             }
-            VariantMetadata meta = new VariantMetadata(metadataBytes);
+            VariantMetadata meta = new VariantMetadata(metadataBytes, batch.currentFileName);
             VariantShredReassembler reassembler = new VariantShredReassembler();
             reassembler.setCurrentMetadata(meta);
             byte[] value = reassembler.reassemble(variantDesc.root(), batch, rowIndex);
@@ -435,7 +435,7 @@ final class PqStructImpl implements PqStruct {
         }
         int valIdx = resolveValueIndex(valueCol);
         byte[] value = batch.getBinary(valueCol, valIdx);
-        return new PqVariantImpl(metadataBytes, value);
+        return new PqVariantImpl(metadataBytes, value, batch.currentFileName);
     }
 
     // ==================== Child Resolution ====================

@@ -32,8 +32,8 @@ public final class PqVariantImpl implements PqVariant {
 
     /// Construct a top-level Variant from raw `metadata` and `value` bytes. The
     /// value header starts at `valueBuf[0]`.
-    public PqVariantImpl(byte[] metadataBytes, byte[] valueBytes) {
-        this(new VariantMetadata(metadataBytes), valueBytes, 0);
+    public PqVariantImpl(byte[] metadataBytes, byte[] valueBytes, String currentFileName) {
+        this(new VariantMetadata(metadataBytes, currentFileName), valueBytes, 0);
     }
 
     public PqVariantImpl(VariantMetadata metadata, byte[] valueBuf, int valueOffset) {
