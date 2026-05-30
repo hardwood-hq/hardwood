@@ -3343,3 +3343,48 @@ dive_screenshots_writer.close()
 print("\nGenerated dive_screenshots_fixture.parquet (in cli):")
 print("  - 4 row groups, 600 rows, nested/list/map fields + dictionary columns")
 print("  - Wide metric_* tail columns for horizontal scrolling in data preview")
+
+
+# Struct followed by a top-level primitive (guard fixture for #525).
+# Schema: id INT, point STRUCT{x, y}, tag STRING, score INT
+#
+# Leaf-column indices:    id=0, point.x=1, point.y=2, tag=3, score=4
+# Top-level field indices: id=0, point=1,            tag=2, score=3
+#
+# `score` is a top-level primitive whose LEAF-column index (4) differs from its
+# top-level FIELD index (3): the `point` struct contributes two extra leaf
+# columns in front of it. `tag` is a string column; a predicate on a BYTE_ARRAY
+# column is not drain-side eligible, so AND-ing it with an int predicate on
+# `score` forces the whole query onto the record-side (FilteredRowReader)
+# filter path — the path that must keep field-index and leaf-column-index
+# distinct when struct-of-primitives files move to the flat reader.
+struct_then_primitive_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('point', pa.struct([
+        ('x', pa.int32()),
+        ('y', pa.int32()),
+    ])),
+    ('tag', pa.string(), False),
+    ('score', pa.int32(), False),
+])
+struct_then_primitive_table = pa.table({
+    'id': [1, 2, 3, 4],
+    'point': [
+        {'x': 10, 'y': 11},
+        {'x': 20, 'y': 21},
+        {'x': 30, 'y': 31},
+        {'x': 40, 'y': 41},
+    ],
+    'tag': ['keep', 'keep', 'keep', 'keep'],
+    'score': [50, 60, 70, 80],
+}, schema=struct_then_primitive_schema)
+pq.write_table(
+    struct_then_primitive_table,
+    'core/src/test/resources/struct_then_primitive_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+print("\nGenerated struct_then_primitive_test.parquet:")
+print("  - id=[1,2,3,4], point={x,y}, tag='keep', score=[50,60,70,80]")
+print("  - score: field index 3 but leaf-column index 4")
