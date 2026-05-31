@@ -20,7 +20,13 @@
   --md-primary-fg-color--dark: #142b46;
 }
 
-.md-header__topic:not([data-md-component="header-topic"]) {
+/*
+ * Hide the redundant site-name text in the header (the logo already includes the
+ * wordmark), but only the text span: the mike version selector is injected by JS
+ * as a sibling inside this same .md-header__topic, so hiding the whole topic would
+ * hide the version picker too.
+ */
+.md-header__topic:not([data-md-component="header-topic"]) > .md-ellipsis {
   display: none;
 }
 
