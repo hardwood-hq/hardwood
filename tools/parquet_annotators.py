@@ -23,6 +23,9 @@ Supported annotations:
 Modern-only fixture helpers (strip legacy annotations so only `logicalType` remains):
 - `strip_converted_type` — for LIST / MAP outer groups.
 
+Legacy-only fixture helpers (set `converted_type` and clear `logicalType`):
+- `annotate_columns_as_legacy_converted_type` — for primitive columns.
+
 Only the subset of parquet.thrift that PyArrow emits, plus the LogicalType
 union, is modelled in the embedded IDL.
 """
@@ -451,3 +454,36 @@ def strip_converted_type(src: str, dst: str, field_name: str) -> None:
     el = _find_outer_group(md, field_name)
     el.converted_type = None
     _write_parquet_footer(dst, data, md)
+
+
+def annotate_columns_as_legacy_converted_type(path: str, specs: dict) -> None:
+    """Rewrite `path` so the named primitive columns carry only a legacy
+    `converted_type` and no modern `logicalType`.
+
+    Simulates files from writers predating the LogicalType union (parquet-mr,
+    Hive, Impala, older Spark), which annotated primitives with `converted_type`
+    alone. `specs` maps a column name to either a `ConvertedType` enum name
+    (e.g. `"UTF8"`, `"TIMESTAMP_MILLIS"`) or, for DECIMAL, a `(name, scale,
+    precision)` triple supplied as a dict `{"ct": "DECIMAL", "scale": 2,
+    "precision": 18}`.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    remaining = dict(specs)
+    for el in file_metadata.schema:
+        spec = remaining.pop(el.name, None)
+        if spec is None:
+            continue
+        if isinstance(spec, str):
+            spec = {"ct": spec}
+        el.logicalType = None
+        el.converted_type = getattr(_parquet.ConvertedType, spec["ct"])
+        if "scale" in spec:
+            el.scale = spec["scale"]
+        if "precision" in spec:
+            el.precision = spec["precision"]
+
+    if remaining:
+        raise ValueError(f"Columns not found in {path}: {sorted(remaining)}")
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)

@@ -26,6 +26,7 @@ from parquet_annotators import (
     annotate_element_at_path_as_json,
     annotate_element_at_path_as_time,
     annotate_element_at_path_as_decimal,
+    annotate_columns_as_legacy_converted_type,
     strip_converted_type,
 )
 
@@ -2295,6 +2296,91 @@ annotate_column_as_interval(
 
 print("\nGenerated interval_legacy_converted_type_test.parquet:")
 print("  - Same data, only the legacy converted_type=INTERVAL annotation set")
+
+# Legacy converted-type coverage (hardwood-hq/hardwood#529). Every primitive
+# `converted_type` that predates the LogicalType union, written with no modern
+# `logicalType` — the shape produced by older parquet-mr / Hive / Impala / Spark.
+# PyArrow emits the bare physical columns (BYTE_ARRAY / INT32 / INT64); the
+# annotator then stamps `converted_type` alone so the schema builder's fallback
+# is exercised end-to-end. Two non-null rows per column.
+legacy_ct_schema = pa.schema([
+    ('utf8_col', pa.binary(), True),
+    ('enum_col', pa.binary(), True),
+    ('json_col', pa.binary(), True),
+    ('bson_col', pa.binary(), True),
+    ('date_col', pa.int32(), True),
+    ('decimal_col', pa.int64(), True),
+    ('time_millis_col', pa.int32(), True),
+    ('time_micros_col', pa.int64(), True),
+    ('timestamp_millis_col', pa.int64(), True),
+    ('timestamp_micros_col', pa.int64(), True),
+    ('int8_col', pa.int32(), True),
+    ('int16_col', pa.int32(), True),
+    ('int32_col', pa.int32(), True),
+    ('int64_col', pa.int64(), True),
+    ('uint8_col', pa.int32(), True),
+    ('uint16_col', pa.int32(), True),
+    ('uint32_col', pa.int32(), True),
+    ('uint64_col', pa.int64(), True),
+])
+
+# Row 1 chosen to exercise edge values: signed-type minima, unsigned-type maxima
+# stored as the raw two's-complement bit pattern (e.g. uint32 max = -1 as int32).
+legacy_ct_table = pa.table({
+    'utf8_col': [b'alpha', b'bravo'],
+    'enum_col': [b'RED', b'GREEN'],
+    'json_col': [b'{"k":1}', b'{"k":2}'],
+    'bson_col': [b'\x05\x00\x00\x00\x00', b'\x05\x00\x00\x00\x00'],  # empty BSON doc
+    'date_col': pa.array([0, 19723], type=pa.int32()),              # epoch, 2024-01-01
+    'decimal_col': pa.array([12345, -100], type=pa.int64()),        # 123.45, -1.00 at scale 2
+    'time_millis_col': pa.array([0, 3661000], type=pa.int32()),     # 00:00:00, 01:01:01
+    'time_micros_col': pa.array([0, 3661000000], type=pa.int64()),
+    'timestamp_millis_col': pa.array([0, 1704067200000], type=pa.int64()),       # 2024-01-01T00:00:00Z
+    'timestamp_micros_col': pa.array([0, 1704067200000000], type=pa.int64()),
+    'int8_col': pa.array([-128, 127], type=pa.int32()),
+    'int16_col': pa.array([-32768, 32767], type=pa.int32()),
+    'int32_col': pa.array([-2147483648, 2147483647], type=pa.int32()),
+    'int64_col': pa.array([-100, 100], type=pa.int64()),
+    'uint8_col': pa.array([0, 255], type=pa.int32()),
+    'uint16_col': pa.array([0, 65535], type=pa.int32()),
+    'uint32_col': pa.array([0, -1], type=pa.int32()),               # 0, 4294967295 (max uint32)
+    'uint64_col': pa.array([0, -1], type=pa.int64()),               # 0, 18446744073709551615 (max uint64)
+}, schema=legacy_ct_schema)
+
+pq.write_table(
+    legacy_ct_table,
+    'core/src/test/resources/legacy_converted_types_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+annotate_columns_as_legacy_converted_type(
+    'core/src/test/resources/legacy_converted_types_test.parquet',
+    {
+        'utf8_col': 'UTF8',
+        'enum_col': 'ENUM',
+        'json_col': 'JSON',
+        'bson_col': 'BSON',
+        'date_col': 'DATE',
+        'decimal_col': {'ct': 'DECIMAL', 'scale': 2, 'precision': 18},
+        'time_millis_col': 'TIME_MILLIS',
+        'time_micros_col': 'TIME_MICROS',
+        'timestamp_millis_col': 'TIMESTAMP_MILLIS',
+        'timestamp_micros_col': 'TIMESTAMP_MICROS',
+        'int8_col': 'INT_8',
+        'int16_col': 'INT_16',
+        'int32_col': 'INT_32',
+        'int64_col': 'INT_64',
+        'uint8_col': 'UINT_8',
+        'uint16_col': 'UINT_16',
+        'uint32_col': 'UINT_32',
+        'uint64_col': 'UINT_64',
+    },
+)
+
+print("\nGenerated legacy_converted_types_test.parquet:")
+print("  - 18 columns, each carrying only a legacy converted_type (no logicalType)")
+print("  - Covers UTF8/ENUM/JSON/BSON, DATE, DECIMAL, TIME_*, TIMESTAMP_*, INT_*/UINT_*")
 
 # FLOAT16 logical type test
 # IEEE 754 half-precision (binary16): sign | 5-bit exponent | 10-bit mantissa,

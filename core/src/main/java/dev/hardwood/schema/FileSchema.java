@@ -246,16 +246,59 @@ public class FileSchema {
     /// Resolve the effective logical type of a primitive element, falling back
     /// to the legacy `converted_type` annotation when the modern logical-type
     /// union is absent. Older writers (parquet-mr, Spark, Hive) only set
-    /// `converted_type=INTERVAL`, which would otherwise leave the column
-    /// unrecognized by typed accessors like `getInterval`.
+    /// `converted_type`, which would otherwise leave the column read as a bare
+    /// physical column and decoded wrong or not at all (e.g. a `DECIMAL` read as
+    /// an unscaled integer, a `DATE` as a raw `INT32`).
+    ///
+    /// When both annotations are present the modern `logicalType()` wins. Only
+    /// primitive-level annotations are mapped here; the group-level `LIST`, `MAP`,
+    /// and `MAP_KEY_VALUE` are consulted directly on [SchemaNode.GroupNode].
     private static LogicalType effectiveLogicalType(SchemaElement element) {
         if (element.logicalType() != null) {
             return element.logicalType();
         }
-        if (element.convertedType() == ConvertedType.INTERVAL) {
-            return new LogicalType.IntervalType();
+        ConvertedType converted = element.convertedType();
+        if (converted == null) {
+            return null;
         }
-        return null;
+        return switch (converted) {
+            case UTF8 -> new LogicalType.StringType();
+            case ENUM -> new LogicalType.EnumType();
+            case JSON -> new LogicalType.JsonType();
+            case BSON -> new LogicalType.BsonType();
+            case INTERVAL -> new LogicalType.IntervalType();
+            case DATE -> new LogicalType.DateType();
+            case DECIMAL -> decimalFromElement(element);
+            // The parquet-format backward-compatibility rule maps the legacy
+            // TIME_*/TIMESTAMP_* converted types to isAdjustedToUTC=true; these
+            // annotations always denoted UTC-normalized instants.
+            case TIME_MILLIS -> new LogicalType.TimeType(true, LogicalType.TimeUnit.MILLIS);
+            case TIME_MICROS -> new LogicalType.TimeType(true, LogicalType.TimeUnit.MICROS);
+            case TIMESTAMP_MILLIS -> new LogicalType.TimestampType(true, LogicalType.TimeUnit.MILLIS);
+            case TIMESTAMP_MICROS -> new LogicalType.TimestampType(true, LogicalType.TimeUnit.MICROS);
+            case INT_8 -> new LogicalType.IntType(8, true);
+            case INT_16 -> new LogicalType.IntType(16, true);
+            case INT_32 -> new LogicalType.IntType(32, true);
+            case INT_64 -> new LogicalType.IntType(64, true);
+            case UINT_8 -> new LogicalType.IntType(8, false);
+            case UINT_16 -> new LogicalType.IntType(16, false);
+            case UINT_32 -> new LogicalType.IntType(32, false);
+            case UINT_64 -> new LogicalType.IntType(64, false);
+            // Group-level annotations are handled on GroupNode, not here.
+            case LIST, MAP, MAP_KEY_VALUE -> null;
+        };
+    }
+
+    /// Build a [LogicalType.DecimalType] from a legacy `DECIMAL` converted-type
+    /// element, reading `scale`/`precision` off the schema element. A missing
+    /// scale defaults to `0`; a missing precision is a malformed schema.
+    private static LogicalType.DecimalType decimalFromElement(SchemaElement element) {
+        if (element.precision() == null) {
+            throw new IllegalStateException(
+                    "DECIMAL converted type requires a precision: " + element.name());
+        }
+        int scale = element.scale() != null ? element.scale() : 0;
+        return new LogicalType.DecimalType(scale, element.precision());
     }
 
     /// Validate a Variant-annotated group's shape: required `metadata` binary
