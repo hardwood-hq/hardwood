@@ -118,14 +118,21 @@ git commit -m "[release] Update versions for ${RELEASE_VERSION}"
 # -- Prepare and perform release ---------------------------------------------
 
 echo "Running Maven release:prepare release:perform..."
-./mvnw -ntp -B -Prelease release:prepare release:perform \
+# -Pperformance-test puts the performance-testing modules into the reactor that
+# release:prepare rewrites, so the release tag carries the release version in
+# their POMs too (otherwise they stay at 1.X-SNAPSHOT and the tag can't be built
+# with -Pperformance-test). The release plugin forwards the active profiles to
+# its forked verify/deploy builds, so these modules get built too: -Dquick keeps
+# the build compile-only (skips tests, QA plugins, and the multi-gigabyte data
+# download), and <maven.deploy.skip> in their POMs keeps them out of Maven Central.
+./mvnw -ntp -B -Prelease -Pperformance-test release:prepare release:perform \
   -DreleaseVersion="${RELEASE_VERSION}" \
   -DdevelopmentVersion="${DEVELOPMENT_VERSION}" \
   -Dresume=false \
   -DpushChanges=false \
   -DlocalCheckout=true \
-  -DpreparationGoals="clean verify -DskipTests" \
-  -Darguments="-DskipTests"
+  -DpreparationGoals="clean verify -Dquick" \
+  -Darguments="-Dquick"
 
 # Restore the cli_release_tag placeholder value to 1.0-early-access so main's
 # HEAD points at the rolling early-access binaries. The release tag (created

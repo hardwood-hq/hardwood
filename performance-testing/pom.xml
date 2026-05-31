@@ -23,6 +23,13 @@
   <name>Hardwood Performance Testing</name>
   <description>Performance testing modules for Hardwood</description>
 
+  <properties>
+    <!-- Never published to Maven Central; these modules are only in the release
+         reactor so release:prepare rewrites their versions consistently with the
+         rest of the build. Inherited by all performance-testing submodules. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
+  </properties>
+
   <dependencyManagement>
     <dependencies>
       <dependency>

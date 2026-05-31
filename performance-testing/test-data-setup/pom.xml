@@ -22,11 +22,22 @@
   <name>Hardwood Performance Test Data Setup</name>
   <description>Downloads and manages test data files for performance testing</description>
 
+  <properties>
+    <!-- Whether to skip fetching the (multi-gigabyte) test data sets. The quick
+         profile below flips this to true so that -Dquick builds this module
+         without downloading, e.g. during release:prepare which only needs the
+         POM versions rewritten, not the performance tests run. -->
+    <testdata.download.skip>false</testdata.download.skip>
+  </properties>
+
   <build>
     <plugins>
       <plugin>
         <groupId>org.codehaus.mojo</groupId>
         <artifactId>exec-maven-plugin</artifactId>
+        <configuration>
+          <skip>${testdata.download.skip}</skip>
+        </configuration>
         <executions>
           <execution>
             <id>download-test-data</id>
@@ -64,4 +75,20 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- -Dquick skips non-essential plugins for fast compile-only builds; the
+         test data download is one such non-essential step here. -->
+    <profile>
+      <id>quick</id>
+      <activation>
+        <property>
+          <name>quick</name>
+        </property>
+      </activation>
+      <properties>
+        <testdata.download.skip>true</testdata.download.skip>
+      </properties>
+    </profile>
+  </profiles>
 </project>
