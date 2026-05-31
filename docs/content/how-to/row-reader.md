@@ -185,7 +185,7 @@ while (rowReader.hasNext()) {
 
 #### INTERVAL columns
 
-`PqInterval` is a plain record with three `long` properties — `months()`, `days()`, and `milliseconds()`. Each holds an unsigned 32-bit value in the range `[0, 4_294_967_295]`, so no additional conversion is needed. The components are independent and not normalized. Files written by older parquet-mr / Spark / Hive writers that set only the legacy `converted_type=INTERVAL` annotation are handled transparently — no caller-side opt-in is required.
+`PqInterval` is a plain record with three `long` properties — `months()`, `days()`, and `milliseconds()`. Each holds an unsigned 32-bit value in the range `[0, 4_294_967_295]`, so no additional conversion is needed. The components are independent and not normalized. `INTERVAL` is one of the legacy `converted_type` annotations handled transparently — see [Legacy converted-type annotations](#legacy-converted-type-annotations) below.
 
 #### FLOAT16 columns
 
@@ -194,6 +194,25 @@ while (rowReader.hasNext()) {
 #### Legacy INT96 timestamps
 
 Parquet files written by older versions of Apache Spark and Hive store timestamps in the deprecated INT96 physical type without a TIMESTAMP logical type annotation. `getTimestamp` detects INT96 automatically and decodes it to an `Instant`; no caller-side handling is required.
+
+#### Legacy converted-type annotations
+
+Writers predating the modern logical-type union (older parquet-mr / Hive / Impala / Spark) annotate primitive columns with only a legacy `converted_type` and no `logicalType`. Hardwood promotes each one to its logical type, so the column decodes through the normal typed accessor with no caller-side opt-in:
+
+| `converted_type` | Accessor | Java type |
+|------------------|----------|-----------|
+| `UTF8` | `getString` | `String` |
+| `JSON` | `getString` | `String` |
+| `ENUM`, `BSON` | `getBinary` | `byte[]` |
+| `DATE` | `getDate` | `LocalDate` |
+| `DECIMAL` | `getDecimal` | `BigDecimal` |
+| `TIME_MILLIS`, `TIME_MICROS` | `getTime` | `LocalTime` |
+| `TIMESTAMP_MILLIS`, `TIMESTAMP_MICROS` | `getTimestamp` | `Instant` |
+| `INT_8`, `INT_16`, `INT_32`, `INT_64` | `getValue` | `Byte` / `Short` / `Integer` / `Long` |
+| `UINT_8`, `UINT_16`, `UINT_32`, `UINT_64` | `getValue` | `Integer` / `Long` (raw two's-complement bit pattern) |
+| `INTERVAL` | `getInterval` | `PqInterval` |
+
+`TIME_*` / `TIMESTAMP_*` are read as UTC-normalized instants, matching the parquet-format backward-compatibility rule for these annotations. Unsigned columns preserve the stored bit pattern — reinterpret with `Integer.toUnsignedLong` / `Long.toUnsignedString` for the unsigned magnitude. When a file carries both a `converted_type` and a modern `logicalType`, the `logicalType` takes precedence.
 
 #### NULL columns
 

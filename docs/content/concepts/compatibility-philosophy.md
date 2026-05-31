@@ -27,9 +27,9 @@ Two goals are in tension, and Hardwood resolves them on different axes:
 - **Read what's out there.** Parquet files in the wild were written by many tools across many
   years — parquet-mr, Arrow, Spark, Hive, PyArrow — using legacy encodings, deprecated types,
   and annotations that newer specs dropped. Hardwood reads these transparently: legacy 2-level
-  list encodings, INT96 timestamps, the old `converted_type=INTERVAL` annotation, `NULL`-typed
-  columns, FLOAT16. On the *input* side, Hardwood is liberal — if parquet-java can read it,
-  Hardwood aims to.
+  list encodings, INT96 timestamps, the legacy `converted_type` annotations that predate the
+  modern logical-type union, `NULL`-typed columns, FLOAT16. On the *input* side, Hardwood is
+  liberal — if parquet-java can read it, Hardwood aims to.
 - **Don't silently produce wrong results.** On the *semantic* side, where a behavior is a matter
   of correctness rather than file compatibility, Hardwood chooses the well-defined answer even
   when that diverges from parquet-java's historical behavior. This follows the project's
