@@ -98,7 +98,12 @@ git checkout -b "release/${RELEASE_VERSION}"
 
 echo "Generating API change report..."
 JAPICMP_OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
-./mvnw -ntp -B package japicmp:cmp -pl :hardwood-core -DskipTests -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
+# -am brings up everything in hardwood-core's reactor dependency graph
+# (hardwood-test-support and the BOMs), but not hardwood-error-prone-checks: it is
+# wired as an annotationProcessorPath, not a project dependency, so it stays
+# invisible to the reactor and must be installed into the local repo first.
+./mvnw -ntp -B install -pl :hardwood-error-prone-checks -DskipTests
+./mvnw -ntp -B package japicmp:cmp -pl :hardwood-core -am -DskipTests -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
 
 # -- Update README versions and date -----------------------------------------
 
@@ -171,11 +176,18 @@ if [[ "$STAGE" == "UPLOAD" ]]; then
   echo "Verifying staged release (using temporary local repo)..."
   STAGING_LOCAL_REPO="$(mktemp -d)"
 
-  # The staging repo only serves dev.hardwood:* — pre-warm the temp local repo
-  # with every external dep from the home cache so those don't round-trip to
-  # staging and get 404s before falling back to Central. Only dev.hardwood:*
-  # is actually fetched from staging.
+  # The staging repo only serves the published dev.hardwood:* artifacts — pre-warm
+  # the temp local repo with every external dep from the home cache so those don't
+  # round-trip to staging and get 404s before falling back to Central. The
+  # dev.hardwood runtime artifacts under test are fetched from staging, while the
+  # pom-only BOMs/parent resolve from the checkout source tree.
   rsync -a "${HOME}/.m2/repository/" "${STAGING_LOCAL_REPO}/" --exclude='dev/hardwood'
+
+  # hardwood-error-prone-checks is build-only tooling (an annotationProcessorPath)
+  # and is not deployed, so it never reaches staging. Seed it from the home cache,
+  # where release:perform's install phase already placed the release version, so
+  # compiling the integration tests can still resolve the processor.
+  rsync -a "${HOME}/.m2/repository/dev/hardwood/hardwood-error-prone-checks" "${STAGING_LOCAL_REPO}/dev/hardwood/"
 
   # Run from target/checkout so ${project.version} resolves to RELEASE_VERSION;
   # release-test-settings.xml lives in the project root.

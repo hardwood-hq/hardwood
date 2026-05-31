@@ -21,6 +21,9 @@
   <name>Hardwood Error Prone Checks</name>
 
   <properties>
+    <!-- Build-only tooling: the Error Prone checks run during this repo's own compilation and
+         are never a runtime dependency of any published artifact, so don't deploy them. -->
+    <maven.deploy.skip>true</maven.deploy.skip>
     <!-- javac rejects the release flag combined with add-exports on system modules. Clear the
          parent's maven.compiler.release and fall back to source/target so the jdk.compiler
          exports required by Error Prone's javac AST imports compile. -->
