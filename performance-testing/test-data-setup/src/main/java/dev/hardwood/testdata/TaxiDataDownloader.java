@@ -72,8 +72,7 @@ public final class TaxiDataDownloader {
         if (property == null || property.isBlank()) {
             return DEFAULT_END;
         }
-        YearMonth requested = YearMonth.parse(property);
-        return requested.isAfter(DEFAULT_END) ? DEFAULT_END : requested;
+        return YearMonth.parse(property);
     }
 
     private static void downloadRange(Path dataDir, YearMonth start, YearMonth end) throws IOException {
