@@ -626,21 +626,24 @@ public class ColumnReader implements AutoCloseable {
     /// filtering. `filter` may be `null`.
     static ColumnReader create(String columnName, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context, ResolvedPredicate filter) {
-        return create(schema.getColumn(columnName), schema, inputFile, rowGroups, context, filter);
+                               HardwoodContextImpl context, ResolvedPredicate filter,
+                               int batchSize) {
+        return create(schema.getColumn(columnName), schema, inputFile, rowGroups, context, filter, batchSize);
     }
 
     /// Create a ColumnReader for a column by index with optional page-level
     /// filtering. `filter` may be `null`.
     static ColumnReader create(int columnIndex, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context, ResolvedPredicate filter) {
-        return create(schema.getColumn(columnIndex), schema, inputFile, rowGroups, context, filter);
+                               HardwoodContextImpl context, ResolvedPredicate filter,
+                               int batchSize) {
+        return create(schema.getColumn(columnIndex), schema, inputFile, rowGroups, context, filter, batchSize);
     }
 
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        InputFile inputFile, List<RowGroup> rowGroups,
-                                       HardwoodContextImpl context, ResolvedPredicate filter) {
+                                       HardwoodContextImpl context, ResolvedPredicate filter,
+                                       int batchSize) {
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema,
                 ColumnProjection.columns(columnSchema.fieldPath().toString()));
 
@@ -649,7 +652,7 @@ public class ColumnReader implements AutoCloseable {
         rowGroupIterator.setFirstFile(schema, rowGroups);
         rowGroupIterator.initialize(projectedSchema, filter);
 
-        return createFromIterator(columnSchema, schema, rowGroupIterator, context, 0, rowGroupIterator);
+        return createFromIterator(columnSchema, schema, rowGroupIterator, context, 0, rowGroupIterator, batchSize);
     }
 
     /// Creates a ColumnReader from a pre-configured RowGroupIterator.
@@ -663,7 +666,8 @@ public class ColumnReader implements AutoCloseable {
                                            RowGroupIterator rowGroupIterator,
                                            HardwoodContextImpl context,
                                            int projectedColumnIndex,
-                                           RowGroupIterator ownedIterator) {
+                                           RowGroupIterator ownedIterator,
+                                           int batchSize) {
         NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                 schema.getRootNode(), columnSchema.columnIndex());
         boolean nested = layers.count() > 0 || columnSchema.maxRepetitionLevel() > 0;
@@ -674,11 +678,11 @@ public class ColumnReader implements AutoCloseable {
             BatchExchange<NestedBatch> nestedBuf = BatchExchange.detaching(
                     columnSchema.name(), () -> {
                         NestedBatch b = new NestedBatch();
-                        b.values = BatchExchange.allocateArray(columnSchema, DEFAULT_BATCH_SIZE);
+                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
                         return b;
                     });
             NestedColumnWorker nestedWorker = new NestedColumnWorker(
-                    pageSource, nestedBuf, columnSchema, DEFAULT_BATCH_SIZE,
+                    pageSource, nestedBuf, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), 0,
                     layers);
             nestedWorker.start();
@@ -688,11 +692,11 @@ public class ColumnReader implements AutoCloseable {
             BatchExchange<BatchExchange.Batch> flatBuf = BatchExchange.detaching(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(columnSchema, DEFAULT_BATCH_SIZE);
+                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
                         return b;
                     });
             FlatColumnWorker flatWorker = new FlatColumnWorker(
-                    pageSource, flatBuf, columnSchema, DEFAULT_BATCH_SIZE,
+                    pageSource, flatBuf, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), 0, null);
             flatWorker.start();
             return ColumnReader.forFlat(columnSchema, flatBuf, flatWorker, ownedIterator);

@@ -105,6 +105,29 @@ class ColumnReadersTest {
     }
 
     @Test
+    void testSmallBatchSize() throws Exception {
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.buildColumnReaders(ColumnProjection.columns("id", "value"))
+                     .batchSize(50)
+                     .build()) {
+
+            int totalRows = 0;
+            int batches = 0;
+            while (columns.nextBatch()) {
+                int count = columns.getRecordCount();
+                assertThat(count).isLessThanOrEqualTo(50);
+                totalRows += count;
+                batches++;
+            }
+            assertThat(totalRows).isEqualTo(300);
+            assertThat(batches).isEqualTo(6); // 300 / 50
+        }
+    }
+
+    @Test
     void testUnknownColumnNameThrows() throws Exception {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
 

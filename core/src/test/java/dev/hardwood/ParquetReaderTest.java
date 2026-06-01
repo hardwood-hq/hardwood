@@ -208,6 +208,29 @@ class ParquetReaderTest {
     }
 
     @Test
+    void testSmallBatchSize() throws Exception {
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.open(InputFile.of(filePath));
+             ColumnReader reader = parquet.buildColumnReader("id")
+                     .batchSize(10)
+                     .build()) {
+
+            int totalRows = 0;
+            int batches = 0;
+            while (reader.nextBatch()) {
+                int count = reader.getRecordCount();
+                assertThat(count).isLessThanOrEqualTo(10);
+                totalRows += count;
+                batches++;
+            }
+            assertThat(totalRows).isEqualTo(300);
+            assertThat(batches).isEqualTo(30); // 300 / 10
+        }
+    }
+
+    @Test
     void testColumnReaderByIndex() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
 

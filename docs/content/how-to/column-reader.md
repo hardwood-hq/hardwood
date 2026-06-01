@@ -47,7 +47,7 @@ The [Validity](/api/latest/dev/hardwood/reader/Validity.html) type wraps the und
 
 Typed accessors are available for each fixed-width physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`. For varlength leaves (`BINARY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) the primary accessors are `getBinaryValues()` (a `byte[]` buffer) plus `getBinaryOffsets()` (a sentinel-suffixed `int[]` of length `getValueCount() + 1`); the byte slice for value `i` is `[offsets[i], offsets[i+1])`. The convenience accessors `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf — useful for low-volume / debug paths but allocate per-row, so hot loops should read the buffers directly.
 
-Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter, use the builder form: `reader.buildColumnReader("id").filter(predicate).build()`.
+Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter or customize the batch size, use the builder form: `reader.buildColumnReader("id").filter(predicate).batchSize(1024).build()`.
 
 ### Reading Multiple Columns
 
@@ -79,6 +79,17 @@ try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
             fareAmount += v2[i];
         }
     }
+}
+```
+
+To customize the batch size for all columns, use `.batchSize(int)` on the builder:
+
+```java
+try (ColumnReaders columns = parquet.buildColumnReaders(
+             ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))
+        .batchSize(2048)
+        .build()) {
+    // ...
 }
 ```
 

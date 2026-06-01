@@ -359,41 +359,42 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     ColumnReader buildColumnReader(String columnName, FilterPredicate filter) {
-        return buildColumnReader(columnName, filter, null);
+        return buildColumnReader(columnName, filter, null, ColumnReader.DEFAULT_BATCH_SIZE);
     }
 
     ColumnReader buildColumnReader(
-            String columnName, FilterPredicate filter, RowGroupPredicate rowGroupFilter) {
+            String columnName, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize) {
         ensureSingleFile("columnReader(String)");
         InputFile inputFile = inputFiles.get(0);
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
         List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
-        return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, resolved);
+        return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, resolved, batchSize);
     }
 
     ColumnReader buildColumnReader(int columnIndex, FilterPredicate filter) {
-        return buildColumnReader(columnIndex, filter, null);
+        return buildColumnReader(columnIndex, filter, null, ColumnReader.DEFAULT_BATCH_SIZE);
     }
 
     ColumnReader buildColumnReader(
-            int columnIndex, FilterPredicate filter, RowGroupPredicate rowGroupFilter) {
+            int columnIndex, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize) {
         ensureSingleFile("columnReader(int)");
         InputFile inputFile = inputFiles.get(0);
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
         List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
-        return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, resolved);
+        return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, resolved, batchSize);
     }
 
     ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) {
-        return buildColumnReaders(projection, filter, null);
+        return buildColumnReaders(projection, filter, null, ColumnReader.DEFAULT_BATCH_SIZE);
     }
 
     ColumnReaders buildColumnReaders(
             ColumnProjection projection,
             FilterPredicate filter,
-            RowGroupPredicate rowGroupFilter) {
+            RowGroupPredicate rowGroupFilter,
+            int batchSize) {
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
         List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
@@ -402,7 +403,7 @@ public class ParquetFileReader implements AutoCloseable {
         iterator.setFirstFile(schema, rowGroups);
         ProjectedSchema projected = iterator.initialize(projection, resolved);
         rowGroupIterators.add(iterator);
-        return new ColumnReaders(context, iterator, schema, projected);
+        return new ColumnReaders(context, iterator, schema, projected, batchSize);
     }
 
     private void ensureSingleFile(String op) {
@@ -642,6 +643,7 @@ public class ParquetFileReader implements AutoCloseable {
         private final boolean byName;
         private FilterPredicate filter;
         private RowGroupPredicate rowGroupFilter;
+        private int batchSize = ColumnReader.DEFAULT_BATCH_SIZE;
 
         private ColumnReaderBuilder(ParquetFileReader fileReader, String columnName) {
             this.fileReader = fileReader;
@@ -672,11 +674,21 @@ public class ParquetFileReader implements AutoCloseable {
             return this;
         }
 
+        /// Set the maximum number of records to return in each batch.
+        /// Default: [ColumnReader#DEFAULT_BATCH_SIZE].
+        public ColumnReaderBuilder batchSize(int batchSize) {
+            if (batchSize <= 0) {
+                throw new IllegalArgumentException("batchSize must be positive: " + batchSize);
+            }
+            this.batchSize = batchSize;
+            return this;
+        }
+
         public ColumnReader build() {
             if (byName) {
-                return fileReader.buildColumnReader(columnName, filter, rowGroupFilter);
+                return fileReader.buildColumnReader(columnName, filter, rowGroupFilter, batchSize);
             }
-            return fileReader.buildColumnReader(columnIndex, filter, rowGroupFilter);
+            return fileReader.buildColumnReader(columnIndex, filter, rowGroupFilter, batchSize);
         }
     }
 
@@ -701,6 +713,7 @@ public class ParquetFileReader implements AutoCloseable {
         private final ColumnProjection projection;
         private FilterPredicate filter;
         private RowGroupPredicate rowGroupFilter;
+        private int batchSize = ColumnReader.DEFAULT_BATCH_SIZE;
 
         private ColumnReadersBuilder(ParquetFileReader fileReader, ColumnProjection projection) {
             if (projection == null) {
@@ -725,8 +738,18 @@ public class ParquetFileReader implements AutoCloseable {
             return this;
         }
 
+        /// Set the maximum number of records to return in each batch for all columns.
+        /// Default: [ColumnReader#DEFAULT_BATCH_SIZE].
+        public ColumnReadersBuilder batchSize(int batchSize) {
+            if (batchSize <= 0) {
+                throw new IllegalArgumentException("batchSize must be positive: " + batchSize);
+            }
+            this.batchSize = batchSize;
+            return this;
+        }
+
         public ColumnReaders build() {
-            return fileReader.buildColumnReaders(projection, filter, rowGroupFilter);
+            return fileReader.buildColumnReaders(projection, filter, rowGroupFilter, batchSize);
         }
     }
 

@@ -52,7 +52,8 @@ public class ColumnReaders implements AutoCloseable {
     ColumnReaders(HardwoodContextImpl context,
                   RowGroupIterator rowGroupIterator,
                   FileSchema schema,
-                  ProjectedSchema projectedSchema) {
+                  ProjectedSchema projectedSchema,
+                  int batchSize) {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         this.readersByName = new LinkedHashMap<>(projectedColumnCount);
         this.readersByIndex = new ColumnReader[projectedColumnCount];
@@ -62,7 +63,7 @@ public class ColumnReaders implements AutoCloseable {
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
 
             ColumnReader reader = ColumnReader.createFromIterator(
-                    columnSchema, schema, rowGroupIterator, context, i, null);
+                    columnSchema, schema, rowGroupIterator, context, i, null, batchSize);
 
             readersByName.put(columnSchema.fieldPath().toString(), reader);
             readersByIndex[i] = reader;
