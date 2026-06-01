@@ -26,19 +26,19 @@ and the reader APIs work underneath.
 - Java 21 or newer (`java -version` to check).
 - Hardwood on the classpath. If you haven't set up a project yet, follow
   [Getting Started](../getting-started.md) first — you need `hardwood-core`, and because the
-  sample file is Snappy-compressed, also add the `snappy-java` dependency.
+  sample file is ZSTD-compressed, also add the `zstd-jni` dependency.
 
 ## Step 1 — Get a sample file
 
 Download a month of the public NYC Taxi & Limousine Commission yellow-cab trip data — a real
-Parquet file, about 50 MB:
+Parquet file, about 60 MB:
 
 ```bash
-curl -O https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2023-01.parquet
+curl -O https://d37ci6vzurychx.cloudfront.net/trip-data/yellow_tripdata_2026-01.parquet
 ```
 
-You now have `yellow_tripdata_2023-01.parquet` in your working directory. Every snippet below
-opens this file via `Path.of("yellow_tripdata_2023-01.parquet")`.
+You now have `yellow_tripdata_2026-01.parquet` in your working directory. Every snippet below
+opens this file via `Path.of("yellow_tripdata_2026-01.parquet")`.
 
 ## Step 2 — See what's inside
 
@@ -54,7 +54,7 @@ import dev.hardwood.schema.FileSchema;
 import java.nio.file.Path;
 
 try (ParquetFileReader reader =
-        ParquetFileReader.open(InputFile.of(Path.of("yellow_tripdata_2023-01.parquet")))) {
+        ParquetFileReader.open(InputFile.of(Path.of("yellow_tripdata_2026-01.parquet")))) {
 
     System.out.println("Total rows: " + reader.getFileMetaData().numRows());
 
@@ -66,9 +66,9 @@ try (ParquetFileReader reader =
 }
 ```
 
-Run it. You'll see a few million rows and a column list that includes `VendorID` (a `long`),
-`passenger_count`, `trip_distance`, and `fare_amount` (each a `double`). Those are the columns
-this lesson uses.
+Run it. You'll see a few million rows and a column list that includes `VendorID` (an `int`),
+`passenger_count` (a `long`), and `trip_distance` and `fare_amount` (each a `double`). Those are
+the columns this lesson uses.
 
 ## Step 3 — Read rows
 
@@ -83,14 +83,14 @@ import dev.hardwood.reader.RowReader;
 import java.nio.file.Path;
 
 try (ParquetFileReader reader =
-            ParquetFileReader.open(InputFile.of(Path.of("yellow_tripdata_2023-01.parquet")));
+            ParquetFileReader.open(InputFile.of(Path.of("yellow_tripdata_2026-01.parquet")));
         RowReader rows = reader.rowReader()) {
 
     int printed = 0;
     while (rows.hasNext() && printed < 5) {
         rows.next();
 
-        long vendor = rows.getLong("VendorID");
+        int vendor = rows.getInt("VendorID");
         double distance = rows.getDouble("trip_distance");
         double fare = rows.getDouble("fare_amount");
 
@@ -122,7 +122,7 @@ import dev.hardwood.schema.ColumnProjection;
 import java.nio.file.Path;
 
 try (ParquetFileReader reader =
-            ParquetFileReader.open(InputFile.of(Path.of("yellow_tripdata_2023-01.parquet")));
+            ParquetFileReader.open(InputFile.of(Path.of("yellow_tripdata_2026-01.parquet")));
         RowReader rows = reader.buildRowReader()
                 .projection(ColumnProjection.columns("trip_distance", "fare_amount"))
                 .filter(FilterPredicate.gt("fare_amount", 100.0))
@@ -155,7 +155,7 @@ import dev.hardwood.reader.Validity;
 import java.nio.file.Path;
 
 try (ParquetFileReader reader =
-            ParquetFileReader.open(InputFile.of(Path.of("yellow_tripdata_2023-01.parquet")));
+            ParquetFileReader.open(InputFile.of(Path.of("yellow_tripdata_2026-01.parquet")));
         ColumnReader fare = reader.columnReader("fare_amount")) {
 
     double total = 0;

@@ -28,7 +28,7 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     try (ColumnReader fare = reader.columnReader("fare_amount")) {
         double sum = 0;
         while (fare.nextBatch()) {
-            int count = fare.getRecordCount();
+            int count = fare.getValueCount();
             double[] values = fare.getDoubles();
             Validity validity = fare.getLeafValidity();
             boolean hasNulls = validity.hasNulls();
@@ -69,12 +69,12 @@ try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
 
     while (columns.nextBatch()) {
         int count = columns.getRecordCount();
-        double[] v0 = columns.getColumnReader("passenger_count").getDoubles();
+        long[]   v0 = columns.getColumnReader("passenger_count").getLongs();
         double[] v1 = columns.getColumnReader("trip_distance").getDoubles();
         double[] v2 = columns.getColumnReader("fare_amount").getDoubles();
 
         for (int i = 0; i < count; i++) {
-            passengerCount += (long) v0[i];
+            passengerCount += v0[i];
             tripDistance += v1[i];
             fareAmount += v2[i];
         }
@@ -201,7 +201,7 @@ The returned array is the `Validity`'s backing storage — no copy. Callers must
 ```java
 try (ColumnReader fare = reader.columnReader("fare_amount")) {
     while (fare.nextBatch()) {
-        int count = fare.getRecordCount();
+        int count = fare.getValueCount();
         double[] values = fare.getDoubles();
         Validity validity = fare.getLeafValidity();
         boolean hasNulls = validity.hasNulls();
@@ -224,14 +224,14 @@ try (ColumnReader col = reader.columnReader("customer.age")) {
         int recordCount = col.getRecordCount();
         Validity structValidity = col.getLayerValidity(0);  // customer null?
         Validity leafValidity   = col.getLeafValidity();    // age null (within a present customer)?
-        boolean structHasNulls = structValidity.hasNulls();
-        boolean leafHasNulls   = leafValidity.hasNulls();
+        boolean anyNullStruct = structValidity.hasNulls();
+        boolean anyNullLeaf   = leafValidity.hasNulls();
         int[] ages = col.getInts();
 
         for (int r = 0; r < recordCount; r++) {
-            if (structHasNulls && structValidity.isNull(r)) {
+            if (anyNullStruct && structValidity.isNull(r)) {
                 // customer == null
-            } else if (leafHasNulls && leafValidity.isNull(r)) {
+            } else if (anyNullLeaf && leafValidity.isNull(r)) {
                 // customer != null, age == null
             } else {
                 sumAge += ages[r];
@@ -253,16 +253,16 @@ try (ColumnReader col = reader.columnReader("fare_components.list.element")) {
         int[] offsets = col.getLayerOffsets(0);          // length recordCount + 1
         Validity listValidity = col.getLayerValidity(0);
         Validity leafValidity = col.getLeafValidity();
-        boolean listHasNulls = listValidity.hasNulls();
-        boolean leafHasNulls = leafValidity.hasNulls();
+        boolean anyNullList = listValidity.hasNulls();
+        boolean anyNullLeaf = leafValidity.hasNulls();
 
         for (int r = 0; r < recordCount; r++) {
-            if (listHasNulls && listValidity.isNull(r)) continue;        // null list
+            if (anyNullList && listValidity.isNull(r)) continue;        // null list
             int start = offsets[r];
             int end   = offsets[r + 1];
             if (start == end) continue;                                  // empty list
             for (int i = start; i < end; i++) {
-                if (!leafHasNulls || leafValidity.isNotNull(i)) {
+                if (!anyNullLeaf || leafValidity.isNotNull(i)) {
                     sum += values[i];
                 }
             }
@@ -286,21 +286,21 @@ try (ColumnReader col = reader.columnReader("matrix.list.element.list.element"))
         Validity outerValidity = col.getLayerValidity(0);
         Validity innerValidity = col.getLayerValidity(1);
         Validity leafValidity  = col.getLeafValidity();
-        boolean outerHasNulls = outerValidity.hasNulls();
-        boolean innerHasNulls = innerValidity.hasNulls();
-        boolean leafHasNulls  = leafValidity.hasNulls();
+        boolean anyNullOuter = outerValidity.hasNulls();
+        boolean anyNullInner = innerValidity.hasNulls();
+        boolean anyNullLeaf  = leafValidity.hasNulls();
         int[] values           = col.getInts();
 
         for (int r = 0; r < recordCount; r++) {
-            if (outerHasNulls && outerValidity.isNull(r)) continue;
+            if (anyNullOuter && outerValidity.isNull(r)) continue;
             int innerStart = outerOffsets[r];
             int innerEnd   = outerOffsets[r + 1];
             for (int j = innerStart; j < innerEnd; j++) {
-                if (innerHasNulls && innerValidity.isNull(j)) continue;
+                if (anyNullInner && innerValidity.isNull(j)) continue;
                 int valStart = innerOffsets[j];
                 int valEnd   = innerOffsets[j + 1];
                 for (int i = valStart; i < valEnd; i++) {
-                    if (!leafHasNulls || leafValidity.isNotNull(i)) {
+                    if (!anyNullLeaf || leafValidity.isNotNull(i)) {
                         sum += values[i];
                     }
                 }
@@ -323,15 +323,15 @@ try (ColumnReader col = reader.columnReader("tags.list.element")) {
         byte[] bytes           = col.getBinaryValues();    // capacity-sized
         int[] binaryOffsets    = col.getBinaryOffsets();   // length valueCount + 1
         Validity leafValidity  = col.getLeafValidity();
-        boolean listHasNulls = listValidity.hasNulls();
-        boolean leafHasNulls = leafValidity.hasNulls();
+        boolean anyNullList = listValidity.hasNulls();
+        boolean anyNullLeaf = leafValidity.hasNulls();
 
         for (int r = 0; r < recordCount; r++) {
-            if (listHasNulls && listValidity.isNull(r)) continue;
+            if (anyNullList && listValidity.isNull(r)) continue;
             int firstValue = layerOffsets[r];
             int lastValue  = layerOffsets[r + 1];
             for (int i = firstValue; i < lastValue; i++) {
-                if (leafHasNulls && leafValidity.isNull(i)) continue;
+                if (anyNullLeaf && leafValidity.isNull(i)) continue;
                 int byteStart = binaryOffsets[i];
                 int byteLen   = binaryOffsets[i + 1] - byteStart;
                 if (matches(bytes, byteStart, byteLen)) hits++;
@@ -359,11 +359,11 @@ try (ColumnReader keys   = reader.columnReader("tags.key_value.key");
         int[]    keyOffsets    = keys.getBinaryOffsets();
         int[]    valueInts     = values.getInts();
         Validity valueValidity = values.getLeafValidity();
-        boolean  mapHasNulls   = mapValidity.hasNulls();
-        boolean  valueHasNulls = valueValidity.hasNulls();
+        boolean  anyNullMap   = mapValidity.hasNulls();
+        boolean  anyNullValue = valueValidity.hasNulls();
 
         for (int r = 0; r < recordCount; r++) {
-            if (mapHasNulls && mapValidity.isNull(r)) continue;  // null map
+            if (anyNullMap && mapValidity.isNull(r)) continue;  // null map
             int start = entryOffsets[r];
             int end   = entryOffsets[r + 1];
             for (int i = start; i < end; i++) {
@@ -371,7 +371,7 @@ try (ColumnReader keys   = reader.columnReader("tags.key_value.key");
                 int keyLen   = keyOffsets[i + 1] - keyStart;
                 String key   = new String(keyBytes, keyStart, keyLen, StandardCharsets.UTF_8);
 
-                if (valueHasNulls && valueValidity.isNull(i)) {
+                if (anyNullValue && valueValidity.isNull(i)) {
                     // key present, value null
                 } else {
                     process(key, valueInts[i]);
