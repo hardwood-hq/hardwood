@@ -19,6 +19,7 @@ import java.util.UUID;
 import java.util.function.Function;
 import java.util.function.IntFunction;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.TopLevelFieldMap.FieldDesc.ListOf;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.LogicalType;
@@ -138,7 +139,11 @@ final class PqListImpl implements PqList {
         if (elementSchema instanceof SchemaNode.GroupNode) {
             return new NestedList<>(this::get);
         }
-        return new LeafList<>(raw -> ValueConverter.convertValue(raw, elementSchema));
+        try {
+            return new LeafList<>(raw -> ValueConverter.convertValue(raw, elementSchema));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName,e);
+        }
     }
 
     @Override
@@ -194,7 +199,11 @@ final class PqListImpl implements PqList {
         if (elementSchema instanceof SchemaNode.PrimitiveNode prim
                 && prim.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
                 && prim.logicalType() instanceof LogicalType.Float16Type) {
-            return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Float.class));
+            try {
+                return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Float.class));
+            }catch (RuntimeException e) {
+                throw ExceptionContext.addFileContext(batch.currentFileName,e);
+            }
         }
         return new LeafList<>(raw -> (Float) raw);
     }
@@ -226,32 +235,56 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<LocalDate> dates() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalDate.class));
+        try {
+            return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalDate.class));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName,e);
+        }
     }
 
     @Override
     public List<LocalTime> times() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalTime.class));
+        try{
+            return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, LocalTime.class));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName,e);
+        }
     }
 
     @Override
     public List<Instant> timestamps() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Instant.class));
+        try{
+            return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, Instant.class));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName,e);
+        }
     }
 
     @Override
     public List<BigDecimal> decimals() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, BigDecimal.class));
+        try{
+            return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, BigDecimal.class));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName,e);
+        }
     }
 
     @Override
     public List<UUID> uuids() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, UUID.class));
+        try{
+            return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, UUID.class));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName,e);
+        }
     }
 
     @Override
     public List<PqInterval> intervals() {
-        return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, PqInterval.class));
+        try{
+            return new LeafList<>(raw -> ValueConverter.convertLogicalType(raw, elementSchema, PqInterval.class));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName,e);
+        }
     }
 
     // ==================== Nested Type Accessors ====================
@@ -349,7 +382,11 @@ final class PqListImpl implements PqList {
         if (batch.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        return ValueConverter.convertValue(batch.getValue(projCol, valueIdx), elementSchema);
+        try {
+            return ValueConverter.convertValue(batch.getValue(projCol, valueIdx), elementSchema);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName,e);
+        }
     }
 
     private Object getNestedElement(int index) {
@@ -476,7 +513,7 @@ final class PqListImpl implements PqList {
                     "Variant list element requires its 'value' child in the projection");
         }
         byte[] value = ((BinaryBatchValues) batch.valueArrays[valueCol]).byteArrayAt(valueIdx);
-        return new PqVariantImpl(metadataBytes, value);
+        return new PqVariantImpl(metadataBytes, value, batch.currentFileName);
     }
 
     private boolean isStructElementNull(TopLevelFieldMap.FieldDesc.Struct structDesc, int valueIdx) {

@@ -13,6 +13,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
@@ -321,9 +322,13 @@ final class PqStructImpl implements PqStruct {
         // FLOAT16 path: convertToFloat16 returns primitive float so the value
         // flows through without per-row autoboxing. readLogicalType isn't reused
         // here because its `LogicalTypeConverter.convert` step boxes via Object.
-        return LogicalTypeConverter.convertToFloat16(
-                ((BinaryBatchValues) batch.valueArrays[projCol]).byteArrayAt(idx),
-                child.schema().type());
+        try {
+            return LogicalTypeConverter.convertToFloat16(
+                    ((BinaryBatchValues) batch.valueArrays[projCol]).byteArrayAt(idx),
+                    child.schema().type());
+        }catch (RuntimeException e) {
+           throw ExceptionContext.addFileContext(batch.currentFileName, e);
+        }
     }
 
     private double readDouble(TopLevelFieldMap.FieldDesc.Primitive child) {
@@ -373,8 +378,12 @@ final class PqStructImpl implements PqStruct {
             return resultClass.cast(rawValue);
         }
         SchemaNode.PrimitiveNode prim = child.schema();
-        Object converted = LogicalTypeConverter.convert(rawValue, prim.type(), prim.logicalType());
-        return resultClass.cast(converted);
+        try {
+            Object converted = LogicalTypeConverter.convert(rawValue, prim.type(), prim.logicalType());
+            return resultClass.cast(converted);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName, e);
+        }
     }
 
     private PqStruct readStruct(TopLevelFieldMap.FieldDesc.Struct structDesc) {
@@ -409,7 +418,7 @@ final class PqStructImpl implements PqStruct {
                         "Shredded Variant inside a repeated context (list/map element) "
                                 + "is not yet supported; field '" + fieldName + "'");
             }
-            VariantMetadata meta = new VariantMetadata(metadataBytes);
+            VariantMetadata meta = new VariantMetadata(metadataBytes, batch.currentFileName);
             VariantShredReassembler reassembler = new VariantShredReassembler();
             reassembler.setCurrentMetadata(meta);
             byte[] value = reassembler.reassemble(variantDesc.root(), batch, rowIndex);
@@ -426,7 +435,7 @@ final class PqStructImpl implements PqStruct {
         }
         int valIdx = resolveValueIndex(valueCol);
         byte[] value = batch.getBinary(valueCol, valIdx);
-        return new PqVariantImpl(metadataBytes, value);
+        return new PqVariantImpl(metadataBytes, value, batch.currentFileName);
     }
 
     // ==================== Child Resolution ====================

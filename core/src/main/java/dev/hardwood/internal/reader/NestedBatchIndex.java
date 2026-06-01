@@ -34,12 +34,14 @@ final class NestedBatchIndex {
     final int[][][] multiOffsets;
     final long[][] elementValidity; // [projectedCol] -> leaf validity bitmap (set bit = present)
     final ProjectedSchema projectedSchema;
+    final String currentFileName;
 
     private NestedBatchIndex(Object[] valueArrays, int[][] defLevels,
                              ColumnSchema[] columnSchemas, int[] valueCounts,
                              int[] recordCounts, int[][] offsets,
                              int[][][] multiOffsets,
-                             long[][] elementValidity, ProjectedSchema projectedSchema) {
+                             long[][] elementValidity, ProjectedSchema projectedSchema,
+                             String currentFileName) {
         this.valueArrays = valueArrays;
         this.defLevels = defLevels;
         this.columnSchemas = columnSchemas;
@@ -49,13 +51,14 @@ final class NestedBatchIndex {
         this.multiOffsets = multiOffsets;
         this.elementValidity = elementValidity;
         this.projectedSchema = projectedSchema;
+        this.currentFileName = currentFileName;
     }
 
     /// Build the batch index from [NestedBatch] objects whose index fields
     /// have been pre-computed by the drain thread.
     static NestedBatchIndex buildFromBatches(NestedBatch[] batches, ColumnSchema[] columnSchemas,
-                                              FileSchema schema, ProjectedSchema projectedSchema,
-                                              TopLevelFieldMap fieldMap) {
+                                             FileSchema schema, ProjectedSchema projectedSchema,
+                                             TopLevelFieldMap fieldMap, String fileName) {
         int colCount = batches.length;
         Object[] valueArrays = new Object[colCount];
         int[][] defLevels = new int[colCount][];
@@ -78,7 +81,7 @@ final class NestedBatchIndex {
 
         return new NestedBatchIndex(valueArrays, defLevels, columnSchemas,
                 valueCounts, recordCounts, offsets, multiOffsets,
-                elementValidity, projectedSchema);
+                elementValidity, projectedSchema, fileName);
     }
 
     /// Compact a layer-indexed offsets array (length `layerCount`, with

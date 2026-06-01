@@ -18,6 +18,7 @@ import java.util.List;
 import java.util.Objects;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.metadata.LogicalType;
@@ -278,7 +279,11 @@ final class PqMapImpl implements PqMap {
         if (isValueNullAt(valueIdx)) {
             return null;
         }
-        return ValueConverter.convertValue(readValueAt(valueIdx), valueSchema);
+        try {
+            return ValueConverter.convertValue(readValueAt(valueIdx), valueSchema);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(batch.currentFileName,e);
+        }
     }
 
     private Object rawValueAt(int valueIdx) {
@@ -371,7 +376,7 @@ final class PqMapImpl implements PqMap {
                     "Variant map value requires its 'value' child in the projection");
         }
         byte[] value = ((BinaryBatchValues) batch.valueArrays[valueCol]).byteArrayAt(valueIdx);
-        return new PqVariantImpl(metadataBytes, value);
+        return new PqVariantImpl(metadataBytes, value, batch.currentFileName);
     }
 
     private boolean isValueNullAt(int valueIdx) {
@@ -490,7 +495,11 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public Object getKey() {
-            return ValueConverter.convertValue(readKey(), keySchema);
+            try {
+                return ValueConverter.convertValue(readKey(), keySchema);
+            }catch (RuntimeException e) {
+                throw ExceptionContext.addFileContext(batch.currentFileName,e);
+            }
         }
 
         @Override
@@ -529,9 +538,13 @@ final class PqMapImpl implements PqMap {
                     && primitive.logicalType() instanceof LogicalType.Float16Type) {
                 // FLOAT16 path: FLBA(2) payload decoded to a single-precision
                 // float, matching PqStructImpl.getFloat and FlatRowReader.getFloat.
-                return LogicalTypeConverter.convertToFloat16(
-                        ((BinaryBatchValues) batch.valueArrays[valueProjCol]).byteArrayAt(valueIdx),
-                        primitive.type());
+                try {
+                    return LogicalTypeConverter.convertToFloat16(
+                            ((BinaryBatchValues) batch.valueArrays[valueProjCol]).byteArrayAt(valueIdx),
+                            primitive.type());
+                }catch (RuntimeException e) {
+                    throw ExceptionContext.addFileContext(batch.currentFileName,e);
+                }
             }
             return ((float[]) batch.valueArrays[valueProjCol])[valueIdx];
         }
@@ -574,38 +587,62 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public LocalDate getDateValue() {
-            Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToDate(raw, valueSchema);
+            try {
+                Object raw = readValueAt(valueIdx);
+                return ValueConverter.convertToDate(raw, valueSchema);
+            }catch (RuntimeException e) {
+                throw ExceptionContext.addFileContext(batch.currentFileName,e);
+            }
         }
 
         @Override
         public LocalTime getTimeValue() {
-            Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToTime(raw, valueSchema);
+            try {
+                Object raw = readValueAt(valueIdx);
+                return ValueConverter.convertToTime(raw, valueSchema);
+            }catch (RuntimeException e) {
+                throw ExceptionContext.addFileContext(batch.currentFileName,e);
+            }
         }
 
         @Override
         public Instant getTimestampValue() {
-            Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToTimestamp(raw, valueSchema);
+            try{
+                Object raw = readValueAt(valueIdx);
+                return ValueConverter.convertToTimestamp(raw, valueSchema);
+            }catch (RuntimeException e) {
+                throw ExceptionContext.addFileContext(batch.currentFileName,e);
+            }
         }
 
         @Override
         public BigDecimal getDecimalValue() {
-            Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToDecimal(raw, valueSchema);
+            try{
+                Object raw = readValueAt(valueIdx);
+                return ValueConverter.convertToDecimal(raw, valueSchema);
+            }catch (RuntimeException e) {
+                throw ExceptionContext.addFileContext(batch.currentFileName,e);
+            }
         }
 
         @Override
         public UUID getUuidValue() {
-            Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToUuid(raw, valueSchema);
+            try{
+                Object raw = readValueAt(valueIdx);
+                return ValueConverter.convertToUuid(raw, valueSchema);
+            }catch (RuntimeException e) {
+                throw ExceptionContext.addFileContext(batch.currentFileName,e);
+            }
         }
 
         @Override
         public PqInterval getIntervalValue() {
-            Object raw = readValueAt(valueIdx);
-            return ValueConverter.convertToInterval(raw, valueSchema);
+            try{
+                Object raw = readValueAt(valueIdx);
+                return ValueConverter.convertToInterval(raw, valueSchema);
+            }catch (RuntimeException e) {
+                throw ExceptionContext.addFileContext(batch.currentFileName,e);
+            }
         }
 
         @Override

@@ -13,6 +13,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.UUID;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.variant.VariantValueDecoder.ObjectLayout;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqVariant;
@@ -103,28 +104,48 @@ final class PqVariantObjectImpl implements PqVariantObject {
 
     @Override
     public int getInt(String name) {
-        int off = valueOffsetFor(name);
-        return VariantValueDecoder.asInt(valueBuf, off);
+        try{
+            int off = valueOffsetFor(name);
+            return VariantValueDecoder.asInt(valueBuf, off);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
     public long getLong(String name) {
-        return VariantValueDecoder.asLong(valueBuf, valueOffsetFor(name));
+        try {
+            return VariantValueDecoder.asLong(valueBuf, valueOffsetFor(name));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
     public float getFloat(String name) {
-        return VariantValueDecoder.asFloat(valueBuf, valueOffsetFor(name));
+        try{
+            return VariantValueDecoder.asFloat(valueBuf, valueOffsetFor(name));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
     public double getDouble(String name) {
-        return VariantValueDecoder.asDouble(valueBuf, valueOffsetFor(name));
+        try{
+            return VariantValueDecoder.asDouble(valueBuf, valueOffsetFor(name));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
     public boolean getBoolean(String name) {
-        return VariantValueDecoder.asBoolean(valueBuf, valueOffsetFor(name));
+        try{
+            return VariantValueDecoder.asBoolean(valueBuf, valueOffsetFor(name));
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
@@ -133,7 +154,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
         if (VariantValueDecoder.type(valueBuf, off) == VariantType.NULL) {
             return null;
         }
-        return VariantValueDecoder.asString(valueBuf, off);
+        try{
+            return VariantValueDecoder.asString(valueBuf, off);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
@@ -142,7 +167,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
         if (VariantValueDecoder.type(valueBuf, off) == VariantType.NULL) {
             return null;
         }
-        return VariantValueDecoder.asBinary(valueBuf, off);
+        try{
+            return VariantValueDecoder.asBinary(valueBuf, off);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
@@ -151,7 +180,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
         if (VariantValueDecoder.type(valueBuf, off) == VariantType.NULL) {
             return null;
         }
-        return VariantValueDecoder.asDate(valueBuf, off);
+        try{
+            return VariantValueDecoder.asDate(valueBuf, off);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
@@ -160,7 +193,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
         if (VariantValueDecoder.type(valueBuf, off) == VariantType.NULL) {
             return null;
         }
-        return VariantValueDecoder.asTime(valueBuf, off);
+        try{
+            return VariantValueDecoder.asTime(valueBuf, off);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
@@ -169,7 +206,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
         if (VariantValueDecoder.type(valueBuf, off) == VariantType.NULL) {
             return null;
         }
-        return VariantValueDecoder.asTimestamp(valueBuf, off);
+        try{
+            return VariantValueDecoder.asTimestamp(valueBuf, off);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
@@ -178,7 +219,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
         if (VariantValueDecoder.type(valueBuf, off) == VariantType.NULL) {
             return null;
         }
-        return VariantValueDecoder.asDecimal(valueBuf, off);
+        try{
+            return VariantValueDecoder.asDecimal(valueBuf, off);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
@@ -187,7 +232,11 @@ final class PqVariantObjectImpl implements PqVariantObject {
         if (VariantValueDecoder.type(valueBuf, off) == VariantType.NULL) {
             return null;
         }
-        return VariantValueDecoder.asUuid(valueBuf, off);
+        try{
+            return VariantValueDecoder.asUuid(valueBuf, off);
+        }catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(metadata.getCurrentFileName(),e);
+        }
     }
 
     @Override
