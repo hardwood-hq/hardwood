@@ -13,6 +13,17 @@
 /// computed definition and repetition levels, see
 /// [dev.hardwood.schema].
 ///
+/// The record types in this package (e.g. [FileMetaData], [RowGroup],
+/// [ColumnChunk], [Statistics]) are **read-only views** of the metadata in a
+/// Parquet file: Hardwood constructs them while parsing, and callers consume
+/// them through their accessors. Their canonical constructors and component
+/// lists are not part of the supported API — do not instantiate these records
+/// directly, and do not rely on record deconstruction patterns over them.
+/// Because these types mirror the evolving Parquet Thrift definitions, future
+/// releases may add components; such additions are treated as
+/// backward-compatible under this policy even though they change the canonical
+/// constructor.
+///
 /// @see <a href="https://parquet.apache.org/docs/file-format/metadata/">File Format – Metadata</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 package dev.hardwood.metadata;
