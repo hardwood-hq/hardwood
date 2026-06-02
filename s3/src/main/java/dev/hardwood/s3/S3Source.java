@@ -16,8 +16,6 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Objects;
 
-import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.RangeBackedInputFile;
 import dev.hardwood.s3.internal.S3Api;
 
 /// A configured connection to an S3-compatible object store.
@@ -46,32 +44,29 @@ public final class S3Source implements Closeable {
         this.tempDir = tempDir;
     }
 
-    /// Creates an [InputFile] for the given bucket and key. Returns an
-    /// [S3InputFile] when range backing is [RangeBacking#NONE] (the
-    /// default); otherwise wraps that bare file in a
-    /// [RangeBackedInputFile] so repeated reads of the same byte range
-    /// hit the local mapping.
-    public InputFile inputFile(String bucket, String key) {
+    /// Creates an [S3InputFile] for the given bucket and key. When the
+    /// source is configured with [RangeBacking#SPARSE_TEMPFILE], the
+    /// returned file transparently caches fetched byte ranges in a
+    /// mmap-backed sparse temp file; the cache is an internal
+    /// implementation detail and does not change the returned type.
+    public S3InputFile inputFile(String bucket, String key) {
         Objects.requireNonNull(bucket, "bucket must not be null");
         Objects.requireNonNull(key, "key must not be null");
-        S3InputFile bare = new S3InputFile(this, bucket, key);
-        return rangeBacking == RangeBacking.SPARSE_TEMPFILE
-                ? new RangeBackedInputFile(bare, tempDir)
-                : bare;
+        return new S3InputFile(this, bucket, key);
     }
 
-    /// Creates an [InputFile] from an `s3://bucket/key` URI. See
+    /// Creates an [S3InputFile] from an `s3://bucket/key` URI. See
     /// [#inputFile(String, String)] for the [RangeBacking] policy.
-    public InputFile inputFile(String uri) {
+    public S3InputFile inputFile(String uri) {
         Objects.requireNonNull(uri, "uri must not be null");
         String[] parsed = parseS3Uri(uri);
         return inputFile(parsed[0], parsed[1]);
     }
 
-    /// Creates [InputFile] instances for multiple keys in the same bucket.
-    public List<InputFile> inputFilesInBucket(String bucket, String... keys) {
+    /// Creates [S3InputFile] instances for multiple keys in the same bucket.
+    public List<S3InputFile> inputFilesInBucket(String bucket, String... keys) {
         Objects.requireNonNull(bucket, "bucket must not be null");
-        List<InputFile> files = new ArrayList<>(keys.length);
+        List<S3InputFile> files = new ArrayList<>(keys.length);
         for (String key : keys) {
             Objects.requireNonNull(key, "key must not be null");
             files.add(inputFile(bucket, key));
@@ -79,9 +74,9 @@ public final class S3Source implements Closeable {
         return files;
     }
 
-    /// Creates [InputFile] instances from `s3://` URIs (may span buckets).
-    public List<InputFile> inputFiles(String... uris) {
-        List<InputFile> files = new ArrayList<>(uris.length);
+    /// Creates [S3InputFile] instances from `s3://` URIs (may span buckets).
+    public List<S3InputFile> inputFiles(String... uris) {
+        List<S3InputFile> files = new ArrayList<>(uris.length);
         for (String uri : uris) {
             Objects.requireNonNull(uri, "uri must not be null");
             files.add(inputFile(uri));
@@ -91,6 +86,14 @@ public final class S3Source implements Closeable {
 
     S3Api api() {
         return api;
+    }
+
+    RangeBacking rangeBacking() {
+        return rangeBacking;
+    }
+
+    Path tempDir() {
+        return tempDir;
     }
 
     @Override

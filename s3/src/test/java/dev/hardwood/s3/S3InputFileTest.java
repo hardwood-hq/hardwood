@@ -236,7 +236,7 @@ class S3InputFileTest {
         // network — proving the counters increase past the open() baseline.
         // (A tiny fixture would fit entirely inside the tail cache and the
         // counters would correctly stay at 1.)
-        S3InputFile file = (S3InputFile) source.inputFile("test-bucket", "column_index_pushdown.parquet");
+        S3InputFile file = source.inputFile("test-bucket", "column_index_pushdown.parquet");
         try (ParquetFileReader reader = ParquetFileReader.open(file)) {
             long openRequests = file.networkRequestCount();
             long openBytes = file.networkBytesFetched();

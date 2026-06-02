@@ -51,7 +51,7 @@ public class Hardwood implements AutoCloseable {
     /// @param inputFiles the input files to read (must not be empty)
     /// @throws IOException if the first file cannot be opened or read
     /// @throws IllegalArgumentException if the list is empty
-    public ParquetFileReader openAll(List<InputFile> inputFiles) throws IOException {
+    public ParquetFileReader openAll(List<? extends InputFile> inputFiles) throws IOException {
         return ParquetFileReader.openAll(inputFiles, context);
     }
 

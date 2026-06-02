@@ -217,7 +217,7 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
     void projectionTransfersFewerBytes() throws Exception {
         // page_index_test.parquet is 170 KB (> 64 KB tail cache), so column chunks
         // reads go to the network.
-        S3InputFile s3File = (S3InputFile) source.inputFile("test-bucket", PAGE_INDEX_FILE);
+        S3InputFile s3File = source.inputFile("test-bucket", PAGE_INDEX_FILE);
         try (ParquetFileReader reader = ParquetFileReader.open(s3File);
              RowReader rows = reader.buildRowReader().projection(ColumnProjection.columns("id")).build()) {
             while (rows.hasNext()) {

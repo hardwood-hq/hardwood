@@ -18,8 +18,6 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.utility.MountableFile;
 
-import dev.hardwood.InputFile;
-import dev.hardwood.internal.reader.RangeBackedInputFile;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -46,7 +44,6 @@ class S3RangeBackingTest {
     static Path cacheDir;
 
     static S3Source backedSource;
-    static S3Source bareSource;
 
     @BeforeAll
     static void setup() {
@@ -57,37 +54,16 @@ class S3RangeBackingTest {
                 .rangeBacking(RangeBacking.SPARSE_TEMPFILE)
                 .tempDir(cacheDir)
                 .build();
-        bareSource = S3Source.builder()
-                .endpoint(S3ProxyContainers.endpoint(s3))
-                .pathStyle(true)
-                .credentials(S3Credentials.of(S3ProxyContainers.ACCESS_KEY, S3ProxyContainers.SECRET_KEY))
-                .build();
     }
 
     @AfterAll
     static void tearDown() {
         backedSource.close();
-        bareSource.close();
-    }
-
-    @Test
-    void backedSourceWrapsInRangeBacked() {
-        InputFile file = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
-        assertThat(file).isInstanceOf(RangeBackedInputFile.class);
-        assertThat(((RangeBackedInputFile) file).delegate()).isInstanceOf(S3InputFile.class);
-    }
-
-    @Test
-    void bareSourceReturnsBareS3InputFile() {
-        InputFile file = bareSource.inputFile("test-bucket", "column_index_pushdown.parquet");
-        assertThat(file).isInstanceOf(S3InputFile.class);
     }
 
     @Test
     void repeatReadAgainstSameRangeReducesHttpGets() throws Exception {
-        InputFile cached = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
-        // Underlying S3InputFile to inspect network counters.
-        S3InputFile inner = (S3InputFile) ((RangeBackedInputFile) cached).delegate();
+        S3InputFile cached = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(cached);
                 ColumnReader col = reader.columnReader("id")) {
@@ -95,11 +71,11 @@ class S3RangeBackingTest {
                 // drain
             }
         }
-        long requestsAfterFirst = inner.networkRequestCount();
-        long bytesAfterFirst = inner.networkBytesFetched();
+        long requestsAfterFirst = cached.networkRequestCount();
+        long bytesAfterFirst = cached.networkBytesFetched();
         assertThat(requestsAfterFirst).isPositive();
 
-        long requestsBeforeSecond = inner.networkRequestCount();
+        long requestsBeforeSecond = cached.networkRequestCount();
         // Re-open + re-read against the *same* InputFile instance. The
         // range cache is alive, so byte ranges fetched on the first
         // pass should now be served from the local mmap.
@@ -109,22 +85,21 @@ class S3RangeBackingTest {
                 // drain
             }
         }
-        long requestsForSecond = inner.networkRequestCount() - requestsBeforeSecond;
+        long requestsForSecond = cached.networkRequestCount() - requestsBeforeSecond;
 
         assertThat(requestsForSecond)
                 .as("second pass should issue strictly fewer GETs than the first")
                 .isLessThan(requestsAfterFirst);
-        assertThat(inner.networkBytesFetched() - bytesAfterFirst)
+        assertThat(cached.networkBytesFetched() - bytesAfterFirst)
                 .as("second pass should fetch strictly fewer bytes than the first")
                 .isLessThan(bytesAfterFirst);
     }
 
     @Test
     void exactSameRangeReadTwiceHitsCache() throws Exception {
-        // Direct readRange() against the decorator: same offset/length
+        // Direct readRange() against the cached file: same offset/length
         // twice, the second goes to the mmap, no network call.
-        InputFile cached = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
-        S3InputFile inner = (S3InputFile) ((RangeBackedInputFile) cached).delegate();
+        S3InputFile cached = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
         cached.open();
 
         // Pick an offset that is outside the 64 KB tail cache so the
@@ -132,21 +107,20 @@ class S3RangeBackingTest {
         long offset = 1024;
         int length = 4096;
         cached.readRange(offset, length);
-        long requestsAfterFirst = inner.networkRequestCount();
-        long bytesAfterFirst = inner.networkBytesFetched();
+        long requestsAfterFirst = cached.networkRequestCount();
+        long bytesAfterFirst = cached.networkBytesFetched();
 
         cached.readRange(offset, length);
 
-        assertThat(inner.networkRequestCount())
+        assertThat(cached.networkRequestCount())
                 .as("exact-match repeat read must not issue a new HTTP GET")
                 .isEqualTo(requestsAfterFirst);
-        assertThat(inner.networkBytesFetched()).isEqualTo(bytesAfterFirst);
+        assertThat(cached.networkBytesFetched()).isEqualTo(bytesAfterFirst);
     }
 
     @Test
     void rowReaderRereadReducesHttpGets() throws Exception {
-        InputFile cached = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
-        S3InputFile inner = (S3InputFile) ((RangeBackedInputFile) cached).delegate();
+        S3InputFile cached = backedSource.inputFile("test-bucket", "column_index_pushdown.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(cached);
                 RowReader rows = reader.rowReader()) {
@@ -154,8 +128,8 @@ class S3RangeBackingTest {
                 rows.next();
             }
         }
-        long after = inner.networkRequestCount();
-        long requestsBeforeSecond = inner.networkRequestCount();
+        long after = cached.networkRequestCount();
+        long requestsBeforeSecond = cached.networkRequestCount();
 
         try (ParquetFileReader reader = ParquetFileReader.open(cached);
                 RowReader rows = reader.rowReader()) {
@@ -163,7 +137,7 @@ class S3RangeBackingTest {
                 rows.next();
             }
         }
-        long requestsForSecond = inner.networkRequestCount() - requestsBeforeSecond;
+        long requestsForSecond = cached.networkRequestCount() - requestsBeforeSecond;
 
         assertThat(requestsForSecond)
                 .as("RowReader re-read should issue fewer GETs than the first read")

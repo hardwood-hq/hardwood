@@ -100,16 +100,16 @@ public class ParquetFileReader implements AutoCloseable {
     /// is read from the first file and is assumed to be common across all
     /// files. Files are opened on demand by the iterator; the first file is
     /// opened eagerly so any I/O or metadata error surfaces immediately.
-    public static ParquetFileReader openAll(List<InputFile> inputFiles) throws IOException {
+    public static ParquetFileReader openAll(List<? extends InputFile> inputFiles) throws IOException {
         return openInternal(inputFiles, HardwoodContextImpl.create(), true);
     }
 
     /// Open multiple Parquet files with a shared context.
-    public static ParquetFileReader openAll(List<InputFile> inputFiles, HardwoodContext context) throws IOException {
+    public static ParquetFileReader openAll(List<? extends InputFile> inputFiles, HardwoodContext context) throws IOException {
         return openInternal(inputFiles, (HardwoodContextImpl) context, false);
     }
 
-    private static ParquetFileReader openInternal(List<InputFile> inputFiles, HardwoodContextImpl context,
+    private static ParquetFileReader openInternal(List<? extends InputFile> inputFiles, HardwoodContextImpl context,
                                                    boolean ownsContext) throws IOException {
         if (inputFiles == null || inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");

@@ -11,10 +11,12 @@ import java.io.IOException;
 import java.io.InputStream;
 import java.net.http.HttpResponse;
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
 import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.reader.RangeBackedInputFile;
 import dev.hardwood.s3.internal.S3Api;
 
 /// [InputFile] backed by an object in Amazon S3 (or an S3-compatible service).
@@ -26,6 +28,13 @@ import dev.hardwood.s3.internal.S3Api;
 /// discovers the file length from the `Content-Range` response header
 /// and pre-fetches the Parquet footer (which sits at the end of the file) in
 /// the same round-trip — eliminating a separate HEAD request per file.
+///
+/// When the owning [S3Source] is configured with
+/// [RangeBacking#SPARSE_TEMPFILE], an internal mmap-backed range cache
+/// serves repeat reads of the same byte ranges without re-issuing HTTP
+/// requests. The cache is invisible at the API surface — the same
+/// counters ([#networkRequestCount], [#networkBytesFetched]) reflect
+/// only network traffic in either mode.
 ///
 /// Thread-safe once [#open()] has been called.
 public class S3InputFile implements InputFile {
@@ -45,15 +54,40 @@ public class S3InputFile implements InputFile {
     private long tailCacheOffset;
     private final AtomicLong networkRequestCount = new AtomicLong();
     private final AtomicLong networkBytesFetched = new AtomicLong();
+    /// Non-null iff the owning [S3Source] was configured with
+    /// [RangeBacking#SPARSE_TEMPFILE]. Wraps a private adapter that
+    /// exposes the bare S3 fetch path, so cache hits don't re-enter
+    /// [#readRange] (and thus don't double-count network counters).
+    private final RangeBackedInputFile cache;
 
     S3InputFile(S3Source source, String bucket, String key) {
         this.api = source.api();
         this.bucket = bucket;
         this.key = key;
+        Path tempDir = source.rangeBacking() == RangeBacking.SPARSE_TEMPFILE
+                ? source.tempDir()
+                : null;
+        this.cache = tempDir != null ? new RangeBackedInputFile(new BareFetcher(), tempDir) : null;
     }
 
     @Override
     public void open() throws IOException {
+        if (cache != null) {
+            cache.open();
+            return;
+        }
+        openBare();
+    }
+
+    @Override
+    public ByteBuffer readRange(long offset, int length) throws IOException {
+        if (cache != null) {
+            return cache.readRange(offset, length);
+        }
+        return readRangeBare(offset, length);
+    }
+
+    private void openBare() throws IOException {
         if (fileLength >= 0) {
             return;
         }
@@ -77,8 +111,7 @@ public class S3InputFile implements InputFile {
         logFetch("open-tail", tailCacheOffset, tail.length, requestNo, totalBytes);
     }
 
-    @Override
-    public ByteBuffer readRange(long offset, int length) throws IOException {
+    private ByteBuffer readRangeBare(long offset, int length) throws IOException {
         // Serve from the tail cache if the requested range falls within it
         if (tailCache != null && offset >= tailCacheOffset
                 && offset + length <= tailCacheOffset + tailCache.capacity()) {
@@ -135,8 +168,10 @@ public class S3InputFile implements InputFile {
     }
 
     @Override
-    public void close() {
-        // S3Source owns the HttpClient — nothing to close here
+    public void close() throws IOException {
+        if (cache != null) {
+            cache.close();
+        }
     }
 
     /// Number of HTTP requests issued against the object since [#open()].
@@ -190,5 +225,38 @@ public class S3InputFile implements InputFile {
         }
         return response.headers().firstValueAsLong("Content-Length")
                 .orElseThrow(() -> new IOException("Response missing both Content-Range and Content-Length headers"));
+    }
+
+    /// Bare-fetch adapter handed to the [RangeBackedInputFile] cache so
+    /// the cache delegates back into the enclosing [S3InputFile]'s
+    /// network path *without* recursing through [#readRange] (which
+    /// would short-circuit to the cache again). The adapter's
+    /// [#close()] is a no-op because the enclosing instance owns no
+    /// per-file resources to release.
+    private final class BareFetcher implements InputFile {
+
+        @Override
+        public void open() throws IOException {
+            openBare();
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            return readRangeBare(offset, length);
+        }
+
+        @Override
+        public long length() {
+            return S3InputFile.this.length();
+        }
+
+        @Override
+        public String name() {
+            return S3InputFile.this.name();
+        }
+
+        @Override
+        public void close() {
+        }
     }
 }
