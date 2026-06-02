@@ -7,9 +7,9 @@
  */
 package dev.hardwood.internal.reader;
 
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 /// Pre-computed batch-level index for all projected columns.
 ///

@@ -38,6 +38,7 @@ import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
@@ -50,7 +51,6 @@ import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 /// Predicate evaluation micro-benchmark, isolated from any I/O.
 ///

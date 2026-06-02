@@ -7,7 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
-import dev.hardwood.schema.ProjectedSchema;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.SchemaNode;
 
 /// Builds [TopLevelFieldMap.FieldDesc] descriptors from schema nodes at runtime.

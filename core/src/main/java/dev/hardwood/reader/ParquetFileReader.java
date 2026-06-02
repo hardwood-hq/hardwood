@@ -20,13 +20,13 @@ import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.jfr.RowGroupFilterEvent;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 /// Reader for one or more Parquet files.
 ///

@@ -15,6 +15,7 @@ import java.util.UUID;
 
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
 import dev.hardwood.metadata.LogicalType;
@@ -26,7 +27,6 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 /// Batch data view for nested schemas.
 ///

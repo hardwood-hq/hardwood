@@ -29,12 +29,12 @@ import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.CompiledBatchFilter;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
