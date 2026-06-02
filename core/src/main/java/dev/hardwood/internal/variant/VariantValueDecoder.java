@@ -16,7 +16,6 @@ import java.time.LocalTime;
 import java.util.UUID;
 
 import dev.hardwood.row.VariantType;
-import dev.hardwood.row.VariantTypeException;
 
 /// Stateless decoder for the Variant value buffer. Parses a value's header byte
 /// and extracts the concrete primitive/short-string payload, or decodes OBJECT
@@ -51,7 +50,7 @@ public final class VariantValueDecoder {
         if (t == VariantType.BOOLEAN_FALSE) {
             return false;
         }
-        throw VariantTypeException.expectedOneOf("BOOLEAN_TRUE/BOOLEAN_FALSE", t);
+        throw VariantErrors.expectedOneOf("BOOLEAN_TRUE/BOOLEAN_FALSE", t);
     }
 
     public static int asInt(byte[] buf, int offset) {
@@ -60,7 +59,7 @@ public final class VariantValueDecoder {
             case INT8 -> buf[offset + 1];
             case INT16 -> readIntLE(buf, offset + 1, 2);
             case INT32 -> readIntLE(buf, offset + 1, 4);
-            default -> throw VariantTypeException.expectedOneOf("INT8/INT16/INT32", t);
+            default -> throw VariantErrors.expectedOneOf("INT8/INT16/INT32", t);
         };
     }
 
@@ -71,14 +70,14 @@ public final class VariantValueDecoder {
             case INT16 -> readIntLE(buf, offset + 1, 2);
             case INT32 -> readIntLE(buf, offset + 1, 4);
             case INT64 -> readLongLE(buf, offset + 1, 8);
-            default -> throw VariantTypeException.expectedOneOf("INT8/INT16/INT32/INT64", t);
+            default -> throw VariantErrors.expectedOneOf("INT8/INT16/INT32/INT64", t);
         };
     }
 
     public static float asFloat(byte[] buf, int offset) {
         VariantType t = type(buf, offset);
         if (t != VariantType.FLOAT) {
-            throw VariantTypeException.expected(VariantType.FLOAT, t);
+            throw VariantErrors.expected(VariantType.FLOAT, t);
         }
         return Float.intBitsToFloat(readIntLE(buf, offset + 1, 4));
     }
@@ -86,7 +85,7 @@ public final class VariantValueDecoder {
     public static double asDouble(byte[] buf, int offset) {
         VariantType t = type(buf, offset);
         if (t != VariantType.DOUBLE) {
-            throw VariantTypeException.expected(VariantType.DOUBLE, t);
+            throw VariantErrors.expected(VariantType.DOUBLE, t);
         }
         return Double.longBitsToDouble(readLongLE(buf, offset + 1, 8));
     }
@@ -106,13 +105,13 @@ public final class VariantValueDecoder {
                 return new String(buf, offset + 5, length, StandardCharsets.UTF_8);
             }
         }
-        throw VariantTypeException.expected(VariantType.STRING, type(buf, offset));
+        throw VariantErrors.expected(VariantType.STRING, type(buf, offset));
     }
 
     public static byte[] asBinary(byte[] buf, int offset) {
         VariantType t = type(buf, offset);
         if (t != VariantType.BINARY) {
-            throw VariantTypeException.expected(VariantType.BINARY, t);
+            throw VariantErrors.expected(VariantType.BINARY, t);
         }
         int length = readIntLE(buf, offset + 1, 4);
         checkBounds(buf, offset + 5, length);
@@ -143,14 +142,14 @@ public final class VariantValueDecoder {
                 }
                 yield new BigDecimal(new BigInteger(be), scale);
             }
-            default -> throw VariantTypeException.expectedOneOf("DECIMAL4/DECIMAL8/DECIMAL16", t);
+            default -> throw VariantErrors.expectedOneOf("DECIMAL4/DECIMAL8/DECIMAL16", t);
         };
     }
 
     public static LocalDate asDate(byte[] buf, int offset) {
         VariantType t = type(buf, offset);
         if (t != VariantType.DATE) {
-            throw VariantTypeException.expected(VariantType.DATE, t);
+            throw VariantErrors.expected(VariantType.DATE, t);
         }
         return LocalDate.ofEpochDay(readIntLE(buf, offset + 1, 4));
     }
@@ -170,7 +169,7 @@ public final class VariantValueDecoder {
                 long nanoOfSec = Math.floorMod(nanos, 1_000_000_000L);
                 yield Instant.ofEpochSecond(secs, nanoOfSec);
             }
-            default -> throw VariantTypeException.expectedOneOf(
+            default -> throw VariantErrors.expectedOneOf(
                     "TIMESTAMP/TIMESTAMP_NTZ/TIMESTAMP_NANOS/TIMESTAMP_NTZ_NANOS", t);
         };
     }
@@ -178,7 +177,7 @@ public final class VariantValueDecoder {
     public static LocalTime asTime(byte[] buf, int offset) {
         VariantType t = type(buf, offset);
         if (t != VariantType.TIME_NTZ) {
-            throw VariantTypeException.expected(VariantType.TIME_NTZ, t);
+            throw VariantErrors.expected(VariantType.TIME_NTZ, t);
         }
         long micros = readLongLE(buf, offset + 1, 8);
         return LocalTime.ofNanoOfDay(Math.multiplyExact(micros, 1_000L));
@@ -187,7 +186,7 @@ public final class VariantValueDecoder {
     public static UUID asUuid(byte[] buf, int offset) {
         VariantType t = type(buf, offset);
         if (t != VariantType.UUID) {
-            throw VariantTypeException.expected(VariantType.UUID, t);
+            throw VariantErrors.expected(VariantType.UUID, t);
         }
         long msb = readLongBE(buf, offset + 1);
         long lsb = readLongBE(buf, offset + 9);
@@ -222,7 +221,7 @@ public final class VariantValueDecoder {
         int header = buf[offset] & 0xFF;
         int basic = header & VariantBinary.BASIC_TYPE_MASK;
         if (basic != VariantBinary.BASIC_TYPE_OBJECT) {
-            throw VariantTypeException.expected(VariantType.OBJECT, VariantBinary.typeOf(buf[offset]));
+            throw VariantErrors.expected(VariantType.OBJECT, VariantBinary.typeOf(buf[offset]));
         }
         int valueHeader = header >>> VariantBinary.VALUE_HEADER_SHIFT;
         int offsetSize = (valueHeader & VariantBinary.OBJECT_FIELD_OFFSET_SIZE_MASK) + 1;
@@ -244,7 +243,7 @@ public final class VariantValueDecoder {
         int header = buf[offset] & 0xFF;
         int basic = header & VariantBinary.BASIC_TYPE_MASK;
         if (basic != VariantBinary.BASIC_TYPE_ARRAY) {
-            throw VariantTypeException.expected(VariantType.ARRAY, VariantBinary.typeOf(buf[offset]));
+            throw VariantErrors.expected(VariantType.ARRAY, VariantBinary.typeOf(buf[offset]));
         }
         int valueHeader = header >>> VariantBinary.VALUE_HEADER_SHIFT;
         int offsetSize = (valueHeader & VariantBinary.ARRAY_FIELD_OFFSET_SIZE_MASK) + 1;

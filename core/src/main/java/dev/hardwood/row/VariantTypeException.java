@@ -15,12 +15,4 @@ public class VariantTypeException extends RuntimeException {
     public VariantTypeException(String message) {
         super(message);
     }
-
-    public static VariantTypeException expected(VariantType expected, VariantType actual) {
-        return new VariantTypeException("Expected Variant type " + expected + ", got " + actual);
-    }
-
-    public static VariantTypeException expectedOneOf(String expected, VariantType actual) {
-        return new VariantTypeException("Expected Variant type " + expected + ", got " + actual);
-    }
 }

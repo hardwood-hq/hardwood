@@ -19,7 +19,6 @@ import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
 import dev.hardwood.row.VariantType;
-import dev.hardwood.row.VariantTypeException;
 
 /// [PqVariantObject] implementation. Caches the parsed [ObjectLayout] so
 /// repeated field accesses don't re-walk the header; field-id-to-index lookup
@@ -214,7 +213,7 @@ final class PqVariantObjectImpl implements PqVariantObject {
             return null;
         }
         if (t != VariantType.OBJECT) {
-            throw VariantTypeException.expected(VariantType.OBJECT, t);
+            throw VariantErrors.expected(VariantType.OBJECT, t);
         }
         return new PqVariantObjectImpl(metadata, valueBuf, off);
     }
@@ -227,7 +226,7 @@ final class PqVariantObjectImpl implements PqVariantObject {
             return null;
         }
         if (t != VariantType.ARRAY) {
-            throw VariantTypeException.expected(VariantType.ARRAY, t);
+            throw VariantErrors.expected(VariantType.ARRAY, t);
         }
         return new PqVariantArrayImpl(metadata, valueBuf, off);
     }

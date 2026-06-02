@@ -18,7 +18,6 @@ import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
 import dev.hardwood.row.VariantType;
-import dev.hardwood.row.VariantTypeException;
 
 /// Flyweight [PqVariant] implementation backed by a shared metadata + value pair
 /// and an offset identifying where this value's header byte lives in the value
@@ -172,7 +171,7 @@ public final class PqVariantImpl implements PqVariant {
     @Override
     public PqVariantObject asObject() {
         if (VariantBinary.basicType(valueBuf[valueOffset]) != VariantBinary.BASIC_TYPE_OBJECT) {
-            throw VariantTypeException.expected(VariantType.OBJECT, type());
+            throw VariantErrors.expected(VariantType.OBJECT, type());
         }
         return new PqVariantObjectImpl(metadata, valueBuf, valueOffset);
     }
@@ -180,7 +179,7 @@ public final class PqVariantImpl implements PqVariant {
     @Override
     public PqVariantArray asArray() {
         if (VariantBinary.basicType(valueBuf[valueOffset]) != VariantBinary.BASIC_TYPE_ARRAY) {
-            throw VariantTypeException.expected(VariantType.ARRAY, type());
+            throw VariantErrors.expected(VariantType.ARRAY, type());
         }
         return new PqVariantArrayImpl(metadata, valueBuf, valueOffset);
     }
