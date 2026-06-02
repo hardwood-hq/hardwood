@@ -69,7 +69,7 @@ doesn't depend on row group sizes.
 ## Bounded cursor — the `head(count)` rule
 
 Each `ParquetModel.readPreviewPage(firstRow, count, …)` call builds
-the cursor with `firstRow(firstRow).head(count)`, where `count` is
+the cursor with `skip(firstRow).head(count)`, where `count` is
 the row count the caller passed. That bound is load-bearing: without
 it, the per-column workers in the v2 pipeline race many row groups
 ahead of what the consumer asks for (#370). The queued pre-fetch

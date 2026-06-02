@@ -247,7 +247,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 A row group is included if and only if its **midpoint** — the start of its first column chunk plus half of its on-disk compressed size — falls in `[start, end)`. This is the standard Hadoop-input-format split convention: across a partitioning of the file into disjoint byte ranges, every row group lands in exactly one range, regardless of where the split boundary falls inside the row group itself.
 
-**Granularity is row-group, not row.** A row group whose midpoint is in `[0, 1000)` is read in full, including any rows whose data extends beyond byte 1000. If you need true row-level windowing, combine `RowGroupPredicate` with [`RowReaderBuilder.firstRow(...)`](#seeking-to-an-absolute-row) and [`head(...)`](#row-limit).
+**Granularity is row-group, not row.** A row group whose midpoint is in `[0, 1000)` is read in full, including any rows whose data extends beyond byte 1000. If you need true row-level windowing, combine `RowGroupPredicate` with [`RowReaderBuilder.skip(...)`](#seeking-to-an-absolute-row) and [`head(...)`](#row-limit).
 
 `RowGroupPredicate` composes with [`FilterPredicate`](#predicate-pushdown-filter) via intersection — both apply, and a row group is read if and only if it passes both:
 
@@ -266,7 +266,7 @@ ColumnReader col = fileReader.buildColumnReader("price")
         RowGroupPredicate.byteRange(otherStart, otherEnd)))
 ```
 
-The same `filter(RowGroupPredicate)` overload is available on `RowReaderBuilder` and `ColumnReadersBuilder`. On `RowReaderBuilder`, `firstRow(N)` and `head(N)` index over the *row-group-filtered* sequence — `firstRow(N)` skips `N` rows of the kept set, `head(N)` caps reading at `N` rows of the kept set. Combining `RowGroupPredicate` with `tail(N)` is rejected: tail mode requires a known total row count, which row-group filtering invalidates.
+The same `filter(RowGroupPredicate)` overload is available on `RowReaderBuilder` and `ColumnReadersBuilder`. On `RowReaderBuilder`, `skip(N)` and `head(N)` index over the *row-group-filtered* sequence — `skip(N)` skips `N` rows of the kept set, `head(N)` caps reading at `N` rows of the kept set. Combining `RowGroupPredicate` with `tail(N)` is rejected: tail mode requires a known total row count, which row-group filtering invalidates.
 
 ### Empty ranges
 
@@ -288,16 +288,16 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-Tail mode cannot currently be combined with a filter predicate — the set of matching rows is not known from row-group statistics alone, so the reader cannot identify which row groups cover the last N matching rows without scanning the whole file. It is also mutually exclusive with `firstRow(long)`.
+Tail mode cannot currently be combined with a filter predicate — the set of matching rows is not known from row-group statistics alone, so the reader cannot identify which row groups cover the last N matching rows without scanning the whole file. It is also mutually exclusive with `skip(long)`.
 
 ### Seeking to an Absolute Row
 
-The `firstRow(long)` builder method begins iteration at an arbitrary absolute row index. Earlier row groups are not opened — their pages are not fetched or decoded — making this an O(1 row group) seek on remote backends, in contrast to walking `next()` from row 0.
+The `skip(long)` builder method begins iteration at an arbitrary absolute row index. Earlier row groups are not opened — their pages are not fetched or decoded — making this an O(1 row group) seek on remote backends, in contrast to walking `next()` from row 0.
 
 ```java
 // Read rows starting at row 1,000,000 — earlier row groups are skipped.
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-     RowReader rowReader = fileReader.buildRowReader().firstRow(1_000_000).build()) {
+     RowReader rowReader = fileReader.buildRowReader().skip(1_000_000).build()) {
 
     while (rowReader.hasNext()) {
         rowReader.next();
@@ -306,23 +306,23 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-Compose with `head(N)` for a bounded `[firstRow, firstRow + N)` window:
+Compose with `head(N)` for a bounded `[skip, skip + N)` window:
 
 ```java
 // Read rows [1_000_000, 1_000_050).
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
      RowReader rowReader = fileReader.buildRowReader()
-             .firstRow(1_000_000)
+             .skip(1_000_000)
              .head(50)
              .build()) {
     // ...
 }
 ```
 
-`firstRow == 0` is the no-op default. `firstRow == totalRows` produces an empty reader; `firstRow > totalRows` throws `IllegalArgumentException`. Mutually exclusive with `tail(N)`.
+`skip == 0` is the no-op default. `skip == totalRows` produces an empty reader; `skip > totalRows` throws `IllegalArgumentException`. Mutually exclusive with `tail(N)`.
 
 !!! warning "Multi-file readers: first file only"
-    For multi-file readers, `firstRow(N)` indexes into the **first** file's rows only — it does not seek across file boundaries. To skip whole files, omit them from the input list; to skip within a non-first file, open it separately.
+    For multi-file readers, `skip(N)` indexes into the **first** file's rows only — it does not seek across file boundaries. To skip whole files, omit them from the input list; to skip within a non-first file, open it separately.
 
 Within the target row group, the reader still decodes the leading residue rows and discards them via `next()`. Page-level skip via the OffsetIndex is tracked separately.
 

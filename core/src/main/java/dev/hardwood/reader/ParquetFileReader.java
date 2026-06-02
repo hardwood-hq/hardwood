@@ -236,19 +236,19 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
-                             RowGroupPredicate rowGroupFilter, long maxRows, long firstRow) {
-        // Apply the row-group predicate (e.g. byte-range) up front so `firstRow` indexes
+                             RowGroupPredicate rowGroupFilter, long maxRows, long skip) {
+        // Apply the row-group predicate (e.g. byte-range) up front so `skip` indexes
         // into the kept sequence — a caller doing split-aware reading can seek inside *its*
         // split. Stats-based row-group dropping (via FilterPredicate) stays inside the
-        // RowGroupIterator, so its semantics under `firstRow` are unchanged from before.
+        // RowGroupIterator, so its semantics under `skip` are unchanged from before.
         List<RowGroup> filteredRowGroups = rowGroupFilter == null
                 ? firstFileMetaData.rowGroups()
                 : filterRowGroups(null, rowGroupFilter);
 
-        if (firstRow == 0L) {
+        if (skip == 0L) {
             return buildRowReader(projection, filter, maxRows, filteredRowGroups);
         }
-        // Locate the row group containing `firstRow` by walking cumulative
+        // Locate the row group containing `skip` by walking cumulative
         // RowGroup.numRows() over the filtered list. After the loop, `cumulative`
         // equals the total row count of `filteredRowGroups` if no target was found.
         long cumulative = 0L;
@@ -256,20 +256,20 @@ public class ParquetFileReader implements AutoCloseable {
         long withinRg = 0L;
         for (int i = 0; i < filteredRowGroups.size(); i++) {
             long rgRows = filteredRowGroups.get(i).numRows();
-            if (firstRow < cumulative + rgRows) {
+            if (skip < cumulative + rgRows) {
                 targetRg = i;
-                withinRg = firstRow - cumulative;
+                withinRg = skip - cumulative;
                 break;
             }
             cumulative += rgRows;
         }
         if (targetRg < 0) {
-            if (firstRow > cumulative) {
+            if (skip > cumulative) {
                 throw new IllegalArgumentException(
-                        "firstRow " + firstRow
+                        "skip " + skip
                         + " exceeds the (row-group-filtered) total row count " + cumulative);
             }
-            // firstRow == cumulative — empty reader.
+            // skip == cumulative — empty reader.
             return buildRowReader(projection, filter, maxRows, List.<RowGroup>of());
         }
         List<RowGroup> rowGroups = targetRg == 0
@@ -516,7 +516,7 @@ public class ParquetFileReader implements AutoCloseable {
         /// Zero (default): start from row 0. Positive: skip rows before the
         /// given absolute row index, opening only the row group(s) needed
         /// to reach it. Mutually exclusive with `tailRows`.
-        private long firstRow;
+        private long skip;
 
         private RowReaderBuilder(ParquetFileReader fileReader) {
             this.fileReader = fileReader;
@@ -541,8 +541,8 @@ public class ParquetFileReader implements AutoCloseable {
         /// Default: read every row group. Combines with [#filter(FilterPredicate)] via
         /// intersection: a row group is read if and only if it passes both.
         ///
-        /// Composes with [#head(long)] and [#firstRow(long)] over the *filtered* row-group
-        /// sequence — `firstRow(N)` skips `N` rows of the kept set, `head(N)` caps at `N`
+        /// Composes with [#head(long)] and [#skip(long)] over the *filtered* row-group
+        /// sequence — `skip(N)` skips `N` rows of the kept set, `head(N)` caps at `N`
         /// rows of the kept set. Mutually exclusive with [#tail(long)] (tail mode requires
         /// a known total row count, which row-group filtering invalidates).
         public RowReaderBuilder filter(RowGroupPredicate rowGroupFilter) {
@@ -562,7 +562,7 @@ public class ParquetFileReader implements AutoCloseable {
         /// Limit to the last `tailRows` rows. Row groups that do not overlap
         /// the tail are skipped entirely, so pages for earlier row groups are
         /// never fetched or decoded — useful on remote backends. Mutually
-        /// exclusive with [#head], [#filter], and [#firstRow]. Single-file only.
+        /// exclusive with [#head], [#filter], and [#skip]. Single-file only.
         public RowReaderBuilder tail(long tailRows) {
             if (tailRows <= 0) {
                 throw new IllegalArgumentException("tail row count must be positive: " + tailRows);
@@ -578,23 +578,23 @@ public class ParquetFileReader implements AutoCloseable {
         ///
         /// **Cost within the target row group.** The reader still yields
         /// rows from the row group's first row, then walks `next()`
-        /// `firstRow - rowGroupFirstRow` times to discard the leading
-        /// residue. Those residue rows *are* decoded — `firstRow` near
+        /// `skip - rowGroupFirstRow` times to discard the leading
+        /// residue. Those residue rows *are* decoded — `skip` near
         /// the end of a 1 M-row group walks ~1 M decoded `next()` calls.
         /// Page-level skip via OffsetIndex is tracked as #381.
         ///
-        /// `firstRow == 0` is the no-op default. `firstRow == totalRows`
-        /// produces an empty reader. `firstRow > totalRows` throws
+        /// `skip == 0` is the no-op default. `skip == totalRows`
+        /// produces an empty reader. `skip > totalRows` throws
         /// [IllegalArgumentException] at `build()` time. Indexes into the
         /// *first* file's rows for multi-file readers; cross-file
-        /// `firstRow` is out of scope. Mutually exclusive with [#tail];
+        /// `skip` is out of scope. Mutually exclusive with [#tail];
         /// composes with [#head] for a bounded
-        /// `[firstRow, firstRow + maxRows)` window.
-        public RowReaderBuilder firstRow(long firstRow) {
-            if (firstRow < 0) {
-                throw new IllegalArgumentException("firstRow must be non-negative: " + firstRow);
+        /// `[skip, skip + maxRows)` window.
+        public RowReaderBuilder skip(long skip) {
+            if (skip < 0) {
+                throw new IllegalArgumentException("skip must be non-negative: " + skip);
             }
-            this.firstRow = firstRow;
+            this.skip = skip;
             return this;
         }
 
@@ -612,14 +612,14 @@ public class ParquetFileReader implements AutoCloseable {
                                 + "tail mode requires a known total row count, which row-group "
                                 + "filtering invalidates");
             }
-            if (tailRows > 0 && firstRow > 0) {
-                throw new IllegalArgumentException("tail and firstRow are mutually exclusive");
+            if (tailRows > 0 && skip > 0) {
+                throw new IllegalArgumentException("tail and skip are mutually exclusive");
             }
             if (tailRows > 0) {
                 return fileReader.buildTailRowReader(projection, tailRows);
             }
             return fileReader.buildRowReader(
-                    projection, filter, rowGroupFilter, headRows, firstRow);
+                    projection, filter, rowGroupFilter, headRows, skip);
         }
     }
 

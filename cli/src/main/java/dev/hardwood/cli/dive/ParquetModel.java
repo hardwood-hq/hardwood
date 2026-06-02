@@ -372,7 +372,7 @@ public final class ParquetModel implements AutoCloseable {
     public void readPreviewPage(long firstRow, int pageSize, java.util.function.Consumer<RowReader> consumer)
             throws IOException {
         try (RowReader cursor = reader.buildRowReader()
-                .firstRow(firstRow)
+                .skip(firstRow)
                 .head(pageSize)
                 .build()) {
             int read = 0;

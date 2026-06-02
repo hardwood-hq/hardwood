@@ -23,28 +23,28 @@ A new method on the existing `RowReaderBuilder`:
 /// are not opened — their pages are not fetched or decoded — so this
 /// is an O(1 RG) seek on remote backends.
 ///
-/// `firstRow == 0` is the no-op default. `firstRow == totalRows`
+/// `skip == 0` is the no-op default. `skip == totalRows`
 /// produces an empty reader. Indexes into the *first* file's rows for
-/// multi-file readers; cross-file `firstRow` is out of scope. Mutually
+/// multi-file readers; cross-file `skip` is out of scope. Mutually
 /// exclusive with [#tail]; composes with [#head] for a bounded
-/// `[firstRow, firstRow + maxRows)` window.
-public RowReaderBuilder firstRow(long firstRow)
+/// `[skip, skip + maxRows)` window.
+public RowReaderBuilder skip(long skip)
 ```
 
 Composes with existing builder methods:
 
 ```java
 // Read rows [N, end) of the file, no projection, no filter
-file.buildRowReader().firstRow(N).build();
+file.buildRowReader().skip(N).build();
 
 // Read rows [N, N+M) — bounded window
-file.buildRowReader().firstRow(N).head(M).build();
+file.buildRowReader().skip(N).head(M).build();
 
 // Same with projection + filter
 file.buildRowReader()
         .projection(ColumnProjection.columns("id", "name"))
         .filter(FilterPredicate.gt("id", 100))
-        .firstRow(500)
+        .skip(500)
         .head(50)
         .build();
 ```
@@ -54,13 +54,13 @@ file).
 
 ## Implementation
 
-In `ParquetFileReader.buildRowReader(projection, filter, maxRows, firstRow)`:
+In `ParquetFileReader.buildRowReader(projection, filter, maxRows, skip)`:
 
-1. If `firstRow == 0`, delegate to the existing path (no behaviour change).
+1. If `skip == 0`, delegate to the existing path (no behaviour change).
 2. Otherwise, locate the target row group by walking cumulative
    `RowGroup.numRows()` from the first file's row-group list. Compute
-   `withinRg = firstRow - rowGroupFirstRow(targetRg)`.
-3. If `firstRow >= totalRows`, return an empty reader (`rowGroups.subList(end, end)`).
+   `withinRg = skip - rowGroupFirstRow(targetRg)`.
+3. If `skip >= totalRows`, return an empty reader (`rowGroups.subList(end, end)`).
 4. Open a reader scoped to `rowGroups.subList(targetRg, end)`. Apply
    `head(maxRowsAdjusted)` where `maxRowsAdjusted = maxRows + withinRg` (the
    `head` budget bounds *yielded* rows, and the within-RG skip yields rows
@@ -76,9 +76,9 @@ Against a multi-row-group file on remote storage:
 
 | Action | Before | After |
 |---|---|---|
-| `firstRow(0)` | Open from row 0 | Same (no-op) |
-| `firstRow(N)` where N is in row group K | Walk row 0 → N, fetching all of row groups 0..K | Skip directly to row group K, fetch only its bytes |
-| `firstRow(totalRows)` | Walk to end (full file) | Empty reader (no fetches) |
+| `skip(0)` | Open from row 0 | Same (no-op) |
+| `skip(N)` where N is in row group K | Walk row 0 → N, fetching all of row groups 0..K | Skip directly to row group K, fetch only its bytes |
+| `skip(totalRows)` | Walk to end (full file) | Empty reader (no fetches) |
 
 ## Dive wiring
 
@@ -87,7 +87,7 @@ fresh `RowReader` on every call:
 
 ```java
 try (RowReader cursor = reader.buildRowReader()
-        .firstRow(firstRow)
+        .skip(firstRow)
         .head(count)
         .build()) {
     while (read < count && cursor.hasNext()) {
@@ -103,7 +103,7 @@ the dive viewport window cache (#377) absorbs all within-buffer
 navigation, so cross-call cursor reuse would buy nothing while
 risking the "phantom fetch" issue (#370) where an unbounded cursor's
 worker pool drains long after the user moved on. `head(count)` caps
-each cursor to exactly the rows asked for; combined with `firstRow`,
+each cursor to exactly the rows asked for; combined with `skip`,
 the cursor is scoped to the target row group onwards and never
 fetches earlier ones.
 
@@ -124,7 +124,7 @@ dedicated viewport window cache (#377) replaces them.
 - **Page-level seek for files without OffsetIndex.** Synthesising
   page-location info from a header walk is #378.
 
-- **Multi-file `firstRow`.** Indexes into the first file's rows only.
+- **Multi-file `skip`.** Indexes into the first file's rows only.
   Cross-file (e.g. "row N across the concatenated dataset") is a separate
   problem and not on the roadmap.
 
@@ -134,16 +134,16 @@ dedicated viewport window cache (#377) replaces them.
 
 ## Testing
 
-- `ParquetReaderTest.firstRowSkipsEarlierRowGroups` — `firstRow(150)` on a
+- `ParquetReaderTest.skipSeeksPastEarlierRowGroups` — `skip(150)` on a
   3-RG file (100 rows each) yields the right rows starting at id 151.
-- `ParquetReaderTest.firstRowAtRowGroupBoundary` — `firstRow(100)` lands
+- `ParquetReaderTest.skipAtRowGroupBoundary` — `skip(100)` lands
   at the start of RG 1 with no within-RG residue.
-- `ParquetReaderTest.firstRowComposesWithHead` — `firstRow(150).head(20)`
+- `ParquetReaderTest.skipComposesWithHead` — `skip(150).head(20)`
   yields exactly rows 150..169.
-- `ParquetReaderTest.firstRowAtTotalRowsYieldsEmpty` — boundary at
+- `ParquetReaderTest.skipAtTotalRowsYieldsEmpty` — boundary at
   end-of-file.
-- `ParquetReaderTest.firstRowRejectsNegative` and
-  `firstRowAndTailAreMutuallyExclusive` cover the validation paths.
+- `ParquetReaderTest.skipRejectsNegative` and
+  `skipAndTailAreMutuallyExclusive` cover the validation paths.
 - `DataPreviewIoTest` exercises the dive integration: jump-to-last-page
   yields the right rows AND reads less than half the file's bytes;
   forward intra-RG steps reuse the cursor; backward seek rebuilds within

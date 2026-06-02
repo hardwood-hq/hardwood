@@ -150,11 +150,11 @@ Bytes-on-the-wire don't change; request count and per-RG latency do.
 - With **#370** (per-column-worker over-fetch): the worker behaviour is
   unchanged; coalescing happens at plan-build time, before workers
   start. #370's fix and this one are orthogonal.
-- With **#361** / **#377** (firstRow seek + dive window): unchanged.
+- With **#361** / **#377** (skip seek + dive window): unchanged.
   The window's refill path issues `readPreviewPage` which goes through
   the same iterator/plan code; coalescing applies transparently.
 - With **#381** (page-level skip via OffsetIndex when seeking with
-  firstRow): page drops introduce intra-column gaps and trigger the
+  skip): page drops introduce intra-column gaps and trigger the
   conservative "no coalescing for filtered columns" rule. The two
   features compose by partitioning each RG into coalesced (fully-read)
   and per-column (filtered) sub-plans.

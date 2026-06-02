@@ -214,14 +214,14 @@ class RowGroupFilterTest {
     }
 
     @Test
-    void rowReaderFirstRowIndexesIntoFilteredSequence() throws Exception {
-        // RowGroupPredicate keeps rg1+rg2 (rows 101..300 in id order). firstRow(10) skips
+    void rowReaderSkipIndexesIntoFilteredSequence() throws Exception {
+        // RowGroupPredicate keeps rg1+rg2 (rows 101..300 in id order). skip(10) skips
         // 10 rows of the kept set, so we resume at id 111.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE));
              RowReader rows = reader.buildRowReader()
                      .projection(ColumnProjection.columns("id"))
                      .filter(RowGroupPredicate.byteRange(rg1Mid, fileLen))
-                     .firstRow(10)
+                     .skip(10)
                      .build()) {
             assertThat(rows.hasNext()).isTrue();
             rows.next();

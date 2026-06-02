@@ -468,12 +468,12 @@ class ParquetReaderTest {
     }
 
     @Test
-    void firstRowSkipsEarlierRowGroups() throws Exception {
+    void skipSeeksPastEarlierRowGroups() throws Exception {
         // filter_pushdown_int.parquet: 3 row groups of 100 rows each — id 1..100, 101..200, 201..300.
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rows = reader.buildRowReader().firstRow(150).build()) {
+             RowReader rows = reader.buildRowReader().skip(150).build()) {
             long firstId = -1;
             long lastId = -1;
             int count = 0;
@@ -486,21 +486,21 @@ class ParquetReaderTest {
                 lastId = id;
                 count++;
             }
-            // firstRow=150 lands inside RG 1 (rows 100..199, ids 101..200)
+            // skip=150 lands inside RG 1 (rows 100..199, ids 101..200)
             // at within-RG offset 50 → first id yielded is 151.
-            assertThat(count).as("rows from firstRow=150").isEqualTo(150);
-            assertThat(firstId).as("first id at firstRow=150").isEqualTo(151L);
+            assertThat(count).as("rows from skip=150").isEqualTo(150);
+            assertThat(firstId).as("first id at skip=150").isEqualTo(151L);
             assertThat(lastId).as("last id at file end").isEqualTo(300L);
         }
     }
 
     @Test
-    void firstRowAtRowGroupBoundary() throws Exception {
-        // firstRow=100 lands at the exact start of RG 1.
+    void skipAtRowGroupBoundary() throws Exception {
+        // skip=100 lands at the exact start of RG 1.
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rows = reader.buildRowReader().firstRow(100).build()) {
+             RowReader rows = reader.buildRowReader().skip(100).build()) {
             int count = 0;
             long firstId = -1;
             while (rows.hasNext()) {
@@ -516,12 +516,12 @@ class ParquetReaderTest {
     }
 
     @Test
-    void firstRowComposesWithHead() throws Exception {
-        // firstRow=150 + head(20) → rows 150..169 → ids 151..170.
+    void skipComposesWithHead() throws Exception {
+        // skip=150 + head(20) → rows 150..169 → ids 151..170.
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
-             RowReader rows = reader.buildRowReader().firstRow(150).head(20).build()) {
+             RowReader rows = reader.buildRowReader().skip(150).head(20).build()) {
             long firstId = -1;
             long lastId = -1;
             int count = 0;
@@ -541,33 +541,33 @@ class ParquetReaderTest {
     }
 
     @Test
-    void firstRowAtTotalRowsYieldsEmpty() throws Exception {
+    void skipAtTotalRowsYieldsEmpty() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             long total = reader.getFileMetaData().numRows();
-            try (RowReader rows = reader.buildRowReader().firstRow(total).build()) {
+            try (RowReader rows = reader.buildRowReader().skip(total).build()) {
                 assertThat(rows.hasNext()).isFalse();
             }
         }
     }
 
     @Test
-    void firstRowRejectsNegative() throws Exception {
+    void skipRejectsNegative() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            assertThatThrownBy(() -> reader.buildRowReader().firstRow(-1).build())
+            assertThatThrownBy(() -> reader.buildRowReader().skip(-1).build())
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }
 
     @Test
-    void firstRowAndTailAreMutuallyExclusive() throws Exception {
+    void skipAndTailAreMutuallyExclusive() throws Exception {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            assertThatThrownBy(() -> reader.buildRowReader().firstRow(100).tail(10L).build())
+            assertThatThrownBy(() -> reader.buildRowReader().skip(100).tail(10L).build())
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }
