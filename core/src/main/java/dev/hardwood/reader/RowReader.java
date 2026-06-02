@@ -12,9 +12,9 @@ import dev.hardwood.internal.reader.FlatRowReader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 /// Provides row-oriented iteration over a Parquet file.
 ///

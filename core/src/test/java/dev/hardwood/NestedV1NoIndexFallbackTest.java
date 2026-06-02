@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
@@ -22,7 +23,6 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

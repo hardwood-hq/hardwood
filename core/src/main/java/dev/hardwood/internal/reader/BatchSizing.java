@@ -7,8 +7,8 @@
  */
 package dev.hardwood.internal.reader;
 
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.ColumnSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 /// Computes optimal batch sizes for column data assembly.
 public final class BatchSizing {

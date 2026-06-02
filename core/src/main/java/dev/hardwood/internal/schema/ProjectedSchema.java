@@ -5,12 +5,17 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.schema;
+package dev.hardwood.internal.schema;
 
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Set;
+
+import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.ColumnSchema;
+import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 /// Represents a projected view of a Parquet schema containing only selected columns.
 ///

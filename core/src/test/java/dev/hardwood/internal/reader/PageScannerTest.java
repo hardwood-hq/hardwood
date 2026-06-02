@@ -16,6 +16,7 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -23,7 +24,6 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 

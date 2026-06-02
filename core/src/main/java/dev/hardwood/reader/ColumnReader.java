@@ -24,11 +24,11 @@ import dev.hardwood.internal.reader.NestedColumnWorker;
 import dev.hardwood.internal.reader.NestedLevelComputer;
 import dev.hardwood.internal.reader.PageSource;
 import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 /// Batch-oriented column reader for reading a single column across all row groups.
 ///

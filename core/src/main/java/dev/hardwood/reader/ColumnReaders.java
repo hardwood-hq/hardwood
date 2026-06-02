@@ -12,9 +12,9 @@ import java.util.Map;
 
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.RowGroupIterator;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 /// Holds multiple [ColumnReader] instances backed by a shared
 /// [RowGroupIterator] for batch-oriented projection reads. Works for both

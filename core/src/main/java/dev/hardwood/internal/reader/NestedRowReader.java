@@ -18,6 +18,7 @@ import java.util.UUID;
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
@@ -27,7 +28,6 @@ import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 import dev.hardwood.schema.SchemaNode;
 
 /// Row reader for nested schemas using the v3 pipeline.

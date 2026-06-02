@@ -9,10 +9,10 @@ package dev.hardwood.internal.reader;
 
 import java.util.List;
 
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.internal.variant.ShredLevel;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 import dev.hardwood.schema.SchemaNode;
 
 /// Maps each top-level field in the root schema to its leaf column(s) within a projection.

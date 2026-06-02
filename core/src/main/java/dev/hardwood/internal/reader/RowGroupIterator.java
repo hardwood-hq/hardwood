@@ -27,6 +27,7 @@ import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.jfr.FileOpenedEvent;
@@ -43,7 +44,6 @@ import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import dev.hardwood.schema.ProjectedSchema;
 
 /// Shared iterator over `(InputFile, RowGroup)` pairs across one or more files.
 ///

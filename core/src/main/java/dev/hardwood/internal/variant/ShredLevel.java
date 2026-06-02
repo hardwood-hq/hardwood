@@ -10,9 +10,9 @@ package dev.hardwood.internal.variant;
 import java.util.ArrayList;
 import java.util.List;
 
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.schema.ProjectedSchema;
 import dev.hardwood.schema.SchemaNode;
 
 /// One node in the Variant shredding tree. Every shredded level carries an
