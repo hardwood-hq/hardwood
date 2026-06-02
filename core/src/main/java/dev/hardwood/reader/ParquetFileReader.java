@@ -550,7 +550,11 @@ public class ParquetFileReader implements AutoCloseable {
             return this;
         }
 
-        /// Limit to the first `maxRows` rows. Mutually exclusive with [#tail].
+        /// Limit to the first `maxRows` rows. When combined with [#filter(FilterPredicate)],
+        /// the cap is on the number of *matching* rows, not the number scanned — the
+        /// reader keeps scanning until `maxRows` rows satisfy the predicate or the input
+        /// is exhausted (SQL `LIMIT` over the filtered relation). Mutually exclusive with
+        /// [#tail].
         public RowReaderBuilder head(long maxRows) {
             if (maxRows <= 0) {
                 throw new IllegalArgumentException("head row count must be positive: " + maxRows);

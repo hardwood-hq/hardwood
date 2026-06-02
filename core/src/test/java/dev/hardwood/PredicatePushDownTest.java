@@ -38,6 +38,11 @@ class PredicatePushDownTest {
     /// id (required) = [0, 9999], value (nullable) = [1000, 10999], sorted. Many pages
     /// of ~128 values each so per-page skipping is observable.
     private static final Path INLINE_STATS_FILE = Paths.get("src/test/resources/inline_page_stats.parquet");
+    /// One row group, 10000 rows, sorted id [0,9999] across ~10 pages, with a
+    /// ColumnIndex/OffsetIndex (Parquet v2). Exercises the page-index fetch path
+    /// (per-page pruning + `truncateToMaxRows`) as opposed to the sequential
+    /// inline-stats path of [#INLINE_STATS_FILE].
+    private static final Path COLUMN_INDEX_FILE = Paths.get("src/test/resources/column_index_pushdown.parquet");
 
     // ==================== ColumnReader with Filter ====================
 
@@ -165,6 +170,122 @@ class PredicatePushDownTest {
                     assertThat(rows.getString("label")).startsWith("rg1_");
                 }
                 assertThat(totalRows).isEqualTo(100);
+            }
+        }
+    }
+
+    @Test
+    void testHeadWithFilterLimitsMatchingRows() throws Exception {
+        // RG1 holds id 1-100. gt(id, 50) keeps 51-100; the first 50 scanned rows
+        // (id 1-50) do not match. head(5) must yield the first five *matching*
+        // rows (id 51-55), not stop after scanning five rows and return nothing.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 50L);
+
+            try (RowReader rows = reader.buildRowReader().filter(filter).head(5).build()) {
+                List<Long> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                }
+                assertThat(ids).containsExactly(51L, 52L, 53L, 54L, 55L);
+            }
+        }
+    }
+
+    @Test
+    void testHeadWithFilterAfterLeadingRowGroupsPruned() throws Exception {
+        // gtEq(id, 201) drops RG1 (1-100) and RG2 (101-200) by row-group statistics;
+        // RG3 holds 201-300. head(60) must return the first 60 matching rows (201-260),
+        // confirming the matched-row cap counts from the first surviving row group.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.gtEq("id", 201L);
+
+            try (RowReader rows = reader.buildRowReader().filter(filter).head(60).build()) {
+                List<Long> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                }
+                assertThat(ids).hasSize(60);
+                assertThat(ids.getFirst()).isEqualTo(201L);
+                assertThat(ids.getLast()).isEqualTo(260L);
+            }
+        }
+    }
+
+    @Test
+    void testHeadWithFilterFewerMatchesThanLimit() throws Exception {
+        // eq(id, 75) matches a single row;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.eq("id", 75L);
+
+            try (RowReader rows = reader.buildRowReader().filter(filter).head(100).build()) {
+                List<Long> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                }
+                assertThat(ids).containsExactly(75L);
+            }
+        }
+    }
+
+    @Test
+    void testHeadWithFilterOnNestedSchemaLimitsMatchingRows() throws Exception {
+        // Record-level filtering on a nested schema routes through FilteredRowReader.
+        // RG2 holds id 4-6; gt(id, 4) skips id 4 and matches 5, 6. head(2) must yield
+        // the first two matches (id 5, 6), not scan two rows and return only id 5.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 4);
+
+            try (RowReader rows = reader.buildRowReader().filter(filter).head(2).build()) {
+                List<Integer> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getInt("id"));
+                }
+                assertThat(ids).containsExactly(5, 6);
+            }
+        }
+    }
+
+    @Test
+    void testHeadWithFilterAcrossManyPagesWithinRowGroup() throws Exception {
+        // INLINE_STATS_FILE: one row group, id sorted 0-9999 across many ~small pages,
+        // no page index (sequential fetch path). gt(id, 1000) matches 1001-9999; the
+        // first match sits far past the first scanned page, so a scanned-row fetch
+        // bound must NOT truncate it away. head(5) must yield id 1001-1005.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INLINE_STATS_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 1000L);
+
+            try (RowReader rows = reader.buildRowReader().filter(filter).head(5).build()) {
+                List<Long> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                }
+                assertThat(ids).containsExactly(1001L, 1002L, 1003L, 1004L, 1005L);
+            }
+        }
+    }
+
+    @Test
+    void testHeadWithFilterAcrossManyPagesWithPageIndex() throws Exception {
+        // COLUMN_INDEX_FILE: one row group, id sorted 0-9999 across ~10 pages, with a
+        // ColumnIndex/OffsetIndex. gt(id, 5000) prunes the leading pages by page stats;
+        // the surviving pages all start well past row 5, so the page-index fetch path
+        // must not truncate them to the first head() rows. head(5) -> id 5001-5005.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(COLUMN_INDEX_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 5000L);
+
+            try (RowReader rows = reader.buildRowReader().filter(filter).head(5).build()) {
+                List<Long> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                }
+                assertThat(ids).containsExactly(5001L, 5002L, 5003L, 5004L, 5005L);
             }
         }
     }

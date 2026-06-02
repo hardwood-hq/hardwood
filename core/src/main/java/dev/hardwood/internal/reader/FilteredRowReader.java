@@ -26,16 +26,24 @@ public final class FilteredRowReader implements RowReader {
 
     private final RowReader delegate;
     private final RowMatcher matcher;
+    /// Cap on matching rows returned (SQL LIMIT over the filtered relation).
+    /// [ColumnWorker#UNLIMITED] means no cap.
+    private final long maxMatches;
 
     private boolean hasMatch;
+    private long matchesReturned;
 
-    FilteredRowReader(RowReader delegate, RowMatcher matcher) {
+    FilteredRowReader(RowReader delegate, RowMatcher matcher, long maxMatches) {
         this.delegate = delegate;
         this.matcher = matcher;
+        this.maxMatches = maxMatches;
     }
 
     @Override
     public boolean hasNext() {
+        if (maxMatches != ColumnWorker.UNLIMITED && matchesReturned >= maxMatches) {
+            return false;
+        }
         if (hasMatch) {
             return true;
         }
@@ -55,6 +63,7 @@ public final class FilteredRowReader implements RowReader {
             throw new java.util.NoSuchElementException("No matching row available. Call hasNext() first.");
         }
         hasMatch = false;
+        matchesReturned++;
     }
 
     // ==================== Delegation ====================

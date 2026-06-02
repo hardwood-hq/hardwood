@@ -111,6 +111,13 @@ public final class FlatRowReader implements RowReader {
     /// single-column fast path applies.
     private final int[] referencedColumns;
     private int pendingRowIndex = -1;
+    /// Drain-side cap on the number of *matching* rows yielded (SQL LIMIT over
+    /// the filtered relation). [ColumnWorker#UNLIMITED] means no cap. Enforced
+    /// only on the drain-side path — the FilteredRowReader wrapper and the worker
+    /// handle the other paths.
+    private final long maxMatchedRows;
+    /// Count of matching rows yielded so far on the drain-side path.
+    private long matchedRowsYielded;
     /// Exclusive upper bound of the current run of consecutive-1 bits in
     /// [#combinedWords] starting at or before `rowIndex + 1`. While
     /// `rowIndex + 1 < runEndExclusive`, [#hasNext] can advance without
@@ -124,7 +131,8 @@ public final class FlatRowReader implements RowReader {
 
     public FlatRowReader(BatchExchange<BatchExchange.Batch>[] exchanges, FlatColumnWorker[] columnWorkers,
                          FileSchema fileSchema, ProjectedSchema projectedSchema,
-                         boolean drainSide, int wordsLen, MergePlan mergePlan) {
+                         boolean drainSide, int wordsLen, MergePlan mergePlan, long maxMatchedRows) {
+        this.maxMatchedRows = maxMatchedRows;
         this.exchanges = exchanges;
         this.columnWorkers = columnWorkers;
         this.columnCount = exchanges.length;
@@ -178,7 +186,9 @@ public final class FlatRowReader implements RowReader {
     /// @param projectedSchema the projected column schema
     /// @param context the hardwood context
     /// @param filter resolved predicate, or `null` for no filtering
-    /// @param maxRows maximum rows (0 = unlimited), enforced by [ColumnWorker] drain
+    /// @param maxRows maximum rows (0 = unlimited). Without a filter this caps scanned
+    ///                rows at the [ColumnWorker] drain. With a filter it caps *matching*
+    ///                rows (SQL LIMIT), enforced over matches by the reader or wrapper.
     /// @return a [FlatRowReader] or [FilteredRowReader]
     public static RowReader create(RowGroupIterator rowGroupIterator,
                                    FileSchema schema,
@@ -188,6 +198,12 @@ public final class FlatRowReader implements RowReader {
                                    long maxRows) {
         int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema);
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
+
+        // A row-level filter changes what `maxRows` counts: under SQL LIMIT
+        // semantics the cap is on *matching* rows, not scanned rows. Let the
+        // workers scan unbounded and enforce the cap over matches downstream —
+        // either in the drain-side reader or in the FilteredRowReader wrapper.
+        long workerMaxRows = filter != null ? ColumnWorker.UNLIMITED : maxRows;
 
         // Try the drain-side path first. tryCompile returns null for any non-eligible
         // predicate; null falls through to the existing FilteredRowReader path below.
@@ -225,7 +241,7 @@ public final class FlatRowReader implements RowReader {
             ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
             FlatColumnWorker worker = new FlatColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), context.executor(), maxRows,
+                    context.decompressorFactory(), context.executor(), workerMaxRows,
                     columnFilter);
 
             buffers[i] = buffer;
@@ -238,8 +254,12 @@ public final class FlatRowReader implements RowReader {
             drainSide = false;
         }
 
+        // On the drain-side path filtering happens here, so the reader itself caps
+        // matched rows. On the FilteredRowReader path the wrapper caps; on the
+        // no-filter path the worker already capped scanned == matched rows.
+        long readerMatchLimit = drainSide ? maxRows : ColumnWorker.UNLIMITED;
         FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projectedSchema,
-                drainSide, wordsLen, mergePlan);
+                drainSide, wordsLen, mergePlan, readerMatchLimit);
         reader.initialize();
 
         if (drainSide) {
@@ -252,7 +272,7 @@ public final class FlatRowReader implements RowReader {
             // a top-level field, and the reader's `getInt(int)` etc. take a
             // projected leaf-column index. Map directly through the projection.
             RowMatcher matcher = RecordFilterCompiler.compile(filter, schema, projectedSchema::toProjectedIndex);
-            return new FilteredRowReader(reader, matcher);
+            return new FilteredRowReader(reader, matcher, maxRows);
         }
         return reader;
     }
@@ -266,6 +286,10 @@ public final class FlatRowReader implements RowReader {
             return false;
         }
         if (drainSide) {
+            if (maxMatchedRows != ColumnWorker.UNLIMITED && matchedRowsYielded >= maxMatchedRows) {
+                exhausted = true;
+                return false;
+            }
             if (pendingRowIndex >= 0) {
                 return true;
             }
@@ -301,6 +325,7 @@ public final class FlatRowReader implements RowReader {
             }
             rowIndex = pendingRowIndex;
             pendingRowIndex = -1;
+            matchedRowsYielded++;
         }
         else {
             rowIndex++;

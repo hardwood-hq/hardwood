@@ -488,9 +488,7 @@ public class RowGroupIterator {
                     continue;
                 }
 
-                if (perRgMaxRows > 0) {
-                    neededPages = truncateToMaxRows(neededPages, perRgMaxRows);
-                }
+                neededPages = truncateToMaxRows(neededPages, perRgMaxRows);
 
                 // Coalesce needed pages within this column into page groups,
                 // bridging small gaps but splitting on large ones.
@@ -790,8 +788,13 @@ public class RowGroupIterator {
         return true;
     }
 
-    /// Truncates a page list to cover at most `maxRows` rows.
+    /// Truncates a page list to cover at most `maxRows` rows. `maxRows <= 0`
+    /// means "no row bound" and returns every page unchanged — the same
+    /// `0 = unlimited` convention used throughout the fetch path.
     private static List<NeededPage> truncateToMaxRows(List<NeededPage> pages, long maxRows) {
+        if (maxRows <= 0) {
+            return pages;
+        }
         List<NeededPage> truncated = new ArrayList<>();
         for (NeededPage page : pages) {
             if (page.location().firstRowIndex() >= maxRows) {
@@ -804,18 +807,17 @@ public class RowGroupIterator {
 
     /// Per-row-group remainder of the iterator-wide `maxRows` budget.
     ///
-    /// Returns `0` when `maxRows` is unset (no limit). When a filter predicate
-    /// is active the prior-row-count sum can't be correlated with matching
-    /// rows, so the global `maxRows` is returned as a conservative bound.
-    /// Otherwise returns `max(0, maxRows - workItem.rowsConsumedBefore())`,
+    /// Returns `0` (no fetch-side truncation) when `maxRows` is unset, or when a
+    /// filter predicate is active: `head(N)` then caps *matching* rows (SQL
+    /// LIMIT), so a matching row can sit past the first `N` scanned rows and
+    /// every surviving page must remain fetchable. Statistics pushdown still
+    /// prunes pages and row groups, and the matched-row cap is enforced at the
+    /// reader. Without a filter, returns `max(0, maxRows - workItem.rowsConsumedBefore())`,
     /// which naturally trims the last partially-needed row group's fetch plan
     /// while being a no-op (all pages kept) for fully-needed earlier ones.
     private long perRgMaxRows(WorkItem workItem) {
-        if (maxRows <= 0) {
+        if (maxRows <= 0 || filterPredicate != null) {
             return 0;
-        }
-        if (filterPredicate != null) {
-            return maxRows;
         }
         return Math.max(0, maxRows - workItem.rowsConsumedBefore());
     }

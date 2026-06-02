@@ -92,7 +92,9 @@ public final class NestedRowReader implements RowReader {
     /// @param projectedSchema the projected column schema
     /// @param context the hardwood context
     /// @param filter resolved predicate, or `null` for no filtering
-    /// @param maxRows maximum rows (0 = unlimited), enforced by [ColumnWorker] drain
+    /// @param maxRows maximum rows (0 = unlimited). Without a filter this caps scanned
+    ///                rows at the [ColumnWorker] drain. With a filter it caps *matching*
+    ///                rows (SQL LIMIT), enforced over matches by the FilteredRowReader wrapper.
     /// @return a [NestedRowReader] or [FilteredRowReader]
     public static RowReader create(RowGroupIterator rowGroupIterator,
                             FileSchema schema,
@@ -102,6 +104,9 @@ public final class NestedRowReader implements RowReader {
                             long maxRows) {
         int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema);
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
+        // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT), so the
+        // workers scan unbounded, and the FilteredRowReader wrapper enforces the cap.
+        long workerMaxRows = filter != null ? ColumnWorker.UNLIMITED : maxRows;
         NestedColumnWorker[] workers = new NestedColumnWorker[projectedColumnCount];
         @SuppressWarnings("unchecked")
         BatchExchange<NestedBatch>[] buffers = new BatchExchange[projectedColumnCount];
@@ -122,7 +127,7 @@ public final class NestedRowReader implements RowReader {
                     schema.getRootNode(), columnSchema.columnIndex());
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
-                    context.decompressorFactory(), context.executor(), maxRows,
+                    context.decompressorFactory(), context.executor(), workerMaxRows,
                     layers);
 
             buffers[i] = buffer;
@@ -140,7 +145,7 @@ public final class NestedRowReader implements RowReader {
             // (or `-1` for nested-leaf columns and unprojected fields).
             int[] topLevelLookup = buildTopLevelFieldIndexLookup(schema, projectedSchema);
             RowMatcher matcher = RecordFilterCompiler.compile(filter, schema, col -> topLevelLookup[col]);
-            return new FilteredRowReader(reader, matcher);
+            return new FilteredRowReader(reader, matcher, maxRows);
         }
         return reader;
     }

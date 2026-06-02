@@ -98,6 +98,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // === In-flight decode tasks (tracked so close() can await them) ===
     private final Set<CompletableFuture<Void>> inFlightDecodes = ConcurrentHashMap.newKeySet();
 
+    /// Sentinel for the `maxRows` / row-limit contract meaning "no limit".
+    static final long UNLIMITED = 0L;
+
     // === Drain assembly state (drain thread only) ===
     final long maxRows;
     long totalRowsAssembled;
