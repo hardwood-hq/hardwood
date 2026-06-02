@@ -901,6 +901,13 @@ simple_map_data = [
         'id': 5,
         'name': 'Eve',
         'attributes': [('single_key', 42)]  # single entry
+    },
+    {
+        'id': 6,
+        'name': 'Frank',
+        # Duplicate 'dup' key. The Parquet spec mandates last-value-wins for
+        # duplicate keys, so a lookup of 'dup' must surface 40, not 10.
+        'attributes': [('dup', 10), ('other', 20), ('dup', 30), ('dup', 40)]
     }
 ]
 
@@ -915,7 +922,7 @@ pq.write_table(
 
 print("\nGenerated simple_map_test.parquet:")
 print("  - Schema: id, name, attributes: map<string, int32>")
-print("  - Data: 5 rows with varying map sizes including empty and null")
+print("  - Data: 6 rows with varying map sizes including empty, null, and duplicate keys")
 
 # 14. Map with different value types
 map_types_schema = pa.schema([

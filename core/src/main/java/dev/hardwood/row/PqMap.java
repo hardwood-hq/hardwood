@@ -51,10 +51,10 @@ public interface PqMap {
     // ==================== Key-Based Lookup ====================
     //
     // Linear-scan lookups for the high-frequency key types: STRING, INT32,
-    // INT64, BYTE_ARRAY. Parquet permits duplicate keys but does not define
-    // resolution semantics; all lookups walk entries in entry order and
-    // surface the first match. `getValue` returns `null` for an absent key
-    // *or* a present-but-null value — use [#containsKey] to disambiguate.
+    // INT64, BYTE_ARRAY. When a key appears more than once, the Parquet spec
+    // mandates that the last value wins; all lookups honor that and surface
+    // the value of the last matching entry. `getValue` returns `null` for an
+    // absent key *or* a present-but-null value — use [#containsKey] to disambiguate.
     // Long-tail key types (DATE / TIME / TIMESTAMP / DECIMAL / UUID) are
     // reachable via [#getEntries] and `Entry.getKey()` for ad-hoc matching.
 

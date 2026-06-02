@@ -123,9 +123,9 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
     present-but-null value — call `containsKey(key)` to disambiguate.
     Lookup is supported by `String` / `int` / `long` / `byte[]` keys;
     long-tail key types (DATE / TIMESTAMP / DECIMAL / UUID) are reachable
-    through `getEntries()` + `Entry.getKey()`. Parquet permits duplicate
-    keys; the lookup methods walk in entry order and surface the first
-    match.
+    through `getEntries()` + `Entry.getKey()`. When a key appears more than
+    once, the lookup methods follow the Parquet spec's last-value-wins rule
+    and surface the value of the last matching entry.
 
 ### Typed Accessor Methods
 

@@ -448,7 +448,8 @@ class ColumnReaderLayerModelTest {
     }
 
     /// `simple_map_test.parquet` has `attributes: map<string, int32>` with
-    /// five rows: 3 entries / 2 entries / empty / null / 1 entry. Pins the
+    /// six rows: 3 entries / 2 entries / empty / null / 1 entry / 4 entries
+    /// (the last row carries duplicate keys). Pins the
     /// key/value lockstep walk over shared parent offsets: both leaves
     /// report the same `getLayerOffsets(0)` and the same `getLayerValidity(0)`,
     /// so a consumer can iterate keys and values in step without coordinating
@@ -464,8 +465,8 @@ class ColumnReaderLayerModelTest {
             assertThat(keys.nextBatch()).isTrue();
             assertThat(values.nextBatch()).isTrue();
 
-            assertThat(keys.getRecordCount()).isEqualTo(5);
-            assertThat(values.getRecordCount()).isEqualTo(5);
+            assertThat(keys.getRecordCount()).isEqualTo(6);
+            assertThat(values.getRecordCount()).isEqualTo(6);
             assertThat(keys.getLayerCount()).isEqualTo(1);
             assertThat(keys.getLayerKind(0)).isEqualTo(LayerKind.REPEATED);
             assertThat(values.getLayerCount()).isEqualTo(1);
@@ -478,12 +479,13 @@ class ColumnReaderLayerModelTest {
             assertThat(keyOffsets).containsExactly(valueOffsets);
             assertThat(keys.getValueCount()).isEqualTo(values.getValueCount());
 
-            // Row counts per state: 3 / 2 / 0 (empty) / 0 (null) / 1.
+            // Row counts per state: 3 / 2 / 0 (empty) / 0 (null) / 1 / 4.
             assertThat(keyOffsets[1] - keyOffsets[0]).isEqualTo(3);
             assertThat(keyOffsets[2] - keyOffsets[1]).isEqualTo(2);
             assertThat(keyOffsets[3] - keyOffsets[2]).isEqualTo(0);
             assertThat(keyOffsets[4] - keyOffsets[3]).isEqualTo(0);
             assertThat(keyOffsets[5] - keyOffsets[4]).isEqualTo(1);
+            assertThat(keyOffsets[6] - keyOffsets[5]).isEqualTo(4);
 
             Validity mapValidity = keys.getLayerValidity(0);
             assertThat(mapValidity.hasNulls()).isTrue();
@@ -492,6 +494,7 @@ class ColumnReaderLayerModelTest {
             assertThat(mapValidity.isNotNull(2)).isTrue();   // empty, present
             assertThat(mapValidity.isNull(3)).isTrue();      // null map
             assertThat(mapValidity.isNotNull(4)).isTrue();
+            assertThat(mapValidity.isNotNull(5)).isTrue();   // duplicate keys, present
 
             // Lockstep read of (key, value) pairs for row 4 ("Eve" → single_key=42).
             byte[] keyBytes = keys.getBinaryValues();

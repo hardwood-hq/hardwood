@@ -22,8 +22,9 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Coverage for the `PqMap` key-based lookups added in hardwood#463
 /// (`getValue` / `getRawValue` / `containsKey` over String / int / long /
-/// byte[] keys). The implementation walks the entries linearly and surfaces
-/// the first match for duplicate keys; absent keys return `null`.
+/// byte[] keys). The implementation scans the entries linearly and, per the
+/// Parquet spec's last-value-wins rule, surfaces the last match for duplicate
+/// keys; absent keys return `null`.
 class PqMapLookupTest {
 
     private static final Path SIMPLE = Paths.get("src/test/resources/simple_map_test.parquet");
@@ -85,6 +86,22 @@ class PqMapLookupTest {
             assertThat(m.containsKey("single_key")).isTrue();
             assertThat(m.getValue("single_key")).isEqualTo(42);
             assertThat(m.containsKey("other")).isFalse();
+        }
+    }
+
+    @Test
+    void duplicateKeyResolvesToLastValue() throws Exception {
+        // Parquet spec: "If there are multiple key-value pairs for the same key,
+        // then the final value for that key must be the last value." Row 6 maps
+        // 'dup' to 10, 30 and 40 in entry order; the lookup must surface 40.
+        try (ParquetFileReader f = ParquetFileReader.open(InputFile.of(SIMPLE));
+             RowReader r = f.rowReader()) {
+            r.next(); r.next(); r.next(); r.next(); r.next(); r.next(); // row 6: Frank
+            PqMap m = r.getMap("attributes");
+            assertThat(m.containsKey("dup")).isTrue();
+            assertThat(m.getValue("dup")).isEqualTo(40);
+            assertThat(m.getRawValue("dup")).isEqualTo(40);
+            assertThat(m.getValue("other")).isEqualTo(20);
         }
     }
 

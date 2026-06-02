@@ -214,7 +214,7 @@ final class PqMapImpl implements PqMap {
         int keyProjCol = mapDesc.keyProjCol();
         BinaryBatchValues keys = (BinaryBatchValues) batch.valueArrays[keyProjCol];
         byte[] needle = key.getBytes(StandardCharsets.UTF_8);
-        for (int i = start; i < end; i++) {
+        for (int i = end - 1; i >= start; i--) {
             if (batch.isElementNull(keyProjCol, i)) {
                 continue;
             }
@@ -228,7 +228,7 @@ final class PqMapImpl implements PqMap {
     private int indexOfIntKey(int key) {
         int keyProjCol = mapDesc.keyProjCol();
         int[] keys = (int[]) batch.valueArrays[keyProjCol];
-        for (int i = start; i < end; i++) {
+        for (int i = end - 1; i >= start; i--) {
             if (batch.isElementNull(keyProjCol, i)) {
                 continue;
             }
@@ -242,7 +242,7 @@ final class PqMapImpl implements PqMap {
     private int indexOfLongKey(long key) {
         int keyProjCol = mapDesc.keyProjCol();
         long[] keys = (long[]) batch.valueArrays[keyProjCol];
-        for (int i = start; i < end; i++) {
+        for (int i = end - 1; i >= start; i--) {
             if (batch.isElementNull(keyProjCol, i)) {
                 continue;
             }
@@ -257,7 +257,7 @@ final class PqMapImpl implements PqMap {
         Objects.requireNonNull(key, "key");
         int keyProjCol = mapDesc.keyProjCol();
         BinaryBatchValues keys = (BinaryBatchValues) batch.valueArrays[keyProjCol];
-        for (int i = start; i < end; i++) {
+        for (int i = end - 1; i >= start; i--) {
             if (batch.isElementNull(keyProjCol, i)) {
                 continue;
             }

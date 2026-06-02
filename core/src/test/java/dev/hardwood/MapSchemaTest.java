@@ -107,13 +107,13 @@ public class MapSchemaTest {
                 assertThat(rowReader.getString("name")).isEqualTo("Diana");
                 assertThat(rowReader.isNull("attributes")).isTrue();
 
-                // Row 4: skip and count
+                // Rows 4 (Eve) and 5 (Frank, duplicate keys): skip and count
                 while (rowReader.hasNext()) {
                     rowReader.next();
                     rowCount++;
                 }
 
-                assertThat(rowCount).isEqualTo(5);
+                assertThat(rowCount).isEqualTo(6);
             }
         }
     }
