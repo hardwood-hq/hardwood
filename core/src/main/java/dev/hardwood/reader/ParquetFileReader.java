@@ -591,9 +591,10 @@ public class ParquetFileReader implements AutoCloseable {
         /// produces an empty reader. `skip > totalRows` throws
         /// [IllegalArgumentException] at `build()` time. Indexes into the
         /// *first* file's rows for multi-file readers; cross-file
-        /// `skip` is out of scope. Mutually exclusive with [#tail];
-        /// composes with [#head] for a bounded
-        /// `[skip, skip + maxRows)` window.
+        /// `skip` is out of scope. Mutually exclusive with [#tail] and with
+        /// [#filter(FilterPredicate)]; composes with [#head] for a bounded
+        /// `[skip, skip + maxRows)` window, and with
+        /// [#filter(RowGroupPredicate)] over the kept row-group sequence.
         public RowReaderBuilder skip(long skip) {
             if (skip < 0) {
                 throw new IllegalArgumentException("skip must be non-negative: " + skip);
@@ -618,6 +619,12 @@ public class ParquetFileReader implements AutoCloseable {
             }
             if (tailRows > 0 && skip > 0) {
                 throw new IllegalArgumentException("tail and skip are mutually exclusive");
+            }
+            if (skip > 0 && filter != null) {
+                throw new IllegalArgumentException(
+                        "skip cannot be combined with a filter predicate: logical OFFSET "
+                                + "semantics over the filtered relation are not yet supported "
+                                + "(tracked in #541)");
             }
             if (tailRows > 0) {
                 return fileReader.buildTailRowReader(projection, tailRows);

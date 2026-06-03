@@ -18,6 +18,7 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
@@ -462,8 +463,24 @@ class ParquetReaderTest {
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.all()).filter(dev.hardwood.reader.FilterPredicate.gt("id", 0L)).tail(10L).build())
+            assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.all()).filter(FilterPredicate.gt("id", 0L)).tail(10L).build())
                     .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void skipAndFilterPredicateAreRejected() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            assertThatThrownBy(() -> reader.buildRowReader()
+                    .projection(ColumnProjection.all())
+                    .skip(50)
+                    .filter(FilterPredicate.gtEq("id", 100L))
+                    .build())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("skip")
+                    .hasMessageContaining("filter");
         }
     }
 

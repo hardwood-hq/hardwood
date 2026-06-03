@@ -319,7 +319,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-`skip == 0` is the no-op default. `skip == totalRows` produces an empty reader; `skip > totalRows` throws `IllegalArgumentException`. Mutually exclusive with `tail(N)`.
+`skip == 0` is the no-op default. `skip == totalRows` produces an empty reader; `skip > totalRows` throws `IllegalArgumentException`. Mutually exclusive with `tail(N)` and with `filter(FilterPredicate)` — a logical `OFFSET` over the filtered relation is not yet supported, so the combination is rejected at `build()` time. `skip(N)` composes with `filter(RowGroupPredicate)` (e.g. `byteRange`), indexing into the kept row-group sequence.
 
 !!! warning "Multi-file readers: first file only"
     For multi-file readers, `skip(N)` indexes into the **first** file's rows only — it does not seek across file boundaries. To skip whole files, omit them from the input list; to skip within a non-first file, open it separately.
