@@ -47,11 +47,12 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 Ready? [Install Hardwood](getting-started.md), then read [your first file end-to-end](tutorial/first-read.md).
 
-## Status
+## Status and Limitations
 
 This is Beta quality software, under active development.
 
-Reading from S3 or an in-memory `ByteBuffer` currently caps a file at 2 GB; split larger datasets across multiple files (local memory-mapped reads have no whole-file size limit). See [Parquet file layout](concepts/parquet-layout.md).
+The Hardwood library supports reading arbitrarily large Parquet files, provided individual column chunks are not larger than 2 GB (see [Parquet file layout](concepts/parquet-layout.md)).
+The interactive `dive` TUI currently caps S3 files at 2 GB.
 
 ## Roadmap
 

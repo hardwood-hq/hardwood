@@ -83,10 +83,11 @@ records each chunk's compressed and uncompressed size, codec, and statistics.
 !!! info "2 GB column-chunk limit"
     A column chunk is addressed within Hardwood as a single in-memory region, so each chunk must
     be at most 2 GB of *compressed* data — the limit is per chunk, not per file. Local
-    memory-mapped files may be arbitrarily large overall; the in-memory (`ByteBuffer`) and
-    object-store backends additionally cap the *whole file* at 2 GB. Datasets larger than that
-    are split across multiple files and read together — see
-    [Read Multiple Files as One Dataset](../how-to/multi-file.md).
+    memory-mapped files and S3-backed files may be arbitrarily large overall; the in-memory
+    (`ByteBuffer`) backend additionally caps the *whole file* at 2 GB, and the `dive` TUI caps
+    S3 files at 2 GB because its mmap-backed range cache uses `MappedByteBuffer`. For datasets
+    that don't fit a single supported file, split the data into multiple files at write time and
+    read them as one — see [Read Multiple Files as One Dataset](../how-to/multi-file.md).
 
 ### Page
 
