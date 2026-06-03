@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.AbstractList;
 import java.util.Arrays;
@@ -586,8 +587,22 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public Instant getTimestampValue() {
+            requireValueTimestampKind(true);
             Object raw = readValueAt(valueIdx);
             return ValueConverter.convertToTimestamp(raw, valueSchema);
+        }
+
+        @Override
+        public LocalDateTime getLocalTimestampValue() {
+            requireValueTimestampKind(false);
+            Object raw = readValueAt(valueIdx);
+            return ValueConverter.convertToLocalTimestamp(raw, valueSchema);
+        }
+
+        private void requireValueTimestampKind(boolean wantUtcAdjusted) {
+            if (valueSchema instanceof SchemaNode.PrimitiveNode primitive) {
+                TimestampAccessorKind.require(valueSchema.name(), primitive.logicalType(), wantUtcAdjusted);
+            }
         }
 
         @Override

@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
@@ -281,6 +282,8 @@ public final class NestedRowReader implements RowReader {
     @Override public LocalTime getTime(String name) { return dataView.getTime(name); }
     @Override public Instant getTimestamp(int i) { return dataView.getTimestamp(i); }
     @Override public Instant getTimestamp(String name) { return dataView.getTimestamp(name); }
+    @Override public LocalDateTime getLocalTimestamp(int i) { return dataView.getLocalTimestamp(i); }
+    @Override public LocalDateTime getLocalTimestamp(String name) { return dataView.getLocalTimestamp(name); }
     @Override public BigDecimal getDecimal(int i) { return dataView.getDecimal(i); }
     @Override public BigDecimal getDecimal(String name) { return dataView.getDecimal(name); }
     @Override public UUID getUuid(int i) { return dataView.getUuid(i); }

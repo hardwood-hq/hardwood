@@ -10,6 +10,7 @@ package dev.hardwood.row;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -92,6 +93,10 @@ public interface StructAccessor extends FieldAccessor {
 
     /// Get a TIMESTAMP field value by field index. See [#getTimestamp(String)].
     Instant getTimestamp(int fieldIndex);
+
+    /// Get a local-wall-clock TIMESTAMP field value by field index. See
+    /// [#getLocalTimestamp(String)].
+    LocalDateTime getLocalTimestamp(int fieldIndex);
 
     /// Get a DECIMAL field value by field index. See [#getDecimal(String)].
     BigDecimal getDecimal(int fieldIndex);

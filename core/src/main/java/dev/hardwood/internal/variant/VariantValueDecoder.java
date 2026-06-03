@@ -12,7 +12,9 @@ import java.math.BigInteger;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 import dev.hardwood.row.VariantType;
@@ -157,20 +159,40 @@ public final class VariantValueDecoder {
     public static Instant asTimestamp(byte[] buf, int offset) {
         VariantType t = type(buf, offset);
         return switch (t) {
-            case TIMESTAMP, TIMESTAMP_NTZ -> {
+            case TIMESTAMP -> {
                 long micros = readLongLE(buf, offset + 1, 8);
                 long secs = Math.floorDiv(micros, 1_000_000L);
                 long nanoOfSec = Math.floorMod(micros, 1_000_000L) * 1_000L;
                 yield Instant.ofEpochSecond(secs, nanoOfSec);
             }
-            case TIMESTAMP_NANOS, TIMESTAMP_NTZ_NANOS -> {
+            case TIMESTAMP_NANOS -> {
                 long nanos = readLongLE(buf, offset + 1, 8);
                 long secs = Math.floorDiv(nanos, 1_000_000_000L);
                 long nanoOfSec = Math.floorMod(nanos, 1_000_000_000L);
                 yield Instant.ofEpochSecond(secs, nanoOfSec);
             }
             default -> throw VariantErrors.expectedOneOf(
-                    "TIMESTAMP/TIMESTAMP_NTZ/TIMESTAMP_NANOS/TIMESTAMP_NTZ_NANOS", t);
+                    "TIMESTAMP/TIMESTAMP_NANOS", t);
+        };
+    }
+
+    public static LocalDateTime asLocalTimestamp(byte[] buf, int offset) {
+        VariantType t = type(buf, offset);
+        return switch (t) {
+            case TIMESTAMP_NTZ -> {
+                long micros = readLongLE(buf, offset + 1, 8);
+                long secs = Math.floorDiv(micros, 1_000_000L);
+                int nanoOfSec = (int) (Math.floorMod(micros, 1_000_000L) * 1_000L);
+                yield LocalDateTime.ofEpochSecond(secs, nanoOfSec, ZoneOffset.UTC);
+            }
+            case TIMESTAMP_NTZ_NANOS -> {
+                long nanos = readLongLE(buf, offset + 1, 8);
+                long secs = Math.floorDiv(nanos, 1_000_000_000L);
+                int nanoOfSec = (int) Math.floorMod(nanos, 1_000_000_000L);
+                yield LocalDateTime.ofEpochSecond(secs, nanoOfSec, ZoneOffset.UTC);
+            }
+            default -> throw VariantErrors.expectedOneOf(
+                    "TIMESTAMP_NTZ/TIMESTAMP_NTZ_NANOS", t);
         };
     }
 

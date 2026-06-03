@@ -11,7 +11,6 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
-import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.HexFormat;
@@ -72,17 +71,9 @@ public final class IndexValueFormatter {
             long raw = col.type() == PhysicalType.INT32
                     ? StatisticsDecoder.decodeInt(bytes)
                     : StatisticsDecoder.decodeLong(bytes);
-            Instant instant = switch (ts.unit()) {
-                case MILLIS -> Instant.ofEpochMilli(raw);
-                case MICROS -> Instant.ofEpochSecond(
-                        Math.floorDiv(raw, 1_000_000L),
-                        Math.floorMod(raw, 1_000_000L) * 1_000L);
-                case NANOS -> Instant.ofEpochSecond(
-                        Math.floorDiv(raw, 1_000_000_000L),
-                        Math.floorMod(raw, 1_000_000_000L));
-            };
-            String s = instant.toString();
-            return ts.isAdjustedToUTC() ? s : (s.endsWith("Z") ? s.substring(0, s.length() - 1) : s);
+            return (ts.isAdjustedToUTC()
+                    ? LogicalTypeConverter.convertToTimestamp(raw, PhysicalType.INT64, ts)
+                    : LogicalTypeConverter.convertToLocalTimestamp(raw, PhysicalType.INT64, ts)).toString();
         }
         if (lt instanceof LogicalType.DateType) {
             return LocalDate.ofEpochDay(StatisticsDecoder.decodeInt(bytes)).toString();

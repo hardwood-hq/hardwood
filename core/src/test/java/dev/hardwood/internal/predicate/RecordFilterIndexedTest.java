@@ -10,6 +10,7 @@ package dev.hardwood.internal.predicate;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
@@ -297,6 +298,7 @@ class RecordFilterIndexedTest {
         @Override public LocalDate getDate(String name) { throw new UnsupportedOperationException(name); }
         @Override public LocalTime getTime(String name) { throw new UnsupportedOperationException(name); }
         @Override public Instant getTimestamp(String name) { throw new UnsupportedOperationException(name); }
+        @Override public LocalDateTime getLocalTimestamp(String name) { throw new UnsupportedOperationException(name); }
         @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(name); }
         @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(name); }
         @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(name); }
@@ -319,6 +321,7 @@ class RecordFilterIndexedTest {
         @Override public LocalDate getDate(int idx) { throw new UnsupportedOperationException(); }
         @Override public LocalTime getTime(int idx) { throw new UnsupportedOperationException(); }
         @Override public Instant getTimestamp(int idx) { throw new UnsupportedOperationException(); }
+        @Override public LocalDateTime getLocalTimestamp(int idx) { throw new UnsupportedOperationException(); }
         @Override public BigDecimal getDecimal(int idx) { throw new UnsupportedOperationException(); }
         @Override public UUID getUuid(int idx) { throw new UnsupportedOperationException(); }
         @Override public PqInterval getInterval(int idx) { throw new UnsupportedOperationException(); }

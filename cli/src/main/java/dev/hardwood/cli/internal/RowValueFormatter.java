@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.HexFormat;
 import java.util.UUID;
@@ -90,7 +91,9 @@ public final class RowValueFormatter {
         LogicalType lt = prim.logicalType();
         return switch (lt) {
             case null -> formatPhysical(reader, fieldIndex);
-            case LogicalType.TimestampType ts -> formatTimestamp(reader.getTimestamp(fieldIndex), ts);
+            case LogicalType.TimestampType ts -> ts.isAdjustedToUTC()
+                    ? reader.getTimestamp(fieldIndex).toString()
+                    : reader.getLocalTimestamp(fieldIndex).toString();
             case LogicalType.DateType d -> reader.getDate(fieldIndex).toString();
             case LogicalType.TimeType t -> reader.getTime(fieldIndex).toString();
             case LogicalType.DecimalType dec -> reader.getDecimal(fieldIndex).toPlainString();
@@ -185,6 +188,9 @@ public final class RowValueFormatter {
         }
         if (value instanceof Instant instant) {
             return instant.toString();
+        }
+        if (value instanceof LocalDateTime ldt) {
+            return ldt.toString();
         }
         return String.valueOf(value);
     }
@@ -371,7 +377,9 @@ public final class RowValueFormatter {
     private static String formatLong(long raw, LogicalType lt) {
         return switch (lt) {
             case null -> Long.toString(raw);
-            case LogicalType.TimestampType ts -> formatTimestamp(rawToInstant(raw, ts.unit()), ts);
+            case LogicalType.TimestampType ts -> (ts.isAdjustedToUTC()
+                    ? LogicalTypeConverter.convertToTimestamp(raw, PhysicalType.INT64, ts)
+                    : LogicalTypeConverter.convertToLocalTimestamp(raw, PhysicalType.INT64, ts)).toString();
             case LogicalType.TimeType t -> formatTime(raw, t.unit());
             case LogicalType.IntType it when !it.isSigned() -> Long.toUnsignedString(raw);
             case LogicalType.IntType it -> Long.toString(raw);
@@ -508,6 +516,9 @@ public final class RowValueFormatter {
         }
         if (value instanceof Instant instant) {
             return instant.toString();
+        }
+        if (value instanceof LocalDateTime ldt) {
+            return ldt.toString();
         }
         return String.valueOf(value);
     }
@@ -658,16 +669,6 @@ public final class RowValueFormatter {
         return sb.toString();
     }
 
-    private static String formatTimestamp(Instant instant, LogicalType.TimestampType type) {
-        String s = instant.toString();
-        if (!type.isAdjustedToUTC() && s.endsWith("Z")) {
-            // Instant always formats with trailing 'Z'; drop it when the annotation
-            // says the timestamp is not UTC-adjusted (local-time semantics).
-            return s.substring(0, s.length() - 1);
-        }
-        return s;
-    }
-
     private static String formatTime(long raw, LogicalType.TimeUnit unit) {
         long nanosOfDay = switch (unit) {
             case MILLIS -> raw * 1_000_000L;
@@ -675,17 +676,5 @@ public final class RowValueFormatter {
             case NANOS -> raw;
         };
         return LocalTime.ofNanoOfDay(nanosOfDay).toString();
-    }
-
-    private static Instant rawToInstant(long raw, LogicalType.TimeUnit unit) {
-        return switch (unit) {
-            case MILLIS -> Instant.ofEpochMilli(raw);
-            case MICROS -> Instant.ofEpochSecond(
-                    Math.floorDiv(raw, 1_000_000L),
-                    Math.floorMod(raw, 1_000_000L) * 1_000L);
-            case NANOS -> Instant.ofEpochSecond(
-                    Math.floorDiv(raw, 1_000_000_000L),
-                    Math.floorMod(raw, 1_000_000_000L));
-        };
     }
 }

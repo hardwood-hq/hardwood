@@ -3320,6 +3320,91 @@ print("  - 1 row group, 64 rows, INT64 id + INT64 value")
 print("  - Bloom filter on 'id' only; 'value' has no bloom filter")
 
 # =====================================================================
+# Local-wall-clock TIMESTAMP fixture (#568). PyArrow's `pa.timestamp(unit)`
+# with no `tz=` argument emits TIMESTAMP(isAdjustedToUTC=false), the
+# "naive" / wall-clock case. The companion UTC-adjusted column lets the
+# read-side test exercise both kinds against the same fixture.
+# =====================================================================
+
+local_timestamp_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('local_millis', pa.timestamp('ms'), False),         # NTZ MILLIS
+    ('local_micros', pa.timestamp('us'), False),         # NTZ MICROS
+    ('utc_micros',   pa.timestamp('us', tz='UTC'), False),  # adjusted MICROS
+    # Nested coverage so the per-impl `require` dispatch on PqStruct, PqList,
+    # and PqMap.Entry is exercised end-to-end.
+    ('nested', pa.struct([
+        ('local_ts', pa.timestamp('us')),
+        ('utc_ts',   pa.timestamp('us', tz='UTC')),
+    ]), False),
+    ('local_ts_list', pa.list_(pa.timestamp('us')), False),
+    ('local_ts_map',  pa.map_(pa.string(), pa.timestamp('us')), False),
+])
+local_timestamp_table = pa.table({
+    'id': [1, 2],
+    'local_millis': [
+        datetime(2026, 3, 5, 9, 30, 0),
+        datetime(2026, 3, 5, 17, 45, 30),
+    ],
+    'local_micros': [
+        datetime(2026, 3, 5, 9, 30, 0, 123456),
+        datetime(2026, 3, 5, 17, 45, 30, 654321),
+    ],
+    'utc_micros': [
+        datetime(2026, 3, 5, 9, 30, 0, 123456),
+        datetime(2026, 3, 5, 17, 45, 30, 654321),
+    ],
+    'nested': [
+        {'local_ts': datetime(2026, 3, 5, 9, 30, 0, 123456),
+         'utc_ts':   datetime(2026, 3, 5, 9, 30, 0, 123456)},
+        {'local_ts': datetime(2026, 3, 5, 17, 45, 30, 654321),
+         'utc_ts':   datetime(2026, 3, 5, 17, 45, 30, 654321)},
+    ],
+    'local_ts_list': [
+        [datetime(2026, 3, 5, 9, 30, 0), datetime(2026, 3, 5, 10, 0, 0)],
+        [datetime(2026, 3, 5, 17, 45, 30)],
+    ],
+    'local_ts_map': [
+        [('start', datetime(2026, 3, 5, 9, 30, 0)),
+         ('end',   datetime(2026, 3, 5, 10, 0, 0))],
+        [('start', datetime(2026, 3, 5, 17, 45, 30))],
+    ],
+}, schema=local_timestamp_schema)
+
+pq.write_table(
+    local_timestamp_table,
+    'core/src/test/resources/local_timestamp_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated local_timestamp_test.parquet (#568):")
+print("  - 2 rows, NTZ MILLIS + NTZ MICROS + UTC MICROS columns,")
+print("    plus nested struct/list/map with NTZ children")
+
+# Companion fixture: INT96 TIMESTAMP. PyArrow only writes INT96 under the
+# `use_deprecated_int96_timestamps=True` flag (it is a legacy Spark/Hive
+# convention and has no isAdjustedToUTC field). One row, one column — just
+# enough to pin the INT96 fallthrough behavior of both timestamp accessors.
+int96_schema = pa.schema([
+    ('ts', pa.timestamp('us', tz='UTC'), False),
+])
+int96_table = pa.table({
+    'ts': [datetime(2026, 3, 5, 9, 30, 0, 123456)],
+}, schema=int96_schema)
+pq.write_table(
+    int96_table,
+    'core/src/test/resources/int96_timestamp_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    use_deprecated_int96_timestamps=True,
+    data_page_version='1.0',
+)
+print("\nGenerated int96_timestamp_test.parquet (#568):")
+print("  - 1 row, single INT96 TIMESTAMP column")
+
+# =====================================================================
 # Dive screenshots fixture (docs/content/assets/cli/*.svg)
 # Not a test corpus file: this realistic, wide, nested/list/map dataset
 # with multiple row groups and dictionary columns is the input the

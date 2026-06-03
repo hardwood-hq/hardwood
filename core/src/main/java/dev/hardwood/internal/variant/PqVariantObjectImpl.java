@@ -10,6 +10,7 @@ package dev.hardwood.internal.variant;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -169,6 +170,15 @@ final class PqVariantObjectImpl implements PqVariantObject {
             return null;
         }
         return VariantValueDecoder.asTimestamp(valueBuf, off);
+    }
+
+    @Override
+    public LocalDateTime getLocalTimestamp(String name) {
+        int off = valueOffsetFor(name);
+        if (VariantValueDecoder.type(valueBuf, off) == VariantType.NULL) {
+            return null;
+        }
+        return VariantValueDecoder.asLocalTimestamp(valueBuf, off);
     }
 
     @Override

@@ -10,6 +10,7 @@ package dev.hardwood.row;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -101,11 +102,19 @@ public interface PqVariant {
     /// @throws VariantTypeException if the type is not [VariantType#TIME_NTZ]
     LocalTime asTime();
 
-    /// Extract a timestamp. Accepts TIMESTAMP/TIMESTAMP_NTZ (micros) and
-    /// TIMESTAMP_NANOS/TIMESTAMP_NTZ_NANOS (nanos).
+    /// Extract a UTC-adjusted timestamp. Accepts the TIMESTAMP (micros) and
+    /// TIMESTAMP_NANOS (nanos) tags only — for the NTZ variants use
+    /// [#asLocalTimestamp].
     ///
-    /// @throws VariantTypeException if the type is not a timestamp
+    /// @throws VariantTypeException if the type is not a UTC-adjusted timestamp
     Instant asTimestamp();
+
+    /// Extract a local-wall-clock timestamp. Accepts the TIMESTAMP_NTZ (micros)
+    /// and TIMESTAMP_NTZ_NANOS (nanos) tags only — for the UTC-adjusted
+    /// variants use [#asTimestamp].
+    ///
+    /// @throws VariantTypeException if the type is not a local-wall-clock timestamp
+    LocalDateTime asLocalTimestamp();
 
     /// Extract a UUID (16 bytes, big-endian).
     ///

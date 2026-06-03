@@ -12,6 +12,7 @@ import java.io.InputStream;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Base64;
 import java.util.UUID;
@@ -189,8 +190,9 @@ class VariantValueDecoderTest {
     void primitiveTimestampNtz() throws IOException {
         PqVariant v = load("primitive_timestampntz");
         assertThat(v.type()).isEqualTo(VariantType.TIMESTAMP_NTZ);
-        // "2025-04-16 12:34:56.78" — no timezone; decoded as UTC micros.
-        assertThat(v.asTimestamp()).isEqualTo(Instant.parse("2025-04-16T12:34:56.780Z"));
+        // "2025-04-16 12:34:56.78" — wall-clock, no timezone.
+        assertThat(v.asLocalTimestamp())
+                .isEqualTo(LocalDateTime.of(2025, 4, 16, 12, 34, 56, 780_000_000));
     }
 
     @Test
@@ -205,8 +207,9 @@ class VariantValueDecoderTest {
     void primitiveTimestampNtzNanos() throws IOException {
         PqVariant v = load("primitive_timestampntz_nanos");
         assertThat(v.type()).isEqualTo(VariantType.TIMESTAMP_NTZ_NANOS);
-        // "2024-11-07T12:33:54.123456789" — no timezone; decoded as UTC nanos.
-        assertThat(v.asTimestamp()).isEqualTo(Instant.parse("2024-11-07T12:33:54.123456789Z"));
+        // "2024-11-07T12:33:54.123456789" — wall-clock, no timezone.
+        assertThat(v.asLocalTimestamp())
+                .isEqualTo(LocalDateTime.of(2024, 11, 7, 12, 33, 54, 123_456_789));
     }
 
     @Test

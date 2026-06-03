@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -91,6 +92,8 @@ public final class FilteredRowReader implements RowReader {
     @Override public LocalTime getTime(String name) { return delegate.getTime(name); }
     @Override public Instant getTimestamp(int i) { return delegate.getTimestamp(i); }
     @Override public Instant getTimestamp(String name) { return delegate.getTimestamp(name); }
+    @Override public LocalDateTime getLocalTimestamp(int i) { return delegate.getLocalTimestamp(i); }
+    @Override public LocalDateTime getLocalTimestamp(String name) { return delegate.getLocalTimestamp(name); }
     @Override public BigDecimal getDecimal(int i) { return delegate.getDecimal(i); }
     @Override public BigDecimal getDecimal(String name) { return delegate.getDecimal(name); }
     @Override public UUID getUuid(int i) { return delegate.getUuid(i); }

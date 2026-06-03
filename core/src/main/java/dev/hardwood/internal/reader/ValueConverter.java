@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -111,6 +112,13 @@ public final class ValueConverter {
             return LogicalTypeConverter.int96ToInstant((byte[]) rawValue);
         }
         return convertLogicalType(rawValue, schema, Instant.class);
+    }
+
+    public static LocalDateTime convertToLocalTimestamp(Object rawValue, SchemaNode schema) {
+        if (rawValue == null) {
+            return null;
+        }
+        return convertLogicalType(rawValue, schema, LocalDateTime.class);
     }
 
     public static BigDecimal convertToDecimal(Object rawValue, SchemaNode schema) {

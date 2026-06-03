@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -323,7 +324,15 @@ public final class NestedBatchDataView {
     }
 
     public Instant getTimestamp(String name) {
-        return readLogicalType(lookupPrimitive(name), LogicalType.TimestampType.class, Instant.class);
+        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
+        TimestampAccessorKind.require(p.name(), p.schema().logicalType(), true);
+        return readLogicalType(p, LogicalType.TimestampType.class, Instant.class);
+    }
+
+    public LocalDateTime getLocalTimestamp(String name) {
+        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitive(name);
+        TimestampAccessorKind.require(p.name(), p.schema().logicalType(), false);
+        return readLogicalType(p, LogicalType.TimestampType.class, LocalDateTime.class);
     }
 
     public BigDecimal getDecimal(String name) {
@@ -367,7 +376,15 @@ public final class NestedBatchDataView {
     }
 
     public Instant getTimestamp(int projectedIndex) {
-        return readLogicalType(lookupPrimitiveByIndex(projectedIndex), LogicalType.TimestampType.class, Instant.class);
+        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
+        TimestampAccessorKind.require(p.name(), p.schema().logicalType(), true);
+        return readLogicalType(p, LogicalType.TimestampType.class, Instant.class);
+    }
+
+    public LocalDateTime getLocalTimestamp(int projectedIndex) {
+        TopLevelFieldMap.FieldDesc.Primitive p = lookupPrimitiveByIndex(projectedIndex);
+        TimestampAccessorKind.require(p.name(), p.schema().logicalType(), false);
+        return readLogicalType(p, LogicalType.TimestampType.class, LocalDateTime.class);
     }
 
     public BigDecimal getDecimal(int projectedIndex) {

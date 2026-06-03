@@ -10,6 +10,7 @@ package dev.hardwood.row;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
@@ -155,8 +156,20 @@ public interface PqList {
     /// View the elements as a [List] of [LocalTime] values.
     List<LocalTime> times();
 
-    /// View the elements as a [List] of [Instant] (timestamp) values.
+    /// View the elements as a [List] of [Instant] (timestamp) values. The element
+    /// column must be a UTC-adjusted TIMESTAMP. For local-wall-clock element
+    /// columns use [#localTimestamps].
+    ///
+    /// @throws IllegalStateException if the element column is a local-wall-clock TIMESTAMP
     List<Instant> timestamps();
+
+    /// View the elements as a [List] of [LocalDateTime] (local-wall-clock
+    /// timestamp) values. The element column must be a local-wall-clock
+    /// TIMESTAMP (`isAdjustedToUTC = false`). For UTC-adjusted element columns
+    /// use [#timestamps].
+    ///
+    /// @throws IllegalStateException if the element column is a UTC-adjusted TIMESTAMP
+    List<LocalDateTime> localTimestamps();
 
     /// View the elements as a [List] of [BigDecimal] values.
     List<BigDecimal> decimals();

@@ -10,6 +10,7 @@ package dev.hardwood.internal.predicate;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -599,6 +600,8 @@ class DrainSideOracleTest {
         @Override public LocalTime getTime(String name) { throw new UnsupportedOperationException(); }
         @Override public Instant getTimestamp(int idx) { throw new UnsupportedOperationException(); }
         @Override public Instant getTimestamp(String name) { throw new UnsupportedOperationException(); }
+        @Override public LocalDateTime getLocalTimestamp(int idx) { throw new UnsupportedOperationException(); }
+        @Override public LocalDateTime getLocalTimestamp(String name) { throw new UnsupportedOperationException(); }
         @Override public BigDecimal getDecimal(int idx) { throw new UnsupportedOperationException(); }
         @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
         @Override public UUID getUuid(int idx) { throw new UnsupportedOperationException(); }

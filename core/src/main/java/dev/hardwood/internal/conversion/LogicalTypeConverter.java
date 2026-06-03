@@ -14,7 +14,9 @@ import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.time.ZoneOffset;
 import java.util.UUID;
 
 import dev.hardwood.metadata.LogicalType;
@@ -39,7 +41,9 @@ public class LogicalTypeConverter {
         return switch (logicalType) {
             case LogicalType.StringType t -> convertToString(physicalValue, physicalType);
             case LogicalType.DateType t -> convertToDate(physicalValue, physicalType);
-            case LogicalType.TimestampType tt -> convertToTimestamp(physicalValue, physicalType, tt);
+            case LogicalType.TimestampType tt -> tt.isAdjustedToUTC()
+                    ? convertToTimestamp(physicalValue, physicalType, tt)
+                    : convertToLocalTimestamp(physicalValue, physicalType, tt);
             case LogicalType.TimeType tt -> convertToTime(physicalValue, physicalType, tt);
             case LogicalType.DecimalType dt -> convertToDecimal(physicalValue, physicalType, dt);
             case LogicalType.IntType it -> convertToInt(physicalValue, physicalType, it);
@@ -103,12 +107,49 @@ public class LogicalTypeConverter {
         if (physicalType != PhysicalType.INT64) {
             throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
         }
+        if (!timestampType.isAdjustedToUTC()) {
+            throw new IllegalStateException(
+                    "TIMESTAMP value is local-wall-clock (isAdjustedToUTC=false); "
+                            + "decode via convertToLocalTimestamp instead");
+        }
 
         long rawValue = (Long) value;
         return switch (timestampType.unit()) {
             case MILLIS -> Instant.ofEpochMilli(rawValue);
             case MICROS -> Instant.ofEpochSecond(rawValue / 1_000_000, (rawValue % 1_000_000) * 1000);
             case NANOS -> Instant.ofEpochSecond(rawValue / 1_000_000_000, rawValue % 1_000_000_000);
+        };
+    }
+
+    public static LocalDateTime convertToLocalTimestamp(Object value, PhysicalType physicalType,
+                                                        LogicalType.TimestampType timestampType) {
+        if (physicalType != PhysicalType.INT64) {
+            throw new IllegalArgumentException("TIMESTAMP logical type requires INT64 physical type, got " + physicalType);
+        }
+        if (timestampType.isAdjustedToUTC()) {
+            throw new IllegalStateException(
+                    "TIMESTAMP value is UTC-adjusted (isAdjustedToUTC=true); "
+                            + "decode via convertToTimestamp instead");
+        }
+
+        // For a local-wall-clock TIMESTAMP the stored int64 is the offset from the
+        // epoch *of the wall clock itself*, so the same epoch arithmetic that
+        // produces an Instant gives the right LocalDateTime when read at UTC —
+        // the bits never change, only the type label.
+        long rawValue = (Long) value;
+        return switch (timestampType.unit()) {
+            case MILLIS -> LocalDateTime.ofEpochSecond(
+                    Math.floorDiv(rawValue, 1_000L),
+                    (int) (Math.floorMod(rawValue, 1_000L) * 1_000_000L),
+                    ZoneOffset.UTC);
+            case MICROS -> LocalDateTime.ofEpochSecond(
+                    Math.floorDiv(rawValue, 1_000_000L),
+                    (int) (Math.floorMod(rawValue, 1_000_000L) * 1_000L),
+                    ZoneOffset.UTC);
+            case NANOS -> LocalDateTime.ofEpochSecond(
+                    Math.floorDiv(rawValue, 1_000_000_000L),
+                    (int) Math.floorMod(rawValue, 1_000_000_000L),
+                    ZoneOffset.UTC);
         };
     }
 

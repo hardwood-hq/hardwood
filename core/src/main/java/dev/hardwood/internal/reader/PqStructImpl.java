@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -161,12 +162,30 @@ final class PqStructImpl implements PqStruct {
 
     @Override
     public Instant getTimestamp(String name) {
-        return readLogicalType(lookupPrimitive(name), Instant.class);
+        TopLevelFieldMap.FieldDesc.Primitive child = lookupPrimitive(name);
+        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), true);
+        return readLogicalType(child, Instant.class);
     }
 
     @Override
     public Instant getTimestamp(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), Instant.class);
+        TopLevelFieldMap.FieldDesc.Primitive child = primitiveAt(fieldIndex);
+        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), true);
+        return readLogicalType(child, Instant.class);
+    }
+
+    @Override
+    public LocalDateTime getLocalTimestamp(String name) {
+        TopLevelFieldMap.FieldDesc.Primitive child = lookupPrimitive(name);
+        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), false);
+        return readLogicalType(child, LocalDateTime.class);
+    }
+
+    @Override
+    public LocalDateTime getLocalTimestamp(int fieldIndex) {
+        TopLevelFieldMap.FieldDesc.Primitive child = primitiveAt(fieldIndex);
+        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), false);
+        return readLogicalType(child, LocalDateTime.class);
     }
 
     @Override

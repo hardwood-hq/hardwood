@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.NoSuchElementException;
@@ -573,6 +574,7 @@ public final class FlatRowReader implements RowReader {
                 byte[] rawValue = ((BinaryBatchValues) flatValueArrays[columnIndex]).byteArrayAt(rowIndex);
                 return LogicalTypeConverter.int96ToInstant(rawValue);
             }
+            TimestampAccessorKind.require(col.name(), col.logicalType(), true);
             long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
             return LogicalTypeConverter.convertToTimestamp(rawValue, col.type(),
                     (LogicalType.TimestampType) col.logicalType());
@@ -585,6 +587,28 @@ public final class FlatRowReader implements RowReader {
     @Override
     public Instant getTimestamp(String name) {
         return getTimestamp(resolveIndex(name));
+    }
+
+    @Override
+    public LocalDateTime getLocalTimestamp(int columnIndex) {
+        if (isNull(columnIndex)) {
+            return null;
+        }
+        ColumnSchema col = columnSchemas[columnIndex];
+        try {
+            TimestampAccessorKind.require(col.name(), col.logicalType(), false);
+            long rawValue = ((long[]) flatValueArrays[columnIndex])[rowIndex];
+            return LogicalTypeConverter.convertToLocalTimestamp(rawValue, col.type(),
+                    (LogicalType.TimestampType) col.logicalType());
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
+    }
+
+    @Override
+    public LocalDateTime getLocalTimestamp(String name) {
+        return getLocalTimestamp(resolveIndex(name));
     }
 
     @Override

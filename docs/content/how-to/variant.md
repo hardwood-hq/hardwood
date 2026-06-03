@@ -46,6 +46,8 @@ The `PqVariantObject` view exposes the same primitive getters as a Parquet struc
 
 **Primitive extraction on `PqVariant`:** When you already hold a `PqVariant` (e.g. an array element) use the `as*()` methods — `asInt`, `asString`, `asTimestamp`, and so on. Each throws `VariantTypeException` if the variant's type tag doesn't match.
 
+**Timestamp tags:** The Variant binary format carries four timestamp tags, split along the same `isAdjustedToUTC` boundary as the Parquet TIMESTAMP logical type. `asTimestamp` returns `Instant` and accepts the UTC-adjusted tags `TIMESTAMP` / `TIMESTAMP_NANOS`; `asLocalTimestamp` returns `LocalDateTime` and accepts the wall-clock tags `TIMESTAMP_NTZ` / `TIMESTAMP_NTZ_NANOS`. `PqVariantObject.getTimestamp` / `getLocalTimestamp` follow the same split.
+
 **Shredded Variants:** Some writers store part of the payload in a typed sibling column (`typed_value`) alongside `value` for better compression and pushdown. Reassembly is transparent: `metadata()` and `value()` return canonical bytes regardless of whether the file was shredded, so `PqVariant` consumers see a single consistent representation.
 
 ## Current limitations

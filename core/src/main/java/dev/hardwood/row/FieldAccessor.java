@@ -10,6 +10,7 @@ package dev.hardwood.row;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.UUID;
 
@@ -88,11 +89,25 @@ public interface FieldAccessor {
     /// @return the time value, or null if the field is null
     LocalTime getTime(String name);
 
-    /// Get a TIMESTAMP field value by name.
+    /// Get a UTC-adjusted TIMESTAMP field value by name. The column's
+    /// `TimestampType` must have `isAdjustedToUTC = true` (the value is an
+    /// instant normalized to UTC). For wall-clock TIMESTAMP columns
+    /// (`isAdjustedToUTC = false`) use [#getLocalTimestamp] instead.
     ///
     /// @param name the field name
     /// @return the instant value, or null if the field is null
+    /// @throws IllegalStateException if the column is a local-wall-clock TIMESTAMP
     Instant getTimestamp(String name);
+
+    /// Get a local-wall-clock TIMESTAMP field value by name. The column's
+    /// `TimestampType` must have `isAdjustedToUTC = false` (the value is a
+    /// wall-clock timestamp with no timezone). For UTC-adjusted columns use
+    /// [#getTimestamp] instead.
+    ///
+    /// @param name the field name
+    /// @return the local timestamp value, or null if the field is null
+    /// @throws IllegalStateException if the column is a UTC-adjusted TIMESTAMP
+    LocalDateTime getLocalTimestamp(String name);
 
     /// Get a DECIMAL field value by name.
     ///
@@ -136,10 +151,11 @@ public interface FieldAccessor {
     /// Returns the value in the same form as the typed accessors above:
     /// `Integer` / `Long` / `Float` / `Double` / `Boolean` for primitives,
     /// `String` for STRING, [LocalDate] for DATE, [LocalTime] for TIME,
-    /// [Instant] for TIMESTAMP, [BigDecimal] for DECIMAL, [UUID] for UUID,
-    /// [PqInterval] for INTERVAL, [PqVariant] for VARIANT, and `byte[]` for
-    /// BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY with no logical-type annotation.
-    /// Nested groups surface as [PqStruct] / [PqList] / [PqMap].
+    /// [Instant] for UTC-adjusted TIMESTAMP, [LocalDateTime] for local-wall-clock
+    /// TIMESTAMP, [BigDecimal] for DECIMAL, [UUID] for UUID, [PqInterval] for
+    /// INTERVAL, [PqVariant] for VARIANT, and `byte[]` for BYTE_ARRAY /
+    /// FIXED_LEN_BYTE_ARRAY with no logical-type annotation. Nested groups
+    /// surface as [PqStruct] / [PqList] / [PqMap].
     ///
     /// Use [#getRawValue] to obtain the underlying physical value instead.
     ///

@@ -10,6 +10,7 @@ package dev.hardwood.row;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
@@ -235,10 +236,19 @@ public interface PqMap {
         /// @return the time value, or null if the value is null
         LocalTime getTimeValue();
 
-        /// Get the value as a TIMESTAMP.
+        /// Get the value as a UTC-adjusted TIMESTAMP (`isAdjustedToUTC = true`).
+        /// For local-wall-clock TIMESTAMP values use [#getLocalTimestampValue].
         ///
         /// @return the instant value, or null if the value is null
+        /// @throws IllegalStateException if the value column is a local-wall-clock TIMESTAMP
         Instant getTimestampValue();
+
+        /// Get the value as a local-wall-clock TIMESTAMP (`isAdjustedToUTC = false`).
+        /// For UTC-adjusted TIMESTAMP values use [#getTimestampValue].
+        ///
+        /// @return the local timestamp value, or null if the value is null
+        /// @throws IllegalStateException if the value column is a UTC-adjusted TIMESTAMP
+        LocalDateTime getLocalTimestampValue();
 
         /// Get the value as a DECIMAL.
         ///

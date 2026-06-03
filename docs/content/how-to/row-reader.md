@@ -145,7 +145,8 @@ All accessor methods are available in two forms:
 | `getString` | BYTE_ARRAY | STRING or JSON | `String` |
 | `getDate` | INT32 | DATE | `LocalDate` |
 | `getTime` | INT32 or INT64 | TIME | `LocalTime` |
-| `getTimestamp` | INT64, or legacy INT96 | TIMESTAMP | `Instant` |
+| `getTimestamp` | INT64, or legacy INT96 | TIMESTAMP (`isAdjustedToUTC = true`) | `Instant` |
+| `getLocalTimestamp` | INT64 | TIMESTAMP (`isAdjustedToUTC = false`) | `LocalDateTime` |
 | `getDecimal` | INT32, INT64, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
 | `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
 | `getInterval` | FIXED_LEN_BYTE_ARRAY(12) | INTERVAL | `PqInterval` |
@@ -159,11 +160,15 @@ All methods are available as both `method(name)` and `method(index)`.
 
 #### Null handling
 
-Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getDecimal`, `getUuid`, `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
+Primitive accessors (`getInt`, `getLong`, `getFloat`, `getDouble`, `getBoolean`) throw `NullPointerException` if the field is null — always check with `isNull()` first. Object accessors (`getString`, `getDate`, `getTimestamp`, `getLocalTimestamp`, `getDecimal`, `getUuid`, `getInterval`, `getStruct`, `getList`, `getMap`) return `null` for null fields.
 
 #### Type mismatches
 
 Requesting the wrong type for a column (e.g. `getInt` on a `LONG` column, `getDate` on a `STRING` column) is a programming error; the call fails at runtime with an unchecked exception. The specific exception type is unspecified and may change between releases — do not catch it as part of normal control flow. If the column type isn't known statically, check it up front via `reader.getFileSchema().getColumn(name)` and inspect the returned `ColumnSchema`'s `type()` / `logicalType()` — see [Inspect File Metadata](metadata.md).
+
+The TIMESTAMP logical type carries an `isAdjustedToUTC` flag that picks between two distinct semantic kinds — a UTC-adjusted instant or a wall-clock local timestamp — and the accessor pair is split along the same line. `getTimestamp` requires `isAdjustedToUTC = true` and returns `Instant`; `getLocalTimestamp` requires `isAdjustedToUTC = false` and returns `LocalDateTime`. Calling the wrong one for a column throws `IllegalStateException` naming the column and the actual flag value. If the kind isn't known statically, branch on `((LogicalType.TimestampType) column.logicalType()).isAdjustedToUTC()` before the accessor call, or use the generic `getValue` accessor which returns `Instant` or `LocalDateTime` per the column's flag. Legacy INT96 columns have no `isAdjustedToUTC` field and are read as `Instant` via `getTimestamp` (Spark / Hive convention).
+
+The TIME logical type also carries an `isAdjustedToUTC` flag, but `LocalTime` has no zone of its own, so `getTime` returns `LocalTime` either way and the flag is informational — inspect `((LogicalType.TimeType) column.logicalType()).isAdjustedToUTC()` if the distinction matters to your application.
 
 #### Index-based access
 

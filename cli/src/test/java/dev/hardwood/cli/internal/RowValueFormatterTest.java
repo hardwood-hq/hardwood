@@ -40,13 +40,15 @@ class RowValueFormatterTest {
     }
 
     @Test
-    void timestampMicrosNotUtcDropsZ() {
+    void timestampMicrosNotUtcRendersAsLocalDateTime() {
         ColumnSchema col = column(PhysicalType.INT64,
                 new LogicalType.TimestampType(false, LogicalType.TimeUnit.MICROS));
         long micros = 1735689600_000_000L;
 
+        // Local-wall-clock timestamp: no trailing 'Z', and LocalDateTime.toString
+        // omits the seconds field when it is zero.
         assertThat(RowValueFormatter.formatDictionaryValue(micros, col))
-                .isEqualTo("2025-01-01T00:00:00");
+                .isEqualTo("2025-01-01T00:00");
     }
 
     @Test

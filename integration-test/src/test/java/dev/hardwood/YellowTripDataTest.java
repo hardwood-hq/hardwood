@@ -9,7 +9,7 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.time.Instant;
+import java.time.LocalDateTime;
 
 import org.junit.jupiter.api.Test;
 
@@ -39,10 +39,10 @@ public class YellowTripDataTest {
                 rowReader.next();
                 rowCount++;
                 assertThat(rowReader.getInt("VendorID")).isEqualTo(1);
-                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
-                        .isEqualTo(Instant.parse("2025-01-01T00:18:38Z"));
-                assertThat(rowReader.getTimestamp("tpep_dropoff_datetime"))
-                        .isEqualTo(Instant.parse("2025-01-01T00:26:59Z"));
+                assertThat(rowReader.getLocalTimestamp("tpep_pickup_datetime"))
+                        .isEqualTo(LocalDateTime.of(2025, 1, 1, 0, 18, 38));
+                assertThat(rowReader.getLocalTimestamp("tpep_dropoff_datetime"))
+                        .isEqualTo(LocalDateTime.of(2025, 1, 1, 0, 26, 59));
                 assertThat(rowReader.getLong("passenger_count")).isEqualTo(1L);
                 assertThat(rowReader.getDouble("trip_distance")).isEqualTo(1.6);
                 assertThat(rowReader.getLong("RatecodeID")).isEqualTo(1L);
@@ -66,10 +66,10 @@ public class YellowTripDataTest {
                 rowReader.next();
                 rowCount++;
                 assertThat(rowReader.getInt("VendorID")).isEqualTo(1);
-                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
-                        .isEqualTo(Instant.parse("2025-01-01T00:32:40Z"));
-                assertThat(rowReader.getTimestamp("tpep_dropoff_datetime"))
-                        .isEqualTo(Instant.parse("2025-01-01T00:35:13Z"));
+                assertThat(rowReader.getLocalTimestamp("tpep_pickup_datetime"))
+                        .isEqualTo(LocalDateTime.of(2025, 1, 1, 0, 32, 40));
+                assertThat(rowReader.getLocalTimestamp("tpep_dropoff_datetime"))
+                        .isEqualTo(LocalDateTime.of(2025, 1, 1, 0, 35, 13));
                 assertThat(rowReader.getLong("passenger_count")).isEqualTo(1L);
                 assertThat(rowReader.getDouble("trip_distance")).isEqualTo(0.5);
                 assertThat(rowReader.getInt("PULocationID")).isEqualTo(236);
@@ -83,8 +83,8 @@ public class YellowTripDataTest {
                 rowReader.next();
                 rowCount++;
                 assertThat(rowReader.getInt("VendorID")).isEqualTo(1);
-                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
-                        .isEqualTo(Instant.parse("2025-01-01T00:44:04Z"));
+                assertThat(rowReader.getLocalTimestamp("tpep_pickup_datetime"))
+                        .isEqualTo(LocalDateTime.of(2025, 1, 1, 0, 44, 4));
                 assertThat(rowReader.getInt("PULocationID")).isEqualTo(141);
                 assertThat(rowReader.getInt("DOLocationID")).isEqualTo(141);
                 assertThat(rowReader.getDouble("trip_distance")).isEqualTo(0.6);
@@ -95,8 +95,8 @@ public class YellowTripDataTest {
                 rowReader.next();
                 rowCount++;
                 assertThat(rowReader.getInt("VendorID")).isEqualTo(2);
-                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
-                        .isEqualTo(Instant.parse("2025-01-01T00:14:27Z"));
+                assertThat(rowReader.getLocalTimestamp("tpep_pickup_datetime"))
+                        .isEqualTo(LocalDateTime.of(2025, 1, 1, 0, 14, 27));
                 assertThat(rowReader.getLong("passenger_count")).isEqualTo(3L);
                 assertThat(rowReader.getDouble("trip_distance")).isEqualTo(0.52);
                 assertThat(rowReader.getInt("PULocationID")).isEqualTo(244);
@@ -111,10 +111,10 @@ public class YellowTripDataTest {
                 rowReader.next();
                 rowCount++;
                 assertThat(rowReader.getInt("VendorID")).isEqualTo(2);
-                assertThat(rowReader.getTimestamp("tpep_pickup_datetime"))
-                        .isEqualTo(Instant.parse("2025-01-01T00:21:34Z"));
-                assertThat(rowReader.getTimestamp("tpep_dropoff_datetime"))
-                        .isEqualTo(Instant.parse("2025-01-01T00:25:06Z"));
+                assertThat(rowReader.getLocalTimestamp("tpep_pickup_datetime"))
+                        .isEqualTo(LocalDateTime.of(2025, 1, 1, 0, 21, 34));
+                assertThat(rowReader.getLocalTimestamp("tpep_dropoff_datetime"))
+                        .isEqualTo(LocalDateTime.of(2025, 1, 1, 0, 25, 6));
                 assertThat(rowReader.getLong("passenger_count")).isEqualTo(3L);
                 assertThat(rowReader.getDouble("trip_distance")).isEqualTo(0.66);
                 assertThat(rowReader.getInt("PULocationID")).isEqualTo(244);

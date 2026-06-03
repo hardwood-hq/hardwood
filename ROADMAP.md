@@ -240,7 +240,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
   - [x] `LogicalTypeConverter` - centralized conversion logic
   - [x] STRING (BYTE_ARRAY → String with UTF-8 decoding)
   - [x] DATE (INT32 → LocalDate, days since epoch)
-  - [x] TIMESTAMP (INT64 → Instant with MILLIS/MICROS/NANOS units)
+  - [x] TIMESTAMP (INT64 → Instant for UTC-adjusted, LocalDateTime for local-wall-clock, MILLIS/MICROS/NANOS units)
   - [x] TIME (INT32/INT64 → LocalTime with MILLIS/MICROS/NANOS units)
   - [x] DECIMAL (FIXED_LEN_BYTE_ARRAY → BigDecimal with scale/precision)
   - [x] INT_8, INT_16 (INT32 → narrowed int with validation)

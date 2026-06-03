@@ -10,6 +10,7 @@ package dev.hardwood.internal.variant;
 import java.math.BigDecimal;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.UUID;
@@ -74,7 +75,8 @@ public final class PqVariantImpl implements PqVariant {
             case DECIMAL4, DECIMAL8, DECIMAL16 -> asDecimal().toString();
             case DATE -> asDate().toString();
             case TIME_NTZ -> asTime().toString();
-            case TIMESTAMP, TIMESTAMP_NTZ, TIMESTAMP_NANOS, TIMESTAMP_NTZ_NANOS -> asTimestamp().toString();
+            case TIMESTAMP, TIMESTAMP_NANOS -> asTimestamp().toString();
+            case TIMESTAMP_NTZ, TIMESTAMP_NTZ_NANOS -> asLocalTimestamp().toString();
             case BINARY -> Arrays.toString(asBinary());
             case STRING -> '"' + asString() + '"';
             case UUID -> asUuid().toString();
@@ -161,6 +163,11 @@ public final class PqVariantImpl implements PqVariant {
     @Override
     public Instant asTimestamp() {
         return VariantValueDecoder.asTimestamp(valueBuf, valueOffset);
+    }
+
+    @Override
+    public LocalDateTime asLocalTimestamp() {
+        return VariantValueDecoder.asLocalTimestamp(valueBuf, valueOffset);
     }
 
     @Override

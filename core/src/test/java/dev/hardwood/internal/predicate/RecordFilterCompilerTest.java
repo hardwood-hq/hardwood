@@ -11,6 +11,7 @@ import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
+import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.List;
 import java.util.UUID;
@@ -405,6 +406,7 @@ class RecordFilterCompilerTest {
             @Override public LocalDate getDate(String name) { throw new UnsupportedOperationException(); }
             @Override public LocalTime getTime(String name) { throw new UnsupportedOperationException(); }
             @Override public Instant getTimestamp(String name) { throw new UnsupportedOperationException(); }
+            @Override public LocalDateTime getLocalTimestamp(String name) { throw new UnsupportedOperationException(); }
             @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
             @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(); }
             @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(); }
@@ -426,6 +428,7 @@ class RecordFilterCompilerTest {
             @Override public LocalDate getDate(int i) { throw new UnsupportedOperationException(); }
             @Override public LocalTime getTime(int i) { throw new UnsupportedOperationException(); }
             @Override public Instant getTimestamp(int i) { throw new UnsupportedOperationException(); }
+            @Override public LocalDateTime getLocalTimestamp(int i) { throw new UnsupportedOperationException(); }
             @Override public BigDecimal getDecimal(int i) { throw new UnsupportedOperationException(); }
             @Override public UUID getUuid(int i) { throw new UnsupportedOperationException(); }
             @Override public PqInterval getInterval(int i) { throw new UnsupportedOperationException(); }
@@ -464,6 +467,7 @@ class RecordFilterCompilerTest {
         @Override public LocalDate getDate(String name) { throw new UnsupportedOperationException(); }
         @Override public LocalTime getTime(String name) { throw new UnsupportedOperationException(); }
         @Override public Instant getTimestamp(String name) { throw new UnsupportedOperationException(); }
+        @Override public LocalDateTime getLocalTimestamp(String name) { throw new UnsupportedOperationException(); }
         @Override public BigDecimal getDecimal(String name) { throw new UnsupportedOperationException(); }
         @Override public UUID getUuid(String name) { throw new UnsupportedOperationException(); }
         @Override public PqInterval getInterval(String name) { throw new UnsupportedOperationException(); }
@@ -485,6 +489,7 @@ class RecordFilterCompilerTest {
         @Override public LocalDate getDate(int i) { throw new UnsupportedOperationException(); }
         @Override public LocalTime getTime(int i) { throw new UnsupportedOperationException(); }
         @Override public Instant getTimestamp(int i) { throw new UnsupportedOperationException(); }
+        @Override public LocalDateTime getLocalTimestamp(int i) { throw new UnsupportedOperationException(); }
         @Override public BigDecimal getDecimal(int i) { throw new UnsupportedOperationException(); }
         @Override public UUID getUuid(int i) { throw new UnsupportedOperationException(); }
         @Override public PqInterval getInterval(int i) { throw new UnsupportedOperationException(); }
