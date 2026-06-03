@@ -448,8 +448,9 @@ public class RowGroupIterator {
         // `PageLocation.firstRowIndex` and `SequentialFetchPlan.valuesRead`
         // are both row-group-local (reset to 0 each RG), so passing the global
         // maxRows would fail to truncate anything in non-first row groups and
-        // over-fetch the last partially-needed RG. With a filter active the
-        // match count is unpredictable, so we fall back to the global value.
+        // over-fetch the last partially-needed RG. With a filter active `head(N)`
+        // caps matching rows (SQL LIMIT), so no fetch-side truncation applies —
+        // perRgMaxRows returns 0 and the matched-row cap is enforced at the reader.
         long perRgMaxRows = perRgMaxRows(workItem);
 
         FetchPlan[] plans = new FetchPlan[projectedCount];

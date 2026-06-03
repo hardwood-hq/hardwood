@@ -21,7 +21,10 @@ import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
 
-/// Filtered wrapper around any [RowReader] that skips non-matching rows.
+/// Filtered wrapper around any [RowReader] that skips non-matching rows. When
+/// constructed with a positive `maxMatches`, also caps the number of matching
+/// rows returned (SQL `LIMIT` over the filtered relation); [ColumnWorker#UNLIMITED]
+/// disables the cap.
 public final class FilteredRowReader implements RowReader {
 
     private final RowReader delegate;
