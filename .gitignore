@@ -1,5 +1,6 @@
 #Maven
 target/
+japicmp-report/
 pom.xml.tag
 pom.xml.releaseBackup
 pom.xml.versionsBackup

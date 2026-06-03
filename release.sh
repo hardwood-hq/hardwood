@@ -99,6 +99,11 @@ git checkout -b "release/${RELEASE_VERSION}"
 echo "Generating API change report..."
 JAPICMP_OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
 tools/api-report.sh "${JAPICMP_OLD_VERSION}"
+# release:prepare's preparationGoals ("clean verify") will wipe target/ shortly,
+# so move the report outside target/ to keep it for upload-artifact. The
+# release.yml workflow reads from japicmp-report/.
+rm -rf japicmp-report
+cp -r target/japicmp japicmp-report
 
 # -- Update README versions and date -----------------------------------------
 

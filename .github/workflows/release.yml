@@ -82,7 +82,7 @@ jobs:
         uses: actions/upload-artifact@bbbca2ddaa5d8feaa63e36b76fdaad77386f024f  # v7 — https://github.com/actions/upload-artifact/releases/tag/v7
         with:
           name: japicmp-report
-          path: core/target/japicmp/
+          path: japicmp-report/
 
       - name: 'JReleaser output'
         if: always()
