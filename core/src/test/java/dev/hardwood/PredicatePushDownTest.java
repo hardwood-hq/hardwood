@@ -291,6 +291,91 @@ class PredicatePushDownTest {
     }
 
     @Test
+    void testSkipWithFilterIsLogicalOffsetSpanningRowGroups() throws Exception {
+        // gt(id, 50) matches 51-300 (250 rows). skip(150) discards the first 150
+        // matches — 51-100 (RG1), 101-200 (RG2), crossing both boundaries — so reading
+        // resumes at the 151st match (id 201) and yields through id 300. The first 50
+        // matches live in RG1, which a physical seek would wrongly skip past.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 50L);
+
+            try (RowReader rows = reader.buildRowReader().skip(150).filter(filter).build()) {
+                List<Long> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                }
+                assertThat(ids).hasSize(100);
+                assertThat(ids.getFirst()).isEqualTo(201L);
+                assertThat(ids.getLast()).isEqualTo(300L);
+            }
+        }
+    }
+
+    @Test
+    void testSkipWithFilterAndHeadIsOffsetLimitOverMatches() throws Exception {
+        // OFFSET 150 LIMIT 5 over gt(id, 50): matches 51-300; skip the first 150
+        // matches (51-200, spanning RG1 and RG2), then return the next 5 -> 201-205.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 50L);
+
+            try (RowReader rows = reader.buildRowReader().skip(150).filter(filter).head(5).build()) {
+                List<Long> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getLong("id"));
+                }
+                assertThat(ids).containsExactly(201L, 202L, 203L, 204L, 205L);
+            }
+        }
+    }
+
+    @Test
+    void testSkipWithFilterBeyondMatchCountYieldsEmpty() throws Exception {
+        // gt(id, 50) matches 250 rows; skip(1000) discards them all and yields an
+        // empty reader (SQL OFFSET past the result set), without throwing.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 50L);
+
+            try (RowReader rows = reader.buildRowReader().skip(1000).filter(filter).build()) {
+                assertThat(rows.hasNext()).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void testSkipWithFilterAtExactMatchCountYieldsEmpty() throws Exception {
+        // gt(id, 50) matches exactly 250 rows; skip(250) discards all of them — the
+        // OFFSET == result-set-size boundary — yielding an empty reader.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 50L);
+
+            try (RowReader rows = reader.buildRowReader().skip(250).filter(filter).build()) {
+                assertThat(rows.hasNext()).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void testSkipWithFilterOnNestedSchemaIsLogicalOffset() throws Exception {
+        // Record-level filtering on a nested schema routes through FilteredRowReader.
+        // RG2 holds id 4-6, RG3 id 7-9. gt(id, 4) matches 5,6,7,8,9; skip(2) discards
+        // the first two matches (5, 6) and yields 7, 8, 9, crossing the RG2/RG3 boundary.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
+            FilterPredicate filter = FilterPredicate.gt("id", 4);
+
+            try (RowReader rows = reader.buildRowReader().skip(2).filter(filter).build()) {
+                List<Integer> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getInt("id"));
+                }
+                assertThat(ids).containsExactly(7, 8, 9);
+            }
+        }
+    }
+
+    @Test
     void testRowReaderFilterNoMatchReturnsZeroRows() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE))) {
             FilterPredicate filter = FilterPredicate.eq("id", 999L);

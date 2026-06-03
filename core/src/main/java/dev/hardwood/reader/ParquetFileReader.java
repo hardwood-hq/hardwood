@@ -240,7 +240,7 @@ public class ParquetFileReader implements AutoCloseable {
         // Apply the row-group predicate (e.g. byte-range) up front so `skip` indexes
         // into the kept sequence — a caller doing split-aware reading can seek inside *its*
         // split. Stats-based row-group dropping (via FilterPredicate) stays inside the
-        // RowGroupIterator, so its semantics under `skip` are unchanged from before.
+        // RowGroupIterator.
         List<RowGroup> filteredRowGroups = rowGroupFilter == null
                 ? firstFileMetaData.rowGroups()
                 : filterRowGroups(null, rowGroupFilter);
@@ -248,9 +248,24 @@ public class ParquetFileReader implements AutoCloseable {
         if (skip == 0L) {
             return buildRowReader(projection, filter, maxRows, filteredRowGroups);
         }
-        // Locate the row group containing `skip` by walking cumulative
-        // RowGroup.numRows() over the filtered list. After the loop, `cumulative`
-        // equals the total row count of `filteredRowGroups` if no target was found.
+
+        if (filter != null) {
+            // Logical OFFSET over the matched relation (SQL OFFSET), symmetric with
+            // head() being LIMIT (#538). Row-group statistics bound values, not match
+            // counts, so we cannot seek by physical row position: build over the full
+            // (row-group-filtered) relation, cap the underlying reader at `skip + head`
+            // matched rows, then discard the first `skip` matches. A `skip` past the end
+            // of the matched relation simply yields an exhausted (empty) reader.
+            long matchedCap = maxRows == 0 ? 0L : Math.addExact(maxRows, skip);
+            RowReader reader = buildRowReader(projection, filter, matchedCap, filteredRowGroups);
+            return discardLeadingRows(reader, skip);
+        }
+
+        // No filter: `skip` is a physical row offset. Locate the row group containing
+        // `skip` by walking cumulative RowGroup.numRows() over the filtered list, open
+        // from there, and discard the within-group residue — earlier row groups are
+        // never opened (O(1 row-group) seek). After the loop, `cumulative` equals the
+        // total row count of `filteredRowGroups` if no target was found.
         long cumulative = 0L;
         int targetRg = -1;
         long withinRg = 0L;
@@ -264,12 +279,8 @@ public class ParquetFileReader implements AutoCloseable {
             cumulative += rgRows;
         }
         if (targetRg < 0) {
-            if (skip > cumulative) {
-                throw new IllegalArgumentException(
-                        "skip " + skip
-                        + " exceeds the (row-group-filtered) total row count " + cumulative);
-            }
-            // skip == cumulative — empty reader.
+            // skip >= total rows — a SQL OFFSET past the end of the relation, so an
+            // empty reader (consistent with the filtered case overshooting the matches).
             return buildRowReader(projection, filter, maxRows, List.<RowGroup>of());
         }
         List<RowGroup> rowGroups = targetRg == 0
@@ -283,13 +294,34 @@ public class ParquetFileReader implements AutoCloseable {
         // Walk past the within-RG residue. These rows *are* decoded —
         // page-level skip via OffsetIndex (#381) would let us drop the
         // leading pages at the byte level instead.
-        for (long i = 0; i < withinRg; i++) {
-            if (!reader.hasNext()) {
-                break;
+        return discardLeadingRows(reader, withinRg);
+    }
+
+    /// Advances `reader` past its first `count` rows via `next()` and returns it,
+    /// positioned at the first row the caller should see. Used to apply both the
+    /// physical within-row-group residue (no-filter `skip`) and the logical `OFFSET`
+    /// (filtered `skip`). Stops early if the reader is exhausted before `count`. If
+    /// iteration fails, the partially built reader is closed before the error
+    /// propagates, so its worker pipeline never leaks.
+    private static RowReader discardLeadingRows(RowReader reader, long count) {
+        try {
+            for (long i = 0; i < count; i++) {
+                if (!reader.hasNext()) {
+                    break;
+                }
+                reader.next();
             }
-            reader.next();
+            return reader;
         }
-        return reader;
+        catch (RuntimeException e) {
+            try {
+                reader.close();
+            }
+            catch (RuntimeException closeException) {
+                e.addSuppressed(closeException);
+            }
+            throw e;
+        }
     }
 
     RowReader buildTailRowReader(ColumnProjection projection, long tailRows) {
@@ -513,9 +545,9 @@ public class ParquetFileReader implements AutoCloseable {
         /// Positive: return at most `tailRows` rows from the end.
         /// Zero (default): no limit. Mutually exclusive with `headRows`.
         private long tailRows;
-        /// Zero (default): start from row 0. Positive: skip rows before the
-        /// given absolute row index, opening only the row group(s) needed
-        /// to reach it. Mutually exclusive with `tailRows`.
+        /// Zero (default): start from row 0. Positive: SQL `OFFSET` — a physical
+        /// absolute row index without a filter, or a logical offset over matched
+        /// rows with one. Mutually exclusive with `tailRows`.
         private long skip;
 
         private RowReaderBuilder(ParquetFileReader fileReader) {
@@ -575,25 +607,23 @@ public class ParquetFileReader implements AutoCloseable {
             return this;
         }
 
-        /// Begin reading from the given absolute row index. Earlier row groups
-        /// are not opened — their pages are not fetched or decoded — so this
-        /// is an O(1 RG) seek on remote backends, in contrast to walking
-        /// `next()` from row 0.
+        /// Skip leading rows before reading — SQL `OFFSET`. Its meaning depends on
+        /// whether a [#filter(FilterPredicate)] is present:
         ///
-        /// **Cost within the target row group.** The reader still yields
-        /// rows from the row group's first row, then walks `next()`
-        /// `skip - rowGroupFirstRow` times to discard the leading
-        /// residue. Those residue rows *are* decoded — `skip` near
-        /// the end of a 1 M-row group walks ~1 M decoded `next()` calls.
-        /// Page-level skip via OffsetIndex is tracked as #381.
+        /// - **Without a filter:** a physical absolute row index. Earlier row groups
+        ///   are not opened — an O(1 row-group) seek on remote backends (the leading
+        ///   residue within the target row group is still decoded). `skip >= totalRows`
+        ///   yields an empty reader. Indexes into the *first* file's rows for multi-file
+        ///   readers.
+        /// - **With a filter:** a *logical* offset over the matched rows — discards the
+        ///   first `n` rows matching the predicate, symmetric with [#head] as `LIMIT`.
+        ///   The O(1) seek does not apply: the reader decodes earlier groups to count
+        ///   matches (groups proven non-matching by statistics are still pruned). A
+        ///   `skip` past the match count yields an empty reader, counting across *all*
+        ///   files in order.
         ///
-        /// `skip == 0` is the no-op default. `skip == totalRows`
-        /// produces an empty reader. `skip > totalRows` throws
-        /// [IllegalArgumentException] at `build()` time. Indexes into the
-        /// *first* file's rows for multi-file readers; cross-file
-        /// `skip` is out of scope. Mutually exclusive with [#tail] and with
-        /// [#filter(FilterPredicate)]; composes with [#head] for a bounded
-        /// `[skip, skip + maxRows)` window, and with
+        /// `skip == 0` is the no-op default. Mutually exclusive with [#tail]; composes
+        /// with [#head] (`skip(n).head(k)` is `OFFSET n LIMIT k`) and with
         /// [#filter(RowGroupPredicate)] over the kept row-group sequence.
         public RowReaderBuilder skip(long skip) {
             if (skip < 0) {
@@ -619,12 +649,6 @@ public class ParquetFileReader implements AutoCloseable {
             }
             if (tailRows > 0 && skip > 0) {
                 throw new IllegalArgumentException("tail and skip are mutually exclusive");
-            }
-            if (skip > 0 && filter != null) {
-                throw new IllegalArgumentException(
-                        "skip cannot be combined with a filter predicate: logical OFFSET "
-                                + "semantics over the filtered relation are not yet supported "
-                                + "(tracked in #541)");
             }
             if (tailRows > 0) {
                 return fileReader.buildTailRowReader(projection, tailRows);
