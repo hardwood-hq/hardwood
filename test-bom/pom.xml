@@ -103,6 +103,13 @@
         <artifactId>hardwood-test-support</artifactId>
         <version>${project.version}</version>
       </dependency>
+
+      <!-- Differential-test oracle (DuckDB) -->
+      <dependency>
+        <groupId>org.duckdb</groupId>
+        <artifactId>duckdb_jdbc</artifactId>
+        <version>1.4.4.0</version>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 </project>

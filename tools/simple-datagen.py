@@ -3481,3 +3481,106 @@ pq.write_table(
 print("\nGenerated struct_then_primitive_test.parquet:")
 print("  - id=[1,2,3,4], point={x,y}, tag='keep', score=[50,60,70,80]")
 print("  - score: field index 3 but leaf-column index 4")
+
+# ---------------------------------------------------------------------------
+# Differential-testing corpus (DuckDB oracle harness, #548).
+#
+# Flat, deterministic fixtures carrying a synthetic `__row__` column equal to the
+# physical row position, so that file order is recoverable as ORDER BY __row__ and
+# hardwood's file-order head/tail/skip map one-to-one onto SQL LIMIT/OFFSET. Two
+# files share one schema and differ only in row-group layout (single vs. multi).
+# Values are computed deterministically (no RNG) so the bytes are stable.
+# ---------------------------------------------------------------------------
+diff_dir = Path('core/src/test/resources/differential')
+diff_dir.mkdir(parents=True, exist_ok=True)
+
+DIFF_ROWS = 250
+diff_schema = pa.schema([
+    ('__row__', pa.int64(), False),   # physical row position 0..N-1
+    ('id', pa.int64(), False),        # = __row__ + 1
+    ('score', pa.float64(), False),
+    ('category', pa.string(), False),
+    ('note', pa.string(), True),      # OPTIONAL — every 7th row is null
+])
+diff_table = pa.table({
+    '__row__': list(range(DIFF_ROWS)),
+    'id': [r + 1 for r in range(DIFF_ROWS)],
+    'score': [float(r % 100) + 0.25 for r in range(DIFF_ROWS)],
+    'category': ['ABCDE'[r % 5] for r in range(DIFF_ROWS)],
+    'note': [None if r % 7 == 0 else f'note-{r}' for r in range(DIFF_ROWS)],
+}, schema=diff_schema)
+
+for diff_name, diff_rg_size in [('diff_numbers_single', DIFF_ROWS), ('diff_numbers_multi', 50)]:
+    pq.write_table(
+        diff_table,
+        str(diff_dir / f'{diff_name}.parquet'),
+        use_dictionary=False,
+        compression=None,
+        data_page_version='2.0',
+        row_group_size=diff_rg_size,
+    )
+print("\nGenerated differential corpus:")
+print(f"  - diff_numbers_single.parquet: {DIFF_ROWS} rows, 1 row group")
+print(f"  - diff_numbers_multi.parquet:  {DIFF_ROWS} rows, row groups of 50")
+
+# Typed differential corpus (value-comparison harness, #548 P2). One row group,
+# every physical/logical type the value comparator covers, all REQUIRED so the
+# values themselves — not null handling — are what's compared.
+DIFF_TYPES_ROWS = 200
+diff_types_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('i32', pa.int32(), False),
+    ('i64', pa.int64(), False),
+    ('f32', pa.float32(), False),
+    ('f64', pa.float64(), False),
+    ('flag', pa.bool_(), False),
+    ('s', pa.string(), False),
+    ('d', pa.date32(), False),
+    ('ts', pa.timestamp('us', tz='UTC'), False),
+    ('dec', pa.decimal128(10, 2), False),
+    ('bin', pa.binary(), False),
+])
+_date_base = date(2000, 1, 1).toordinal()
+diff_types_table = pa.table({
+    '__row__': list(range(DIFF_TYPES_ROWS)),
+    'i32': [r - 100 for r in range(DIFF_TYPES_ROWS)],
+    'i64': [r * 1000 - 50 for r in range(DIFF_TYPES_ROWS)],
+    'f32': [r * 0.5 for r in range(DIFF_TYPES_ROWS)],
+    'f64': [r / 8.0 for r in range(DIFF_TYPES_ROWS)],
+    'flag': [r % 2 == 0 for r in range(DIFF_TYPES_ROWS)],
+    's': [f'row-{r}' for r in range(DIFF_TYPES_ROWS)],
+    'd': [date.fromordinal(_date_base + r) for r in range(DIFF_TYPES_ROWS)],
+    'ts': [datetime.fromtimestamp(1577836800 + r, tz=timezone.utc).replace(microsecond=(r * 137) % 1000000)
+           for r in range(DIFF_TYPES_ROWS)],
+    'dec': [Decimal(f'{r}.25') for r in range(DIFF_TYPES_ROWS)],
+    'bin': [bytes([r % 256, (r + 1) % 256, (r + 2) % 256]) for r in range(DIFF_TYPES_ROWS)],
+}, schema=diff_types_schema)
+pq.write_table(
+    diff_types_table,
+    str(diff_dir / 'diff_types.parquet'),
+    use_dictionary=False,
+    compression=None,
+    data_page_version='2.0',
+)
+print(f"  - diff_types.parquet:          {DIFF_TYPES_ROWS} rows, typed value-comparison corpus")
+
+# Nulls corpus (filter null-semantics harness, #548 P2). A nullable column with
+# scattered nulls, so a comparison predicate must drop the null rows (SQL
+# three-valued logic) to agree with the oracle.
+DIFF_NULLS_ROWS = 150
+diff_nulls_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('val', pa.int64(), True),  # OPTIONAL — null every 3rd row
+])
+diff_nulls_table = pa.table({
+    '__row__': list(range(DIFF_NULLS_ROWS)),
+    'val': [None if r % 3 == 0 else r * 2 for r in range(DIFF_NULLS_ROWS)],
+}, schema=diff_nulls_schema)
+pq.write_table(
+    diff_nulls_table,
+    str(diff_dir / 'diff_nulls.parquet'),
+    use_dictionary=False,
+    compression=None,
+    data_page_version='2.0',
+)
+print(f"  - diff_nulls.parquet:          {DIFF_NULLS_ROWS} rows, nullable column for filter null-semantics")
