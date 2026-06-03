@@ -19,11 +19,14 @@ from row 0 and fetching everything in between.
 A new method on the existing `RowReaderBuilder`:
 
 ```java
-/// Begin reading from the given absolute row index. Earlier row groups
-/// are not opened — their pages are not fetched or decoded — so this
-/// is an O(1 RG) seek on remote backends.
+/// Skip rows before reading — SQL `OFFSET`. **Without a filter**, `skip(n)`
+/// is a physical absolute row index: earlier row groups are not opened —
+/// their pages are not fetched or decoded — so this is an O(1 RG) seek on
+/// remote backends. **With a filter**, `skip(n)` is a logical offset over
+/// the matched rows (see ROW_SELECTION_SEMANTICS.md / #541), and the O(1)
+/// seek does not apply — earlier groups are decoded to count matches.
 ///
-/// `skip == 0` is the no-op default. `skip == totalRows`
+/// `skip == 0` is the no-op default. `skip >= totalRows`
 /// produces an empty reader. Indexes into the *first* file's rows for
 /// multi-file readers; cross-file `skip` is out of scope. Mutually
 /// exclusive with [#tail]; composes with [#head] for a bounded
@@ -54,7 +57,12 @@ file).
 
 ## Implementation
 
-In `ParquetFileReader.buildRowReader(projection, filter, maxRows, skip)`:
+The physical seek below is the **no-filter** path. When a `FilterPredicate` is
+present, `skip` is instead a logical offset over the matched rows — earlier
+groups must be decoded to count matches — handled separately per
+[ROW_SELECTION_SEMANTICS.md](ROW_SELECTION_SEMANTICS.md) (#541).
+
+In `ParquetFileReader.buildRowReader(projection, filter, maxRows, skip)`, with no filter:
 
 1. If `skip == 0`, delegate to the existing path (no behaviour change).
 2. Otherwise, locate the target row group by walking cumulative
@@ -140,8 +148,8 @@ dedicated viewport window cache (#377) replaces them.
   at the start of RG 1 with no within-RG residue.
 - `ParquetReaderTest.skipComposesWithHead` — `skip(150).head(20)`
   yields exactly rows 150..169.
-- `ParquetReaderTest.skipAtTotalRowsYieldsEmpty` — boundary at
-  end-of-file.
+- `ParquetReaderTest.skipAtOrBeyondTotalRowsYieldsEmpty` — at and past
+  end-of-file (overshoot yields empty, not an error).
 - `ParquetReaderTest.skipRejectsNegative` and
   `skipAndTailAreMutuallyExclusive` cover the validation paths.
 - `DataPreviewIoTest` exercises the dive integration: jump-to-last-page

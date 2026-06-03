@@ -36,6 +36,7 @@ nav:
     - How a Parquet File Is Laid Out: concepts/parquet-layout.md
     - The Concurrency Model: concepts/concurrency-model.md
     - RowReader vs. ColumnReader: concepts/reader-models.md
+    - Row Selection: concepts/row-selection.md
     - Compatibility Philosophy: concepts/compatibility-philosophy.md
   - Reference:
     - Configuration: reference/configuration.md

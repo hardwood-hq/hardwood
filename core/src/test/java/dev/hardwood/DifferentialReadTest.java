@@ -158,8 +158,15 @@ class DifferentialReadTest {
 
                 builds("filter + head", null, new Pred(Op.GT, 100), null, 20, null),
 
-                // --- known-wrong today; clearing the marker turns this into the fix's verifier ---
-                pending("#541", "filter + skip + head", new Pred(Op.GT, 100), 10, 20, null));
+                // --- #541: skip + filter as logical OFFSET over the matched relation ---
+                builds("filter + skip + head", null, new Pred(Op.GT, 100), 10, 20, null),
+                builds("filter + skip", null, new Pred(Op.GT, 100), 30, null, null),
+
+                // --- skip past the end of the relation: a SQL OFFSET overshoot yields empty,
+                //     both at the boundary (== 250 rows) and beyond, with and without a filter ---
+                builds("skip == total", null, null, 250, null, null),
+                builds("skip beyond total", null, null, 300, null, null),
+                builds("filter + skip beyond matches", null, new Pred(Op.GT, 100), 300, null, null));
     }
 
     static Stream<Arguments> cases() {

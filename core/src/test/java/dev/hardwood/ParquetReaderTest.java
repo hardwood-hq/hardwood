@@ -469,18 +469,32 @@ class ParquetReaderTest {
     }
 
     @Test
-    void skipAndFilterPredicateAreRejected() throws Exception {
+    void skipWithFilterIsLogicalOffsetOverMatches() throws Exception {
+        // id 1..300. gtEq(id, 100) matches 100..300 (201 rows). skip(50) is a logical
+        // OFFSET over the matched relation: discard the first 50 matches (100..149) and
+        // yield the rest, 150..300 — not a physical 50-row seek (#541).
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
-            assertThatThrownBy(() -> reader.buildRowReader()
-                    .projection(ColumnProjection.all())
-                    .skip(50)
-                    .filter(FilterPredicate.gtEq("id", 100L))
-                    .build())
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessageContaining("skip")
-                    .hasMessageContaining("filter");
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .skip(50)
+                     .filter(FilterPredicate.gtEq("id", 100L))
+                     .build()) {
+            long firstId = -1;
+            long lastId = -1;
+            int count = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                long id = rows.getLong("id");
+                if (firstId < 0) {
+                    firstId = id;
+                }
+                lastId = id;
+                count++;
+            }
+            assertThat(count).as("matches after skip(50)").isEqualTo(151);
+            assertThat(firstId).as("first matched id after skip(50)").isEqualTo(150L);
+            assertThat(lastId).as("last matched id").isEqualTo(300L);
         }
     }
 
@@ -558,12 +572,17 @@ class ParquetReaderTest {
     }
 
     @Test
-    void skipAtTotalRowsYieldsEmpty() throws Exception {
+    void skipAtOrBeyondTotalRowsYieldsEmpty() throws Exception {
+        // skip past the end of the file is a SQL OFFSET overshoot — an empty reader,
+        // not an error, at the boundary (== totalRows) and beyond (> totalRows).
         Path parquetFile = Paths.get("src/test/resources/filter_pushdown_int.parquet");
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
             long total = reader.getFileMetaData().numRows();
             try (RowReader rows = reader.buildRowReader().skip(total).build()) {
+                assertThat(rows.hasNext()).isFalse();
+            }
+            try (RowReader rows = reader.buildRowReader().skip(total + 1000).build()) {
                 assertThat(rows.hasNext()).isFalse();
             }
         }
