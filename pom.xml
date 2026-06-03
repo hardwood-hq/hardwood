@@ -67,6 +67,7 @@
     <auto-service.version>1.1.1</auto-service.version>
     <error-prone.version>2.49.0</error-prone.version>
     <hadoop.version>3.4.3</hadoop.version>
+    <japicmp.newVersion>${project.version}</japicmp.newVersion>
     <java.version>21</java.version>
     <java.version.build>25</java.version.build>
     <maven.compiler.parameters>true</maven.compiler.parameters>
@@ -107,6 +108,31 @@
           <groupId>com.github.siom79.japicmp</groupId>
           <artifactId>japicmp-maven-plugin</artifactId>
           <version>0.25.4</version>
+          <configuration>
+            <oldVersion>
+              <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>${project.artifactId}</artifactId>
+                <version>${japicmp.oldVersion}</version>
+                <type>jar</type>
+              </dependency>
+            </oldVersion>
+            <newVersion>
+              <dependency>
+                <groupId>${project.groupId}</groupId>
+                <artifactId>${project.artifactId}</artifactId>
+                <version>${japicmp.newVersion}</version>
+                <type>jar</type>
+              </dependency>
+            </newVersion>
+            <parameter>
+              <onlyModified>true</onlyModified>
+              <excludes>
+                <exclude>dev.hardwood.internal</exclude>
+              </excludes>
+            </parameter>
+            <outputDirectory>${maven.multiModuleProjectDirectory}/target/japicmp/${project.artifactId}</outputDirectory>
+          </configuration>
         </plugin>
         <plugin>
           <groupId>org.apache.maven.plugins</groupId>

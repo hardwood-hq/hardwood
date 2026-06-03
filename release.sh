@@ -98,12 +98,7 @@ git checkout -b "release/${RELEASE_VERSION}"
 
 echo "Generating API change report..."
 JAPICMP_OLD_VERSION="$(sed -n 's/^Latest version: \([^,]*\),.*/\1/p' README.md)"
-# -am brings up everything in hardwood-core's reactor dependency graph
-# (hardwood-test-support and the BOMs), but not hardwood-error-prone-checks: it is
-# wired as an annotationProcessorPath, not a project dependency, so it stays
-# invisible to the reactor and must be installed into the local repo first.
-./mvnw -ntp -B install -pl :hardwood-error-prone-checks -DskipTests
-./mvnw -ntp -B package japicmp:cmp -pl :hardwood-core -am -DskipTests -Djapicmp.oldVersion="${JAPICMP_OLD_VERSION}"
+tools/api-report.sh "${JAPICMP_OLD_VERSION}"
 
 # -- Update README versions and date -----------------------------------------
 
