@@ -8,6 +8,7 @@
 package dev.hardwood.testing;
 
 import java.io.IOException;
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
@@ -267,7 +268,14 @@ public class Utils {
                 compareMap(context, resolved.getValueType(), (Map<?, ?>) refValue, map);
             }
             default -> {
-                Object actualValue = getLeafValue(actual, fieldName, resolved);
+                // parquet-java's Avro reader applies the DECIMAL logical-type conversion
+                // to INT32/INT64-backed decimals, surfacing a BigDecimal. Hardwood's row
+                // API exposes the same via getDecimal(), so read it that way and compare
+                // BigDecimal-to-BigDecimal. (BYTE_ARRAY/FIXED-backed decimals are read as
+                // raw bytes on both sides, so refValue is not a BigDecimal for those.)
+                Object actualValue = refValue instanceof BigDecimal
+                        ? actual.getDecimal(fieldName)
+                        : getLeafValue(actual, fieldName, resolved);
                 compareLeafValues(context, refValue, actualValue);
             }
         }
@@ -381,9 +389,36 @@ public class Utils {
         else if (comparableRef instanceof byte[] refBytes) {
             assertThat((byte[]) comparableActual).as(context).isEqualTo(refBytes);
         }
+        else if (comparableRef instanceof BigDecimal refDecimal) {
+            assertDecimalMatches(context, refDecimal, comparableActual);
+        }
         else {
             assertThat(comparableActual).as(context).isEqualTo(comparableRef);
         }
+    }
+
+    /// Compare a reference [BigDecimal] (produced by parquet-java's Avro reader
+    /// for INT32/INT64-backed decimals) against the Hardwood-side value. The two
+    /// read APIs surface decimals differently:
+    ///
+    /// - The row API (`StructAccessor#getDecimal`) decodes the logical type and
+    ///   hands back a [BigDecimal], compared directly here.
+    /// - The column API ([dev.hardwood.reader.ColumnReader]) is the physical layer
+    ///   and exposes only the raw unscaled `int`/`long`; the scaled value is
+    ///   reconstructed using the reference's scale before comparing.
+    ///
+    /// Both arms compare with [java.math.BigDecimal#compareTo] semantics so that
+    /// equal values with differing scales (e.g. `1.0` vs `1.00`) still match.
+    private static void assertDecimalMatches(String context, BigDecimal expected, Object actual) {
+        if (actual instanceof BigDecimal actualDecimal) {
+            assertThat(actualDecimal).as(context).isEqualByComparingTo(expected);
+            return;
+        }
+        assertThat(actual)
+                .as(context + " (decimal unscaled value)")
+                .isInstanceOf(Number.class);
+        BigDecimal reconstructed = BigDecimal.valueOf(((Number) actual).longValue(), expected.scale());
+        assertThat(reconstructed).as(context).isEqualByComparingTo(expected);
     }
 
     /// Compare an Avro collection against a Hardwood [PqList] element-by-element.
@@ -964,6 +999,9 @@ public class Utils {
         }
         else if (expected instanceof byte[] refBytes) {
             assertThat((byte[]) actual).as(context).isEqualTo(refBytes);
+        }
+        else if (expected instanceof BigDecimal refDecimal) {
+            assertDecimalMatches(context, refDecimal, actual);
         }
         else {
             assertThat(actual).as(context).isEqualTo(expected);
