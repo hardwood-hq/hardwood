@@ -81,6 +81,26 @@ FilterPredicate filter = FilterPredicate.or(
 !!! note "Divergence from parquet-java"
     parquet-java's `notEq` treats `null <> v` as true and therefore includes null rows, which breaks the SQL identity above. Hardwood applies uniform SQL three-valued-logic semantics across all comparison operators. To reproduce parquet-java's behavior, make the null-inclusion explicit: `or(notEq("x", v), isNull("x"))`.
 
+### Float and Double Comparisons
+
+Predicates on `float` and `double` columns use the `Float.compare` / `Double.compare` total order, not IEEE 754 equality. Two consequences matter in practice:
+
+- `-0.0` is strictly less than `+0.0`. `eq(0.0)` matches only `+0.0` values; to match either zero, use `or(eq(0.0), eq(-0.0))`.
+- `NaN` sorts above every finite value. `eq(Float.NaN)` matches only `NaN` (whereas IEEE `NaN == anything` is always false). `lt` and `ltEq` against any value never match `NaN` rows; `gt` and `gtEq` against a finite value always include `NaN` rows.
+
+```java
+// Match any NaN row
+FilterPredicate anyNaN = FilterPredicate.eq("score", Double.NaN);
+
+// Match both signed zeros
+FilterPredicate anyZero = FilterPredicate.or(
+    FilterPredicate.eq("ratio", 0.0),
+    FilterPredicate.eq("ratio", -0.0)
+);
+```
+
+Row-group and page-level pushdown is defensive against non-conformant writers: if a column's statistics carry `NaN` as `min` or `max` (forbidden by the Parquet spec, but produced by older or buggy writers), that bound is treated as no-bound and the row group / page is not pruned on its account.
+
 ### Logical Type Support
 
 Factory methods are provided for common Parquet logical types, handling the physical

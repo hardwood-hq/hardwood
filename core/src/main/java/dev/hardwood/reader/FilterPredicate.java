@@ -58,6 +58,25 @@ import java.util.UUID;
 /// parquet-java's `notEq`, which treats `null <> v` as true and therefore
 /// includes null rows. To reproduce parquet-java's behavior in Hardwood, write
 /// the null-inclusion explicitly: `or(notEq("x", v), isNull("x"))`.
+///
+/// ## Float and double comparisons
+///
+/// Predicates on `float` and `double` columns use the [Float#compare] /
+/// [Double#compare] total order, not IEEE 754 equality. Two consequences
+/// matter in practice:
+///
+/// - `-0.0` is strictly less than `+0.0`. `eq(0.0)` matches only `+0.0`
+///   values; to match either zero, use `or(eq(0.0), eq(-0.0))`.
+/// - `NaN` sorts above every finite value. `eq(NaN)` matches only `NaN`
+///   (whereas IEEE `NaN == anything` is always false). `lt` and `ltEq` against
+///   any value never match `NaN` rows; `gt` and `gtEq` against a finite value
+///   always include `NaN` rows.
+///
+/// Predicate pushdown is defensive against non-conformant writers: if a
+/// column's statistics carry `NaN` as `min` or `max` (forbidden by the
+/// Parquet spec, but produced by older / buggy writers), the bound is
+/// treated as no-bound and pruning is skipped on that side — matching rows
+/// are never dropped.
 public sealed interface FilterPredicate
         permits FilterPredicate.IntColumnPredicate,
                 FilterPredicate.LongColumnPredicate,
