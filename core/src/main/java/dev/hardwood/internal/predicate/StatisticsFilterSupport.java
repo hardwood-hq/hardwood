@@ -93,6 +93,13 @@ final class StatisticsFilterSupport {
     }
 
     static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max) {
+        // The Parquet spec forbids writing NaN to statistics min/max, but older / buggy writers
+        // have produced such bounds. NaN sorts above every finite value in Float.compare's total
+        // order, so applying the range checks below would silently prune row groups / pages that
+        // hold matching finite rows. Treat NaN bounds as no-bound and never prune.
+        if (Float.isNaN(min) || Float.isNaN(max)) {
+            return false;
+        }
         return switch (op) {
             case EQ -> Float.compare(value, min) < 0 || Float.compare(value, max) > 0;
             case NOT_EQ -> Float.compare(min, max) == 0 && Float.compare(value, min) == 0;
@@ -104,6 +111,9 @@ final class StatisticsFilterSupport {
     }
 
     static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max) {
+        if (Double.isNaN(min) || Double.isNaN(max)) {
+            return false;
+        }
         return switch (op) {
             case EQ -> Double.compare(value, min) < 0 || Double.compare(value, max) > 0;
             case NOT_EQ -> Double.compare(min, max) == 0 && Double.compare(value, min) == 0;

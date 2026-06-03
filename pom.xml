@@ -330,6 +330,8 @@
                     <exclude>.venv/**</exclude>
                     <exclude>.docker-venv/**</exclude>
                     <exclude>_tmp/**</exclude>
+                    <exclude>japicmp-report/**</exclude>
+                    <exclude>**/__pycache__/**</exclude>
                     <exclude>.release-env</exclude>
                     <exclude>LICENSE.txt</exclude>
                     <exclude>etc/license-cc-by-sa.txt</exclude>
