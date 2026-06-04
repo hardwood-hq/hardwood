@@ -99,6 +99,43 @@ print("  - Encoding: PLAIN (use_dictionary=False)")
 print("  - Compression: SNAPPY (compression='snappy')")
 print("  - Data: id=[1,2,3], value=[100,200,300] - NO NULLS")
 
+# hardwood-hq/hardwood#594: pins the ColumnReader batch-array non-aliasing
+# contract. Four rows of one flat column per accessor family plus a list<int32>
+# column. The null pattern (present / null / null / present) is chosen so that
+# reading with batchSize=2 yields two batches that EACH carry a real (backed)
+# validity bitmap — never the shared Validity.NO_NULLS singleton — so the test
+# can assert the backing long[] is freshly allocated per batch, not just the
+# value arrays. Every flat column is non-null in row 0 and row 3 so both batches
+# also hold at least one real binary value.
+batch_identity_schema = pa.schema([
+    ('ints', pa.int32(), True),
+    ('longs', pa.int64(), True),
+    ('floats', pa.float32(), True),
+    ('doubles', pa.float64(), True),
+    ('flags', pa.bool_(), True),
+    ('labels', pa.string(), True),
+    ('nums', pa.list_(pa.int32()), True),
+])
+batch_identity_table = pa.table({
+    'ints': [10, None, None, 40],
+    'longs': [100, None, None, 400],
+    'floats': [1.5, None, None, 4.5],
+    'doubles': [2.5, None, None, 5.5],
+    'flags': [True, None, None, False],
+    'labels': ['alpha', None, None, 'delta'],
+    'nums': [[1, 2], None, None, [3]],
+}, schema=batch_identity_schema)
+pq.write_table(batch_identity_table,
+               'core/src/test/resources/batch_array_identity_test.parquet',
+               use_dictionary=False,
+               compression=None,
+               data_page_version='1.0')
+
+print("\nGenerated batch_array_identity_test.parquet:")
+print("  - Rows: present / null / null / present per flat column")
+print("  - nums: [1,2] / null / null / [3]")
+print("  - With batchSize=2 both batches carry backed validity bitmaps")
+
 # Generate dictionary encoded file with strings
 schema_dict = pa.schema([
     ('id', pa.int64(), False),
