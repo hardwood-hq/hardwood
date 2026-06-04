@@ -42,7 +42,10 @@ MODULES=":hardwood-core,:hardwood-avro,:hardwood-s3,:hardwood-aws-auth"
 ARTIFACTS=(hardwood-core hardwood-avro hardwood-s3 hardwood-aws-auth)
 
 if [ -z "$NEW" ]; then
-  CAPTION="HEAD vs $OLD"
+  # Record which commit HEAD was so a downloaded report names its exact source.
+  # Honor CI's ${GITHUB_SHA} when set, otherwise resolve it from the local repo.
+  HEAD_SHA="$(git rev-parse --short "${GITHUB_SHA:-HEAD}")"
+  CAPTION="HEAD ($HEAD_SHA) vs $OLD"
   # error-prone-checks is wired as an annotationProcessorPath, not a project
   # dependency, so it stays invisible to the reactor and must be installed into
   # the local repo first. The four modules are then installed (not just
