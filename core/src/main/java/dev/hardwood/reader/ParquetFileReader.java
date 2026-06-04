@@ -359,12 +359,7 @@ public class ParquetFileReader implements AutoCloseable {
             // mask gate (a nested-v1 column without an OffsetIndex). Decode
             // every leading row and discard it to preserve cross-column
             // row alignment.
-            for (long i = 0; i < skip; i++) {
-                if (!reader.hasNext()) {
-                    break;
-                }
-                reader.next();
-            }
+            return discardLeadingRows(reader, skip);
         }
         return reader;
     }

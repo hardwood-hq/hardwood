@@ -189,13 +189,15 @@ class BuilderCombinationTest {
         }
     }
 
-    /// Multi-file boundary cells — `skip` indexes into the first file only and `tail` is
-    /// single-file-only (throws) — need a multi-file fixture before they can be pinned.
-    /// Tracked by #577; left disabled, so the gap is visible in test reports.
+    /// Multi-file boundary cells — physical `skip` (no filter) indexes into the first file
+    /// only, logical `skip` (with a filter) counts matches across *all* files in order, and
+    /// `tail` is single-file-only (throws) — all need a multi-file fixture before they can be
+    /// pinned. Tracked by #577; left disabled, so the gap is visible in test reports.
     @Test
     @Disabled("multi-file boundary cells need a multi-file fixture — see #577")
     void multiFileBoundaries() {
-        // skip + multi-file: indexes into the first file's rows only.
+        // physical skip + multi-file: indexes into the first file's rows only.
+        // filtered skip + multi-file: counts matched rows across all files in order.
         // tail + multi-file: currently UnsupportedOperationException.
     }
 }

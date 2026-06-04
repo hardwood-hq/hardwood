@@ -313,7 +313,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 !!! warning "Multi-file readers: first file only"
     For the no-filter (physical) case, `skip(N)` indexes into the **first** file's rows only — it does not seek across file boundaries. To skip whole files, omit them from the input list; to skip within a non-first file, open it separately.
 
-**With a filter,** `skip(n)` is a *logical* offset over the matched rows — it discards the first `n` rows that match the predicate and returns the rest, exactly like SQL `OFFSET` after a `WHERE`. The O(1 row-group seek does **not** apply: row-group statistics bound min/max values, not match *counts*, so the reader decodes earlier groups to count matches (groups whose statistics prove no match are still pruned). A `skip` past the number of matching rows yields an empty reader rather than throwing.
+**With a filter,** `skip(n)` is a *logical* offset over the matched rows — it discards the first `n` rows that match the predicate and returns the rest, exactly like SQL `OFFSET` after a `WHERE`. The O(1 row-group) seek does **not** apply: row-group statistics bound min/max values, not match *counts*, so the reader decodes earlier groups to count matches (groups whose statistics prove no match are still pruned). A `skip` past the number of matching rows yields an empty reader rather than throwing.
 
 ```java
 // Skip the first 150 rows matching the predicate, then read the next 20.

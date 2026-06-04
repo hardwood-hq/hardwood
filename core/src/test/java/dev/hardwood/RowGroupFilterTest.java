@@ -9,6 +9,7 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.BeforeAll;
@@ -226,6 +227,30 @@ class RowGroupFilterTest {
             assertThat(rows.hasNext()).isTrue();
             rows.next();
             assertThat(rows.getLong("id")).isEqualTo(111L);
+        }
+    }
+
+    @Test
+    void rowReaderByteRangeFilterSkipAndHeadComposeByIntersection() throws Exception {
+        // RowGroupPredicate keeps rg1+rg2 (rows 101..300); the FilterPredicate gt(id, 150)
+        // matches 151..300 within those groups (150 matches). skip(50) discards the first 50
+        // matches (151..200), and head(5) caps the rest at 5 -> 201..205. This pins the full
+        // intersection: byteRange(...).filter(p).skip(n).head(k) counts over the matching rows
+        // within this reader's row groups, not over the file.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("id"))
+                     .filter(RowGroupPredicate.byteRange(rg1Mid, fileLen))
+                     .filter(FilterPredicate.gt("id", 150L))
+                     .skip(50)
+                     .head(5)
+                     .build()) {
+            List<Long> ids = new ArrayList<>();
+            while (rows.hasNext()) {
+                rows.next();
+                ids.add(rows.getLong("id"));
+            }
+            assertThat(ids).containsExactly(201L, 202L, 203L, 204L, 205L);
         }
     }
 
