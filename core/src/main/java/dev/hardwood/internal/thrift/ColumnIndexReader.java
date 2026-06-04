@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.metadata.ColumnIndex;
-import dev.hardwood.metadata.GeospatialStatistics;
 
 /// Reader for ColumnIndex from Thrift Compact Protocol.
 ///
@@ -23,7 +22,11 @@ import dev.hardwood.metadata.GeospatialStatistics;
 /// - 3: max_values (list<binary>)
 /// - 4: boundary_order (enum BoundaryOrder)
 /// - 5: null_counts (list<i64>, optional)
-/// - 7: geospatial_stats (list<GeospatialStatistics>, optional)
+/// - 6: repetition_level_histograms (list<i64>, optional)
+/// - 7: definition_level_histograms (list<i64>, optional)
+/// - 8: nan_counts (list<i64>, optional)
+///
+/// Fields 6–8 are not yet surfaced and are skipped.
 public class ColumnIndexReader {
 
     public static ColumnIndex read(ThriftCompactReader reader) throws IOException {
@@ -42,7 +45,6 @@ public class ColumnIndexReader {
         List<byte[]> maxValues = new ArrayList<>();
         ColumnIndex.BoundaryOrder boundaryOrder = ColumnIndex.BoundaryOrder.UNORDERED;
         List<Long> nullCounts = null;
-        List<GeospatialStatistics> geospatialStatistics = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -109,31 +111,14 @@ public class ColumnIndexReader {
                         reader.skipField(header.type());
                     }
                     break;
-                case 7: // geospatial_stats (list<GeospatialStatistics>, optional)
-                    if (header.type() == 0x09) { // LIST
-                        ThriftCompactReader.CollectionHeader listHeader = reader.readListHeader();
-                        if (listHeader.elementType() == 0x0C) { // STRUCT
-                            geospatialStatistics = new ArrayList<>(listHeader.size());
-                            for (int i = 0; i < listHeader.size(); i++) {
-                                geospatialStatistics.add(GeospatialStatisticsReader.read(reader));
-                            }
-                        }
-                        else {
-                            for (int i = 0; i < listHeader.size(); i++) {
-                                reader.skipField(listHeader.elementType());
-                            }
-                        }
-                    }
-                    else {
-                        reader.skipField(header.type());
-                    }
-                    break;
                 default:
+                    // Fields 6 (repetition_level_histograms), 7 (definition_level_histograms)
+                    // and 8 (nan_counts) are not yet surfaced and fall through to be skipped.
                     reader.skipField(header.type());
                     break;
             }
         }
 
-        return new ColumnIndex(nullPages, minValues, maxValues, boundaryOrder, nullCounts, geospatialStatistics);
+        return new ColumnIndex(nullPages, minValues, maxValues, boundaryOrder, nullCounts);
     }
 }

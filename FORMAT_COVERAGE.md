@@ -95,7 +95,7 @@ All fields (column_idx, descending, nulls_first) ❌ — struct not read.
 | 14 | bloom_filter_offset | 🟡 | shown in dive; no bloom-filter decode (#105) |
 | 15 | bloom_filter_length | 🟡 | #105 |
 | 16 | size_statistics | ❌ | #607 |
-| 17 | geospatial_statistics | ✅ | row-group / page filter evaluators |
+| 17 | geospatial_statistics | ✅ | row-group filter evaluator (no per-page geospatial stats exist) |
 
 ### PageEncodingStats
 All fields (page_type, encoding, count) ❌ — struct not read.
@@ -176,7 +176,7 @@ Empty struct; not read (see `PageHeader.index_page_header`).
 | 4 | boundary_order | ✅ | |
 | 5 | null_counts | ✅ | |
 | 6 | repetition_level_histograms | ❌ | #607 |
-| 7 | definition_level_histograms | ❌ | #607; currently mis-read as geospatial (#608) |
+| 7 | definition_level_histograms | ❌ | skipped; surfacing tracked by #607 |
 | 8 | nan_counts | ❌ | #607 |
 
 ### OffsetIndex
@@ -220,7 +220,7 @@ The ❌ rows cluster into a handful of capabilities, cross-referenced to ROADMAP
 
 - **Modular encryption** — entire feature stubbed to fail-fast. #128 (ROADMAP has no phase yet).
 - **Bloom-filter pushdown** — ROADMAP 9.3 / 9.4; #105.
-- **Size statistics & level histograms** — ROADMAP 9.x; #607, #608.
+- **Size statistics & level histograms** — ROADMAP 9.x; #607.
 - **Statistics completeness** — distinct_count, exactness flags, nan_count; #483, #607.
 - **Declared sort order** — `sorting_columns`, `is_sorted`; ROADMAP 4.2.
 - **Column orders** — float total-order vs type-defined; #483.

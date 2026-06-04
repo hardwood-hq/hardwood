@@ -13,7 +13,7 @@ their logical type, so both must be implemented together.
 parquet-java 1.16.0 added the metadata layer (logical types + statistics read/write)
 but does not provide spatial filter pushdown — engines like Sedona and DuckDB implement
 their own pushdown on top of the Parquet metadata. Hardwood's `Filter.intersects()`
-with row group and page-level evaluation would go beyond what parquet-java offers.
+with row-group evaluation would go beyond what parquet-java offers.
 
 ## Logical Types
 
@@ -77,12 +77,13 @@ Per-column-chunk statistics for spatial filter pushdown.
 For GEOGRAPHY columns, x is longitude ([-180, 180]) and y is latitude ([-90, 90]).
 `xmin > xmax` is legal and indicates antimeridian wrapping.
 
-The same `GeospatialStatistics` struct also appears in `ColumnIndex` (field 7) for
-page-level spatial filtering.
+Parquet defines geospatial statistics only per column chunk. `ColumnIndex` has no
+geospatial field — its field 7 is `definition_level_histograms` — so spatial filter
+pushdown is possible at row-group granularity only, not per page.
 
 ## Implementation
 
-Steps 1–4 build on each other and should land in order. Step 1 (logical types) is a
+Steps 1–3 build on each other and should land in order. Step 1 (logical types) is a
 prerequisite for step 2 — the statistics are not useful to consumers until the reader
 can identify geospatial columns.
 
@@ -118,13 +119,7 @@ No changes needed in `SchemaElementReader` — it already delegates field 10 to
 `GeospatialStatisticsReader` and `BoundingBoxReader` in the Thrift package, and a
 `geospatialStatistics` field on `ColumnMetaData`.
 
-### Step 3 — Page-level geospatial statistics on ColumnIndex
-
-Add `List<GeospatialStatistics> geospatialStatistics` (one per page) to the `ColumnIndex`
-record, parsed from field 7 of the Thrift `ColumnIndex` struct. This enables page-level
-spatial filter pushdown analogous to the existing min/max page index.
-
-### Step 4 — Spatial bounding box predicate
+### Step 3 — Spatial bounding box predicate
 
 Add a `IntersectsPredicate` to the `FilterPredicate` sealed interface:
 
@@ -189,15 +184,11 @@ evaluator throws `IllegalArgumentException`.
 
 #### Page-level evaluation
 
-In `PageFilterEvaluator`, add a case for `IntersectsPredicate`. For each page, read
-the per-page `GeospatialStatistics` from the `ColumnIndex` (step 3) and apply the same
-intersection test. Pages whose bounding box does not intersect the query box are excluded
-from the `RowRanges` result.
+Not applicable. Parquet has no per-page geospatial statistics, so `PageFilterEvaluator`
+returns `RowRanges.all()` for `IntersectsPredicate`; spatial pruning happens only at
+row-group granularity.
 
-If the column index does not contain geospatial statistics, fall back to
-`RowRanges.all()` (no page-level filtering), consistent with existing behavior.
-
-### Step 5 — End-to-end test with JTS
+### Step 4 — End-to-end test with JTS
 
 Add JTS (`org.locationtech.jts:jts-core`) as a test dependency in the core module.
 Write an end-to-end test that exercises the full chain a real user would follow:
@@ -253,14 +244,14 @@ Note that individual rows within a surviving row group may fall outside the quer
 box — pushdown is coarse-grained. The test asserts that *some* row groups were
 skipped, not that every row matches.
 
-### Step 6 — Documentation
+### Step 5 — Documentation
 
 - Update `docs/content/usage.md` with examples showing:
     - how to identify geospatial columns via their logical type
     - how to access bounding box metadata
     - how to use `intersects` for filter pushdown
 - Add test Parquet files (via `simple-datagen.py`) that contain GEOMETRY/GEOGRAPHY
-  logical types with geospatial statistics at both column chunk and page level.
+  logical types with column-chunk geospatial statistics.
 - Unit tests for the spatial predicate evaluator:
     - basic intersection / non-intersection
     - antimeridian wrapping
@@ -279,11 +270,9 @@ skipped, not that every row matches.
 | `core/.../thrift/BoundingBoxReader.java` | Create |
 | `core/.../thrift/ColumnMetaDataReader.java` | Add field 17 |
 | `core/.../metadata/ColumnMetaData.java` | Add `geospatialStatistics` field |
-| `core/.../metadata/ColumnIndex.java` | Add `geospatialStatistics` field |
-| `core/.../thrift/ColumnIndexReader.java` | Add field 7 |
 | `core/.../reader/FilterPredicate.java` | Add `IntersectsPredicate` record and factory |
 | `core/.../internal/reader/RowGroupFilterEvaluator.java` | Add spatial bbox evaluation |
-| `core/.../internal/reader/PageFilterEvaluator.java` | Add spatial bbox evaluation |
+| `core/.../internal/reader/PageFilterEvaluator.java` | Return `RowRanges.all()` for spatial predicates |
 | `core/pom.xml` | Add JTS test dependency |
 | `core/.../GeospatialEndToEndTest.java` | End-to-end test with JTS |
 | `docs/content/usage.md` | Update with geospatial examples |

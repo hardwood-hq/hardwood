@@ -11,7 +11,7 @@
 -->
 # Geospatial Support
 
-Hardwood reads the [Parquet geospatial metadata layer](https://parquet.apache.org/docs/file-format/types/geospatial/) — GEOMETRY / GEOGRAPHY logical types and per-chunk / per-page `GeospatialStatistics` — and offers a bounding-box filter predicate that pushes spatial selectivity down to the row group and page level. Hardwood does not decode WKB payloads itself — geometry decoding is left to the caller, so the reader has no runtime geometry-library dependency. The de-facto standard Java library for this is the [JTS Topology Suite](https://locationtech.github.io/jts/); the snippets below assume JTS, but any WKB decoder works.
+Hardwood reads the [Parquet geospatial metadata layer](https://parquet.apache.org/docs/file-format/types/geospatial/) — GEOMETRY / GEOGRAPHY logical types and per-chunk `GeospatialStatistics` — and offers a bounding-box filter predicate that pushes spatial selectivity down to the row group level. Hardwood does not decode WKB payloads itself — geometry decoding is left to the caller, so the reader has no runtime geometry-library dependency. The de-facto standard Java library for this is the [JTS Topology Suite](https://locationtech.github.io/jts/); the snippets below assume JTS, but any WKB decoder works.
 
 To use JTS in the examples below, add the `jts-core` dependency:
 
@@ -50,7 +50,7 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 
 ### Bounding-Box Statistics
 
-Per-chunk geospatial statistics are exposed on `ColumnMetaData.geospatialStatistics()`. The `BoundingBox` carries `xmin/xmax/ymin/ymax` (always present) plus optional `zmin/zmax/mmin/mmax`. For GEOGRAPHY columns, `xmin > xmax` is legal and indicates a chunk that wraps the antimeridian. The same struct also appears per-page on `ColumnIndex.geospatialStatistics()` when the file was written with a Page Index.
+Per-chunk geospatial statistics are exposed on `ColumnMetaData.geospatialStatistics()`. The `BoundingBox` carries `xmin/xmax/ymin/ymax` (always present) plus optional `zmin/zmax/mmin/mmax`. For GEOGRAPHY columns, `xmin > xmax` is legal and indicates a chunk that wraps the antimeridian.
 
 ```java
 import dev.hardwood.metadata.BoundingBox;
@@ -110,7 +110,7 @@ FilterPredicate.and(
 
 ### Limitations
 
-`intersects` is **coarse-grained**: Hardwood drops row groups and pages whose bounding box is disjoint from the query box, but every row in a surviving page is returned. Rows whose individual geometry falls outside the query box are emitted along with truly intersecting ones. Apply your own per-row check on the WKB payload (e.g. via JTS) when you need exact geometric filtering — the bounding-box pushdown still saves the I/O for non-overlapping chunks.
+`intersects` is **coarse-grained**: Hardwood drops row groups whose bounding box is disjoint from the query box, but every row in a surviving row group is returned. Rows whose individual geometry falls outside the query box are emitted along with truly intersecting ones. Apply your own per-row check on the WKB payload (e.g. via JTS) when you need exact geometric filtering — the bounding-box pushdown still saves the I/O for non-overlapping chunks.
 
 Negation of `intersects` is **not supported**: `FilterPredicate.not(FilterPredicate.intersects(...))` throws `UnsupportedOperationException` at resolve time. The chunk-level criterion for "no row intersects" requires bbox containment rather than overlap, and the per-row dual would require decoding every WKB payload inside the reader — which would pull a geometry library into the runtime. If you need "geometries outside this box", read without a spatial filter and apply the negation yourself against `getBinary("location")`.
 
