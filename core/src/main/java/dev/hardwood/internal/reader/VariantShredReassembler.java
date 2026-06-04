@@ -269,16 +269,20 @@ public final class VariantShredReassembler {
 
     /// Decode the partial-unshredded object bytes in `raw`, appending each
     /// (name, valueBytes) pair into `names` / `values` starting at `count`.
-    /// Spec guarantees these names are disjoint from the shredded set, so we
-    /// can simply append — no deduplication needed. Field ids index into the
-    /// top-level metadata dictionary (same for all nesting depths within a
+    /// The spec requires these names to be disjoint from the shredded set
+    /// (`names[0..count)`); a collision is a malformed file that would yield a
+    /// Variant object with duplicate field ids, so we reject it via
+    /// [#rejectFieldCollision] rather than append blindly. Field ids index into
+    /// the top-level metadata dictionary (same for all nesting depths within a
     /// variant), resolved via `currentMetadata`. Returns the new count.
     private int mergeUnshreddedObject(byte[] raw, String[] names, byte[][] values, int count) {
+        int shreddedCount = count;
         ObjectLayout layout = VariantValueDecoder.parseObject(raw, 0);
         int n = layout.numElements();
         for (int i = 0; i < n; i++) {
             int fieldId = VariantValueDecoder.objectFieldId(raw, layout, i);
             String fieldName = currentMetadata.getField(fieldId);
+            rejectFieldCollision(fieldName, names, shreddedCount);
             int valueStart = VariantValueDecoder.objectValueOffset(raw, layout, i);
             // The object's offset array has `numElements + 1` entries, so
             // offset[i+1] is always valid and points at the byte past element i.
@@ -290,6 +294,23 @@ public final class VariantShredReassembler {
             count++;
         }
         return count;
+    }
+
+    /// Enforce the shredding invariant that a partially-shredded object's
+    /// `typed_value` struct and unshredded `value` object carry disjoint field
+    /// names. `shreddedNames[0..shreddedCount)` holds the names already emitted
+    /// from the shredded struct; an unshredded field that repeats one of them
+    /// is a malformed file (the reassembled object would have duplicate field
+    /// ids), so fail early rather than produce a corrupt Variant. Objects are
+    /// typically tiny, so a linear scan is cheaper than allocating a set.
+    private static void rejectFieldCollision(String fieldName, String[] shreddedNames, int shreddedCount) {
+        for (int i = 0; i < shreddedCount; i++) {
+            if (fieldName.equals(shreddedNames[i])) {
+                throw new IllegalStateException(
+                        "Malformed shredded Variant: field '" + fieldName + "' appears in both the "
+                        + "shredded typed_value and the unshredded value object");
+            }
+        }
     }
 
     /// Emit the object framing with fields sorted alphabetically (spec
