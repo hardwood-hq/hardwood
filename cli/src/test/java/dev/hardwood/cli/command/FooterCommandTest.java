@@ -30,4 +30,15 @@ class FooterCommandTest implements FooterCommandContract {
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).contains("not implemented yet");
     }
+
+    @Test
+    void reportsEncryptedFooterGracefully() {
+        // Encrypted-footer mode: 'PARE' magic instead of 'PAR1'.
+        String file = getClass().getResource("/encrypted_footer.parquet").getPath();
+
+        Cli.Result result = Cli.launch("footer", "-f", file);
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).contains("Encrypted Parquet files are not supported");
+    }
 }

@@ -6,9 +6,11 @@
 #  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
 #
 
+import base64
 import numpy
 import pyarrow as pa
 import pyarrow.parquet as pq
+import pyarrow.parquet.encryption as pe
 from datetime import datetime, date, time, timezone
 from decimal import Decimal
 import uuid
@@ -3706,3 +3708,69 @@ pq.write_table(
     data_page_version='2.0',
 )
 print(f"  - diff_nulls.parquet:          {DIFF_NULLS_ROWS} rows, nullable column for filter null-semantics")
+
+# ============================================================================
+# Encrypted Test Files (Parquet Modular Encryption)
+# ============================================================================
+#
+# Hardwood does not support decryption (hardwood-hq/hardwood#600); these fixtures
+# exist purely so the reader can be asserted to fail *gracefully* — with a clear
+# "encrypted Parquet files are not supported" error rather than a misleading
+# "invalid magic number" or an unattributable page-scan crash.
+#
+# Unlike every other fixture here, these are NOT byte-stable across reruns: AES-GCM
+# draws a fresh random nonce per write, so regenerating produces a different (but
+# equivalent) file. That is fine — the graceful-failure tests assert on the error,
+# not on exact bytes — but do not be alarmed by a non-empty git diff after a rerun.
+
+
+class _InMemoryKmsClient(pe.KmsClient):
+    """Toy KMS that 'wraps' a data key by base64-encoding it. Sufficient for
+    PyArrow to emit a syntactically valid encrypted file; provides no real
+    protection, which is irrelevant for fixtures that are never decrypted."""
+
+    def __init__(self, config):
+        super().__init__()
+        self.master_keys = config.custom_kms_conf
+
+    def wrap_key(self, key_bytes, master_key_id):
+        return base64.b64encode(key_bytes)
+
+    def unwrap_key(self, wrapped_key, master_key_id):
+        return base64.b64decode(wrapped_key)
+
+
+_encryption_table = pa.table({
+    'id': [1, 2, 3],
+    'value': [100, 200, 300],
+}, schema=pa.schema([('id', pa.int64(), False), ('value', pa.int64(), False)]))
+
+_kms_conf = pe.KmsConnectionConfig(custom_kms_conf={
+    'footer_key': base64.b64encode(b'0123456789012345').decode(),
+    'column_key': base64.b64encode(b'1234567890123450').decode(),
+})
+
+
+def _write_encrypted(path, plaintext_footer):
+    crypto_factory = pe.CryptoFactory(lambda conf: _InMemoryKmsClient(conf))
+    enc_config = pe.EncryptionConfiguration(
+        footer_key='footer_key',
+        column_keys={'column_key': ['value']},
+        plaintext_footer=plaintext_footer,
+    )
+    props = crypto_factory.file_encryption_properties(_kms_conf, enc_config)
+    with pq.ParquetWriter(path, _encryption_table.schema, encryption_properties=props) as writer:
+        writer.write_table(_encryption_table)
+
+
+# Encrypted-footer mode: the footer itself is encrypted and the magic bytes are
+# 'PARE' instead of 'PAR1'.
+_write_encrypted('core/src/test/resources/encrypted_footer.parquet', plaintext_footer=False)
+print("\nGenerated encrypted_footer.parquet:")
+print("  - Parquet Modular Encryption, encrypted-footer mode (PARE magic)")
+
+# Plaintext-footer mode: the footer is readable (PAR1 magic) and carries
+# encryption_algorithm, but the column data is encrypted.
+_write_encrypted('core/src/test/resources/encrypted_plaintext_footer.parquet', plaintext_footer=True)
+print("\nGenerated encrypted_plaintext_footer.parquet:")
+print("  - Parquet Modular Encryption, plaintext-footer mode (PAR1 magic, encrypted data)")

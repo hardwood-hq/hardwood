@@ -13,6 +13,7 @@ import java.util.Collections;
 import java.util.List;
 import java.util.Map;
 
+import dev.hardwood.internal.EncryptedParquetException;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.SchemaElement;
@@ -91,6 +92,11 @@ public class FileMetaDataReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 8: // encryption_algorithm (present only with a plaintext footer)
+                    // The footer parses, but the column data is encrypted and
+                    // Hardwood cannot decrypt it. Fail fast rather than letting a
+                    // later page scan crash with an unattributable error.
+                    throw new EncryptedParquetException();
                 default:
                     reader.skipField(header.type());
                     break;
