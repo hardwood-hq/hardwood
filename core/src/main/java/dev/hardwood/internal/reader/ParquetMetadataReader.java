@@ -14,6 +14,7 @@ import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.EncryptedParquetException;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
@@ -27,6 +28,9 @@ import dev.hardwood.metadata.FileMetaData;
 public final class ParquetMetadataReader {
 
     private static final byte[] MAGIC = "PAR1".getBytes(StandardCharsets.UTF_8);
+    /// Magic written in place of [#MAGIC] when the footer itself is encrypted
+    /// (Parquet Modular Encryption, encrypted-footer mode).
+    private static final byte[] ENCRYPTED_MAGIC = "PARE".getBytes(StandardCharsets.UTF_8);
     private static final int FOOTER_LENGTH_SIZE = 4;
     private static final int MAGIC_SIZE = 4;
 
@@ -53,6 +57,9 @@ public final class ParquetMetadataReader {
         }
         byte[] startMagic = new byte[MAGIC_SIZE];
         startMagicBuf.get(startMagic);
+        if (Arrays.equals(startMagic, ENCRYPTED_MAGIC)) {
+            throw encrypted(inputFile);
+        }
         if (!Arrays.equals(startMagic, MAGIC)) {
             throw new IOException(ExceptionContext.filePrefix(inputFile.name())
                     + "Not a Parquet file (invalid magic number at start)");
@@ -68,6 +75,9 @@ public final class ParquetMetadataReader {
         int footerLength = footerInfoBuf.getInt();
         byte[] endMagic = new byte[MAGIC_SIZE];
         footerInfoBuf.get(endMagic);
+        if (Arrays.equals(endMagic, ENCRYPTED_MAGIC)) {
+            throw encrypted(inputFile);
+        }
         if (!Arrays.equals(endMagic, MAGIC)) {
             throw new IOException(ExceptionContext.filePrefix(inputFile.name())
                     + "Not a Parquet file (invalid magic number at end)");
@@ -85,6 +95,18 @@ public final class ParquetMetadataReader {
             footerBuffer = inputFile.readRange(footerStart, footerLength);
         }
         ThriftCompactReader reader = new ThriftCompactReader(footerBuffer);
-        return FileMetaDataReader.read(reader);
+        try {
+            return FileMetaDataReader.read(reader);
+        }
+        catch (EncryptedParquetException e) {
+            // Plaintext-footer encryption: the footer parsed, but the data is
+            // encrypted. Re-throw with file context for an attributable error.
+            throw encrypted(inputFile);
+        }
+    }
+
+    private static EncryptedParquetException encrypted(InputFile inputFile) {
+        return new EncryptedParquetException(
+                ExceptionContext.filePrefix(inputFile.name()) + EncryptedParquetException.MESSAGE);
     }
 }

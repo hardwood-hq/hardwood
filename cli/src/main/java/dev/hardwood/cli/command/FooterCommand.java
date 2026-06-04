@@ -22,6 +22,9 @@ import picocli.CommandLine.Spec;
 public class FooterCommand implements Callable<Integer> {
 
     private static final byte[] PARQUET_MAGIC = { 'P', 'A', 'R', '1' };
+    // Written in place of PARQUET_MAGIC when the footer is encrypted (Parquet
+    // Modular Encryption, encrypted-footer mode).
+    private static final byte[] ENCRYPTED_MAGIC = { 'P', 'A', 'R', 'E' };
     // Parquet trailer layout (last 8 bytes): [4-byte footer length LE][4-byte magic PAR1]
     private static final int TRAILER_SIZE = 8;
     private static final int MAGIC_SIZE = 4;
@@ -57,7 +60,13 @@ public class FooterCommand implements Callable<Integer> {
             byte[] trailingMagic = new byte[MAGIC_SIZE];
             trailer.get(trailingMagic);
 
-            if (!isMagic(trailingMagic)) {
+            if (isMagic(trailingMagic, ENCRYPTED_MAGIC)) {
+                spec.commandLine().getErr().println(
+                        "Encrypted Parquet files are not supported (Parquet Modular Encryption).");
+                return CommandLine.ExitCode.SOFTWARE;
+            }
+
+            if (!isMagic(trailingMagic, PARQUET_MAGIC)) {
                 spec.commandLine().getErr().println("Invalid Parquet file: trailing magic bytes not found.");
                 return CommandLine.ExitCode.SOFTWARE;
             }
@@ -81,9 +90,9 @@ public class FooterCommand implements Callable<Integer> {
         return CommandLine.ExitCode.OK;
     }
 
-    private static boolean isMagic(byte[] bytes) {
+    private static boolean isMagic(byte[] bytes, byte[] magic) {
         for (int i = 0; i < MAGIC_SIZE; i++) {
-            if (bytes[i] != PARQUET_MAGIC[i]) {
+            if (bytes[i] != magic[i]) {
                 return false;
             }
         }
