@@ -160,7 +160,7 @@ try (ParquetFileReader reader =
 
     double total = 0;
     while (fare.nextBatch()) {
-        int count = fare.getRecordCount();
+        int count = fare.getValueCount();
         double[] values = fare.getDoubles();
         Validity validity = fare.getLeafValidity();
         boolean hasNulls = validity.hasNulls();
