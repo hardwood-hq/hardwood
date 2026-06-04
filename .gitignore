@@ -61,6 +61,7 @@ hardwood-cli-early-access-*/
 
 # Claude
 .claude/worktrees/
+.claude/settings.local.json
 __pycache__/
 
 # Local scratch / non-source workspace
