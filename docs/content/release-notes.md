@@ -13,7 +13,7 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
-## 1.0.0.Final (2026-06-24)
+## 1.0.0.Final (2026-06-25)
 
 [API changes](/api-changes/1.0.0.Final/)
 
