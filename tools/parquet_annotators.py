@@ -246,6 +246,27 @@ def _write_parquet_footer(path: str, data_before_footer: bytes, file_metadata) -
         f.write(b'PAR1')
 
 
+def corrupt_data_page_offset_negative(path: str) -> None:
+    """Rewrite `path` so that the first column chunk's `data_page_offset` is
+    negative (-1).
+
+    Produces a structurally valid footer whose only defect is an adversarial
+    offset, so the reader can be asserted to reject it with a controlled,
+    file-attributed error (hardwood-hq/hardwood#604) instead of letting the
+    negative value reach a buffer slice downstream.
+    """
+    data_before_footer, file_metadata = _read_parquet_footer(path)
+
+    if not file_metadata.row_groups or not file_metadata.row_groups[0].columns:
+        raise ValueError(f"{path} has no column chunk to corrupt")
+    meta_data = file_metadata.row_groups[0].columns[0].meta_data
+    if meta_data is None:
+        raise ValueError(f"{path} first column chunk has no inline ColumnMetaData")
+    meta_data.data_page_offset = -1
+
+    _write_parquet_footer(path, data_before_footer, file_metadata)
+
+
 def annotate_column_as_bson(path: str, column_name: str) -> None:
     """Rewrite `path` so that the named column carries the BSON logical type."""
     data_before_footer, file_metadata = _read_parquet_footer(path)

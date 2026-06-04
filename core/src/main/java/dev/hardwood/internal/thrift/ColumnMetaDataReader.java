@@ -97,7 +97,7 @@ public class ColumnMetaDataReader {
                     break;
                 case 5: // num_values
                     if (header.type() == 0x06) {
-                        numValues = reader.readI64();
+                        numValues = reader.readNonNegativeI64("ColumnMetaData.num_values");
                     }
                     else {
                         reader.skipField(header.type());
@@ -105,7 +105,7 @@ public class ColumnMetaDataReader {
                     break;
                 case 6: // total_uncompressed_size
                     if (header.type() == 0x06) {
-                        totalUncompressedSize = reader.readI64();
+                        totalUncompressedSize = reader.readNonNegativeI64("ColumnMetaData.total_uncompressed_size");
                     }
                     else {
                         reader.skipField(header.type());
@@ -113,7 +113,7 @@ public class ColumnMetaDataReader {
                     break;
                 case 7: // total_compressed_size
                     if (header.type() == 0x06) {
-                        totalCompressedSize = reader.readI64();
+                        totalCompressedSize = reader.readNonNegativeI64("ColumnMetaData.total_compressed_size");
                     }
                     else {
                         reader.skipField(header.type());
@@ -129,7 +129,7 @@ public class ColumnMetaDataReader {
                     break;
                 case 9: // data_page_offset
                     if (header.type() == 0x06) {
-                        dataPageOffset = reader.readI64();
+                        dataPageOffset = reader.readNonNegativeI64("ColumnMetaData.data_page_offset");
                     }
                     else {
                         reader.skipField(header.type());
@@ -140,7 +140,7 @@ public class ColumnMetaDataReader {
                     break;
                 case 11: // dictionary_page_offset (optional)
                     if (header.type() == 0x06) {
-                        dictionaryPageOffset = reader.readI64();
+                        dictionaryPageOffset = reader.readNonNegativeI64("ColumnMetaData.dictionary_page_offset");
                     }
                     else {
                         reader.skipField(header.type());

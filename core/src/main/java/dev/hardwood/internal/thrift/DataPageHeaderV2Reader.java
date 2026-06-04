@@ -44,22 +44,22 @@ public class DataPageHeaderV2Reader {
 
             switch (header.fieldId()) {
                 case 1: // num_values
-                    numValues = reader.readI32();
+                    numValues = reader.readNonNegativeI32("DataPageHeaderV2.num_values");
                     break;
                 case 2: // num_nulls
-                    numNulls = reader.readI32();
+                    numNulls = reader.readNonNegativeI32("DataPageHeaderV2.num_nulls");
                     break;
                 case 3: // num_rows
-                    numRows = reader.readI32();
+                    numRows = reader.readNonNegativeI32("DataPageHeaderV2.num_rows");
                     break;
                 case 4: // encoding
                     encoding = ThriftEnumLookup.encoding(reader.readI32());
                     break;
                 case 5: // definition_levels_byte_length
-                    definitionLevelsByteLength = reader.readI32();
+                    definitionLevelsByteLength = reader.readNonNegativeI32("DataPageHeaderV2.definition_levels_byte_length");
                     break;
                 case 6: // repetition_levels_byte_length
-                    repetitionLevelsByteLength = reader.readI32();
+                    repetitionLevelsByteLength = reader.readNonNegativeI32("DataPageHeaderV2.repetition_levels_byte_length");
                     break;
                 case 7: // is_compressed (boolean encoded in type: 0x01=true, 0x02=false)
                     if (header.type() == 0x01) {

@@ -103,6 +103,13 @@ public final class ParquetMetadataReader {
             // encrypted. Re-throw with file context for an attributable error.
             throw encrypted(inputFile);
         }
+        catch (IOException e) {
+            // Any failure parsing the footer (negative sizes/counts/offsets,
+            // unknown field type, truncated/EOF mid-footer, ...) names the
+            // problem but not the file; attach file context so the controlled
+            // error stays attributable.
+            throw new IOException(ExceptionContext.filePrefix(inputFile.name()) + e.getMessage(), e);
+        }
     }
 
     private static EncryptedParquetException encrypted(InputFile inputFile) {

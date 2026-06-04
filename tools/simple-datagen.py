@@ -30,6 +30,7 @@ from parquet_annotators import (
     annotate_element_at_path_as_decimal,
     annotate_columns_as_legacy_converted_type,
     strip_converted_type,
+    corrupt_data_page_offset_negative,
 )
 
 
@@ -3774,3 +3775,23 @@ print("  - Parquet Modular Encryption, encrypted-footer mode (PARE magic)")
 _write_encrypted('core/src/test/resources/encrypted_plaintext_footer.parquet', plaintext_footer=True)
 print("\nGenerated encrypted_plaintext_footer.parquet:")
 print("  - Parquet Modular Encryption, plaintext-footer mode (PAR1 magic, encrypted data)")
+
+# ============================================================================
+# Malformed Metadata Test Files (hardwood-hq/hardwood#604)
+# ============================================================================
+#
+# A structurally valid file whose footer carries a negative data_page_offset.
+# The reader must reject it at metadata-parse time with a controlled,
+# file-attributed IOException rather than letting the negative value reach a
+# buffer slice. Written by rewriting a valid single-column file's footer.
+
+_negative_offset_path = 'core/src/test/resources/negative_data_page_offset.parquet'
+pq.write_table(
+    pa.table({'id': [1, 2, 3]}, schema=pa.schema([('id', pa.int64(), False)])),
+    _negative_offset_path,
+    use_dictionary=False,
+    compression=None,
+)
+corrupt_data_page_offset_negative(_negative_offset_path)
+print("\nGenerated negative_data_page_offset.parquet:")
+print("  - valid footer with data_page_offset = -1 (controlled-rejection fixture)")

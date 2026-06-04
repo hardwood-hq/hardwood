@@ -37,7 +37,7 @@ public class DictionaryPageHeaderReader {
 
             switch (header.fieldId()) {
                 case 1: // num_values
-                    numValues = reader.readI32();
+                    numValues = reader.readNonNegativeI32("DictionaryPageHeader.num_values");
                     break;
                 case 2: // encoding
                     encoding = ThriftEnumLookup.encoding(reader.readI32());

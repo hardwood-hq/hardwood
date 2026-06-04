@@ -42,7 +42,7 @@ public class DataPageHeaderReader {
             switch (header.fieldId()) {
                 case 1: // num_values
                     if (header.type() == 0x05) {
-                        numValues = reader.readI32();
+                        numValues = reader.readNonNegativeI32("DataPageHeader.num_values");
                     }
                     else {
                         reader.skipField(header.type());

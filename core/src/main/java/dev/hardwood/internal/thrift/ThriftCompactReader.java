@@ -115,6 +115,34 @@ public class ThriftCompactReader {
         return readZigzag();
     }
 
+    /// Read an i32 that must be non-negative — a size, count or byte-length.
+    /// A negative value indicates a malformed or adversarial file and would
+    /// otherwise drive a negative allocation or out-of-bounds slice downstream,
+    /// so fail fast here with a controlled error naming the field.
+    ///
+    /// @param fieldName fully-qualified field name for the error message
+    public int readNonNegativeI32(String fieldName) throws IOException {
+        int value = readI32();
+        if (value < 0) {
+            throw new IOException(
+                    "Malformed Parquet metadata: " + fieldName + " must be non-negative but was " + value);
+        }
+        return value;
+    }
+
+    /// Read an i64 that must be non-negative — a size, count or file offset.
+    /// See [#readNonNegativeI32] for rationale.
+    ///
+    /// @param fieldName fully-qualified field name for the error message
+    public long readNonNegativeI64(String fieldName) throws IOException {
+        long value = readI64();
+        if (value < 0) {
+            throw new IOException(
+                    "Malformed Parquet metadata: " + fieldName + " must be non-negative but was " + value);
+        }
+        return value;
+    }
+
     /// Read a double value (8 bytes, little-endian).
     public double readDouble() throws EOFException {
         if (buffer.remaining() < 8) {

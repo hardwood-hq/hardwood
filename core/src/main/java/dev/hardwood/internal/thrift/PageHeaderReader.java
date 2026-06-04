@@ -53,7 +53,7 @@ public class PageHeaderReader {
                     break;
                 case 2: // uncompressed_page_size
                     if (header.type() == 0x05) {
-                        uncompressedPageSize = reader.readI32();
+                        uncompressedPageSize = reader.readNonNegativeI32("PageHeader.uncompressed_page_size");
                     }
                     else {
                         reader.skipField(header.type());
@@ -61,7 +61,7 @@ public class PageHeaderReader {
                     break;
                 case 3: // compressed_page_size
                     if (header.type() == 0x05) {
-                        compressedPageSize = reader.readI32();
+                        compressedPageSize = reader.readNonNegativeI32("PageHeader.compressed_page_size");
                     }
                     else {
                         reader.skipField(header.type());
