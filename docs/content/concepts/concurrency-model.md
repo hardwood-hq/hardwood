@@ -69,7 +69,10 @@ shared pool matters, since all the files draw on the same workers. See
 - **Drive one reader from one thread.** A `RowReader` / `ColumnReader` / `ColumnReaders` instance
   is a stateful cursor meant to be advanced by a single consumer thread. The concurrency is
   *internal* — you do not, and should not, call `next()` / `nextBatch()` on the same reader from
-  multiple threads.
+  multiple threads. This restricts advancing the cursor, not the data it returns: a `ColumnReader`
+  allocates fresh batch arrays on every `nextBatch()` and never reuses them later, so you can fan a
+  batch's arrays out to other threads for processing while the consumer thread moves on (see
+  [Column-Oriented Reading](../how-to/column-reader.md#retaining-and-handing-off-batch-arrays)).
 - **For your own parallelism, read in parallel at the file or row-group grain.** To use more
   than one consumer thread, give each its own reader over a different file, or partition one file
   across readers by byte range with

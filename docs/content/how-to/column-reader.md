@@ -95,6 +95,22 @@ try (ColumnReaders columns = parquet.buildColumnReaders(
 
 `ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when any reader is exhausted — partial advancement isn't possible because all readers consume from a shared `RowGroupIterator`. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-reader record counts throw `IllegalStateException`. Single-column consumers, or callers that need fine-grained per-reader cadence, can still call `ColumnReader.nextBatch()` directly on the readers returned by `getColumnReader(...)`.
 
+### Retaining and Handing Off Batch Arrays
+
+The arrays and `Validity` objects returned by the accessors belong to the current batch and are freshly allocated on each `nextBatch()`. A later `nextBatch()` never reuses or overwrites an array returned for an earlier batch, so you can keep a returned array and process it after advancing — including by handing it to another thread:
+
+```java
+while (columns.nextBatch()) {
+    int count = columns.getRecordCount();
+    long[]   v0 = columns.getColumnReader("passenger_count").getLongs();
+    double[] v1 = columns.getColumnReader("trip_distance").getDoubles();
+    double[] v2 = columns.getColumnReader("fare_amount").getDoubles();
+    Thread.ofPlatform().start(() -> process(count, v0, v1, v2));
+}
+```
+
+The reader stays a single-threaded cursor: only the loop thread calls `nextBatch()`. It is the *returned arrays* that are detached and safe to read elsewhere, not the reader. (For `getBinaryValues()` the byte buffer is capacity-sized — see above — but it too is fresh per batch.)
+
 ### Nested and Repeated Columns
 
 #### Navigating nested groups in the schema

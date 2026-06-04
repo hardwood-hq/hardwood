@@ -55,6 +55,17 @@ import dev.hardwood.schema.FileSchema;
 /// distinguishes empty from null at REPEATED layers (validity carries the
 /// null bit).
 ///
+/// **Array ownership.** Every array and [Validity] handed back by an
+/// accessor ([#getInts()], [#getLongs()], [#getLayerOffsets(int)],
+/// [#getLeafValidity()], and the rest) belongs to the current batch and is
+/// freshly allocated by the [#nextBatch()] call that produced it. A later
+/// [#nextBatch()] never reuses or overwrites an array returned for an
+/// earlier batch — so a returned array may be kept and read after the reader
+/// has advanced, including handed off to another thread for processing. The
+/// reader itself is still a single-threaded cursor: only one consumer thread
+/// may call [#nextBatch()]. (The capacity-sizing note on [#getBinaryValues()]
+/// is about array *length*, not reuse; that buffer is fresh per batch too.)
+///
 /// **This API is [Experimental]:** the shape of the batch accessors and
 /// layer representation may change in future releases without prior
 /// deprecation.
