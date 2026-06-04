@@ -2,6 +2,8 @@
 
 A from-scratch implementation of Apache Parquet reader/writer in Java with no dependencies except compression libraries.
 
+For field-level `parquet.thrift` metadata coverage (which spec fields are read/processed/skipped), see [FORMAT_COVERAGE.md](FORMAT_COVERAGE.md).
+
 ## Phase 1: Foundation & Format Understanding
 
 ### 1.1 Core Data Structures
@@ -12,7 +14,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
   - [x] UINT_8, UINT_16, UINT_32, UINT_64 (unsigned integers)
   - [x] LIST (nested list support with arbitrary depth)
   - [x] MAP (map<key, value> with nested maps and struct values)
-  - [ ] INTERVAL (not implemented)
+  - [x] INTERVAL
 - [x] Define repetition types: `REQUIRED`, `OPTIONAL`, `REPEATED`
 
 ### 1.2 Schema Representation
@@ -164,7 +166,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
   - [x] Row groups
   - [x] Key-value metadata
   - [x] Created by string
-  - [x] Column orders
+  - [ ] Column orders (field skipped — stats sort order assumed type-defined; #483)
 - [ ] FileMetaData serialization
 - [x] FileMetaData deserialization
 
@@ -267,8 +269,7 @@ A from-scratch implementation of Apache Parquet reader/writer in Java with no de
   - [x] `PqVariant` / `PqVariantObject` / `PqVariantArray` row-API
   - [x] Shredded variant reassembly — primitive, object, array, nested (Phase 2, #286)
   - [x] Cross-impl byte-for-byte oracle against `parquet-testing/shredded_variant/*.variant.bin`
-- [ ] Not implemented (future)
-  - [ ] INTERVAL
+- [x] INTERVAL (FIXED_LEN_BYTE_ARRAY[12] → `PqInterval` via `LogicalTypeConverter`)
 
 ---
 
