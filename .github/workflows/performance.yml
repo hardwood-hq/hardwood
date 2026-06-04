@@ -33,6 +33,11 @@ on:
 # the test-data-setup module on cache miss) and the perf test both honor
 # `perf.start` / `perf.end`; keeping the cache key aligned ensures we don't
 # silently widen the window when the cache is regenerated.
+#
+# The taxi-data cache is restored and saved as separate steps so that the save
+# only runs when the job succeeds. Actions cache entries are immutable, so a
+# partial dataset persisted by a failed download would otherwise freeze under
+# this key forever and break every later run (issue #588).
 env:
   PERF_START: '2023-01'
   PERF_END: '2025-12'
@@ -63,8 +68,9 @@ jobs:
             maven-${{ runner.os }}-${{ github.job }}-
             maven-${{ runner.os }}-
 
-      - name: 'Cache taxi data'
-        uses: actions/cache@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+      - name: 'Restore taxi data cache'
+        id: taxi-data-cache
+        uses: actions/cache/restore@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
         with:
           path: performance-testing/test-data-setup/target/tlc-trip-record-data/
           key: taxi-data-${{ env.PERF_START }}-to-${{ env.PERF_END }}
@@ -89,3 +95,13 @@ jobs:
           PERF_RUNS: ${{ inputs.perf_runs || '5' }}
           TESTS: ${{ inputs.tests || 'FlatPerformanceTest,NestedPerformanceTest' }}
         run: ./mvnw -B verify -Pperformance-test -pl :hardwood-performance-testing -amd -Dperf.start="$PERF_START" -Dperf.end="$PERF_END" -Dperf.runs="$PERF_RUNS" -Dtest="$TESTS" -Dsurefire.failIfNoSpecifiedTests=false
+
+      # Persist the taxi data only on success, and only when we actually had to
+      # download it (a restore hit needs no re-save). This prevents a partial
+      # dataset from a failed download being frozen under the immutable key.
+      - name: 'Save taxi data cache'
+        if: success() && steps.taxi-data-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@668228422ae6a00e4ad889ee87cd7109ec5666a7  # v5 — https://github.com/actions/cache/releases/tag/v5
+        with:
+          path: performance-testing/test-data-setup/target/tlc-trip-record-data/
+          key: taxi-data-${{ env.PERF_START }}-to-${{ env.PERF_END }}

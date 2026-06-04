@@ -22,6 +22,19 @@
   <name>Hardwood Performance Test Data Setup</name>
   <description>Downloads and manages test data files for performance testing</description>
 
+  <dependencies>
+    <dependency>
+      <groupId>org.junit.jupiter</groupId>
+      <artifactId>junit-jupiter</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>org.assertj</groupId>
+      <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
   <properties>
     <!-- Whether to skip fetching the (multi-gigabyte) test data sets. The quick
          profile below flips this to true so that -Dquick builds this module
