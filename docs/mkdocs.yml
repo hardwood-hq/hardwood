@@ -36,10 +36,15 @@ nav:
     - How a Parquet File Is Laid Out: concepts/parquet-layout.md
     - The Concurrency Model: concepts/concurrency-model.md
     - RowReader vs. ColumnReader: concepts/reader-models.md
+    - The Layer Model: concepts/nested-columns.md
     - Row Selection: concepts/row-selection.md
+    - Timestamp Semantics: concepts/timestamps.md
     - Compatibility Philosophy: concepts/compatibility-philosophy.md
   - Reference:
     - Configuration: reference/configuration.md
+    - Typed Accessors: reference/accessors.md
+    - Query Controls: reference/query-controls.md
+    - S3: reference/s3.md
     - Error Handling: reference/error-handling.md
     - CLI: reference/cli.md
     - Package Structure: reference/packages.md

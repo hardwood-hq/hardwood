@@ -126,49 +126,15 @@ All three navigation methods return `null` when the group isn't of the expected 
 
 #### Reading nested data: the layer model
 
-`ColumnReader` exposes a column's schema chain as a sequence of **layers**. Each non-leaf node along the chain contributes zero or one layer:
+`ColumnReader` exposes a nested column's schema chain as a sequence of **layers**, numbered
+`0..getLayerCount() - 1` outermost-to-innermost, with the leaf queried separately. Each layer has a
+[Validity](/api/latest/dev/hardwood/reader/Validity.html) via `getLayerValidity(k)`; `REPEATED`
+layers (lists and maps) additionally have `getLayerOffsets(k)`; and the leaf has its own
+`getLeafValidity()`.
 
-| Schema node | Contributes layer? | Layer kind |
-|---|---|---|
-| `REQUIRED` group | no | — |
-| `OPTIONAL` group (struct) | yes | `STRUCT` |
-| `LIST` / `MAP`-annotated group | yes — exactly one | `REPEATED` |
-
-Layers are numbered `0..getLayerCount() - 1` outermost-to-innermost, and the leaf is queried separately. A flat column reports `getLayerCount() == 0`.
-
-For each layer, two buffers describe the items at that layer:
-
-- `getLayerValidity(k)` — a [Validity](/api/latest/dev/hardwood/reader/Validity.html) indexed by item position; `isNull(i)` / `isNotNull(i)` answer the per-item question, `hasNulls()` is the O(1) fast-path gate. Returns the shared `Validity.NO_NULLS` singleton when no item at layer `k` is null in this batch.
-- `getLayerOffsets(k)` — sentinel-suffixed offsets of length `count(k) + 1` into the next inner layer's items (or, for the innermost layer, into the leaf-value array). Only valid when `getLayerKind(k) == REPEATED`; throws on a `STRUCT` layer.
-
-The leaf has its own `getLeafValidity()` (also a `Validity`), and the four states of a `LIST`/`MAP` container fall out cleanly from offsets and validity:
-
-| Logical value | `getLayerValidity` | `offsets[r+1] - offsets[r]` |
-|---|---|---|
-| `null`           | `isNull(r)`    | `0` |
-| `[]`             | `isNotNull(r)` | `0` |
-| `[null]`         | `isNotNull(r)` | `1`, leaf validity says null |
-| `[v]`            | `isNotNull(r)` | `1`, leaf validity says not null |
-
-Empty-vs-null is the offsets diff; the validity bit picks out null. No empty-marker bitmap is needed.
-
-A quick reference for what `getLayerCount()` / `getLayerKind(k)` report for common chains:
-
-| Schema chain | `getLayerCount()` | Kinds (outer → inner) |
-|---|---|---|
-| `optional double x` | 0 | — |
-| `optional struct { ... int x }` | 1 | STRUCT |
-| `list<int>` | 1 | REPEATED |
-| `map<string, int>` | 1 | REPEATED |
-| `list<list<int>>` | 2 | REPEATED, REPEATED |
-| `optional struct { list<int> }` | 2 | STRUCT, REPEATED |
-| `list<optional struct { ... }>` | 2 | REPEATED, STRUCT |
-| `optional struct { map<string, int> }` | 2 | STRUCT, REPEATED |
-
-Two rules generate this table:
-
-1. **STRUCT keeps cardinality.** Items at layer `k+1` equal items at layer `k`. STRUCT layers carry validity, no offsets.
-2. **REPEATED expands cardinality.** Items at layer `k+1` equal `getLayerOffsets(k)[count(k)]`. REPEATED layers carry both validity and offsets.
+For the full model — how `STRUCT` and `REPEATED` nodes map to layers, the four container states,
+the offset/validity encoding, and the per-layer count recursion — see
+[The Layer Model](../concepts/nested-columns.md). The examples below walk the common shapes.
 
 #### Picking a null-check loop shape
 
@@ -418,19 +384,3 @@ Validity metaValidity  = reader.getLayerValidity(0);   // STRUCT layer for `meta
 Validity mapValidity   = reader.getLayerValidity(1);   // REPEATED layer for the map
 int[]    entryOffsets  = reader.getLayerOffsets(1);
 ```
-
-#### Real items only
-
-The leaf array and `getLayerOffsets` carry **real items only** — phantom slots from null/empty parents at any `REPEATED` layer are excluded. `getValueCount()` returns the real leaf count. `STRUCT` layers do not expand or contract the item stream — they carry a validity bitmap of the same length as their parent. Only `REPEATED` layers add cardinality, via their offsets.
-
-#### Counts at each layer
-
-Every per-layer buffer is sized to `count(k)`, defined recursively:
-
-- `count(0) == getRecordCount()`
-- For `k > 0`: `count(k)` equals `count(k-1)` if layer `k-1` is `STRUCT`, or `getLayerOffsets(k-1)[count(k-1)]` (the trailing sentinel) if layer `k-1` is `REPEATED`.
-
-The leaf array itself follows the same rule one step past the innermost layer, so `getValueCount()` matches `count(layerCount)`.
-
-Deeper nestings extend the same chain: at depth N you walk `getLayerOffsets(0)` through `getLayerOffsets(N - 1)`, checking `getLayerValidity(k)` (and, for `REPEATED` layers, the zero-length offsets diff that flags an empty container) at each step before descending.
-

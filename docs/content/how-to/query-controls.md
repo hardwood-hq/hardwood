@@ -51,16 +51,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-| Category | Supported |
-|---|---|
-| Comparison operators | `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` |
-| Set operators | `in` (int, long), `inStrings` |
-| Null operators | `isNull`, `isNotNull` (any type) |
-| Physical types (comparison) | `int`, `long`, `float`, `double`, `boolean`, `String` |
-| Logical types (comparison) | `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` |
-| Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
-
-All predicates, including those wrapped in `not`, are pushed down to the statistics level for row-group and page skipping.
+For the full matrix of supported operators, comparable physical and logical types, and combinators, see [Query Controls](../reference/query-controls.md#supported-filter-predicates). All predicates, including those wrapped in `not`, are pushed down to the statistics level for row-group and page skipping.
 
 ### Null Handling
 
@@ -181,14 +172,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-**Projection options:**
-
-| Form | Description |
-|------|-------------|
-| `ColumnProjection.all()` | Read all columns (default) |
-| `ColumnProjection.columns("id", "name")` | Read specific columns by name |
-| `ColumnProjection.columns("address")` | Select an entire struct and all its children |
-| `ColumnProjection.columns("address.city")` | Select a specific nested field (dot notation) |
+`ColumnProjection.all()` reads every column (the default); `ColumnProjection.columns(...)` selects by name, including a whole struct and its children or a dot-notation nested field. See [Query Controls](../reference/query-controls.md#column-projection-forms) for the full list of forms.
 
 ### Combining Projection and Filters
 
