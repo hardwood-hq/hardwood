@@ -24,9 +24,8 @@ import dev.hardwood.internal.reader.NoNullsValidity;
 ///   `w` covers items `[w*64, w*64+64)`, low bit = lowest item.
 ///
 /// Consumer-side predicates (`isNull(i)` / `isNotNull(i)` / `hasNulls()`)
-/// describe nullability; the storage uses set-bit = present internally
-/// to match Arrow's layout. [#hasNulls()] makes the no-nulls fast path
-/// explicit:
+/// describe nullability; the storage uses set-bit = present internally.
+/// [#hasNulls()] makes the no-nulls fast path explicit:
 /// ```java
 /// if (!validity.hasNulls()) {
 ///     // tight loop, skip per-item check

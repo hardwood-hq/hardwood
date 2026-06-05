@@ -93,6 +93,8 @@ try (ColumnReaders columns = parquet.buildColumnReaders(
 }
 ```
 
+The batch size caps the number of **records** per batch, never the number of leaf values. A batch boundary always falls between records: a record — and, for a repeated column, all of the leaf values belonging to it — is never split across two batches. A consequence for repeated columns is that `getValueCount()` can exceed the configured batch size, since one record may carry many leaf values; size any per-value buffers off `getValueCount()`, not the batch size.
+
 `ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when any reader is exhausted — partial advancement isn't possible because all readers consume from a shared `RowGroupIterator`. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-reader record counts throw `IllegalStateException`. Single-column consumers, or callers that need fine-grained per-reader cadence, can still call `ColumnReader.nextBatch()` directly on the readers returned by `getColumnReader(...)`.
 
 ### Retaining and Handing Off Batch Arrays

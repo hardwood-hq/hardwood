@@ -18,6 +18,12 @@ model** is how `ColumnReader` expresses that structure without boxing or per-row
 explains the model; for worked code against it, see
 [Column-Oriented Reading](../how-to/column-reader.md).
 
+> **A note on lineage.** The layer model — flat value arrays, offset buffers, and set-bit-present
+> validity bitmaps — takes inspiration from [Apache Arrow](https://arrow.apache.org/)'s columnar
+> representation, so the shapes feel familiar if you come from an Arrow-based engine. The
+> resemblance is conceptual only: Hardwood implements no part of the Arrow specification, and the
+> buffers are plain Java arrays rather than an Arrow-bit-compatible layout.
+
 ## Layers
 
 `ColumnReader` exposes a column's schema chain as a sequence of **layers**. Each non-leaf node

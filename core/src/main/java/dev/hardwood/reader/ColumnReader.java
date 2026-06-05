@@ -225,7 +225,9 @@ public class ColumnReader implements AutoCloseable {
 
     /// Total number of leaf values in the current batch — sized to real items
     /// only (phantom slots from null/empty parents are excluded). For flat
-    /// columns this equals [#getRecordCount()].
+    /// columns this equals [#getRecordCount()]. For a repeated column it is not
+    /// bounded by the configured batch size — the batch size caps records, not
+    /// leaf values — so a batch may carry more leaf values than records.
     public int getValueCount() {
         checkBatchAvailable();
         if (!nested) {
