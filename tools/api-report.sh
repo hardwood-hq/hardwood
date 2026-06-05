@@ -43,9 +43,12 @@ MODULES=":hardwood-core,:hardwood-avro,:hardwood-s3,:hardwood-aws-auth"
 ARTIFACTS=(hardwood-core hardwood-avro hardwood-s3 hardwood-aws-auth)
 
 if [ -z "$NEW" ]; then
-  # Record which commit HEAD was so a downloaded report names its exact source.
-  # Honor CI's ${GITHUB_SHA} when set, otherwise resolve it from the local repo.
-  HEAD_SHA="$(git rev-parse --short "${GITHUB_SHA:-HEAD}")"
+  # Name the new side by its source commit. The site publish workflow runs this
+  # from a hardwood checkout but under its own ${GITHUB_SHA} (the *site* repo's
+  # commit), so prefer ${SOURCE_REF} — the hardwood commit being published, set
+  # by that workflow, just as the docs footer does. Fall back to ${GITHUB_SHA}
+  # for the main-repo CI runs, then the local HEAD.
+  HEAD_SHA="$(git rev-parse --short "${SOURCE_REF:-${GITHUB_SHA:-HEAD}}")"
   CAPTION="HEAD ($HEAD_SHA) vs $OLD"
 else
   CAPTION="$NEW vs $OLD"
