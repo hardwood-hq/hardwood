@@ -1156,6 +1156,22 @@ class FilterPredicateTest {
     }
 
     @Test
+    void testRowGroupIsNotDroppedWithNaNBoundingBox() {
+        FileSchema schema = createGeometrySchema();
+        // No corpus fixture carries a NaN in its bbox bounds (spec-compliant writers exclude NaN),
+        // so the NaN-bound case is pinned here. A NaN bound makes the box unusable for pruning: the
+        // row group must be kept. Today NaN comparisons already collapse every drop disjunct to false,
+        // so this passes — the test guards that against a future refactor of the drop expression that
+        // might let a NaN bound through as a wrong drop. One NaN per x/y bound, each an intersecting box.
+        FilterPredicate query = FilterPredicate.intersects("col", 3.0, 0.0, 8.0, 4.0);
+
+        assertThat(canDropRowGroup(query, createGeospatialRowGroup(2.0, 10.0, -4.0, Double.NaN), schema)).isFalse();
+        assertThat(canDropRowGroup(query, createGeospatialRowGroup(2.0, 10.0, Double.NaN, 6.0), schema)).isFalse();
+        assertThat(canDropRowGroup(query, createGeospatialRowGroup(Double.NaN, 10.0, -4.0, 6.0), schema)).isFalse();
+        assertThat(canDropRowGroup(query, createGeospatialRowGroup(2.0, Double.NaN, -4.0, 6.0), schema)).isFalse();
+    }
+
+    @Test
     void testRowGroupIsDroppedWithNonIntersectingBoundingBox() {
         FileSchema schema = createGeometrySchema();
         RowGroup rg = createGeospatialRowGroup(2.0, 10.0, -4.0, 6.0);
