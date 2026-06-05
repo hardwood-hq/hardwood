@@ -49,6 +49,7 @@ nav:
     - CLI: reference/cli.md
     - Package Structure: reference/packages.md
     - API (JavaDoc): /api/latest/
+    - API Changes: /api-changes/latest/
   - Contributing: contributing.md
   - Release Notes: release-notes.md
 

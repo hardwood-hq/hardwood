@@ -14,9 +14,10 @@
 #   e.g. tools/api-report.sh 1.0.0.CR1               # HEAD (snapshot) vs 1.0.0.CR1
 #        tools/api-report.sh 1.0.0.Beta2 1.0.0.CR1   # compare two published versions
 #
-# When <newVersion> is omitted, the local snapshot is installed and used as the
-# new side. When it is supplied, both sides are resolved from the Maven
-# repository and no build is needed.
+# When <newVersion> is omitted, the local snapshot is the new side. When it is
+# supplied, both sides are resolved from the Maven repository. Either way the
+# local modules are installed first — japicmp's shared classpath needs the
+# project's own artifact present (see below).
 #
 # Outputs:
 #   target/japicmp/api-report.diff           — concatenated per-module diffs
@@ -46,18 +47,24 @@ if [ -z "$NEW" ]; then
   # Honor CI's ${GITHUB_SHA} when set, otherwise resolve it from the local repo.
   HEAD_SHA="$(git rev-parse --short "${GITHUB_SHA:-HEAD}")"
   CAPTION="HEAD ($HEAD_SHA) vs $OLD"
-  # error-prone-checks is wired as an annotationProcessorPath, not a project
-  # dependency, so it stays invisible to the reactor and must be installed into
-  # the local repo first. The four modules are then installed (not just
-  # packaged) so japicmp can resolve their snapshot dependencies
-  # cross-invocation.
-  echo "Installing error-prone-checks and module JARs..."
-  ./mvnw -ntp -pl :hardwood-error-prone-checks -DskipTests install -q
-  ./mvnw -ntp -pl "$MODULES" -am -DskipTests install -q
 else
   CAPTION="$NEW vs $OLD"
-  echo "Comparing published $NEW against $OLD — skipping local build."
 fi
+
+# The local modules are always installed, even when both compared versions are
+# published. japicmp resolves with ONE_COMMON_CLASSPATH, which pulls the current
+# project's own artifact (the local snapshot) onto the shared classpath; without
+# it the goal fails to resolve that snapshot regardless of the compared
+# coordinates. The installed snapshot only backs the classpath — the diff is
+# still computed strictly between $OLD and the new side.
+#
+# error-prone-checks is wired as an annotationProcessorPath, not a project
+# dependency, so it stays invisible to the reactor and must be installed into
+# the local repo first. The four modules are then installed (not just packaged)
+# so japicmp can resolve their snapshot dependencies cross-invocation.
+echo "Installing error-prone-checks and module JARs..."
+./mvnw -ntp -pl :hardwood-error-prone-checks -DskipTests install -q
+./mvnw -ntp -pl "$MODULES" -am -DskipTests install -q
 
 echo "Running japicmp..."
 if [ -z "$NEW" ]; then
