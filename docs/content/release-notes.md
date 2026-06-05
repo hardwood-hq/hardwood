@@ -15,7 +15,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.0.0.CR1 (2026-05-31)
 
-[Announcement blog post](https://www.morling.dev/blog/improved-column-reader-api-geospatial-support-hardwood-1-0-0-cr1-available/)
+[Announcement blog post](https://www.morling.dev/blog/improved-column-reader-api-geospatial-support-hardwood-1-0-0-cr1-available/) · [API changes](/api-changes/1.0.0.CR1/)
 
 Highlights of this release:
 
@@ -35,7 +35,7 @@ Thank you to all contributors to this release: [Carlos Sousa](https://github.com
 
 ## 1.0.0.Beta2 (2026-04-29)
 
-[Announcement blog post](https://www.morling.dev/blog/variant-support-interactive-parquet-file-tui-hardwood-1.0.0.beta2-is-out/)
+[Announcement blog post](https://www.morling.dev/blog/variant-support-interactive-parquet-file-tui-hardwood-1.0.0.beta2-is-out/) · [API changes](/api-changes/1.0.0.Beta2/)
 
 Highlights of this release:
 
@@ -53,7 +53,7 @@ Thank you to all contributors to this release: [André Rouél](https://github.co
 
 ## 1.0.0.Beta1 (2026-04-02)
 
-[Announcement blog post](https://www.morling.dev/blog/hardwood-reaches-beta-s3-predicate-push-down-cli/)
+[Announcement blog post](https://www.morling.dev/blog/hardwood-reaches-beta-s3-predicate-push-down-cli/) · [API changes](/api-changes/1.0.0.Beta1/)
 
 Highlights of this release:
 
