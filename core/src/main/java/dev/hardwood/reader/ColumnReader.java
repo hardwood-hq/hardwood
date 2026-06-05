@@ -106,6 +106,14 @@ public class ColumnReader implements AutoCloseable {
     // File name from the current batch — used for exception enrichment
     private String currentFileName;
 
+    // Exact-filtering coordination (#624). When a filter is configured, the
+    // owning [FilterCoordinator] drives every reader in lockstep, computes a
+    // per-batch record selection, and compacts each exposed reader's batch down
+    // to the matching records via [#applySelection(int[])]. `coordinator` is
+    // `null` for the unfiltered path, where [#nextBatch()] advances directly.
+    private FilterCoordinator coordinator;
+    private long consumedGeneration;
+
     @SuppressWarnings("unchecked")
     private ColumnReader(ColumnSchema column, boolean nested,
                          NestedLevelComputer.Layers layers,
@@ -152,6 +160,27 @@ public class ColumnReader implements AutoCloseable {
     ///
     /// @return true if a batch is available, false if exhausted
     public boolean nextBatch() {
+        if (coordinator != null) {
+            // Filtered path: a single [FilterCoordinator] advances every reader
+            // in the projection together so the per-batch selection is computed
+            // once and applied to all of them. Whichever reader is asked first
+            // triggers the shared advance; siblings already at that generation
+            // simply adopt the just-produced batch.
+            if (consumedGeneration == coordinator.generation()) {
+                boolean ok = coordinator.advance();
+                consumedGeneration = coordinator.generation();
+                return ok;
+            }
+            consumedGeneration = coordinator.generation();
+            return coordinator.hasBatch();
+        }
+        return rawNextBatch();
+    }
+
+    /// Advances this reader to its next decoded batch without applying any
+    /// record selection. The unfiltered public entry point and the filtered
+    /// [FilterCoordinator] both funnel through here.
+    boolean rawNextBatch() {
         if (exhausted) {
             return false;
         }
@@ -185,7 +214,16 @@ public class ColumnReader implements AutoCloseable {
             currentFileName = batch.fileName;
         }
 
-        // Invalidate per-batch caches.
+        invalidatePerBatchCaches();
+
+        return true;
+    }
+
+    /// Clears the lazily-computed, per-batch derived state (nested real view and
+    /// the materialised binary/string views) so the accessors recompute against
+    /// the batch now current. Called when a new batch is polled and after a
+    /// selection compacts the current batch in place.
+    private void invalidatePerBatchCaches() {
         realViewComputed = false;
         currentRealView = null;
         cachedRealValues = null;
@@ -193,8 +231,6 @@ public class ColumnReader implements AutoCloseable {
         cachedRealBinaryOffsets = null;
         cachedBinaries = null;
         cachedStrings = null;
-
-        return true;
     }
 
     private BatchExchange.Batch pollFlatBatch() {
@@ -465,6 +501,21 @@ public class ColumnReader implements AutoCloseable {
 
     @Override
     public void close() {
+        // When a coordinator owns this reader, closing any single reader tears
+        // down the whole projection (all sibling readers plus the shared
+        // iterator). This keeps `try (ColumnReader r = ...filter(...).build())`
+        // working for the single-column entry point.
+        if (coordinator != null) {
+            coordinator.close();
+            return;
+        }
+        rawClose();
+    }
+
+    /// Closes this reader's own worker and (if owned) its iterator, without
+    /// involving the [FilterCoordinator]. Called directly on the unfiltered
+    /// path and by the coordinator when it tears down the projection.
+    void rawClose() {
         if (columnWorker != null) {
             try {
                 columnWorker.close();
@@ -476,6 +527,176 @@ public class ColumnReader implements AutoCloseable {
         if (rowGroupIterator != null) {
             rowGroupIterator.close();
         }
+    }
+
+    // ==================== Exact-filter coordination (#624) ====================
+
+    /// Installs the [FilterCoordinator] that drives this reader on the filtered
+    /// path. Once set, [#nextBatch()] delegates to the coordinator.
+    void setCoordinator(FilterCoordinator coordinator) {
+        this.coordinator = coordinator;
+    }
+
+    /// Whether this reader decodes through the nested pipeline.
+    boolean isNested() {
+        return nested;
+    }
+
+    /// The current (pre-selection) flat batch, for predicate evaluation by the
+    /// [SelectionEngine]. Only valid for flat readers between a successful
+    /// [#rawNextBatch()] and the next advance.
+    BatchExchange.Batch currentFlatBatch() {
+        return currentFlatBatch;
+    }
+
+    /// The current (pre-selection) nested batch, for predicate evaluation by the
+    /// [SelectionEngine].
+    NestedBatch currentNestedBatch() {
+        return currentNestedBatch;
+    }
+
+    /// The record count of the current batch before any selection is applied.
+    int rawRecordCount() {
+        return recordCount;
+    }
+
+    /// Adopts the coordinator's current generation without triggering an
+    /// advance — used when [ColumnReaders#nextBatch()] drives the group.
+    void syncGeneration() {
+        if (coordinator != null) {
+            consumedGeneration = coordinator.generation();
+        }
+    }
+
+    /// Compacts the current batch down to the `count` records whose ascending
+    /// indices occupy `kept[0..count)`. A negative `count` means "every record
+    /// matches" — a no-op fast path that leaves the decoded batch untouched.
+    /// `kept` is a reusable buffer owned by the [SelectionEngine]; only its
+    /// `[0, count)` prefix is read. After this call the public accessors observe
+    /// only the matching records.
+    void applySelection(int[] kept, int count) {
+        if (count < 0) {
+            return;
+        }
+        if (nested) {
+            currentNestedBatch = compactNestedBatch(currentNestedBatch, kept, count);
+        }
+        else {
+            compactFlatBatchInPlace(currentFlatBatch, kept, count);
+        }
+        recordCount = count;
+        invalidatePerBatchCaches();
+    }
+
+    /// Compacts a flat batch to the kept records. The fixed-width value array is
+    /// gathered **in place** — `kept` is strictly ascending with `kept[j] >= j`,
+    /// so `values[j] = values[kept[j]]` never overwrites a slot still to be
+    /// read. The batch is detached (consumer-owned, never recycled) and not yet
+    /// observed by the caller, so mutating it is safe and avoids a fresh
+    /// per-batch `values[]` allocation on the common path. Variable-length
+    /// (`BinaryBatchValues`) leaves can't gather in place and get a compacted
+    /// copy; validity is rebuilt only when a kept record is null.
+    private static void compactFlatBatchInPlace(BatchExchange.Batch batch, int[] kept, int count) {
+        Object values = batch.values;
+        if (values instanceof BinaryBatchValues binary) {
+            batch.values = compactBinary(binary, kept, count);
+        }
+        else {
+            compactPrimitiveInPlace(values, kept, count);
+        }
+        batch.validity = compactValidity(batch.validity, kept, count);
+        batch.recordCount = count;
+    }
+
+    private static void compactPrimitiveInPlace(Object values, int[] kept, int count) {
+        switch (values) {
+            case int[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
+            case long[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
+            case float[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
+            case double[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
+            case boolean[] a -> { for (int j = 0; j < count; j++) a[j] = a[kept[j]]; }
+            default -> throw new IllegalStateException("Unexpected leaf array type: " + values.getClass());
+        }
+    }
+
+    /// Gathers the present/null bits at the kept record positions into a fresh
+    /// bitmap. Mirrors the set-bit-=-present polarity of
+    /// [BatchExchange.Batch#validity]; returns `null` when no kept record is
+    /// null (the sparse "all present" representation).
+    private static long[] compactValidity(long[] src, int[] kept, int count) {
+        if (src == null) {
+            return null;
+        }
+        long[] out = null;
+        for (int j = 0; j < count; j++) {
+            int idx = kept[j];
+            boolean present = (src[idx >>> 6] & (1L << idx)) != 0L;
+            if (present) {
+                if (out != null) {
+                    out[j >>> 6] |= 1L << j;
+                }
+            }
+            else if (out == null) {
+                // First null encountered: materialise the bitmap and mark every
+                // earlier kept record present.
+                out = new long[(count + 63) >>> 6];
+                for (int b = 0; b < j; b++) {
+                    out[b >>> 6] |= 1L << b;
+                }
+            }
+        }
+        return out;
+    }
+
+    /// Compacts a nested batch to the selected top-level records by slicing the
+    /// raw `(definitionLevels, repetitionLevels, values)` triplet per record —
+    /// each record is the contiguous level run `[recordOffsets[r], end)`. The
+    /// real-items view is recomputed lazily from the sliced raw arrays by
+    /// [#ensureRealView()], so no layer bookkeeping is rebuilt here.
+    private static NestedBatch compactNestedBatch(NestedBatch src, int[] kept, int count) {
+        int[] recordOffsets = src.recordOffsets;
+        int srcRecordCount = src.recordCount;
+        int srcValueCount = src.valueCount;
+
+        // Total kept leaf slots, to size the gather index up front.
+        int total = 0;
+        for (int j = 0; j < count; j++) {
+            int r = kept[j];
+            int start = recordOffsets[r];
+            int end = (r + 1 < srcRecordCount) ? recordOffsets[r + 1] : srcValueCount;
+            total += end - start;
+        }
+
+        int[] keptLeaves = new int[total];
+        int[] newRecordOffsets = new int[count];
+        int pos = 0;
+        for (int j = 0; j < count; j++) {
+            int r = kept[j];
+            newRecordOffsets[j] = pos;
+            int start = recordOffsets[r];
+            int end = (r + 1 < srcRecordCount) ? recordOffsets[r + 1] : srcValueCount;
+            for (int k = start; k < end; k++) {
+                keptLeaves[pos++] = k;
+            }
+        }
+
+        NestedBatch out = new NestedBatch();
+        out.fileName = src.fileName;
+        out.recordCount = count;
+        out.valueCount = total;
+        out.values = compactPrimitive(src.values, keptLeaves);
+        out.definitionLevels = gather(src.definitionLevels, keptLeaves);
+        out.repetitionLevels = src.repetitionLevels != null ? gather(src.repetitionLevels, keptLeaves) : null;
+        out.recordOffsets = newRecordOffsets;
+        return out;
+    }
+
+    private static int[] gather(int[] src, int[] indices) {
+        int[] out = new int[indices.length];
+        for (int i = 0; i < indices.length; i++) {
+            out[i] = src[indices[i]];
+        }
+        return out;
     }
 
     // ==================== Internal ====================
@@ -554,24 +775,26 @@ public class ColumnReader implements AutoCloseable {
                 for (int i = 0; i < n; i++) out[i] = a[map[i]];
                 yield out;
             }
-            case BinaryBatchValues bbv -> compactBinary(bbv, map);
+            case BinaryBatchValues bbv -> compactBinary(bbv, map, map.length);
             default -> throw new IllegalStateException("Unexpected leaf array type: " + raw.getClass());
         };
     }
 
-    private static BinaryBatchValues compactBinary(BinaryBatchValues raw, int[] map) {
-        int n = map.length;
+    /// Compacts a varlength leaf to the records at `map[0..count)`. `map` may be
+    /// an oversized reusable buffer (flat in-place path) or an exact gather index
+    /// (nested path); only its `[0, count)` prefix is read.
+    private static BinaryBatchValues compactBinary(BinaryBatchValues raw, int[] map, int count) {
         int totalBytes = 0;
-        int[] outOffsets = new int[n + 1];
-        for (int i = 0; i < n; i++) {
+        int[] outOffsets = new int[count + 1];
+        for (int i = 0; i < count; i++) {
             int rawIdx = map[i];
             int len = raw.offsets[rawIdx + 1] - raw.offsets[rawIdx];
             outOffsets[i] = totalBytes;
             totalBytes += len;
         }
-        outOffsets[n] = totalBytes;
+        outOffsets[count] = totalBytes;
         byte[] outBytes = new byte[totalBytes];
-        for (int i = 0; i < n; i++) {
+        for (int i = 0; i < count; i++) {
             int rawIdx = map[i];
             int rawStart = raw.offsets[rawIdx];
             int len = raw.offsets[rawIdx + 1] - rawStart;

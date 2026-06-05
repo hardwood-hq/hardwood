@@ -333,6 +333,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Page index-based page filtering (`PageFilterEvaluator` with page-range I/O)
 - [x] Inline `DataPageHeader.statistics` fallback when Column Index is absent (`InlinePageStatsScanner`)
 - [x] Drain-side per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs/DRAIN_SIDE_RECORD_FILTERING.md`)
+- [x] Exact column-reader filtering — `buildColumnReader(...).filter(...)` / `buildColumnReaders(...).filter(...)` return only matching rows with no client-side residual (`SelectionEngine` + `FilterCoordinator`; see `_designs/EXACT_COLUMN_READER_FILTERING.md`)
 - [ ] Bloom filter-based filtering
 
 ---

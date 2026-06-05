@@ -9,6 +9,7 @@ package dev.hardwood.reader;
 
 import java.io.IOException;
 import java.util.ArrayList;
+import java.util.LinkedHashSet;
 import java.util.List;
 
 import dev.hardwood.HardwoodContext;
@@ -392,11 +393,15 @@ public class ParquetFileReader implements AutoCloseable {
     ColumnReader buildColumnReader(
             String columnName, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize) {
         ensureSingleFile("columnReader(String)");
+        if (filter != null) {
+            // Exact filtering routes through the shared filtered-projection
+            // engine and exposes the single requested column.
+            return buildColumnReaders(ColumnProjection.columns(columnName), filter, rowGroupFilter, batchSize)
+                    .getColumnReader(0);
+        }
         InputFile inputFile = inputFiles.get(0);
-        ResolvedPredicate resolved = filter != null
-                ? FilterPredicateResolver.resolve(filter, schema) : null;
-        List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
-        return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, resolved, batchSize);
+        List<RowGroup> rowGroups = filterRowGroups(null, rowGroupFilter);
+        return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, null, batchSize);
     }
 
     ColumnReader buildColumnReader(int columnIndex, FilterPredicate filter) {
@@ -406,11 +411,14 @@ public class ParquetFileReader implements AutoCloseable {
     ColumnReader buildColumnReader(
             int columnIndex, FilterPredicate filter, RowGroupPredicate rowGroupFilter, int batchSize) {
         ensureSingleFile("columnReader(int)");
+        if (filter != null) {
+            String columnName = schema.getColumn(columnIndex).fieldPath().toString();
+            return buildColumnReaders(ColumnProjection.columns(columnName), filter, rowGroupFilter, batchSize)
+                    .getColumnReader(0);
+        }
         InputFile inputFile = inputFiles.get(0);
-        ResolvedPredicate resolved = filter != null
-                ? FilterPredicateResolver.resolve(filter, schema) : null;
-        List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
-        return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, resolved, batchSize);
+        List<RowGroup> rowGroups = filterRowGroups(null, rowGroupFilter);
+        return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, null, batchSize);
     }
 
     ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) {
@@ -426,11 +434,40 @@ public class ParquetFileReader implements AutoCloseable {
                 ? FilterPredicateResolver.resolve(filter, schema) : null;
         List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
 
+        if (resolved == null) {
+            RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0);
+            iterator.setFirstFile(schema, rowGroups);
+            ProjectedSchema projected = iterator.initialize(projection, null);
+            rowGroupIterators.add(iterator);
+            return new ColumnReaders(context, iterator, schema, projected, batchSize);
+        }
+
+        // Exact filtering (#624): decode the payload columns *and* the predicate
+        // columns through one shared iterator (single iterator ⇒ all columns
+        // stay row-aligned regardless of per-column page-skip capability), then
+        // compact each exposed column to the matching records per batch.
+        ColumnProjection augmented = augmentWithPredicateColumns(projection, resolved);
         RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0);
         iterator.setFirstFile(schema, rowGroups);
-        ProjectedSchema projected = iterator.initialize(projection, resolved);
+        ProjectedSchema augProjected = iterator.initialize(augmented, resolved);
+        ProjectedSchema payloadProjected = ProjectedSchema.create(schema, projection);
         rowGroupIterators.add(iterator);
-        return new ColumnReaders(context, iterator, schema, projected, batchSize);
+        return ColumnReaders.filtered(
+                context, iterator, schema, augProjected, payloadProjected, resolved, batchSize);
+    }
+
+    /// Builds the union of `projection` and the predicate's leaf columns so the
+    /// predicate columns are decoded even when the caller did not project them.
+    /// A `projectsAll()` projection already covers them.
+    private ColumnProjection augmentWithPredicateColumns(
+            ColumnProjection projection, ResolvedPredicate resolved) {
+        if (projection.projectsAll()) {
+            return projection;
+        }
+        LinkedHashSet<String> names = new LinkedHashSet<>(
+                projection.getProjectedColumnNames());
+        names.addAll(SelectionEngine.predicateColumnPaths(resolved, schema));
+        return ColumnProjection.columns(names.toArray(new String[0]));
     }
 
     private void ensureSingleFile(String op) {
@@ -689,8 +726,12 @@ public class ParquetFileReader implements AutoCloseable {
             this.byName = false;
         }
 
-        /// Apply a column-statistics filter — row groups whose statistics prove no row
-        /// matches are skipped. Default: no filter.
+        /// Apply a filter predicate. The built reader returns **only** the rows
+        /// matching `filter` — exact, with no client-side residual: a direct
+        /// aggregate over the output is correct. Row groups and pages proven
+        /// non-matching by statistics are skipped; the surviving rows are then
+        /// filtered exactly. The predicate may reference this column, another
+        /// column, or a column that is not otherwise read. Default: no filter.
         public ColumnReaderBuilder filter(FilterPredicate filter) {
             this.filter = filter;
             return this;
@@ -753,8 +794,12 @@ public class ParquetFileReader implements AutoCloseable {
             this.projection = projection;
         }
 
-        /// Apply a column-statistics filter — row groups whose statistics prove no row
-        /// matches are skipped. Default: no filter.
+        /// Apply a filter predicate. Every column in the projection returns
+        /// **only** the rows matching `filter` — exact, row-aligned across
+        /// columns, with no client-side residual. Row groups and pages proven
+        /// non-matching by statistics are skipped; the surviving rows are then
+        /// filtered exactly. The predicate may reference a projected column or a
+        /// column that is not part of the projection. Default: no filter.
         public ColumnReadersBuilder filter(FilterPredicate filter) {
             this.filter = filter;
             return this;

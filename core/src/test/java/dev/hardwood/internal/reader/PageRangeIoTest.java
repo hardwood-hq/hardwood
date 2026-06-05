@@ -133,15 +133,25 @@ class PageRangeIoTest {
 
     @Test
     void testColumnReaderPageRangeIoWithDictionary() throws Exception {
-        // Read a dictionary-encoded column with filtering to exercise
-        // the parseDictionaryFromSlice path in PageScanner
+        // Read a dictionary-encoded column with filtering to exercise the
+        // parseDictionaryFromSlice path in PageScanner. The filter is on `id`
+        // while `category` is read, so exact filtering (#624) must also decode
+        // `id`. The honest page-range baseline is therefore an unfiltered read
+        // of *both* columns the filtered path touches: page pruning still fetches
+        // fewer bytes than reading them in full.
         ByteCountingInputFile unfilteredFile = new ByteCountingInputFile(InputFile.of(DICT_TEST_FILE));
         unfilteredFile.open();
         long unfilteredRows = 0;
-        try (ParquetFileReader reader = ParquetFileReader.open(unfilteredFile);
-             ColumnReader col = reader.columnReader("category")) {
-            while (col.nextBatch()) {
-                unfilteredRows += col.getRecordCount();
+        try (ParquetFileReader reader = ParquetFileReader.open(unfilteredFile)) {
+            try (ColumnReader col = reader.columnReader("category")) {
+                while (col.nextBatch()) {
+                    unfilteredRows += col.getRecordCount();
+                }
+            }
+            try (ColumnReader col = reader.columnReader("id")) {
+                while (col.nextBatch()) {
+                    // touch id so its bytes count toward the baseline
+                }
             }
         }
 

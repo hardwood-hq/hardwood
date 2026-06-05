@@ -49,6 +49,8 @@ Typed accessors are available for each fixed-width physical type: `getInts()`, `
 
 Column readers can also be created by index via `columnReader(int columnIndex)`. To attach a filter or customize the batch size, use the builder form: `reader.buildColumnReader("id").filter(predicate).batchSize(1024).build()`.
 
+A filtered column reader returns **only** the matching rows — exact, with no client-side residual filtering required. Each batch's `getRecordCount()` and typed arrays already exclude non-matching rows, so a direct aggregate over the output is correct. The predicate may reference the column being read, another column, or a column that is not read at all; for `columnReaders(projection)` every column is filtered to the same row set and stays row-aligned. Predicate columns that are not part of the projection are decoded internally to evaluate the filter but are not exposed.
+
 ### Reading Multiple Columns
 
 For reading multiple columns together, use `columnReaders(projection)` which returns a `ColumnReaders` collection. Drive every reader in lockstep with `ColumnReaders.nextBatch()`:

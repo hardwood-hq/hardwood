@@ -474,10 +474,15 @@ class PredicatePushDownTest {
             try (ColumnReader activeReader = reader.buildColumnReader("active").filter(filter).build()) {
                 int totalRows = 0;
                 while (activeReader.nextBatch()) {
-                    totalRows += activeReader.getRecordCount();
+                    boolean[] values = activeReader.getBooleans();
+                    int count = activeReader.getRecordCount();
+                    totalRows += count;
+                    for (int i = 0; i < count; i++) {
+                        assertThat(values[i]).isFalse();
+                    }
                 }
-                // RG1 (all false) + RG2 (mixed) = 10 rows
-                assertThat(totalRows).isEqualTo(10);
+                // Exact (#624): RG1 (5 false) + RG2's two false rows = 7.
+                assertThat(totalRows).isEqualTo(7);
             }
         }
     }

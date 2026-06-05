@@ -141,13 +141,14 @@ class RowGroupFilterTest {
     @Test
     void columnReaderRowGroupFilterComposesWithFilterPredicate() throws Exception {
         // Byte range keeps rg0+rg1 (id 1-200). FilterPredicate gt(id, 150) drops rg0
-        // (max=100) and keeps rg1 (max=200). Intersection: rg1 only.
+        // (max=100) and keeps rg1, then filters it exactly (#624): only id 151-200
+        // survive — not the whole surviving row group.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE));
              ColumnReader col = reader.buildColumnReader("id")
                      .filter(FilterPredicate.gt("id", 150L))
                      .filter(RowGroupPredicate.byteRange(0, rg2Mid))
                      .build()) {
-            assertThat(firstAndLastIds(col)).containsExactly(101L, 200L);
+            assertThat(firstAndLastIds(col)).containsExactly(151L, 200L);
         }
     }
 

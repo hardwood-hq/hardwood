@@ -10,6 +10,7 @@ package dev.hardwood.reader;
 import java.util.LinkedHashMap;
 import java.util.Map;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -46,6 +47,10 @@ public class ColumnReaders implements AutoCloseable {
 
     private final Map<String, ColumnReader> readersByName;
     private final ColumnReader[] readersByIndex;
+    /// Non-null on the exact-filtering path (#624): drives all readers in
+    /// lockstep and compacts each to the matching records per batch. `null` on
+    /// the plain projection path.
+    private final FilterCoordinator coordinator;
     private int recordCount;
     private boolean batchAvailable;
 
@@ -57,6 +62,7 @@ public class ColumnReaders implements AutoCloseable {
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         this.readersByName = new LinkedHashMap<>(projectedColumnCount);
         this.readersByIndex = new ColumnReader[projectedColumnCount];
+        this.coordinator = null;
 
         for (int i = 0; i < projectedColumnCount; i++) {
             int originalIndex = projectedSchema.toOriginalIndex(i);
@@ -68,6 +74,56 @@ public class ColumnReaders implements AutoCloseable {
             readersByName.put(columnSchema.fieldPath().toString(), reader);
             readersByIndex[i] = reader;
         }
+    }
+
+    private ColumnReaders(Map<String, ColumnReader> readersByName,
+                          ColumnReader[] readersByIndex,
+                          FilterCoordinator coordinator) {
+        this.readersByName = readersByName;
+        this.readersByIndex = readersByIndex;
+        this.coordinator = coordinator;
+    }
+
+    /// Builds a filtered [ColumnReaders] that returns only the records matching
+    /// `resolved` (#624). Every column of `augProjected` (payload columns plus
+    /// the predicate columns) is decoded through one shared iterator; the
+    /// exposed readers are those of `payloadProjection`, compacted to the
+    /// matching records each batch. Predicate columns not in `payloadProjection`
+    /// are decoded to evaluate the predicate but are not exposed.
+    static ColumnReaders filtered(HardwoodContextImpl context,
+                                  RowGroupIterator rowGroupIterator,
+                                  FileSchema schema,
+                                  ProjectedSchema augProjected,
+                                  ProjectedSchema payloadProjected,
+                                  ResolvedPredicate resolved,
+                                  int batchSize) {
+        int augCount = augProjected.getProjectedColumnCount();
+        ColumnReader[] allReaders = new ColumnReader[augCount];
+        Map<String, ColumnReader> byPath = new LinkedHashMap<>(augCount);
+        for (int i = 0; i < augCount; i++) {
+            ColumnSchema columnSchema = schema.getColumn(augProjected.toOriginalIndex(i));
+            ColumnReader reader = ColumnReader.createFromIterator(
+                    columnSchema, schema, rowGroupIterator, context, i, null, batchSize);
+            allReaders[i] = reader;
+            byPath.put(columnSchema.fieldPath().toString(), reader);
+        }
+
+        int payloadCount = payloadProjected.getProjectedColumnCount();
+        Map<String, ColumnReader> readersByName = new LinkedHashMap<>(payloadCount);
+        ColumnReader[] payloadReaders = new ColumnReader[payloadCount];
+        for (int p = 0; p < payloadCount; p++) {
+            ColumnSchema columnSchema = schema.getColumn(payloadProjected.toOriginalIndex(p));
+            ColumnReader reader = byPath.get(columnSchema.fieldPath().toString());
+            payloadReaders[p] = reader;
+            readersByName.put(columnSchema.fieldPath().toString(), reader);
+        }
+
+        SelectionEngine engine = SelectionEngine.create(schema, augProjected, resolved, allReaders, batchSize);
+        FilterCoordinator coordinator = new FilterCoordinator(allReaders, payloadReaders, engine);
+        for (ColumnReader reader : allReaders) {
+            reader.setCoordinator(coordinator);
+        }
+        return new ColumnReaders(readersByName, payloadReaders, coordinator);
     }
 
     /// Get the number of projected columns.
@@ -121,6 +177,15 @@ public class ColumnReaders implements AutoCloseable {
     /// @return true if a new aligned batch is available across all readers, false if exhausted
     /// @throws IllegalStateException if the readers report mismatched record counts
     public boolean nextBatch() {
+        if (coordinator != null) {
+            boolean advanced = coordinator.advance();
+            for (ColumnReader reader : readersByIndex) {
+                reader.syncGeneration();
+            }
+            recordCount = coordinator.recordCount();
+            batchAvailable = advanced;
+            return advanced;
+        }
         if (readersByIndex.length == 0) {
             batchAvailable = false;
             recordCount = 0;
@@ -178,6 +243,10 @@ public class ColumnReaders implements AutoCloseable {
 
     @Override
     public void close() {
+        if (coordinator != null) {
+            coordinator.close();
+            return;
+        }
         for (ColumnReader reader : readersByIndex) {
             reader.close();
         }
