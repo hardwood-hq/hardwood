@@ -296,24 +296,28 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         return bbv;
     }
 
-    /// Trims a typed values array to the exact size. For
-    /// [BinaryBatchValues] this trims the offsets array to `size + 1` and
-    /// publishes the (possibly capacity-sized) bytes buffer as-is — only
-    /// the prefix `[0, offsets[size])` is meaningful per the
-    /// capacity-sized contract.
+    /// Snapshots the assembled values for `[0, size)` into an independent array
+    /// the published batch owns outright.
+    ///
+    /// The drain reuses its accumulators ([#nestedValues] and friends) for the
+    /// next batch — [#publishCurrentBatch] only resets the counts, not the
+    /// backing storage — so the published batch must not alias them. For
+    /// [BinaryBatchValues] that means copying the meaningful **bytes** prefix as
+    /// well as the offsets: sharing the bytes buffer would let the next batch's
+    /// `appendAt` (which restarts at byte offset 0) overwrite the still-unread
+    /// rows of the batch just published.
     private Object trimValues(Object values, int size) {
         return switch (values) {
-            case int[] a -> a.length == size ? a : Arrays.copyOf(a, size);
-            case long[] a -> a.length == size ? a : Arrays.copyOf(a, size);
-            case float[] a -> a.length == size ? a : Arrays.copyOf(a, size);
-            case double[] a -> a.length == size ? a : Arrays.copyOf(a, size);
-            case boolean[] a -> a.length == size ? a : Arrays.copyOf(a, size);
+            case int[] a -> Arrays.copyOf(a, size);
+            case long[] a -> Arrays.copyOf(a, size);
+            case float[] a -> Arrays.copyOf(a, size);
+            case double[] a -> Arrays.copyOf(a, size);
+            case boolean[] a -> Arrays.copyOf(a, size);
             case BinaryBatchValues bbv -> {
-                if (bbv.offsets.length == size + 1) {
-                    yield bbv;
-                }
-                int[] trimmed = Arrays.copyOf(bbv.offsets, size + 1);
-                yield new BinaryBatchValues(bbv.bytes, trimmed);
+                int byteLength = bbv.offsets[size];
+                yield new BinaryBatchValues(
+                        Arrays.copyOf(bbv.bytes, byteLength),
+                        Arrays.copyOf(bbv.offsets, size + 1));
             }
             default -> throw new IllegalStateException("Unexpected values array type: " + values.getClass());
         };

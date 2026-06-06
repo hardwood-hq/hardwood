@@ -314,6 +314,44 @@ pq.write_table(
 print("\nGenerated nested_struct_test.parquet:")
 print("  - Data: id=[1,2,3], address=[{street,city,zip}, {street,city,zip}, null]")
 
+# 1b. Nested dictionary-encoded string decoded across a batch boundary.
+# Regression fixture for a nested-read bug: the drain reused one bytes buffer
+# across batches and published each batch by aliasing it, so assembling the next
+# batch overwrote the previous batch's still-unread values. It triggers whenever
+# a single nested variable-length leaf spans more than one batch. The row reader
+# auto-sizes its batch to 6 MB / row width (so a lone string column needs
+# > ~393k rows to cross), but the ColumnReader path shares the same worker and
+# takes an explicit batch size, so the test reads this fixture with a batch of 64
+# and 300 rows suffice. Values are distinct so any corruption is obvious; the
+# struct is null on every 7th row, the name on every 3rd. data_page_version
+# '1.0' matches the real-world (PLAIN dictionary page) layout that surfaced this.
+NESTED_BATCH_ROWS = 300
+
+def _nested_batch_name(i):
+    # name is null on every 3rd row (within a present struct)
+    return None if i % 3 == 0 else f"value_{i:04d}"
+
+nested_batch_table = pa.table(
+    {
+        # nested struct is null on every 7th row
+        'nested': pa.array(
+            [None if i % 7 == 0 else {'name': _nested_batch_name(i)}
+             for i in range(NESTED_BATCH_ROWS)],
+            type=pa.struct([('name', pa.string())])),
+    },
+    schema=pa.schema([('nested', pa.struct([('name', pa.string())]))]),
+)
+pq.write_table(
+    nested_batch_table,
+    'core/src/test/resources/nested_dict_batch_boundary.parquet',
+    use_dictionary=True,
+    compression='snappy',
+    data_page_version='1.0',
+)
+
+print("\nGenerated nested_dict_batch_boundary.parquet:")
+print(f"  - {NESTED_BATCH_ROWS} rows, nested.name (dictionary-encoded string; read across batches)")
+
 # 2. List of basic types test
 list_basic_schema = pa.schema([
     ('id', pa.int32(), False),
