@@ -29,6 +29,7 @@ from parquet_annotators import (
     annotate_element_at_path_as_time,
     annotate_element_at_path_as_decimal,
     annotate_columns_as_legacy_converted_type,
+    annotate_map_as_legacy_key_value,
     strip_converted_type,
     corrupt_data_page_offset_negative,
 )
@@ -2732,8 +2733,9 @@ _map_data = pa.Table.from_pylist([
 ], schema=_map_schema)
 pq.write_table(_map_data, _map_ann_base, use_dictionary=False, compression=None, data_page_version='1.0')
 strip_converted_type(_map_ann_base, 'core/src/test/resources/map_annotation_modern_only_test.parquet', 'attrs')
+annotate_map_as_legacy_key_value(_map_ann_base, 'core/src/test/resources/map_annotation_legacy_key_value_test.parquet', 'attrs')
 
-print("\nGenerated map_annotation_both/modern_only_test.parquet:")
+print("\nGenerated map_annotation_both/modern_only/legacy_key_value_test.parquet:")
 print("  - Schema: id INT32, attrs MAP<STRING, INT32>")
 
 # =====================================================================

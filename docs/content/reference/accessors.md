@@ -116,3 +116,8 @@ UTC-normalized `Instant`, matching the parquet-format backward-compatibility rul
 annotations. Unsigned columns preserve the stored bit pattern — reinterpret with
 `Integer.toUnsignedLong` / `Long.toUnsignedString` for the unsigned magnitude. When a file carries
 both a `converted_type` and a modern `logicalType`, the `logicalType` takes precedence.
+
+The MAP group annotation has a legacy form too: some older parquet-mr / Hive / Impala files annotate
+only the inner repeated `key_value` group with `MAP_KEY_VALUE` and leave the outer group unannotated.
+Hardwood recognizes this form as a map, so `getMap` returns a `PqMap` and `getColumn(...).logicalType()`
+reports a `MapType` exactly as it does for the modern `MAP` annotation.

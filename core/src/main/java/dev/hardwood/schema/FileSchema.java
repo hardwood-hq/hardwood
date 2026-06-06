@@ -229,7 +229,7 @@ public class FileSchema {
                         element.name(),
                         repType,
                         element.convertedType(),
-                        element.logicalType(),
+                        effectiveGroupLogicalType(element, groupChildren),
                         groupChildren,
                         defLevel,
                         repLevel);
@@ -287,6 +287,33 @@ public class FileSchema {
             // Group-level annotations are handled on GroupNode, not here.
             case LIST, MAP, MAP_KEY_VALUE -> null;
         };
+    }
+
+    /// Resolve the effective logical type of a group element. The modern
+    /// `logicalType()` wins when present. Otherwise, recognise the legacy MAP
+    /// encoding in which only the inner repeated `key_value` group carries the
+    /// `MAP_KEY_VALUE` converted type, with no `MAP` annotation on the outer
+    /// group. Older parquet-mr / Hive / Impala writers emit this form; surfacing
+    /// it as a [LogicalType.MapType] lets the rest of the reader treat it
+    /// identically to a MAP-annotated group.
+    private static LogicalType effectiveGroupLogicalType(SchemaElement element, List<SchemaNode> children) {
+        if (element.logicalType() != null) {
+            return element.logicalType();
+        }
+        if (hasMapKeyValueChild(children)) {
+            return new LogicalType.MapType();
+        }
+        return null;
+    }
+
+    /// Returns true if `children` is a single REPEATED group annotated with the
+    /// legacy `MAP_KEY_VALUE` converted type, the hallmark of the legacy MAP
+    /// encoding.
+    private static boolean hasMapKeyValueChild(List<SchemaNode> children) {
+        return children.size() == 1
+                && children.get(0) instanceof SchemaNode.GroupNode child
+                && child.repetitionType() == RepetitionType.REPEATED
+                && child.convertedType() == ConvertedType.MAP_KEY_VALUE;
     }
 
     /// Build a [LogicalType.DecimalType] from a legacy `DECIMAL` converted-type

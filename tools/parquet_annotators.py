@@ -25,6 +25,8 @@ Modern-only fixture helpers (strip legacy annotations so only `logicalType` rema
 
 Legacy-only fixture helpers (set `converted_type` and clear `logicalType`):
 - `annotate_columns_as_legacy_converted_type` — for primitive columns.
+- `annotate_map_as_legacy_key_value` — for MAP groups (MAP_KEY_VALUE on the
+  inner group, no annotation on the outer group).
 
 Only the subset of parquet.thrift that PyArrow emits, plus the LogicalType
 union, is modelled in the embedded IDL.
@@ -474,6 +476,37 @@ def strip_converted_type(src: str, dst: str, field_name: str) -> None:
     data, md = _read_parquet_footer(dst)
     el = _find_outer_group(md, field_name)
     el.converted_type = None
+    _write_parquet_footer(dst, data, md)
+
+
+def annotate_map_as_legacy_key_value(src: str, dst: str, field_name: str) -> None:
+    """Copy `src` to `dst`, rewriting the MAP for `field_name` into the legacy
+    MAP_KEY_VALUE-only encoding.
+
+    The outer group loses every annotation and the inner repeated `key_value`
+    group gains `converted_type=MAP_KEY_VALUE`, reproducing files from older
+    parquet-mr / Hive / Impala writers that annotated only the inner group with
+    no MAP annotation on the outer group. PyArrow 24.0.0 emits neither
+    annotation on the inner group, so this helper supplies it directly.
+    """
+    shutil.copy2(src, dst)
+    data, md = _read_parquet_footer(dst)
+    elements = md.schema
+    outer_idx = None
+    for i, el in enumerate(elements):
+        if el.name == field_name and el.num_children is not None:
+            outer_idx = i
+            break
+    if outer_idx is None:
+        raise ValueError(f"Top-level group '{field_name}' not found in schema")
+    # In the standard MAP encoding the first child (immediately following the
+    # outer group in the depth-first list) is the repeated key_value group.
+    key_value = elements[outer_idx + 1]
+    if key_value.num_children is None:
+        raise ValueError(f"'{field_name}' first child is not a group")
+    elements[outer_idx].converted_type = None
+    elements[outer_idx].logicalType = None
+    key_value.converted_type = _parquet.ConvertedType.MAP_KEY_VALUE
     _write_parquet_footer(dst, data, md)
 
 
