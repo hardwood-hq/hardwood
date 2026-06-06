@@ -129,33 +129,15 @@ Run the following command to format the source code and organize the imports as 
 
 ### Building the Native CLI
 
-The `hardwood` CLI can be compiled to a GraalVM native binary using the `-Dnative` flag.
+The `hardwood` CLI can be compiled to a GraalVM native binary using the `-Dnative` flag. See [`cli/README.md`](cli/README.md) for detailed build and usage instructions.
 
-#### Local GraalVM build
-
-Requires GraalVM (Java 25+) installed locally. Install via [SDKMAN](https://sdkman.io/):
-
-```shell
-sdk install java 25.0.2-graalce
-```
-
-Then build:
+For a quick start:
 
 ```shell
 ./mvnw -Dnative package -pl cli -am
 ```
 
-The resulting distribution is at `cli/target/hardwood-<version>/bin/hardwood`.
-
-#### Linux — container build (no local GraalVM required)
-
-Requires Docker. The build runs inside a Linux container and produces a Linux x86\_64 ELF binary:
-
-```shell
-./mvnw -Dnative -Dquarkus.native.container-build=true package -pl cli -am
-```
-
-> **Note:** The container build always produces a Linux binary. Running it on macOS will fail with `exec format error`. Use the local GraalVM build for macOS binaries.
+The resulting binary is typically at `cli/target/hardwood-cli`.
 
 See [NATIVE_BUILD.md](NATIVE_BUILD.md) for details on how the native build works (compression codec handling, build arguments).
 
