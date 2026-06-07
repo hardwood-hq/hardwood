@@ -10,12 +10,15 @@
 # Generate an API change report laid out for publishing under /api-changes/<version>/.
 #
 # Resolves the comparison endpoints from the repo's git tags and delegates to
-# tools/api-report.sh, then stages the unified report in <outputDir> with the
-# combined HTML exposed as index.html so the published URL serves cleanly.
+# tools/api-report.sh, then stages only the unified combined HTML in <outputDir>
+# as index.html so the published URL serves cleanly. The per-module reports and
+# the unified text diff that api-report.sh also writes under target/japicmp/ are
+# left unpublished — the combined HTML splices every module's body inline, so it
+# is self-contained, and nothing on the site links to the other files.
 #
 # Usage: tools/publish-api-report.sh <version> <outputDir>
 #   <version>    Maven release version (e.g. 1.0.0.CR1) or "dev"
-#   <outputDir>  directory to receive index.html + the per-module reports
+#   <outputDir>  directory to receive index.html (the unified HTML report)
 #
 # For "dev", the local HEAD snapshot is the new side and the latest tagged
 # release is the old side. For a release version, both sides are the published
@@ -92,7 +95,6 @@ if [ ! -f "$REPORT_DIR/api-report.html" ]; then
 fi
 
 mkdir -p "$OUT"
-cp -r "$REPORT_DIR/." "$OUT/"
-cp "$OUT/api-report.html" "$OUT/index.html"
+cp "$REPORT_DIR/api-report.html" "$OUT/index.html"
 
 echo "Staged report for /api-changes/$VERSION/ in $OUT"

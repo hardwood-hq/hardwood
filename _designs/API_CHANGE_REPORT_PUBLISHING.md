@@ -17,6 +17,12 @@ API of two builds of the four published modules (`hardwood-core`, `hardwood-avro
 JavaDoc. Reports for all releases from the first comparable pair (`1.0.0.Alpha1` → `1.0.0.Beta1`)
 onward are published; the very first release has no predecessor and therefore no report.
 
+The report caption names the two compared sides (e.g. `HEAD (abc1234) vs 1.0.0.CR1` for the dev
+build, or `1.0.0.CR2 vs 1.0.0.CR1` for a release). In the HTML report each side links to its
+GitHub commit (`.../commit/<sha>`) — the snapshot side to the source commit being published,
+each release side to the commit its tag resolves to. A side whose commit cannot be resolved
+renders as plain text. The plaintext text diff caption is left unlinked.
+
 ---
 
 ## Repositories
@@ -66,13 +72,16 @@ result out for publishing:
 ```
 tools/publish-api-report.sh <version> <outputDir>
   <version>    Maven release version (e.g. 1.0.0.CR1) or "dev"
-  <outputDir>  directory to receive index.html + the per-module reports
+  <outputDir>  directory to receive index.html (the unified HTML report)
 ```
 
-It resolves old/new as described above, invokes `api-report.sh`, then copies `target/japicmp/`
-into `<outputDir>` and exposes the unified `api-report.html` as `index.html` so
-`/api-changes/<version>/` serves cleanly. When the version has no predecessor it prints a notice
-and exits 0 without writing output.
+It resolves old/new as described above, invokes `api-report.sh`, then stages only the unified
+`api-report.html` as `<outputDir>/index.html` so `/api-changes/<version>/` serves cleanly. The
+combined HTML splices every module's body inline, so it is self-contained; the per-module reports
+and the unified text diff that `api-report.sh` also writes under `target/japicmp/` are deliberately
+left unpublished — nothing on the site links to them, and shipping them re-published unchanged
+files on every build. When the version has no predecessor it prints a notice and exits 0 without
+writing output.
 
 For a release version both compared sides are the published JARs (the release and its
 predecessor), so the report is correct from any checkout — the workflows never need to check out

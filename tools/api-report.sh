@@ -42,17 +42,45 @@ cd "$ROOT"
 MODULES=":hardwood-core,:hardwood-avro,:hardwood-s3,:hardwood-aws-auth"
 ARTIFACTS=(hardwood-core hardwood-avro hardwood-s3 hardwood-aws-auth)
 
+REPO_URL="https://github.com/hardwood-hq/hardwood"
+
+# Resolve a git ref to a full commit SHA, or empty if it cannot be resolved
+# (e.g. the tag was not fetched). Non-fatal: a missing SHA just drops the link.
+commit_sha() { git rev-parse --verify --quiet "$1^{commit}" 2>/dev/null || true; }
+
+# Wrap a caption term in a link to its GitHub commit when the SHA is known,
+# otherwise emit it as plain text.
+link_commit() { # <label> <sha>
+  if [ -n "$2" ]; then
+    printf '<a href="%s/commit/%s" target="_blank" rel="noopener">%s</a>' \
+      "$REPO_URL" "$2" "$1"
+  else
+    printf '%s' "$1"
+  fi
+}
+
+# Each side of the comparison is named by a label (for the plaintext caption) and
+# resolved to a commit SHA (for the HTML caption's links). The old side is always
+# a release tag; the new side is either a release tag or, for the snapshot run,
+# the source commit being published.
+OLD_SHA="$(commit_sha "v$OLD")"
 if [ -z "$NEW" ]; then
   # Name the new side by its source commit. The site publish workflow runs this
   # from a hardwood checkout but under its own ${GITHUB_SHA} (the *site* repo's
   # commit), so prefer ${SOURCE_REF} — the hardwood commit being published, set
   # by that workflow, just as the docs footer does. Fall back to ${GITHUB_SHA}
   # for the main-repo CI runs, then the local HEAD.
-  HEAD_SHA="$(git rev-parse --short "${SOURCE_REF:-${GITHUB_SHA:-HEAD}}")"
-  CAPTION="HEAD ($HEAD_SHA) vs $OLD"
+  NEW_REF="${SOURCE_REF:-${GITHUB_SHA:-HEAD}}"
+  HEAD_SHA="$(git rev-parse --short "$NEW_REF")"
+  NEW_LABEL="HEAD ($HEAD_SHA)"
+  NEW_SHA="$(commit_sha "$NEW_REF")"
 else
-  CAPTION="$NEW vs $OLD"
+  NEW_LABEL="$NEW"
+  NEW_SHA="$(commit_sha "v$NEW")"
 fi
+CAPTION="$NEW_LABEL vs $OLD"
+# HTML variant of the caption, with each version linked to its GitHub commit.
+CAPTION_HTML="$(link_commit "$NEW_LABEL" "$NEW_SHA") vs $(link_commit "$OLD" "$OLD_SHA")"
 
 # The local modules are always installed, even when both compared versions are
 # published. japicmp resolves with ONE_COMMON_CLASSPATH, which pulls the current
@@ -119,7 +147,7 @@ if [ -n "$template" ] && [ -f "$template" ]; then
       | sed "s|<title>.*</title>|<title>Hardwood API report — $CAPTION</title>|"
     echo "<body>"
     echo "<h1>Hardwood API report</h1>"
-    echo "<p>$CAPTION &mdash; generated $GENERATED</p>"
+    echo "<p>$CAPTION_HTML &mdash; generated $GENERATED</p>"
     echo "<ul>"
     for artifact in "${ARTIFACTS[@]}"; do
       echo "  <li><a href=\"#$artifact\">$artifact</a></li>"
