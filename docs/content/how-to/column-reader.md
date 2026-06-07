@@ -84,7 +84,7 @@ try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-To customize the batch size for all columns, use `.batchSize(int)` on the builder:
+By default the batch size is chosen adaptively from the projected columns' physical widths, so the per-batch arrays stay within the CPU cache regardless of how wide or how many columns you project — the same byte-budgeted sizing the `RowReader` path uses. To pin a specific record count instead, use `.batchSize(int)` on the builder:
 
 ```java
 try (ColumnReaders columns = parquet.buildColumnReaders(

@@ -20,7 +20,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 Highlights of this release:
 
 - **Breaking:** `RowReaderBuilder.firstRow()` renamed to `skip()`, which now composes with a filter as a logical `OFFSET` — rows are skipped after the filter is applied
-- Configurable read batch size for `ColumnReader` / `ColumnReaders`, with the default batch size now part of the public API
+- Configurable read batch size for `ColumnReader` / `ColumnReaders`, with the default now sized adaptively from the projected column widths (byte-budgeted to stay within CPU cache, matching the `RowReader` path) instead of a fixed record count
 - TIMESTAMP accessors honor `isAdjustedToUTC`, with dedicated accessors for local (non-UTC) timestamps
 - Graceful, explicit failure when opening encrypted Parquet files
 - Stricter metadata validation: negative sizes, counts, and offsets are rejected, as are shredded Variant objects repeating a field across `typed_value` and `value`

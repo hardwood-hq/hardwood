@@ -16,6 +16,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.BatchSizing;
 import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.reader.FlatColumnWorker;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
@@ -71,10 +72,6 @@ import dev.hardwood.schema.FileSchema;
 /// deprecation.
 @Experimental
 public class ColumnReader implements AutoCloseable {
-
-    /// The default maximum number of records returned per batch when no batch
-    /// size is configured via `batchSize(int)` on the reader builders.
-    public static final int DEFAULT_BATCH_SIZE = 262_144;
 
     private final ColumnSchema column;
     private final boolean nested;
@@ -885,12 +882,16 @@ public class ColumnReader implements AutoCloseable {
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema,
                 ColumnProjection.columns(columnSchema.fieldPath().toString()));
 
+        int resolvedBatchSize = batchSize > 0
+                ? batchSize
+                : BatchSizing.computeOptimalBatchSize(projectedSchema);
+
         RowGroupIterator rowGroupIterator = new RowGroupIterator(
                 List.of(inputFile), context, 0);
         rowGroupIterator.setFirstFile(schema, rowGroups);
         rowGroupIterator.initialize(projectedSchema, filter);
 
-        return createFromIterator(columnSchema, schema, rowGroupIterator, context, 0, rowGroupIterator, batchSize);
+        return createFromIterator(columnSchema, schema, rowGroupIterator, context, 0, rowGroupIterator, resolvedBatchSize);
     }
 
     /// Creates a ColumnReader from a pre-configured RowGroupIterator.

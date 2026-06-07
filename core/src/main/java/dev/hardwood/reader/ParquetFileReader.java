@@ -18,6 +18,7 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
+import dev.hardwood.internal.reader.BatchSizing;
 import dev.hardwood.internal.reader.FlatRowReader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.internal.reader.NestedRowReader;
@@ -59,6 +60,13 @@ import dev.hardwood.schema.FileSchema;
 /// most 2 GB ([Integer#MAX_VALUE] bytes) of compressed data. The in-memory and
 /// object-store backends have a 2 GB limit on the whole file.
 public class ParquetFileReader implements AutoCloseable {
+
+    /// Sentinel used by the column-reader builders to mean "no explicit batch
+    /// size set": the size is then resolved from the projected column widths via
+    /// [BatchSizing#computeOptimalBatchSize(dev.hardwood.internal.schema.ProjectedSchema)]
+    /// at build time. Never reaches the workers — [#resolveBatchSize] turns it
+    /// into a concrete positive count.
+    private static final int AUTO_BATCH_SIZE = 0;
 
     private final List<InputFile> inputFiles;
     /// Metadata of the first file. For single-file readers this is the
@@ -415,7 +423,7 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     ColumnReader buildColumnReader(String columnName, FilterPredicate filter) {
-        return buildColumnReader(columnName, filter, null, ColumnReader.DEFAULT_BATCH_SIZE);
+        return buildColumnReader(columnName, filter, null, AUTO_BATCH_SIZE);
     }
 
     ColumnReader buildColumnReader(
@@ -433,7 +441,7 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     ColumnReader buildColumnReader(int columnIndex, FilterPredicate filter) {
-        return buildColumnReader(columnIndex, filter, null, ColumnReader.DEFAULT_BATCH_SIZE);
+        return buildColumnReader(columnIndex, filter, null, AUTO_BATCH_SIZE);
     }
 
     ColumnReader buildColumnReader(
@@ -450,7 +458,7 @@ public class ParquetFileReader implements AutoCloseable {
     }
 
     ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) {
-        return buildColumnReaders(projection, filter, null, ColumnReader.DEFAULT_BATCH_SIZE);
+        return buildColumnReaders(projection, filter, null, AUTO_BATCH_SIZE);
     }
 
     ColumnReaders buildColumnReaders(
@@ -467,7 +475,8 @@ public class ParquetFileReader implements AutoCloseable {
             iterator.setFirstFile(schema, rowGroups);
             ProjectedSchema projected = iterator.initialize(projection, null);
             rowGroupIterators.add(iterator);
-            return new ColumnReaders(context, iterator, schema, projected, batchSize);
+            return new ColumnReaders(context, iterator, schema, projected,
+                    resolveBatchSize(batchSize, projected));
         }
 
         // Exact filtering (#624): decode the payload columns *and* the predicate
@@ -480,8 +489,20 @@ public class ParquetFileReader implements AutoCloseable {
         ProjectedSchema augProjected = iterator.initialize(augmented, resolved);
         ProjectedSchema payloadProjected = ProjectedSchema.create(schema, projection);
         rowGroupIterators.add(iterator);
+        // Size against the augmented projection — the predicate columns allocate
+        // per-batch arrays too, so they count toward the byte budget.
         return ColumnReaders.filtered(
-                context, iterator, schema, augProjected, payloadProjected, resolved, batchSize);
+                context, iterator, schema, augProjected, payloadProjected, resolved,
+                resolveBatchSize(batchSize, augProjected));
+    }
+
+    /// Resolves a requested batch size to a concrete record count. A positive
+    /// `requested` (set explicitly via the builders' `batchSize(int)`) is used
+    /// verbatim; the [#AUTO_BATCH_SIZE] sentinel is turned into a byte-budgeted
+    /// size derived from the projected column widths, the same logic the
+    /// `RowReader` path uses, so both regimes agree.
+    private static int resolveBatchSize(int requested, ProjectedSchema projected) {
+        return requested > 0 ? requested : BatchSizing.computeOptimalBatchSize(projected);
     }
 
     /// Builds the union of `projection` and the predicate's leaf columns so the
@@ -734,7 +755,7 @@ public class ParquetFileReader implements AutoCloseable {
         private final boolean byName;
         private FilterPredicate filter;
         private RowGroupPredicate rowGroupFilter;
-        private int batchSize = ColumnReader.DEFAULT_BATCH_SIZE;
+        private int batchSize = AUTO_BATCH_SIZE;
 
         private ColumnReaderBuilder(ParquetFileReader fileReader, String columnName) {
             this.fileReader = fileReader;
@@ -770,7 +791,11 @@ public class ParquetFileReader implements AutoCloseable {
         }
 
         /// Set the maximum number of records to return in each batch.
-        /// Default: [ColumnReader#DEFAULT_BATCH_SIZE].
+        ///
+        /// When unset, the batch size is chosen adaptively from the column's
+        /// physical width so the per-batch arrays stay within the CPU cache —
+        /// the same byte-budgeted sizing the [RowReader] path uses — rather
+        /// than a fixed record count. Set this explicitly to override.
         public ColumnReaderBuilder batchSize(int batchSize) {
             if (batchSize <= 0) {
                 throw new IllegalArgumentException("batchSize must be positive: " + batchSize);
@@ -808,7 +833,7 @@ public class ParquetFileReader implements AutoCloseable {
         private final ColumnProjection projection;
         private FilterPredicate filter;
         private RowGroupPredicate rowGroupFilter;
-        private int batchSize = ColumnReader.DEFAULT_BATCH_SIZE;
+        private int batchSize = AUTO_BATCH_SIZE;
 
         private ColumnReadersBuilder(ParquetFileReader fileReader, ColumnProjection projection) {
             if (projection == null) {
@@ -838,7 +863,11 @@ public class ParquetFileReader implements AutoCloseable {
         }
 
         /// Set the maximum number of records to return in each batch for all columns.
-        /// Default: [ColumnReader#DEFAULT_BATCH_SIZE].
+        ///
+        /// When unset, the batch size is chosen adaptively from the projected
+        /// columns' physical widths so the per-batch arrays stay within the CPU
+        /// cache — the same byte-budgeted sizing the [RowReader] path uses —
+        /// rather than a fixed record count. Set this explicitly to override.
         public ColumnReadersBuilder batchSize(int batchSize) {
             if (batchSize <= 0) {
                 throw new IllegalArgumentException("batchSize must be positive: " + batchSize);
