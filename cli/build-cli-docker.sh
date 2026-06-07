@@ -68,14 +68,8 @@ if [ ! -f "$REPO_ROOT/cli/target/hardwood_completion" ]; then
   exit 1
 fi
 
-echo ""
-echo "Copying binary and completion script to docker build context..."
-cp "$REPO_ROOT/cli/target/hardwood-cli" "$REPO_ROOT/cli/docker/hardwood"
-cp "$REPO_ROOT/cli/target/hardwood_completion" "$REPO_ROOT/cli/docker/hardwood_completion"
-chmod +x "$REPO_ROOT/cli/docker/hardwood"
-
 echo "Building Docker image..."
-docker build -t "$IMAGE_NAME" -f "$REPO_ROOT/cli/docker/Dockerfile" "$REPO_ROOT/cli/docker"
+docker build -t "$IMAGE_NAME" -f "$REPO_ROOT/cli/docker/Dockerfile" "$REPO_ROOT/cli"
 
 echo ""
 echo "✓ Docker image built successfully: $IMAGE_NAME"

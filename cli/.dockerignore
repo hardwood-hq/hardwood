@@ -1,0 +1,4 @@
+# Exclude everything except the files the Dockerfile COPYs from target/.
+*
+!target/hardwood-cli
+!target/hardwood_completion

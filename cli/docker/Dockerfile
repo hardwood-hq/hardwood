@@ -1,8 +1,7 @@
 # SPDX-License-Identifier: Apache-2.0
 # Minimal Fedora-based container image for the hardwood native CLI.
-# This Dockerfile expects a pre-built native Linux `hardwood` executable
-# to be present in the build context (CLI CI will place the binary here
-# before building the image).
+# Build context must be the cli/ module directory so that target/ is reachable.
+# Run: docker build -t hardwood/hardwood:local -f docker/Dockerfile .
 
 FROM quay.io/fedora/fedora-minimal:41
 
@@ -12,13 +11,11 @@ LABEL org.opencontainers.image.licenses="Apache-2.0"
 
 ENV PATH=/usr/local/bin:$PATH
 
-# Copy pre-built native executable into the image. The CI will copy
-# the correct architecture-specific binary into this directory before
-# invoking `docker build`.
-COPY hardwood /usr/local/bin/hardwood
+# Copy pre-built native executable from the Maven target directory.
+COPY target/hardwood-cli /usr/local/bin/hardwood
 
 # Copy shell completion script (optional; sourced by users in interactive shells).
-COPY hardwood_completion /usr/local/bin/hardwood_completion
+COPY target/hardwood_completion /usr/local/bin/hardwood_completion
 
 # Create an entrypoint wrapper that starts an interactive shell when invoked
 # with no arguments, or runs hardwood otherwise.

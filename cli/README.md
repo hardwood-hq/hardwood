@@ -108,27 +108,19 @@ After building, run the image:
 docker run --rm hardwood/hardwood:local --help
 ```
 
-Using the Docker image
+Using the Docker image (run from the repo root)
 
 ```bash
 # Run a command (example: show help)
 docker run --rm hardwood/hardwood:local --help
 
-# Run info against a fixture (mount repo for test files)
+# Mount a local directory and run a command 
 docker run --rm -v "$(pwd)":/repo -w /repo hardwood/hardwood:local info -f core/src/test/resources/plain_uncompressed.parquet
 
 # Run interactive TUI in a container
 docker run --rm -it -v "$(pwd)":/repo -w /repo hardwood/hardwood:local dive -f core/src/test/resources/plain_uncompressed.parquet
 ```
 
-4) To use the completion script inside a running container shell:
-
-```bash
-# Start an interactive container (requires bash/shell to be present)
-docker run --rm -it hardwood/hardwood:local /bin/bash
-
-# Inside the container:
-source /usr/local/bin/hardwood_completion
-hardwood <TAB>  # completion should work
-```
+# Start an interactive shell (tab completion is sourced automatically)
+docker run --rm -it hardwood/hardwood:local
 
