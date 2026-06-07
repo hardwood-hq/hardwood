@@ -66,8 +66,8 @@ fi
 # the local repo first. The four modules are then installed (not just packaged)
 # so japicmp can resolve their snapshot dependencies cross-invocation.
 echo "Installing error-prone-checks and module JARs..."
-./mvnw -ntp -pl :hardwood-error-prone-checks -DskipTests install -q
-./mvnw -ntp -pl "$MODULES" -am -DskipTests install -q
+./mvnw -ntp -pl :hardwood-error-prone-checks -Dquick install -q
+./mvnw -ntp -pl "$MODULES" -am -Dquick install -q
 
 echo "Running japicmp..."
 if [ -z "$NEW" ]; then
