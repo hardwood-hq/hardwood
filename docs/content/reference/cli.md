@@ -235,3 +235,35 @@ source hardwood_completion
 ```
 
 To make it permanent, add the line above to your `~/.bashrc` or `~/.bash_profile`.
+
+## Docker
+
+A minimal Fedora-based Docker image is published to Docker Hub for Linux amd64 and arm64:
+
+```shell
+docker pull hardwood/hardwood:{{cli_release_tag}}
+```
+
+Run any command by passing it after the image name:
+
+```shell
+docker run --rm hardwood/hardwood:{{cli_release_tag}} --help
+docker run --rm hardwood/hardwood:{{cli_release_tag}} info -f /data/data.parquet
+```
+
+Mount a local directory to access files on the host:
+
+```shell
+docker run --rm \
+  -v "$(pwd)":/data \
+  hardwood/hardwood:{{cli_release_tag}} \
+  schema -f /data/data.parquet
+```
+
+Start an interactive shell with tab completion pre-loaded:
+
+```shell
+docker run --rm -it \
+  -v "$(pwd)":/data \
+  hardwood/hardwood:{{cli_release_tag}}
+```
