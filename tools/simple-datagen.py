@@ -944,6 +944,54 @@ print("\nGenerated delta_byte_array_test.parquet:")
 print("  - Encoding: DELTA_BYTE_ARRAY for string columns")
 print("  - Data: 8 rows with id, prefix_strings, varying_strings")
 
+# 13. DELTA_BYTE_ARRAY encoding for FIXED_LEN_BYTE_ARRAY columns.
+FLBA_LEN = 4
+required_vals = [
+    bytes([0xAA, 0xBB, 0x01, 0x00]),
+    bytes([0xAA, 0xBB, 0x01, 0x01]),   # prefix len 3 with previous
+    bytes([0xAA, 0xBB, 0x02, 0x00]),   # prefix len 2
+    bytes([0xAA, 0xCC, 0x00, 0x00]),   # prefix len 1
+    bytes([0xAA, 0xCC, 0x00, 0xFF]),   # prefix len 3
+    bytes([0xAA, 0xCC, 0x01, 0x00]),   # prefix len 3
+    bytes([0xFF, 0x00, 0x00, 0x00]),   # no common prefix
+    bytes([0xFF, 0x00, 0x00, 0x01]),   # prefix len 3
+    bytes([0xFF, 0x00, 0x01, 0x00]),   # prefix len 2
+    bytes([0xFF, 0xFF, 0x00, 0x00]),   # prefix len 1
+]
+
+optional_vals = [v if i % 3 != 0 else None
+                for i, v in enumerate(required_vals)]
+
+flba_schema = pa.schema([
+    ('id',       pa.int32(),         False),  # REQUIRED
+    ('tag_req',  pa.binary(FLBA_LEN), False), # REQUIRED FIXED_LEN_BYTE_ARRAY
+    ('tag_opt',  pa.binary(FLBA_LEN), True),  # OPTIONAL FIXED_LEN_BYTE_ARRAY
+])
+
+flba_table = pa.table(
+    {
+        'id':      list(range(1, 11)),
+        'tag_req': required_vals,
+        'tag_opt': optional_vals,
+    },
+    schema=flba_schema,
+)
+
+pq.write_table(
+    flba_table,
+    'core/src/test/resources/delta_byte_array_flba_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+    column_encoding={'tag_req': 'DELTA_BYTE_ARRAY', 'tag_opt': 'DELTA_BYTE_ARRAY'},
+)
+
+print("\nGenerated delta_byte_array_flba_test.parquet:")
+print("  - Encoding: DELTA_BYTE_ARRAY on FIXED_LEN_BYTE_ARRAY(4) columns")
+print("  - Columns: id (INT32), tag_req (REQUIRED), tag_opt (OPTIONAL with nulls on rows 0,3,6,9)")
+print("  - 10 rows with fixed prefix-sharing byte patterns")
+
+
 # ============================================================================
 # Map Test Files
 # ============================================================================
