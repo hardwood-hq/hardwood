@@ -7,14 +7,7 @@
  */
 package dev.hardwood.reader;
 
-import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.reader.FlatRowReader;
-import dev.hardwood.internal.reader.HardwoodContextImpl;
-import dev.hardwood.internal.reader.NestedRowReader;
-import dev.hardwood.internal.reader.RowGroupIterator;
-import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.row.StructAccessor;
-import dev.hardwood.schema.FileSchema;
 
 /// Provides row-oriented iteration over a Parquet file.
 ///
@@ -33,32 +26,6 @@ import dev.hardwood.schema.FileSchema;
 /// }
 /// ```
 public interface RowReader extends StructAccessor, AutoCloseable {
-
-    /// Creates a [RowReader] for the given pipeline components.
-    ///
-    /// Selects [dev.hardwood.internal.reader.FlatRowReader] for flat schemas and
-    /// [dev.hardwood.internal.reader.NestedRowReader] for nested schemas.
-    /// Wraps with [dev.hardwood.internal.reader.FilteredRowReader] when a filter is present.
-    ///
-    /// @param rowGroupIterator initialized iterator over row groups
-    /// @param schema file schema
-    /// @param projectedSchema column projection
-    /// @param context hardwood context
-    /// @param filter resolved predicate, or `null` for no filtering
-    /// @param maxRows maximum rows (0 = unlimited)
-    static RowReader create(RowGroupIterator rowGroupIterator,
-                            FileSchema schema,
-                            ProjectedSchema projectedSchema,
-                            HardwoodContextImpl context,
-                            ResolvedPredicate filter,
-                            long maxRows) {
-        if (schema.isFlatSchema()) {
-            return FlatRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows);
-        }
-        else {
-            return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows);
-        }
-    }
 
     /// Check if there are more rows to read.
     ///

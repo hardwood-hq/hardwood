@@ -18,7 +18,9 @@ import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
+import dev.hardwood.internal.reader.FlatRowReader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.NestedRowReader;
 import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
@@ -353,7 +355,7 @@ public class ParquetFileReader implements AutoCloseable {
             iterator.setTailSkip(skip);
         }
 
-        RowReader reader = RowReader.create(iterator, schema, projectedSchema, context, null, 0);
+        RowReader reader = createRowReader(iterator, schema, projectedSchema, context, null, 0);
 
         if (!fastSkip) {
             // Fallback: at least one projected column closes the per-page
@@ -383,7 +385,33 @@ public class ParquetFileReader implements AutoCloseable {
         iterator.initialize(projectedSchema, resolved);
         rowGroupIterators.add(iterator);
 
-        return RowReader.create(iterator, schema, projectedSchema, context, resolved, maxRows);
+        return createRowReader(iterator, schema, projectedSchema, context, resolved, maxRows);
+    }
+
+    /// Creates a [RowReader] for the given pipeline components.
+    ///
+    /// Selects [dev.hardwood.internal.reader.FlatRowReader] for flat schemas and
+    /// [dev.hardwood.internal.reader.NestedRowReader] for nested schemas.
+    /// Wraps with [dev.hardwood.internal.reader.FilteredRowReader] when a filter is present.
+    ///
+    /// @param rowGroupIterator initialized iterator over row groups
+    /// @param schema file schema
+    /// @param projectedSchema column projection
+    /// @param context hardwood context
+    /// @param filter resolved predicate, or `null` for no filtering
+    /// @param maxRows maximum rows (0 = unlimited)
+    private RowReader createRowReader (RowGroupIterator rowGroupIterator,
+                            FileSchema schema,
+                            ProjectedSchema projectedSchema,
+                            HardwoodContextImpl context,
+                            ResolvedPredicate filter,
+                            long maxRows) {
+        if (schema.isFlatSchema()) {
+            return FlatRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows);
+        }
+        else {
+            return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows);
+        }
     }
 
     ColumnReader buildColumnReader(String columnName, FilterPredicate filter) {
@@ -488,10 +516,6 @@ public class ParquetFileReader implements AutoCloseable {
             }
         }
         return rowGroups.subList(startIndex, rowGroups.size());
-    }
-
-    private List<RowGroup> filterRowGroups(ResolvedPredicate filter) {
-        return filterRowGroups(filter, null);
     }
 
     /// Filter row groups by an optional column-statistics predicate and an optional
