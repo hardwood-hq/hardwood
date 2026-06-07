@@ -242,14 +242,14 @@ To make it permanent, add the line above to your `~/.bashrc` or `~/.bash_profile
 A minimal Fedora-based Docker image is published to the GitHub Container Registry for Linux amd64 and arm64:
 
 ```shell
-docker pull ghcr.io/hardwood-hq/hardwood:{{cli_release_tag}}
+docker pull ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}}
 ```
 
 Run any command by passing it after the image name:
 
 ```shell
-docker run --rm ghcr.io/hardwood-hq/hardwood:{{cli_release_tag}} --help
-docker run --rm ghcr.io/hardwood-hq/hardwood:{{cli_release_tag}} info -f /data/data.parquet
+docker run --rm ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} --help
+docker run --rm ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} info -f /data/data.parquet
 ```
 
 Mount a local directory to access files on the host:
@@ -257,7 +257,7 @@ Mount a local directory to access files on the host:
 ```shell
 docker run --rm \
   -v "$(pwd)":/data \
-  ghcr.io/hardwood-hq/hardwood:{{cli_release_tag}} \
+  ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} \
   schema -f /data/data.parquet
 ```
 
@@ -266,7 +266,7 @@ The `dive` TUI needs an interactive terminal, so pass `-it`:
 ```shell
 docker run --rm -it \
   -v "$(pwd)":/data \
-  ghcr.io/hardwood-hq/hardwood:{{cli_release_tag}} \
+  ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}} \
   dive -f /data/data.parquet
 ```
 
@@ -275,5 +275,5 @@ Start an interactive shell with tab completion pre-loaded:
 ```shell
 docker run --rm -it \
   -v "$(pwd)":/data \
-  ghcr.io/hardwood-hq/hardwood:{{cli_release_tag}}
+  ghcr.io/hardwood-hq/hardwood:{{cli_docker_tag}}
 ```
