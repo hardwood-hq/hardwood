@@ -111,9 +111,6 @@ docker run --rm hardwood/hardwood:local --help
 Using the Docker image (run from the repo root)
 
 ```bash
-# Run a command (example: show help)
-docker run --rm hardwood/hardwood:local --help
-
 # Mount a local directory and run a command 
 docker run --rm -v "$(pwd)":/repo -w /repo hardwood/hardwood:local info -f core/src/test/resources/plain_uncompressed.parquet
 
@@ -121,6 +118,8 @@ docker run --rm -v "$(pwd)":/repo -w /repo hardwood/hardwood:local info -f core/
 docker run --rm -it -v "$(pwd)":/repo -w /repo hardwood/hardwood:local dive -f core/src/test/resources/plain_uncompressed.parquet
 ```
 
-# Start an interactive shell (tab completion is sourced automatically)
-docker run --rm -it hardwood/hardwood:local
+```bash
+# Start an interactive shell with the current directory mounted (tab completion is sourced automatically)
+docker run --rm -it -v "$(pwd)":/data -w /data hardwood/hardwood:local
+```
 
