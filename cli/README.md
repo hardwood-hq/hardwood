@@ -80,23 +80,35 @@ cli/target/hardwood-cli dive -f core/src/test/resources/plain_uncompressed.parqu
 
 Building a Docker image
 
-The repository contains a minimal Fedora-based Dockerfile at `cli/docker/Dockerfile`. To build a Docker image locally:
-
-1) Copy the built binary and completion script into the docker build context:
+The repository contains a minimal Fedora-based Dockerfile at `cli/docker/Dockerfile`. To build a Docker image locally, use the convenience script in the cli directory:
 
 ```bash
-cp cli/target/hardwood-cli cli/docker/hardwood
-cp cli/target/hardwood_completion cli/docker/hardwood_completion
-chmod +x cli/docker/hardwood
+cd cli
+./build-cli-docker.sh
 ```
 
-2) Build the Docker image:
+By default, the script uses an existing built binary if available. If you want to force a rebuild of the CLI binary, use the `-f` or `--force` flag:
 
 ```bash
-docker build -t hardwood/hardwood:local -f cli/docker/Dockerfile cli/docker
+./build-cli-docker.sh -f
 ```
 
-3) Run the Docker image:
+You can also specify a custom image tag:
+
+```bash
+./build-cli-docker.sh v1.0.0              # uses existing binary
+./build-cli-docker.sh --force v1.0.0      # forces rebuild
+```
+
+The script automatically builds a Linux native binary using the containerized native build (if needed). This requires Docker to be running.
+
+After building, run the image:
+
+```bash
+docker run --rm hardwood/hardwood:local --help
+```
+
+Using the Docker image
 
 ```bash
 # Run a command (example: show help)
