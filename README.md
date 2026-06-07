@@ -129,15 +129,13 @@ Run the following command to format the source code and organize the imports as 
 
 ### Building the Native CLI
 
-The `hardwood` CLI can be compiled to a GraalVM native binary using the `-Dnative` flag. See [`cli/README.md`](cli/README.md) for detailed build and usage instructions.
-
-Requires GraalVM (Java 25+) installed locally. Install via [SDKMAN](https://sdkman.io/):
+The `hardwood` CLI compiles to a GraalVM native binary. Requires GraalVM (Java 25+) installed locally — install via [SDKMAN](https://sdkman.io/):
 
 ```shell
 sdk install java 25.0.2-graalce
 ```
 
-Then run the native build for the `cli` module and its dependencies:
+Then build the `cli` module and its dependencies:
 
 ```shell
 ./mvnw -Dnative package -pl cli -am
@@ -145,7 +143,7 @@ Then run the native build for the `cli` module and its dependencies:
 
 The resulting binary is at `cli/target/hardwood-cli`.
 
-See [NATIVE_BUILD.md](NATIVE_BUILD.md) for details on how the native build works (compression codec handling, build arguments).
+See [NATIVE_BUILD.md](NATIVE_BUILD.md) for the full build guide — containerized Linux builds, the Docker image, and how the native build works (codec handling, build arguments).
 
 ### Building the Documentation
 

@@ -1,5 +1,62 @@
 # Native CLI Build Details
 
+## Building the native CLI
+
+### Prerequisites
+
+A local GraalVM (Java 25+) is required to build a native binary for your own platform. Install via [SDKMAN](https://sdkman.io/):
+
+```bash
+sdk install java 25.0.2-graalce
+```
+
+### Local build
+
+Build the native binary for the `cli` module and its dependencies:
+
+```bash
+./mvnw -Dnative package -pl cli -am
+```
+
+The resulting binary is at `cli/target/hardwood-cli`. Run it directly (e.g. `cli/target/hardwood-cli --help`); see the [CLI reference](docs/content/reference/cli.md) for command usage.
+
+### Linux binary without a local GraalVM (containerized)
+
+To build a Linux binary on a non-Linux host — e.g. for a Docker image on macOS — use Quarkus' containerized native build, which runs GraalVM inside the Mandrel builder container:
+
+```bash
+./mvnw -Dnative -Dquarkus.native.container-build=true package -pl cli -am
+```
+
+This requires Docker to be running. The build always produces a Linux ELF binary; running it directly on macOS fails with `exec format error`.
+
+### Building the Docker image
+
+`cli/build-cli-docker.sh` builds the container image. It produces (or reuses) the full native dist — the Linux binary, completion script, and codec libraries — building it in a container so it targets Linux regardless of the host OS, then builds the image:
+
+```bash
+cd cli
+./build-cli-docker.sh              # reuse an existing dist, tag :local
+./build-cli-docker.sh -f           # force a rebuild of the dist
+./build-cli-docker.sh v1.0.0       # custom tag
+```
+
+See the [CLI reference](docs/content/reference/cli.md#docker) for running the published image.
+
+### Troubleshooting: missing `error-prone-checks` artifact
+
+The QA profile wires in a build-only annotation-processor module, `dev.hardwood:hardwood-error-prone-checks`. On a clean tree, a native build of `cli` alone can fail with:
+
+```
+Could not find artifact dev.hardwood:hardwood-error-prone-checks:jar:1.0.0-SNAPSHOT
+```
+
+Build that module alongside the CLI:
+
+```bash
+./mvnw -Dnative package -pl cli,error-prone-checks -am
+```
+
 ## How the native build works
 
 The CLI module uses [Quarkus](https://quarkus.io/) with `quarkus-picocli` and GraalVM/Mandrel native image. Several non-obvious pieces are required to make all compression codecs work correctly in a native binary.
