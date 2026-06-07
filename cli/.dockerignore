@@ -1,4 +1,6 @@
-# Exclude everything except the files the Dockerfile COPYs from target/.
+# Exclude everything except the files the Dockerfile COPYs.
 *
 !target/hardwood-cli
 !target/hardwood_completion
+!target/native-libs
+!docker/entrypoint.sh

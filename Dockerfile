@@ -6,7 +6,7 @@
 #  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
 #
 
-FROM quay.io/fedora/fedora-minimal:41
+FROM quay.io/fedora/fedora-minimal:43
 
 RUN microdnf install -y --nodocs \
       curl \

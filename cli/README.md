@@ -87,7 +87,7 @@ cd cli
 ./build-cli-docker.sh
 ```
 
-By default, the script uses an existing built binary if available. If you want to force a rebuild of the CLI binary, use the `-f` or `--force` flag:
+By default, the script reuses an existing native dist if one is present. To rebuild it, use the `-f` or `--force` flag:
 
 ```bash
 ./build-cli-docker.sh -f
@@ -96,30 +96,30 @@ By default, the script uses an existing built binary if available. If you want t
 You can also specify a custom image tag:
 
 ```bash
-./build-cli-docker.sh v1.0.0              # uses existing binary
-./build-cli-docker.sh --force v1.0.0      # forces rebuild
+./build-cli-docker.sh v1.0.0              # reuse dist if present
+./build-cli-docker.sh --force v1.0.0      # force rebuild
 ```
 
-The script automatically builds a Linux native binary using the containerized native build (if needed). This requires Docker to be running.
+If no dist is present, the script builds the full native dist — the Linux `hardwood` binary, the completion script, and the codec native libraries — in a container, so it targets Linux regardless of the host OS. This means the image builds and runs on macOS (including reading compressed Parquet), and requires Docker to be running.
 
 After building, run the image:
 
 ```bash
-docker run --rm hardwood/hardwood:local --help
+docker run --rm ghcr.io/hardwood-hq/hardwood:local --help
 ```
 
 Using the Docker image (run from the repo root)
 
 ```bash
-# Mount a local directory and run a command 
-docker run --rm -v "$(pwd)":/repo -w /repo hardwood/hardwood:local info -f core/src/test/resources/plain_uncompressed.parquet
+# Mount a local directory and run a command
+docker run --rm -v "$(pwd)":/repo -w /repo ghcr.io/hardwood-hq/hardwood:local info -f core/src/test/resources/plain_uncompressed.parquet
 
 # Run interactive TUI in a container
-docker run --rm -it -v "$(pwd)":/repo -w /repo hardwood/hardwood:local dive -f core/src/test/resources/plain_uncompressed.parquet
+docker run --rm -it -v "$(pwd)":/repo -w /repo ghcr.io/hardwood-hq/hardwood:local dive -f core/src/test/resources/plain_uncompressed.parquet
 ```
 
 ```bash
 # Start an interactive shell with the current directory mounted (tab completion is sourced automatically)
-docker run --rm -it -v "$(pwd)":/data -w /data hardwood/hardwood:local
+docker run --rm -it -v "$(pwd)":/data -w /data ghcr.io/hardwood-hq/hardwood:local
 ```
 
