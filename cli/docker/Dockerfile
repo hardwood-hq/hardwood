@@ -1,4 +1,11 @@
-# SPDX-License-Identifier: Apache-2.0
+#
+#  SPDX-License-Identifier: Apache-2.0
+#
+#  Copyright The original authors
+#
+#  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+#
+
 # Minimal Fedora-based container image for the hardwood native CLI.
 # Build context must be the cli/ module directory so that target/ is reachable.
 # Run: docker build -t hardwood/hardwood:local -f docker/Dockerfile .
