@@ -529,9 +529,13 @@ public class S3SelectiveReadJfrTest extends AbstractJfrRecorderTest {
     void columnReaderPartialReadDoesNotScanAllRowGroups() throws Exception {
         // ColumnReader has the same lazy row-group fetching as RowReader.
         // Reading a single batch from one column should not scan all 20 row groups.
+        // Pin the batch to one row group's worth of rows so the assertion tracks
+        // lazy fetching rather than the (adaptive, width-derived) default batch
+        // size — a single INT64 column would otherwise byte-budget to 524K rows,
+        // i.e. ~11 of the 50K-row row groups, just to fill one batch.
         try (ParquetFileReader reader = ParquetFileReader.open(
                 source.inputFile("test-bucket", LAZY_ROWGROUP_FILE));
-             ColumnReader col = reader.columnReader("c0")) {
+             ColumnReader col = reader.buildColumnReader("c0").batchSize(LAZY_RG_ROWS).build()) {
             assertThat(col.nextBatch()).isTrue();
             // Consume one batch and close — don't read further
         }
