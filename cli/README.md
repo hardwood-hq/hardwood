@@ -78,7 +78,7 @@ cli/target/hardwood-cli print -n 10 -f core/src/test/resources/plain_uncompresse
 cli/target/hardwood-cli dive -f core/src/test/resources/plain_uncompressed.parquet
 ```
 
-Building a Docker image
+## Building a Docker image
 
 The repository contains a minimal Fedora-based Dockerfile at `cli/docker/Dockerfile`. To build a Docker image locally, use the convenience script in the cli directory:
 
