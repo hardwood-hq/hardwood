@@ -124,4 +124,4 @@ extra:
   # ghcr.io image tag the CLI docker examples pull (bare version, no v prefix —
   # registry convention differs from the git tag). Updated by release.sh for
   # the tagged docs build; main keeps it at the rolling early-access tag.
-  cli_docker_tag: 1.0-early-access
+  cli_docker_tag: 1.0.0.CR2
