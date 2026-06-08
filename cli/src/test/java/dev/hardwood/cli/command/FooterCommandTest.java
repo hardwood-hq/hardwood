@@ -41,4 +41,14 @@ class FooterCommandTest implements FooterCommandContract {
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).contains("Encrypted Parquet files are not supported");
     }
+
+    @Test
+    @Override
+    public void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("info", "-f", nonexistentFile());
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).contains("File not found");
+        assertThat(result.errorOutput()).contains(nonexistentFile());
+    }
 }

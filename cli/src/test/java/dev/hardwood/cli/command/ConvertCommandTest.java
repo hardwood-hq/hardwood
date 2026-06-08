@@ -154,4 +154,14 @@ class ConvertCommandTest implements ConvertCommandContract {
                   {"id":"1","name":"preferences","value":{"opt_in": true, "theme": "dark"}}
                 ]""");
     }
+
+    @Test
+    @Override
+    public void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("info", "-f", nonexistentFile());
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).contains("File not found");
+        assertThat(result.errorOutput()).contains(nonexistentFile());
+    }
 }

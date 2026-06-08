@@ -30,4 +30,14 @@ class InfoCommandTest implements InfoCommandContract {
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).contains("not implemented yet");
     }
+
+    @Test
+    @Override
+    public void failsOnNonexistentFile() {
+        Cli.Result result = Cli.launch("info", "-f", nonexistentFile());
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).contains("File not found");
+        assertThat(result.errorOutput()).contains(nonexistentFile());
+    }
 }
