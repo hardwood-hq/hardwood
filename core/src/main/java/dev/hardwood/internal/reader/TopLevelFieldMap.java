@@ -12,6 +12,8 @@ import java.util.List;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.internal.variant.ShredLevel;
+import dev.hardwood.metadata.ConvertedType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -130,7 +132,9 @@ final class TopLevelFieldMap {
         for (int i = 0; i < fieldCount; i++) {
             int projFieldIdx = projectedFieldIndices[i];
             SchemaNode topLevelNode = rootChildren.get(projFieldIdx);
-            FieldDesc desc = buildDesc(topLevelNode, schema, projectedSchema);
+            FieldDesc desc = topLevelNode.repetitionType() == RepetitionType.REPEATED
+                    ? buildBareRepeatedListDesc(topLevelNode, schema, projectedSchema)
+                    : buildDesc(topLevelNode, schema, projectedSchema);
             nameToIndex.put(topLevelNode.name(), i);
             byIndex[i] = desc;
             byOriginalIndex[projFieldIdx] = desc;
@@ -188,7 +192,9 @@ final class TopLevelFieldMap {
         int idx = 0;
         for (int i = 0; i < childCount; i++) {
             SchemaNode child = schemaChildren.get(i);
-            FieldDesc childDesc = buildDescForChild(child, schema, projectedSchema);
+            FieldDesc childDesc = child.repetitionType() == RepetitionType.REPEATED
+                    ? buildBareRepeatedListDesc(child, schema, projectedSchema)
+                    : buildDescForChild(child, schema, projectedSchema);
             if (childDesc != null) {
                 nameToIndex.put(child.name(), idx);
                 children[idx] = childDesc;
@@ -229,6 +235,65 @@ final class TopLevelFieldMap {
 
         return new FieldDesc.ListOf(listGroup, elementSchema, firstProjCol, leafCount,
                 nullDefLevel, elementDefLevel, elementDesc);
+    }
+
+    /// Builds a list descriptor for an unannotated `REPEATED` field. Per the
+    /// Parquet format spec, a repeated field that is neither contained by a
+    /// `LIST`/`MAP`-annotated group nor itself `LIST`/`MAP`-annotated is a
+    /// required list of required elements whose element type is the type of the
+    /// field (see
+    /// [Nested Types](https://parquet.apache.org/docs/file-format/types/logicaltypes/#nested-types)).
+    /// The field is wrapped in a synthetic required `LIST` group and surfaced
+    /// through the same machinery as an explicitly annotated list. The element is
+    /// the field itself — a repeated primitive yields list-of-scalar, a repeated
+    /// group yields list-of-struct — and is never unwrapped the way the
+    /// `LIST`-annotated backward-compatibility rules in
+    /// [SchemaNode.GroupNode#getListElement()] unwrap a single-field repeated group.
+    ///
+    /// Returns `null` when no leaf under `node` is part of the projection, so a
+    /// caller can treat it the same as [#buildDescForChild] for projection filtering.
+    static FieldDesc.ListOf buildBareRepeatedListDesc(SchemaNode node,
+                                                      FileSchema schema,
+                                                      ProjectedSchema projectedSchema) {
+        if (!isChildProjected(node, projectedSchema)) {
+            return null;
+        }
+        SchemaNode.GroupNode listGroup = syntheticListWrapper(node);
+
+        // The synthetic wrapper carries the levels "outside" the list, so the
+        // list is null exactly when its enclosing parent is absent; an element
+        // exists at or above the field's own definition level.
+        int nullDefLevel = listGroup.maxDefinitionLevel();
+        int elementDefLevel = node.maxDefinitionLevel();
+
+        int[] range = new int[] { Integer.MAX_VALUE, -1 };
+        collectLeafRange(node, projectedSchema, range);
+        int firstProjCol = range[0];
+        int lastProjCol = range[1];
+        int leafCount = (firstProjCol <= lastProjCol) ? (lastProjCol - firstProjCol + 1) : 0;
+
+        FieldDesc elementDesc = null;
+        if (node instanceof SchemaNode.GroupNode group) {
+            elementDesc = buildStructDesc(group, schema, projectedSchema);
+        }
+
+        return new FieldDesc.ListOf(listGroup, node, firstProjCol, leafCount,
+                nullDefLevel, elementDefLevel, elementDesc);
+    }
+
+    /// Synthesizes the required `LIST`-annotated container wrapping an
+    /// unannotated `REPEATED` field. Its definition/repetition levels are one
+    /// below the field's own (the levels outside the list), leaving the field as
+    /// the list element.
+    private static SchemaNode.GroupNode syntheticListWrapper(SchemaNode node) {
+        return new SchemaNode.GroupNode(
+                node.name(),
+                RepetitionType.REQUIRED,
+                ConvertedType.LIST,
+                null,
+                List.of(node),
+                node.maxDefinitionLevel() - 1,
+                node.maxRepetitionLevel() - 1);
     }
 
     static FieldDesc.MapOf buildMapDesc(SchemaNode.GroupNode mapGroup,

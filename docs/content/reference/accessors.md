@@ -122,3 +122,19 @@ only the inner repeated `key_value` group with `MAP_KEY_VALUE` and leave the out
 Hardwood recognizes this form as a map, so `getMap` returns a `PqMap` and the group's
 `SchemaNode.GroupNode.isMap()` reports `true` (with `logicalType()` returning a `MapType`), exactly as
 for the modern `MAP` annotation.
+
+## Legacy list encodings
+
+Lists predate the modern `LIST`-annotated three-level group and appear in older files in two legacy
+forms. Hardwood reads both as lists, so `getList` returns a `PqList` with no caller-side opt-in:
+
+- **Unannotated repeated field.** A `REPEATED` field carrying no `LIST`/`MAP` annotation is a required
+  list of required elements whose element type is the field itself. A repeated primitive reads as a
+  list of scalars (`getList("foo").ints()`); a repeated group reads as a list of structs
+  (`getList("foo").structs()`).
+- **Two-level `LIST` group.** A `LIST`-annotated group whose repeated child is the element directly,
+  with no intermediate `list` wrapper. Hardwood applies the parquet-format
+  [backward-compatibility rules](https://parquet.apache.org/docs/file-format/types/logicaltypes/#backward-compatibility-rules)
+  to resolve the element: a repeated group with multiple fields, a repeated group named `array` or
+  `<list>_tuple`, or a repeated group whose single field is itself repeated is the element struct;
+  otherwise the repeated group's single child is the element.

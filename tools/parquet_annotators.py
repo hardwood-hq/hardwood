@@ -479,6 +479,179 @@ def strip_converted_type(src: str, dst: str, field_name: str) -> None:
     _write_parquet_footer(dst, data, md)
 
 
+def collapse_list_to_unannotated_repeated(src: str, dst: str, field_name: str) -> None:
+    """Copy `src` to `dst`, rewriting a three-level required `LIST` of required
+    primitive elements into a bare unannotated `REPEATED` field.
+
+    Models the legacy encoding the Parquet spec defines as "a repeated field that
+    is neither contained by a LIST- or MAP-annotated group nor annotated by LIST
+    or MAP", which a reader must interpret as a required list of required
+    elements
+    (https://parquet.apache.org/docs/file-format/types/logicaltypes/#nested-types).
+    PyArrow always annotates lists, so the unannotated form is produced here by
+    footer surgery.
+
+    Only the footer schema is restructured; the data pages are left byte for
+    byte unchanged. A required list of required elements and a bare repeated
+    field share the same maximum definition and repetition levels (both 1), so
+    the encoded level streams are already correct against the collapsed
+    single-leaf schema. The three nodes — `field_name` (the LIST group), its
+    repeated child group, and the element leaf — are replaced by a single
+    `REPEATED` primitive named `field_name` carrying the element's physical type.
+    """
+    shutil.copy2(src, dst)
+    data, md = _read_parquet_footer(dst)
+
+    outer_idx = None
+    for i, el in enumerate(md.schema):
+        if el.name == field_name and el.num_children is not None:
+            outer_idx = i
+            break
+    if outer_idx is None:
+        raise ValueError(f"Top-level group '{field_name}' not found in schema")
+
+    repeated_group = md.schema[outer_idx + 1]
+    element = md.schema[outer_idx + 2]
+    if repeated_group.num_children is None or element.type is None:
+        raise ValueError(
+            f"'{field_name}' is not a three-level list of a primitive element")
+
+    element.name = field_name
+    element.repetition_type = _parquet.FieldRepetitionType.REPEATED
+    md.schema = md.schema[:outer_idx] + [element] + md.schema[outer_idx + 3:]
+
+    for row_group in md.row_groups:
+        for column in row_group.columns:
+            if column.meta_data.path_in_schema[0] == field_name:
+                column.meta_data.path_in_schema = [field_name]
+
+    _write_parquet_footer(dst, data, md)
+
+
+def collapse_list_of_lists_to_legacy_two_level(src: str, dst: str, list_name: str,
+                                               element_name: str, leaf_name: str) -> None:
+    """Copy `src` to `dst`, rewriting a modern `list<list<primitive>>` into the
+    legacy two-level encoding whose outer element is itself a repeated group.
+
+    Exercises the LIST backward-compatibility rule that a repeated group with a
+    single field that is *itself* repeated is the element type (a list whose
+    element is a list), rather than a synthetic single-field wrapper to be
+    unwrapped
+    (https://parquet.apache.org/docs/file-format/types/logicaltypes/#backward-compatibility-rules).
+
+    PyArrow emits the fully-annotated three-level-per-level form:
+
+        optional group <list_name> (LIST) { repeated group list {
+            required group element (LIST) { repeated group list {
+                required <primitive> element }}}}
+
+    which is rewritten to:
+
+        optional group <list_name> (LIST) {
+            repeated group <element_name> { repeated <primitive> <leaf_name> }}
+
+    Only the footer schema is restructured; the leaf level streams are unchanged
+    because the dropped intermediates are `required`/synthetic and contribute no
+    definition or repetition levels (both forms have leaf max def 3, max rep 2).
+    """
+    shutil.copy2(src, dst)
+    data, md = _read_parquet_footer(dst)
+
+    outer_idx = None
+    for i, el in enumerate(md.schema):
+        if el.name == list_name and el.num_children is not None:
+            outer_idx = i
+            break
+    if outer_idx is None:
+        raise ValueError(f"Top-level group '{list_name}' not found in schema")
+
+    # Depth-first layout under the outer LIST group:
+    #   [outer] [list] [element(LIST)] [list] [leaf]
+    middle = md.schema[outer_idx + 2]
+    leaf = md.schema[outer_idx + 4]
+    if middle.num_children is None or leaf.type is None:
+        raise ValueError(f"'{list_name}' is not a list<list<primitive>>")
+
+    middle.name = element_name
+    middle.repetition_type = _parquet.FieldRepetitionType.REPEATED
+    middle.converted_type = None
+    middle.logicalType = None
+    middle.num_children = 1
+
+    leaf.name = leaf_name
+    leaf.repetition_type = _parquet.FieldRepetitionType.REPEATED
+
+    md.schema = md.schema[:outer_idx + 1] + [middle, leaf] + md.schema[outer_idx + 5:]
+
+    for row_group in md.row_groups:
+        for column in row_group.columns:
+            if column.meta_data.path_in_schema[0] == list_name:
+                column.meta_data.path_in_schema = [list_name, element_name, leaf_name]
+
+    _write_parquet_footer(dst, data, md)
+
+
+def collapse_list_of_structs_to_unannotated_repeated_group(src: str, dst: str,
+                                                           field_name: str) -> None:
+    """Copy `src` to `dst`, rewriting a three-level required `LIST` of required
+    struct elements into a bare unannotated `REPEATED` group.
+
+    Models the legacy encoding the Parquet spec defines as "a repeated field that
+    is neither contained by a LIST- or MAP-annotated group nor annotated by LIST
+    or MAP", which a reader must interpret as a required list of required
+    elements — here the element is a group, so the field reads as a list of
+    structs
+    (https://parquet.apache.org/docs/file-format/types/logicaltypes/#nested-types).
+    PyArrow always annotates lists, so the unannotated form is produced here by
+    footer surgery.
+
+    Only the footer schema is restructured; the data pages are left byte for
+    byte unchanged. A required list of a required struct and a bare repeated
+    group share the same maximum definition and repetition levels for every leaf
+    (the dropped `LIST` outer group and `element` group are both `required` and
+    contribute no levels), so the encoded level streams are already correct
+    against the collapsed schema. The three structural nodes — `field_name` (the
+    LIST group), its repeated `list` child, and the `element` group — collapse
+    into a single `REPEATED` group named `field_name` that carries the struct's
+    fields directly.
+    """
+    shutil.copy2(src, dst)
+    data, md = _read_parquet_footer(dst)
+
+    outer_idx = None
+    for i, el in enumerate(md.schema):
+        if el.name == field_name and el.num_children is not None:
+            outer_idx = i
+            break
+    if outer_idx is None:
+        raise ValueError(f"Top-level group '{field_name}' not found in schema")
+
+    # Depth-first layout under the outer LIST group:
+    #   [outer] [list] [element(group)] [field...]
+    outer = md.schema[outer_idx]
+    repeated_group = md.schema[outer_idx + 1]
+    element = md.schema[outer_idx + 2]
+    if repeated_group.num_children is None or element.num_children is None:
+        raise ValueError(
+            f"'{field_name}' is not a three-level list of a struct element")
+
+    outer.repetition_type = _parquet.FieldRepetitionType.REPEATED
+    outer.converted_type = None
+    outer.logicalType = None
+    outer.num_children = element.num_children
+
+    md.schema = md.schema[:outer_idx + 1] + md.schema[outer_idx + 3:]
+
+    for row_group in md.row_groups:
+        for column in row_group.columns:
+            path = column.meta_data.path_in_schema
+            if path[0] == field_name:
+                # Drop the synthetic 'list' and 'element' path components.
+                column.meta_data.path_in_schema = [field_name] + path[3:]
+
+    _write_parquet_footer(dst, data, md)
+
+
 def annotate_map_as_legacy_key_value(src: str, dst: str, field_name: str) -> None:
     """Copy `src` to `dst`, rewriting the MAP for `field_name` into the legacy
     MAP_KEY_VALUE-only encoding.

@@ -509,4 +509,89 @@ class ColumnReaderLayerModelTest {
             assertThat(valueInts[entry]).isEqualTo(42);
         }
     }
+
+    /// Legacy list encodings (#656) must surface through the same layer model as
+    /// their modern equivalents — the ColumnReader path derives its layers solely
+    /// from [dev.hardwood.internal.reader.NestedLevelComputer], so a bare
+    /// unannotated `REPEATED INT32` is a one-layer list: a single `REPEATED`
+    /// layer over the leaf, here `foo = [42, 7]`.
+    @Test
+    void unannotatedRepeatedPrimitiveExposesSingleRepeatedLayer() throws Exception {
+        Path file = Paths.get("src/test/resources/unannotated_repeated_primitive_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+             ColumnReader col = reader.columnReader("foo")) {
+
+            assertThat(col.nextBatch()).isTrue();
+            assertThat(col.getRecordCount()).isEqualTo(1);
+            assertThat(col.getLayerCount()).isEqualTo(1);
+            assertThat(col.getLayerKind(0)).isEqualTo(LayerKind.REPEATED);
+            assertThat(col.getLayerOffsets(0)).containsExactly(0, 2);
+            assertThat(col.getInts()).containsExactly(42, 7);
+        }
+    }
+
+    /// A legacy two-level list-of-lists (`mylist (LIST) { repeated group bag {
+    /// repeated int32 num } }`) must produce the *same* two `REPEATED`-layer
+    /// chained-offset model as the modern fully-annotated `list<list<int>>`. The
+    /// two fixtures share their leaf data byte-for-byte and differ only in footer
+    /// schema, so the ColumnReader layer model and values must coincide.
+    @Test
+    void legacyTwoLevelListOfListsMatchesModernLayerModel() throws Exception {
+        Path legacy = Paths.get("src/test/resources/list_of_lists_legacy_two_level_test.parquet");
+        Path modern = Paths.get("src/test/resources/list_of_lists_modern_test.parquet");
+
+        try (ParquetFileReader legacyReader = ParquetFileReader.open(InputFile.of(legacy));
+             ColumnReader legacyCol = legacyReader.columnReader("mylist.bag.num");
+             ParquetFileReader modernReader = ParquetFileReader.open(InputFile.of(modern));
+             ColumnReader modernCol = modernReader.columnReader("mylist.list.element.list.element")) {
+
+            assertThat(legacyCol.nextBatch()).isTrue();
+            assertThat(modernCol.nextBatch()).isTrue();
+
+            assertThat(legacyCol.getLayerCount()).isEqualTo(2);
+            assertThat(legacyCol.getLayerKind(0)).isEqualTo(LayerKind.REPEATED);
+            assertThat(legacyCol.getLayerKind(1)).isEqualTo(LayerKind.REPEATED);
+
+            // [[1,2],[3]] — outer list of 2, inner offsets split 2|1, leaf [1,2,3].
+            assertThat(legacyCol.getLayerOffsets(0)).containsExactly(0, 2);
+            assertThat(legacyCol.getLayerOffsets(1)).containsExactly(0, 2, 3);
+            assertThat(legacyCol.getInts()).containsExactly(1, 2, 3);
+
+            // Parity with the modern fully-annotated encoding.
+            assertThat(legacyCol.getLayerOffsets(0)).containsExactly(modernCol.getLayerOffsets(0));
+            assertThat(legacyCol.getLayerOffsets(1)).containsExactly(modernCol.getLayerOffsets(1));
+            assertThat(legacyCol.getInts()).containsExactly(modernCol.getInts());
+        }
+    }
+
+    /// An unannotated `REPEATED group { a; b }` is a list of (required) structs.
+    /// Each leaf column exposes one `REPEATED` layer with the *same* offsets — no
+    /// `STRUCT` layer, since the element struct is required — so a consumer
+    /// reconstructs structs by reading `foo.a` and `foo.b` in lockstep over the
+    /// shared offsets. Here `foo = [{a:1,b:"x"}, {a:2,b:"y"}]`.
+    @Test
+    void unannotatedRepeatedGroupExposesListOfStructsOverSharedOffsets() throws Exception {
+        Path file = Paths.get("src/test/resources/unannotated_repeated_group_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+             ColumnReader aCol = reader.columnReader("foo.a");
+             ColumnReader bCol = reader.columnReader("foo.b")) {
+
+            assertThat(aCol.nextBatch()).isTrue();
+            assertThat(bCol.nextBatch()).isTrue();
+
+            assertThat(aCol.getLayerCount()).isEqualTo(1);
+            assertThat(aCol.getLayerKind(0)).isEqualTo(LayerKind.REPEATED);
+            assertThat(bCol.getLayerCount()).isEqualTo(1);
+            assertThat(bCol.getLayerKind(0)).isEqualTo(LayerKind.REPEATED);
+
+            // Both leaves of the same repeated struct carry identical list offsets.
+            assertThat(aCol.getLayerOffsets(0)).containsExactly(0, 2);
+            assertThat(bCol.getLayerOffsets(0)).containsExactly(aCol.getLayerOffsets(0));
+
+            assertThat(aCol.getInts()).containsExactly(1, 2);
+            assertThat(bCol.getStrings()).containsExactly("x", "y");
+        }
+    }
 }

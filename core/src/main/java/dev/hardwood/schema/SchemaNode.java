@@ -98,13 +98,16 @@ public sealed interface SchemaNode {
     ///
     /// Applies the Parquet backward-compatibility rules for legacy 2-level
     /// encodings as defined in the format spec; see
-    /// [Backward-compatibility rules](https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#backward-compatibility-rules):
+    /// [Backward-compatibility rules](https://parquet.apache.org/docs/file-format/types/logicaltypes/#backward-compatibility-rules):
     ///
     /// 1. If the repeated field is not a group, the repeated field's type is the element type.
     /// 2. If the repeated field is a group with multiple fields, the repeated group is the element.
-    /// 3. If the repeated field is a group with one field and is named either `array` or uses
+    /// 3. If the repeated field is a group with one field and that field is itself `repeated`, the
+    ///    repeated group is the element — it is a genuine element struct, not a synthetic
+    ///    single-field wrapper (legacy 2-level encoding of a list whose element is itself a list).
+    /// 4. If the repeated field is a group with one field and is named either `array` or uses
     ///    the LIST-annotated group's name with `_tuple` appended, the repeated group is the element.
-    /// 4. Otherwise, the repeated field's single child is the element (standard 3-level encoding).
+    /// 5. Otherwise, the repeated field's single child is the element (standard 3-level encoding).
         public SchemaNode getListElement() {
             if (!isList() || children.isEmpty()) {
                 return null;
@@ -121,13 +124,19 @@ public sealed interface SchemaNode {
             if (innerGroup.children().size() != 1) {
                 return innerGroup;
             }
-            // Rule 3: repeated group with one field named 'array' or '<listName>_tuple' —
+            // Rule 3: repeated group whose single field is itself repeated — the repeated group
+            // is the element. A synthetic 3-level wrapper never has a repeated child, so a
+            // repeated child marks this group as a real element (a list whose element is a list).
+            if (innerGroup.children().get(0).repetitionType() == RepetitionType.REPEATED) {
+                return innerGroup;
+            }
+            // Rule 4: repeated group with one field named 'array' or '<listName>_tuple' —
             // the repeated group is the element (legacy 2-level encoding).
             String innerName = innerGroup.name();
             if ("array".equals(innerName) || (name() + "_tuple").equals(innerName)) {
                 return innerGroup;
             }
-            // Rule 4: standard 3-level encoding — the repeated group's single child is the element.
+            // Rule 5: standard 3-level encoding — the repeated group's single child is the element.
             return innerGroup.children().get(0);
         }
 

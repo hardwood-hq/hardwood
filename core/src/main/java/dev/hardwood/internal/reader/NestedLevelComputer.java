@@ -254,7 +254,24 @@ public final class NestedLevelComputer {
                                             List<LayerKind> kinds, List<Integer> thresholds,
                                             boolean parentWasListMap) {
         return switch (node) {
-            case SchemaNode.PrimitiveNode prim -> prim.columnIndex() == columnIndex;
+            case SchemaNode.PrimitiveNode prim -> {
+                if (prim.columnIndex() != columnIndex) {
+                    yield false;
+                }
+                // A repeated primitive that is not the suppressed element of a
+                // LIST/MAP wrapper contributes its own `REPEATED` layer: the bare
+                // unannotated repeated field, including the inner repeated element
+                // of a legacy 2-level list-of-lists. When it IS the wrapper's
+                // element (`parentWasListMap`), the enclosing LIST/MAP already
+                // accounts for that repetition level. The threshold is the
+                // container's def level (one below the leaf's), so the leaf items
+                // appear at `threshold + 1 == prim.maxDefinitionLevel()`.
+                if (!parentWasListMap && prim.repetitionType() == RepetitionType.REPEATED) {
+                    kinds.add(LayerKind.REPEATED);
+                    thresholds.add(prim.maxDefinitionLevel() - 1);
+                }
+                yield true;
+            }
             case SchemaNode.GroupNode group -> {
                 boolean isListOrMap = group.isList() || group.isMap();
                 LayerKind addedKind = null;

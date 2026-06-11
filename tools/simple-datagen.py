@@ -30,6 +30,9 @@ from parquet_annotators import (
     annotate_element_at_path_as_decimal,
     annotate_columns_as_legacy_converted_type,
     annotate_map_as_legacy_key_value,
+    collapse_list_to_unannotated_repeated,
+    collapse_list_of_structs_to_unannotated_repeated_group,
+    collapse_list_of_lists_to_legacy_two_level,
     strip_converted_type,
     corrupt_data_page_offset_negative,
 )
@@ -387,6 +390,111 @@ pq.write_table(
 
 print("\nGenerated list_basic_test.parquet:")
 print("  - Data: id=[1,2,3,4], tags=[[a,b,c],[],null,[single]], scores=[[10,20,30],[100],[1,2],null]")
+
+# ---------------------------------------------------------------------------
+# Unannotated repeated field read as a list (hardwood-hq/hardwood#656).
+#
+# A required list of required int32 elements is the three-level annotated form;
+# a bare `REPEATED INT32` is the legacy unannotated form the Parquet spec says
+# must be read as a required list of required elements. Both encode the single
+# row `foo = [42, 7]` and share identical data pages — only the footer schema
+# differs — so the unannotated fixture is derived from the annotated one by
+# collapsing its LIST schema (PyArrow always annotates lists).
+unannotated_repeated_type = pa.list_(pa.field('element', pa.int32(), nullable=False))
+unannotated_repeated_table = pa.table(
+    {'foo': pa.array([[42, 7]], type=unannotated_repeated_type)},
+    schema=pa.schema([pa.field('foo', unannotated_repeated_type, nullable=False)])
+)
+pq.write_table(
+    unannotated_repeated_table,
+    'core/src/test/resources/unannotated_repeated_annotated_list_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+    store_schema=False
+)
+collapse_list_to_unannotated_repeated(
+    'core/src/test/resources/unannotated_repeated_annotated_list_test.parquet',
+    'core/src/test/resources/unannotated_repeated_primitive_test.parquet',
+    'foo'
+)
+
+print("\nGenerated unannotated_repeated_annotated_list_test.parquet + unannotated_repeated_primitive_test.parquet:")
+print("  - Data: foo=[42,7]; annotated three-level LIST and the collapsed unannotated REPEATED INT32 form")
+
+# ---------------------------------------------------------------------------
+# Legacy two-level list-of-lists (hardwood-hq/hardwood#656, LIST backward-compat
+# rule 3). The outer list's element is a repeated group whose single field is
+# itself repeated, so the repeated group is the element and must NOT be unwrapped
+# the way a synthetic single-field wrapper would be. PyArrow only emits the
+# fully-annotated form, so the legacy encoding is derived by footer surgery.
+#
+# Both files carry identical leaf data (max def 3, max rep 2) but differ in how
+# the schema is interpreted: the modern form is a plain list<list<int>> read as
+# [[1, 2], [3]], while the legacy two-level form names the intermediate repeated
+# group and is read via rule 3 as list<struct{num: list<int>}>, i.e.
+# [{num: [1, 2]}, {num: [3]}].
+legacy_lol_type = pa.list_(pa.field('num', pa.int32(), nullable=False))
+legacy_lol_table = pa.table(
+    {'mylist': pa.array([[[1, 2], [3]]],
+                        type=pa.list_(pa.field('bag', legacy_lol_type, nullable=False)))},
+    schema=pa.schema([pa.field('mylist',
+                               pa.list_(pa.field('bag', legacy_lol_type, nullable=False)),
+                               nullable=True)])
+)
+pq.write_table(
+    legacy_lol_table,
+    'core/src/test/resources/list_of_lists_modern_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+    store_schema=False
+)
+collapse_list_of_lists_to_legacy_two_level(
+    'core/src/test/resources/list_of_lists_modern_test.parquet',
+    'core/src/test/resources/list_of_lists_legacy_two_level_test.parquet',
+    'mylist', 'bag', 'num'
+)
+
+print("\nGenerated list_of_lists_modern_test.parquet + list_of_lists_legacy_two_level_test.parquet:")
+print("  - modern list<list<int>> reads [[1,2],[3]]; legacy 2-level reads list<struct{num:list}> = [{num:[1,2]},{num:[3]}]")
+
+# ---------------------------------------------------------------------------
+# Unannotated repeated GROUP read as a list of structs (hardwood-hq/hardwood#656).
+#
+# The element of a bare unannotated repeated field is the field itself, so a
+# repeated group surfaces as list<struct>. The annotated three-level form is a
+# required list of a required struct; the bare form is derived from it by
+# collapsing the LIST/list/element scaffolding (all required, contributing no
+# levels) into a single REPEATED group, leaving the leaf data pages untouched.
+# Both encode the single row foo = [{a:1,b:'x'}, {a:2,b:'y'}].
+unannotated_repeated_group_struct = pa.struct([
+    pa.field('a', pa.int32(), nullable=True),
+    pa.field('b', pa.string(), nullable=True),
+])
+unannotated_repeated_group_type = pa.list_(
+    pa.field('element', unannotated_repeated_group_struct, nullable=False))
+unannotated_repeated_group_table = pa.table(
+    {'foo': pa.array([[{'a': 1, 'b': 'x'}, {'a': 2, 'b': 'y'}]],
+                     type=unannotated_repeated_group_type)},
+    schema=pa.schema([pa.field('foo', unannotated_repeated_group_type, nullable=False)])
+)
+pq.write_table(
+    unannotated_repeated_group_table,
+    'core/src/test/resources/unannotated_repeated_group_annotated_list_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+    store_schema=False
+)
+collapse_list_of_structs_to_unannotated_repeated_group(
+    'core/src/test/resources/unannotated_repeated_group_annotated_list_test.parquet',
+    'core/src/test/resources/unannotated_repeated_group_test.parquet',
+    'foo'
+)
+
+print("\nGenerated unannotated_repeated_group_annotated_list_test.parquet + unannotated_repeated_group_test.parquet:")
+print("  - Data: foo=[{a:1,b:x},{a:2,b:y}]; annotated three-level LIST and the collapsed unannotated REPEATED group form")
 
 # 3. List of structs test
 list_struct_schema = pa.schema([
