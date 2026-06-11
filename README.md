@@ -5,7 +5,7 @@
 # Hardwood
 
 _A parser for the Apache Parquet file format, optimized for minimal dependencies and great performance.
-Available as a Java library and a [command-line tool](https://hardwood.dev/latest/cli/)._
+Available as a Java library and a [command-line tool](https://hardwood.dev/latest/reference/cli/)._
 
 Goals of the project are:
 
