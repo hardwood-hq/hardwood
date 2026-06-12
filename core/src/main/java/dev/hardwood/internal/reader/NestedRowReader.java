@@ -53,6 +53,7 @@ public final class NestedRowReader implements RowReader {
     private int rowIndex = -1;
     private int batchSize = 0;
     private boolean exhausted;
+    private boolean closed;
 
 
     NestedRowReader(BatchExchange<NestedBatch>[] exchanges, NestedColumnWorker[] columnWorkers,
@@ -322,6 +323,10 @@ public final class NestedRowReader implements RowReader {
 
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         if (columnWorkers != null) {
             for (NestedColumnWorker worker : columnWorkers) {
                 worker.close();

@@ -86,6 +86,7 @@ public class ColumnReader implements AutoCloseable {
     private NestedBatch currentNestedBatch;
     private int recordCount;
     private boolean exhausted;
+    private boolean closed;
 
     // Real-items-only view for nested batches, computed lazily and cached per
     // batch. Invalidated in `nextBatch()`.
@@ -496,6 +497,8 @@ public class ColumnReader implements AutoCloseable {
         return column;
     }
 
+    /// Releases the resources held by this reader. Idempotent: calling it more
+    /// than once has no further effect.
     @Override
     public void close() {
         // When a coordinator owns this reader, closing any single reader tears
@@ -513,6 +516,10 @@ public class ColumnReader implements AutoCloseable {
     /// involving the [FilterCoordinator]. Called directly on the unfiltered
     /// path and by the coordinator when it tears down the projection.
     void rawClose() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         if (columnWorker != null) {
             try {
                 columnWorker.close();

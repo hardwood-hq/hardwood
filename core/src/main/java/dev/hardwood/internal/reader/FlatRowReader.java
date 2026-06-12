@@ -82,6 +82,7 @@ public final class FlatRowReader implements RowReader {
     private int rowIndex = -1;
     private int batchSize = 0;
     private boolean exhausted;
+    private boolean closed;
 
     // Drain-side filter path: when drainSide is true, iterate via nextSetBit over
     // combinedWords. When false, the original rowIndex++ path is taken.
@@ -871,6 +872,10 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public void close() {
+        if (closed) {
+            return;
+        }
+        closed = true;
         if (columnWorkers != null) {
             for (FlatColumnWorker worker : columnWorkers) {
                 worker.close();

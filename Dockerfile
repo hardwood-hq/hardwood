@@ -18,6 +18,7 @@ RUN microdnf install -y --nodocs \
       tar \
       diffutils \
       binutils \
+      file \
       vim-common \
       python3 \
       python3-pip \

@@ -37,6 +37,8 @@ public interface RowReader extends StructAccessor, AutoCloseable {
     /// @throws java.util.NoSuchElementException if no more rows are available
     void next();
 
+    /// Releases the resources held by this reader. Idempotent: calling it more
+    /// than once has no further effect.
     @Override
     void close();
 }
