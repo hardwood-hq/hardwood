@@ -38,8 +38,8 @@ class SchemaCompatibilityTest {
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
                     .hasMessage("[compat_ts_millis.parquet] Column 'ts' has incompatible logical type:" +
-                            " expected TimestampType[isAdjustedToUTC=true, unit=MICROS]" +
-                            " but found TimestampType[isAdjustedToUTC=true, unit=MILLIS]");
+                            " expected TIMESTAMP(MICROS, UTC)" +
+                            " but found TIMESTAMP(MILLIS, UTC)");
         }
     }
 
@@ -58,8 +58,8 @@ class SchemaCompatibilityTest {
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
                     .hasMessage("[compat_decimal_10_4.parquet] Column 'amount' has incompatible logical type:" +
-                            " expected DecimalType[scale=2, precision=10]" +
-                            " but found DecimalType[scale=4, precision=10]");
+                            " expected DECIMAL(10, 2)" +
+                            " but found DECIMAL(10, 4)");
         }
     }
 
@@ -97,7 +97,7 @@ class SchemaCompatibilityTest {
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
                     .hasMessage("[compat_plain_int64.parquet] Column 'ts' has incompatible logical type:" +
-                            " expected TimestampType[isAdjustedToUTC=true, unit=MICROS] but found null");
+                            " expected TIMESTAMP(MICROS, UTC) but found null");
         }
     }
 

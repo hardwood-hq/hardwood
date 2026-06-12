@@ -11,7 +11,6 @@ import java.nio.file.Paths;
 import java.time.Instant;
 import java.time.LocalDateTime;
 import java.time.ZoneOffset;
-import java.util.Locale;
 
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ParquetFileReader;
@@ -112,29 +111,7 @@ public class DebugParquetTest {
     }
 
     private static String formatLogicalType(LogicalType logicalType) {
-        if (logicalType == null) {
-            return "-";
-        }
-        // Extract the simple type name from the record class
-        String name = logicalType.getClass().getSimpleName();
-        // Remove "Type" suffix if present (e.g., "TimestampType" -> "TIMESTAMP")
-        if (name.endsWith("Type")) {
-            name = name.substring(0, name.length() - 4);
-        }
-        // Add parameters for parameterized types
-        if (logicalType instanceof LogicalType.TimestampType ts) {
-            return name.toUpperCase(Locale.ROOT) + "(" + ts.unit() + ")";
-        }
-        if (logicalType instanceof LogicalType.TimeType t) {
-            return name.toUpperCase(Locale.ROOT) + "(" + t.unit() + ")";
-        }
-        if (logicalType instanceof LogicalType.DecimalType d) {
-            return name.toUpperCase(Locale.ROOT) + "(" + d.precision() + "," + d.scale() + ")";
-        }
-        if (logicalType instanceof LogicalType.IntType i) {
-            return (i.isSigned() ? "INT" : "UINT") + "_" + i.bitWidth();
-        }
-        return name.toUpperCase(Locale.ROOT);
+        return logicalType == null ? "-" : logicalType.toString();
     }
 
     private static String padRight(String s, int width) {

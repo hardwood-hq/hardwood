@@ -10,6 +10,10 @@ package dev.hardwood.metadata;
 /// Logical types that provide semantic meaning to physical types.
 /// Sealed interface allows for parameterized types (e.g., DECIMAL with scale/precision).
 ///
+/// Each implementation's `toString()` renders the Parquet-style annotation token shown in
+/// schema dumps and metadata views — `STRING`, `LIST`, `DECIMAL(10, 2)`, `TIMESTAMP(MICROS, UTC)`,
+/// and so on — not the default record representation.
+///
 /// @see <a href="https://parquet.apache.org/docs/file-format/types/logicaltypes/">File Format – Logical Types</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public sealed
@@ -18,33 +22,78 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
 {
 
     /// UTF-8 encoded string.
-    record StringType() implements LogicalType {}
+    record StringType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "STRING";
+        }
+    }
 
     /// Column whose every value is null. Carries no parameters; the value of
     /// every row in such a column is SQL NULL.
-    record NullType() implements LogicalType {}
+    record NullType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "NULL";
+        }
+    }
 
     /// Enum stored as a UTF-8 string.
-    record EnumType() implements LogicalType {}
+    record EnumType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "ENUM";
+        }
+    }
 
     /// UUID stored as a 16-byte fixed-length byte array.
-    record UuidType() implements LogicalType {}
+    record UuidType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "UUID";
+        }
+    }
 
     /// Calendar date (days since Unix epoch).
-    record DateType() implements LogicalType {}
+    record DateType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "DATE";
+        }
+    }
 
     /// JSON document stored as a UTF-8 string.
-    record JsonType() implements LogicalType {}
+    record JsonType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "JSON";
+        }
+    }
 
     /// BSON document stored as a byte array.
-    record BsonType() implements LogicalType {}
+    record BsonType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "BSON";
+        }
+    }
 
     /// Interval stored as a 12-byte fixed-length byte array (months, days, millis).
-    record IntervalType() implements LogicalType {}
+    record IntervalType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "INTERVAL";
+        }
+    }
 
     /// IEEE 754 half-precision (binary16) floating point, stored as a 2-byte
     /// `FIXED_LEN_BYTE_ARRAY` in little-endian byte order.
-    record Float16Type() implements LogicalType {}
+    record Float16Type() implements LogicalType {
+        @Override
+        public String toString() {
+            return "FLOAT16";
+        }
+    }
 
     /// Integer type with a specific bit width and signedness.
     ///
@@ -55,6 +104,11 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
             if (bitWidth != 8 && bitWidth != 16 && bitWidth != 32 && bitWidth != 64) {
                 throw new IllegalArgumentException("Invalid bit width: " + bitWidth);
             }
+        }
+
+        @Override
+        public String toString() {
+            return (isSigned ? "INT" : "UINT") + "_" + bitWidth;
         }
     }
 
@@ -71,25 +125,50 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
                 throw new IllegalArgumentException("Scale cannot be negative: " + scale);
             }
         }
+
+        @Override
+        public String toString() {
+            return "DECIMAL(" + precision + ", " + scale + ")";
+        }
     }
 
     /// Time of day with configurable precision and UTC adjustment.
     ///
     /// @param isAdjustedToUTC `true` if the value is normalized to UTC
     /// @param unit time resolution (millis, micros, or nanos)
-    record TimeType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {}
+    record TimeType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {
+        @Override
+        public String toString() {
+            return "TIME(" + unit + ", " + (isAdjustedToUTC ? "UTC" : "local") + ")";
+        }
+    }
 
     /// Timestamp with configurable precision and UTC adjustment.
     ///
     /// @param isAdjustedToUTC `true` if the value is normalized to UTC
     /// @param unit time resolution (millis, micros, or nanos)
-    record TimestampType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {}
+    record TimestampType(boolean isAdjustedToUTC, TimeUnit unit) implements LogicalType {
+        @Override
+        public String toString() {
+            return "TIMESTAMP(" + unit + ", " + (isAdjustedToUTC ? "UTC" : "local") + ")";
+        }
+    }
 
     /// List (repeated element) logical type.
-    record ListType() implements LogicalType {}
+    record ListType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "LIST";
+        }
+    }
 
     /// Map (key-value pairs) logical type.
-    record MapType() implements LogicalType {}
+    record MapType() implements LogicalType {
+        @Override
+        public String toString() {
+            return "MAP";
+        }
+    }
 
     /// Variant (self-describing, semi-structured) logical type per the Parquet
     /// Variant spec. Annotates a group whose children are `metadata` (binary) and
@@ -112,13 +191,33 @@ permits LogicalType.StringType,LogicalType.EnumType,LogicalType.UuidType,Logical
     /// Geometry type with configurable CRS
     ///
     /// @param crs geospatial coordinate reference system, OGC:CRS84 if absent
-    record GeometryType(String crs) implements LogicalType {}
+    record GeometryType(String crs) implements LogicalType {
+        @Override
+        public String toString() {
+            return crs == null ? "GEOMETRY" : "GEOMETRY(" + crs + ")";
+        }
+    }
 
     /// Geography type with configurable CRS
     ///
     /// @param crs geospatial coordinate reference system, OGC:CRS84 if absent
     /// @param edgeInterpolation geodesic formulation
-    record GeographyType(String crs, EdgeInterpolationAlgorithm edgeInterpolation) implements LogicalType {}
+    record GeographyType(String crs, EdgeInterpolationAlgorithm edgeInterpolation) implements LogicalType {
+        @Override
+        public String toString() {
+            StringBuilder params = new StringBuilder();
+            if (crs != null) {
+                params.append(crs);
+            }
+            if (edgeInterpolation != null) {
+                if (params.length() > 0) {
+                    params.append(", ");
+                }
+                params.append(edgeInterpolation);
+            }
+            return params.length() == 0 ? "GEOGRAPHY" : "GEOGRAPHY(" + params + ")";
+        }
+    }
 
     /// Resolution of time and timestamp logical types.
     enum TimeUnit {

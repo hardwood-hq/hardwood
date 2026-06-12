@@ -108,11 +108,11 @@ group`, and that pair contributes one `REPEATED` layer rather than one layer per
 above resolve any schema unambiguously. Take a `contacts` column whose schema prints as:
 
 ```
-optional group contacts (ListType[]) {
+optional group contacts (LIST) {
   repeated group list {
     optional group element {
-      required byte_array name (StringType[]);
-      optional byte_array phoneNumber (StringType[]);
+      required byte_array name (STRING);
+      optional byte_array phoneNumber (STRING);
     }
   }
 }
@@ -121,10 +121,10 @@ optional group contacts (ListType[]) {
 Walking the chain for `contacts.list.element.name`, the two `LIST` nodes fuse into one layer:
 
 ```
-optional group contacts (ListType[])   ──┐
-  repeated group list                  ──┴─►  REPEATED  (layer 0)
-    optional group element             ────►  STRUCT    (layer 1)
-      required byte_array name          ───►  leaf
+optional group contacts (LIST)  ──┐
+  repeated group list           ──┴─►  REPEATED  (layer 0)
+    optional group element      ────►  STRUCT    (layer 1)
+      required byte_array name  ────►  leaf
 ```
 
 `getLayerCount()` is `2`, with kinds `[REPEATED, STRUCT]`. The list's own nullability is not a
