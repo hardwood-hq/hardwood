@@ -34,6 +34,12 @@ along the chain contributes zero or one layer:
 | `REQUIRED` group | no | — |
 | `OPTIONAL` group (struct) | yes | `STRUCT` |
 | `LIST` / `MAP`-annotated group | yes — exactly one | `REPEATED` |
+| synthetic `repeated group` inside a `LIST` / `MAP` | no | — |
+
+Layers follow a column's *logical* structure rather than its physical schema nodes, so node count
+and layer count diverge wherever a `LIST` or `MAP` appears: its stack of group nodes contributes a
+single `REPEATED` layer. [How schema nodes map to layers](#how-schema-nodes-map-to-layers) works this
+through on a concrete schema.
 
 Layers are numbered `0..getLayerCount() - 1` outermost-to-innermost, and the leaf is queried
 separately. A flat column reports `getLayerCount() == 0`.
@@ -93,6 +99,39 @@ Those two rules generate the layer shape of any chain:
 
 Maps report as `REPEATED` — the layer enum does not distinguish map-shape from list-shape; consult
 `getColumnSchema()` if you need that distinction.
+
+## How schema nodes map to layers
+
+Because layers follow logical structure, the physical group nodes of a schema do not map one-to-one
+onto layers: a `LIST` or `MAP` is encoded as an annotated outer group wrapping a synthetic `repeated
+group`, and that pair contributes one `REPEATED` layer rather than one layer per node. The rules
+above resolve any schema unambiguously. Take a `contacts` column whose schema prints as:
+
+```
+optional group contacts (ListType[]) {
+  repeated group list {
+    optional group element {
+      required byte_array name (StringType[]);
+      optional byte_array phoneNumber (StringType[]);
+    }
+  }
+}
+```
+
+Walking the chain for `contacts.list.element.name`, the two `LIST` nodes fuse into one layer:
+
+```
+optional group contacts (ListType[])   ──┐
+  repeated group list                  ──┴─►  REPEATED  (layer 0)
+    optional group element             ────►  STRUCT    (layer 1)
+      required byte_array name          ───►  leaf
+```
+
+`getLayerCount()` is `2`, with kinds `[REPEATED, STRUCT]`. The list's own nullability is not a
+separate layer: a null `contacts` is recorded in `getLayerValidity(0)` of the `REPEATED` layer — the
+same layer shape a `required` list would have, differing only in that validity. Layer 1 is the
+`element` struct, which carries validity but no offsets, so `getLayerOffsets(1)` throws `Layer 1 is
+STRUCT, not REPEATED`.
 
 ## Counts at each layer
 
