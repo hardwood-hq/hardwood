@@ -9,12 +9,13 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.function.Consumer;
+import java.util.stream.LongStream;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.BeforeAll;
-import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
@@ -53,6 +54,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class BuilderCombinationTest {
 
     private static final Path FIXTURE = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+    private static final List<InputFile> MULTI_FIXTURE = InputFile.ofPaths(
+            Paths.get("src/test/resources/multi_file_part0.parquet"),
+            Paths.get("src/test/resources/multi_file_part1.parquet")
+    );
 
     /// `filter_pushdown_int.parquet`: 3 row groups of 100 rows — `id` 1..100, 101..200, 201..300.
     private static final long TOTAL_ROWS = 300;
@@ -189,15 +194,37 @@ class BuilderCombinationTest {
         }
     }
 
-    /// Multi-file boundary cells — physical `skip` (no filter) indexes into the first file
+    /// Multi-file boundary cells (#577) — physical `skip` (no filter) indexes into the first file
     /// only, logical `skip` (with a filter) counts matches across *all* files in order, and
-    /// `tail` is single-file-only (throws) — all need a multi-file fixture before they can be
-    /// pinned. Tracked by #577; left disabled, so the gap is visible in test reports.
+    /// `tail` is single-file-only (throws).
+    /// `id` is the global row position: file 0 holds 0..149, file 1 holds 150..249.
     @Test
-    @Disabled("multi-file boundary cells need a multi-file fixture — see #577")
-    void multiFileBoundaries() {
-        // physical skip + multi-file: indexes into the first file's rows only.
-        // filtered skip + multi-file: counts matched rows across all files in order.
-        // tail + multi-file: currently UnsupportedOperationException.
+    void multiFileBoundaries() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.openAll(MULTI_FIXTURE)) {
+            assertThat(ids(reader.buildRowReader().skip(125)))
+                    .containsExactlyElementsOf(longRange(125, 249));
+            assertThat(ids(reader.buildRowReader().filter(FilterPredicate.gt("id", 99L)).skip(60)))
+                    .containsExactlyElementsOf(longRange(160, 249));
+            // skip beyond file0 row count - does NOT carry into file1, which streams in full
+            assertThat(ids(reader.buildRowReader().skip(160)))
+                    .containsExactlyElementsOf(longRange(150, 249));
+            assertThatThrownBy(reader.buildRowReader().tail(50)::build)
+                    .isInstanceOf(UnsupportedOperationException.class);
+        }
+    }
+
+    private static List<Long> ids(RowReaderBuilder builder) {
+        List<Long> rows = new ArrayList<>();
+        try (RowReader r = builder.build()) {
+            while (r.hasNext()) {
+                r.next();
+                rows.add(r.getLong("id"));
+            }
+        }
+        return rows;
+    }
+
+    private static List<Long> longRange(long fromInclusive, long toInclusive) {
+        return LongStream.rangeClosed(fromInclusive, toInclusive).boxed().toList();
     }
 }

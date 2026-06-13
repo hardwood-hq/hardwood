@@ -689,9 +689,11 @@ public class ParquetFileReader implements AutoCloseable {
         ///
         /// - **Without a filter:** a physical absolute row index. Earlier row groups
         ///   are not opened — an O(1 row-group) seek on remote backends (the leading
-        ///   residue within the target row group is still decoded). `skip >= totalRows`
-        ///   yields an empty reader. Indexes into the *first* file's rows for multi-file
-        ///   readers.
+        ///   residue within the target row group is still decoded). For a single-file
+        ///   `skip >= totalRows` yields an empty reader. For a multi-file reader
+        ///   the offset resolves against the first file only and never carries across
+        ///   a file boundary. `skip` at or beyond the first file's row count drops
+        ///   it entirely and streams the remaining files in full.
         /// - **With a filter:** a *logical* offset over the matched rows — discards the
         ///   first `n` rows matching the predicate, symmetric with [#head] as `LIMIT`.
         ///   The O(1) seek does not apply: the reader decodes earlier groups to count

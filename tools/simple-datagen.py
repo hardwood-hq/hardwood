@@ -1784,6 +1784,19 @@ print("\nGenerated filter_pushdown_nested.parquet:")
 print("  - 3 row groups with struct column (address: {city, zip})")
 print("  - RG0: zip 70000-72000, RG1: zip 80000-82000, RG2: zip 90000-92000")
 
+
+# Multi-file fixture for #577: two files with same schema and disjoint row ranges
+multi_schema = pa.schema([('id', pa.int64(), False)])
+for name, start, length in [('multi_file_part0', 0, 150), ('multi_file_part1', 150, 100)]:
+    pq.write_table(
+        pa.table({'id': list(range(start, start + length))}, schema=multi_schema),
+        f'core/src/test/resources/{name}.parquet',
+        use_dictionary=False,
+        compression=None,
+        data_page_version='2.0',
+        row_group_size=50,
+    )
+
 # ===== Key-value metadata test file =====
 
 kv_schema = pa.schema([
