@@ -510,6 +510,79 @@ def annotate_map_as_legacy_key_value(src: str, dst: str, field_name: str) -> Non
     _write_parquet_footer(dst, data, md)
 
 
+def remove_map_value_field(src: str, dst: str, map_field_name: str) -> None:
+    """Copy `src` to `dst`, removing the 'value' field from the key_value group
+    of the named MAP field, and updating path_in_schema for the key.
+
+    Simulates key-only MAPs (sets) permitted by the Parquet spec.
+    """
+    shutil.copy2(src, dst)
+    data_before_footer, file_metadata = _read_parquet_footer(dst)
+
+    # 1. Find the MAP element and its key_value child
+    map_idx = -1
+    for i, el in enumerate(file_metadata.schema):
+        if el.name == map_field_name and el.num_children is not None:
+            map_idx = i
+            break
+    if map_idx == -1:
+        raise ValueError(f"MAP field {map_field_name!r} not found")
+
+    kv_idx = map_idx + 1
+    kv_el = file_metadata.schema[kv_idx]
+    if kv_el.name != "key_value":
+        # PyArrow might name it 'list' or 'map' depending on version/settings
+        # but usually it's 'key_value' for standard maps.
+        pass
+
+    # 2. Find key and value children
+    key_idx = kv_idx + 1
+    # Check if it has 2 children
+    if kv_el.num_children != 2:
+        raise ValueError(f"Expected 2 children for key_value group, found {kv_el.num_children}")
+
+    value_idx = -1
+    # The value element is after the key and its subtree
+    def _get_subtree_size(idx):
+        size = 1
+        nc = file_metadata.schema[idx].num_children or 0
+        curr = idx + 1
+        for _ in range(nc):
+            subtree_size = _get_subtree_size(curr)
+            size += subtree_size
+            curr += subtree_size
+        return size
+
+    key_subtree_size = _get_subtree_size(key_idx)
+    value_idx = key_idx + key_subtree_size
+
+    # 3. Remove the value field from schema
+    value_subtree_size = _get_subtree_size(value_idx)
+    del file_metadata.schema[value_idx : value_idx + value_subtree_size]
+
+    # 4. Update parent's num_children
+    kv_el.num_children = 1
+
+    # 5. Fix path_in_schema in ColumnMetaData
+    # We need to find the column that corresponds to the 'value' field and remove it from row groups
+    # and update the 'key' column path if necessary (though key path usually stays same).
+    # Since we are removing a column, we must remove it from every RowGroup.
+
+    # Identify the value column by its path
+    # Assuming standard MAP structure: [map_field_name, "key_value", "value"]
+    value_path = [map_field_name, kv_el.name, "value"]
+
+    for rg in file_metadata.row_groups:
+        new_columns = []
+        for col in rg.columns:
+            if col.meta_data.path_in_schema == value_path:
+                continue
+            new_columns.append(col)
+        rg.columns = new_columns
+
+    _write_parquet_footer(dst, data_before_footer, file_metadata)
+
+
 def annotate_columns_as_legacy_converted_type(path: str, specs: dict) -> None:
     """Rewrite `path` so the named primitive columns carry only a legacy
     `converted_type` and no modern `logicalType`.
