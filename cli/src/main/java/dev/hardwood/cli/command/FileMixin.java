@@ -64,7 +64,12 @@ public class FileMixin {
                 return null;
             }
         }
-        return InputFile.of(Path.of(file));
+        Path localPath = Path.of(file);
+        if (!Files.exists(localPath)) {
+            throw new CommandLine.ParameterException(spec.commandLine(),
+                    "File not found: " + file);
+        }
+        return InputFile.of(localPath);
     }
 
     private InputFile createS3InputFile(RangeBacking rangeBacking) {
