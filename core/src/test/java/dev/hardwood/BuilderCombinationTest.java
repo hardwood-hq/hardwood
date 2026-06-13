@@ -85,7 +85,7 @@ class BuilderCombinationTest {
         return start + compressed / 2;
     }
 
-    enum Disposition {BUILDS, REJECTED}
+    enum Disposition { BUILDS, REJECTED }
 
     record Combo(String name, Consumer<RowReaderBuilder> apply, Disposition expect,
                  String rejectMessage, String oracleNote) {
@@ -194,9 +194,9 @@ class BuilderCombinationTest {
         }
     }
 
-    /// Multi-file boundary cells (#577) — physical `skip` (no filter) indexes into the first file only,
-    /// logical `skip` (with a filter) counts matches across *all* files in order,
-    /// and `tail` is single-file-only (throws).
+    /// Multi-file boundary cells (#577) — physical `skip` (no filter) indexes into the first file
+    /// only, logical `skip` (with a filter) counts matches across *all* files in order, and
+    /// `tail` is single-file-only (throws).
     /// `id` is the global row position: file 0 holds 0..149, file 1 holds 150..249.
     @Test
     void multiFileBoundaries() throws Exception {
