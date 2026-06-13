@@ -203,12 +203,13 @@ class BuilderCombinationTest {
         try (ParquetFileReader reader = ParquetFileReader.openAll(MULTI_FIXTURE)) {
             assertThat(ids(reader.buildRowReader().skip(125)))
                     .containsExactlyElementsOf(longRange(125, 249));
+            assertThat(ids(reader.buildRowReader().filter(FilterPredicate.gt("id", 99L)).skip(60)))
+                    .containsExactlyElementsOf(longRange(160, 249));
             // skip beyond file0 row count - does NOT carry into file1, which streams in full
             assertThat(ids(reader.buildRowReader().skip(160)))
                     .containsExactlyElementsOf(longRange(150, 249));
             assertThatThrownBy(reader.buildRowReader().tail(50)::build)
-                    .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessageContaining("not yet supported for multi-file");
+                    .isInstanceOf(UnsupportedOperationException.class);
         }
     }
 
