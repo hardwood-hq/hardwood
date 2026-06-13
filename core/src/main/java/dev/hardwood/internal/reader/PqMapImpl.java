@@ -48,9 +48,9 @@ final class PqMapImpl implements PqMap {
         this.end = end;
 
         // Get key/value schemas from MAP -> key_value -> (key, value)
-        SchemaNode.GroupNode keyValueGroup = (SchemaNode.GroupNode) mapDesc.schema().children().get(0);
-        this.keySchema = keyValueGroup.children().get(0);
-        this.valueSchema = keyValueGroup.children().get(1);
+        SchemaNode.GroupNode mapNode = (SchemaNode.GroupNode) mapDesc.schema();
+        this.keySchema = mapNode.getMapKey();
+        this.valueSchema = mapNode.getMapValue();
     }
 
     // ==================== Factory Methods ====================
@@ -378,7 +378,7 @@ final class PqMapImpl implements PqMap {
     private boolean isValueNullAt(int valueIdx) {
         int valueProjCol = mapDesc.valueProjCol();
         if (valueProjCol < 0) {
-            return false;
+            return true;
         }
         // Compare against the value node's own max def level (not the leaf
         // primitive's), so a non-null complex value with null primitive
@@ -386,7 +386,7 @@ final class PqMapImpl implements PqMap {
         // position must be resolved explicitly — see resolveValueLeafIdx.
         int valLeafIdx = resolveValueLeafIdx(valueIdx);
         int defLevel = batch.getDefLevel(valueProjCol, valLeafIdx);
-        return defLevel < valueSchema.maxDefinitionLevel();
+        return valueSchema != null && defLevel < valueSchema.maxDefinitionLevel();
     }
 
     private Object readValueAt(int valueIdx) {

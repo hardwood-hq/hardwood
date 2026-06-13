@@ -164,10 +164,13 @@ public sealed interface SchemaNode {
             }
             SchemaNode keyValue = children.get(0);
             if (!(keyValue instanceof GroupNode keyValueGroup)
-                    || keyValueGroup.repetitionType() != RepetitionType.REPEATED
-                    || keyValueGroup.children().size() != 2) {
+                    || keyValueGroup.repetitionType() != RepetitionType.REPEATED) {
                 return null;
             }
-            return keyValueGroup.children().get(index);
+            List<SchemaNode> kvChildren = keyValueGroup.children();
+            if (index >= kvChildren.size()) {
+                return null;
+            }
+            return kvChildren.get(index);
         }
 }}

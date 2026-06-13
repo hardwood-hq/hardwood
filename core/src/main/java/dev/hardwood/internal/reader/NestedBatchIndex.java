@@ -199,6 +199,9 @@ final class NestedBatchIndex {
     /// indicated by a clear bit (or a `null` validity reference means every
     /// leaf in the batch is present).
     boolean isElementNull(int projectedCol, int valueIndex) {
+        if (projectedCol < 0) {
+            return true;
+        }
         long[] validity = elementValidity[projectedCol];
         return validity != null && (validity[valueIndex >>> 6] & (1L << valueIndex)) == 0L;
     }

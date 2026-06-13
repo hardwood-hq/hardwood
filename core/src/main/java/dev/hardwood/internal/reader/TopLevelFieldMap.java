@@ -305,11 +305,11 @@ final class TopLevelFieldMap {
         SchemaNode.GroupNode keyValueGroup = (SchemaNode.GroupNode) mapGroup.children().get(0);
         int entryDefLevel = keyValueGroup.maxDefinitionLevel();
 
-        SchemaNode keyNode = keyValueGroup.children().get(0);
-        SchemaNode valueNode = keyValueGroup.children().get(1);
+        SchemaNode keyNode = mapGroup.getMapKey();
+        SchemaNode valueNode = mapGroup.getMapValue();
 
         int keyProjCol = findFirstLeafProjCol(keyNode, projectedSchema);
-        int valueProjCol = findFirstLeafProjCol(valueNode, projectedSchema);
+        int valueProjCol = (valueNode != null) ? findFirstLeafProjCol(valueNode, projectedSchema) : -1;
 
         // Pre-build value descriptor for nested types
         FieldDesc valueDesc = null;

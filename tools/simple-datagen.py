@@ -35,6 +35,7 @@ from parquet_annotators import (
     collapse_list_of_lists_to_legacy_two_level,
     strip_converted_type,
     corrupt_data_page_offset_negative,
+    remove_map_value_field,
 )
 
 
@@ -3991,3 +3992,24 @@ pq.write_table(
 corrupt_data_page_offset_negative(_negative_offset_path)
 print("\nGenerated negative_data_page_offset.parquet:")
 print("  - valid footer with data_page_offset = -1 (controlled-rejection fixture)")
+
+
+# Key-only map (set) fixture (#597).
+# Spec: If the value field is not present, it can be represented as a map with
+# all null values or as a set of keys.
+# Schema: id INT, tags MAP<STRING, INT>
+_map_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('tags', pa.map_(pa.string(), pa.int32()), True),
+])
+_map_data = pa.table({
+    'id': [1, 2],
+    'tags': [[('a', 1), ('b', 2)], [('c', 3)]],
+}, schema=_map_schema)
+_map_base = 'core/src/test/resources/map_key_only_base.parquet'
+pq.write_table(_map_data, _map_base, use_dictionary=False, compression=None, data_page_version='1.0')
+remove_map_value_field(_map_base, 'core/src/test/resources/map_key_only_test.parquet', 'tags')
+import os
+os.remove(_map_base)
+print("\nGenerated map_key_only_test.parquet:")
+print("  - id=[1, 2], tags MAP<STRING, (missing value)>")
