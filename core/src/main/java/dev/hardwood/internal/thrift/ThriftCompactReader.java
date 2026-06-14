@@ -56,6 +56,25 @@ public class ThriftCompactReader {
         return buffer.position() - startPosition;
     }
 
+    /// Returns the number of bytes still available to read in the buffer.
+    public int remaining() {
+        return buffer.remaining();
+    }
+
+    /// Returns a zero-copy, read-only, little-endian view of the next `length` bytes and advances
+    /// past them. The returned buffer shares storage with this reader's buffer (no copy), so for a
+    /// memory-mapped input it stays backed by the mapped file.
+    public ByteBuffer readSlice(int length) throws EOFException {
+        if (buffer.remaining() < length) {
+            throw new EOFException("Unexpected EOF while slicing " + length + " bytes");
+        }
+        ByteBuffer slice = buffer.slice(buffer.position(), length)
+                .asReadOnlyBuffer()
+                .order(ByteOrder.LITTLE_ENDIAN);
+        buffer.position(buffer.position() + length);
+        return slice;
+    }
+
     /// Read an unsigned varint from the buffer.
     public long readVarint() throws EOFException {
         long result = 0;

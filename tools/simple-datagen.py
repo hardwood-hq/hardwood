@@ -3536,10 +3536,20 @@ print("  - Rows: [{age=10},{age=null},null] / [] / null / [{age=99}]")
 bloom_schema = pa.schema([
     ('id', pa.int64(), False),
     ('value', pa.int64(), False),
+    ('name', pa.string(), False),
+    ('code', pa.int32(), False),
 ])
+# 'name' values vary in length from 0 to 63 bytes so that hashing them exercises
+# every xxHash64 code path: the empty input (zero-length value), the 1-byte tail
+# (short names), the 4-byte tail, and the >=32-byte accumulator-lane loop (the long
+# names). 'code' is INT32 (4-byte values) and 'id' is INT64 (8-byte values), covering
+# the fixed-width paths too.
+bloom_names = ['x' * i for i in range(64)]
 bloom_table = pa.table({
     'id': list(range(64)),
     'value': [v * 10 for v in range(64)],
+    'name': bloom_names,
+    'code': [v * 3 for v in range(64)],
 }, schema=bloom_schema)
 
 pq.write_table(
@@ -3548,12 +3558,16 @@ pq.write_table(
     use_dictionary=False,
     compression=None,
     data_page_version='1.0',
-    bloom_filter_options={'id': {'ndv': 64, 'fpp': 0.05}},
+    bloom_filter_options={
+        'id': {'ndv': 64, 'fpp': 0.05},
+        'name': {'ndv': 64, 'fpp': 0.05},
+        'code': {'ndv': 64, 'fpp': 0.05},
+    },
 )
 
 print("\nGenerated bloom_filter_test.parquet:")
-print("  - 1 row group, 64 rows, INT64 id + INT64 value")
-print("  - Bloom filter on 'id' only; 'value' has no bloom filter")
+print("  - 1 row group, 64 rows, INT64 id + INT64 value + STRING name + INT32 code")
+print("  - Bloom filters on 'id', 'name', 'code'; 'value' has no bloom filter")
 
 # =====================================================================
 # Local-wall-clock TIMESTAMP fixture (#568). PyArrow's `pa.timestamp(unit)`
