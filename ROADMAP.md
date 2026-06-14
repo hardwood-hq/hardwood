@@ -316,10 +316,10 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] Page index writing
 
 ### 9.3 Bloom Filters
-- [ ] Implement split block bloom filter
-- [ ] XXHASH implementation (or integration)
+- [x] Implement split block bloom filter
+- [x] XXHASH implementation (or integration)
 - [ ] Bloom filter serialization
-- [ ] Bloom filter deserialization
+- [x] Bloom filter deserialization
 - [ ] Bloom filter checking during reads
 
 ### 9.4 Predicate Pushdown
