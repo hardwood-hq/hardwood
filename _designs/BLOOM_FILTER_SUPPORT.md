@@ -40,7 +40,7 @@ public record BloomFilterHeader(
 Each enum exposes `fromVariant(short)` mapping the union's Thrift field id to its sole constant, throwing `IllegalArgumentException` on an unknown variant.
 
 ### `internal/thrift/BloomFilterHeaderReader.java`
-Parses the struct: `numBytes` (field 1) via `readNonNegativeI32`; the three unions (fields 2–4) by reading the single set variant — its field id, its empty inner struct, and the union's STOP — and mapping via the enums' `fromVariant`. Wire types are validated per field, and all four fields are checked present after the struct, throwing `IllegalStateException` on a missing or malformed field.
+Parses the struct: `numBytes` (field 1) via `readNonNegativeI32`; the three unions (fields 2–4) by reading the single set variant — its field id, its empty inner struct, and the union's STOP — and mapping via the enums' `fromVariant`. Wire types are validated per field, and all four fields are checked present after the struct, throwing `IllegalStateException` on a missing or malformed field, consistent with the other struct-content readers (`BoundingBoxReader`, `LogicalTypeReader`). `BloomFilterReader` raises the same type when the decoded `numBytes` is not a positive multiple of 32 or the bitset is truncated, so both halves of the decode report malformed input uniformly.
 
 ## Step 2: Filter model and reader
 
@@ -59,7 +59,7 @@ Reads the header, then takes the following `numBytes` as the bitset:
 ```java
 BloomFilterHeader header = BloomFilterHeaderReader.read(reader);
 int numBytes = header.numBytes();
-if (numBytes > reader.remaining()) { throw new IOException(/* truncated */); }
+if (numBytes > reader.remaining()) { throw new IllegalStateException(/* truncated */); }
 ByteBuffer bitset = reader.readSlice(numBytes);
 return new BloomFilter(header, bitset);
 ```

@@ -56,10 +56,10 @@ public class BloomFilterHeaderReader {
         }
 
         if (numBytes < 0) {
-            throw new IllegalStateException("Invalid BloomFilterHeader: missing required field 'numBytes'");
+            throw invalidHeader("missing required field 'numBytes'");
         }
         if (algorithm == null || hash == null || compression == null) {
-            throw new IllegalStateException("Invalid BloomFilterHeader: missing required field(s) "
+            throw invalidHeader("missing required field(s) "
                     + (algorithm == null ? "algorithm " : "")
                     + (hash == null ? "hash " : "")
                     + (compression == null ? "compression " : ""));
@@ -70,34 +70,41 @@ public class BloomFilterHeaderReader {
 
     private static int readRequiredBitsetSize(ThriftCompactReader reader, byte type) throws IOException {
         if (type != TYPE_INT_32) {
-            throw new IllegalStateException(
-                    "Invalid BloomFilterHeader: required field '" + "numBytes"
-                            + "' has wrong wire type 0x" + Integer.toHexString(type & 0xFF));
+            throw wrongWireType("required field 'numBytes'", type);
         }
         return reader.readNonNegativeI32("BloomFilterHeader.numBytes");
     }
 
     private static short readUnionVariant(ThriftCompactReader reader, byte type, String name) throws IOException {
         if (type != TYPE_STRUCT) {
-            throw new IllegalStateException(
-                    "Invalid BloomFilterHeader: union field '" + name
-                            + "' has wrong wire type 0x" + Integer.toHexString(type & 0xFF));
+            throw wrongWireType("union field '" + name + "'", type);
         }
         short saved = reader.pushFieldIdContext();
         try {
             ThriftCompactReader.FieldHeader variant = reader.readFieldHeader();
             if (variant == null) {
-                throw new IllegalStateException(
-                        "Invalid BloomFilterHeader: union field '" + name + "' has no variant set");
+                throw invalidHeader("union field '" + name + "' has no variant set");
+            }
+            // The variant's value is an empty struct; a different wire type would make skipField
+            // consume the wrong number of bytes and desync the rest of the header.
+            if (variant.type() != TYPE_STRUCT) {
+                throw wrongWireType("union field '" + name + "' variant " + variant.fieldId(), variant.type());
             }
             reader.skipField(variant.type()); // consume the variant's value (the empty inner struct)
             if (reader.readFieldHeader() != null) {
-                throw new IllegalStateException(
-                        "Invalid BloomFilterHeader: union field '" + name + "' has more than one variant set");
+                throw invalidHeader("union field '" + name + "' has more than one variant set");
             }
             return variant.fieldId();
         } finally {
             reader.popFieldIdContext(saved);
         }
+    }
+
+    private static IllegalStateException wrongWireType(String fieldDescription, byte type) {
+        return invalidHeader(fieldDescription + " has wrong wire type 0x" + Integer.toHexString(type & 0xFF));
+    }
+
+    private static IllegalStateException invalidHeader(String message) {
+        return new IllegalStateException("Invalid BloomFilterHeader: " + message);
     }
 }
