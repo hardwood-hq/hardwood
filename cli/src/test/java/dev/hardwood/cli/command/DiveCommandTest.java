@@ -36,4 +36,17 @@ class DiveCommandTest {
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).containsIgnoringCase("file");
     }
+
+    /// The Surefire fork has no console (stdout/stdin are piped), so the
+    /// fail-fast guard fires for real — the same path a `docker run` without
+    /// `-it` hits.
+    @Test
+    void failsFastWithoutTty() {
+        Path fixture = Path.of(getClass().getResource("/compat_plain_int64.parquet").getPath());
+
+        Cli.Result result = Cli.launch("dive", "-f", fixture.toString());
+
+        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).containsIgnoringCase("interactive terminal");
+    }
 }

@@ -73,6 +73,15 @@ public class DiveCommand implements Callable<Integer> {
 
     @Override
     public Integer call() {
+        // Without a TTY the JLine TUI can't run; checked before any file I/O.
+        // Smoke-render never enters raw mode, so it is exempt.
+        if (!smokeRender && interactiveTerminalUnavailable()) {
+            spec.commandLine().getErr().println(
+                    "Error: 'dive' requires an interactive terminal. "
+                            + "Re-run attached to a TTY (with Docker: docker run -it ...).");
+            return CommandLine.ExitCode.USAGE;
+        }
+
         // Dive re-reads the same byte ranges constantly (page-up/page-down
         // navigation, jump-to-end-then-back, the `t` toggle, etc.). Opt
         // into the sparse-tempfile range cache so those repeats hit a
@@ -107,6 +116,13 @@ public class DiveCommand implements Callable<Integer> {
                 logHandler.close();
             }
         }
+    }
+
+    /// Reports whether stdin or stdout is not attached to a terminal.
+    /// `System.console()` is `null` when either is redirected, including in
+    /// the native image.
+    private static boolean interactiveTerminalUnavailable() {
+        return System.console() == null;
     }
 
     /// Configures JUL logging for an interactive dive session.
