@@ -144,16 +144,19 @@ public sealed interface SchemaNode {
     /// (`map.key_value.key`).
     ///
     /// Returns `null` if this group is not a MAP, or if the structure does not
-    /// match the standard encoding (a single REPEATED `key_value` child group with
-    /// exactly two children). Symmetric with [#getListElement()] in returning
-    /// `null` rather than throwing — callers decide whether a malformed schema is
-    /// fatal at their layer.
+    /// match the standard encoding (a single REPEATED `key_value` child group).
+    /// Symmetric with [#getListElement()] in returning `null` rather than
+    /// throwing — callers decide whether a malformed schema is fatal at their
+    /// layer.
         public SchemaNode getMapKey() {
             return mapChild(0);
         }
 
     /// For MAP groups, returns the value node from the standard encoding
-    /// (`map.key_value.value`). See [#getMapKey()] for null semantics.
+    /// (`map.key_value.value`), or `null` if the `key_value` group has no value
+    /// field. The Parquet spec permits a key-only `key_value` group, which
+    /// represents a set of keys or a map with all-null values. See
+    /// [#getMapKey()] for the other null cases.
         public SchemaNode getMapValue() {
             return mapChild(1);
         }
