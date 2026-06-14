@@ -15,12 +15,15 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Tests for Parquet MAP fields whose {@code key_value} group has no {@code value} field.
 class MapKeyOnlyTest {
@@ -88,6 +91,34 @@ class MapKeyOnlyTest {
             assertThat(tags2.size()).isEqualTo(1);
             assertThat(tags2.getEntries().get(0).getStringKey()).isEqualTo("c");
             assertThat(tags2.getEntries().get(0).getValue()).isNull();
+        }
+    }
+
+    /// The ColumnReader path has only the `key` leaf (no `value` column exists),
+    /// so the map's single REPEATED layer is driven entirely by the key reader.
+    /// Mirrors [#testReadKeyOnlyMap()] across the column-oriented read path.
+    @Test
+    void testReadKeyOnlyMapViaColumnReader() throws IOException {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FILE));
+                ColumnReader keys = reader.columnReader("tags.key_value.key")) {
+
+            assertThat(keys.nextBatch()).isTrue();
+            assertThat(keys.getRecordCount()).isEqualTo(2);
+            assertThat(keys.getLayerCount()).isEqualTo(1);
+            assertThat(keys.getLayerKind(0)).isEqualTo(LayerKind.REPEATED);
+
+            // Row 0 has two entries (a, b), row 1 has one (c).
+            int[] offsets = keys.getLayerOffsets(0);
+            assertThat(offsets).containsExactly(0, 2, 3);
+
+            assertThat(keys.getStrings()).containsExactly("a", "b", "c");
+
+            // This fixture is structurally key-only: the value field is omitted from
+            // the schema, so there is no value leaf to open — distinct from a map
+            // that carries a value column whose entries all happen to be null.
+            assertThatThrownBy(() -> reader.columnReader("tags.key_value.value"))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Column not found");
         }
     }
 }

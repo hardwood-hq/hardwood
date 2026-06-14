@@ -3886,9 +3886,10 @@ print("\nGenerated negative_data_page_offset.parquet:")
 print("  - valid footer with data_page_offset = -1 (controlled-rejection fixture)")
 
 
-# Key-only map (set) fixture (#597).
-# Spec: If the value field is not present, it can be represented as a map with
-# all null values or as a set of keys.
+# Key-only map (set) fixture (#657).
+# Spec: the MAP value field "can be required, optional, or omitted"; if omitted
+# "it can be represented as a map with all null values or as a set of keys."
+# https://github.com/apache/parquet-format/blob/master/LogicalTypes.md#maps
 # Schema: id INT, tags MAP<STRING, INT>
 _map_schema = pa.schema([
     ('id', pa.int32(), False),
