@@ -20,6 +20,8 @@ RUN microdnf install -y --nodocs \
       binutils \
       file \
       vim-common \
+      fontconfig \
+      dejavu-sans-fonts \
       python3 \
       python3-pip \
     && microdnf clean all
