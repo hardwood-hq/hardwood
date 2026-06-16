@@ -133,6 +133,22 @@ same layer shape a `required` list would have, differing only in that validity. 
 `element` struct, which carries validity but no offsets, so `getLayerOffsets(1)` throws `Layer 1 is
 STRUCT, not REPEATED`.
 
+## Logical element versus physical encoding
+
+The same logical-over-physical split governs schema *navigation*, not just layers.
+`SchemaNode.GroupNode.getListElement()` returns a list's **logical** element — *what* the element
+is — independent of whether the list is physically 2-level or 3-level. For `list<list<int>>` the
+element is the inner `list<int>`; for `list<int>` it is the `int`. The encoding changes only *where*
+that element sits in the node tree, never what `getListElement()` resolves it to.
+
+The returned node keeps all its physical attributes. In a standard 3-level list the element is the
+non-repeated child below the synthetic `repeated group`; in a legacy 2-level list the repeated field
+*is* the element, so the returned node is itself `REPEATED`. Counted structurally, a list's nesting
+depth is the number of `repeated` nodes on the path (equivalently, the leaf's maximum repetition
+level), not the number of `LIST` annotations. To walk to the leaf logically, recurse
+`getListElement()` while the result `isList()` — uniform across both encodings. To inspect the raw
+physical tree instead, walk `children()`.
+
 ## Counts at each layer
 
 Every per-layer buffer is sized to `count(k)`, defined recursively:

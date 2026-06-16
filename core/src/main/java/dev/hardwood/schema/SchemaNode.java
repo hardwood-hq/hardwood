@@ -92,9 +92,9 @@ public sealed interface SchemaNode {
             return logicalType instanceof LogicalType.VariantType;
         }
 
-    /// For LIST groups, returns the element node (skipping the intermediate
-    /// `list`/`key_value` group in standard 3-level encoding). Returns `null`
-    /// if not a list or improperly structured.
+    /// For LIST groups, returns the list's element node — the logical element,
+    /// independent of whether the list uses 2-level or 3-level encoding. Returns
+    /// `null` if not a list or improperly structured.
     ///
     /// Applies the Parquet backward-compatibility rules for legacy 2-level
     /// encodings as defined in the format spec; see
@@ -107,7 +107,24 @@ public sealed interface SchemaNode {
     ///    single-field wrapper (legacy 2-level encoding of a list whose element is itself a list).
     /// 4. If the repeated field is a group with one field and is named either `array` or uses
     ///    the LIST-annotated group's name with `_tuple` appended, the repeated group is the element.
-    /// 5. Otherwise, the repeated field's single child is the element (standard 3-level encoding).
+    /// 5. Otherwise, the repeated field is a wrapper and its single child is the element — the
+    ///    standard `list`/`element` structure and any other single-field 3-level shape not matched
+    ///    by rules 1–4 (the child need not be named `element`).
+    ///
+    /// The returned node is an existing schema node, so its repetition is authentic: a 2-level
+    /// list's element is itself `REPEATED` (the repeated field is both the element and the list's
+    /// repetition carrier), while a 3-level list's element is the non-repeated child of the
+    /// intermediate `list` group. A list's nesting depth is the count of `repeated` nodes on the
+    /// path (the leaf's max repetition level), not the count of `LIST` annotations. Since the
+    /// element may itself be a list, walk to the leaf by recursing while it is a list — uniform
+    /// across both encodings:
+    ///
+    /// ```java
+    /// SchemaNode node = listGroup;
+    /// while (node instanceof GroupNode g && g.isList()) {
+    ///     node = g.getListElement();
+    /// }
+    /// ```
         public SchemaNode getListElement() {
             if (!isList() || children.isEmpty()) {
                 return null;
@@ -136,7 +153,8 @@ public sealed interface SchemaNode {
             if ("array".equals(innerName) || (name() + "_tuple").equals(innerName)) {
                 return innerGroup;
             }
-            // Rule 5: standard 3-level encoding — the repeated group's single child is the element.
+            // Rule 5: wrapper group (standard `list`/`element` or any other single-field 3-level
+            // shape) — descend to the repeated group's single child.
             return innerGroup.children().get(0);
         }
 

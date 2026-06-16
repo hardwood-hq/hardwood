@@ -122,7 +122,7 @@ The reader stays a single-threaded cursor: only the loop thread calls `nextBatch
 Before opening a reader for a nested column, you usually need to walk the file's schema tree to find the leaf you want. `SchemaNode.GroupNode` exposes the structural primitives:
 
 - `isList()` / `isMap()` / `isStruct()` — disambiguate which kind of group a node is.
-- `getListElement()` — for LIST groups, returns the element node, applying Parquet's backward-compatibility rules for legacy 2-level encodings.
+- `getListElement()` — for LIST groups, returns the element node, applying Parquet's backward-compatibility rules for legacy 2-level encodings. For a legacy 2-level list the returned element is itself `REPEATED` and, in a nested list, itself a LIST; a list's nesting depth is the number of `repeated` nodes on the path, not the number of LIST annotations. Walk to the leaf uniformly by recursing while the result `isList()`.
 - `getMapKey()` / `getMapValue()` — for MAP groups, returns the key and value nodes from the standard `map.key_value.key` / `map.key_value.value` encoding.
 - `children()` — for plain struct groups, iterate to get each field.
 
