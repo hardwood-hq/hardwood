@@ -71,6 +71,16 @@ public final class FlatRowReader implements RowReader {
     private final PhysicalType[] physicalTypes;
     private final ColumnSchema[] columnSchemas;
 
+    // Direct-mapped identity cache over name -> index resolution. Field names are
+    // passed as the same (interned/constant) String instance on every row, so after
+    // the first resolution a reference compare replaces the StringToIntMap hash +
+    // String.equals on the hot per-field path. Pure speed layer: a miss or a slot
+    // collision falls back to nameToIndex, so it is always correct. Consumed by the
+    // single reader thread only — no synchronization.
+    private final String[] indexCacheKey;
+    private final int[] indexCacheVal;
+    private final int indexCacheMask;
+
     // Hot fields — directly owned, no inheritance.
     // `flatValidity[col]` is a packed bitmap (set bit = leaf is present); the
     // per-row check is `(flatValidity[col][row >>> 6] & (1L << row)) != 0L`.
@@ -166,6 +176,14 @@ public final class FlatRowReader implements RowReader {
             physicalTypes[i] = col.type();
             columnSchemas[i] = col;
         }
+
+        int cacheCap = 16;
+        while (cacheCap < columnCount * 2) {
+            cacheCap <<= 1;
+        }
+        this.indexCacheMask = cacheCap - 1;
+        this.indexCacheKey = new String[cacheCap];
+        this.indexCacheVal = new int[cacheCap];
     }
 
     /// Eagerly loads the first batch. Must be called after construction.
@@ -897,10 +915,20 @@ public final class FlatRowReader implements RowReader {
     }
 
     private int resolveIndex(String name) {
+        int slot = name.hashCode() & indexCacheMask;
+        if (indexCacheKey[slot] == name) {
+            return indexCacheVal[slot];
+        }
+        return resolveIndexMiss(name, slot);
+    }
+
+    private int resolveIndexMiss(String name, int slot) {
         int index = nameToIndex.get(name);
         if (index < 0) {
             throw new IllegalArgumentException(prefix() + "Column not in projection: " + name);
         }
+        indexCacheKey[slot] = name;
+        indexCacheVal[slot] = index;
         return index;
     }
 
