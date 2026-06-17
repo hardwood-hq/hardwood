@@ -28,6 +28,7 @@ import dev.hardwood.jfr.PageDecodedEvent;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.Statistics;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Decoder for individual Parquet data pages.
@@ -104,6 +105,16 @@ public class PageDecoder {
     /// @param dictionary dictionary for this page, or null if not dictionary-encoded
     /// @return decoded page
     public Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary) throws IOException {
+        return decodePage(pageBuffer, dictionary, null);
+    }
+
+    /// As [#decodePage(ByteBuffer, Dictionary)], with the current page's column-chunk
+    /// statistics. When those (or the inline per-page statistics) positively assert
+    /// zero nulls, definition-level decode is skipped for the all-present fast path.
+    /// The chunk statistics must belong to *this* page's row group — the cached
+    /// [#columnMetaData] is reused across codec-compatible chunks and may be stale.
+    public Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary, Statistics chunkStatistics)
+            throws IOException {
         PageDecodedEvent event = new PageDecodedEvent();
         event.begin();
 
@@ -124,10 +135,11 @@ public class PageDecoder {
             case DATA_PAGE -> {
                 Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
                 byte[] uncompressedData = decompressor.decompress(pageData, pageHeader.uncompressedPageSize());
-                yield parseDataPage(pageHeader.dataPageHeader(), uncompressedData, dictionary);
+                yield parseDataPage(pageHeader.dataPageHeader(), uncompressedData, dictionary, chunkStatistics);
             }
             case DATA_PAGE_V2 -> {
-                yield parseDataPageV2(pageHeader.dataPageHeaderV2(), pageData, pageHeader.uncompressedPageSize(), dictionary);
+                yield parseDataPageV2(pageHeader.dataPageHeaderV2(), pageData, pageHeader.uncompressedPageSize(),
+                        dictionary, chunkStatistics);
             }
             default -> throw new IOException("Unexpected page type for single-page decode: " + pageHeader.type());
         };
@@ -170,7 +182,26 @@ public class PageDecoder {
         return 32 - Integer.numberOfLeadingZeros(maxValue);
     }
 
-    private Page parseDataPage(DataPageHeader header, byte[] data, Dictionary dictionary) throws IOException {
+    /// True when statistics positively assert zero nulls for this page and the column
+    /// is flat (`maxRepetitionLevel == 0`). The page is then all-present, so
+    /// definition-level decode (and its `int[numValues]` allocation) is skipped: the
+    /// dense `definitionLevels == null` path runs the SIMD value/dictionary decode and
+    /// leaves the batch validity as the sparse "all present" representation.
+    ///
+    /// Either the inline per-page statistics or the (current) chunk statistics is
+    /// sufficient. Conservative by construction — absent or non-zero `nullCount` on
+    /// both, or any nested column, falls back to full definition-level decode.
+    private boolean canSkipDefinitionLevels(Statistics pageStatistics, Statistics chunkStatistics) {
+        return column.maxRepetitionLevel() == 0
+                && (assertsNoNulls(pageStatistics) || assertsNoNulls(chunkStatistics));
+    }
+
+    private static boolean assertsNoNulls(Statistics statistics) {
+        return statistics != null && statistics.nullCount() != null && statistics.nullCount() == 0L;
+    }
+
+    private Page parseDataPage(DataPageHeader header, byte[] data, Dictionary dictionary, Statistics chunkStatistics)
+            throws IOException {
         int offset = 0;
 
         int[] repetitionLevels = null;
@@ -185,7 +216,9 @@ public class PageDecoder {
         if (column.maxDefinitionLevel() > 0) {
             int defLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
             offset += 4;
-            definitionLevels = decodeLevels(data, offset, defLevelLength, header.numValues(), column.maxDefinitionLevel());
+            if (!canSkipDefinitionLevels(header.statistics(), chunkStatistics)) {
+                definitionLevels = decodeLevels(data, offset, defLevelLength, header.numValues(), column.maxDefinitionLevel());
+            }
             offset += defLevelLength;
         }
 
@@ -195,7 +228,7 @@ public class PageDecoder {
     }
 
     private Page parseDataPageV2(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
-            Dictionary dictionary) throws IOException {
+            Dictionary dictionary, Statistics chunkStatistics) throws IOException {
         int repLevelLen = header.repetitionLevelsByteLength();
         int defLevelLen = header.definitionLevelsByteLength();
         int valuesOffset = repLevelLen + defLevelLen;
@@ -209,7 +242,8 @@ public class PageDecoder {
         }
 
         int[] definitionLevels = null;
-        if (column.maxDefinitionLevel() > 0 && defLevelLen > 0) {
+        if (column.maxDefinitionLevel() > 0 && defLevelLen > 0
+                && !canSkipDefinitionLevels(header.statistics(), chunkStatistics)) {
             byte[] defLevelData = new byte[defLevelLen];
             pageData.slice(repLevelLen, defLevelLen).get(defLevelData);
             definitionLevels = decodeLevels(defLevelData, 0, defLevelLen, header.numValues(), column.maxDefinitionLevel());
