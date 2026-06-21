@@ -32,7 +32,7 @@ public sealed interface ResolvedPredicate {
     /// widening case) for callers that do not consult statistics (record/batch matching).
     record FloatPredicate(int columnIndex, FilterPredicate.Operator op, float value,
             boolean ieee754TotalOrder) implements ResolvedPredicate {
-        FloatPredicate(int columnIndex, FilterPredicate.Operator op, float value) {
+        public FloatPredicate(int columnIndex, FilterPredicate.Operator op, float value) {
             this(columnIndex, op, value, false);
         }
     }
@@ -43,14 +43,14 @@ public sealed interface ResolvedPredicate {
     /// both record values and stats min/max.
     record Float16Predicate(int columnIndex, FilterPredicate.Operator op, float value,
             boolean ieee754TotalOrder) implements ResolvedPredicate {
-        Float16Predicate(int columnIndex, FilterPredicate.Operator op, float value) {
+        public Float16Predicate(int columnIndex, FilterPredicate.Operator op, float value) {
             this(columnIndex, op, value, false);
         }
     }
 
     record DoublePredicate(int columnIndex, FilterPredicate.Operator op, double value,
             boolean ieee754TotalOrder) implements ResolvedPredicate {
-        DoublePredicate(int columnIndex, FilterPredicate.Operator op, double value) {
+        public DoublePredicate(int columnIndex, FilterPredicate.Operator op, double value) {
             this(columnIndex, op, value, false);
         }
     }
