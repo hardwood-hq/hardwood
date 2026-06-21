@@ -34,7 +34,7 @@ is read and displayed yet feeds no filtering). The read-vs-skipped axis matches 
 | 4 | row_groups | ✅ | |
 | 5 | key_value_metadata | ✅ | exposed on `FileMetaData` |
 | 6 | created_by | ✅ | displayed in CLI / dive |
-| 7 | column_orders | ❌ | stats sort order assumed type-defined; #483 |
+| 7 | column_orders | ✅ | decoded onto `FileMetaData.columnOrders`; #595 |
 | 8 | encryption_algorithm | ❌ | encrypted footers fail fast (#600); full support #128 |
 | 9 | footer_signing_key_metadata | ❌ | #128 |
 
@@ -43,7 +43,10 @@ All fields ❌ — Parquet Modular Encryption is unsupported; encrypted files fa
 fast. Tracked by **#128** (support), #600 (graceful failure).
 
 ### ColumnOrder (TypeDefinedOrder, IEEE754TotalOrder)
-❌ — tied to `FileMetaData.column_orders`; #483.
+✅ — decoded onto `FileMetaData.columnOrders` as `ColumnOrder`; an unrecognized union member maps to
+`ColumnOrder.UNKNOWN`. The order drives float/double statistics pruning: type-defined (and absent)
+orders widen `±0` bounds for correct signed-zero handling, while `IEEE754TotalOrder` prunes exactly;
+#595.
 
 ---
 

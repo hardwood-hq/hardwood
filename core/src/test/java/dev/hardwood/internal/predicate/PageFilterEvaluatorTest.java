@@ -200,7 +200,7 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     float min = StatisticsDecoder.decodeFloat(columnIndex.minValues().get(pageIndex));
                     float max = StatisticsDecoder.decodeFloat(columnIndex.maxValues().get(pageIndex));
-                    return StatisticsFilterSupport.canDropFloat(op, value, min, max);
+                    return StatisticsFilterSupport.canDropFloat(op, value, min, max, false);
                 });
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");
@@ -238,7 +238,7 @@ class PageFilterEvaluatorTest {
                 (columnIndex, pageIndex) -> {
                     double min = StatisticsDecoder.decodeDouble(columnIndex.minValues().get(pageIndex));
                     double max = StatisticsDecoder.decodeDouble(columnIndex.maxValues().get(pageIndex));
-                    return StatisticsFilterSupport.canDropDouble(op, value, min, max);
+                    return StatisticsFilterSupport.canDropDouble(op, value, min, max, false);
                 });
 
         assertEquals(page0Kept, ranges.overlapsPage(0, 50),  "page 0 (rows 0-50)");

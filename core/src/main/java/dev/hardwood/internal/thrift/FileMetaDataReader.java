@@ -14,6 +14,7 @@ import java.util.List;
 import java.util.Map;
 
 import dev.hardwood.internal.EncryptedParquetException;
+import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.SchemaElement;
@@ -30,6 +31,7 @@ public class FileMetaDataReader {
         List<RowGroup> rowGroups = new ArrayList<>();
         Map<String, String> keyValueMetadata = Collections.emptyMap();
         String createdBy = null;
+        List<ColumnOrder> columnOrders = Collections.emptyList();
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -92,6 +94,18 @@ public class FileMetaDataReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 7: // column_orders (optional list<ColumnOrder>)
+                    if (header.type() == 0x09) { // LIST
+                        ThriftCompactReader.CollectionHeader listHeader = reader.readListHeader();
+                        columnOrders = new ArrayList<>(listHeader.size());
+                        for (int i = 0; i < listHeader.size(); i++) {
+                            columnOrders.add(ColumnOrderReader.read(reader));
+                        }
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 case 8: // encryption_algorithm (present only with a plaintext footer)
                     // The footer parses, but the column data is encrypted and
                     // Hardwood cannot decrypt it. Fail fast rather than letting a
@@ -103,6 +117,7 @@ public class FileMetaDataReader {
             }
         }
 
-        return new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata, createdBy);
+        return new FileMetaData(version, schema, numRows, rowGroups, keyValueMetadata, createdBy,
+                columnOrders);
     }
 }

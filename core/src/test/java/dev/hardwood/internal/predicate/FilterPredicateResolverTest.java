@@ -16,6 +16,7 @@ import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -415,6 +416,51 @@ class FilterPredicateResolverTest {
                 FilterPredicate.not(FilterPredicate.intersects("loc", 0.0, 0.0, 1.0, 1.0)), schema))
                 .isInstanceOf(UnsupportedOperationException.class)
                 .hasMessageContaining("Negation");
+    }
+
+    // ==================== Column order propagation (#595) ====================
+
+    @Test
+    void floatTypeDefinedOrderMarksPredicateForWidening() {
+        FileSchema schema = schemaWithLogicalType("f", PhysicalType.FLOAT, null);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.eq("f", 1.0f), schema, List.of(ColumnOrder.TYPE_DEFINED_ORDER));
+        assertThat(((ResolvedPredicate.FloatPredicate) resolved).ieee754TotalOrder()).isFalse();
+    }
+
+    @Test
+    void floatIeee754OrderMarksPredicateExact() {
+        FileSchema schema = schemaWithLogicalType("f", PhysicalType.FLOAT, null);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.eq("f", 1.0f), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
+        assertThat(((ResolvedPredicate.FloatPredicate) resolved).ieee754TotalOrder()).isTrue();
+    }
+
+    @Test
+    void doubleAbsentColumnOrdersDefaultsToTypeDefined() {
+        FileSchema schema = schemaWithLogicalType("d", PhysicalType.DOUBLE, null);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.eq("d", 1.0), schema, List.of());
+        assertThat(((ResolvedPredicate.DoublePredicate) resolved).ieee754TotalOrder()).isFalse();
+    }
+
+    @Test
+    void float16TypeDefinedOrderMarksPredicateForWidening() {
+        FileSchema schema = schemaWithLogicalType("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
+                new LogicalType.Float16Type());
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.eq("h", 1.0f), schema, List.of(ColumnOrder.TYPE_DEFINED_ORDER));
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.Float16Predicate.class);
+        assertThat(((ResolvedPredicate.Float16Predicate) resolved).ieee754TotalOrder()).isFalse();
+    }
+
+    @Test
+    void float16Ieee754OrderMarksPredicateExact() {
+        FileSchema schema = schemaWithLogicalType("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
+                new LogicalType.Float16Type());
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.eq("h", 1.0f), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
+        assertThat(((ResolvedPredicate.Float16Predicate) resolved).ieee754TotalOrder()).isTrue();
     }
 
     // ==================== Helpers ====================

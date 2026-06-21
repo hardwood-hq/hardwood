@@ -18,6 +18,8 @@ import java.util.Map;
 /// @param rowGroups metadata for each row group in the file
 /// @param keyValueMetadata application-defined key-value metadata, or an empty map if absent
 /// @param createdBy identifier of the library that wrote the file, or `null` if absent
+/// @param columnOrders the statistics ordering for each leaf column, in schema order, or an empty
+///        list if the file omits `column_orders` (in which case the type-defined ordering applies)
 /// @see <a href="https://parquet.apache.org/docs/file-format/metadata/#file-metadata">File Format – File Metadata</a>
 /// @see <a href="https://github.com/apache/parquet-format/blob/master/src/main/thrift/parquet.thrift">parquet.thrift</a>
 public record FileMetaData(
@@ -26,5 +28,6 @@ public record FileMetaData(
         long numRows,
         List<RowGroup> rowGroups,
         Map<String, String> keyValueMetadata,
-        String createdBy) {
+        String createdBy,
+        List<ColumnOrder> columnOrders) {
 }

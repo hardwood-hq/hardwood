@@ -166,7 +166,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Row groups
   - [x] Key-value metadata
   - [x] Created by string
-  - [ ] Column orders (field skipped — stats sort order assumed type-defined; #483)
+  - [x] Column orders (decoded onto `FileMetaData.columnOrders`; #595)
 - [ ] FileMetaData serialization
 - [x] FileMetaData deserialization
 

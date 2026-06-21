@@ -37,13 +37,13 @@ final class StatisticsFilterSupport {
                     StatisticsDecoder.decodeLong(stats.maxValue()));
             case ResolvedPredicate.FloatPredicate p -> canDropFloat(p.op(), p.value(),
                     StatisticsDecoder.decodeFloat(stats.minValue()),
-                    StatisticsDecoder.decodeFloat(stats.maxValue()));
+                    StatisticsDecoder.decodeFloat(stats.maxValue()), p.ieee754TotalOrder());
             case ResolvedPredicate.Float16Predicate p -> canDropFloat(p.op(), p.value(),
                     StatisticsDecoder.decodeFloat16(stats.minValue()),
-                    StatisticsDecoder.decodeFloat16(stats.maxValue()));
+                    StatisticsDecoder.decodeFloat16(stats.maxValue()), p.ieee754TotalOrder());
             case ResolvedPredicate.DoublePredicate p -> canDropDouble(p.op(), p.value(),
                     StatisticsDecoder.decodeDouble(stats.minValue()),
-                    StatisticsDecoder.decodeDouble(stats.maxValue()));
+                    StatisticsDecoder.decodeDouble(stats.maxValue()), p.ieee754TotalOrder());
             case ResolvedPredicate.BooleanPredicate p -> canDrop(p.op(), p.value() ? 1 : 0,
                     StatisticsDecoder.decodeBoolean(stats.minValue()) ? 1 : 0,
                     StatisticsDecoder.decodeBoolean(stats.maxValue()) ? 1 : 0);
@@ -92,13 +92,22 @@ final class StatisticsFilterSupport {
         };
     }
 
-    static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max) {
+    static boolean canDropFloat(FilterPredicate.Operator op, float value, float min, float max,
+            boolean ieee754TotalOrder) {
         // The Parquet spec forbids writing NaN to statistics min/max, but older / buggy writers
         // have produced such bounds. NaN sorts above every finite value in Float.compare's total
         // order, so applying the range checks below would silently prune row groups / pages that
         // hold matching finite rows. Treat NaN bounds as no-bound and never prune.
         if (Float.isNaN(min) || Float.isNaN(max)) {
             return false;
+        }
+        // Under the type-defined ordering the spec leaves +0/-0 ambiguous: a +0 min may hide -0, a
+        // -0 max may hide +0. Float.compare's total order separates them (-0 < +0), which could
+        // wrongly drop the opposite zero, so widen each zero bound to its total-order extreme. The
+        // IEEE 754 total order is unambiguous, so its bounds are already exact and left as-is.
+        if (!ieee754TotalOrder) {
+            min = (min == 0.0f) ? -0.0f : min;
+            max = (max == 0.0f) ? 0.0f : max;
         }
         return switch (op) {
             case EQ -> Float.compare(value, min) < 0 || Float.compare(value, max) > 0;
@@ -110,9 +119,16 @@ final class StatisticsFilterSupport {
         };
     }
 
-    static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max) {
+    static boolean canDropDouble(FilterPredicate.Operator op, double value, double min, double max,
+            boolean ieee754TotalOrder) {
         if (Double.isNaN(min) || Double.isNaN(max)) {
             return false;
+        }
+        // See canDropFloat: widen ±0 bounds under the type-defined ordering, leave them exact for
+        // the unambiguous IEEE 754 total order.
+        if (!ieee754TotalOrder) {
+            min = (min == 0.0) ? -0.0 : min;
+            max = (max == 0.0) ? 0.0 : max;
         }
         return switch (op) {
             case EQ -> Double.compare(value, min) < 0 || Double.compare(value, max) > 0;

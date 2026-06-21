@@ -15,13 +15,14 @@ Inspecting metadata before reading is useful for understanding file structure, c
 
 A Parquet file is organized as follows:
 
-- **FileMetaData** — top-level: row count, schema, key-value metadata (e.g. Spark schema, pandas metadata), and the writer that produced the file (`createdBy`)
+- **FileMetaData** — top-level: row count, schema, key-value metadata (e.g. Spark schema, pandas metadata), the writer that produced the file (`createdBy`), and the per-column statistics ordering (`columnOrders`)
 - **RowGroup** — a horizontal partition of the data; each row group contains all columns for a subset of rows
 - **ColumnChunk** — one column within a row group; holds compression codec, byte sizes, and optional statistics (min/max values, null count) used for predicate pushdown. Per-chunk byte ranges for the column index and offset index (when present in the file) are exposed via `columnIndexOffset`/`columnIndexLength` and `offsetIndexOffset`/`offsetIndexLength` on `ColumnChunk`. The bloom-filter byte range (`bloomFilterOffset`/`bloomFilterLength`) is exposed on `ColumnMetaData`, matching its position in the Parquet Thrift schema.
 
 ```java
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.metadata.Statistics;
@@ -29,6 +30,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
+import java.util.List;
 import java.util.Map;
 
 try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
@@ -43,6 +45,11 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
     for (Map.Entry<String, String> entry : kvMetadata.entrySet()) {
         System.out.println("  " + entry.getKey() + " = " + entry.getValue());
     }
+
+    // The statistics ordering for each leaf column, in schema order. Empty when the file omits
+    // column_orders, in which case the type-defined ordering applies to every column. The value is
+    // one of ColumnOrder.TYPE_DEFINED_ORDER, IEEE754_TOTAL_ORDER, or UNKNOWN.
+    List<ColumnOrder> columnOrders = metadata.columnOrders();
 
     // Schema inspection
     FileSchema schema = reader.getFileSchema();

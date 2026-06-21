@@ -384,7 +384,7 @@ public class ParquetFileReader implements AutoCloseable {
                                      long maxRows, List<RowGroup> firstFileRowGroups,
                                      long tailSkip) {
         ResolvedPredicate resolved = filter != null
-                ? FilterPredicateResolver.resolve(filter, schema) : null;
+                ? FilterPredicateResolver.resolve(filter, schema, firstFileMetaData.columnOrders()) : null;
 
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
 
@@ -467,7 +467,7 @@ public class ParquetFileReader implements AutoCloseable {
             RowGroupPredicate rowGroupFilter,
             int batchSize) {
         ResolvedPredicate resolved = filter != null
-                ? FilterPredicateResolver.resolve(filter, schema) : null;
+                ? FilterPredicateResolver.resolve(filter, schema, firstFileMetaData.columnOrders()) : null;
         List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
 
         if (resolved == null) {

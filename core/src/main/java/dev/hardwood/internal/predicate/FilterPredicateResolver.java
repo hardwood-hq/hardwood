@@ -11,7 +11,9 @@ import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalTime;
+import java.util.List;
 
+import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.FilterPredicate;
@@ -46,12 +48,26 @@ import dev.hardwood.schema.FileSchema;
 /// need to repeat column lookups or type checks.
 public class FilterPredicateResolver {
 
-    /// Resolves a [FilterPredicate] tree into a [ResolvedPredicate] tree.
+    /// Resolves a [FilterPredicate] tree without column-order information. Float/double leaves are
+    /// treated as type-defined, so statistics pruning widens `±0` bounds (the conservative default).
     ///
     /// @param predicate the user-facing predicate tree
     /// @param schema the file schema for column resolution and type validation
     /// @return a fully resolved predicate tree ready for evaluation
     public static ResolvedPredicate resolve(FilterPredicate predicate, FileSchema schema) {
+        return resolve(predicate, schema, List.of());
+    }
+
+    /// Resolves a [FilterPredicate] tree into a [ResolvedPredicate] tree.
+    ///
+    /// @param predicate the user-facing predicate tree
+    /// @param schema the file schema for column resolution and type validation
+    /// @param columnOrders the file's decoded `column_orders` (empty if absent), used to mark
+    ///        float/double leaves that use the IEEE 754 total order so statistics pruning can skip
+    ///        the `±0` widening for them
+    /// @return a fully resolved predicate tree ready for evaluation
+    public static ResolvedPredicate resolve(FilterPredicate predicate, FileSchema schema,
+            List<ColumnOrder> columnOrders) {
         return switch (predicate) {
             case DateColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -120,16 +136,19 @@ public class FilterPredicateResolver {
                 rejectRepeated(p.column(), cs);
                 if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
                         && cs.logicalType() instanceof LogicalType.Float16Type) {
-                    yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(), p.value());
+                    yield new ResolvedPredicate.Float16Predicate(cs.columnIndex(), p.op(), p.value(),
+                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
                 }
                 validateType(p.column(), PhysicalType.FLOAT, cs);
-                yield new ResolvedPredicate.FloatPredicate(cs.columnIndex(), p.op(), p.value());
+                yield new ResolvedPredicate.FloatPredicate(cs.columnIndex(), p.op(), p.value(),
+                        isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
             case DoubleColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.DOUBLE, cs);
-                yield new ResolvedPredicate.DoublePredicate(cs.columnIndex(), p.op(), p.value());
+                yield new ResolvedPredicate.DoublePredicate(cs.columnIndex(), p.op(), p.value(),
+                        isIeee754TotalOrder(cs.columnIndex(), columnOrders));
             }
             case BooleanColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
@@ -186,13 +205,13 @@ public class FilterPredicateResolver {
                 yield new ResolvedPredicate.IsNotNullPredicate(cs.columnIndex());
             }
             case And a -> new ResolvedPredicate.And(a.filters().stream()
-                    .map(f -> resolve(f, schema))
+                    .map(f -> resolve(f, schema, columnOrders))
                     .toList());
             case Or o -> new ResolvedPredicate.Or(o.filters().stream()
-                    .map(f -> resolve(f, schema))
+                    .map(f -> resolve(f, schema, columnOrders))
                     .toList());
             case Not n -> {
-                ResolvedPredicate resolvedDelegate = resolve(n.delegate(), schema);
+                ResolvedPredicate resolvedDelegate = resolve(n.delegate(), schema, columnOrders);
                 yield ResolvedPredicate.negate(resolvedDelegate);
             }
             case IntersectsPredicate p -> {
@@ -206,6 +225,14 @@ public class FilterPredicateResolver {
                         p.xmin(), p.ymin(), p.xmax(), p.ymax());
             }
         };
+    }
+
+    /// `true` when the leaf at `columnIndex` declares the IEEE 754 total order, whose signed-zero
+    /// statistics are exact. Any other case — type-defined order, an absent (empty) `column_orders`,
+    /// an out-of-range index, or an unrecognized order — yields `false`, so pruning widens `±0`.
+    private static boolean isIeee754TotalOrder(int columnIndex, List<ColumnOrder> columnOrders) {
+        return columnIndex < columnOrders.size()
+                && columnOrders.get(columnIndex) == ColumnOrder.IEEE754_TOTAL_ORDER;
     }
 
     // ==================== Column resolution ====================
