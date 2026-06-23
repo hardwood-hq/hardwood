@@ -47,6 +47,8 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 
 Ready? [Install Hardwood](getting-started.md), then read [your first file end-to-end](tutorial/first-read.md).
 
+Prefer to learn by running code? The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository collects small, self-contained examples — one per concept — that you can clone and run with a single command.
+
 ## Status and Limitations
 
 This is Beta quality software, under active development.

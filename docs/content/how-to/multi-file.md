@@ -14,6 +14,9 @@
 When processing multiple Parquet files, use the `Hardwood` class to share a thread pool across readers.
 `Hardwood.openAll(List<InputFile>)` returns a `ParquetFileReader` over many files. The same `RowReader`, `ColumnReader`, and `ColumnReaders` APIs apply.
 
+!!! example "Try it yourself"
+    Want to run it or explore the capabilities yourself? [**Multi-File**](https://github.com/hardwood-hq/hardwood-examples/tree/main/multi-file) reads three months of data as one dataset, and [**Byte Buffer Source**](https://github.com/hardwood-hq/hardwood-examples/tree/main/byte-buffer-source) reads several in-memory `ByteBuffer`s as one dataset.
+
 ```java
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;

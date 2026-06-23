@@ -18,6 +18,13 @@ model** is how `ColumnReader` expresses that structure without boxing or per-row
 explains the model; for worked code against it, see
 [Column-Oriented Reading](../how-to/column-reader.md).
 
+!!! example "Try it yourself"
+    Want to run it or explore the capabilities yourself?
+    [**Layer Model**](https://github.com/hardwood-hq/hardwood-examples/tree/main/layer-model) counts list
+    and map items from offsets without materializing rows, and
+    [**Nested Data**](https://github.com/hardwood-hq/hardwood-examples/tree/main/nested-data) reads the
+    same shapes through the Row API.
+
 > **A note on lineage.** The layer model — flat value arrays, offset buffers, and set-bit-present
 > validity bitmaps — takes inspiration from [Apache Arrow](https://arrow.apache.org/)'s columnar
 > representation, so the shapes feel familiar if you come from an Arrow-based engine. The

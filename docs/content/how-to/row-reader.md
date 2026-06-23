@@ -13,6 +13,9 @@
 
 The `RowReader` provides a convenient row-oriented interface for reading Parquet files with typed accessor methods for type-safe field access.
 
+!!! example "Try it yourself"
+    Want to run it or explore the capabilities yourself? [**Nested Data**](https://github.com/hardwood-hq/hardwood-examples/tree/main/nested-data) walks structs, lists, and maps with the Row API, and [**Hello Hardwood**](https://github.com/hardwood-hq/hardwood-examples/tree/main/hello-hardwood) covers the basics.
+
 ```java
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ParquetFileReader;

@@ -13,6 +13,9 @@
 
 Hardwood reads the [Parquet geospatial metadata layer](https://parquet.apache.org/docs/file-format/types/geospatial/) — GEOMETRY / GEOGRAPHY logical types and per-chunk `GeospatialStatistics` — and offers a bounding-box filter predicate that pushes spatial selectivity down to the row group level. Hardwood does not decode WKB payloads itself — geometry decoding is left to the caller, so the reader has no runtime geometry-library dependency. The de-facto standard Java library for this is the [JTS Topology Suite](https://locationtech.github.io/jts/); the snippets below assume JTS, but any WKB decoder works.
 
+!!! example "Try it yourself"
+    Want to run it or explore the capabilities yourself? The [**Geospatial**](https://github.com/hardwood-hq/hardwood-examples/tree/main/geospatial) example reads a GEOMETRY column, pushes a bounding-box filter down to the row-group level, and decodes WKB points with JTS.
+
 To use JTS in the examples below, add the `jts-core` dependency:
 
 ```xml
@@ -88,7 +91,7 @@ import org.locationtech.jts.io.WKBReader;
 
 FilterPredicate filter = FilterPredicate.intersects("location", -25.0, 35.0, 45.0, 72.0);
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
-        RowReader rowReader = fileReader.createRowReader(filter)) {
+        RowReader rowReader = fileReader.buildRowReader().filter(filter).build()) {
     WKBReader wkbReader = new WKBReader();
     while (rowReader.hasNext()) {
         rowReader.next();

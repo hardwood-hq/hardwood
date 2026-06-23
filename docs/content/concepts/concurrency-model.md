@@ -94,3 +94,6 @@ shared pool matters, since all the files draw on the same workers. See
   decode itself.
 - [Read Multiple Files as One Dataset](../how-to/multi-file.md) — the cross-file API and pool
   sharing in practice.
+- [Concurrent Column Consumer](https://github.com/hardwood-hq/hardwood-examples/tree/main/concurrent-column-consumer)
+  — a runnable example that fans each batch's per-value work across a thread pool, with a
+  single-threaded baseline to show the gains.

@@ -16,6 +16,9 @@ The `ColumnReader` provides batch-oriented columnar access with typed primitive 
 !!! warning "Experimental API"
     The `ColumnReader` is under active development; the shape of the batch accessors and layer representation may change in future releases without prior deprecation.
 
+!!! example "Try it yourself"
+    Want to run it or explore the capabilities yourself? [**Column Analytics**](https://github.com/hardwood-hq/hardwood-examples/tree/main/column-analytics) aggregates a column batch by batch, [**Layer Model**](https://github.com/hardwood-hq/hardwood-examples/tree/main/layer-model) reads nested columns from offsets, and [**Concurrent Column Consumer**](https://github.com/hardwood-hq/hardwood-examples/tree/main/concurrent-column-consumer) fans batch arrays across a thread pool.
+
 ### Reading a Single Column
 
 ```java
@@ -384,7 +387,7 @@ Two orthogonal offset axes show up here, as in `list<string>`: `entryOffsets` wa
 If the map sits under an `OPTIONAL` group — e.g. `optional group meta { map<string, int> tags }` — the chain gains a `STRUCT` layer on top. The same key/value lockstep walk applies, with `getLayerValidity(0)` for `meta`, `getLayerValidity(1)` plus `getLayerOffsets(1)` for the map, and `getLeafValidity()` for the value:
 
 ```java
-Validity metaValidity  = reader.getLayerValidity(0);   // STRUCT layer for `meta`
-Validity mapValidity   = reader.getLayerValidity(1);   // REPEATED layer for the map
-int[]    entryOffsets  = reader.getLayerOffsets(1);
+Validity metaValidity  = values.getLayerValidity(0);   // STRUCT layer for `meta`
+Validity mapValidity   = values.getLayerValidity(1);   // REPEATED layer for the map
+int[]    entryOffsets  = values.getLayerOffsets(1);
 ```

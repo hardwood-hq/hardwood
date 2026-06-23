@@ -21,6 +21,11 @@ options. When you're done, the [how-to guides](../how-to/index.md) cover the ful
 choices, and the [background pages](../concepts/parquet-layout.md) explain how Parquet files
 and the reader APIs work underneath.
 
+!!! example "Try it yourself"
+    Want to run this as a standalone example? The [Hello Hardwood](https://github.com/hardwood-hq/hardwood-examples/tree/main/hello-hardwood)
+    example mirrors these steps — opening a file, inspecting its schema and footer, reading a few
+    rows, and summing a column.
+
 ## Before you start
 
 - Java 21 or newer (`java -version` to check).
@@ -160,7 +165,7 @@ try (ParquetFileReader reader =
 
     double total = 0;
     while (fare.nextBatch()) {
-        int count = fare.getValueCount();
+        int count = fare.getRecordCount();
         double[] values = fare.getDoubles();
         Validity validity = fare.getLeafValidity();
         boolean hasNulls = validity.hasNulls();

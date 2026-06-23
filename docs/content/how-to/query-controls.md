@@ -11,6 +11,9 @@
 -->
 # Predicate Pushdown, Projection, Limits, and Splits
 
+!!! example "Try it yourself"
+    Want to run it or explore the capabilities yourself? The [**Query Controls**](https://github.com/hardwood-hq/hardwood-examples/tree/main/query-controls) example filters, projects, limits, paginates, and splits a read by byte range.
+
 ## Predicate Pushdown (Filter)
 
 Filter predicates apply at three levels, in this order:

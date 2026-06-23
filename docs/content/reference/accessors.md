@@ -17,6 +17,9 @@ correspondence between accessor, Parquet type, and Java type, together with the 
 type-mismatch contracts every accessor obeys. For the task-oriented walkthrough, see
 [Read Row by Row](../how-to/row-reader.md).
 
+!!! example "Try it yourself"
+    Want to run it or explore the capabilities yourself? The [**Typed Accessors**](https://github.com/hardwood-hq/hardwood-examples/tree/main/typed-accessors) example decodes dates, times, UTC and local timestamps, decimals, UUIDs, intervals, FLOAT16, and JSON/BSON to their natural Java types.
+
 ## Accessor type mapping
 
 All accessors are available in two forms — name-based (`getInt("column_name")`) and index-based

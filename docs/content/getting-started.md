@@ -150,4 +150,4 @@ If you attempt to read a file using a compression codec whose library is not on 
 
 With the core dependency in place, you're ready to read. The [Read Your First Parquet File](tutorial/first-read.md) tutorial walks through it end-to-end against a real dataset — printing the schema, reading rows with typed accessors, narrowing the read with a projection and a filter, and summing a column the columnar way.
 
-For the full API — column projection, predicate pushdown, column-oriented reading, and more — see the [How-to Guides](how-to/index.md).
+For the full API — column projection, predicate pushdown, column-oriented reading, and more — see the [How-to Guides](how-to/index.md). For example projects you can clone and run, see the [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository.

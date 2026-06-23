@@ -24,6 +24,12 @@ Read Parquet files with Hardwood — pick the guide that matches what you need:
 - [**Read Geospatial Columns**](geospatial.md) — GEOMETRY / GEOGRAPHY columns, bounding-box filter pushdown.
 - [**Inspect File Metadata**](metadata.md) — file metadata, row groups, column chunks, schema introspection.
 
+!!! example "Runnable examples"
+    Each guide below links to a matching standalone example in the
+    [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository — every example is a
+    complete project you can clone and run with a single command. New to Hardwood? Start with
+    [Hello Hardwood](https://github.com/hardwood-hq/hardwood-examples/tree/main/hello-hardwood).
+
 For detailed class-level documentation, see the [JavaDoc](/api/latest/).
 
 ## Choosing a Reader

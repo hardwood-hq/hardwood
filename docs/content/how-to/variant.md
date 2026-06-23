@@ -13,6 +13,9 @@
 
 A Parquet column annotated with the [`VARIANT`](https://parquet.apache.org/docs/file-format/types/variantencoding/) logical type carries semi-structured, JSON-like data in a self-describing binary encoding. Physically it is a group of two required `BYTE_ARRAY` children, `metadata` and `value`, whose bytes together define a Variant value with its own type tag (object, array, string, int, etc.). `getVariant` reads both children and surfaces them through the `PqVariant` API.
 
+!!! example "Try it yourself"
+    Want to run it or explore the capabilities yourself? The [**Variant Columns**](https://github.com/hardwood-hq/hardwood-examples/tree/main/variant-columns) example renders every Variant type through one recursive method, including nested objects and arrays.
+
 ```java
 try (RowReader rowReader = fileReader.rowReader()) {
     while (rowReader.hasNext()) {
