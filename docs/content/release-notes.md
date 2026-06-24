@@ -27,6 +27,7 @@ Highlights of this release:
 - `ColumnReader` and `RowReader` `close()` methods are now idempotent, fixing a close-time performance regression introduced in Beta2
 - Logical types render as Parquet-style annotation tokens (e.g. `STRING`) instead of a misleading record `toString()`
 - `hardwood dive` fails fast with a clear message when stdout is not an interactive terminal
+- `hardwood print` short option names follow the conventional single-dash, single-character form (`-s`, `-w`, `-i`, `-d`); `--transpose` is long-only
 - Documentation and tooling polish: corrected Docker image tags in the published docs, a single unified API change report linking each version to its commit, and stable JavaDoc diagrams
 
 See the [1.0.0.Final milestone](https://github.com/hardwood-hq/hardwood/milestone/7?closed=1) on GitHub for the full list of resolved issues.

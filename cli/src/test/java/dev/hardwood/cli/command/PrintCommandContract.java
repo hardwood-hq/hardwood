@@ -109,7 +109,7 @@ interface PrintCommandContract {
 
     @Test
     default void showsRowIndexWhenEnabled() {
-        Cli.Result result = Cli.launch("print", "-f", plainFile(), "-ri");
+        Cli.Result result = Cli.launch("print", "-f", plainFile(), "-i");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
@@ -139,7 +139,7 @@ interface PrintCommandContract {
 
     @Test
     default void columnsFilterWithNestedStruct() {
-        Cli.Result result = Cli.launch("print", "-f", deepNestedFile(), "--columns", "name,account", "-mw", "150");
+        Cli.Result result = Cli.launch("print", "-f", deepNestedFile(), "--columns", "name,account", "-w", "150");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
@@ -209,7 +209,7 @@ interface PrintCommandContract {
 
     @Test
     default void transposesRows() {
-        Cli.Result result = Cli.launch("print", "-f", byteArrayFile(), "-tp", "-n", "3");
+        Cli.Result result = Cli.launch("print", "-f", byteArrayFile(), "--transpose", "-n", "3");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
@@ -258,7 +258,7 @@ interface PrintCommandContract {
 
     @Test
     default void displaysNestedStructFields() {
-        Cli.Result result = Cli.launch("print", "-f", deepNestedFile(), "-mw", "150");
+        Cli.Result result = Cli.launch("print", "-f", deepNestedFile(), "-w", "150");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
@@ -274,7 +274,7 @@ interface PrintCommandContract {
 
     @Test
     default void wrapsWhenTruncationDisabled() {
-        Cli.Result result = Cli.launch("print", "-f", byteArrayFile(), "--no-truncate", "-mw", "5");
+        Cli.Result result = Cli.launch("print", "-f", byteArrayFile(), "--no-truncate", "-w", "5");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
