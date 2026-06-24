@@ -45,22 +45,22 @@ public class PrintCommand implements Callable<Integer> {
     @Spec
     CommandSpec spec;
 
-    @CommandLine.Option(names = {"-ss", "--sample-size"}, defaultValue = "10", description = "Max number of lines used to auto-adjust the column width.")
+    @CommandLine.Option(names = {"-s", "--sample-size"}, defaultValue = "10", description = "Max number of lines used to auto-adjust the column width.")
     int sampleSize;
 
-    @CommandLine.Option(names = {"-mw", "--max-width"}, defaultValue = "50", description = "Max width in characters of a column.")
+    @CommandLine.Option(names = {"-w", "--max-width"}, defaultValue = "50", description = "Max width in characters of a column.")
     int maxWidth;
 
     @CommandLine.Option(names = {"-t", "--truncate"}, negatable = true, fallbackValue = "true", defaultValue = "true", description = "Should rows be truncated instead of wrapping on next line when too long.")
     boolean truncate;
 
-    @CommandLine.Option(names = {"-tp", "--transpose"}, defaultValue = "false", description = "When true, the rows are printed with two columns, the headers and values.")
+    @CommandLine.Option(names = {"--transpose"}, defaultValue = "false", description = "When true, the rows are printed with two columns, the headers and values.")
     boolean transpose;
 
-    @CommandLine.Option(names = {"-ri", "--row-index"}, defaultValue = "false", description = "When true, a virtual column is added containing the row index.")
+    @CommandLine.Option(names = {"-i", "--row-index"}, defaultValue = "false", description = "When true, a virtual column is added containing the row index.")
     boolean addRowIndex;
 
-    @CommandLine.Option(names = {"-rd", "--row-delimiter"}, description = "Should a line separate rows, it is lighter without but less readable when it overlaps a single terminal line.")
+    @CommandLine.Option(names = {"-d", "--row-delimiter"}, description = "Should a line separate rows, it is lighter without but less readable when it overlaps a single terminal line.")
     boolean rowDelimiter;
 
     @CommandLine.Option(names = {"-n", "--rows"}, defaultValue = RowLimits.ALL, description = "Number of rows to display. Positive values show the first N rows (head), negative values show the last N rows (tail), 'ALL' shows every row.")

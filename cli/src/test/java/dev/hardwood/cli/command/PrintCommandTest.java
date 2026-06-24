@@ -96,7 +96,7 @@ class PrintCommandTest implements PrintCommandContract {
 
     @Test
     void rendersVariantObjectAsJsonLikeText() {
-        Cli.Result result = Cli.launch("print", "-f", VARIANT_ATTRIBUTES_FILE, "-mw", "120");
+        Cli.Result result = Cli.launch("print", "-f", VARIANT_ATTRIBUTES_FILE, "-w", "120");
 
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).isEqualTo("""
