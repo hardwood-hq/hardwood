@@ -7,40 +7,50 @@
  */
 package dev.hardwood.cli.command;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
+import java.nio.charset.StandardCharsets;
 
-import picocli.CommandLine;
+import org.aesh.AeshRuntimeRunner;
 
 /// In-process launcher for CLI command tests. Executes the top-level `hardwood`
-/// command directly via picocli with stdout and stderr captured into strings,
-/// avoiding the Quarkus bootstrap that `@QuarkusMainTest` pays per test class.
-///
-/// Mirrors the configuration applied to the production `CommandLine`
-/// produced by [HardwoodCommand.getCommandLineInstance] so tests exercise the
-/// same parser behaviour.
+/// command directly via aesh with stdout and stderr captured into strings.
 final class Cli {
 
     private Cli() {
     }
 
     static Result launch(String... args) {
-        StringWriter out = new StringWriter();
-        StringWriter err = new StringWriter();
+        ByteArrayOutputStream outBuf = new ByteArrayOutputStream();
+        ByteArrayOutputStream errBuf = new ByteArrayOutputStream();
+        PrintStream origOut = System.out;
+        PrintStream origErr = System.err;
 
-        CommandLine commandLine = new CommandLine(new HardwoodCommand())
-                .setCaseInsensitiveEnumValuesAllowed(true)
-                .setOut(new PrintWriter(out, true))
-                .setErr(new PrintWriter(err, true));
+        int exitCode;
+        try {
+            System.setOut(new PrintStream(outBuf, true, StandardCharsets.UTF_8));
+            System.setErr(new PrintStream(errBuf, true, StandardCharsets.UTF_8));
 
-        int exitCode = commandLine.execute(args);
-        return new Result(exitCode, stripTrailingNewlines(out.toString()), stripTrailingNewlines(err.toString()));
+            org.aesh.command.CommandResult result = AeshRuntimeRunner.builder()
+                    .command(HardwoodCommand.class)
+                    .args(args)
+                    .execute();
+            exitCode = result == org.aesh.command.CommandResult.SUCCESS ? 0 : 1;
+        }
+        catch (Exception e) {
+            exitCode = 1;
+            new PrintStream(errBuf, true, StandardCharsets.UTF_8).println(e.getMessage());
+        }
+        finally {
+            System.setOut(origOut);
+            System.setErr(origErr);
+        }
+
+        return new Result(exitCode,
+                stripTrailingNewlines(outBuf.toString(StandardCharsets.UTF_8)),
+                stripTrailingNewlines(errBuf.toString(StandardCharsets.UTF_8)));
     }
 
-    /// `QuarkusMainLauncher` strips the trailing line separator from captured
-    /// output. Match that so assertions using text blocks (which have no
-    /// trailing newline) behave identically whether launched directly or via
-    /// Quarkus.
     private static String stripTrailingNewlines(String s) {
         int end = s.length();
         while (end > 0) {

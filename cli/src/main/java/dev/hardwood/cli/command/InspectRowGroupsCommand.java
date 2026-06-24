@@ -10,7 +10,12 @@ package dev.hardwood.cli.command;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Mixin;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Sizes;
@@ -20,26 +25,18 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "rowgroups", description = "Display per-row-group column chunk metadata (sizes, codec).")
-public class InspectRowGroupsCommand implements Callable<Integer> {
+@CommandDefinition(name = "rowgroups", description = "Display per-row-group column chunk metadata (sizes, codec).", generateHelp = true)
+public class InspectRowGroupsCommand implements Command<CommandInvocation> {
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
+    @Mixin
     FileMixin fileMixin;
-    @Spec
-    CommandSpec spec;
 
     @Override
-    public Integer call() {
+    public CommandResult execute(CommandInvocation ci) {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
@@ -48,21 +45,21 @@ public class InspectRowGroupsCommand implements Callable<Integer> {
 
             for (int i = 0; i < rowGroups.size(); i++) {
                 if (i > 0) {
-                    spec.commandLine().getOut().println();
+                    System.out.println();
                 }
                 printRowGroup(i, rowGroups.get(i));
             }
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     private void printRowGroup(int index, RowGroup rg) {
-        spec.commandLine().getOut().printf("Row Group %d  (%d rows, %s uncompressed)%n",
+        System.out.printf("Row Group %d  (%d rows, %s uncompressed)%n",
                 index, rg.numRows(), Sizes.format(rg.totalByteSize()));
 
         String[] headers = {"Column", "Type", "Codec", "Compressed", "Uncompressed"};
@@ -77,6 +74,6 @@ public class InspectRowGroupsCommand implements Callable<Integer> {
                     Sizes.format(cmd.totalUncompressedSize())
             });
         }
-        spec.commandLine().getOut().println(RowTable.renderTable(headers, rows));
+        System.out.println(RowTable.renderTable(headers, rows));
     }
 }

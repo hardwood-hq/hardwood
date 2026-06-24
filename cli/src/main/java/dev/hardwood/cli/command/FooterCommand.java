@@ -11,46 +11,39 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Mixin;
 
 import dev.hardwood.InputFile;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "footer", description = "Print decoded footer length, offset, and file structure.")
-public class FooterCommand implements Callable<Integer> {
+@CommandDefinition(name = "footer", description = "Print decoded footer length, offset, and file structure.", generateHelp = true)
+public class FooterCommand implements Command<CommandInvocation> {
 
     private static final byte[] PARQUET_MAGIC = { 'P', 'A', 'R', '1' };
-    // Written in place of PARQUET_MAGIC when the footer is encrypted (Parquet
-    // Modular Encryption, encrypted-footer mode).
     private static final byte[] ENCRYPTED_MAGIC = { 'P', 'A', 'R', 'E' };
-    // Parquet trailer layout (last 8 bytes): [4-byte footer length LE][4-byte magic PAR1]
     private static final int TRAILER_SIZE = 8;
     private static final int MAGIC_SIZE = 4;
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
+    @Mixin
     FileMixin fileMixin;
 
-    @Spec
-    CommandSpec spec;
-
     @Override
-    public Integer call() {
+    public CommandResult execute(CommandInvocation ci) {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
         try (inputFile) {
             inputFile.open();
             long fileSize = inputFile.length();
 
             if (fileSize < TRAILER_SIZE + MAGIC_SIZE) {
-                spec.commandLine().getErr().println("File is too small to be a valid Parquet file.");
-                return CommandLine.ExitCode.SOFTWARE;
+                System.err.println("File is too small to be a valid Parquet file.");
+                return CommandResult.FAILURE;
             }
 
             ByteBuffer trailer = inputFile.readRange(fileSize - TRAILER_SIZE, TRAILER_SIZE)
@@ -61,14 +54,14 @@ public class FooterCommand implements Callable<Integer> {
             trailer.get(trailingMagic);
 
             if (isMagic(trailingMagic, ENCRYPTED_MAGIC)) {
-                spec.commandLine().getErr().println(
+                System.err.println(
                         "Encrypted Parquet files are not supported (Parquet Modular Encryption).");
-                return CommandLine.ExitCode.SOFTWARE;
+                return CommandResult.FAILURE;
             }
 
             if (!isMagic(trailingMagic, PARQUET_MAGIC)) {
-                spec.commandLine().getErr().println("Invalid Parquet file: trailing magic bytes not found.");
-                return CommandLine.ExitCode.SOFTWARE;
+                System.err.println("Invalid Parquet file: trailing magic bytes not found.");
+                return CommandResult.FAILURE;
             }
 
             byte[] leadingMagic = new byte[MAGIC_SIZE];
@@ -76,18 +69,18 @@ public class FooterCommand implements Callable<Integer> {
 
             long footerOffset = fileSize - TRAILER_SIZE - footerLength;
 
-            spec.commandLine().getOut().println("File Size:     " + fileSize + " bytes");
-            spec.commandLine().getOut().println("Footer Offset: " + footerOffset + " bytes");
-            spec.commandLine().getOut().println("Footer Length: " + footerLength + " bytes");
-            spec.commandLine().getOut().println("Leading Magic:  " + new String(leadingMagic, StandardCharsets.US_ASCII));
-            spec.commandLine().getOut().println("Trailing Magic: " + new String(trailingMagic, StandardCharsets.US_ASCII));
+            System.out.println("File Size:     " + fileSize + " bytes");
+            System.out.println("Footer Offset: " + footerOffset + " bytes");
+            System.out.println("Footer Length: " + footerLength + " bytes");
+            System.out.println("Leading Magic:  " + new String(leadingMagic, StandardCharsets.US_ASCII));
+            System.out.println("Trailing Magic: " + new String(trailingMagic, StandardCharsets.US_ASCII));
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     private static boolean isMagic(byte[] bytes, byte[] magic) {

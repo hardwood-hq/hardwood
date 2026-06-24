@@ -7,12 +7,11 @@
  */
 package dev.hardwood.cli.command;
 
-import org.junit.jupiter.api.Test;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.concurrent.TimeUnit;
 
-import io.quarkus.test.common.WithTestResource;
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainIntegrationTest;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
+import org.junit.jupiter.api.Test;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -20,27 +19,41 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// the compiled binary boots, parses arguments, loads a file from disk, and
 /// produces expected output. Per-command behavioural coverage lives in the
 /// JVM `*CommandTest` classes.
-@QuarkusMainIntegrationTest
-@WithTestResource(QuietLoggingTestResource.class)
 class NativeBinarySmokeIT {
 
+    private final String nativeBinary = System.getProperty("native.image.path");
     private final String plainFile = getClass().getResource("/plain_uncompressed.parquet").getPath();
 
     @Test
-    void readsLocalFile(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("schema", "-f", plainFile);
+    void readsLocalFile() throws IOException, InterruptedException {
+        NativeResult result = exec(nativeBinary, "schema", "-f", plainFile);
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("message schema");
+        assertThat(result.stdout()).contains("message schema");
     }
 
     @Test
-    void diveSmokeRenderExitsZero(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("dive", "-f", plainFile, "--smoke-render");
+    void diveSmokeRenderExitsZero() throws IOException, InterruptedException {
+        NativeResult result = exec(nativeBinary, "dive", "-f", plainFile, "--smoke-render");
 
         assertThat(result.exitCode())
                 .withFailMessage("dive --smoke-render failed: stdout=%s stderr=%s",
-                        result.getOutput(), result.getErrorOutput())
+                        result.stdout(), result.stderr())
                 .isZero();
+    }
+
+    static NativeResult exec(String... command) throws IOException, InterruptedException {
+        ProcessBuilder pb = new ProcessBuilder(command)
+                .redirectErrorStream(false);
+        Process process = pb.start();
+        boolean finished = process.waitFor(30, TimeUnit.SECONDS);
+        assertThat(finished).withFailMessage("Process timed out after 30s").isTrue();
+
+        String stdout = new String(process.getInputStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+        String stderr = new String(process.getErrorStream().readAllBytes(), StandardCharsets.UTF_8).strip();
+        return new NativeResult(process.exitValue(), stdout, stderr);
+    }
+
+    record NativeResult(int exitCode, String stdout, String stderr) {
     }
 }

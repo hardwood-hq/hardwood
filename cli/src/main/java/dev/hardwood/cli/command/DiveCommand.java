@@ -9,12 +9,19 @@ package dev.hardwood.cli.command;
 
 import java.io.IOException;
 import java.nio.file.Path;
-import java.util.concurrent.Callable;
 import java.util.logging.FileHandler;
 import java.util.logging.Level;
 import java.util.logging.LogRecord;
 import java.util.logging.Logger;
 import java.util.logging.SimpleFormatter;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Mixin;
+import org.aesh.command.option.Option;
+import org.aesh.command.option.OptionVisibility;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.dive.DiveApp;
@@ -23,72 +30,48 @@ import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.s3.RangeBacking;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Rect;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-/// Launches the interactive `hardwood dive` TUI for exploring a Parquet file's
-/// structure. See `_designs/INTERACTIVE_DIVE_TUI.md`.
-///
-/// **Logging.** Quarkus pins JBoss LogManager as the runtime
-/// `System.LoggerFinder` (via the transitive `jboss-logmanager`
-/// dependency, which Quarkus's bootstrap references directly and cannot
-/// be excluded). JBoss LogManager is JUL-API-compatible, so this command
-/// configures dive's optional `--log-file` via `java.util.logging` —
-/// records emitted via `System.Logger` from `dev.hardwood.*` flow through
-/// JBoss LogManager and into the [FileHandler] attached here.
-@CommandLine.Command(
+@CommandDefinition(
         name = "dive",
-        description = "Interactively explore a Parquet file's structure.")
-public class DiveCommand implements Callable<Integer> {
+        description = "Interactively explore a Parquet file's structure.",
+        generateHelp = true)
+public class DiveCommand implements Command<CommandInvocation> {
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
+    @Mixin
     FileMixin fileMixin;
 
-    @Spec
-    CommandSpec spec;
-
-    @CommandLine.Option(
-            names = "--max-dict-bytes",
+    @Option(
+            name = "max-dict-bytes",
             description = "Maximum chunk size (in bytes) to auto-load on the Dictionary screen; "
                     + "larger chunks require a confirm prompt. Default: ${DEFAULT-VALUE} (16 MiB).",
             defaultValue = "16777216")
     int maxDictBytes;
 
-    @CommandLine.Option(
-            names = "--smoke-render",
+    @Option(
+            name = "smoke-render",
+            hasValue = false,
             description = "Render one frame to a 120x40 buffer and exit 0. Used by the native-image smoke test; not intended for interactive use.",
-            hidden = true)
+            visibility = OptionVisibility.HIDDEN)
     boolean smokeRender;
 
-    @CommandLine.Option(
-            names = "--log-file",
+    @Option(
+            name = "log-file",
             description = "Write FINE-level dev.hardwood logs (including per-fetch entries from S3InputFile) "
-                    + "to the given path. The file is truncated on each invocation. Off by default.",
-            paramLabel = "<path>")
+                    + "to the given path. The file is truncated on each invocation. Off by default.")
     Path logFile;
 
     @Override
-    public Integer call() {
-        // Without a TTY the JLine TUI can't run; checked before any file I/O.
-        // Smoke-render never enters raw mode, so it is exempt.
+    public CommandResult execute(CommandInvocation ci) {
         if (!smokeRender && interactiveTerminalUnavailable()) {
-            spec.commandLine().getErr().println(
+            System.err.println(
                     "Error: 'dive' requires an interactive terminal. "
                             + "Re-run attached to a TTY (with Docker: docker run -it ...).");
-            return CommandLine.ExitCode.USAGE;
+            return CommandResult.FAILURE;
         }
 
-        // Dive re-reads the same byte ranges constantly (page-up/page-down
-        // navigation, jump-to-end-then-back, the `t` toggle, etc.). Opt
-        // into the sparse-tempfile range cache so those repeats hit a
-        // local mmap instead of S3. See #373.
         InputFile inputFile = fileMixin.toInputFile(RangeBacking.SPARSE_TEMPFILE);
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
         FileHandler logHandler = installLogFileHandler();
@@ -98,18 +81,18 @@ public class DiveCommand implements Callable<Integer> {
             if (smokeRender) {
                 Buffer buffer = Buffer.empty(new Rect(0, 0, 120, 40));
                 app.renderOnce(buffer);
-                return CommandLine.ExitCode.OK;
+                return CommandResult.SUCCESS;
             }
             app.run();
-            return CommandLine.ExitCode.OK;
+            return CommandResult.SUCCESS;
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
         catch (Exception e) {
-            spec.commandLine().getErr().println("Error running dive TUI: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error running dive TUI: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
         finally {
             if (logHandler != null) {
@@ -118,23 +101,10 @@ public class DiveCommand implements Callable<Integer> {
         }
     }
 
-    /// Reports whether stdin or stdout is not attached to a terminal.
-    /// `System.console()` is `null` when either is redirected, including in
-    /// the native image.
     private static boolean interactiveTerminalUnavailable() {
         return System.console() == null;
     }
 
-    /// Configures JUL logging for an interactive dive session.
-    ///
-    /// Always detaches the `dev.hardwood` logger from parent handlers so
-    /// nothing leaks to stdout/stderr while the TUI owns the terminal —
-    /// otherwise log records would garble the rendered frames.
-    ///
-    /// When `--log-file` is set, also attaches a [FileHandler] writing
-    /// one record per line to the given path, truncated per session.
-    /// Returns the handler so it can be closed at shutdown, or `null`
-    /// when no log file is requested.
     private FileHandler installLogFileHandler() {
         Logger logger = Logger.getLogger("dev.hardwood");
         logger.setUseParentHandlers(false);
@@ -157,7 +127,7 @@ public class DiveCommand implements Callable<Integer> {
             return handler;
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Failed to open log file " + logFile + ": " + e.getMessage());
+            System.err.println("Failed to open log file " + logFile + ": " + e.getMessage());
             return null;
         }
     }

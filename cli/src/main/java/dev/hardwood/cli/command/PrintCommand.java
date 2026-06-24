@@ -8,16 +8,23 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
+import java.io.PrintWriter;
 import java.util.Iterator;
 import java.util.List;
 import java.util.Spliterator;
 import java.util.Spliterators;
-import java.util.concurrent.Callable;
 import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.IntFunction;
 import java.util.stream.IntStream;
 import java.util.stream.Stream;
 import java.util.stream.StreamSupport;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Mixin;
+import org.aesh.command.option.Option;
 
 import com.github.freva.asciitable.AsciiTable;
 
@@ -29,54 +36,45 @@ import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "print", description = "Print all rows as an ASCII table.")
-public class PrintCommand implements Callable<Integer> {
+@CommandDefinition(name = "print", description = "Print all rows as an ASCII table.", generateHelp = true)
+public class PrintCommand implements Command<CommandInvocation> {
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
+    @Mixin
     FileMixin fileMixin;
 
-    @Spec
-    CommandSpec spec;
-
-    @CommandLine.Option(names = {"-s", "--sample-size"}, defaultValue = "10", description = "Max number of lines used to auto-adjust the column width.")
+    @Option(shortName = 's', name = "sample-size", defaultValue = "10", description = "Max number of lines used to auto-adjust the column width.")
     int sampleSize;
 
-    @CommandLine.Option(names = {"-w", "--max-width"}, defaultValue = "50", description = "Max width in characters of a column.")
+    @Option(shortName = 'w', name = "max-width", defaultValue = "50", description = "Max width in characters of a column.")
     int maxWidth;
 
-    @CommandLine.Option(names = {"-t", "--truncate"}, negatable = true, fallbackValue = "true", defaultValue = "true", description = "Should rows be truncated instead of wrapping on next line when too long.")
-    boolean truncate;
+    @Option(shortName = 't', name = "truncate", hasValue = false, negatable = true, defaultValue = "true", description = "Should rows be truncated instead of wrapping on next line when too long.")
+    Boolean truncate;
 
-    @CommandLine.Option(names = {"--transpose"}, defaultValue = "false", description = "When true, the rows are printed with two columns, the headers and values.")
+    @Option(name = "transpose", hasValue = false, description = "When true, the rows are printed with two columns, the headers and values.")
     boolean transpose;
 
-    @CommandLine.Option(names = {"-i", "--row-index"}, defaultValue = "false", description = "When true, a virtual column is added containing the row index.")
+    @Option(shortName = 'i', name = "row-index", hasValue = false, description = "When true, a virtual column is added containing the row index.")
     boolean addRowIndex;
 
-    @CommandLine.Option(names = {"-d", "--row-delimiter"}, description = "Should a line separate rows, it is lighter without but less readable when it overlaps a single terminal line.")
+    @Option(shortName = 'd', name = "row-delimiter", hasValue = false, description = "Should a line separate rows, it is lighter without but less readable when it overlaps a single terminal line.")
     boolean rowDelimiter;
 
-    @CommandLine.Option(names = {"-n", "--rows"}, defaultValue = RowLimits.ALL, description = "Number of rows to display. Positive values show the first N rows (head), negative values show the last N rows (tail), 'ALL' shows every row.")
+    @Option(shortName = 'n', name = "rows", defaultValue = RowLimits.ALL, description = "Number of rows to display. Positive values show the first N rows (head), negative values show the last N rows (tail), 'ALL' shows every row.")
     String n;
 
-    @CommandLine.Option(names = {"-c", "--columns"}, description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
+    @Option(shortName = 'c', name = "columns", description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
     String columns;
 
     @Override
-    public Integer call() {
+    public CommandResult execute(CommandInvocation ci) {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
-        int rowLimit = RowLimits.parse(n, spec);
+        int rowLimit = RowLimits.parse(n);
         ColumnProjection projection = parseColumnProjection();
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
@@ -94,18 +92,18 @@ public class PrintCommand implements Callable<Integer> {
             }
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     private void printTransposed(Stream<Object[]> stream, String[] headers, List<SchemaNode> fields, AtomicLong rowIndex) {
         stream.forEach(r -> {
             Stream<Object[]> data = IntStream.range(0, headers.length)
                     .mapToObj(i -> new Object[]{headers[i], RowTable.renderValue(r[i], fields.get(i))});
-            spec.commandLine().getOut().println(
+            System.out.println(
                     AsciiTable.builder()
                             .data((rowIndex != null ?
                                     Stream.concat(
@@ -117,7 +115,7 @@ public class PrintCommand implements Callable<Integer> {
 
     private void printTable(Stream<Object[]> stream, String[] headers, List<SchemaNode> fields, AtomicLong rowIndex) {
         new StreamedTable().print(
-                spec.commandLine().getOut(),
+                new PrintWriter(System.out, true),
                 addRowIndex ? Stream.concat(Stream.of("rowIndex"), Stream.of(headers)).toArray(String[]::new) : headers,
                 stream
                         .map(r -> rowIndex == null ?
@@ -146,9 +144,6 @@ public class PrintCommand implements Callable<Integer> {
         if (projection.projectsAll()) {
             return allChildren;
         }
-        // ColumnProjection.columns("a.b") projects "a" at top level — so we filter root children
-        // by checking which top-level fields have any projected column underneath them.
-        // For simplicity, we match top-level names against the projection prefixes.
         return allChildren.stream()
                 .filter(child -> projection.getProjectedColumnNames().stream()
                         .anyMatch(name -> name.equals(child.name()) || name.startsWith(child.name() + ".")))

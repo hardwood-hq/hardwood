@@ -7,8 +7,9 @@
  */
 package dev.hardwood.cli.internal;
 
-import org.eclipse.microprofile.config.Config;
-import org.eclipse.microprofile.config.ConfigProvider;
+import java.io.IOException;
+import java.io.InputStream;
+import java.util.Properties;
 
 /// Resolves the human-readable version string for the CLI and TUI.
 public final class Version {
@@ -25,10 +26,18 @@ public final class Version {
     /// checkout. Values come from the filtered `application.properties` populated
     /// by the `capture-git-info` antrun step.
     private static String initVersion() {
-        Config config = ConfigProvider.getConfig();
-        String applicationVersion = config.getValue("project.version", String.class);
-        String applicationRevision = config.getValue("project.revision", String.class);
-        boolean dirty = config.getValue("project.revision.dirty", Boolean.class);
+        Properties props = new Properties();
+        try (InputStream in = Version.class.getResourceAsStream("/application.properties")) {
+            if (in != null) {
+                props.load(in);
+            }
+        }
+        catch (IOException e) {
+            // Ignore — fall through to defaults
+        }
+        String applicationVersion = props.getProperty("project.version", "unknown");
+        String applicationRevision = props.getProperty("project.revision", "unknown");
+        boolean dirty = Boolean.parseBoolean(props.getProperty("project.revision.dirty", "false"));
 
         String dirtyMark = dirty ? "-dirty" : "";
         return Fmt.fmt("%s (%s%s)", applicationVersion, applicationRevision, dirtyMark);
