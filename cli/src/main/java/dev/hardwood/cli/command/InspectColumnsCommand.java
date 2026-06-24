@@ -14,7 +14,12 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Mixin;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Fmt;
@@ -28,26 +33,18 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "columns", description = "Show compressed and uncompressed byte sizes per column, ranked.")
-public class InspectColumnsCommand implements Callable<Integer> {
+@CommandDefinition(name = "columns", description = "Show compressed and uncompressed byte sizes per column, ranked.", generateHelp = true)
+public class InspectColumnsCommand implements Command<CommandInvocation> {
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
+    @Mixin
     FileMixin fileMixin;
-    @Spec
-     CommandSpec spec;
 
     @Override
-    public Integer call() {
+    public CommandResult execute(CommandInvocation ci) {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
@@ -63,11 +60,11 @@ public class InspectColumnsCommand implements Callable<Integer> {
             }
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     private static List<ColumnSize> aggregateSizes(FileMetaData metadata, InputFile inputFile) {
@@ -131,7 +128,7 @@ public class InspectColumnsCommand implements Callable<Integer> {
                     s.pageCountAvailable() ? String.valueOf(s.pageCount()) : "-"
             });
         }
-        spec.commandLine().getOut().println(RowTable.renderTable(headers, rows));
+        System.out.println(RowTable.renderTable(headers, rows));
     }
 
     private record ColumnSize(String path, String type, String codec, long compressed, long uncompressed,

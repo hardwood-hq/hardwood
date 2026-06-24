@@ -7,7 +7,25 @@
   },
 
   {
+    "name": "com.github.luben.zstd.Zstd"
+  },
+  {
+    "name": "org.xerial.snappy.Snappy"
+  },
+  {
+    "name": "net.jpountz.lz4.LZ4Factory"
+  },
+  {
+    "name": "com.aayushatharva.brotli4j.Brotli4jLoader"
+  },
+
+  {
     "name": "dev.tamboui.terminal.BackendProvider",
+    "allDeclaredMethods": true
+  },
+  {
+    "name": "dev.tamboui.capability.core.CoreCapabilityProvider",
+    "allDeclaredConstructors": true,
     "allDeclaredMethods": true
   },
   {

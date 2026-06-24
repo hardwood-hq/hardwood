@@ -16,9 +16,7 @@
       <screenshots.parquetFile>${maven.multiModuleProjectDirectory}/cli/src/test/resources/dive_screenshots_fixture.parquet</screenshots.parquetFile>
       <screenshots.tapeFile>${maven.multiModuleProjectDirectory}/docs/screenshots/dive-screenshots.tape</screenshots.tapeFile>
       <screenshots.castFile>${project.build.directory}/dive-screenshots.cast</screenshots.castFile>
-      <quarkus.platform.artifact-id>quarkus-bom</quarkus.platform.artifact-id>
-      <quarkus.platform.group-id>io.quarkus.platform</quarkus.platform.group-id>
-      <quarkus.platform.version>3.27.2</quarkus.platform.version>
+      <aesh.version>3.16.3</aesh.version>
       <!-- Integration tests require a native binary; skip by default.
            The native profile overrides this to false. -->
       <skipITs>true</skipITs>
@@ -65,11 +63,14 @@
         <scope>import</scope>
       </dependency>
       <dependency>
-        <groupId>${quarkus.platform.group-id}</groupId>
-        <artifactId>${quarkus.platform.artifact-id}</artifactId>
-        <version>${quarkus.platform.version}</version>
-        <type>pom</type>
-        <scope>import</scope>
+        <groupId>org.aesh</groupId>
+        <artifactId>aesh</artifactId>
+        <version>${aesh.version}</version>
+      </dependency>
+      <dependency>
+        <groupId>org.aesh</groupId>
+        <artifactId>readline-api</artifactId>
+        <version>3.16.2</version>
       </dependency>
 
       <!-- ASCII table rendering for command output -->
@@ -195,25 +196,20 @@
       <artifactId>brotli4j</artifactId>
     </dependency>
 
-    <!-- Quarkus.
-
-         quarkus-core pulls in jboss-logmanager, which (a) is referenced
-         directly by Quarkus's bootstrap (QuarkusEntryPoint) so it
-         can't be excluded, and (b) ships a System.LoggerFinder service
-         provider. That makes JBoss LogManager the de-facto LoggerFinder
-         for the CLI runtime; there's no way to swap it without
-         breaking Quarkus startup. Since JBoss LogManager is
-         JUL-API-compatible, dive's log-file flag configures logging via
-         java.util.logging; records emitted via System.Logger from
-         S3InputFile and friends flow through JBoss LogManager and into
-         the JUL FileHandler we attach. -->
+    <!-- Aesh CLI framework -->
     <dependency>
-      <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-picocli</artifactId>
+      <groupId>org.aesh</groupId>
+      <artifactId>aesh</artifactId>
+      <exclusions>
+        <exclusion>
+          <groupId>org.aesh</groupId>
+          <artifactId>readline</artifactId>
+        </exclusion>
+      </exclusions>
     </dependency>
     <dependency>
-      <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-arc</artifactId>
+      <groupId>org.aesh</groupId>
+      <artifactId>readline-api</artifactId>
     </dependency>
 
     <!-- Test dependencies -->
@@ -237,17 +233,14 @@
       <artifactId>hardwood-test-support</artifactId>
       <scope>test</scope>
     </dependency>
-    <dependency>
-      <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-junit5</artifactId>
-      <scope>test</scope>
-    </dependency>
+
     <!-- netty-buffer is an optional dependency of brotli4j (declared optional in its POM).
          It must be explicitly provided so GraalVM native-image can resolve the
          ByteBufUtil reference in DirectDecompress at build time. -->
     <dependency>
       <groupId>io.netty</groupId>
       <artifactId>netty-buffer</artifactId>
+      <version>4.1.118.Final</version>
       <optional>true</optional>
     </dependency>
   </dependencies>
@@ -289,24 +282,38 @@
                 <id>regenerate-dive-screenshots</id>
                 <phase>package</phase>
                 <goals>
-                  <goal>exec</goal>
+                  <goal>java</goal>
                 </goals>
                 <configuration>
-                  <workingDirectory>${maven.multiModuleProjectDirectory}</workingDirectory>
-                  <executable>java</executable>
+                  <includeProjectDependencies>true</includeProjectDependencies>
+                  <mainClass>dev.hardwood.cli.Main</mainClass>
                   <arguments>
-                    <argument>-Djava.util.logging.manager=org.jboss.logmanager.LogManager</argument>
-                    <argument>-Dtamboui.record=${screenshots.castFile}</argument>
-                    <argument>-Dtamboui.record.config=${screenshots.tapeFile}</argument>
-                    <argument>-Dtamboui.record.width=120</argument>
-                    <argument>-Dtamboui.record.height=40</argument>
-                    <argument>-Dtamboui.record.fps=30</argument>
-                    <argument>-jar</argument>
-                    <argument>${project.build.directory}/quarkus-app/quarkus-run.jar</argument>
                     <argument>dive</argument>
                     <argument>-f</argument>
                     <argument>${screenshots.parquetFile}</argument>
                   </arguments>
+                  <systemProperties>
+                    <property>
+                      <key>tamboui.record</key>
+                      <value>${screenshots.castFile}</value>
+                    </property>
+                    <property>
+                      <key>tamboui.record.config</key>
+                      <value>${screenshots.tapeFile}</value>
+                    </property>
+                    <property>
+                      <key>tamboui.record.width</key>
+                      <value>120</value>
+                    </property>
+                    <property>
+                      <key>tamboui.record.height</key>
+                      <value>40</value>
+                    </property>
+                    <property>
+                      <key>tamboui.record.fps</key>
+                      <value>30</value>
+                    </property>
+                  </systemProperties>
                 </configuration>
               </execution>
             </executions>
@@ -322,22 +329,40 @@
         </property>
       </activation>
       <properties>
-        <quarkus.package.jar.enabled>false</quarkus.package.jar.enabled>
         <skipITs>false</skipITs>
-        <quarkus.native.enabled>true</quarkus.native.enabled>
       </properties>
       <build>
-        <pluginManagement>
-          <plugins>
-            <plugin>
-              <groupId>${quarkus.platform.group-id}</groupId>
-              <artifactId>quarkus-maven-plugin</artifactId>
-              <version>${quarkus.platform.version}</version>
-              <extensions>true</extensions>
-            </plugin>
-          </plugins>
-        </pluginManagement>
         <plugins>
+          <plugin>
+            <groupId>org.graalvm.buildtools</groupId>
+            <artifactId>native-maven-plugin</artifactId>
+            <version>0.10.6</version>
+            <extensions>true</extensions>
+            <executions>
+              <execution>
+                <id>build-native</id>
+                <goals>
+                  <goal>compile-no-fork</goal>
+                </goals>
+                <phase>prepare-package</phase>
+              </execution>
+            </executions>
+            <configuration>
+              <mainClass>dev.hardwood.cli.Main</mainClass>
+              <imageName>hardwood-cli</imageName>
+              <buildArgs>
+                <arg>-march=compatibility</arg>
+                <arg>--gc=serial</arg>
+                <arg>-J--enable-native-access=ALL-UNNAMED</arg>
+                <arg>--initialize-at-run-time=org.jline.nativ</arg>
+                <arg>--initialize-at-run-time=org.jline.terminal.impl.jni</arg>
+                <arg>-H:-UseServiceLoaderFeature</arg>
+              </buildArgs>
+            </configuration>
+          </plugin>
+
+          <!-- Generate shell completion scripts (bash, zsh, fish) via aesh's
+               ShellCompletionGenerator at build time. -->
           <plugin>
             <groupId>org.codehaus.mojo</groupId>
             <artifactId>exec-maven-plugin</artifactId>
@@ -350,12 +375,9 @@
                 </goals>
                 <configuration>
                   <includeProjectDependencies>true</includeProjectDependencies>
-                  <mainClass>picocli.AutoComplete</mainClass>
+                  <mainClass>dev.hardwood.cli.internal.GenerateCompletion</mainClass>
                   <arguments>
-                    <argument>--force</argument>
-                    <argument>-o</argument>
-                    <argument>${project.build.directory}/hardwood_completion</argument>
-                    <argument>dev.hardwood.cli.command.HardwoodCommand</argument>
+                    <argument>${project.build.directory}</argument>
                   </arguments>
                 </configuration>
               </execution>
@@ -450,6 +472,7 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-antrun-plugin</artifactId>
             <executions>
+
               <execution>
                 <id>stage-native-libs</id>
                 <phase>prepare-package</phase>
@@ -618,6 +641,21 @@
         </executions>
       </plugin>
 
+      <!-- Aesh annotation processor for compile-time command metadata -->
+      <plugin>
+        <groupId>org.apache.maven.plugins</groupId>
+        <artifactId>maven-compiler-plugin</artifactId>
+        <configuration>
+          <annotationProcessorPaths>
+            <path>
+              <groupId>org.aesh</groupId>
+              <artifactId>aesh-processor</artifactId>
+              <version>${aesh.version}</version>
+            </path>
+          </annotationProcessorPaths>
+        </configuration>
+      </plugin>
+
       <!-- Run unit tests with Vector API module -->
       <plugin>
         <groupId>org.apache.maven.plugins</groupId>
@@ -625,9 +663,6 @@
         <configuration>
           <skipTests>${skipSurefire}</skipTests>
           <argLine>--add-modules jdk.incubator.vector --add-opens java.base/java.lang=ALL-UNNAMED</argLine>
-          <systemPropertyVariables>
-            <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
-          </systemPropertyVariables>
         </configuration>
       </plugin>
 
@@ -648,28 +683,13 @@
             <configuration>
               <systemPropertyVariables>
                 <native.image.path>${project.build.directory}/hardwood-cli${executable-suffix}</native.image.path>
-                <java.util.logging.manager>org.jboss.logmanager.LogManager</java.util.logging.manager>
               </systemPropertyVariables>
             </configuration>
           </execution>
         </executions>
       </plugin>
 
-      <plugin>
-        <groupId>${quarkus.platform.group-id}</groupId>
-        <artifactId>quarkus-maven-plugin</artifactId>
-        <version>${quarkus.platform.version}</version>
-        <extensions>true</extensions>
-        <executions>
-          <execution>
-            <goals>
-              <goal>build</goal>
-              <goal>generate-code</goal>
-              <goal>generate-code-tests</goal>
-            </goals>
-          </execution>
-        </executions>
-      </plugin>
+
     </plugins>
   </build>
 </project>

@@ -10,6 +10,9 @@
       {"pattern": "org/jline/nativ/.*\\.so"},
       {"pattern": "org/jline/nativ/.*\\.dylib"},
       {"pattern": "org/jline/nativ/.*\\.dll"},
+
+      {"pattern": "dev/tamboui/tui/bindings/.*\\.properties"},
+
       {"pattern": "META-INF/services/.*"}
     ]
   }

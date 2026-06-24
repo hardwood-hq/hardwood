@@ -420,7 +420,7 @@ jobs:
           merge-multiple: true
 
       - name: 'Build Native Image'
-        # -DskipSurefire=true skips the JVM @QuarkusMainTest suite (already run
-        # in the `build-cli` job); Failsafe still runs the native smoke ITs during
+        # -DskipSurefire=true skips the JVM unit test suite (already run in the
+        # `build-cli` job); Failsafe still runs the native smoke ITs during
         # integration-test.
         run: ./mvnw -ntp -B -Dnative verify -pl :hardwood-cli -DskipSurefire=true
