@@ -13,9 +13,11 @@ import java.util.List;
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
@@ -35,13 +37,37 @@ public final class AvroSchemaConverter {
     /// @return the equivalent Avro record schema
     public static Schema convert(FileSchema fileSchema) {
         SchemaNode.GroupNode root = fileSchema.getRootNode();
-        return convertGroup(root, fileSchema.getName());
+        return convertGroup(root, fileSchema.getName(), null);
     }
 
-    private static Schema convertGroup(SchemaNode.GroupNode group, String recordName) {
+    /// Convert a Hardwood FileSchema to an Avro record Schema, narrowed to the
+    /// given column projection. Only projected fields appear in the result, with
+    /// pruning applied recursively through structs, list elements, and map values
+    /// — so `address.city` yields an `address` record carrying only `city`, and
+    /// `items.list.element.quantity` yields a list whose element record carries
+    /// only `quantity`, mirroring the partial rows the row reader serves.
+    ///
+    /// @param fileSchema the Parquet file schema
+    /// @param projection the columns to retain
+    /// @return the equivalent Avro record schema, restricted to projected fields
+    public static Schema convert(FileSchema fileSchema, ColumnProjection projection) {
+        if (projection.projectsAll()) {
+            return convert(fileSchema);
+        }
+        ProjectedSchema projected = ProjectedSchema.create(fileSchema, projection);
+        return convertGroup(fileSchema.getRootNode(), fileSchema.getName(), projected);
+    }
+
+    /// Convert a struct group (or the schema root) to an Avro record, retaining
+    /// only children that contain a projected leaf when `projected` is non-null.
+    private static Schema convertGroup(SchemaNode.GroupNode group, String recordName,
+            ProjectedSchema projected) {
         List<Schema.Field> fields = new ArrayList<>();
         for (SchemaNode child : group.children()) {
-            Schema fieldSchema = convertNode(child);
+            if (projected != null && !hasProjectedLeaf(child, projected)) {
+                continue;
+            }
+            Schema fieldSchema = convertNode(child, projected);
             // Wrap OPTIONAL fields in [null, T] — unless T is already the
             // NULL type, since Avro unions disallow duplicate branches.
             if (child.repetitionType() == RepetitionType.OPTIONAL
@@ -53,25 +79,40 @@ public final class AvroSchemaConverter {
         return Schema.createRecord(recordName, null, null, false, fields);
     }
 
-    private static Schema convertNode(SchemaNode node) {
+    /// True if `node` is, or transitively contains, a projected leaf column.
+    private static boolean hasProjectedLeaf(SchemaNode node, ProjectedSchema projected) {
         return switch (node) {
-            case SchemaNode.PrimitiveNode prim -> convertPrimitive(prim);
-            case SchemaNode.GroupNode group -> convertGroupNode(group);
+            case SchemaNode.PrimitiveNode prim -> projected.toProjectedIndex(prim.columnIndex()) >= 0;
+            case SchemaNode.GroupNode group -> {
+                for (SchemaNode child : group.children()) {
+                    if (hasProjectedLeaf(child, projected)) {
+                        yield true;
+                    }
+                }
+                yield false;
+            }
         };
     }
 
-    private static Schema convertGroupNode(SchemaNode.GroupNode group) {
+    private static Schema convertNode(SchemaNode node, ProjectedSchema projected) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> convertPrimitive(prim);
+            case SchemaNode.GroupNode group -> convertGroupNode(group, projected);
+        };
+    }
+
+    private static Schema convertGroupNode(SchemaNode.GroupNode group, ProjectedSchema projected) {
         if (group.isVariant()) {
             return convertVariant(group);
         }
         if (group.isList()) {
-            return convertList(group);
+            return convertList(group, projected);
         }
         if (group.isMap()) {
-            return convertMap(group);
+            return convertMap(group, projected);
         }
-        // Plain struct
-        return convertGroup(group, group.name());
+        // Plain struct — prune unprojected children recursively.
+        return convertGroup(group, group.name(), projected);
     }
 
     /// Emit a two-field Avro RECORD carrying the canonical Variant bytes.
@@ -87,13 +128,16 @@ public final class AvroSchemaConverter {
         return Schema.createRecord(group.name(), null, null, false, new ArrayList<>(fields));
     }
 
-    private static Schema convertList(SchemaNode.GroupNode listGroup) {
+    private static Schema convertList(SchemaNode.GroupNode listGroup, ProjectedSchema projected) {
         SchemaNode element = listGroup.getListElement();
         if (element == null) {
             // Fallback for malformed list
             return Schema.createArray(Schema.create(Schema.Type.NULL));
         }
-        Schema elementSchema = convertNode(element);
+        // The list column is only reached when it has a projected leaf; prune the
+        // element subtree so a list<struct> with a sub-field projection narrows to
+        // the served fields.
+        Schema elementSchema = convertNode(element, projected);
         if (element.repetitionType() == RepetitionType.OPTIONAL
                 && elementSchema.getType() != Schema.Type.NULL) {
             elementSchema = nullable(elementSchema);
@@ -101,7 +145,7 @@ public final class AvroSchemaConverter {
         return Schema.createArray(elementSchema);
     }
 
-    private static Schema convertMap(SchemaNode.GroupNode mapGroup) {
+    private static Schema convertMap(SchemaNode.GroupNode mapGroup, ProjectedSchema projected) {
         // MAP -> key_value (repeated) -> key, value
         if (mapGroup.children().isEmpty()) {
             return Schema.createMap(Schema.create(Schema.Type.NULL));
@@ -109,7 +153,9 @@ public final class AvroSchemaConverter {
         SchemaNode inner = mapGroup.children().get(0);
         if (inner instanceof SchemaNode.GroupNode kvGroup && kvGroup.children().size() >= 2) {
             SchemaNode valueNode = kvGroup.children().get(1);
-            Schema valueSchema = convertNode(valueNode);
+            // Prune the value subtree so a map<_, struct> with a sub-field
+            // projection narrows to the served fields (the key is always read).
+            Schema valueSchema = convertNode(valueNode, projected);
             if (valueNode.repetitionType() == RepetitionType.OPTIONAL
                     && valueSchema.getType() != Schema.Type.NULL) {
                 valueSchema = nullable(valueSchema);

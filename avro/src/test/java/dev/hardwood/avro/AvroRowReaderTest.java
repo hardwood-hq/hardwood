@@ -24,6 +24,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.VariantType;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -304,6 +305,297 @@ class AvroRowReaderTest {
             for (GenericRecord record : records) {
                 assertThat(record.get("nothing")).isNull();
             }
+        }
+    }
+
+    @Test
+    void readSubsetProjectionTopLevel() throws Exception {
+        // plain_uncompressed.parquet: id INT64, value INT64 — 3 rows.
+        // Project only `value`: the materialized schema and records must contain
+        // `value` and not `id`. Regression for hardwood-hq/hardwood#692.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("value")).build()) {
+
+            Schema schema = reader.getSchema();
+            assertThat(schema.getFields()).hasSize(1);
+            assertThat(schema.getField("value")).isNotNull();
+            assertThat(schema.getField("id")).isNull();
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(3);
+            assertThat(records.getFirst().get("value")).isEqualTo(100L);
+        }
+    }
+
+    @Test
+    void readNestedFieldProjection() throws Exception {
+        // nested_struct_test.parquet: id INT32, address { street, city, zip }.
+        // Project a single nested field `address.city`: the materialized schema
+        // must expose only `address` carrying only `city`, and reading must not
+        // touch the unprojected siblings.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("nested_struct_test.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("address.city")).build()) {
+
+            Schema schema = reader.getSchema();
+            assertThat(schema.getFields()).hasSize(1);
+            Schema.Field addressField = schema.getField("address");
+            assertThat(addressField).isNotNull();
+            Schema addressRecord = addressField.schema().getTypes().stream()
+                    .filter(s -> s.getType() == Schema.Type.RECORD)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(addressRecord.getFields()).hasSize(1);
+            assertThat(addressRecord.getField("city")).isNotNull();
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).isNotEmpty();
+            GenericRecord address = (GenericRecord) records.get(0).get("address");
+            assertThat(address.get("city").toString()).isEqualTo("New York");
+        }
+    }
+
+    @Test
+    void readHead() throws Exception {
+        // plain_uncompressed.parquet: id INT64, value INT64 — 3 rows.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader).head(2).build()) {
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(2);
+            assertThat(records.get(0).get("id")).isEqualTo(1L);
+            assertThat(records.get(1).get("id")).isEqualTo(2L);
+        }
+    }
+
+    @Test
+    void readTail() throws Exception {
+        // plain_uncompressed.parquet: id INT64, value INT64 — 3 rows.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("plain_uncompressed.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader).tail(1).build()) {
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(1);
+            assertThat(records.getFirst().get("id")).isEqualTo(3L);
+        }
+    }
+
+    @Test
+    void readProjectionWithFilter() throws Exception {
+        // filter_pushdown_int.parquet: id 1-300 across 3 row groups. Projecting
+        // `id` together with a filter on `id` must still read correctly.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("filter_pushdown_int.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("id"))
+                     .filter(FilterPredicate.gt("id", 200L)).build()) {
+
+            assertThat(reader.getSchema().getFields()).hasSize(1);
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(100);
+            for (GenericRecord record : records) {
+                assertThat((Long) record.get("id")).isGreaterThan(200L);
+            }
+        }
+    }
+
+    @Test
+    void readProjectionWithFilterAndHead() throws Exception {
+        // filter_pushdown_int.parquet: id 1-300 across 3 row groups. Combine all
+        // three controls: project `id`, filter id > 200 (matches 201-300), then
+        // head(10) to keep the first 10 matched rows (201-210).
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("filter_pushdown_int.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("id"))
+                     .filter(FilterPredicate.gt("id", 200L))
+                     .head(10).build()) {
+
+            assertThat(reader.getSchema().getFields()).hasSize(1);
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(10);
+            assertThat(records.get(0).get("id")).isEqualTo(201L);
+            assertThat(records.get(9).get("id")).isEqualTo(210L);
+        }
+    }
+
+    @Test
+    void readWholeNestedGroupProjection() throws Exception {
+        // nested_struct_test.parquet: id INT32, address { street, city, zip }.
+        // Projecting the parent group `address` (no dot) must retain all of its
+        // children — the parent-group-expands-to-all-children path under pruning.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("nested_struct_test.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("address")).build()) {
+
+            Schema schema = reader.getSchema();
+            assertThat(schema.getFields()).hasSize(1);
+            Schema addressRecord = schema.getField("address").schema().getTypes().stream()
+                    .filter(s -> s.getType() == Schema.Type.RECORD)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(addressRecord.getFields()).hasSize(3);
+
+            GenericRecord address = (GenericRecord) readAll(reader).getFirst().get("address");
+            assertThat(address.get("street").toString()).isEqualTo("123 Main St");
+            assertThat(address.get("city").toString()).isEqualTo("New York");
+            assertThat(address.get("zip")).isEqualTo(10001);
+        }
+    }
+
+    @Test
+    void readListColumnProjection() throws Exception {
+        // list_basic_test.parquet: id INT32, tags list<string>, scores list<int>.
+        // Project only the list column `tags` (excluding `id` and `scores`): list
+        // columns are retained wholesale, so the schema must carry only `tags` and
+        // reading the array must work under the narrowed schema.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("list_basic_test.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("tags")).build()) {
+
+            Schema schema = reader.getSchema();
+            assertThat(schema.getFields()).hasSize(1);
+            assertThat(schema.getField("tags")).isNotNull();
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).isNotEmpty();
+            assertThat((List<?>) records.getFirst().get("tags")).isNotEmpty();
+        }
+    }
+
+    @Test
+    void readMapColumnProjection() throws Exception {
+        // simple_map_test.parquet: id INT32, name STRING, attributes map<string,int>.
+        // Project only the map column `attributes`: like lists, maps are retained
+        // wholesale, so the schema must carry only `attributes`.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("simple_map_test.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("attributes")).build()) {
+
+            Schema schema = reader.getSchema();
+            assertThat(schema.getFields()).hasSize(1);
+            assertThat(schema.getField("attributes")).isNotNull();
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).isNotEmpty();
+            assertThat(records.getFirst().get("attributes")).isInstanceOf(Map.class);
+        }
+    }
+
+    @Test
+    void readListOfStructSubFieldProjection() throws Exception {
+        // list_struct_test.parquet: id INT32, items list<struct{name, quantity}>.
+        // Project a single sub-field inside the list element (items.list.element.
+        // quantity). The row reader serves partial element structs holding only
+        // `quantity`, so the Avro element record must narrow the same way —
+        // otherwise materialization would read the unprojected `name`.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("list_struct_test.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("items.list.element.quantity")).build()) {
+
+            Schema schema = reader.getSchema();
+            assertThat(schema.getFields()).hasSize(1);
+            Schema itemsArray = schema.getField("items").schema().getTypes().stream()
+                    .filter(s -> s.getType() == Schema.Type.ARRAY)
+                    .findFirst()
+                    .orElseThrow();
+            Schema elementRecord = itemsArray.getElementType().getTypes().stream()
+                    .filter(s -> s.getType() == Schema.Type.RECORD)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(elementRecord.getFields()).hasSize(1);
+            assertThat(elementRecord.getField("quantity")).isNotNull();
+            assertThat(elementRecord.getField("name")).isNull();
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(3);
+
+            @SuppressWarnings("unchecked")
+            List<GenericRecord> firstItems = (List<GenericRecord>) records.getFirst().get("items");
+            assertThat(firstItems).hasSize(2);
+            assertThat(firstItems.get(0).get("quantity")).isEqualTo(5);
+            assertThat(firstItems.get(1).get("quantity")).isEqualTo(10);
+        }
+    }
+
+    @Test
+    void readMapValueSubFieldProjection() throws Exception {
+        // map_struct_value_test.parquet: id, people map<string, struct{name, age}>.
+        // Row 0 people = {employee1:{Alice,30}, employee2:{Bob,25}}.
+        //
+        // Projecting only people.key_value.value.age must materialize a map of
+        // {key -> {age}}: the Avro schema narrows the map value record to a single
+        // `age` field (no `name`), and the map's key is force-included by the
+        // core resolver so the reader can still assemble the map.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("map_struct_value_test.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("people.key_value.value.age")).build()) {
+
+            Schema schema = reader.getSchema();
+            assertThat(schema.getFields()).hasSize(1);
+            Schema peopleMap = schema.getField("people").schema().getTypes().stream()
+                    .filter(s -> s.getType() == Schema.Type.MAP)
+                    .findFirst()
+                    .orElseThrow();
+            Schema valueRecord = peopleMap.getValueType().getTypes().stream()
+                    .filter(s -> s.getType() == Schema.Type.RECORD)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(valueRecord.getFields()).hasSize(1);
+            assertThat(valueRecord.getField("age")).isNotNull();
+            assertThat(valueRecord.getField("name")).isNull();
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(3);
+
+            @SuppressWarnings("unchecked")
+            Map<String, GenericRecord> people = (Map<String, GenericRecord>) records.get(0).get("people");
+            assertThat(people).containsOnlyKeys("employee1", "employee2");
+            assertThat(people.get("employee1").get("age")).isEqualTo(30);
+            assertThat(people.get("employee2").get("age")).isEqualTo(25);
+        }
+    }
+
+    @Test
+    void readVariantSubFieldProjection() throws Exception {
+        // variant_shredded_test.parquet: var is a shredded Variant
+        // {metadata, value, typed_value:int64}; row 0 holds INT64(42) whose
+        // canonical value bytes are [0x18, 42, 0, 0, 0, 0, 0, 0, 0].
+        //
+        // Variants are read atomically: projecting any leaf inside a Variant
+        // pulls the whole column, and the Avro view stays the canonical
+        // {metadata: bytes, value: bytes} record carrying the reassembled bytes
+        // — identical to the unprojected shape exercised by readShreddedVariantColumn.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("variant_shredded_test.parquet")));
+             AvroRowReader reader = AvroReaders.buildRowReader(fileReader)
+                     .projection(ColumnProjection.columns("var.typed_value")).build()) {
+
+            Schema schema = reader.getSchema();
+            assertThat(schema.getFields()).hasSize(1);
+            Schema varRecord = schema.getField("var").schema().getTypes().stream()
+                    .filter(s -> s.getType() == Schema.Type.RECORD)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(varRecord.getFields()).hasSize(2);
+            assertThat(varRecord.getField("metadata").schema().getType()).isEqualTo(Schema.Type.BYTES);
+            assertThat(varRecord.getField("value").schema().getType()).isEqualTo(Schema.Type.BYTES);
+
+            List<GenericRecord> records = readAll(reader);
+            GenericRecord var0 = (GenericRecord) records.get(0).get("var");
+            assertThat(var0).isNotNull();
+            assertThat(bytes(var0.get("value")))
+                    .containsExactly(0x18, 42, 0, 0, 0, 0, 0, 0, 0);
         }
     }
 
