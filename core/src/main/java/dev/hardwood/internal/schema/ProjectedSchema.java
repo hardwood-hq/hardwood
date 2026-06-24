@@ -51,6 +51,24 @@ public final class ProjectedSchema {
     /// @return a projected schema containing only the selected columns
     /// @throws IllegalArgumentException if a projected column name is not found in the schema
     public static ProjectedSchema create(FileSchema schema, ColumnProjection projection) {
+        return create(schema, projection, false);
+    }
+
+    /// Resolves a [ColumnProjection] against `schema`.
+    ///
+    /// When `completeContainers` is true, special groups are expanded to the
+    /// leaves they cannot be materialized without: a MAP's `key` column and every
+    /// leaf of a VARIANT (read atomically). Row assembly requires this; the
+    /// columnar [ColumnReader] / [dev.hardwood.reader.ColumnReaders] paths read
+    /// individual leaves and pass false to keep the projection literal.
+    ///
+    /// @param schema the file schema
+    /// @param projection the requested columns
+    /// @param completeContainers whether to pull in required sibling leaves of
+    ///        projected MAP / VARIANT groups
+    /// @return the resolved projection
+    public static ProjectedSchema create(FileSchema schema, ColumnProjection projection,
+            boolean completeContainers) {
         if (projection.projectsAll()) {
             return createAllColumnsProjection(schema);
         }
@@ -77,12 +95,27 @@ public final class ProjectedSchema {
             }
         }
 
-        // Sort by original index to maintain column order
-        includedOriginalIndices.sort(Integer::compareTo);
-        includedFieldIndices.sort(Integer::compareTo);
+        // Enforce structural invariants on special groups: a MAP cannot be
+        // assembled without its key column, and a VARIANT is read atomically.
+        // Pull in the required sibling leaves whenever any part of such a group
+        // is projected, then rebuild the leaf list in column order.
+        boolean[] includedLeaf = new boolean[originalCount];
+        for (int idx : includedOriginalIndices) {
+            includedLeaf[idx] = true;
+        }
+        if (completeContainers) {
+            enforceGroupInvariants(schema.getRootNode(), includedLeaf);
+        }
 
-        // Remove duplicates from field indices
-        includedFieldIndices = new ArrayList<>(includedFieldIndices.stream().distinct().toList());
+        includedOriginalIndices = new ArrayList<>();
+        for (int i = 0; i < originalCount; i++) {
+            if (includedLeaf[i]) {
+                includedOriginalIndices.add(i);
+            }
+        }
+
+        // Sort and de-duplicate field indices
+        includedFieldIndices = new ArrayList<>(includedFieldIndices.stream().sorted().distinct().toList());
 
         // Build projected arrays
         int projectedCount = includedOriginalIndices.size();
@@ -126,14 +159,19 @@ public final class ProjectedSchema {
                                             List<Integer> includedOriginalIndices,
                                             List<Integer> includedFieldIndices,
                                             int[] originalToProjected) {
-        // First check if it's a direct column name (flat schema)
+        // First check if it's a direct column name. The match is on leaf name
+        // (`FieldPath.leafName()`), so this also picks up a nested leaf whose
+        // last path segment equals `name`. Register the leaf's top-level
+        // ancestor as a projected field so the projection is coherent at the
+        // row level — for a flat top-level leaf the ancestor is the leaf
+        // itself; for a nested match it's the containing top-level group.
         for (ColumnSchema col : schema.getColumns()) {
             if (col.name().equals(name) && originalToProjected[col.columnIndex()] < 0) {
                 includedOriginalIndices.add(col.columnIndex());
-                // Find the field index
+                String topLevel = col.fieldPath().topLevelName();
                 List<SchemaNode> children = schema.getRootNode().children();
                 for (int i = 0; i < children.size(); i++) {
-                    if (children.get(i).name().equals(name)) {
+                    if (children.get(i).name().equals(topLevel)) {
                         includedFieldIndices.add(i);
                         break;
                     }
@@ -219,6 +257,60 @@ public final class ProjectedSchema {
             case SchemaNode.GroupNode group -> {
                 for (SchemaNode child : group.children()) {
                     collectColumnsFromNode(child, includedOriginalIndices, originalToProjected);
+                }
+            }
+        }
+    }
+
+    /// Walks the schema tree and, for any special group that has at least one
+    /// projected leaf, pulls in the sibling leaves the group cannot be read
+    /// without: a MAP's `key` column, and every leaf of a VARIANT (which is
+    /// reassembled atomically). Without this, a sub-field projection such as
+    /// `people.key_value.value.age` or `var.typed_value` would leave the reader
+    /// unable to assemble the map or the variant.
+    private static void enforceGroupInvariants(SchemaNode node, boolean[] includedLeaf) {
+        if (!(node instanceof SchemaNode.GroupNode group)) {
+            return;
+        }
+        for (SchemaNode child : group.children()) {
+            enforceGroupInvariants(child, includedLeaf);
+        }
+        if (!hasIncludedLeaf(group, includedLeaf)) {
+            return;
+        }
+        if (group.isVariant()) {
+            addAllLeaves(group, includedLeaf);
+        }
+        else if (group.isMap()) {
+            SchemaNode key = group.getMapKey();
+            if (key != null) {
+                addAllLeaves(key, includedLeaf);
+            }
+        }
+    }
+
+    /// True if `node` is, or transitively contains, an already-included leaf.
+    private static boolean hasIncludedLeaf(SchemaNode node, boolean[] includedLeaf) {
+        return switch (node) {
+            case SchemaNode.PrimitiveNode prim -> includedLeaf[prim.columnIndex()];
+            case SchemaNode.GroupNode group -> {
+                for (SchemaNode child : group.children()) {
+                    if (hasIncludedLeaf(child, includedLeaf)) {
+                        yield true;
+                    }
+                }
+                yield false;
+            }
+        };
+    }
+
+    /// Marks every leaf under `node` as included.
+    private static void addAllLeaves(SchemaNode node, boolean[] includedLeaf) {
+        switch (node) {
+            case SchemaNode.PrimitiveNode prim -> includedLeaf[prim.columnIndex()] = true;
+            case SchemaNode.GroupNode group -> {
+                for (SchemaNode child : group.children()) {
+                    addAllLeaves(child, includedLeaf);
                 }
             }
         }
