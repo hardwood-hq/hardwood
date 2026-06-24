@@ -17,6 +17,7 @@ import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
 
+import dev.hardwood.avro.internal.AvroSchemaConverter;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -93,7 +94,9 @@ public class AvroRowReader implements AutoCloseable {
         return switch (resolved.getType()) {
             case BOOLEAN -> reader.getBoolean(name);
             case INT -> reader.getInt(name);
-            case LONG -> reader.getLong(name);
+            case LONG -> isUnsignedInt32(resolved)
+                    ? Integer.toUnsignedLong(reader.getInt(name))
+                    : reader.getLong(name);
             case FLOAT -> reader.getFloat(name);
             case DOUBLE -> reader.getDouble(name);
             case STRING -> reader.getString(name);
@@ -139,7 +142,9 @@ public class AvroRowReader implements AutoCloseable {
         return switch (resolved.getType()) {
             case BOOLEAN -> struct.getBoolean(name);
             case INT -> struct.getInt(name);
-            case LONG -> struct.getLong(name);
+            case LONG -> isUnsignedInt32(resolved)
+                    ? Integer.toUnsignedLong(struct.getInt(name))
+                    : struct.getLong(name);
             case FLOAT -> struct.getFloat(name);
             case DOUBLE -> struct.getDouble(name);
             case STRING -> struct.getString(name);
@@ -184,7 +189,12 @@ public class AvroRowReader implements AutoCloseable {
         return switch (elementSchema.getType()) {
             case BOOLEAN -> pqList.get(index);
             case INT -> pqList.get(index);
-            case LONG -> pqList.get(index);
+            case LONG -> {
+                Object raw = pqList.get(index);
+                yield isUnsignedInt32(elementSchema) && raw instanceof Integer i
+                        ? Integer.toUnsignedLong(i)
+                        : raw;
+            }
             case FLOAT -> pqList.get(index);
             case DOUBLE -> pqList.get(index);
             case STRING -> pqList.get(index);
@@ -230,7 +240,9 @@ public class AvroRowReader implements AutoCloseable {
         return switch (valueSchema.getType()) {
             case BOOLEAN -> entry.getBooleanValue();
             case INT -> entry.getIntValue();
-            case LONG -> entry.getLongValue();
+            case LONG -> isUnsignedInt32(valueSchema)
+                    ? Integer.toUnsignedLong(entry.getIntValue())
+                    : entry.getLongValue();
             case FLOAT -> entry.getFloatValue();
             case DOUBLE -> entry.getDoubleValue();
             case STRING -> entry.getStringValue();
@@ -240,6 +252,10 @@ public class AvroRowReader implements AutoCloseable {
             case MAP -> materializeMap(entry.getMapValue(), valueSchema.getValueType());
             default -> entry.getValue();
         };
+    }
+
+    private static boolean isUnsignedInt32(Schema schema) {
+        return Boolean.TRUE.equals(schema.getObjectProp(AvroSchemaConverter.UNSIGNED_INT32_PROP));
     }
 
     private static Schema resolveUnion(Schema schema) {

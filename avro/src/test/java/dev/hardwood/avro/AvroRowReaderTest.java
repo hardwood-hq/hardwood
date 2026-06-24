@@ -288,6 +288,91 @@ class AvroRowReaderTest {
     }
 
     @Test
+    void readUnsignedIntColumns() throws Exception {
+        // unsigned_int_test.parquet: id UINT32, uint32_val UINT32, uint64_val UINT64
+        // UINT32 maps to Avro LONG (signed Avro INT can't carry 4294967295). The
+        // materializer must dispatch by the source column's physical type (INT32),
+        // read the int, and widen with an unsigned mask — not call getLong against
+        // an int[]-backed batch.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("unsigned_int_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema schema = reader.getSchema();
+            Schema idSchema = schema.getField("id").schema();
+            Schema uint32Schema = schema.getField("uint32_val").schema();
+            Schema uint64Schema = schema.getField("uint64_val").schema();
+            assertThat(idSchema.getType()).isEqualTo(Schema.Type.LONG);
+            assertThat(uint32Schema.getType()).isEqualTo(Schema.Type.LONG);
+            assertThat(uint64Schema.getType()).isEqualTo(Schema.Type.LONG);
+
+            // UINT_32 schemas carry the marker that routes the reader to getInt + widen;
+            // UINT_64 schemas (already long[]-backed) must not carry it.
+            assertThat(idSchema.getObjectProp(AvroSchemaConverter.UNSIGNED_INT32_PROP))
+                    .isEqualTo(Boolean.TRUE);
+            assertThat(uint32Schema.getObjectProp(AvroSchemaConverter.UNSIGNED_INT32_PROP))
+                    .isEqualTo(Boolean.TRUE);
+            assertThat(uint64Schema.getObjectProp(AvroSchemaConverter.UNSIGNED_INT32_PROP))
+                    .isNull();
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(3);
+
+            assertThat(records.getFirst().get("id")).isEqualTo(1L);
+            assertThat(records.getFirst().get("uint32_val")).isEqualTo(0L);
+            assertThat(records.getFirst().get("uint64_val")).isEqualTo(0L);
+
+            assertThat(records.get(1).get("id")).isEqualTo(2L);
+            assertThat(records.get(1).get("uint32_val")).isEqualTo(2147483647L);
+            assertThat(records.get(1).get("uint64_val")).isEqualTo(9223372036854775807L);
+
+            // Row 3 covers the values where signed-vs-unsigned matters:
+            //   uint32_val = 4294967295 (0xFFFFFFFF) must NOT surface as -1L,
+            //   uint64_val = 18446744073709551615 (0xFFFFFFFFFFFFFFFF) wraps to -1L
+            //   in Avro since Avro has no native unsigned long type.
+            assertThat(records.get(2).get("id")).isEqualTo(3L);
+            assertThat(records.get(2).get("uint32_val")).isEqualTo(4294967295L);
+            assertThat(records.get(2).get("uint64_val")).isEqualTo(-1L);
+        }
+    }
+
+    @Test
+    void readNestedUnsignedIntColumns() throws Exception {
+        // unsigned_int_nested_test.parquet: id INT32, point STRUCT{x UINT32, y UINT32},
+        // flags LIST<UINT32>, counters MAP<STRING, UINT32>. Exercises the
+        // struct, list, and map dispatch paths — all share the same
+        // Avro-type-based switch that mishandles UINT32 → LONG when the
+        // physical column is INT32.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("unsigned_int_nested_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(2);
+
+            GenericRecord row1 = records.get(0);
+            GenericRecord point1 = (GenericRecord) row1.get("point");
+            assertThat(point1.get("x")).isEqualTo(0L);
+            assertThat(point1.get("y")).isEqualTo(2147483647L);
+
+            @SuppressWarnings("unchecked")
+            List<Object> flags1 = (List<Object>) row1.get("flags");
+            assertThat(flags1).containsExactly(0L, 2147483647L, 4294967295L);
+
+            @SuppressWarnings("unchecked")
+            Map<String, Object> counters1 = (Map<String, Object>) row1.get("counters");
+            assertThat(counters1).containsEntry("zero", 0L)
+                    .containsEntry("mid", 2147483647L)
+                    .containsEntry("max", 4294967295L);
+
+            GenericRecord row2 = records.get(1);
+            GenericRecord point2 = (GenericRecord) row2.get("point");
+            assertThat(point2.get("x")).isEqualTo(4294967295L);
+            assertThat(point2.get("y")).isEqualTo(1L);
+        }
+    }
+
+    @Test
     void readNullLogicalTypeColumn() throws Exception {
         // null_logical_type_test.parquet: id INT32, nothing INT32 annotated NULL
         // — every row's `nothing` is null. Avro schema field must be bare NULL.

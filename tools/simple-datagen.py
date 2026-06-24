@@ -2234,6 +2234,47 @@ pq.write_table(
 print("\nGenerated unsigned_int_test.parquet:")
 print("  - Data: uint32_val=[0, 2147483647, 4294967295], uint64_val=[0, 9223372036854775807, 18446744073709551615]")
 
+# UINT32 in nested positions — struct field, list element, map value.
+# Exercises the Avro materializer paths that dispatch on Avro type for
+# nested UINT32 columns whose physical storage is still INT32.
+unsigned_int_nested_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('point', pa.struct([
+        pa.field('x', pa.uint32(), False),
+        pa.field('y', pa.uint32(), False),
+    ]), False),
+    ('flags', pa.list_(pa.field('item', pa.uint32(), False)), False),
+    ('counters', pa.map_(pa.string(), pa.uint32()), False),
+])
+
+unsigned_int_nested_data = {
+    'id': [1, 2],
+    'point': [
+        {'x': 0, 'y': 2147483647},
+        {'x': 4294967295, 'y': 1},
+    ],
+    'flags': [
+        [0, 2147483647, 4294967295],
+        [1, 2, 3],
+    ],
+    'counters': [
+        [('zero', 0), ('mid', 2147483647), ('max', 4294967295)],
+        [('a', 1), ('b', 2)],
+    ],
+}
+
+unsigned_int_nested_table = pa.table(unsigned_int_nested_data, schema=unsigned_int_nested_schema)
+pq.write_table(
+    unsigned_int_nested_table,
+    'core/src/test/resources/unsigned_int_nested_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0'
+)
+
+print("\nGenerated unsigned_int_nested_test.parquet:")
+print("  - UINT32 inside struct, list, and map<string,_>; values include 0, 2147483647, and 4294967295")
+
 # ============================================================================
 # Inline page statistics (no ColumnIndex) — models parquet-cpp-arrow defaults
 # ============================================================================

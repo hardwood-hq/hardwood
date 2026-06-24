@@ -26,6 +26,12 @@ import dev.hardwood.schema.SchemaNode;
 /// with standard Avro tools and libraries.
 public final class AvroSchemaConverter {
 
+    /// Marker property on an Avro `LONG` schema indicating that the source
+    /// column is physically `INT32` with the `UINT_32` logical type. Readers
+    /// must call the `getInt` accessor and apply [Integer#toUnsignedLong] to
+    /// recover the unsigned magnitude.
+    public static final String UNSIGNED_INT32_PROP = "hardwood.unsignedInt32";
+
     private AvroSchemaConverter() {
     }
 
@@ -193,7 +199,9 @@ public final class AvroSchemaConverter {
 
     private static Schema convertIntType(LogicalType.IntType i) {
         if (!i.isSigned() && i.bitWidth() == 32) {
-            return Schema.create(Schema.Type.LONG);
+            Schema schema = Schema.create(Schema.Type.LONG);
+            schema.addProp(UNSIGNED_INT32_PROP, true);
+            return schema;
         }
         if (i.bitWidth() <= 32) {
             return Schema.create(Schema.Type.INT);
