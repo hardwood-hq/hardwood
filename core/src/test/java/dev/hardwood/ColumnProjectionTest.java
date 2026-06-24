@@ -9,13 +9,18 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.ArrayList;
+import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
+import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.row.PqVariant;
+import dev.hardwood.row.VariantType;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
@@ -325,6 +330,157 @@ public class ColumnProjectionTest {
             rows.next();
             assertThat(rows.getInt("id")).isEqualTo(3);
             assertThat(rows.getStruct("address")).isNull();
+        }
+    }
+
+    @Test
+    void mapValueSubFieldProjectionShouldReadKeysAndValue() throws Exception {
+        // map_struct_value_test.parquet: id, people map<string, struct{name, age}>.
+        // Row 0: {employee1:{Alice,30}, employee2:{Bob,25}}.
+        // Row 1: {manager:{Charlie,45}}.
+        // Row 2: empty map.
+        //
+        // Projecting only the value sub-field people.key_value.value.age should
+        // read a well-formed map across all rows: a Parquet MAP's key column is
+        // mandatory, so the resolver must keep it (parquet-java does the same).
+        Path parquetFile = Paths.get("src/test/resources/map_struct_value_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("people.key_value.value.age")).build()) {
+
+            List<String> keys = new ArrayList<>();
+            List<Integer> ages = new ArrayList<>();
+            while (rows.hasNext()) {
+                rows.next();
+                PqMap people = rows.getMap("people");
+                for (PqMap.Entry entry : people.getEntries()) {
+                    keys.add(entry.getStringKey());
+                    ages.add(entry.getStructValue().getInt("age"));
+                }
+            }
+            assertThat(keys).containsExactly("employee1", "employee2", "manager");
+            assertThat(ages).containsExactly(30, 25, 45);
+        }
+    }
+
+    @Test
+    void simpleNameMatchingNestedLeafShouldReadMap() throws Exception {
+        // Same map_struct_value_test.parquet fixture, but projecting "age" by
+        // simple name (no dot notation). The bare name matches the nested leaf
+        // people.key_value.value.age via its leaf name. The resolver must (a)
+        // register the leaf's top-level ancestor `people` so the field is
+        // addressable at the row level, and (b) force-include the map's key
+        // column so the map can be assembled.
+        Path parquetFile = Paths.get("src/test/resources/map_struct_value_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("age")).build()) {
+
+            assertThat(rows.getFieldCount()).isEqualTo(1);
+            assertThat(rows.getFieldName(0)).isEqualTo("people");
+
+            List<String> keys = new ArrayList<>();
+            List<Integer> ages = new ArrayList<>();
+            while (rows.hasNext()) {
+                rows.next();
+                PqMap people = rows.getMap("people");
+                for (PqMap.Entry entry : people.getEntries()) {
+                    keys.add(entry.getStringKey());
+                    ages.add(entry.getStructValue().getInt("age"));
+                }
+            }
+            assertThat(keys).containsExactly("employee1", "employee2", "manager");
+            assertThat(ages).containsExactly(30, 25, 45);
+        }
+    }
+
+    @Test
+    void mapOfVariantSubFieldProjectionShouldReadBothSiblings() throws Exception {
+        // variant_in_repeated_test.parquet: var_map is map<string, variant{metadata,value}>.
+        // Row 0: {a -> BOOLEAN_TRUE, b -> INT32(7)}.
+        // Row 1: {c -> "hi"}.
+        //
+        // Project a single leaf of the variant inside the map
+        // (`var_map.key_value.value.value`). The resolver must pull in two
+        // structural siblings in one pass: the variant's `metadata` leaf (read
+        // atomically) and the MAP's `key` leaf. This exercises the post-order
+        // traversal in enforceGroupInvariants on a compound shape.
+        Path parquetFile = Paths.get("src/test/resources/variant_in_repeated_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("var_map.key_value.value.value")).build()) {
+
+            rows.next();
+            PqMap row0 = rows.getMap("var_map");
+            List<PqMap.Entry> r0Entries = row0.getEntries();
+            assertThat(r0Entries).hasSize(2);
+            assertThat(r0Entries.get(0).getStringKey()).isEqualTo("a");
+            assertThat(r0Entries.get(0).getVariantValue().type()).isEqualTo(VariantType.BOOLEAN_TRUE);
+            assertThat(r0Entries.get(1).getStringKey()).isEqualTo("b");
+            assertThat(r0Entries.get(1).getVariantValue().asInt()).isEqualTo(7);
+
+            rows.next();
+            PqMap row1 = rows.getMap("var_map");
+            List<PqMap.Entry> r1Entries = row1.getEntries();
+            assertThat(r1Entries).hasSize(1);
+            assertThat(r1Entries.get(0).getStringKey()).isEqualTo("c");
+            assertThat(r1Entries.get(0).getVariantValue().asString()).isEqualTo("hi");
+
+            assertThat(rows.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    void variantSubFieldProjectionShouldReassemble() throws Exception {
+        // variant_shredded_test.parquet: var is a shredded Variant
+        // {metadata, value, typed_value:int64}. Four rows exercise the distinct
+        // reassembly outcomes:
+        //   Row 1: shredded INT64(42)        — typed_value set
+        //   Row 2: unshredded BOOLEAN_TRUE   — value carries the Variant bytes,
+        //                                      typed_value null (only readable
+        //                                      if `value` is also projected)
+        //   Row 3: Variant NULL              — both leaves null at non-null group
+        //   Row 4: shredded INT64(10^12)
+        //
+        // Projecting a single Variant leaf (var.typed_value) must still yield a
+        // correctly reassembled Variant across all rows — a Variant is read
+        // atomically, so the resolver must pull in metadata and value as well.
+        // Row 2 is the load-bearing case: if only typed_value were projected, the
+        // unshredded boolean would be lost.
+        Path parquetFile = Paths.get("src/test/resources/variant_shredded_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("var.typed_value")).build()) {
+
+            rows.next();
+            PqVariant v1 = rows.getVariant("var");
+            assertThat(v1).isNotNull();
+            assertThat(v1.type()).isEqualTo(VariantType.INT64);
+            assertThat(v1.asLong()).isEqualTo(42L);
+
+            rows.next();
+            PqVariant v2 = rows.getVariant("var");
+            assertThat(v2).isNotNull();
+            assertThat(v2.type()).isEqualTo(VariantType.BOOLEAN_TRUE);
+            assertThat(v2.asBoolean()).isTrue();
+
+            rows.next();
+            PqVariant v3 = rows.getVariant("var");
+            assertThat(v3).isNotNull();
+            assertThat(v3.type()).isEqualTo(VariantType.NULL);
+            assertThat(v3.isNull()).isTrue();
+
+            rows.next();
+            PqVariant v4 = rows.getVariant("var");
+            assertThat(v4).isNotNull();
+            assertThat(v4.type()).isEqualTo(VariantType.INT64);
+            assertThat(v4.asLong()).isEqualTo(1_000_000_000_000L);
+
+            assertThat(rows.hasNext()).isFalse();
         }
     }
 

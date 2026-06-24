@@ -524,6 +524,24 @@ class PredicatePushDownTest {
     }
 
     @Test
+    void testFilterOnMapSubFieldIsRejected() throws Exception {
+        // A MAP's key_value group is REPEATED, so any leaf below it inherits a
+        // rep level > 0 and is rejected by the same guard. This pins the safety
+        // net the SelectionEngine relies on: the literal-projection path it uses
+        // for predicate columns (no map-key force-include) is structurally
+        // unreachable because the predicate is rejected before resolution.
+        Path mapFile = Paths.get("src/test/resources/map_struct_value_test.parquet");
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(mapFile))) {
+            FilterPredicate filter = FilterPredicate.eq("people.key_value.value.age", 30);
+
+            assertThatThrownBy(() -> reader.buildColumnReaders(ColumnProjection.columns("id"))
+                    .filter(filter).build())
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("repeated");
+        }
+    }
+
+    @Test
     void testFilterOnFlatColumnFiltersRepeatedColumn() throws Exception {
         // Filter on flat "id" column, read all columns including repeated "scores"
         // id > 6 -> skip RG0 (id 1-3) and RG1 (id 4-6), keep RG2 (id 7-9)

@@ -352,7 +352,7 @@ public class ParquetFileReader implements AutoCloseable {
         // Probing through the iterator avoids the prior duplicate probe
         // where canFastSkipTail and computeFetchPlans both ran the same
         // page-format check per row group.
-        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection, true);
         RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0L, 0L);
         iterator.setFirstFile(schema, subset);
         iterator.initialize(projectedSchema, null);
@@ -386,7 +386,7 @@ public class ParquetFileReader implements AutoCloseable {
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema, firstFileMetaData.columnOrders()) : null;
 
-        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection);
+        ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection, true);
 
         RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, maxRows, tailSkip);
         iterator.setFirstFile(schema, firstFileRowGroups);
