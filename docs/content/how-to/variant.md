@@ -53,5 +53,5 @@ The `PqVariantObject` view exposes the same primitive getters as a Parquet struc
 ## Current limitations
 
 - **No Variant-aware predicate pushdown.** Filter predicates against a Variant sub-path (e.g. `WHERE v.age > 30`) aren't yet understood by the pushdown pipeline. Filtering still works against the file's physical shredded columns if you know the layout — a `FilterPredicate.gt("v.typed_value.age", 30)` gets row-group and page skipping via ordinary column statistics — but that ties query code to the writer's shredding strategy and misses any rows where the payload sits in the opaque `value` blob instead. Tracked as [#309](https://github.com/hardwood-hq/hardwood/issues/309).
-- **No path projection optimization.** Reading only `v.age` from a Variant column still reassembles the whole Variant for each row rather than reading just the shredded `typed_value.age` column. Requires the same variant-aware planning as #309; no separate issue filed yet.
+- **No path projection optimization.** Reading only `v.age` from a Variant column still reassembles the whole Variant for each row rather than reading just the shredded `typed_value.age` column. Requires the same variant-aware planning as #309. Tracked as [#700](https://github.com/hardwood-hq/hardwood/issues/700).
 

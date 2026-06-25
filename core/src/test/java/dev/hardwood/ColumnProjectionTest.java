@@ -365,6 +365,46 @@ public class ColumnProjectionTest {
     }
 
     @Test
+    void mapKeyOnlyProjectionDoesNotPullInValue() throws Exception {
+        // Same map_struct_value_test.parquet fixture. Projecting only the key
+        // sub-field people.key_value.value... is the mirror of the value-side
+        // case: the key is structurally mandatory, but the value is not, so
+        // container completion must force-include the key and nothing more — a
+        // key-only key_value group is a valid map (the value column stays
+        // unprojected and reads back as absent).
+        Path parquetFile = Paths.get("src/test/resources/map_struct_value_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile))) {
+            FileSchema schema = reader.getFileSchema();
+
+            // Resolver-level: the value leaves must not be force-included.
+            ProjectedSchema projected = ProjectedSchema.create(
+                    schema, ColumnProjection.columns("people.key_value.key"), true);
+            assertThat(projected.getProjectedColumnCount()).isEqualTo(1);
+            assertThat(projected.getProjectedColumn(0).name()).isEqualTo("key");
+
+            // Row-level: the map still assembles and the keys read across all
+            // rows, including the empty-map row, with the value absent.
+            try (RowReader rows = reader.buildRowReader()
+                    .projection(ColumnProjection.columns("people.key_value.key")).build()) {
+
+                assertThat(rows.getFieldCount()).isEqualTo(1);
+                assertThat(rows.getFieldName(0)).isEqualTo("people");
+
+                List<String> keys = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    PqMap people = rows.getMap("people");
+                    for (PqMap.Entry entry : people.getEntries()) {
+                        keys.add(entry.getStringKey());
+                    }
+                }
+                assertThat(keys).containsExactly("employee1", "employee2", "manager");
+            }
+        }
+    }
+
+    @Test
     void simpleNameMatchingNestedLeafShouldReadMap() throws Exception {
         // Same map_struct_value_test.parquet fixture, but projecting "age" by
         // simple name (no dot notation). The bare name matches the nested leaf
