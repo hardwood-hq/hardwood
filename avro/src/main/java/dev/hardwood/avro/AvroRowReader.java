@@ -7,12 +7,16 @@
  */
 package dev.hardwood.avro;
 
+import java.math.BigDecimal;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.UUID;
 
+import org.apache.avro.LogicalType;
+import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericData;
 import org.apache.avro.generic.GenericRecord;
@@ -99,8 +103,10 @@ public class AvroRowReader implements AutoCloseable {
                     : reader.getLong(name);
             case FLOAT -> reader.getFloat(name);
             case DOUBLE -> reader.getDouble(name);
-            case STRING -> reader.getString(name);
-            case BYTES -> wrapBytes(reader.getBinary(name));
+            case STRING -> isUuid(resolved) ? uuidString(reader.getUuid(name)) : reader.getString(name);
+            case BYTES -> isDecimal(resolved)
+                    ? decimalBytes(reader.getDecimal(name))
+                    : wrapBytes(reader.getBinary(name));
             case FIXED -> wrapBytes(reader.getBinary(name));
             case RECORD -> isVariantShape(resolved)
                     ? materializeVariant(reader.getVariant(name), resolved)
@@ -147,8 +153,10 @@ public class AvroRowReader implements AutoCloseable {
                     : struct.getLong(name);
             case FLOAT -> struct.getFloat(name);
             case DOUBLE -> struct.getDouble(name);
-            case STRING -> struct.getString(name);
-            case BYTES -> wrapBytes(struct.getBinary(name));
+            case STRING -> isUuid(resolved) ? uuidString(struct.getUuid(name)) : struct.getString(name);
+            case BYTES -> isDecimal(resolved)
+                    ? decimalBytes(struct.getDecimal(name))
+                    : wrapBytes(struct.getBinary(name));
             case FIXED -> wrapBytes(struct.getBinary(name));
             case RECORD -> isVariantShape(resolved)
                     ? materializeVariant(struct.getVariant(name), resolved)
@@ -197,9 +205,15 @@ public class AvroRowReader implements AutoCloseable {
             }
             case FLOAT -> pqList.get(index);
             case DOUBLE -> pqList.get(index);
-            case STRING -> pqList.get(index);
+            case STRING -> {
+                Object val = pqList.get(index);
+                yield isUuid(elementSchema) && val instanceof UUID u ? u.toString() : val;
+            }
             case BYTES -> {
                 Object val = pqList.get(index);
+                if (isDecimal(elementSchema) && val instanceof BigDecimal d) {
+                    yield decimalBytes(d);
+                }
                 yield val instanceof byte[] bytes ? ByteBuffer.wrap(bytes) : val;
             }
             case RECORD -> {
@@ -245,8 +259,10 @@ public class AvroRowReader implements AutoCloseable {
                     : entry.getLongValue();
             case FLOAT -> entry.getFloatValue();
             case DOUBLE -> entry.getDoubleValue();
-            case STRING -> entry.getStringValue();
-            case BYTES -> wrapBytes(entry.getBinaryValue());
+            case STRING -> isUuid(valueSchema) ? uuidString(entry.getUuidValue()) : entry.getStringValue();
+            case BYTES -> isDecimal(valueSchema)
+                    ? decimalBytes(entry.getDecimalValue())
+                    : wrapBytes(entry.getBinaryValue());
             case RECORD -> materializeStruct(entry.getStructValue(), valueSchema);
             case ARRAY -> materializeList(entry.getListValue(), valueSchema.getElementType());
             case MAP -> materializeMap(entry.getMapValue(), valueSchema.getValueType());
@@ -256,6 +272,31 @@ public class AvroRowReader implements AutoCloseable {
 
     private static boolean isUnsignedInt32(Schema schema) {
         return Boolean.TRUE.equals(schema.getObjectProp(AvroSchemaConverter.UNSIGNED_INT32_PROP));
+    }
+
+    /// True for an Avro `BYTES` schema carrying the decimal logical type. Such a
+    /// column may be physically `INT32`/`INT64`/`BYTE_ARRAY`-backed, so it must be
+    /// read through the logical `getDecimal` accessor rather than `getBinary`.
+    private static boolean isDecimal(Schema schema) {
+        return schema.getLogicalType() instanceof LogicalTypes.Decimal;
+    }
+
+    /// True for an Avro `STRING` schema carrying the uuid logical type. The source
+    /// column is `FIXED_LEN_BYTE_ARRAY`, so it must be read through `getUuid` and
+    /// rendered as the canonical UUID string rather than decoded as raw bytes.
+    private static boolean isUuid(Schema schema) {
+        LogicalType logicalType = schema.getLogicalType();
+        return logicalType != null && "uuid".equals(logicalType.getName());
+    }
+
+    /// Encode a decimal as the two's-complement big-endian unscaled bytes Avro's
+    /// `decimal` logical type expects on a `BYTES` schema.
+    private static ByteBuffer decimalBytes(BigDecimal value) {
+        return value == null ? null : ByteBuffer.wrap(value.unscaledValue().toByteArray());
+    }
+
+    private static String uuidString(UUID value) {
+        return value == null ? null : value.toString();
     }
 
     private static Schema resolveUnion(Schema schema) {

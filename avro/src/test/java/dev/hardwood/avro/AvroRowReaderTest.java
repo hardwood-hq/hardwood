@@ -7,12 +7,15 @@
  */
 package dev.hardwood.avro;
 
+import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 import org.apache.avro.generic.GenericRecord;
 import org.junit.jupiter.api.Test;
@@ -371,6 +374,61 @@ class AvroRowReaderTest {
             assertThat(point2.get("x")).isEqualTo(4294967295L);
             assertThat(point2.get("y")).isEqualTo(1L);
         }
+    }
+
+    @Test
+    void readDecimalBackedByInt64Column() throws Exception {
+        // legacy_converted_types_test.parquet: decimal_col is a DECIMAL(18,2)
+        // whose physical storage is INT64 ([12345, -100] => 123.45, -1.00).
+        // DECIMAL maps to Avro BYTES, but the materializer must dispatch on the
+        // source column's physical type — read the decimal and emit the unscaled
+        // two's-complement bytes, not call getBinary against a long[]-backed batch.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("legacy_converted_types_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema decimalSchema = reader.getSchema().getField("decimal_col").schema()
+                    .getTypes().stream()
+                    .filter(s -> s.getType() != Schema.Type.NULL)
+                    .findFirst().orElseThrow();
+            assertThat(decimalSchema.getType()).isEqualTo(Schema.Type.BYTES);
+            assertThat(decimalSchema.getLogicalType()).isInstanceOf(LogicalTypes.Decimal.class);
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(2);
+            assertThat(decimalAt(records.get(0), "decimal_col", 2)).isEqualByComparingTo("123.45");
+            assertThat(decimalAt(records.get(1), "decimal_col", 2)).isEqualByComparingTo("-1.00");
+        }
+    }
+
+    @Test
+    void readUuidColumn() throws Exception {
+        // logical_types_test.parquet: account_id is a UUID (FIXED_LEN_BYTE_ARRAY(16)).
+        // UUID maps to an Avro STRING carrying the uuid logical type, so the
+        // materializer must surface the canonical UUID string — not decode the 16
+        // raw bytes as a UTF-8 string via getString.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("logical_types_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema accountId = reader.getSchema().getField("account_id").schema();
+            assertThat(accountId.getType()).isEqualTo(Schema.Type.STRING);
+            assertThat(accountId.getLogicalType()).isNotNull();
+            assertThat(accountId.getLogicalType().getName()).isEqualTo("uuid");
+
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(3);
+            assertThat(records.get(0).get("account_id").toString())
+                    .isEqualTo("12345678-1234-5678-1234-567812345678");
+            assertThat(records.get(1).get("account_id").toString())
+                    .isEqualTo("87654321-4321-8765-4321-876543218765");
+            assertThat(records.get(2).get("account_id").toString())
+                    .isEqualTo("aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+        }
+    }
+
+    private static BigDecimal decimalAt(GenericRecord record, String field, int scale) {
+        return new BigDecimal(new BigInteger(bytes(record.get(field))), scale);
     }
 
     @Test
