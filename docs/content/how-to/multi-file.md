@@ -46,15 +46,18 @@ Cross-file prefetching is automatic: when pages from file N are running low, pag
 
 The schema of the first file is the reference schema. Each subsequent file is validated against it as it is opened: every projected column must exist with a matching physical type, logical type, and repetition type, otherwise a `SchemaIncompatibleException` is thrown. Non-projected columns are not checked, so files may carry additional columns. With no explicit projection, all columns of the first file are projected and therefore required in every subsequent file.
 
-By default, `Hardwood.create()` sizes the thread pool to the number of available processors. For custom thread pool sizing, use `HardwoodContext` directly:
+By default, `Hardwood.create()` sizes the thread pool to the number of available processors. To control the decode parallelism, create a `HardwoodContext` of the desired size and pass it to `Hardwood.create(HardwoodContext)`:
 
 ```java
 import dev.hardwood.HardwoodContext;
 
 try (HardwoodContext context = HardwoodContext.create(4);  // 4 threads
-     ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path), context);
-     RowReader rowReader = reader.rowReader()) {
+     Hardwood hardwood = Hardwood.create(context);
+     ParquetFileReader parquet = hardwood.openAll(files);
+     RowReader reader = parquet.rowReader()) {
     // ...
 }
 ```
+
+The caller owns the supplied context: it is not closed when the `Hardwood` instance is closed, so the same context — and its thread pool — can be reused across later reads and shared with single-file reads via `ParquetFileReader.open(InputFile, HardwoodContext)`.
 

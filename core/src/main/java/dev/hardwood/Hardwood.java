@@ -24,18 +24,47 @@ import dev.hardwood.reader.ParquetFileReader;
 /// }
 /// ```
 ///
+/// To control the decode parallelism, or to reuse one context (and its thread
+/// pool) across many reads and standalone [ParquetFileReader]s, create the
+/// [HardwoodContext] yourself and pass it in:
+/// ```java
+/// try (HardwoodContext context = HardwoodContext.create(4)) {
+///     try (Hardwood hardwood = Hardwood.create(context)) {
+///         // ...
+///     }
+///     // context is still open here for further use
+/// }
+/// ```
+///
 /// For single-file usage, [ParquetFileReader#open(InputFile)] is simpler.
 public class Hardwood implements AutoCloseable {
 
     private final HardwoodContextImpl context;
+    private final boolean ownsContext;
 
-    private Hardwood(HardwoodContextImpl context) {
+    private Hardwood(HardwoodContextImpl context, boolean ownsContext) {
         this.context = context;
+        this.ownsContext = ownsContext;
     }
 
     /// Create a new Hardwood instance with a thread pool sized to available processors.
+    /// The context is owned by this instance and closed when it is closed.
     public static Hardwood create() {
-        return new Hardwood(HardwoodContextImpl.create());
+        return new Hardwood(HardwoodContextImpl.create(), true);
+    }
+
+    /// Create a new Hardwood instance backed by the given context, e.g. one
+    /// created via [HardwoodContext#create(int)] to size the decode thread pool.
+    ///
+    /// The caller retains ownership of the context: it is **not** closed when
+    /// this instance is closed, so the same context — and its thread pool — can
+    /// be reused for later reads and shared with standalone [ParquetFileReader]s
+    /// opened via [ParquetFileReader#open(InputFile, HardwoodContext)].
+    public static Hardwood create(HardwoodContext context) {
+        if (context == null) {
+            throw new IllegalArgumentException("context must not be null");
+        }
+        return new Hardwood((HardwoodContextImpl) context, false);
     }
 
     /// Open a single Parquet file. The file is opened immediately and
@@ -57,6 +86,8 @@ public class Hardwood implements AutoCloseable {
 
     @Override
     public void close() {
-        context.close();
+        if (ownsContext) {
+            context.close();
+        }
     }
 }

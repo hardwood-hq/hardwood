@@ -33,9 +33,12 @@ that context comes into being:
 
 - **Implicit.** `ParquetFileReader.open(InputFile)` creates and owns a context sized to the
   available processors. Closing the reader shuts it down.
-- **Explicit.** Create a `Hardwood` (via `Hardwood.create()`) or a `HardwoodContext` (via
-  `HardwoodContext.create(threadCount)`) yourself and pass it to the reader. The pool then
-  outlives any one reader and is shared across all readers opened against it.
+- **Explicit.** Create a `HardwoodContext` (via `HardwoodContext.create(threadCount)`) to size the
+  pool, then share it: pass it to `Hardwood.create(HardwoodContext)` for multi-file reads or to
+  `ParquetFileReader.open(InputFile, HardwoodContext)` for single-file reads. `Hardwood.create()`
+  with no context is the shorthand that builds and owns a default-sized one. An explicitly created
+  context outlives any one reader and is shared across all readers opened against it; the caller
+  closes it.
 
 Share one context across many reads. The pool is the expensive, reusable resource; readers are
 cheap and short-lived. This matters most when reading many files — see below.

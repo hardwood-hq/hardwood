@@ -49,6 +49,38 @@ class MultiFileRowReaderTest {
     }
 
     @Test
+    void testSuppliedContextSizesPoolAndIsNotClosed() throws Exception {
+        Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
+        List<Path> files = List.of(filePath, filePath);
+
+        try (HardwoodContext context = HardwoodContext.create(2)) {
+            List<Long> ids = new ArrayList<>();
+
+            try (Hardwood hardwood = Hardwood.create(context);
+                 ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(files));
+                 RowReader reader = parquet.rowReader()) {
+
+                while (reader.hasNext()) {
+                    reader.next();
+                    ids.add(reader.getLong("id"));
+                }
+            }
+
+            assertThat(ids).containsExactly(1L, 2L, 3L, 1L, 2L, 3L);
+            // The caller owns the context, so closing the Hardwood instance must
+            // not shut its executor down — it is still usable for further reads.
+            assertThat(context.executor().isShutdown()).isFalse();
+        }
+    }
+
+    @Test
+    void testCreateRejectsNullContext() {
+        assertThatThrownBy(() -> Hardwood.create(null))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("context");
+    }
+
+    @Test
     void testReadMultipleIdenticalFiles() throws Exception {
         // Read the same file multiple times to test cross-file prefetching
         Path filePath = Paths.get("src/test/resources/plain_uncompressed.parquet");
