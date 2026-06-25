@@ -217,7 +217,11 @@ public class AvroRowReader implements AutoCloseable {
                 yield val instanceof byte[] bytes ? ByteBuffer.wrap(bytes) : val;
             }
             case FIXED -> {
-                Object val = pqList.get(index);
+                // Read the raw physical bytes, not the decoded element: a decimal
+                // stored as FIXED_LEN_BYTE_ARRAY decodes to BigDecimal via
+                // get(index), but Avro `fixed` needs the on-disk bytes — the same
+                // form the top-level / struct / map paths read via getBinary.
+                Object val = pqList.getRaw(index);
                 yield val instanceof byte[] bytes ? wrapFixed(bytes, elementSchema) : val;
             }
             case RECORD -> {

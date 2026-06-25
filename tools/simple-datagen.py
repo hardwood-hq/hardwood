@@ -1142,6 +1142,34 @@ print("  - Schema: id, s: struct<tag: fixed(4)>, l: list<fixed(4)>, m: map<strin
 print("  - Exercises the struct/list/map FIXED materialize paths on the Avro reader")
 
 
+# 12c. list<decimal> — a DECIMAL stored as FIXED_LEN_BYTE_ARRAY nested inside a
+# list. The Avro element type is a `fixed` carrying the decimal logical type, but
+# the list materialize path decodes decimal elements to BigDecimal rather than raw
+# bytes, exercising the FIXED-vs-decimal branch in materializeListElement.
+list_decimal_flba_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('amounts', pa.list_(pa.decimal128(10, 2))),  # list<decimal(10,2)> stored as FLBA
+])
+
+list_decimal_flba_data = [
+    {'id': 1, 'amounts': [Decimal('1.23'), Decimal('45.67')]},
+    {'id': 2, 'amounts': [Decimal('-9.99')]},
+]
+
+list_decimal_flba_table = pa.Table.from_pylist(list_decimal_flba_data, schema=list_decimal_flba_schema)
+pq.write_table(
+    list_decimal_flba_table,
+    'core/src/test/resources/list_decimal_flba_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated list_decimal_flba_test.parquet:")
+print("  - Schema: id, amounts: list<decimal(10,2)> stored as FIXED_LEN_BYTE_ARRAY")
+print("  - Exercises the list FIXED materialize path for decimal-annotated elements")
+
+
 # ============================================================================
 # Map Test Files
 # ============================================================================

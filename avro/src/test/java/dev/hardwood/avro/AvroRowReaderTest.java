@@ -867,6 +867,44 @@ class AvroRowReaderTest {
         }
     }
 
+    @Test
+    void listOfDecimalOnFixedMaterializesAsGenericFixed() throws Exception {
+        // list_decimal_flba_test.parquet: id INT32, amounts list<decimal(10,2)>
+        // stored as FIXED_LEN_BYTE_ARRAY(5). The Avro element type is a `fixed`
+        // carrying the decimal logical type. A decimal element decodes to BigDecimal
+        // via PqList.get, so the list FIXED path must read the raw physical bytes
+        // (PqList.getRaw) to wrap each element as a GenericData.Fixed carrying the
+        // on-disk two's-complement payload — and the records must serialize.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("list_decimal_flba_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema schema = reader.getSchema();
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(2);
+
+            @SuppressWarnings("unchecked")
+            List<Object> amounts = (List<Object>) records.get(0).get("amounts");
+            assertThat(amounts).hasSize(2);
+            assertThat(amounts).allMatch(e -> e instanceof GenericData.Fixed fixed
+                    && fixed.bytes().length == 5);
+            // The fixed bytes are the two's-complement unscaled value, sign-extended
+            // to width 5 — decoding them at scale 2 must recover the original decimals.
+            assertThat(decimalFromFixed(amounts.get(0))).isEqualByComparingTo("1.23");
+            assertThat(decimalFromFixed(amounts.get(1))).isEqualByComparingTo("45.67");
+
+            @SuppressWarnings("unchecked")
+            List<Object> amounts1 = (List<Object>) records.get(1).get("amounts");
+            assertThat(decimalFromFixed(amounts1.get(0))).isEqualByComparingTo("-9.99");
+
+            assertThatCode(() -> serialize(schema, records)).doesNotThrowAnyException();
+        }
+    }
+
+    private static BigDecimal decimalFromFixed(Object fixed) {
+        return new BigDecimal(new BigInteger(((GenericData.Fixed) fixed).bytes()), 2);
+    }
+
     private static void serialize(Schema schema, List<GenericRecord> records) throws Exception {
         DatumWriter<GenericRecord> writer = new GenericDatumWriter<>(schema);
         ByteArrayOutputStream out = new ByteArrayOutputStream();
