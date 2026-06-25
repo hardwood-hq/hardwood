@@ -31,9 +31,9 @@ import dev.hardwood.row.PqStruct;
 ///
 /// Wraps a Hardwood [RowReader] and materializes each row into a
 /// `GenericRecord` using the converted Avro schema. Values are stored
-/// in Avro's raw representation (e.g. timestamps as `Long`, decimals
-/// as `ByteBuffer`), matching the behavior of parquet-java's
-/// `AvroReadSupport`.
+/// in Avro's raw representation (e.g. timestamps as `Long`, `bytes`-backed
+/// decimals as `ByteBuffer`, `fixed`-typed columns as `GenericData.Fixed`),
+/// matching the behavior of parquet-java's `AvroReadSupport`.
 ///
 /// ```java
 /// try (AvroRowReader reader = AvroReaders.createRowReader(fileReader)) {
@@ -107,7 +107,7 @@ public class AvroRowReader implements AutoCloseable {
             case BYTES -> isDecimal(resolved)
                     ? decimalBytes(reader.getDecimal(name))
                     : wrapBytes(reader.getBinary(name));
-            case FIXED -> wrapBytes(reader.getBinary(name));
+            case FIXED -> wrapFixed(reader.getBinary(name), resolved);
             case RECORD -> isVariantShape(resolved)
                     ? materializeVariant(reader.getVariant(name), resolved)
                     : materializeStruct(reader.getStruct(name), resolved);
@@ -157,7 +157,7 @@ public class AvroRowReader implements AutoCloseable {
             case BYTES -> isDecimal(resolved)
                     ? decimalBytes(struct.getDecimal(name))
                     : wrapBytes(struct.getBinary(name));
-            case FIXED -> wrapBytes(struct.getBinary(name));
+            case FIXED -> wrapFixed(struct.getBinary(name), resolved);
             case RECORD -> isVariantShape(resolved)
                     ? materializeVariant(struct.getVariant(name), resolved)
                     : materializeStruct(struct.getStruct(name), resolved);
@@ -216,6 +216,10 @@ public class AvroRowReader implements AutoCloseable {
                 }
                 yield val instanceof byte[] bytes ? ByteBuffer.wrap(bytes) : val;
             }
+            case FIXED -> {
+                Object val = pqList.get(index);
+                yield val instanceof byte[] bytes ? wrapFixed(bytes, elementSchema) : val;
+            }
             case RECORD -> {
                 Object val = pqList.get(index);
                 yield val instanceof PqStruct struct ? materializeStruct(struct, elementSchema) : val;
@@ -263,6 +267,7 @@ public class AvroRowReader implements AutoCloseable {
             case BYTES -> isDecimal(valueSchema)
                     ? decimalBytes(entry.getDecimalValue())
                     : wrapBytes(entry.getBinaryValue());
+            case FIXED -> wrapFixed(entry.getBinaryValue(), valueSchema);
             case RECORD -> materializeStruct(entry.getStructValue(), valueSchema);
             case ARRAY -> materializeList(entry.getListValue(), valueSchema.getElementType());
             case MAP -> materializeMap(entry.getMapValue(), valueSchema.getValueType());
@@ -312,5 +317,25 @@ public class AvroRowReader implements AutoCloseable {
 
     private static ByteBuffer wrapBytes(byte[] bytes) {
         return bytes != null ? ByteBuffer.wrap(bytes) : null;
+    }
+
+    /// Wrap raw bytes as a [GenericData.Fixed] of the schema's declared size.
+    ///
+    /// Avro requires a `GenericFixed` for a `fixed`-typed field; a bare
+    /// [ByteBuffer] is silently accepted by [GenericRecord#put] but fails when the
+    /// record is serialized through a `GenericDatumWriter`. A `FIXED_LEN_BYTE_ARRAY`
+    /// column stores exactly `type_length` bytes per value, so a payload whose width
+    /// does not match the declared `fixed` size is malformed and rejected.
+    private static GenericData.Fixed wrapFixed(byte[] bytes, Schema fixedSchema) {
+        if (bytes == null) {
+            return null;
+        }
+        int size = fixedSchema.getFixedSize();
+        if (bytes.length != size) {
+            throw new IllegalArgumentException(
+                    "FIXED value of " + bytes.length + " bytes does not match fixed(" + size
+                            + ") schema '" + fixedSchema.getFullName() + "'");
+        }
+        return new GenericData.Fixed(fixedSchema, bytes);
     }
 }

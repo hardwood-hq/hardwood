@@ -1101,6 +1101,47 @@ print("  - Columns: id (INT32), tag_req (REQUIRED), tag_opt (OPTIONAL with nulls
 print("  - 10 rows with fixed prefix-sharing byte patterns")
 
 
+# 12b. FIXED_LEN_BYTE_ARRAY nested inside a struct, list, and map value. Exercises
+# the struct/list/map FIXED materialize paths on the Avro reader, which differ from
+# the top-level path covered by delta_byte_array_flba_test.parquet.
+nested_flba_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('s', pa.struct([('tag', pa.binary(FLBA_LEN))])),  # struct<tag: fixed(4)>
+    ('l', pa.list_(pa.binary(FLBA_LEN))),              # list<fixed(4)>
+    ('m', pa.map_(pa.string(), pa.binary(FLBA_LEN))),  # map<string, fixed(4)>
+])
+
+nested_flba_data = [
+    {
+        'id': 1,
+        's': {'tag': bytes([0x00, 0x01, 0x02, 0x03])},
+        'l': [bytes([0x10, 0x11, 0x12, 0x13]), bytes([0x20, 0x21, 0x22, 0x23])],
+        'm': [('a', bytes([0x30, 0x31, 0x32, 0x33])),
+              ('b', bytes([0x40, 0x41, 0x42, 0x43]))],
+    },
+    {
+        'id': 2,
+        # High-bit-set bytes exercise the sign-byte handling in wrapFixed.
+        's': {'tag': bytes([0xFF, 0xFE, 0xFD, 0xFC])},
+        'l': [bytes([0x50, 0x51, 0x52, 0x53])],
+        'm': [('c', bytes([0x60, 0x61, 0x62, 0x63]))],
+    },
+]
+
+nested_flba_table = pa.Table.from_pylist(nested_flba_data, schema=nested_flba_schema)
+pq.write_table(
+    nested_flba_table,
+    'core/src/test/resources/nested_flba_test.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+)
+
+print("\nGenerated nested_flba_test.parquet:")
+print("  - Schema: id, s: struct<tag: fixed(4)>, l: list<fixed(4)>, m: map<string, fixed(4)>")
+print("  - Exercises the struct/list/map FIXED materialize paths on the Avro reader")
+
+
 # ============================================================================
 # Map Test Files
 # ============================================================================

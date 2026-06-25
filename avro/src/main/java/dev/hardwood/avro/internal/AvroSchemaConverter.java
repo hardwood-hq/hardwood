@@ -34,7 +34,14 @@ public final class AvroSchemaConverter {
     /// recover the unsigned magnitude.
     public static final String UNSIGNED_INT32_PROP = "hardwood.unsignedInt32";
 
-    private AvroSchemaConverter() {
+    private final FileSchema fileSchema;
+
+    /// The projection to narrow to, or `null` to retain every field.
+    private final ProjectedSchema projected;
+
+    private AvroSchemaConverter(FileSchema fileSchema, ProjectedSchema projected) {
+        this.fileSchema = fileSchema;
+        this.projected = projected;
     }
 
     /// Convert a Hardwood FileSchema to an Avro record Schema.
@@ -42,8 +49,7 @@ public final class AvroSchemaConverter {
     /// @param fileSchema the Parquet file schema
     /// @return the equivalent Avro record schema
     public static Schema convert(FileSchema fileSchema) {
-        SchemaNode.GroupNode root = fileSchema.getRootNode();
-        return convertGroup(root, fileSchema.getName(), null);
+        return new AvroSchemaConverter(fileSchema, null).convertRoot();
     }
 
     /// Convert a Hardwood FileSchema to an Avro record Schema, narrowed to the
@@ -61,19 +67,22 @@ public final class AvroSchemaConverter {
             return convert(fileSchema);
         }
         ProjectedSchema projected = ProjectedSchema.create(fileSchema, projection);
-        return convertGroup(fileSchema.getRootNode(), fileSchema.getName(), projected);
+        return new AvroSchemaConverter(fileSchema, projected).convertRoot();
+    }
+
+    private Schema convertRoot() {
+        return convertGroup(fileSchema.getRootNode(), fileSchema.getName());
     }
 
     /// Convert a struct group (or the schema root) to an Avro record, retaining
-    /// only children that contain a projected leaf when `projected` is non-null.
-    private static Schema convertGroup(SchemaNode.GroupNode group, String recordName,
-            ProjectedSchema projected) {
+    /// only children that contain a projected leaf when a projection is active.
+    private Schema convertGroup(SchemaNode.GroupNode group, String recordName) {
         List<Schema.Field> fields = new ArrayList<>();
         for (SchemaNode child : group.children()) {
             if (projected != null && !hasProjectedLeaf(child, projected)) {
                 continue;
             }
-            Schema fieldSchema = convertNode(child, projected);
+            Schema fieldSchema = convertNode(child);
             // Wrap OPTIONAL fields in [null, T] — unless T is already the
             // NULL type, since Avro unions disallow duplicate branches.
             if (child.repetitionType() == RepetitionType.OPTIONAL
@@ -100,25 +109,25 @@ public final class AvroSchemaConverter {
         };
     }
 
-    private static Schema convertNode(SchemaNode node, ProjectedSchema projected) {
+    private Schema convertNode(SchemaNode node) {
         return switch (node) {
             case SchemaNode.PrimitiveNode prim -> convertPrimitive(prim);
-            case SchemaNode.GroupNode group -> convertGroupNode(group, projected);
+            case SchemaNode.GroupNode group -> convertGroupNode(group);
         };
     }
 
-    private static Schema convertGroupNode(SchemaNode.GroupNode group, ProjectedSchema projected) {
+    private Schema convertGroupNode(SchemaNode.GroupNode group) {
         if (group.isVariant()) {
             return convertVariant(group);
         }
         if (group.isList()) {
-            return convertList(group, projected);
+            return convertList(group);
         }
         if (group.isMap()) {
-            return convertMap(group, projected);
+            return convertMap(group);
         }
         // Plain struct — prune unprojected children recursively.
-        return convertGroup(group, group.name(), projected);
+        return convertGroup(group, group.name());
     }
 
     /// Emit a two-field Avro RECORD carrying the canonical Variant bytes.
@@ -134,7 +143,7 @@ public final class AvroSchemaConverter {
         return Schema.createRecord(group.name(), null, null, false, new ArrayList<>(fields));
     }
 
-    private static Schema convertList(SchemaNode.GroupNode listGroup, ProjectedSchema projected) {
+    private Schema convertList(SchemaNode.GroupNode listGroup) {
         SchemaNode element = listGroup.getListElement();
         if (element == null) {
             // Fallback for malformed list
@@ -143,7 +152,7 @@ public final class AvroSchemaConverter {
         // The list column is only reached when it has a projected leaf; prune the
         // element subtree so a list<struct> with a sub-field projection narrows to
         // the served fields.
-        Schema elementSchema = convertNode(element, projected);
+        Schema elementSchema = convertNode(element);
         if (element.repetitionType() == RepetitionType.OPTIONAL
                 && elementSchema.getType() != Schema.Type.NULL) {
             elementSchema = nullable(elementSchema);
@@ -151,7 +160,7 @@ public final class AvroSchemaConverter {
         return Schema.createArray(elementSchema);
     }
 
-    private static Schema convertMap(SchemaNode.GroupNode mapGroup, ProjectedSchema projected) {
+    private Schema convertMap(SchemaNode.GroupNode mapGroup) {
         // MAP -> key_value (repeated) -> key, value
         if (mapGroup.children().isEmpty()) {
             return Schema.createMap(Schema.create(Schema.Type.NULL));
@@ -161,7 +170,7 @@ public final class AvroSchemaConverter {
             SchemaNode valueNode = kvGroup.children().get(1);
             // Prune the value subtree so a map<_, struct> with a sub-field
             // projection narrows to the served fields (the key is always read).
-            Schema valueSchema = convertNode(valueNode, projected);
+            Schema valueSchema = convertNode(valueNode);
             if (valueNode.repetitionType() == RepetitionType.OPTIONAL
                     && valueSchema.getType() != Schema.Type.NULL) {
                 valueSchema = nullable(valueSchema);
@@ -171,7 +180,7 @@ public final class AvroSchemaConverter {
         return Schema.createMap(Schema.create(Schema.Type.NULL));
     }
 
-    private static Schema convertPrimitive(SchemaNode.PrimitiveNode prim) {
+    private Schema convertPrimitive(SchemaNode.PrimitiveNode prim) {
         LogicalType logicalType = prim.logicalType();
 
         if (logicalType != null) {
@@ -181,7 +190,7 @@ public final class AvroSchemaConverter {
         return convertPhysicalType(prim.type(), prim);
     }
 
-    private static Schema convertLogicalType(PhysicalType physicalType, LogicalType logicalType,
+    private Schema convertLogicalType(PhysicalType physicalType, LogicalType logicalType,
             SchemaNode.PrimitiveNode prim) {
         return switch (logicalType) {
             case LogicalType.StringType s -> Schema.create(Schema.Type.STRING);
@@ -233,12 +242,12 @@ public final class AvroSchemaConverter {
         };
     }
 
-    private static Schema convertDecimalType(PhysicalType physicalType, LogicalType.DecimalType d,
+    private Schema convertDecimalType(PhysicalType physicalType, LogicalType.DecimalType d,
             SchemaNode.PrimitiveNode prim) {
         org.apache.avro.LogicalType decimal = LogicalTypes.decimal(d.precision(), d.scale());
         if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
             return decimal.addToSchema(Schema.createFixed(
-                    prim.name(), null, null, prim.columnIndex()));
+                    prim.name(), null, null, fixedByteLength(prim)));
         }
         return decimal.addToSchema(Schema.create(Schema.Type.BYTES));
     }
@@ -255,7 +264,7 @@ public final class AvroSchemaConverter {
         return Schema.create(Schema.Type.LONG);
     }
 
-    private static Schema convertPhysicalType(PhysicalType type, SchemaNode.PrimitiveNode prim) {
+    private Schema convertPhysicalType(PhysicalType type, SchemaNode.PrimitiveNode prim) {
         return switch (type) {
             case BOOLEAN -> Schema.create(Schema.Type.BOOLEAN);
             case INT32 -> Schema.create(Schema.Type.INT);
@@ -263,9 +272,24 @@ public final class AvroSchemaConverter {
             case FLOAT -> Schema.create(Schema.Type.FLOAT);
             case DOUBLE -> Schema.create(Schema.Type.DOUBLE);
             case BYTE_ARRAY -> Schema.create(Schema.Type.BYTES);
-            case FIXED_LEN_BYTE_ARRAY -> Schema.createFixed(prim.name(), null, null, 12);
+            case FIXED_LEN_BYTE_ARRAY -> Schema.createFixed(prim.name(), null, null, fixedByteLength(prim));
+            // INT96 has a fixed 12-byte width that the schema does not carry a length for.
             case INT96 -> Schema.createFixed(prim.name(), null, null, 12);
         };
+    }
+
+    /// Resolve the declared byte length of a [PhysicalType#FIXED_LEN_BYTE_ARRAY]
+    /// column, looked up from its [dev.hardwood.schema.ColumnSchema] by leaf index.
+    /// A fixed-length column with no `type_length` is malformed; fail early rather
+    /// than emit a bogus zero-width Avro `fixed`, matching the decoders that reject
+    /// the same condition.
+    private int fixedByteLength(SchemaNode.PrimitiveNode prim) {
+        Integer typeLength = fileSchema.getColumn(prim.columnIndex()).typeLength();
+        if (typeLength == null) {
+            throw new IllegalArgumentException(
+                    "FIXED_LEN_BYTE_ARRAY column '" + prim.name() + "' is missing its type_length");
+        }
+        return typeLength;
     }
 
     private static Schema nullable(Schema schema) {

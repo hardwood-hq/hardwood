@@ -7,6 +7,7 @@
  */
 package dev.hardwood.avro;
 
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
@@ -15,9 +16,15 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
+import org.apache.avro.LogicalType;
 import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericData;
+import org.apache.avro.generic.GenericDatumWriter;
 import org.apache.avro.generic.GenericRecord;
+import org.apache.avro.io.DatumWriter;
+import org.apache.avro.io.Encoder;
+import org.apache.avro.io.EncoderFactory;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
@@ -30,6 +37,7 @@ import dev.hardwood.row.VariantType;
 import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 
 class AvroRowReaderTest {
 
@@ -473,6 +481,55 @@ class AvroRowReaderTest {
     }
 
     @Test
+    void decimalOnFixedUsesByteLengthAsFixedSize() throws Exception {
+        // compat_decimal_10_2.parquet: id INT64, amount decimal(10,2) stored as
+        // FIXED_LEN_BYTE_ARRAY of length 5 at leaf index 1. Building the reader
+        // converts the schema; the decimal's Avro `fixed` size must be the column's
+        // byte length (5), not its leaf index (1) — the latter cannot hold 10 digits.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("compat_decimal_10_2.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema amount = reader.getSchema().getField("amount").schema();
+            assertThat(amount.getType()).isEqualTo(Schema.Type.FIXED);
+            assertThat(amount.getFixedSize()).isEqualTo(5);
+
+            LogicalType logicalType = amount.getLogicalType();
+            assertThat(logicalType).isInstanceOf(LogicalTypes.Decimal.class);
+            LogicalTypes.Decimal decimal = (LogicalTypes.Decimal) logicalType;
+            assertThat(decimal.getPrecision()).isEqualTo(10);
+            assertThat(decimal.getScale()).isEqualTo(2);
+        }
+    }
+
+    @Test
+    void fixedColumnMaterializesAsGenericFixedAndSerializes() throws Exception {
+        // A `fixed`-typed Avro field requires a GenericFixed value, not a bare
+        // ByteBuffer. GenericRecord.put accepts a ByteBuffer silently, so the defect
+        // only surfaces on serialization — assert the materialized value is a
+        // GenericData.Fixed of the declared size and that the records round-trip
+        // through a GenericDatumWriter.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("compat_decimal_10_2.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema schema = reader.getSchema();
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).isNotEmpty();
+
+            for (GenericRecord record : records) {
+                Object amount = record.get("amount");
+                if (amount != null) {
+                    assertThat(amount).isInstanceOf(GenericData.Fixed.class);
+                    assertThat(((GenericData.Fixed) amount).bytes()).hasSize(5);
+                }
+            }
+
+            assertThatCode(() -> serialize(schema, records)).doesNotThrowAnyException();
+        }
+    }
+
+    @Test
     void readNestedFieldProjection() throws Exception {
         // nested_struct_test.parquet: id INT32, address { street, city, zip }.
         // Project a single nested field `address.city`: the materialized schema
@@ -740,6 +797,84 @@ class AvroRowReaderTest {
             assertThat(bytes(var0.get("value")))
                     .containsExactly(0x18, 42, 0, 0, 0, 0, 0, 0, 0);
         }
+    }
+
+    @Test
+    void plainFixedUsesByteLengthAsFixedSize() throws Exception {
+        // delta_byte_array_flba_test.parquet: id INT32, tag_req/tag_opt stored as
+        // plain FIXED_LEN_BYTE_ARRAY of length 4 (no decimal annotation). The Avro
+        // `fixed` size must follow the column's byte length, not the hardcoded 12.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("delta_byte_array_flba_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema tagReq = reader.getSchema().getField("tag_req").schema();
+            assertThat(tagReq.getType()).isEqualTo(Schema.Type.FIXED);
+            assertThat(tagReq.getFixedSize()).isEqualTo(4);
+
+            // tag_opt is OPTIONAL → union [null, fixed(4)].
+            Schema tagOpt = reader.getSchema().getField("tag_opt").schema();
+            Schema fixed = tagOpt.getTypes().stream()
+                    .filter(s -> s.getType() == Schema.Type.FIXED)
+                    .findFirst()
+                    .orElseThrow();
+            assertThat(fixed.getFixedSize()).isEqualTo(4);
+
+            // Plain (non-decimal) FIXED must also materialize as GenericFixed and
+            // round-trip through serialization.
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).isNotEmpty();
+            for (GenericRecord record : records) {
+                assertThat(record.get("tag_req")).isInstanceOf(GenericData.Fixed.class);
+            }
+            assertThatCode(() -> serialize(reader.getSchema(), records))
+                    .doesNotThrowAnyException();
+        }
+    }
+
+    @Test
+    void nestedFixedColumnsMaterializeAsGenericFixedAndSerialize() throws Exception {
+        // nested_flba_test.parquet: id INT32, s struct<tag: fixed(4)>, l list<fixed(4)>,
+        // m map<string, fixed(4)>. Exercises the struct, list, and map-value FIXED
+        // materialize paths — each must yield a GenericData.Fixed of size 4, and the
+        // records must round-trip through a GenericDatumWriter.
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("nested_flba_test.parquet")));
+             AvroRowReader reader = AvroReaders.rowReader(fileReader)) {
+
+            Schema schema = reader.getSchema();
+            List<GenericRecord> records = readAll(reader);
+            assertThat(records).hasSize(2);
+
+            GenericRecord first = records.get(0);
+
+            GenericRecord struct = (GenericRecord) first.get("s");
+            assertThat(struct.get("tag")).isInstanceOf(GenericData.Fixed.class);
+            assertThat(((GenericData.Fixed) struct.get("tag")).bytes())
+                    .containsExactly(0x00, 0x01, 0x02, 0x03);
+
+            List<?> list = (List<?>) first.get("l");
+            assertThat(list).hasSize(2);
+            assertThat(list).allMatch(e -> e instanceof GenericData.Fixed fixed
+                    && fixed.bytes().length == 4);
+
+            Map<?, ?> map = (Map<?, ?>) first.get("m");
+            assertThat(map).hasSize(2);
+            assertThat(map.values()).allMatch(v -> v instanceof GenericData.Fixed fixed
+                    && fixed.bytes().length == 4);
+
+            assertThatCode(() -> serialize(schema, records)).doesNotThrowAnyException();
+        }
+    }
+
+    private static void serialize(Schema schema, List<GenericRecord> records) throws Exception {
+        DatumWriter<GenericRecord> writer = new GenericDatumWriter<>(schema);
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Encoder encoder = EncoderFactory.get().binaryEncoder(out, null);
+        for (GenericRecord record : records) {
+            writer.write(record, encoder);
+        }
+        encoder.flush();
     }
 
     private static List<GenericRecord> readAll(AvroRowReader reader) {
