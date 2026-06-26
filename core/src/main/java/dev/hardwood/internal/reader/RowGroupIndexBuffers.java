@@ -47,6 +47,20 @@ public class RowGroupIndexBuffers {
     /// @param rowGroup  the row group whose indexes to fetch
     public static RowGroupIndexBuffers fetch(InputFile inputFile,
             RowGroup rowGroup) throws IOException {
+        return fetch(inputFile, rowGroup, true);
+    }
+
+    /// Fetches offset indexes for a row group, and optionally column indexes.
+    ///
+    /// Unfiltered scans need OffsetIndex bytes to plan page reads, but do not
+    /// need ColumnIndex statistics. Filtered scans include both so page-level
+    /// predicate pushdown can evaluate min/max/null-count metadata.
+    ///
+    /// @param inputFile the file to read from
+    /// @param rowGroup the row group whose indexes to fetch
+    /// @param includeColumnIndexes whether ColumnIndex buffers should be fetched
+    public static RowGroupIndexBuffers fetch(InputFile inputFile,
+            RowGroup rowGroup, boolean includeColumnIndexes) throws IOException {
 
         List<ColumnChunk> allColumns = rowGroup.columns();
 
@@ -58,7 +72,7 @@ public class RowGroupIndexBuffers {
                 maxEnd = Math.max(maxEnd,
                         col.offsetIndexOffset() + col.offsetIndexLength());
             }
-            if (col.columnIndexOffset() != null) {
+            if (includeColumnIndexes && col.columnIndexOffset() != null) {
                 minOffset = Math.min(minOffset, col.columnIndexOffset());
                 maxEnd = Math.max(maxEnd,
                         col.columnIndexOffset() + col.columnIndexLength());
@@ -86,7 +100,7 @@ public class RowGroupIndexBuffers {
                 int relOffset = Math.toIntExact(col.offsetIndexOffset() - minOffset);
                 oi = indexRegion.slice(relOffset, col.offsetIndexLength());
             }
-            if (col.columnIndexOffset() != null) {
+            if (includeColumnIndexes && col.columnIndexOffset() != null) {
                 int relOffset = Math.toIntExact(col.columnIndexOffset() - minOffset);
                 ci = indexRegion.slice(relOffset, col.columnIndexLength());
             }

@@ -279,7 +279,8 @@ public class RowGroupIterator {
             try (FetchReason.Scope ignored = FetchReason.set(
                     "rg=" + workItem.rowGroupIndex() + " indexes")) {
                 RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(
-                        workItem.inputFile(), workItem.rowGroup());
+                        workItem.inputFile(), workItem.rowGroup(),
+                        filterPredicate != null);
 
                 RowRanges matchingRows = RowRanges.ALL;
                 if (filterPredicate != null) {
