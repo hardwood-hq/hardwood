@@ -15,9 +15,7 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.0.0.Final (2026-06-25)
 
-[API changes](/api-changes/1.0.0.Final/)
-
-<!-- TODO at release: add the announcement blog post link here, as a follow-up commit (see CR1).  · [API changes](/api-changes/1.0.0.Final/) -->
+[Announcement blog post](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/)) · [API changes](/api-changes/1.0.0.Final/)
 
 Highlights of this release:
 
@@ -39,8 +37,6 @@ Thank you to all contributors to this release: [Fawzi Essam](https://github.com/
 ## 1.0.0.CR2 (2026-06-07)
 
 [API changes](/api-changes/1.0.0.CR2/)
-
-<!-- TODO at release: add the announcement blog post link here, as a follow-up commit (see CR1).  · [API changes](/api-changes/1.0.0.CR2/) -->
 
 Highlights of this release:
 
