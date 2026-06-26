@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
 
@@ -20,6 +21,7 @@ class CountingInputFile implements InputFile {
 
     private final InputFile delegate;
     private final AtomicInteger readRangeCount = new AtomicInteger();
+    private final AtomicLong bytesRead = new AtomicLong();
 
     CountingInputFile(InputFile delegate) {
         this.delegate = delegate;
@@ -34,6 +36,10 @@ class CountingInputFile implements InputFile {
         return readRangeCount.get();
     }
 
+    long bytesRead() {
+        return bytesRead.get();
+    }
+
     @Override
     public void open() throws IOException {
         delegate.open();
@@ -42,6 +48,7 @@ class CountingInputFile implements InputFile {
     @Override
     public ByteBuffer readRange(long offset, int length) throws IOException {
         readRangeCount.incrementAndGet();
+        bytesRead.addAndGet(length);
         return delegate.readRange(offset, length);
     }
 

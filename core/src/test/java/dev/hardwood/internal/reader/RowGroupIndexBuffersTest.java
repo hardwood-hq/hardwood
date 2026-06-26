@@ -48,6 +48,44 @@ class RowGroupIndexBuffersTest {
     }
 
     @Test
+    void skipsColumnIndexesWhenNotRequested() throws Exception {
+        CountingInputFile fullIndexFile = new CountingInputFile(InputFile.of(PAGE_INDEX_FILE));
+        fullIndexFile.open();
+        FileMetaData fullMeta = ParquetMetadataReader.readMetadata(fullIndexFile);
+        RowGroup fullRowGroup = fullMeta.rowGroups().get(0);
+
+        long fullBytesBefore = fullIndexFile.bytesRead();
+        RowGroupIndexBuffers fullBuffers = RowGroupIndexBuffers.fetch(
+                fullIndexFile, fullRowGroup, true);
+        long fullIndexBytes = fullIndexFile.bytesRead() - fullBytesBefore;
+
+        CountingInputFile offsetOnlyFile = new CountingInputFile(InputFile.of(PAGE_INDEX_FILE));
+        offsetOnlyFile.open();
+        FileMetaData offsetOnlyMeta = ParquetMetadataReader.readMetadata(offsetOnlyFile);
+        RowGroup offsetOnlyRowGroup = offsetOnlyMeta.rowGroups().get(0);
+
+        long offsetOnlyBytesBefore = offsetOnlyFile.bytesRead();
+        RowGroupIndexBuffers offsetOnlyBuffers = RowGroupIndexBuffers.fetch(
+                offsetOnlyFile, offsetOnlyRowGroup, false);
+        long offsetOnlyBytes = offsetOnlyFile.bytesRead() - offsetOnlyBytesBefore;
+
+        assertThat(offsetOnlyBytes)
+                .as("Offset-only index fetch should skip ColumnIndex bytes")
+                .isLessThan(fullIndexBytes);
+
+        for (int i = 0; i < offsetOnlyRowGroup.columns().size(); i++) {
+            ColumnIndexBuffers colBuffers = offsetOnlyBuffers.forColumn(i);
+            assertThat(colBuffers).as("Column %d", i).isNotNull();
+            assertThat(colBuffers.offsetIndex())
+                    .as("Column %d offset index", i).isNotNull();
+            assertThat(colBuffers.columnIndex())
+                    .as("Column %d column index", i).isNull();
+            assertThat(fullBuffers.forColumn(i).columnIndex())
+                    .as("Column %d full column index", i).isNotNull();
+        }
+    }
+
+    @Test
     void returnsNullForFileWithoutIndexes() throws Exception {
         CountingInputFile countingFile = new CountingInputFile(InputFile.of(PLAIN_FILE));
         countingFile.open();
