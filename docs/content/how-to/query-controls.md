@@ -315,10 +315,9 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-`skip == 0` is the no-op default. `skip >= totalRows` produces an empty reader (a SQL `OFFSET` past the end of the file). Within the target row group, the reader still decodes the leading residue rows and discards them via `next()`; page-level skip via the OffsetIndex is tracked separately.
+`skip == 0` is the no-op default. `skip >= totalRows` produces an empty reader (a SQL `OFFSET` past the end of the file, or of the concatenated relation for multi-file readers). Within the target row group, the reader still decodes the leading residue rows and discards them via `next()`; page-level skip via the OffsetIndex is tracked separately.
 
-!!! warning "Multi-file readers: first file only"
-    For the no-filter (physical) case, `skip(N)` indexes into the **first** file's rows only — it never carries across a file boundary. A `skip` at or beyond the first file's row count therefore does not empty the reader: it drops the first file and streams the remaining files in full. To skip whole files, omit them from the input list; to skip within a non-first file, open it separately.
+For multi-file readers, physical `skip(N)` is a global offset across the input files in order. Hardwood reads the footers of skipped files to count their rows, but skipped files' data pages are not fetched or decoded.
 
 **With a filter,** `skip(n)` is a *logical* offset over the matched rows — it discards the first `n` rows that match the predicate and returns the rest, exactly like SQL `OFFSET` after a `WHERE`. The O(1 row-group) seek does **not** apply: row-group statistics bound min/max values, not match *counts*, so the reader decodes earlier groups to count matches (groups whose statistics prove no match are still pruned). A `skip` past the number of matching rows yields an empty reader rather than throwing.
 

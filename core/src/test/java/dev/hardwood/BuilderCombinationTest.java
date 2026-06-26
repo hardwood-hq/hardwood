@@ -7,10 +7,14 @@
  */
 package dev.hardwood;
 
+import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -194,9 +198,9 @@ class BuilderCombinationTest {
         }
     }
 
-    /// Multi-file boundary cells (#577) — physical `skip` (no filter) indexes into the first file
-    /// only, logical `skip` (with a filter) counts matches across *all* files in order, and
-    /// `tail` is single-file-only (throws).
+    /// Multi-file boundary cells (#577, #672) — physical `skip` (no filter) is a
+    /// global offset across all files, logical `skip` (with a filter) counts matches
+    /// across *all* files in order, and `tail` is single-file-only (throws).
     /// `id` is the global row position: file 0 holds 0..149, file 1 holds 150..249.
     @Test
     void multiFileBoundaries() throws Exception {
@@ -205,11 +209,56 @@ class BuilderCombinationTest {
                     .containsExactlyElementsOf(longRange(125, 249));
             assertThat(ids(reader.buildRowReader().filter(FilterPredicate.gt("id", 99L)).skip(60)))
                     .containsExactlyElementsOf(longRange(160, 249));
-            // skip beyond file0 row count - does NOT carry into file1, which streams in full
             assertThat(ids(reader.buildRowReader().skip(160)))
-                    .containsExactlyElementsOf(longRange(150, 249));
+                    .containsExactlyElementsOf(longRange(160, 249));
+            assertThat(ids(reader.buildRowReader().skip(250)))
+                    .isEmpty();
+            assertThat(ids(reader.buildRowReader().skip(300)))
+                    .isEmpty();
             assertThatThrownBy(reader.buildRowReader().tail(50)::build)
                     .isInstanceOf(UnsupportedOperationException.class);
+        }
+    }
+
+    @Test
+    void physicalMultiFileSkipDoesNotReadSkippedFileData() throws Exception {
+        CountingInputFile file0 = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part0.parquet")));
+        CountingInputFile file1 = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part1.parquet")));
+
+        try (ParquetFileReader reader = ParquetFileReader.openAll(List.of(file0, file1))) {
+            int file0ReadsAfterOpen = file0.readCount();
+
+            assertThat(ids(reader.buildRowReader().skip(160).head(1)))
+                    .containsExactly(160L);
+            assertThat(file0.readCount())
+                    .as("file 0 should only have the footer reads from openAll")
+                    .isEqualTo(file0ReadsAfterOpen);
+        }
+    }
+
+    @Test
+    void physicalMultiFileSkipDoesNotReadMiddleSkippedFileData() throws Exception {
+        CountingInputFile file0 = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part0.parquet")));
+        CountingInputFile skippedMiddle = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part1.parquet")));
+        CountingInputFile target = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part1.parquet")));
+
+        try (ParquetFileReader reader = ParquetFileReader.openAll(List.of(file0, skippedMiddle, target))) {
+            assertThat(ids(reader.buildRowReader().skip(250).head(1)))
+                    .containsExactly(150L);
+            assertThat(skippedMiddle.readCount())
+                    .as("middle file should only be opened for metadata")
+                    .isEqualTo(3);
+            assertThat(skippedMiddle.bytesRead())
+                    .as("middle file should not have data pages fetched")
+                    .isLessThan(skippedMiddle.length());
+            assertThat(target.readCount())
+                    .as("target file should be read beyond metadata to produce a row")
+                    .isGreaterThan(skippedMiddle.readCount());
         }
     }
 
@@ -226,5 +275,50 @@ class BuilderCombinationTest {
 
     private static List<Long> longRange(long fromInclusive, long toInclusive) {
         return LongStream.rangeClosed(fromInclusive, toInclusive).boxed().toList();
+    }
+
+    private static final class CountingInputFile implements InputFile {
+        private final InputFile delegate;
+        private final AtomicInteger readCount = new AtomicInteger();
+        private final AtomicLong bytesRead = new AtomicLong();
+
+        private CountingInputFile(InputFile delegate) {
+            this.delegate = delegate;
+        }
+
+        int readCount() {
+            return readCount.get();
+        }
+
+        long bytesRead() {
+            return bytesRead.get();
+        }
+
+        @Override
+        public void open() throws IOException {
+            delegate.open();
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            readCount.incrementAndGet();
+            bytesRead.addAndGet(length);
+            return delegate.readRange(offset, length);
+        }
+
+        @Override
+        public long length() throws IOException {
+            return delegate.length();
+        }
+
+        @Override
+        public String name() {
+            return delegate.name();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
     }
 }

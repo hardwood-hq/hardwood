@@ -72,6 +72,7 @@ public class RowGroupIterator {
     private final List<InputFile> inputFiles;
     private final HardwoodContextImpl context;
     private final long maxRows;
+    private final long physicalSkip;
 
     /// Number of leading rows of the first row group to skip. Non-zero only on
     /// the tail-read fast path; consumed by [#computeFetchPlans] to synthesize
@@ -80,6 +81,7 @@ public class RowGroupIterator {
     /// be promoted from the construction-time value of `0` via
     /// [#setTailSkip(long)] once the gate decision is in.
     private long tailSkip;
+    private long firstRowGroupSkip;
 
     // Set after first file
     private FileSchema referenceSchema;
@@ -171,21 +173,46 @@ public class RowGroupIterator {
     ///        cross-column alignment.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
                             long maxRows, long tailSkip) {
+        this(inputFiles, context, maxRows, tailSkip, 0);
+    }
+
+    /// Creates a RowGroupIterator with tail-skip and physical-skip budgets.
+    ///
+    /// @param inputFiles one or more input files (must not be empty)
+    /// @param context the Hardwood context
+    /// @param maxRows maximum rows to read (0 = unlimited)
+    /// @param tailSkip leading rows of the first row group to skip via per-page
+    ///        masking (0 = unused)
+    /// @param physicalSkip leading physical rows to skip while building the
+    ///        work list (0 = unused). Whole row groups are dropped; the residue
+    ///        within the first kept row group is exposed via [#firstRowGroupSkip()].
+    public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
+                            long maxRows, long tailSkip, long physicalSkip) {
         if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
         if (tailSkip < 0) {
             throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
         }
+        if (physicalSkip < 0) {
+            throw new IllegalArgumentException("physicalSkip must be non-negative, got " + physicalSkip);
+        }
         this.inputFiles = new ArrayList<>(inputFiles);
         this.context = context;
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
+        this.physicalSkip = physicalSkip;
     }
 
     /// Returns the maximum rows limit (0 = unlimited).
     public long maxRows() {
         return maxRows;
+    }
+
+    /// Rows to discard from the first kept row group after whole row groups
+    /// before the physical skip target have been dropped from the work list.
+    public long firstRowGroupSkip() {
+        return firstRowGroupSkip;
     }
 
     /// Sets the reference schema and pre-prepared first file, skipping [#openFirst()].
@@ -821,7 +848,8 @@ public class RowGroupIterator {
         if (maxRows <= 0 || filterPredicate != null) {
             return 0;
         }
-        return Math.max(0, maxRows - workItem.rowsConsumedBefore());
+        long leadingSkip = workItem.workItemIndex() == 0 ? firstRowGroupSkip : 0;
+        return Math.max(0, maxRows - workItem.rowsConsumedBefore() + leadingSkip);
     }
 
     /// Returns the context.
@@ -858,6 +886,7 @@ public class RowGroupIterator {
     private void buildWorkList() {
         long rowBudget = maxRows > 0 ? maxRows : Long.MAX_VALUE;
         long rowsConsumed = 0;
+        long physicalSkipRemaining = physicalSkip;
         boolean hasFilter = filterPredicate != null;
 
         for (int fileIndex = 0; fileIndex < inputFiles.size() && rowBudget > 0; fileIndex++) {
@@ -866,6 +895,18 @@ public class RowGroupIterator {
 
             for (int rgIndex = 0; rgIndex < rowGroups.size() && rowBudget > 0; rgIndex++) {
                 RowGroup rg = rowGroups.get(rgIndex);
+                long rgRows = rg.numRows();
+                if (physicalSkipRemaining >= rgRows) {
+                    physicalSkipRemaining -= rgRows;
+                    continue;
+                }
+
+                long leadingSkip = physicalSkipRemaining;
+                physicalSkipRemaining = 0;
+                if (workItems.isEmpty()) {
+                    firstRowGroupSkip = leadingSkip;
+                }
+
                 workItems.add(new WorkItem(
                         prepared.inputFile,
                         rg,
@@ -879,9 +920,9 @@ public class RowGroupIterator {
                 // With a filter active, actual match count is unpredictable,
                 // so all row groups remain available.
                 if (!hasFilter) {
-                    rowBudget -= rg.numRows();
+                    rowBudget -= rgRows - leadingSkip;
                 }
-                rowsConsumed += rg.numRows();
+                rowsConsumed += rgRows - leadingSkip;
             }
 
             // Trigger prefetch of next file
