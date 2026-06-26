@@ -17,7 +17,11 @@ import org.eclipse.jgit.api.errors.GitAPIException;
 /// Utility to clone the parquet-testing repository for comparison tests.
 public class ParquetTestingRepoCloner {
 
-    private static final String REPO_URL = "https://github.com/apache/parquet-testing.git";
+    // TEMPORARY: pointed at the fork/branch behind apache/parquet-testing#113
+    // (malformed-variant hardening fixtures) so the variant-hardening tests can run
+    // before the PR is merged. Revert to apache/parquet-testing master once it lands.
+    private static final String REPO_URL = "https://github.com/steveloughran/parquet-testing.git";
+    private static final String BRANCH = "pr/variant-hardening";
     private static final Path TARGET_DIR = Path.of("target/parquet-testing");
 
     /// Ensure the parquet-testing repository is cloned to target/parquet-testing.
@@ -36,6 +40,7 @@ public class ParquetTestingRepoCloner {
         try {
             Git.cloneRepository()
                     .setURI(REPO_URL)
+                    .setBranch(BRANCH)
                     .setDirectory(TARGET_DIR.toFile())
                     .setDepth(1) // Shallow clone for speed
                     .call()
