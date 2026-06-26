@@ -7,24 +7,39 @@
  */
 package dev.hardwood.cli.command;
 
-import picocli.CommandLine;
+import java.util.List;
 
-@CommandLine.Command(name = "inspect", description = "Low-level introspection commands.", subcommands = {
+import org.aesh.command.Command;
+import org.aesh.command.CommandResult;
+import org.aesh.command.GroupCommand;
+import org.aesh.command.GroupCommandDefinition;
+import org.aesh.command.invocation.CommandInvocation;
+
+@GroupCommandDefinition(
+    name = "inspect",
+    description = "Low-level introspection commands.",
+    groupCommands = {
         InspectPagesCommand.class,
         InspectDictionaryCommand.class,
         InspectColumnsCommand.class,
         InspectRowGroupsCommand.class
-})
-public class InspectCommand implements Runnable {
-
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Spec
-    CommandLine.Model.CommandSpec spec;
+    }
+)
+public class InspectCommand implements GroupCommand<CommandInvocation> {
 
     @Override
-    public void run() {
-        spec.commandLine().usage(spec.commandLine().getOut());
+    public List<Command<CommandInvocation>> getCommands() {
+        return List.of(
+            new InspectPagesCommand(),
+            new InspectDictionaryCommand(),
+            new InspectColumnsCommand(),
+            new InspectRowGroupsCommand()
+        );
+    }
+
+    @Override
+    public CommandResult execute(CommandInvocation invocation) {
+        invocation.println("inspect requires a subcommand.");
+        return CommandResult.FAILURE;
     }
 }

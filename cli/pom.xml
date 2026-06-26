@@ -208,8 +208,8 @@
          S3InputFile and friends flow through JBoss LogManager and into
          the JUL FileHandler we attach. -->
     <dependency>
-      <groupId>io.quarkus</groupId>
-      <artifactId>quarkus-picocli</artifactId>
+      <groupId>org.aesh</groupId>
+      <artifactId>aesh</artifactId>
     </dependency>
     <dependency>
       <groupId>io.quarkus</groupId>
@@ -350,12 +350,9 @@
                 </goals>
                 <configuration>
                   <includeProjectDependencies>true</includeProjectDependencies>
-                  <mainClass>picocli.AutoComplete</mainClass>
+                  <mainClass>dev.hardwood.cli.completion.AeshCompletionGenerator</mainClass>
                   <arguments>
-                    <argument>--force</argument>
-                    <argument>-o</argument>
                     <argument>${project.build.directory}/hardwood_completion</argument>
-                    <argument>dev.hardwood.cli.command.HardwoodCommand</argument>
                   </arguments>
                 </configuration>
               </execution>

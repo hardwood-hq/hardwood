@@ -7,34 +7,44 @@
  */
 package dev.hardwood.cli.command;
 
-import java.io.PrintWriter;
-import java.io.StringWriter;
+import java.io.ByteArrayOutputStream;
+import java.io.PrintStream;
 
-import picocli.CommandLine;
+import org.aesh.command.CommandResult;
+
+import dev.hardwood.cli.AeshCli;
 
 /// In-process launcher for CLI command tests. Executes the top-level `hardwood`
-/// command directly via picocli with stdout and stderr captured into strings,
+/// command directly via Aesh with stdout and stderr captured into strings,
 /// avoiding the Quarkus bootstrap that `@QuarkusMainTest` pays per test class.
-///
-/// Mirrors the configuration applied to the production `CommandLine`
-/// produced by [HardwoodCommand.getCommandLineInstance] so tests exercise the
-/// same parser behaviour.
 final class Cli {
 
     private Cli() {
     }
 
     static Result launch(String... args) {
-        StringWriter out = new StringWriter();
-        StringWriter err = new StringWriter();
+        PrintStream originalOut = System.out;
+        PrintStream originalErr = System.err;
 
-        CommandLine commandLine = new CommandLine(new HardwoodCommand())
-                .setCaseInsensitiveEnumValuesAllowed(true)
-                .setOut(new PrintWriter(out, true))
-                .setErr(new PrintWriter(err, true));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        ByteArrayOutputStream err = new ByteArrayOutputStream();
 
-        int exitCode = commandLine.execute(args);
-        return new Result(exitCode, stripTrailingNewlines(out.toString()), stripTrailingNewlines(err.toString()));
+        try {
+            System.setOut(new PrintStream(out, true));
+            System.setErr(new PrintStream(err, true));
+
+            CommandResult result = AeshCli.execute(args);
+            int exitCode = result.isSuccess() ? 0 : (result.getResultValue() != 0 ? result.getResultValue() : 1);
+            return new Result(exitCode, stripTrailingNewlines(out.toString()), stripTrailingNewlines(err.toString()));
+        } catch (Exception e) {
+            String errMessage = e.getMessage() != null ? e.getMessage() : e.toString();
+            // Since System.err was redirected to err, let's write to it directly:
+            System.err.println(errMessage);
+            return new Result(1, stripTrailingNewlines(out.toString()), stripTrailingNewlines(err.toString()));
+        } finally {
+            System.setOut(originalOut);
+            System.setErr(originalErr);
+        }
     }
 
     /// `QuarkusMainLauncher` strips the trailing line separator from captured
@@ -42,10 +52,11 @@ final class Cli {
     /// trailing newline) behave identically whether launched directly or via
     /// Quarkus.
     private static String stripTrailingNewlines(String s) {
+        s = s.replace("\r\n", "\n").replace('\r', '\n');
         int end = s.length();
         while (end > 0) {
             char c = s.charAt(end - 1);
-            if (c == '\n' || c == '\r') {
+            if (c == '\n') {
                 end--;
             }
             else {

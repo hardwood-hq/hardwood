@@ -7,16 +7,18 @@
  */
 package dev.hardwood.cli.command;
 
-import dev.hardwood.cli.internal.Fmt;
-import dev.hardwood.cli.internal.Version;
-import io.quarkus.picocli.runtime.PicocliCommandLineFactory;
-import io.quarkus.picocli.runtime.annotations.TopCommand;
-import jakarta.enterprise.inject.Produces;
-import picocli.CommandLine;
-import picocli.CommandLine.IVersionProvider;
+import java.util.List;
 
-@TopCommand()
-@CommandLine.Command(name = "hardwood", mixinStandardHelpOptions = true, versionProvider = VersionProviderWithConfigProvider.class, subcommands = {
+import org.aesh.command.Command;
+import org.aesh.command.CommandResult;
+import org.aesh.command.GroupCommand;
+import org.aesh.command.GroupCommandDefinition;
+import org.aesh.command.invocation.CommandInvocation;
+
+@GroupCommandDefinition(
+    name = "hardwood",
+    description = "A command-line interface for hardwood",
+    groupCommands = {
         HelpCommand.class,
         InfoCommand.class,
         SchemaCommand.class,
@@ -25,23 +27,28 @@ import picocli.CommandLine.IVersionProvider;
         InspectCommand.class,
         PrintCommand.class,
         DiveCommand.class
-}, description = "A command-line interface for hardwood"
-
-)
-
-public class HardwoodCommand {
-    @Produces
-    CommandLine getCommandLineInstance(PicocliCommandLineFactory factory) {
-        return factory.create().setCaseInsensitiveEnumValuesAllowed(true);
     }
-}
-
-class VersionProviderWithConfigProvider implements IVersionProvider {
+)
+public class HardwoodCommand implements GroupCommand<CommandInvocation> {
 
     @Override
-    public String[] getVersion() {
-        String applicationName = "hardwood";
-        String applicationVersion = Version.getVersion();
-        return new String[]{ Fmt.fmt("%s %s", applicationName, applicationVersion) };
+    public List<Command<CommandInvocation>> getCommands() {
+        return List.of(
+            new HelpCommand(),
+            new InfoCommand(),
+            new SchemaCommand(),
+            new ConvertCommand(),
+            new FooterCommand(),
+            new InspectCommand(),
+            new PrintCommand(),
+            new DiveCommand()
+        );
+    }
+
+    @Override
+    public CommandResult execute(CommandInvocation invocation) {
+        invocation.println("Usage: hardwood [command] [options]");
+        invocation.println("Use 'hardwood help' to see all available commands.");
+        return CommandResult.SUCCESS;
     }
 }

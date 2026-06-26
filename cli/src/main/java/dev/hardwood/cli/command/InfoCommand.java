@@ -8,7 +8,11 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Sizes;
@@ -16,26 +20,15 @@ import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "info", description = "Display high-level file information.")
-public class InfoCommand implements Callable<Integer> {
-
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
-    FileMixin fileMixin;
-    @Spec
-    CommandSpec spec;
+@CommandDefinition(name = "info", description = "Display high-level file information.")
+public class InfoCommand extends FileCommandBase implements Command<CommandInvocation> {
 
     @Override
-    public Integer call() {
-        InputFile inputFile = fileMixin.toInputFile();
+    public CommandResult execute(CommandInvocation invocation) {
+        InputFile inputFile = toInputFile(invocation);
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
@@ -50,18 +43,18 @@ public class InfoCommand implements Callable<Integer> {
                 }
             }
 
-            spec.commandLine().getOut().println("Format Version:    " + metadata.version());
-            spec.commandLine().getOut().println("Created By:        " + (metadata.createdBy() != null ? metadata.createdBy() : "unknown"));
-            spec.commandLine().getOut().println("Row Groups:        " + metadata.rowGroups().size());
-            spec.commandLine().getOut().println("Total Rows:        " + metadata.numRows());
-            spec.commandLine().getOut().println("Uncompressed Size: " + Sizes.format(totalUncompressed));
-            spec.commandLine().getOut().println("Compressed Size:   " + Sizes.format(totalCompressed));
+            invocation.println("Format Version:    " + metadata.version());
+            invocation.println("Created By:        " + (metadata.createdBy() != null ? metadata.createdBy() : "unknown"));
+            invocation.println("Row Groups:        " + metadata.rowGroups().size());
+            invocation.println("Total Rows:        " + metadata.numRows());
+            invocation.println("Uncompressed Size: " + Sizes.format(totalUncompressed));
+            invocation.println("Compressed Size:   " + Sizes.format(totalCompressed));
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 }

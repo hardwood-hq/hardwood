@@ -7,78 +7,56 @@
  */
 package dev.hardwood.cli.command;
 
-import java.io.PrintWriter;
-import java.util.ArrayList;
 import java.util.List;
 
-import dev.hardwood.cli.completion.HelpCompletions;
-import picocli.CommandLine;
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Arguments;
 
-/// Adapted from the `CommandLine.HelpCommand` class. There are two primary differences:
-///
-/// - Information on nested subcommands is available (e.g., `hardwood inspect pages`)
-/// - Abbreviation of subcommands (`CommandLine.setAbbreviatedSubcommandsAllowed`) is not supported
-///   (this feature is not currently used in hardwood)
-@CommandLine.Command(name = "help", header = {
-        "Display help information about the specified command." }, synopsisHeading = "%nUsage: ", helpCommand = true, description = {
-                "%nWhen no COMMAND is given, the usage help for the main command is displayed.", "If a COMMAND is specified, the help for that command is shown.%n" })
-public class HelpCommand implements CommandLine.IHelpCommandInitializable2, Runnable {
+@CommandDefinition(name = "help", description = "Display help information about the specified command.")
+public class HelpCommand implements Command<CommandInvocation> {
 
-    // Help for help!
-    @CommandLine.Mixin
-    HelpMixin help;
+    private static final List<String> TOP_LEVEL_COMMANDS = List.of(
+            "help", "info", "schema", "convert", "footer", "inspect", "print", "dive");
+    private static final List<String> INSPECT_COMMANDS = List.of(
+            "pages", "dictionary", "columns", "rowgroups");
 
-    @CommandLine.Parameters(paramLabel = "COMMAND", arity = "0..*", completionCandidates = HelpCompletions.class, description = {
-            "The COMMAND to display the usage help message for." })
+    @Arguments(description = "The command to display the usage help message for.")
     private List<String> commands;
 
-    private CommandLine self;
-    private PrintWriter outWriter;
-    private CommandLine.Help.ColorScheme colorScheme;
-
-    public HelpCommand() {
-    }
-
     @Override
-    public void run() {
-        CommandLine parent = this.self == null ? null : this.self.getParent();
-        if (parent != null) {
-            if (this.commands != null && !this.commands.isEmpty()) {
-                CommandLine parentCommand = parent;
-                CommandLine subCommand = null;
-                List<String> fullCommandPath = new ArrayList<>();
-                for (String command : commands) {
-                    fullCommandPath.add(command);
-
-                    subCommand = parentCommand
-                            .getCommandSpec()
-                            .subcommands()
-                            .get(command);
-
-                    if (subCommand == null) {
-                        throw new CommandLine.ParameterException(
-                                parent,
-                                "Unknown command: '" + String.join(" ", fullCommandPath) + "'.",
-                                null,
-                                command);
-                    }
-
-                    parentCommand = subCommand;
+    public CommandResult execute(CommandInvocation invocation) {
+        if (commands == null || commands.isEmpty()) {
+            invocation.print(invocation.getHelpInfo("hardwood") + "\n");
+        } else {
+            String fullCommand = String.join(" ", commands);
+            if (!knownCommand(commands)) {
+                invocation.print("Unknown command: '" + fullCommand + "'.\n");
+                return CommandResult.FAILURE;
+            }
+            try {
+                String helpInfo = invocation.getHelpInfo(fullCommand);
+                if (helpInfo == null || helpInfo.isEmpty()) {
+                    invocation.print("Unknown command: '" + fullCommand + "'.\n");
+                    return CommandResult.FAILURE;
                 }
-
-                subCommand.usage(this.outWriter, this.colorScheme);
+                invocation.print(helpInfo + "\n");
+            } catch (Exception e) {
+                invocation.print("Unknown command: '" + fullCommand + "'.\n");
+                return CommandResult.FAILURE;
             }
-            else {
-                parent.usage(this.outWriter, this.colorScheme);
-            }
-
         }
+        return CommandResult.SUCCESS;
     }
 
-    @Override
-    public void init(CommandLine helpCommandLine, CommandLine.Help.ColorScheme colorScheme, PrintWriter out, PrintWriter err) {
-        this.self = helpCommandLine;
-        this.colorScheme = colorScheme;
-        this.outWriter = out;
+    private static boolean knownCommand(List<String> commands) {
+        if (commands.size() == 1) {
+            return TOP_LEVEL_COMMANDS.contains(commands.getFirst());
+        }
+        return commands.size() == 2
+                && "inspect".equals(commands.getFirst())
+                && INSPECT_COMMANDS.contains(commands.get(1));
     }
 }

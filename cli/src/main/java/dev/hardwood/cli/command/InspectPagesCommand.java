@@ -11,7 +11,12 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.IndexValueFormatter;
@@ -34,31 +39,21 @@ import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "pages", description = "List data and dictionary pages per column chunk.")
-public class InspectPagesCommand implements Callable<Integer> {
+@CommandDefinition(name = "pages", description = "List data and dictionary pages per column chunk.")
+public class InspectPagesCommand extends FileCommandBase implements Command<CommandInvocation> {
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
-    FileMixin fileMixin;
-    @Spec
-     CommandSpec spec;
-    @CommandLine.Option(names = {"-c", "--column"}, paramLabel = "COLUMN", description = "Restrict output to a single column.")
+    @Option(name = "column", shortName = 'c', description = "Restrict output to a single column.")
     String column;
 
-    @CommandLine.Option(names = "--no-stats", description = "Omit page-index derived columns (First Row, Min, Max, Nulls) even when available.")
+    @Option(name = "no-stats", description = "Omit page-index derived columns (First Row, Min, Max, Nulls) even when available.", defaultValue = "false", hasValue = false)
     boolean noStats;
 
     @Override
-    public Integer call() {
-        InputFile inputFile = fileMixin.toInputFile();
+    public CommandResult execute(CommandInvocation invocation) {
+        InputFile inputFile = toInputFile(invocation);
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
         FileMetaData metadata;
@@ -68,8 +63,8 @@ public class InspectPagesCommand implements Callable<Integer> {
             schema = reader.getFileSchema();
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
         int filterColumnIndex = -1;
@@ -78,36 +73,36 @@ public class InspectPagesCommand implements Callable<Integer> {
                 filterColumnIndex = schema.getColumn(column).columnIndex();
             }
             catch (IllegalArgumentException e) {
-                spec.commandLine().getErr().println("Unknown column: " + column);
-                return CommandLine.ExitCode.SOFTWARE;
+                System.err.println("Unknown column: " + column);
+                return CommandResult.FAILURE;
             }
         }
 
-        InputFile pageInputFile = fileMixin.toInputFile();
+        InputFile pageInputFile = toInputFile(invocation);
         try {
             pageInputFile.open();
-            printPages(metadata, schema, pageInputFile, filterColumnIndex);
+            printPages(invocation, metadata, schema, pageInputFile, filterColumnIndex);
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading pages: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading pages: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
         finally {
             try {
                 pageInputFile.close();
             }
             catch (IOException e) {
-                spec.commandLine().getErr().println("Error closing file: " + e.getMessage());
+                System.err.println("Error closing file: " + e.getMessage());
             }
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     private static final String[] HEADERS_PLAIN = {"RG", "Page", "Type", "Encoding", "Compressed", "Values"};
     private static final String[] HEADERS_WITH_INDEX = {"RG", "Page", "Type", "Encoding", "First Row", "Compressed", "Values", "Min", "Max", "Nulls"};
 
-    private void printPages(FileMetaData metadata, FileSchema schema, InputFile inputFile, int filterColumnIndex) throws IOException {
+    private void printPages(CommandInvocation invocation, FileMetaData metadata, FileSchema schema, InputFile inputFile, int filterColumnIndex) throws IOException {
         List<RowGroup> rowGroups = metadata.rowGroups();
         List<ColumnSchema> columns = schema.getColumns();
 
@@ -117,14 +112,14 @@ public class InspectPagesCommand implements Callable<Integer> {
                 continue;
             }
             if (!firstColumn) {
-                spec.commandLine().getOut().println();
+                invocation.println("");
             }
             firstColumn = false;
-            renderColumn(col, rowGroups, inputFile);
+            renderColumn(invocation, col, rowGroups, inputFile);
         }
     }
 
-    private void renderColumn(ColumnSchema col, List<RowGroup> rowGroups, InputFile inputFile) throws IOException {
+    private void renderColumn(CommandInvocation invocation, ColumnSchema col, List<RowGroup> rowGroups, InputFile inputFile) throws IOException {
         List<RowGroupData> rgData = new ArrayList<>();
         boolean anyIndex = false;
         String columnLabel = col.name();
@@ -254,14 +249,10 @@ public class InspectPagesCommand implements Callable<Integer> {
             });
         }
 
-        spec.commandLine().getOut().println(columnLabel);
-        spec.commandLine().getOut().println(RowTable.renderTable(headers, rows, separatorsBefore, List.of(totalRowIdx)));
+        invocation.println(columnLabel);
+        invocation.println(RowTable.renderTable(headers, rows, separatorsBefore, List.of(totalRowIdx)));
     }
 
-    /// Formats the column label suffix indicating where the Min / Max / Nulls
-    /// cells' values came from for this column. Reports `ColumnIndex` (side-car
-    /// Page Index), `inline` (`DataPageHeader.statistics`), `mixed` when row
-    /// groups disagree, or `no page-level stats` when neither is present.
     private static String statsSourceSuffix(boolean anyColumnIndex, boolean anyInline, boolean anyNoStats) {
         int kinds = (anyColumnIndex ? 1 : 0) + (anyInline ? 1 : 0) + (anyNoStats ? 1 : 0);
         if (kinds == 0) {

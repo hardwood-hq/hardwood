@@ -7,6 +7,7 @@
  */
 package dev.hardwood.cli.command;
 
+import java.net.URISyntaxException;
 import java.nio.file.Path;
 
 import org.junit.jupiter.api.Test;
@@ -19,8 +20,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 class DiveCommandTest {
 
     @Test
-    void smokeRenderExitsZero() {
-        Path fixture = Path.of(getClass().getResource("/compat_plain_int64.parquet").getPath());
+    void smokeRenderExitsZero() throws URISyntaxException {
+        Path fixture = Path.of(getClass().getResource("/compat_plain_int64.parquet").toURI());
 
         Cli.Result result = Cli.launch("dive", "-f", fixture.toString(), "--smoke-render");
 
@@ -41,8 +42,8 @@ class DiveCommandTest {
     /// fail-fast guard fires for real — the same path a `docker run` without
     /// `-it` hits.
     @Test
-    void failsFastWithoutTty() {
-        Path fixture = Path.of(getClass().getResource("/compat_plain_int64.parquet").getPath());
+    void failsFastWithoutTty() throws URISyntaxException {
+        Path fixture = Path.of(getClass().getResource("/compat_plain_int64.parquet").toURI());
 
         Cli.Result result = Cli.launch("dive", "-f", fixture.toString());
 

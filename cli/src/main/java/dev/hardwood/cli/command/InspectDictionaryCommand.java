@@ -11,7 +11,12 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.IndexValueFormatter;
@@ -27,45 +32,35 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "dictionary", description = "Print dictionary entries for a column.")
-public class InspectDictionaryCommand implements Callable<Integer> {
+@CommandDefinition(name = "dictionary", description = "Print dictionary entries for a column.")
+public class InspectDictionaryCommand extends FileCommandBase implements Command<CommandInvocation> {
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
-    FileMixin fileMixin;
-    @Spec
-    CommandSpec spec;
-    @CommandLine.Option(names = {"-c", "--column"}, required = true, paramLabel = "COLUMN", description = "Column name to inspect.")
+    @Option(name = "column", shortName = 'c', required = true, description = "Column name to inspect.")
     String column;
-    @CommandLine.Option(names = "--limit", defaultValue = "50", paramLabel = "N",
-            description = "Maximum dictionary entries per row group to print (0 = unlimited).")
+
+    @Option(name = "limit", defaultValue = "50", description = "Maximum dictionary entries per row group to print (0 = unlimited).")
     int limit;
 
     @Override
-    public Integer call() {
-        if (fileMixin.toInputFile() == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+    public CommandResult execute(CommandInvocation invocation) {
+        if (toInputFile(invocation) == null) {
+            return CommandResult.FAILURE;
         }
         if (limit < 0) {
-            spec.commandLine().getErr().println("--limit must be greater than or equal to 0");
-            return CommandLine.ExitCode.USAGE;
+            System.err.println("--limit must be greater than or equal to 0");
+            return CommandResult.FAILURE;
         }
 
         FileMetaData metadata;
         FileSchema schema;
-        try (ParquetFileReader reader = ParquetFileReader.open(fileMixin.toInputFile())) {
+        try (ParquetFileReader reader = ParquetFileReader.open(toInputFile(invocation))) {
             metadata = reader.getFileMetaData();
             schema = reader.getFileSchema();
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
         ColumnSchema columnSchema;
@@ -73,32 +68,32 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             columnSchema = schema.getColumn(column);
         }
         catch (IllegalArgumentException e) {
-            spec.commandLine().getErr().println("Unknown column: " + column);
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Unknown column: " + column);
+            return CommandResult.FAILURE;
         }
 
-        InputFile inputFile = fileMixin.toInputFile();
+        InputFile inputFile = toInputFile(invocation);
         try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
             inputFile.open();
-            printDictionaries(metadata, columnSchema, context, inputFile);
+            printDictionaries(invocation, metadata, columnSchema, context, inputFile);
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading dictionary: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading dictionary: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
         finally {
             try {
                 inputFile.close();
             }
             catch (IOException e) {
-                spec.commandLine().getErr().println("Error closing file: " + e.getMessage());
+                System.err.println("Error closing file: " + e.getMessage());
             }
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
-    private void printDictionaries(FileMetaData metadata, ColumnSchema columnSchema,
+    private void printDictionaries(CommandInvocation invocation, FileMetaData metadata, ColumnSchema columnSchema,
                                    HardwoodContextImpl context, InputFile inputFile)
             throws IOException {
         List<RowGroup> rowGroups = metadata.rowGroups();
@@ -143,15 +138,15 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             }
         }
 
-        spec.commandLine().getOut().println(columnLabel);
+        invocation.println(columnLabel);
         for (String message : messages) {
-            spec.commandLine().getOut().println(message);
+            invocation.println(message);
         }
         if (!rows.isEmpty()) {
             String[] headers = includeLength
                     ? new String[]{"RG", "Index", "Length", "Value"}
                     : new String[]{"RG", "Index", "Value"};
-            spec.commandLine().getOut().println(RowTable.renderTable(headers, rows, separatorsBefore, List.of()));
+            invocation.println(RowTable.renderTable(headers, rows, separatorsBefore, List.of()));
         }
     }
 

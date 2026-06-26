@@ -14,7 +14,11 @@ import java.util.Comparator;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.Fmt;
@@ -28,26 +32,15 @@ import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "columns", description = "Show compressed and uncompressed byte sizes per column, ranked.")
-public class InspectColumnsCommand implements Callable<Integer> {
-
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
-    FileMixin fileMixin;
-    @Spec
-     CommandSpec spec;
+@CommandDefinition(name = "columns", description = "Show compressed and uncompressed byte sizes per column, ranked.")
+public class InspectColumnsCommand extends FileCommandBase implements Command<CommandInvocation> {
 
     @Override
-    public Integer call() {
-        InputFile inputFile = fileMixin.toInputFile();
+    public CommandResult execute(CommandInvocation invocation) {
+        InputFile inputFile = toInputFile(invocation);
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
@@ -56,18 +49,18 @@ public class InspectColumnsCommand implements Callable<Integer> {
                 inputFile.open();
                 List<ColumnSize> sizes = aggregateSizes(metadata, inputFile);
                 sizes.sort(Comparator.comparingLong(ColumnSize::compressed).reversed());
-                printRanked(sizes);
+                printRanked(invocation, sizes);
             }
             finally {
                 inputFile.close();
             }
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     private static List<ColumnSize> aggregateSizes(FileMetaData metadata, InputFile inputFile) {
@@ -115,7 +108,7 @@ public class InspectColumnsCommand implements Callable<Integer> {
         }
     }
 
-    private void printRanked(List<ColumnSize> sizes) {
+    private void printRanked(CommandInvocation invocation, List<ColumnSize> sizes) {
         String[] headers = {"Rank", "Column", "Type", "Compressed", "Uncompressed", "Ratio", "# Pages"};
         List<String[]> rows = new ArrayList<>();
         for (int i = 0; i < sizes.size(); i++) {
@@ -131,7 +124,7 @@ public class InspectColumnsCommand implements Callable<Integer> {
                     s.pageCountAvailable() ? String.valueOf(s.pageCount()) : "-"
             });
         }
-        spec.commandLine().getOut().println(RowTable.renderTable(headers, rows));
+        invocation.println(RowTable.renderTable(headers, rows));
     }
 
     private record ColumnSize(String path, String type, String codec, long compressed, long uncompressed,

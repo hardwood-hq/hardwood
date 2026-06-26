@@ -26,12 +26,21 @@ public final class Version {
     /// by the `capture-git-info` antrun step.
     private static String initVersion() {
         Config config = ConfigProvider.getConfig();
-        String applicationVersion = config.getValue("project.version", String.class);
-        String applicationRevision = config.getValue("project.revision", String.class);
-        boolean dirty = config.getValue("project.revision.dirty", Boolean.class);
+        String applicationVersion = getConfigValue(config, "project.version", "unknown");
+        String applicationRevision = getConfigValue(config, "project.revision", "unknown");
+        boolean dirty = Boolean.parseBoolean(getConfigValue(config, "project.revision.dirty", "false"));
 
         String dirtyMark = dirty ? "-dirty" : "";
         return Fmt.fmt("%s (%s%s)", applicationVersion, applicationRevision, dirtyMark);
+    }
+
+    private static String getConfigValue(Config config, String key, String fallback) {
+        try {
+            return config.getOptionalValue(key, String.class).orElse(fallback);
+        }
+        catch (RuntimeException e) {
+            return fallback;
+        }
     }
 
     public static String getVersion() {

@@ -10,9 +10,15 @@ package dev.hardwood.cli.command;
 import java.io.FileWriter;
 import java.io.IOException;
 import java.io.PrintWriter;
+import java.io.Writer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.table.RowTable;
@@ -23,56 +29,58 @@ import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "convert", description = "Convert Parquet file to CSV or JSON.")
-public class ConvertCommand implements Callable<Integer> {
+@CommandDefinition(name = "convert", description = "Convert Parquet file to CSV or JSON.")
+public class ConvertCommand extends FileCommandBase implements Command<CommandInvocation> {
 
     enum Format {
         CSV,
         JSON
     }
 
-    @CommandLine.Mixin
-    HelpMixin help;
+    @Option(name = "format", shortName = 'F', required = true, description = "Output format: csv, json.")
+    String format;
 
-    @CommandLine.Mixin
-    FileMixin fileMixin;
-
-    @Spec
-    CommandSpec spec;
-
-    @CommandLine.Option(names = {"-F", "--format"}, required = true, description = "Output format: csv, json.")
-    Format format;
-
-    @CommandLine.Option(names = {"-o", "--output"}, description = "Output file path (default: stdout).")
+    @Option(name = "output", shortName = 'o', description = "Output file path (default: stdout).")
     String outputFile;
 
-    @CommandLine.Option(names = {"-c", "--columns"}, description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
+    @Option(name = "columns", shortName = 'c', description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
     String columns;
 
-    @CommandLine.Option(names = {"-n", "--rows"}, defaultValue = RowLimits.ALL, description = "Number of rows to convert. Positive values convert the first N rows (head), negative values convert the last N rows (tail), 'ALL' converts every row.")
+    @Option(name = "rows", shortName = 'n', defaultValue = RowLimits.ALL, description = "Number of rows to convert. Positive values convert the first N rows (head), negative values convert the last N rows (tail), 'ALL' converts every row.")
     String n;
 
     @Override
-    public Integer call() {
-        InputFile inputFile = fileMixin.toInputFile();
+    public CommandResult execute(CommandInvocation invocation) {
+        InputFile inputFile = toInputFile(invocation);
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
-        int rowLimit = RowLimits.parse(n, spec);
+        int rowLimit;
+        try {
+            rowLimit = RowLimits.parse(n);
+        } catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            return CommandResult.FAILURE;
+        }
         ColumnProjection projection = parseColumnProjection();
+        Format outputFormat;
+        try {
+            outputFormat = Format.valueOf(format.toUpperCase());
+        }
+        catch (IllegalArgumentException e) {
+            System.err.println("Invalid value for option '--format': expected csv or json, got '" + format + "'");
+            return CommandResult.FAILURE;
+        }
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema fileSchema = reader.getFileSchema();
             List<SchemaNode> fields = projectedFields(fileSchema, projection);
 
-            PrintWriter out = openOutput();
+            PrintWriter out = openOutput(invocation);
             try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, rowLimit)) {
-                switch (format) {
+                switch (outputFormat) {
                     case CSV -> writeCsv(out, fields, rowReader);
                     case JSON -> writeJson(out, fields, rowReader);
                 }
@@ -85,15 +93,15 @@ public class ConvertCommand implements Callable<Integer> {
             }
         }
         catch (IllegalArgumentException e) {
-            spec.commandLine().getErr().println(e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println(e.getMessage());
+            return CommandResult.FAILURE;
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     private ColumnProjection parseColumnProjection() {
@@ -118,11 +126,20 @@ public class ConvertCommand implements Callable<Integer> {
                 .toList();
     }
 
-    private PrintWriter openOutput() throws IOException {
+    private PrintWriter openOutput(CommandInvocation invocation) throws IOException {
         if (outputFile != null) {
             return new PrintWriter(new FileWriter(outputFile));
         }
-        return spec.commandLine().getOut();
+        return new PrintWriter(new Writer() {
+            @Override
+            public void write(char[] cbuf, int off, int len) {
+                invocation.print(new String(cbuf, off, len));
+            }
+            @Override
+            public void flush() {}
+            @Override
+            public void close() {}
+        }, true);
     }
 
     // ==================== CSV ====================

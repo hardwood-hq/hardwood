@@ -12,37 +12,42 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Option;
+
 import dev.hardwood.InputFile;
 import dev.hardwood.aws.auth.SdkCredentialsProviders;
 import dev.hardwood.s3.RangeBacking;
 import dev.hardwood.s3.S3Source;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-public class FileMixin {
+public abstract class FileCommandBase {
 
     private static final String[] REMOTE_PREFIXES = { "s3://" };
     private static final String[] UNSUPPORTED_REMOTE_PREFIXES = { "gs://", "gcs://", "hdfs://" };
 
-    @CommandLine.Option(names = { "-f", "--file" }, required = true, paramLabel = "FILE", description = "Path to the Parquet file.")
-    String file;
+    @Option(name = "file", shortName = 'f', required = true, description = "Path to the Parquet file.")
+    protected String file;
 
-    @Spec
-    CommandSpec spec;
+    protected String getCleanedFile() {
+        if (file != null && file.length() > 2 && file.charAt(0) == '/' && file.charAt(2) == ':') {
+            return file.substring(1);
+        }
+        return file;
+    }
 
-    boolean isRemoteUri() {
+    protected boolean isRemoteUri(CommandInvocation invocation) {
+        String cleaned = getCleanedFile();
         for (String prefix : UNSUPPORTED_REMOTE_PREFIXES) {
-            if (file.startsWith(prefix)) {
-                spec.commandLine().getErr().println("Remote paths are not implemented yet for this command.");
+            if (cleaned.startsWith(prefix)) {
+                System.err.println("Remote paths are not implemented yet for this command.");
                 return true;
             }
         }
         return false;
     }
 
-    InputFile toInputFile() {
-        return toInputFile(RangeBacking.NONE);
+    protected InputFile toInputFile(CommandInvocation invocation) {
+        return toInputFile(invocation, RangeBacking.NONE);
     }
 
     /// Resolves the configured `--file` to an [InputFile]. For remote
@@ -52,22 +57,23 @@ public class FileMixin {
     /// commands like `dive` opt into [RangeBacking#SPARSE_TEMPFILE] so
     /// repeat reads of the same byte ranges hit a local mmap-backed
     /// cache instead of S3.
-    InputFile toInputFile(RangeBacking rangeBacking) {
+    protected InputFile toInputFile(CommandInvocation invocation, RangeBacking rangeBacking) {
+        String cleaned = getCleanedFile();
         for (String prefix : REMOTE_PREFIXES) {
-            if (file.startsWith(prefix)) {
-                return createS3InputFile(rangeBacking);
+            if (cleaned.startsWith(prefix)) {
+                return createS3InputFile(invocation, rangeBacking);
             }
         }
         for (String prefix : UNSUPPORTED_REMOTE_PREFIXES) {
-            if (file.startsWith(prefix)) {
-                spec.commandLine().getErr().println("Remote URIs are not implemented yet.");
+            if (cleaned.startsWith(prefix)) {
+                System.err.println("Remote URIs are not implemented yet.");
                 return null;
             }
         }
-        return InputFile.of(Path.of(file));
+        return InputFile.of(Path.of(cleaned));
     }
 
-    private InputFile createS3InputFile(RangeBacking rangeBacking) {
+    private InputFile createS3InputFile(CommandInvocation invocation, RangeBacking rangeBacking) {
         String endpointUrl = resolveEndpoint();
 
         S3Source.Builder builder = S3Source.builder()
@@ -88,12 +94,12 @@ public class FileMixin {
             builder.region(region);
         }
         else if (endpointUrl == null) {
-            throw new CommandLine.ParameterException(spec.commandLine(),
+            throw new IllegalArgumentException(
                     "Unable to determine AWS region. Set AWS_REGION or configure a default region in ~/.aws/config.");
         }
 
         S3Source source = builder.build();
-        return source.inputFile(file);
+        return source.inputFile(getCleanedFile());
     }
 
     /// Resolves the S3 endpoint URL from system property or env var.
@@ -132,7 +138,7 @@ public class FileMixin {
             return region;
         }
 
-        // 2. ~/.aws/config [default] profile
+        // 3. ~/.aws/config [default] profile
         String profile = System.getenv("AWS_PROFILE");
         if (profile == null) {
             profile = "default";
@@ -172,7 +178,7 @@ public class FileMixin {
         return null;
     }
 
-    Path toPath() {
-        return Path.of(file);
+    protected Path toPath() {
+        return Path.of(getCleanedFile());
     }
 }

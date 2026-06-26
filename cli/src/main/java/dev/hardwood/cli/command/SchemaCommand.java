@@ -10,7 +10,12 @@ package dev.hardwood.cli.command;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.metadata.LogicalType;
@@ -18,12 +23,9 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "schema", description = "Print the file schema.")
-public class SchemaCommand implements Callable<Integer> {
+@CommandDefinition(name = "schema", description = "Print the file schema.")
+public class SchemaCommand extends FileCommandBase implements Command<CommandInvocation> {
 
     enum Format {
         NATIVE,
@@ -31,40 +33,41 @@ public class SchemaCommand implements Callable<Integer> {
         PROTO
     }
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
-    FileMixin fileMixin;
-    @Spec
-    CommandSpec spec;
-    @CommandLine.Option(names = {"-F", "--format"}, defaultValue = "NATIVE", description = "Output format: NATIVE (default), AVRO, PROTO.")
-    Format format;
+    @Option(name = "format", shortName = 'F', defaultValue = "NATIVE", description = "Output format: NATIVE (default), AVRO, PROTO.")
+    String format;
 
     @Override
-    public Integer call() {
-        InputFile inputFile = fileMixin.toInputFile();
+    public CommandResult execute(CommandInvocation invocation) {
+        InputFile inputFile = toInputFile(invocation);
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             FileSchema schema = reader.getFileSchema();
+            Format outputFormat;
+            try {
+                outputFormat = Format.valueOf(format.toUpperCase());
+            }
+            catch (IllegalArgumentException e) {
+                System.err.println("Invalid value for option '--format': expected native, avro, or proto, got '" + format + "'");
+                return CommandResult.FAILURE;
+            }
 
-            String output = switch (format) {
+            String output = switch (outputFormat) {
                 case NATIVE -> schema.toString();
                 case AVRO -> toAvroSchema(schema);
                 case PROTO -> toProtoSchema(schema);
             };
 
-            spec.commandLine().getOut().println(output);
+            invocation.println(output);
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     // ── Avro ─────────────────────────────────────────────────────────────────
