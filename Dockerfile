@@ -22,6 +22,7 @@ RUN microdnf install -y --nodocs \
       vim-common \
       fontconfig \
       dejavu-sans-fonts \
+      google-noto-sans-vf-fonts \
       librsvg2-tools \
       python3 \
       python3-pip \

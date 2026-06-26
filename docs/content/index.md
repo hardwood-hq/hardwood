@@ -14,6 +14,10 @@
 _A lightweight Java reader for the [Apache Parquet](https://parquet.apache.org/) file format.
 Available as a Java library and a [command-line tool](reference/cli.md)._
 
+!!! success "Hardwood 1.0 is out!"
+
+    Hardwood 1.0 is released — read the [announcement blog post](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/) for the story behind the project and what it can do.
+
 ## Why Hardwood
 
 Hardwood gives applications Parquet read support without pulling in Hadoop, Avro, or the wider [parquet-java](https://github.com/apache/parquet-java) dependency tree:
@@ -51,7 +55,7 @@ Prefer to learn by running code? The [hardwood-examples](https://github.com/hard
 
 ## Status and Limitations
 
-This is Beta quality software, under active development.
+Hardwood 1.0 is released and ready for production use.
 
 The Hardwood library supports reading arbitrarily large Parquet files, provided individual column chunks are not larger than 2 GB (see [Parquet file layout](concepts/parquet-layout.md)).
 The interactive `dive` TUI currently caps S3 files at 2 GB.
