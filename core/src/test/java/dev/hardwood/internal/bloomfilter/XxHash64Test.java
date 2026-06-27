@@ -134,6 +134,22 @@ class XxHash64Test {
         assertThat(XxHash64.hash(value)).isEqualTo(XxHash64.hash(toLittleEndian(value)));
     }
 
+    @ParameterizedTest(name = "hash(float {0}) == hash(little-endian bytes)")
+    @ValueSource(floats = {0.0f, -0.0f, 1.0f, -1.0f, 3.14159f, Float.MIN_VALUE, Float.MAX_VALUE,
+            Float.NaN, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY})
+    void floatOverloadMatchesItsLittleEndianPlainEncoding(float value) {
+        assertThat(XxHash64.hash(value))
+                .isEqualTo(XxHash64.hash(toLittleEndian(Float.floatToRawIntBits(value))));
+    }
+
+    @ParameterizedTest(name = "hash(double {0}) == hash(little-endian bytes)")
+    @ValueSource(doubles = {0.0, -0.0, 1.0, -1.0, 3.141592653589793, Double.MIN_VALUE,
+            Double.MAX_VALUE, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY})
+    void doubleOverloadMatchesItsLittleEndianPlainEncoding(double value) {
+        assertThat(XxHash64.hash(value))
+                .isEqualTo(XxHash64.hash(toLittleEndian(Double.doubleToRawLongBits(value))));
+    }
+
     /// ASCII bytes of `s`, used so the reference vectors read as the literal strings they hash.
     private static byte[] ascii(String s) {
         byte[] out = new byte[s.length()];

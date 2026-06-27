@@ -109,6 +109,22 @@ public final class XxHash64 {
         return avalanche(h64);
     }
 
+    /// Hashes a `float` — equivalent to hashing the four little-endian bytes of its IEEE-754 plain
+    /// encoding (the plain encoding of a `FLOAT`), matching `BlockSplitBloomFilter.hash(float)` in
+    /// parquet-java. `floatToRawIntBits` preserves the exact bit pattern, including the sign of
+    /// zero and any NaN payload.
+    public static long hash(float value) {
+        return hash(Float.floatToRawIntBits(value));
+    }
+
+    /// Hashes a `double` — equivalent to hashing the eight little-endian bytes of its IEEE-754
+    /// plain encoding (the plain encoding of a `DOUBLE`), matching
+    /// `BlockSplitBloomFilter.hash(double)` in parquet-java. `doubleToRawLongBits` preserves the
+    /// exact bit pattern, including the sign of zero and any NaN payload.
+    public static long hash(double value) {
+        return hash(Double.doubleToRawLongBits(value));
+    }
+
     /// Final mixing step (avalanche) shared by every entry point.
     private static long avalanche(long h64) {
         h64 ^= h64 >>> 33;

@@ -26,6 +26,7 @@ import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
@@ -899,7 +900,7 @@ public class RowGroupIterator {
 
         for (int fileIndex = 0; fileIndex < inputFiles.size() && rowBudget > 0; fileIndex++) {
             PreparedFile prepared = getPreparedFile(fileIndex);
-            List<RowGroup> rowGroups = filterRowGroups(prepared.rowGroups, prepared.inputFile.name());
+            List<RowGroup> rowGroups = filterRowGroups(prepared.rowGroups, prepared.inputFile);
 
             for (int rgIndex = 0; rgIndex < rowGroups.size() && rowBudget > 0; rgIndex++) {
                 RowGroup rg = rowGroups.get(rgIndex);
@@ -1025,16 +1026,17 @@ public class RowGroupIterator {
         }
     }
 
-    private List<RowGroup> filterRowGroups(List<RowGroup> rowGroups, String fileName) {
+    private List<RowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile) {
         if (filterPredicate == null) {
             return rowGroups;
         }
         List<RowGroup> filtered = rowGroups.stream()
-                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filterPredicate, rg))
+                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filterPredicate, rg,
+                        new RowGroupBloomFilterSource(inputFile, rg)))
                 .toList();
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();
-        event.file = fileName;
+        event.file = inputFile.name();
         event.totalRowGroups = rowGroups.size();
         event.rowGroupsKept = filtered.size();
         event.rowGroupsSkipped = rowGroups.size() - filtered.size();

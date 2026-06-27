@@ -18,7 +18,7 @@ import jdk.jfr.StackTrace;
 /// (split-aware reading).
 ///
 /// This is distinct from [RowGroupFilterEvent], which reports row groups dropped by
-/// statistics predicate push-down. Byte-range selection keeps a row group when its
+/// statistics/bloom predicate push-down. Byte-range selection keeps a row group when its
 /// midpoint falls inside the requested split, and runs before push-down: the row groups
 /// reported as kept here are the input to the push-down evaluation.
 @Name("dev.hardwood.RowGroupByteRangeFilter")

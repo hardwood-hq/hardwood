@@ -18,7 +18,7 @@
 
 Filter predicates apply at three levels, in this order:
 
-1. **Row group** — entire row groups whose statistics prove no rows can match are skipped.
+1. **Row group** — entire row groups whose statistics prove no rows can match are skipped. For `eq` and `in` predicates, a column's [Bloom filter](https://parquet.apache.org/docs/file-format/bloomfilter/) (when present) additionally skips a row group whose value range covers the target but which never actually stored it — the case min/max statistics cannot catch.
 2. **Page** — within surviving row groups, the Column Index (per-page min/max statistics) is used to skip individual pages, avoiding unnecessary decompression and decoding. On remote backends like S3, only the matching pages are fetched, so the same skip also reduces network I/O.
 3. **Record** — `buildRowReader().filter(filter).build()` evaluates the predicate against each decoded row and returns only rows that actually match.
 
@@ -138,10 +138,12 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
   nested columns (structs, lists, or maps), record-level filtering is not active. Row-group
   and page-level statistics pushdown still apply, but non-matching rows within surviving pages
   will not be filtered out. A warning is logged when this occurs.
-- **Bloom filter pushdown is not supported
-  ([#105](https://github.com/hardwood-hq/hardwood/issues/105)).** Parquet files may contain
-  Bloom filters for high-cardinality columns, but Hardwood does not currently use them for
-  filter evaluation.
+- **Bloom filter pushdown applies to `eq` predicates** on `INT32`, `INT64`, `FLOAT`, `DOUBLE`, and
+  binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) columns that carry a Bloom filter, and to `in`
+  predicates on the integer and binary types. It runs automatically during row-group pruning,
+  alongside statistics, and skips a row group when the value is provably absent. For `FLOAT` /
+  `DOUBLE`, `eq(-0.0)` and `eq(NaN)` are not pruned by the Bloom filter. Range predicates (`lt`,
+  `gt`, …) and `notEq` are unaffected — a Bloom filter answers only membership.
 - **Dictionary-based filtering is not supported
   ([#196](https://github.com/hardwood-hq/hardwood/issues/196)).** Dictionary-encoded columns
   are not checked for predicate matches before decoding.

@@ -95,8 +95,8 @@ All fields (column_idx, descending, nulls_first) ❌ — struct not read.
 | 11 | dictionary_page_offset | ✅ | |
 | 12 | statistics | ✅ | row-group filtering |
 | 13 | encoding_stats | ❌ | dictionary/plain page mix not read |
-| 14 | bloom_filter_offset | 🟡 | shown in dive; filter body now read & decoded (#669); not yet used for query pruning (#105) |
-| 15 | bloom_filter_length | 🟡 | shown in dive; #669 read path; pushdown #105 |
+| 14 | bloom_filter_offset | ✅ | shown in dive; filter body read & decoded (#669); used for `eq`/`in` row-group pruning (#105) |
+| 15 | bloom_filter_length | ✅ | shown in dive; #669 read path; #105 pushdown |
 | 16 | size_statistics | ❌ | #607 |
 | 17 | geospatial_statistics | ✅ | row-group filter evaluator (no per-page geospatial stats exist) |
 
@@ -213,8 +213,8 @@ Parameterized sub-structs — all fields ✅: `DecimalType` (scale, precision),
 
 ### BloomFilterHeader · BloomFilterAlgorithm · BloomFilterHash · BloomFilterCompression
 All fields ✅ — the bloom filter at `bloom_filter_offset` is read and decoded (header plus the
-split-block bitset), with an XXH64 membership-check primitive (#669). The decoded filter is not
-yet used for query pruning — tracked by **#105** (pushdown), #507 (dive).
+split-block bitset), with an XXH64 membership-check primitive (#669). The decoded filter drives
+`eq`/`in` row-group pruning for INT32, INT64, and binary columns (#105). Dive surfacing is #507.
 
 ---
 
@@ -223,7 +223,7 @@ yet used for query pruning — tracked by **#105** (pushdown), #507 (dive).
 The ❌ rows cluster into a handful of capabilities, cross-referenced to ROADMAP:
 
 - **Modular encryption** — entire feature stubbed to fail-fast. #128 (ROADMAP has no phase yet).
-- **Bloom-filter pushdown** — query pruning via bloom filters is not implemented; the decoded filter feeds no filtering. ROADMAP 9.4 / #105. (The filter read path exists — #669 — and filter *writing* / ROADMAP 9.3 serialization is also open.)
+- **Bloom-filter writing** — filter *serialization* is not implemented (ROADMAP 9.3). The read path (#669) and `eq`/`in` pushdown (#105) are done.
 - **Size statistics & level histograms** — ROADMAP 9.x; #607.
 - **Statistics completeness** — distinct_count, exactness flags, nan_count; #483, #607.
 - **Declared sort order** — `sorting_columns`, `is_sorted`; ROADMAP 4.2.
