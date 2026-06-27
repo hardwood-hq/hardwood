@@ -14,7 +14,7 @@ import java.util.Arrays;
 /// field id or by name.
 ///
 /// Layout:
-/// - 1-byte header: version (bit 0-3) | sorted_strings (bit 4) | offset_size_minus_one (bit 5-6)
+/// - 1-byte header: version (bit 0-3) | sorted_strings (bit 4) | offset_size_minus_one (bit 6-7)
 /// - `offset_size` bytes: dictionary_size (unsigned LE)
 /// - `(dictionary_size + 1) * offset_size` bytes: offsets into the strings section (unsigned LE)
 /// - `offset_size` bytes of the last offset define the total byte length
@@ -48,6 +48,11 @@ public final class VariantMetadata {
             throw new IllegalArgumentException("Variant metadata buffer truncated before dictionary_size");
         }
         this.dictionarySize = VariantBinary.readUnsignedLE(buf, headerEnd, offsetSize);
+        // Reject an out-of-range dictionary_size before it feeds later arithmetic.
+        if (dictionarySize < 0) {
+            throw new IllegalArgumentException(
+                    "Variant metadata dictionary_size is not a valid unsigned int: " + dictionarySize);
+        }
         this.offsetsStart = headerEnd + offsetSize;
         int offsetsLen = (dictionarySize + 1) * offsetSize;
         if (buf.length < offsetsStart + offsetsLen) {

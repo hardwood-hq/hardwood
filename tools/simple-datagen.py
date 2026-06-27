@@ -2432,6 +2432,104 @@ print("  - 4 rows: BOOLEAN_TRUE, BOOLEAN_FALSE, INT32(42), short string 'hi'")
 print("  - `var` is a VARIANT-annotated group of {metadata, value} binaries")
 
 # ============================================================================
+# Variant logical type — metadata with offset_size = 2
+# ============================================================================
+#
+# Regression fixture for the metadata offset-size parse: a Variant whose
+# dictionary string section exceeds 255 bytes, so the writer must use
+# offset_size = 2, encoded in bits 6-7 of the metadata header. Reading that
+# field from the wrong bits corrupts the whole dictionary. The `var` value is an
+# object with two long-named fields so the read path actually resolves the keys.
+
+def _v_le(value, width):
+    return bytes((value >> (8 * i)) & 0xFF for i in range(width))
+
+# Two 160-byte keys → 320-byte string section (> 255), forcing offset_size = 2.
+# Keys are lexicographically ordered to match the sorted-strings flag.
+_v_k0 = b'a' * 160
+_v_k1 = b'b' * 160
+
+# metadata header 0x51 = version 1 | sorted (bit 4) | offset_size_minus_one=1 (bits 6-7)
+_md_offsize2 = (
+    bytes([0x51])
+    + _v_le(2, 2)                                                 # dictionary_size = 2 (2-byte LE)
+    + _v_le(0, 2) + _v_le(len(_v_k0), 2) + _v_le(len(_v_k0) + len(_v_k1), 2)  # offset table
+    + _v_k0 + _v_k1                                               # string data
+)
+
+# value: object { k0: int8(5), k1: boolean true }
+#   header 0x02 (OBJECT, idSize=1, offsetSize=1, small); numElements=2;
+#   field_ids=[0,1]; field_offsets=[0,2,3]; values int8(5)=[0x0C,0x05], true=[0x04]
+_val_object = bytes([
+    0x02,                # object header
+    0x02,                # numElements = 2
+    0x00, 0x01,          # field_ids: id0, id1
+    0x00, 0x02, 0x03,    # field_offsets: 0, 2, 3
+    0x0C, 0x05,          # field 0 value: INT8 = 5
+    0x04,                # field 1 value: BOOLEAN_TRUE
+])
+
+variant_offsize2_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('var', pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), False),
+    ]), True),
+])
+
+variant_offsize2_table = pa.table({
+    'id': [1],
+    'var': [{'metadata': _md_offsize2, 'value': _val_object}],
+}, schema=variant_offsize2_schema)
+
+pq.write_table(
+    variant_offsize2_table,
+    'core/src/test/resources/variant_metadata_offset_size2.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant('core/src/test/resources/variant_metadata_offset_size2.parquet', 'var')
+
+print("\nGenerated variant_metadata_offset_size2.parquet:")
+print("  - `var` is a VARIANT object whose metadata uses offset_size=2 (320-byte dict)")
+print("  - fields: ('a'*160)=INT8 5, ('b'*160)=BOOLEAN_TRUE")
+
+# ============================================================================
+# Variant logical type — malformed metadata (negative dictionary_size)
+# ============================================================================
+#
+# A VARIANT column whose `metadata` is deliberately corrupt: header 0xC1 selects
+# offset_size=4, and the 4-byte dictionary_size 0xFFFFFFFF reads back as a
+# negative int. Decoding is rejected when the row is read, exercising the
+# file-name enrichment on the variant read path.
+
+variant_bad_meta_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('var', pa.struct([
+        pa.field('metadata', pa.binary(), False),
+        pa.field('value', pa.binary(), False),
+    ]), True),
+])
+
+variant_bad_meta_table = pa.table({
+    'id': [1],
+    'var': [{'metadata': bytes([0xC1, 0xFF, 0xFF, 0xFF, 0xFF]), 'value': bytes([0x00])}],
+}, schema=variant_bad_meta_schema)
+
+pq.write_table(
+    variant_bad_meta_table,
+    'core/src/test/resources/variant_negative_dict_size.parquet',
+    compression='NONE',
+    use_dictionary=False,
+    data_page_version='1.0',
+)
+annotate_group_as_variant('core/src/test/resources/variant_negative_dict_size.parquet', 'var')
+
+print("\nGenerated variant_negative_dict_size.parquet:")
+print("  - `var` metadata is corrupt (4-byte dictionary_size reads as negative)")
+
+# ============================================================================
 # Variant logical type — shredded (typed_value: int64)
 # ============================================================================
 #
