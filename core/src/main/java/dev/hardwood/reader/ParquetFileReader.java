@@ -17,7 +17,6 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
-import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.reader.BatchSizing;
 import dev.hardwood.internal.reader.FlatRowReader;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
@@ -26,7 +25,7 @@ import dev.hardwood.internal.reader.ParquetMetadataReader;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.jfr.FileOpenedEvent;
-import dev.hardwood.jfr.RowGroupFilterEvent;
+import dev.hardwood.jfr.RowGroupByteRangeFilterEvent;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnProjection;
@@ -252,9 +251,7 @@ public class ParquetFileReader implements AutoCloseable {
         // into the kept sequence — a caller doing split-aware reading can seek inside *its*
         // split. Stats-based row-group dropping (via FilterPredicate) stays inside the
         // RowGroupIterator.
-        List<RowGroup> filteredRowGroups = rowGroupFilter == null
-                ? firstFileMetaData.rowGroups()
-                : filterRowGroups(null, rowGroupFilter);
+        List<RowGroup> filteredRowGroups = filterRowGroups(rowGroupFilter);
 
         if (skip == 0L) {
             return buildRowReader(projection, filter, maxRows, filteredRowGroups);
@@ -436,7 +433,7 @@ public class ParquetFileReader implements AutoCloseable {
                     .getColumnReader(0);
         }
         InputFile inputFile = inputFiles.get(0);
-        List<RowGroup> rowGroups = filterRowGroups(null, rowGroupFilter);
+        List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
         return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, null, batchSize);
     }
 
@@ -453,7 +450,7 @@ public class ParquetFileReader implements AutoCloseable {
                     .getColumnReader(0);
         }
         InputFile inputFile = inputFiles.get(0);
-        List<RowGroup> rowGroups = filterRowGroups(null, rowGroupFilter);
+        List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
         return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, null, batchSize);
     }
 
@@ -468,7 +465,7 @@ public class ParquetFileReader implements AutoCloseable {
             int batchSize) {
         ResolvedPredicate resolved = filter != null
                 ? FilterPredicateResolver.resolve(filter, schema, firstFileMetaData.columnOrders()) : null;
-        List<RowGroup> rowGroups = filterRowGroups(resolved, rowGroupFilter);
+        List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
 
         if (resolved == null) {
             RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0);
@@ -539,22 +536,25 @@ public class ParquetFileReader implements AutoCloseable {
         return rowGroups.subList(startIndex, rowGroups.size());
     }
 
-    /// Filter row groups by an optional column-statistics predicate and an optional
-    /// [RowGroupPredicate]. A row group is kept if and only if it passes both.
-    private List<RowGroup> filterRowGroups(
-            ResolvedPredicate filter, RowGroupPredicate rowGroupFilter) {
+    /// Pre-filter row groups by an optional byte-range [RowGroupPredicate]. Statistics-based
+    /// dropping (via a [FilterPredicate]) is not applied here — it stays inside the
+    /// [RowGroupIterator], which applies it per file. Returns all row groups unchanged when no
+    /// `rowGroupFilter` is given.
+    ///
+    /// Doing the byte-range check here, before the iterator's statistics evaluation, preserves
+    /// the cheap-first ordering: the byte-range predicate is both cheaper (a midpoint compare)
+    /// and more selective (one shard out of N) in split-aware reads, so the rejected majority of
+    /// row groups never reach the more expensive statistics check downstream.
+    private List<RowGroup> filterRowGroups(RowGroupPredicate rowGroupFilter) {
         List<RowGroup> all = firstFileMetaData.rowGroups();
-        // Evaluate the RowGroupPredicate first: in split-aware reads it is both
-        // cheaper (a midpoint compare for ByteRange) and more selective (one shard
-        // out of N), short-circuiting the column-statistics check on the rejected
-        // majority.
+        if (rowGroupFilter == null) {
+            return all;
+        }
         List<RowGroup> kept = all.stream()
-                .filter(rg -> rowGroupFilter == null || matches(rg, rowGroupFilter))
-                .filter(rg -> filter == null
-                        || !RowGroupFilterEvaluator.canDropRowGroup(filter, rg))
+                .filter(rg -> matches(rg, rowGroupFilter))
                 .toList();
 
-        RowGroupFilterEvent event = new RowGroupFilterEvent();
+        RowGroupByteRangeFilterEvent event = new RowGroupByteRangeFilterEvent();
         event.file = inputFiles.get(0).name();
         event.totalRowGroups = all.size();
         event.rowGroupsKept = kept.size();

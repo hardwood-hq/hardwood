@@ -27,7 +27,7 @@ public class RowGroupFilterEvent extends Event {
     public String file;
 
     @Label("Total Row Groups")
-    @Description("Total number of row groups in the file before filtering")
+    @Description("Total number of row groups before predicate push-down")
     public int totalRowGroups;
 
     @Label("Row Groups Kept")
