@@ -60,6 +60,16 @@ class VariantMetadataTest {
     }
 
     @Test
+    void negativeDictionarySizeRejected() {
+        // Header 0xC1: version=1 (bits 0-3), offset_size=4 (bits 6-7 = 11).
+        // The 4-byte dictionary_size 0xFFFFFFFF reads back as a negative int.
+        byte[] bytes = { (byte) 0xC1, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF };
+        assertThatThrownBy(() -> new VariantMetadata(bytes))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Variant metadata dictionary_size is not a valid unsigned int: -1");
+    }
+
+    @Test
     void truncatedBufferRejected() {
         byte[] bytes = { 0x01 }; // header only, no dictionary size bytes
         assertThatThrownBy(() -> new VariantMetadata(bytes))

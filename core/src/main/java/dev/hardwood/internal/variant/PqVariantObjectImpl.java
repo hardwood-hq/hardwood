@@ -22,9 +22,11 @@ import dev.hardwood.row.PqVariantObject;
 import dev.hardwood.row.VariantType;
 
 /// [PqVariantObject] implementation. Caches the parsed [ObjectLayout] so
-/// repeated field accesses don't re-walk the header; field-id-to-index lookup
-/// uses binary search over the object's id array (ids are guaranteed sorted
-/// ascending per the Variant spec).
+/// repeated field accesses don't re-walk the header. Field lookup resolves the
+/// name to its dictionary id once, then scans the object's id array linearly:
+/// the ids are ordered by field name (not numerically), so a numeric binary
+/// search would be incorrect unless the metadata dictionary is itself sorted.
+/// See [#indexOf(String)].
 final class PqVariantObjectImpl implements PqVariantObject {
 
     private final VariantMetadata metadata;

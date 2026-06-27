@@ -13,7 +13,7 @@ import dev.hardwood.row.VariantType;
 /// encoding. All multi-byte integers in the encoding are unsigned little-endian
 /// unless otherwise noted.
 ///
-/// @see <a href="https://github.com/apache/parquet-format/blob/master/VariantEncoding.md">Parquet Variant Encoding</a>
+/// @see <a href="https://parquet.apache.org/docs/file-format/types/variantencoding/">Parquet Variant Encoding</a>
 public final class VariantBinary {
 
     private VariantBinary() {}
@@ -21,13 +21,15 @@ public final class VariantBinary {
     // ==================== Metadata header byte ====================
     //   bit 0-3: version (must be 1)
     //   bit 4:   sorted_strings flag
-    //   bit 5-6: offset_size_minus_one (0..3 → 1..4 bytes)
-    //   bit 7:   unused
+    //   bit 5:   unused
+    //   bit 6-7: offset_size_minus_one (0..3 → 1..4 bytes)
+    // Bit layout per the Variant spec's "Metadata encoding" section:
+    // https://parquet.apache.org/docs/file-format/types/variantencoding/#metadata-encoding
 
     public static final int METADATA_VERSION = 1;
     public static final int METADATA_VERSION_MASK = 0x0F;
     public static final int METADATA_SORTED_MASK = 0x10;
-    public static final int METADATA_OFFSET_SIZE_SHIFT = 5;
+    public static final int METADATA_OFFSET_SIZE_SHIFT = 6;
     public static final int METADATA_OFFSET_SIZE_MASK = 0x03;
 
     // ==================== Value header byte — basic_type ====================

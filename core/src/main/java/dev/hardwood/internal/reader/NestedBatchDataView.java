@@ -570,12 +570,25 @@ public final class NestedBatchDataView {
     private static final byte[] VARIANT_NULL_VALUE = new byte[] { 0x00 };
 
     private PqVariant createVariant(TopLevelFieldMap.FieldDesc.Variant desc) {
+        // Variant bytes are decoded lazily here, so a malformed `metadata`/`value`
+        // surfaces as a decode error from deep inside the variant codec. Enrich it
+        // (and the local projection checks) with the originating file name, matching
+        // the other accessors in this view.
+        try {
+            return createVariantInternal(desc);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addFileContext(currentFileName, e);
+        }
+    }
+
+    private PqVariant createVariantInternal(TopLevelFieldMap.FieldDesc.Variant desc) {
         if (isVariantNull(desc)) {
             return null;
         }
         if (desc.metadataCol() < 0) {
-            throw new IllegalStateException(prefix()
-                    + "Variant column '" + desc.schema().name() + "' requires its 'metadata' child in the projection");
+            throw new IllegalStateException(
+                    "Variant column '" + desc.schema().name() + "' requires its 'metadata' child in the projection");
         }
         int metaIdx = cachedValueIndex[desc.metadataCol()];
         byte[] metadataBytes = batchIndex.getBinary(desc.metadataCol(), metaIdx);
@@ -597,8 +610,8 @@ public final class NestedBatchDataView {
         // Unshredded: the raw value bytes ARE the canonical value bytes.
         int valueCol = desc.valueCol();
         if (valueCol < 0) {
-            throw new IllegalStateException(prefix()
-                    + "Variant column '" + desc.schema().name() + "' requires its 'value' child in the projection");
+            throw new IllegalStateException(
+                    "Variant column '" + desc.schema().name() + "' requires its 'value' child in the projection");
         }
         int valIdx = cachedValueIndex[valueCol];
         byte[] value = batchIndex.getBinary(valueCol, valIdx);
