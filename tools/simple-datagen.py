@@ -3760,18 +3760,24 @@ bloom_schema = pa.schema([
     ('value', pa.int64(), False),
     ('name', pa.string(), False),
     ('code', pa.int32(), False),
+    ('price', pa.float32(), False),
+    ('ratio', pa.float64(), False),
 ])
 # 'name' values vary in length from 0 to 63 bytes so that hashing them exercises
 # every xxHash64 code path: the empty input (zero-length value), the 1-byte tail
 # (short names), the 4-byte tail, and the >=32-byte accumulator-lane loop (the long
 # names). 'code' is INT32 (4-byte values) and 'id' is INT64 (8-byte values), covering
-# the fixed-width paths too.
+# the fixed-width paths too. 'price' (FLOAT) holds even multiples of 2 and 'ratio'
+# (DOUBLE) multiples of 0.5, so an in-range value such as 1.0 / 0.25 is never written
+# and can be proven absent only by the bloom filter, not by min/max statistics.
 bloom_names = ['x' * i for i in range(64)]
 bloom_table = pa.table({
     'id': list(range(64)),
     'value': [v * 10 for v in range(64)],
     'name': bloom_names,
     'code': [v * 3 for v in range(64)],
+    'price': [float(v * 2) for v in range(64)],
+    'ratio': [v * 0.5 for v in range(64)],
 }, schema=bloom_schema)
 
 pq.write_table(
@@ -3784,12 +3790,15 @@ pq.write_table(
         'id': {'ndv': 64, 'fpp': 0.05},
         'name': {'ndv': 64, 'fpp': 0.05},
         'code': {'ndv': 64, 'fpp': 0.05},
+        'price': {'ndv': 64, 'fpp': 0.05},
+        'ratio': {'ndv': 64, 'fpp': 0.05},
     },
 )
 
 print("\nGenerated bloom_filter_test.parquet:")
-print("  - 1 row group, 64 rows, INT64 id + INT64 value + STRING name + INT32 code")
-print("  - Bloom filters on 'id', 'name', 'code'; 'value' has no bloom filter")
+print("  - 1 row group, 64 rows, INT64 id + INT64 value + STRING name + INT32 code"
+      " + FLOAT price + DOUBLE ratio")
+print("  - Bloom filters on 'id', 'name', 'code', 'price', 'ratio'; 'value' has none")
 
 # =====================================================================
 # Local-wall-clock TIMESTAMP fixture (#568). PyArrow's `pa.timestamp(unit)`

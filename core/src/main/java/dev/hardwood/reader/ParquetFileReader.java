@@ -521,15 +521,15 @@ public class ParquetFileReader implements AutoCloseable {
         return rowGroups.subList(startIndex, rowGroups.size());
     }
 
-    /// Pre-filter row groups by an optional byte-range [RowGroupPredicate]. Statistics-based
-    /// dropping (via a [FilterPredicate]) is not applied here — it stays inside the
+    /// Pre-filter row groups by an optional byte-range [RowGroupPredicate]. Statistics- and
+    /// bloom-based dropping (via a [FilterPredicate]) is not applied here — it stays inside the
     /// [RowGroupIterator], which applies it per file. Returns all row groups unchanged when no
     /// `rowGroupFilter` is given.
     ///
-    /// Doing the byte-range check here, before the iterator's statistics evaluation, preserves
-    /// the cheap-first ordering: the byte-range predicate is both cheaper (a midpoint compare)
-    /// and more selective (one shard out of N) in split-aware reads, so the rejected majority of
-    /// row groups never reach the more expensive statistics check downstream.
+    /// Doing the byte-range check here, before the iterator's statistics/bloom evaluation,
+    /// preserves the cheap-first ordering: the byte-range predicate is both cheaper (a midpoint
+    /// compare) and more selective (one shard out of N) in split-aware reads, so the rejected
+    /// majority of row groups never reach the more expensive statistics/bloom check downstream.
     private List<RowGroup> filterRowGroups(RowGroupPredicate rowGroupFilter) {
         List<RowGroup> all = firstFileMetaData.rowGroups();
         if (rowGroupFilter == null) {

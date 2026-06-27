@@ -320,7 +320,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] XXHASH implementation (or integration)
 - [ ] Bloom filter serialization
 - [x] Bloom filter deserialization
-- [ ] Bloom filter checking during reads
+- [x] Bloom filter checking during reads
 
 ### 9.4 Predicate Pushdown
 - [x] Implement `FilterPredicate` hierarchy (sealed interface)
@@ -334,7 +334,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Inline `DataPageHeader.statistics` fallback when Column Index is absent (`InlinePageStatsScanner`)
 - [x] Drain-side per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs/DRAIN_SIDE_RECORD_FILTERING.md`)
 - [x] Exact column-reader filtering — `buildColumnReader(...).filter(...)` / `buildColumnReaders(...).filter(...)` return only matching rows with no client-side residual (`SelectionEngine` + `FilterCoordinator`; see `_designs/EXACT_COLUMN_READER_FILTERING.md`)
-- [ ] Bloom filter-based filtering
+- [x] Bloom filter-based row group filtering for `eq` / `in` on INT32, INT64, and binary columns (`RowGroupBloomFilterSource`; see `_designs/BLOOM_FILTER_PUSHDOWN.md`)
 
 ---
 
