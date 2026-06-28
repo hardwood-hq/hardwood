@@ -151,6 +151,9 @@ public sealed interface Dictionary {
 
         /// Returns dictionary entry `index` as a `String`, decoding it once per chunk
         /// and caching it. Repeated values across the chunk share this one instance.
+        /// `index` must be a valid entry index: the row reader reaches this only via
+        /// [BinaryBatchValues#stringAt] for a non-null dictionary value, so a wiring
+        /// bug surfaces immediately as an out-of-bounds access here.
         String internedString(int index) {
             String[] cache = interned;
             if (cache == null) {
