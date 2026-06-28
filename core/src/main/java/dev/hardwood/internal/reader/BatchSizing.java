@@ -57,6 +57,9 @@ public final class BatchSizing {
             case INT64, DOUBLE -> 8;
             case BOOLEAN -> 1;
             case INT96 -> 12;
+            // Rough estimate; UTF8/JSON columns cost a little more per row — they
+            // also carry the per-value dictionary + index arrays for interned-String
+            // reuse — but the byte-array estimate is intentionally approximate.
             case BYTE_ARRAY -> 16;
             case FIXED_LEN_BYTE_ARRAY -> col.typeLength() != null ? col.typeLength() : 16;
         };

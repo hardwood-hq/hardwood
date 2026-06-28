@@ -83,6 +83,16 @@ public final class ValueConverter {
         return new String((byte[]) rawValue, StandardCharsets.UTF_8);
     }
 
+    /// Whether `schema` is a leaf whose decoded value is a `String` (UTF8 or JSON
+    /// over `BYTE_ARRAY`). Such leaves can be served from the row reader's
+    /// per-chunk interned-`String` cache (`getString`) instead of decoding per
+    /// value; other leaves go through [#convertValue].
+    public static boolean isStringLeaf(SchemaNode schema) {
+        return schema instanceof SchemaNode.PrimitiveNode primitive
+                && (primitive.logicalType() instanceof LogicalType.StringType
+                    || primitive.logicalType() instanceof LogicalType.JsonType);
+    }
+
     public static byte[] convertToBinary(Object rawValue, SchemaNode schema) {
         if (rawValue == null) {
             return null;

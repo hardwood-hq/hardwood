@@ -4249,3 +4249,65 @@ import os
 os.remove(_map_base)
 print("\nGenerated map_key_only_test.parquet:")
 print("  - id=[1, 2], tags MAP<STRING, (missing value)>")
+
+
+# ============================================================================
+# Dictionary String reuse fixtures (hardwood-hq/hardwood#636)
+# ============================================================================
+#
+# The row reader interns each dictionary entry's String once per column chunk;
+# these exercise that reuse across the reader's accessor paths.
+
+# Cross-batch: one row group larger than a row-reader batch with low cardinality,
+# so a value recurs across batches of the same chunk (interned per chunk, not per
+# batch).
+CROSS_BATCH_ROWS = 600_000
+CROSS_BATCH_LABELS = ['red', 'green', 'blue']
+
+cross_batch_table = pa.table(
+    {'label': [CROSS_BATCH_LABELS[i % 3] for i in range(CROSS_BATCH_ROWS)]},
+)
+pq.write_table(
+    cross_batch_table,
+    'core/src/test/resources/dict_cross_batch.parquet',
+    use_dictionary=True,
+    compression='snappy',
+    data_page_version='1.0',
+    row_group_size=CROSS_BATCH_ROWS,
+)
+print("\nGenerated dict_cross_batch.parquet:")
+print(f"  - {CROSS_BATCH_ROWS} rows in one row group, label (dictionary-encoded, 3 distinct; reused across batches)")
+
+# Repeated values + nulls, small enough to be a single batch, for interning
+# across the struct / list / generic accessors.
+NESTED_REPEAT_ROWS = 200
+NESTED_REPEAT_POOL = ['alpha', 'beta', 'gamma', 'delta']
+
+
+def _nested_repeat_info(i):
+    # struct is null on every 13th row; otherwise a repeated pool value
+    return None if i % 13 == 0 else {'name': NESTED_REPEAT_POOL[i % 4]}
+
+
+def _nested_repeat_tags(i):
+    # 0, 1 or 2 elements (some empty lists) drawn from the repeated pool
+    return [NESTED_REPEAT_POOL[(i + j) % 4] for j in range(i % 3)]
+
+
+nested_repeats_table = pa.table(
+    {
+        'info': pa.array([_nested_repeat_info(i) for i in range(NESTED_REPEAT_ROWS)],
+                         type=pa.struct([('name', pa.string())])),
+        'tags': pa.array([_nested_repeat_tags(i) for i in range(NESTED_REPEAT_ROWS)],
+                         type=pa.list_(pa.string())),
+    },
+)
+pq.write_table(
+    nested_repeats_table,
+    'core/src/test/resources/dict_nested_repeats.parquet',
+    use_dictionary=True,
+    compression='snappy',
+    data_page_version='1.0',
+)
+print("\nGenerated dict_nested_repeats.parquet:")
+print(f"  - {NESTED_REPEAT_ROWS} rows, info.name + tags (dictionary-encoded strings, repeated values + nulls)")

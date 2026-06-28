@@ -8,7 +8,6 @@
 package dev.hardwood.internal.reader;
 
 import java.math.BigDecimal;
-import java.nio.charset.StandardCharsets;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
@@ -139,6 +138,9 @@ final class PqListImpl implements PqList {
         if (elementSchema instanceof SchemaNode.GroupNode) {
             return new NestedList<>(this::get);
         }
+        if (ValueConverter.isStringLeaf(elementSchema)) {
+            return new LeafList<>(raw -> raw, true);
+        }
         return new LeafList<>(raw -> ValueConverter.convertValue(raw, elementSchema));
     }
 
@@ -214,10 +216,7 @@ final class PqListImpl implements PqList {
 
     @Override
     public List<String> strings() {
-        return new LeafList<>(raw -> {
-            if (raw instanceof String s) return s;
-            return new String((byte[]) raw, StandardCharsets.UTF_8);
-        });
+        return new LeafList<>(raw -> (String) raw, true);
     }
 
     @Override
@@ -362,6 +361,9 @@ final class PqListImpl implements PqList {
         int valueIdx = start + index;
         if (batch.isElementNull(projCol, valueIdx)) {
             return null;
+        }
+        if (ValueConverter.isStringLeaf(elementSchema)) {
+            return batch.getString(projCol, valueIdx);
         }
         return ValueConverter.convertValue(batch.getValue(projCol, valueIdx), elementSchema);
     }
@@ -546,9 +548,17 @@ final class PqListImpl implements PqList {
     /// short-circuiting nulls before the converter runs.
     private final class LeafList<T> extends AbstractList<T> {
         private final Function<Object, T> converter;
+        /// When true, fetch the interned `String` via `getString` (one instance
+        /// per chunk) instead of the raw value; the converter then just casts.
+        private final boolean internString;
 
         LeafList(Function<Object, T> converter) {
+            this(converter, false);
+        }
+
+        LeafList(Function<Object, T> converter, boolean internString) {
             this.converter = converter;
+            this.internString = internString;
         }
 
         @Override
@@ -564,7 +574,8 @@ final class PqListImpl implements PqList {
             if (batch.isElementNull(projCol, pos)) {
                 return null;
             }
-            return converter.apply(batch.getValue(projCol, pos));
+            Object raw = internString ? batch.getString(projCol, pos) : batch.getValue(projCol, pos);
+            return converter.apply(raw);
         }
     }
 

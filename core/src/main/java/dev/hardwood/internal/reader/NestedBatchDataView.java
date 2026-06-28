@@ -539,6 +539,9 @@ public final class NestedBatchDataView {
                 if (batchIndex.isElementNull(p.projectedCol(), valueIdx)) {
                     yield null;
                 }
+                if (decode && ValueConverter.isStringLeaf(p.schema())) {
+                    yield batchIndex.getString(p.projectedCol(), valueIdx);
+                }
                 Object raw = batchIndex.getValue(p.projectedCol(), valueIdx);
                 yield decode ? ValueConverter.convertValue(raw, p.schema()) : raw;
             }

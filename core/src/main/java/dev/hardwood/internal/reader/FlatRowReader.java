@@ -684,16 +684,23 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public Object getValue(int columnIndex) {
+        ColumnSchema col = columnSchemas[columnIndex];
+        LogicalType lt = col.logicalType();
+        // Dictionary-encoded UTF8/JSON: return the interned String (one per chunk).
+        if (physicalTypes[columnIndex] == PhysicalType.BYTE_ARRAY
+                && (lt instanceof LogicalType.StringType || lt instanceof LogicalType.JsonType)) {
+            return isNull(columnIndex)
+                    ? null
+                    : ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
+        }
         Object raw = getRawValue(columnIndex);
         if (raw == null) {
             return null;
         }
-        ColumnSchema col = columnSchemas[columnIndex];
         if (physicalTypes[columnIndex] == PhysicalType.INT96) {
             // INT96 has no LogicalType but is conventionally a TIMESTAMP.
             return LogicalTypeConverter.int96ToInstant((byte[]) raw);
         }
-        LogicalType lt = col.logicalType();
         if (lt == null) {
             return raw;
         }

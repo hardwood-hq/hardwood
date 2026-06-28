@@ -279,6 +279,9 @@ final class PqMapImpl implements PqMap {
         if (isValueNullAt(valueIdx)) {
             return null;
         }
+        if (ValueConverter.isStringLeaf(valueSchema)) {
+            return batch.getString(mapDesc.valueProjCol(), valueIdx);
+        }
         return ValueConverter.convertValue(readValueAt(valueIdx), valueSchema);
     }
 
@@ -491,6 +494,13 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public Object getKey() {
+            if (ValueConverter.isStringLeaf(keySchema)) {
+                int keyProjCol = mapDesc.keyProjCol();
+                if (batch.isElementNull(keyProjCol, valueIdx)) {
+                    return null;
+                }
+                return batch.getString(keyProjCol, valueIdx);
+            }
             return ValueConverter.convertValue(readKey(), keySchema);
         }
 
