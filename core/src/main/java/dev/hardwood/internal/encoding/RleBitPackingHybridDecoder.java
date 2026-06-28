@@ -359,6 +359,39 @@ public class RleBitPackingHybridDecoder {
         }
     }
 
+    /// Returns `true` if the first `count` values of this stream are all equal
+    /// to `value`, as proven by a single leading RLE run that covers them.
+    ///
+    /// Used to detect all-present definition levels (one RLE run of `maxDef`)
+    /// without materializing the level array. This is a read-only probe: it
+    /// inspects the first run and then restores the decoder to its original
+    /// state, so the same instance can afterwards be read from the beginning —
+    /// via [#readInts] or otherwise — exactly as if the probe had never run.
+    public boolean isSingleRleRunOf(int value, int count) {
+        if (count == 0) {
+            return true;
+        }
+        if (bitWidth == 0 || pos >= dataEnd) {
+            return false;
+        }
+        // Snapshot the run state readNextRun is about to mutate, then restore it
+        // before returning so the probe leaves no trace. bitBuffer/bitsInBuffer
+        // are untouched by readNextRun, so they need no saving.
+        int savedPos = pos;
+        int savedRemainingInRun = remainingInRun;
+        int savedCurrentValue = currentValue;
+        boolean savedIsRleRun = isRleRun;
+
+        readNextRun();
+        boolean match = isRleRun && currentValue == value && remainingInRun >= count;
+
+        pos = savedPos;
+        remainingInRun = savedRemainingInRun;
+        currentValue = savedCurrentValue;
+        isRleRun = savedIsRleRun;
+        return match;
+    }
+
     private long readUnsignedVarInt() {
         long result = 0;
         int shift = 0;
