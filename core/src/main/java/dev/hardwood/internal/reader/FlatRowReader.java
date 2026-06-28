@@ -687,8 +687,7 @@ public final class FlatRowReader implements RowReader {
         ColumnSchema col = columnSchemas[columnIndex];
         LogicalType lt = col.logicalType();
         // Dictionary-encoded UTF8/JSON: return the interned String (one per chunk).
-        if (physicalTypes[columnIndex] == PhysicalType.BYTE_ARRAY
-                && (lt instanceof LogicalType.StringType || lt instanceof LogicalType.JsonType)) {
+        if (ValueConverter.isStringLeaf(physicalTypes[columnIndex], lt)) {
             return isNull(columnIndex)
                     ? null
                     : ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);

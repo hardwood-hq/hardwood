@@ -4311,3 +4311,49 @@ pq.write_table(
 )
 print("\nGenerated dict_nested_repeats.parquet:")
 print(f"  - {NESTED_REPEAT_ROWS} rows, info.name + tags (dictionary-encoded strings, repeated values + nulls)")
+
+
+# Cross-CHUNK straddle: two row groups (two column chunks -> two dictionaries)
+# with DISJOINT value pools, total rows below the row reader's 16384 batch floor
+# so the whole file is read as one batch spanning both chunks. Exercises the
+# single dictionary slot's straddle fallback -- the batch keeps chunk 0's
+# dictionary and byte-decodes chunk 1's values, whose entry ordinals would
+# otherwise mis-index chunk 0's dictionary.
+CROSS_CHUNK_RG = 100
+CROSS_CHUNK_POOL_A = ['alpha', 'bravo', 'charlie']
+CROSS_CHUNK_POOL_B = ['delta', 'echo', 'foxtrot']
+cross_chunk_labels = [
+    (CROSS_CHUNK_POOL_A if i < CROSS_CHUNK_RG else CROSS_CHUNK_POOL_B)[i % 3]
+    for i in range(2 * CROSS_CHUNK_RG)
+]
+pq.write_table(
+    pa.table({'label': cross_chunk_labels}),
+    'core/src/test/resources/dict_cross_chunk.parquet',
+    use_dictionary=True,
+    compression='snappy',
+    data_page_version='1.0',
+    row_group_size=CROSS_CHUNK_RG,
+)
+print("\nGenerated dict_cross_chunk.parquet:")
+print(f"  - {2 * CROSS_CHUNK_RG} rows in two row groups, label (dictionary-encoded, disjoint pools per chunk)")
+
+# Dictionary-encoded map<string,string> with repeated keys + values, for interning
+# across the generic PqMap key/value accessors.
+STRING_MAP_ROWS = 200
+STRING_MAP_VALS = ['red', 'green', 'blue', 'amber']
+string_map_props = [
+    [('color', STRING_MAP_VALS[i % 4]), ('size', STRING_MAP_VALS[(i + 1) % 4])]
+    for i in range(STRING_MAP_ROWS)
+]
+pq.write_table(
+    pa.table({
+        'id': pa.array(range(STRING_MAP_ROWS), type=pa.int32()),
+        'props': pa.array(string_map_props, type=pa.map_(pa.string(), pa.string())),
+    }),
+    'core/src/test/resources/dict_string_map.parquet',
+    use_dictionary=True,
+    compression='snappy',
+    data_page_version='1.0',
+)
+print("\nGenerated dict_string_map.parquet:")
+print(f"  - {STRING_MAP_ROWS} rows, props map<string,string> (dictionary-encoded keys + values)")
