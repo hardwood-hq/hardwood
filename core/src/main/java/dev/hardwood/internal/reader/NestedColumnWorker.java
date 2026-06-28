@@ -255,6 +255,12 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                     bbv.appendAt(destIndex, EMPTY_BYTES, 0, 0);
                 }
                 // FIXED_LEN null: trivial offsets stay; bytes content is undefined.
+                if (bbv.rawRefs != null) {
+                    // Dictionary-encoded values share one byte[] per entry, so the
+                    // reader can intern them to one String (#636); plain-page values
+                    // are recorded as null to fall back to the packed-byte path.
+                    bbv.rawRefs[destIndex] = p.dictionaryEncoded() ? val : null;
+                }
             }
         }
     }
@@ -292,6 +298,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             System.arraycopy(bbv.bytes, 0, newBytes, 0, bbv.bytes.length);
             bbv.bytes = newBytes;
         }
+        if (bbv.rawRefs != null) {
+            bbv.rawRefs = Arrays.copyOf(bbv.rawRefs, newCapacity);
+        }
         bbv.offsets = newOffsets;
         return bbv;
     }
@@ -315,9 +324,13 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             case boolean[] a -> Arrays.copyOf(a, size);
             case BinaryBatchValues bbv -> {
                 int byteLength = bbv.offsets[size];
-                yield new BinaryBatchValues(
+                BinaryBatchValues trimmed = new BinaryBatchValues(
                         Arrays.copyOf(bbv.bytes, byteLength),
                         Arrays.copyOf(bbv.offsets, size + 1));
+                if (bbv.rawRefs != null) {
+                    trimmed.rawRefs = Arrays.copyOf(bbv.rawRefs, size);
+                }
+                yield trimmed;
             }
             default -> throw new IllegalStateException("Unexpected values array type: " + values.getClass());
         };

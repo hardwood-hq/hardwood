@@ -137,7 +137,9 @@ public sealed interface Dictionary {
                                int[] definitionLevels, int[] repetitionLevels, int maxDefLevel) {
             byte[][] output = new byte[numValues][];
             indexDecoder.readDictionaryByteArrays(output, values, definitionLevels, maxDefLevel);
-            return new Page.ByteArrayPage(output, definitionLevels, repetitionLevels, maxDefLevel, numValues);
+            // dictionaryEncoded = true: equal entries share one `byte[]`, so the
+            // row reader can intern repeated values to one `String` (issue #636).
+            return new Page.ByteArrayPage(output, definitionLevels, repetitionLevels, maxDefLevel, numValues, true);
         }
     }
 }

@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.nio.charset.StandardCharsets;
+import java.util.IdentityHashMap;
 
 /// Per-batch values slot for a varlength leaf (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`
 /// / `INT96`).
@@ -26,6 +27,17 @@ public final class BinaryBatchValues {
     public byte[] bytes;
     public int[] offsets;
 
+    /// Per-value source reference for dictionary-encoded `UTF8` / `JSON` columns,
+    /// parallel to [#offsets]; `null` (the field) for every other column. A
+    /// `null` element means "not dictionary-encoded — decode from [#bytes]".
+    /// Equal values that point at the same dictionary entry share one `byte[]`
+    /// object, which [#stringAt] interns to a single `String` (issue #636).
+    public byte[][] rawRefs;
+
+    /// Identity-keyed intern cache for [#stringAt], lazily created and keyed on
+    /// the shared dictionary-entry reference in [#rawRefs].
+    private IdentityHashMap<byte[], String> internCache;
+
     public BinaryBatchValues(byte[] bytes, int[] offsets) {
         this.bytes = bytes;
         this.offsets = offsets;
@@ -42,12 +54,35 @@ public final class BinaryBatchValues {
         return result;
     }
 
-    /// Materialise value `idx` as a UTF-8 decoded `String`. Allocates one
-    /// `String` per call.
+    /// Materialise value `idx` as a UTF-8 decoded `String`. For a
+    /// dictionary-encoded value (a non-null [#rawRefs] entry) the `String` is
+    /// interned by the dictionary-entry identity, so repeated values are decoded
+    /// once; otherwise it allocates one `String` per call.
     public String stringAt(int idx) {
+        byte[] ref = rawRefs != null ? rawRefs[idx] : null;
+        if (ref != null) {
+            if (internCache == null) {
+                internCache = new IdentityHashMap<>();
+            }
+            String cached = internCache.get(ref);
+            if (cached == null) {
+                cached = new String(ref, StandardCharsets.UTF_8);
+                internCache.put(ref, cached);
+            }
+            return cached;
+        }
         int start = offsets[idx];
         int len = offsets[idx + 1] - start;
         return new String(bytes, start, len, StandardCharsets.UTF_8);
+    }
+
+    /// Clears the [#stringAt] intern cache. Called when a recycled value holder
+    /// is refilled for a new batch, so interned `String`s and their
+    /// dictionary-entry keys from the previous batch are not retained.
+    public void clearInternCache() {
+        if (internCache != null) {
+            internCache.clear();
+        }
     }
 
     /// Length in bytes of value `idx`.
