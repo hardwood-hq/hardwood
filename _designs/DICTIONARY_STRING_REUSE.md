@@ -37,27 +37,39 @@ chunk.
 ### Carrying the entry index to the batch
 
 Dictionary-encoded `Page.ByteArrayPage`s carry the source `ByteArrayDictionary` and the
-per-value dictionary entry indices (`int[]`); both are `null` for `PLAIN` (dictionary-fallback)
-pages. The row-assembly value holder (`BinaryBatchValues`) records, for `UTF8` / `JSON`
-columns, a per-value `(dictionary, index)` pair parallel to its offsets.
-`BinaryBatchValues.stringAt(i)` resolves a dictionary-encoded value through the cache and
-falls back to the packed bytes otherwise:
+per-value dictionary entry indices (`int[]`, `-1` at null positions); both are `null` for
+`PLAIN` (dictionary-fallback) pages. The row-assembly value holder (`BinaryBatchValues`)
+carries, for `UTF8` / `JSON` columns only (the `internStrings` flag, set at batch allocation), a
+single chunk `dictionary` reference plus a parallel `int[] dictIndices`. `dictIndices[i]` is the
+entry index, or `-1` for a value that decodes from the packed bytes (a plain value, a null,
+or a value from a second chunk's dictionary — see below).
+`BinaryBatchValues.stringAt(i)` resolves through the cache and falls back to the packed bytes
+otherwise:
 
 ```
-if (dictionaries != null && dictionaries[i] != null)
-    return dictionaries[i].internedString(dictIndices[i]);
+if (dictionary != null && dictIndices[i] >= 0)
+    return dictionary.internedString(dictIndices[i]);
 return new String(bytes, offsets[i], offsets[i+1]-offsets[i], UTF-8);  // unchanged fallback
 ```
 
-Because the dictionary reference is per value, a batch that spans two column chunks (and
-therefore two dictionaries) resolves each value against its own chunk's cache.
+The `dictionary` slot and `dictIndices` array are allocated lazily, when the first
+dictionary-encoded page contributes to a batch; the worker resets the slot to `null` as each
+recycled batch begins. A non-string column allocates neither, and a string column whose chunk
+is entirely `PLAIN`-encoded allocates neither — paying only the single `dictionary != null`
+check in `stringAt`.
+
+A batch flushes at file boundaries, not chunk boundaries, so one batch can span two column
+chunks (two dictionaries). The holder keeps the **first** chunk's dictionary; values from the
+second chunk record `-1` and decode through the packed bytes — correct, merely
+un-deduplicated for that one straddling batch. The next batch resets the slot and adopts the
+second chunk's dictionary.
 
 ### Scope
 
 - `UTF8` / `JSON` `BYTE_ARRAY` columns on the row-reader path (flat and nested), across every
   string accessor — typed `getString`, generic `getValue` / `toString`, and the list and map
-  collection views all resolve through the per-chunk cache. The parallel per-value arrays are
-  allocated only for these columns; all other columns are unaffected.
+  collection views all resolve through the per-chunk cache. The per-value `dictIndices` array is
+  allocated lazily and only for these columns; all other columns are unaffected.
 - The packed-byte representation is retained, so `getBinary` / raw-byte access keep their
   existing contract.
 - Out of scope: non-string dictionary leaves, and the column reader's own `getStrings`
@@ -71,7 +83,11 @@ therefore two dictionaries) resolves each value against its own chunk's cache.
   flyweight "not safe across `next()`" contract concerns the reused mutable buffers, not
   immutable return values.
 - **Mixed pages.** A chunk may mix dictionary and plain pages; plain-page values (and null
-  values) carry a `null` dictionary and fall back to per-value `new String`.
+  values) record `dictIndices[i] = -1` and fall back to per-value `new String`.
+- **Chunk-straddling batch.** A batch that spans two chunks keeps the first chunk's
+  dictionary; the second chunk's values record `-1` and decode from the packed bytes for that
+  one batch (correct, un-deduplicated). The byte buffer is written for every value regardless,
+  so the fallback is always available.
 - **Threading.** The dictionary (and its cache) is confined to one column's pipeline, and in
   the current readers the cache is filled only on the consumer thread (via `stringAt`).
   Entries are immutable, so even if a future caller filled it from another thread, the worst
@@ -83,6 +99,7 @@ therefore two dictionaries) resolves each value against its own chunk's cache.
   because `convertValue` decodes a raw `byte[]` and cannot accept an already-interned `String`.
 - **Deferred:** `Dictionary.decodePage` builds the per-value index array for every
   `ByteArrayDictionary` page, including `INT96` / `FIXED_LEN_BYTE_ARRAY` columns that never
-  intern — a small, transient per-page allocation that a column-type hint could skip. The
-  column reader's `getStrings` and a typed `PqMap` key/value interning test are likewise
-  left as follow-ups.
+  intern — a small, transient per-page allocation that a column-type hint could skip (the
+  batch-level `dictIndices` is already limited to string columns via `internStrings`). The column
+  reader's `getStrings` and a typed `PqMap` key/value interning test are likewise left as
+  follow-ups.

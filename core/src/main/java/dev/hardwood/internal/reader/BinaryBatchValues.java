@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.nio.charset.StandardCharsets;
+import java.util.Arrays;
 
 /// Per-batch values slot for a varlength leaf (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`
 /// / `INT96`).
@@ -26,14 +27,23 @@ public final class BinaryBatchValues {
     public byte[] bytes;
     public int[] offsets;
 
-    /// Per-value source dictionary for dictionary-encoded `UTF8` / `JSON` columns,
-    /// parallel to [#offsets]; `null` (the field) for non-string columns, and a
-    /// `null` element means "decode from [#bytes]". With [#dictIndices], [#stringAt]
-    /// returns the dictionary's interned `String`, so a value is materialised once per chunk.
-    public Dictionary.ByteArrayDictionary[] dictionaries;
+    /// Whether this column's values are interned `UTF8` / `JSON` `String`s. Set
+    /// once at batch allocation ([BatchExchange#allocateArray]); only these
+    /// columns record dictionary indices and reuse cached `String`s. When
+    /// `false`, [#stringAt] always materialises from [#bytes].
+    public boolean internStrings;
 
-    /// Per-value dictionary entry index, parallel to [#dictionaries]. Meaningful
-    /// only where the matching [#dictionaries] element is non-null.
+    /// The chunk dictionary backing [#dictIndices], or `null` when no dictionary
+    /// page has contributed to this batch (every value then materialises from
+    /// [#bytes]). Holds the per-entry `String` cache that lets [#stringAt] reuse
+    /// one instance per dictionary entry per chunk.
+    public Dictionary.ByteArrayDictionary dictionary;
+
+    /// Per-value dictionary entry index, meaningful only when [#dictionary] is
+    /// non-null. `-1` marks a value that must materialise from [#bytes]: a
+    /// plain-encoded value, a null position, or a value from a second chunk's
+    /// dictionary in a batch that straddles a chunk boundary. Allocated lazily
+    /// by [#ensureDictionary] when the first dictionary page lands.
     public int[] dictIndices;
 
     public BinaryBatchValues(byte[] bytes, int[] offsets) {
@@ -52,14 +62,18 @@ public final class BinaryBatchValues {
         return result;
     }
 
-    /// Materialise value `idx` as a UTF-8 decoded `String`. For a
-    /// dictionary-encoded value (a non-null [#dictionaries] entry) the `String`
-    /// comes from the dictionary's per-chunk interned cache, so repeated values
-    /// are decoded once per chunk; otherwise it allocates one `String` per call.
+    /// Materialise value `idx` as a UTF-8 decoded `String`. A dictionary-encoded
+    /// value (when [#dictionary] is set and `dictIndices[idx]` is non-negative)
+    /// reuses the chunk dictionary's per-entry interned cache, so repeated values
+    /// are decoded once per chunk; any other value allocates one `String` per
+    /// call from [#bytes].
     public String stringAt(int idx) {
-        Dictionary.ByteArrayDictionary dict = dictionaries != null ? dictionaries[idx] : null;
+        Dictionary.ByteArrayDictionary dict = dictionary;
         if (dict != null) {
-            return dict.internedString(dictIndices[idx]);
+            int dictIndex = dictIndices[idx];
+            if (dictIndex >= 0) {
+                return dict.internedString(dictIndex);
+            }
         }
         int start = offsets[idx];
         int len = offsets[idx + 1] - start;
@@ -100,5 +114,76 @@ public final class BinaryBatchValues {
         byte[] grown = new byte[(int) newSize];
         System.arraycopy(bytes, 0, grown, 0, bytes.length);
         bytes = grown;
+    }
+
+    /// Records dictionary entry indices for a contiguous page range
+    /// `[srcPos, srcPos + length)` landing at `[destPos, destPos + length)`, so
+    /// [#stringAt] can reuse one materialised `String` per entry. A no-op for a
+    /// non-interned column ([#internStrings] `false`).
+    ///
+    /// `pageDictIndices` is `null` for a plain (non-dictionary) page; such
+    /// values are recorded as `-1` only once the batch is already on the
+    /// dictionary path, since otherwise [#stringAt] reads [#bytes] regardless.
+    /// The first dictionary page switches the batch on (see [#ensureDictionary]).
+    public void recordDictIndices(int[] pageDictIndices, Dictionary.ByteArrayDictionary pageDict,
+                                  int srcPos, int destPos, int length) {
+        if (!internStrings) {
+            return;
+        }
+        if (pageDictIndices == null) {
+            if (dictionary != null) {
+                Arrays.fill(dictIndices, destPos, destPos + length, -1);
+            }
+            return;
+        }
+        if (ensureDictionary(pageDict, destPos)) {
+            System.arraycopy(pageDictIndices, srcPos, dictIndices, destPos, length);
+        }
+        else {
+            Arrays.fill(dictIndices, destPos, destPos + length, -1);
+        }
+    }
+
+    /// Records the dictionary entry index for a single gathered value at
+    /// `destPos`. Used by nested assembly, where kept values are scattered by
+    /// the rep/def-level walk rather than copied as a contiguous range. See
+    /// [#recordDictIndices] for the range form; the dictionary-switch rules are
+    /// identical. A no-op for a non-interned column ([#internStrings] `false`).
+    public void recordDictIndex(int[] pageDictIndices, Dictionary.ByteArrayDictionary pageDict,
+                                int srcPos, int destPos) {
+        if (!internStrings) {
+            return;
+        }
+        if (pageDictIndices == null) {
+            if (dictionary != null) {
+                dictIndices[destPos] = -1;
+            }
+            return;
+        }
+        // ensureDictionary lazily allocates dictIndices, so it must run before
+        // the `dictIndices[destPos]` store target is evaluated — otherwise the
+        // store binds the pre-allocation (null) array reference.
+        int dictIndex = ensureDictionary(pageDict, destPos) ? pageDictIndices[srcPos] : -1;
+        dictIndices[destPos] = dictIndex;
+    }
+
+    /// Switches the batch onto the dictionary representation on the first
+    /// dictionary page that contributes: adopts `pageDict`, allocates
+    /// [#dictIndices] (sized to the value capacity), and backfills the plain
+    /// prefix `[0, destPos)` with `-1`. Returns `true` when `pageDict` is this
+    /// batch's dictionary — so the caller records the page's indices — and
+    /// `false` when the value belongs to a second dictionary in a batch that
+    /// straddles a chunk boundary, in which case it falls back to byte
+    /// materialisation.
+    private boolean ensureDictionary(Dictionary.ByteArrayDictionary pageDict, int destPos) {
+        if (dictionary == null) {
+            dictionary = pageDict;
+            int capacity = offsets.length - 1;
+            if (dictIndices == null || dictIndices.length < capacity) {
+                dictIndices = new int[capacity];
+            }
+            Arrays.fill(dictIndices, 0, destPos, -1);
+        }
+        return dictionary == pageDict;
     }
 }
