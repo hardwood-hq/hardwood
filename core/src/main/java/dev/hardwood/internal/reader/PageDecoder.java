@@ -141,9 +141,31 @@ public class PageDecoder {
     }
 
     /// Decode levels using RLE/Bit-Packing Hybrid encoding.
-    private int[] decodeLevels(byte[] levelData, int offset, int length, int numValues, int maxLevel) {
+    private int[] decodeRepetitionLevels(byte[] levelData, int offset, int length, int numValues, int maxLevel) {
         int[] levels = new int[numValues];
         RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, getBitWidth(maxLevel));
+        decoder.readInts(levels, 0, numValues);
+        return levels;
+    }
+
+    /// Decode definition levels, applying the all-present fast path: when the
+    /// stream is a single RLE run of `maxDef` (the common case for an optional
+    /// but fully-populated column), skip materializing the per-value level array
+    /// and represent "all present" as a `null` level array — the same
+    /// representation used for required columns throughout the reader.
+    ///
+    /// Restricted to flat columns; nested record assembly consumes the def-level
+    /// array directly and stays on the materializing path.
+    private int[] decodeDefinitionLevels(byte[] levelData, int offset, int length, int numValues) {
+        int maxDef = column.maxDefinitionLevel();
+        int bitWidth = getBitWidth(maxDef);
+        RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, bitWidth);
+        // The probe loads the first run; if it is not the all-present fast path,
+        // readInts below resumes from that same loaded run on the same instance.
+        if (column.maxRepetitionLevel() == 0 && decoder.isSingleRleRunOf(maxDef, numValues)) {
+            return null;
+        }
+        int[] levels = new int[numValues];
         decoder.readInts(levels, 0, numValues);
         return levels;
     }
@@ -177,7 +199,7 @@ public class PageDecoder {
         if (column.maxRepetitionLevel() > 0) {
             int repLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
             offset += 4;
-            repetitionLevels = decodeLevels(data, offset, repLevelLength, header.numValues(), column.maxRepetitionLevel());
+            repetitionLevels = decodeRepetitionLevels(data, offset, repLevelLength, header.numValues(), column.maxRepetitionLevel());
             offset += repLevelLength;
         }
 
@@ -185,7 +207,7 @@ public class PageDecoder {
         if (column.maxDefinitionLevel() > 0) {
             int defLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
             offset += 4;
-            definitionLevels = decodeLevels(data, offset, defLevelLength, header.numValues(), column.maxDefinitionLevel());
+            definitionLevels = decodeDefinitionLevels(data, offset, defLevelLength, header.numValues());
             offset += defLevelLength;
         }
 
@@ -205,14 +227,14 @@ public class PageDecoder {
         if (column.maxRepetitionLevel() > 0 && repLevelLen > 0) {
             byte[] repLevelData = new byte[repLevelLen];
             pageData.slice(0, repLevelLen).get(repLevelData);
-            repetitionLevels = decodeLevels(repLevelData, 0, repLevelLen, header.numValues(), column.maxRepetitionLevel());
+            repetitionLevels = decodeRepetitionLevels(repLevelData, 0, repLevelLen, header.numValues(), column.maxRepetitionLevel());
         }
 
         int[] definitionLevels = null;
         if (column.maxDefinitionLevel() > 0 && defLevelLen > 0) {
             byte[] defLevelData = new byte[defLevelLen];
             pageData.slice(repLevelLen, defLevelLen).get(defLevelData);
-            definitionLevels = decodeLevels(defLevelData, 0, defLevelLen, header.numValues(), column.maxDefinitionLevel());
+            definitionLevels = decodeDefinitionLevels(defLevelData, 0, defLevelLen, header.numValues());
         }
 
         byte[] valuesData;
