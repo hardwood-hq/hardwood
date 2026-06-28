@@ -255,11 +255,17 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                     bbv.appendAt(destIndex, EMPTY_BYTES, 0, 0);
                 }
                 // FIXED_LEN null: trivial offsets stay; bytes content is undefined.
-                if (bbv.rawRefs != null) {
-                    // Dictionary-encoded values share one byte[] per entry, so the
-                    // reader can intern them to one String (#636); plain-page values
-                    // are recorded as null to fall back to the packed-byte path.
-                    bbv.rawRefs[destIndex] = p.dictionaryEncoded() ? val : null;
+                if (bbv.dictionaries != null) {
+                    // Record the per-value dictionary + entry index so stringAt can intern;
+                    // plain pages and null values leave a null dictionary (packed fallback).
+                    Dictionary.ByteArrayDictionary pageDict = p.dictionary();
+                    if (val != null && pageDict != null) {
+                        bbv.dictionaries[destIndex] = pageDict;
+                        bbv.dictIndices[destIndex] = p.dictIndices()[srcIndex];
+                    }
+                    else {
+                        bbv.dictionaries[destIndex] = null;
+                    }
                 }
             }
         }
@@ -298,8 +304,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             System.arraycopy(bbv.bytes, 0, newBytes, 0, bbv.bytes.length);
             bbv.bytes = newBytes;
         }
-        if (bbv.rawRefs != null) {
-            bbv.rawRefs = Arrays.copyOf(bbv.rawRefs, newCapacity);
+        if (bbv.dictionaries != null) {
+            bbv.dictionaries = Arrays.copyOf(bbv.dictionaries, newCapacity);
+            bbv.dictIndices = Arrays.copyOf(bbv.dictIndices, newCapacity);
         }
         bbv.offsets = newOffsets;
         return bbv;
@@ -327,8 +334,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                 BinaryBatchValues trimmed = new BinaryBatchValues(
                         Arrays.copyOf(bbv.bytes, byteLength),
                         Arrays.copyOf(bbv.offsets, size + 1));
-                if (bbv.rawRefs != null) {
-                    trimmed.rawRefs = Arrays.copyOf(bbv.rawRefs, size);
+                if (bbv.dictionaries != null) {
+                    trimmed.dictionaries = Arrays.copyOf(bbv.dictionaries, size);
+                    trimmed.dictIndices = Arrays.copyOf(bbv.dictIndices, size);
                 }
                 yield trimmed;
             }

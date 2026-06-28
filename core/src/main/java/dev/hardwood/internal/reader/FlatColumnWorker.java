@@ -190,14 +190,11 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                 BinaryBatchValues bbv = (BinaryBatchValues) values;
                 byte[][] pageValues = p.values();
                 boolean fixedLen = physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY;
-                // Record dictionary-entry references for String interning (#636).
-                // A recycled holder carries the previous batch's intern cache, so
-                // clear it as the new batch begins (destPos == 0).
-                boolean recordRefs = bbv.rawRefs != null;
-                if (recordRefs && destPos == 0) {
-                    bbv.clearInternCache();
-                }
-                boolean dictRefs = recordRefs && p.dictionaryEncoded();
+                // Record the per-value dictionary + entry index so stringAt can intern;
+                // plain pages and null values leave a null dictionary (packed fallback).
+                boolean recordDict = bbv.dictionaries != null;
+                Dictionary.ByteArrayDictionary pageDict = p.dictionary();
+                int[] pageDictIndices = p.dictIndices();
                 for (int i = 0; i < length; i++) {
                     byte[] val = pageValues[srcPos + i];
                     int dest = destPos + i;
@@ -209,11 +206,14 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                     }
                     // FIXED_LEN null: pre-filled trivial offsets are kept;
                     // bytes content at this slot is undefined scratch.
-                    if (recordRefs) {
-                        // Non-dictionary pages decode a fresh byte[] per value, so
-                        // they are not safe to dedup by identity — leave null to
-                        // fall back to the packed-byte path in stringAt.
-                        bbv.rawRefs[dest] = dictRefs ? val : null;
+                    if (recordDict) {
+                        if (val != null && pageDict != null) {
+                            bbv.dictionaries[dest] = pageDict;
+                            bbv.dictIndices[dest] = pageDictIndices[srcPos + i];
+                        }
+                        else {
+                            bbv.dictionaries[dest] = null;
+                        }
                     }
                 }
                 markNulls(p.definitionLevels(), srcPos, destPos, length);

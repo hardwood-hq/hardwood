@@ -116,9 +116,13 @@ public class RleBitPackingHybridDecoder {
         applyDictionary(output, dictionary, indices, defLevels, maxDef);
     }
 
-    public void readDictionaryByteArrays(byte[][] output, byte[][] dictionary, int[] defLevels, int maxDef) {
+    /// Resolves dictionary-encoded byte-array values, also writing each value's
+    /// dictionary entry index into `outDictIndices` (`-1` at null positions) so the
+    /// row reader can intern values by entry.
+    public void readDictionaryByteArrays(byte[][] output, int[] outDictIndices, byte[][] dictionary,
+                                         int[] defLevels, int maxDef) {
         int[] indices = decodeIndices(output.length, defLevels, maxDef);
-        applyDictionary(output, dictionary, indices, defLevels, maxDef);
+        applyDictionary(output, outDictIndices, dictionary, indices, defLevels, maxDef);
     }
 
     public void readBooleans(boolean[] output, int[] defLevels, int maxDef) {
@@ -215,17 +219,25 @@ public class RleBitPackingHybridDecoder {
         }
     }
 
-    private void applyDictionary(byte[][] output, byte[][] dict, int[] indices, int[] defLevels, int maxDef) {
+    private void applyDictionary(byte[][] output, int[] outDictIndices, byte[][] dict, int[] indices,
+                                 int[] defLevels, int maxDef) {
         if (defLevels == null) {
             for (int i = 0; i < output.length; i++) {
-                output[i] = dict[indices[i]];
+                int d = indices[i];
+                output[i] = dict[d];
+                outDictIndices[i] = d;
             }
         }
         else {
             int idx = 0;
             for (int i = 0; i < output.length; i++) {
                 if (defLevels[i] == maxDef) {
-                    output[i] = dict[indices[idx++]];
+                    int d = indices[idx++];
+                    output[i] = dict[d];
+                    outDictIndices[i] = d;
+                }
+                else {
+                    outDictIndices[i] = -1;
                 }
             }
         }
