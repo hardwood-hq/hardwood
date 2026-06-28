@@ -74,13 +74,13 @@ public sealed interface Page {
     }
 
     record ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
-            int size, boolean dictionaryEncoded)
+            int size, Dictionary.ByteArrayDictionary dictionary, int[] dictIndices)
             implements Page {
-        /// Page from a non-dictionary (`PLAIN`) decode: `values` are freshly
-        /// decoded per value, so they must not be deduplicated by identity.
+        /// Page from a non-dictionary (`PLAIN`) decode: no shared dictionary, so
+        /// values cannot be interned per entry (`dictionary` / `dictIndices` null).
         ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
                 int size) {
-            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, false);
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, null, null);
         }
 
         public byte[] get(int index) {

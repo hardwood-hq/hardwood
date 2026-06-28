@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 
 import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
@@ -126,20 +127,54 @@ public sealed interface Dictionary {
         }
     }
 
-    record ByteArrayDictionary(byte[][] values) implements Dictionary {
+    /// A class (not a record) so it can hold the lazily-materialised per-chunk
+    /// interned `String` cache ([#interned]) alongside the entry bytes.
+    final class ByteArrayDictionary implements Dictionary {
+        private final byte[][] values;
+
+        /// Interned `String` per entry, decoded once per chunk and reused. Lazily
+        /// allocated; populated only for UTF8 / JSON columns via [#internedString(int)].
+        private String[] interned;
+
+        ByteArrayDictionary(byte[][] values) {
+            this.values = values;
+        }
+
+        public byte[][] values() {
+            return values;
+        }
+
         @Override
         public int size() {
             return values.length;
+        }
+
+        /// Returns dictionary entry `index` as a `String`, decoding it once per chunk
+        /// and caching it. Repeated values across the chunk share this one instance.
+        String internedString(int index) {
+            String[] cache = interned;
+            if (cache == null) {
+                cache = new String[values.length];
+                interned = cache;
+            }
+            String s = cache[index];
+            if (s == null) {
+                s = new String(values[index], StandardCharsets.UTF_8);
+                cache[index] = s;
+            }
+            return s;
         }
 
         @Override
         public Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
                                int[] definitionLevels, int[] repetitionLevels, int maxDefLevel) {
             byte[][] output = new byte[numValues][];
-            indexDecoder.readDictionaryByteArrays(output, values, definitionLevels, maxDefLevel);
-            // dictionaryEncoded = true: equal entries share one `byte[]`, so the
-            // row reader can intern repeated values to one `String` (issue #636).
-            return new Page.ByteArrayPage(output, definitionLevels, repetitionLevels, maxDefLevel, numValues, true);
+            int[] dictIndices = new int[numValues];
+            indexDecoder.readDictionaryByteArrays(output, dictIndices, values, definitionLevels, maxDefLevel);
+            // Carry the dictionary and per-value entry indices so the row reader
+            // can intern repeated values to one String per chunk.
+            return new Page.ByteArrayPage(output, definitionLevels, repetitionLevels, maxDefLevel,
+                    numValues, this, dictIndices);
         }
     }
 }

@@ -19,8 +19,8 @@ import dev.hardwood.row.PqStruct;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
-/// Issue #636: equal values of a dictionary-encoded column materialise to the
-/// same interned `String` instance, instead of a fresh allocation per value.
+/// Equal values of a dictionary-encoded column materialise to the same interned
+/// `String` instance, instead of a fresh allocation per value.
 class DictionaryStringReuseTest {
 
     /// `dictionary_uncompressed.parquet` has a dictionary-encoded `category`

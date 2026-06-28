@@ -259,7 +259,8 @@ public class BatchExchange<B> {
                         new byte[Math.multiplyExact(BINARY_BYTES_PER_VALUE_HINT, capacity)],
                         new int[capacity + 1]);
                 if (isStringColumn(column)) {
-                    bbv.rawRefs = new byte[capacity][];
+                    bbv.dictionaries = new Dictionary.ByteArrayDictionary[capacity];
+                    bbv.dictIndices = new int[capacity];
                 }
                 yield bbv;
             }
@@ -277,7 +278,7 @@ public class BatchExchange<B> {
 
     /// Whether `column` is a `UTF8` / `JSON` `BYTE_ARRAY` column — the leaves
     /// whose row-reader values are materialised as `String` and so benefit from
-    /// dictionary-entry interning ([BinaryBatchValues#rawRefs]).
+    /// dictionary-entry interning ([BinaryBatchValues#dictionaries]).
     private static boolean isStringColumn(ColumnSchema column) {
         return column.type() == PhysicalType.BYTE_ARRAY
                 && (column.logicalType() instanceof LogicalType.StringType
