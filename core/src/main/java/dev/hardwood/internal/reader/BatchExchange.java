@@ -11,6 +11,7 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -253,9 +254,15 @@ public class BatchExchange<B> {
             case FLOAT -> new float[capacity];
             case DOUBLE -> new double[capacity];
             case BOOLEAN -> new boolean[capacity];
-            case BYTE_ARRAY, INT96 -> new BinaryBatchValues(
-                    new byte[Math.multiplyExact(BINARY_BYTES_PER_VALUE_HINT, capacity)],
-                    new int[capacity + 1]);
+            case BYTE_ARRAY, INT96 -> {
+                BinaryBatchValues bbv = new BinaryBatchValues(
+                        new byte[Math.multiplyExact(BINARY_BYTES_PER_VALUE_HINT, capacity)],
+                        new int[capacity + 1]);
+                if (isStringColumn(column)) {
+                    bbv.rawRefs = new byte[capacity][];
+                }
+                yield bbv;
+            }
             case FIXED_LEN_BYTE_ARRAY -> {
                 int width = column.typeLength();
                 byte[] bytes = new byte[Math.multiplyExact(width, capacity)];
@@ -266,5 +273,14 @@ public class BatchExchange<B> {
                 yield new BinaryBatchValues(bytes, offsets);
             }
         };
+    }
+
+    /// Whether `column` is a `UTF8` / `JSON` `BYTE_ARRAY` column — the leaves
+    /// whose row-reader values are materialised as `String` and so benefit from
+    /// dictionary-entry interning ([BinaryBatchValues#rawRefs]).
+    private static boolean isStringColumn(ColumnSchema column) {
+        return column.type() == PhysicalType.BYTE_ARRAY
+                && (column.logicalType() instanceof LogicalType.StringType
+                    || column.logicalType() instanceof LogicalType.JsonType);
     }
 }

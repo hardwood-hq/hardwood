@@ -73,8 +73,16 @@ public sealed interface Page {
         }
     }
 
-    record ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size)
+    record ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
+            int size, boolean dictionaryEncoded)
             implements Page {
+        /// Page from a non-dictionary (`PLAIN`) decode: `values` are freshly
+        /// decoded per value, so they must not be deduplicated by identity.
+        ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
+                int size) {
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, false);
+        }
+
         public byte[] get(int index) {
             return values[index];
         }
