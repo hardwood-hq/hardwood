@@ -201,6 +201,12 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
         rowsInCurrentBatch = 0;
         nestedValueCount = 0;
+        // The accumulator is reused for the next batch; clear its dictionary
+        // slot so dictIndex state is rebuilt from scratch (the dictIndices array
+        // is retained and overwritten in place).
+        if (nestedValues instanceof BinaryBatchValues bbv) {
+            bbv.dictionary = null;
+        }
     }
 
     /// Computes index structures (element validity and layer-indexed
@@ -255,18 +261,10 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                     bbv.appendAt(destIndex, EMPTY_BYTES, 0, 0);
                 }
                 // FIXED_LEN null: trivial offsets stay; bytes content is undefined.
-                if (bbv.dictionaries != null) {
-                    // Record the per-value dictionary + entry index so stringAt can intern;
-                    // plain pages and null values leave a null dictionary (packed fallback).
-                    Dictionary.ByteArrayDictionary pageDict = p.dictionary();
-                    if (val != null && pageDict != null) {
-                        bbv.dictionaries[destIndex] = pageDict;
-                        bbv.dictIndices[destIndex] = p.dictIndices()[srcIndex];
-                    }
-                    else {
-                        bbv.dictionaries[destIndex] = null;
-                    }
-                }
+                // Record the per-value dictionary index so stringAt can intern; a
+                // no-op for non-string columns, and plain/null values fall back
+                // to the packed-byte path (see BinaryBatchValues#recordDictIndex).
+                bbv.recordDictIndex(p.dictIndices(), p.dictionary(), srcIndex, destIndex);
             }
         }
     }
@@ -304,8 +302,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             System.arraycopy(bbv.bytes, 0, newBytes, 0, bbv.bytes.length);
             bbv.bytes = newBytes;
         }
-        if (bbv.dictionaries != null) {
-            bbv.dictionaries = Arrays.copyOf(bbv.dictionaries, newCapacity);
+        // Keep dictIndices sized to the value capacity once the accumulator has
+        // switched onto the dictionary representation.
+        if (bbv.dictIndices != null) {
             bbv.dictIndices = Arrays.copyOf(bbv.dictIndices, newCapacity);
         }
         bbv.offsets = newOffsets;
@@ -334,8 +333,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                 BinaryBatchValues trimmed = new BinaryBatchValues(
                         Arrays.copyOf(bbv.bytes, byteLength),
                         Arrays.copyOf(bbv.offsets, size + 1));
-                if (bbv.dictionaries != null) {
-                    trimmed.dictionaries = Arrays.copyOf(bbv.dictionaries, size);
+                if (bbv.dictionary != null) {
+                    trimmed.dictionary = bbv.dictionary;
                     trimmed.dictIndices = Arrays.copyOf(bbv.dictIndices, size);
                 }
                 yield trimmed;

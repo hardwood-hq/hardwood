@@ -159,6 +159,12 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             Arrays.fill(currentValidity, 0L);
         }
         currentBatchHasAbsents = false;
+        // The freshly-taken batch is recycled; clear its dictionary slot so the
+        // next batch rebuilds dictIndex state from scratch (the dictIndices
+        // array is retained and overwritten in place).
+        if (currentBatch.values instanceof BinaryBatchValues bbv) {
+            bbv.dictionary = null;
+        }
     }
 
     private static final byte[] EMPTY_BYTES = new byte[0];
@@ -190,11 +196,6 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                 BinaryBatchValues bbv = (BinaryBatchValues) values;
                 byte[][] pageValues = p.values();
                 boolean fixedLen = physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY;
-                // Record the per-value dictionary + entry index so stringAt can intern;
-                // plain pages and null values leave a null dictionary (packed fallback).
-                boolean recordDict = bbv.dictionaries != null;
-                Dictionary.ByteArrayDictionary pageDict = p.dictionary();
-                int[] pageDictIndices = p.dictIndices();
                 for (int i = 0; i < length; i++) {
                     byte[] val = pageValues[srcPos + i];
                     int dest = destPos + i;
@@ -206,16 +207,11 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                     }
                     // FIXED_LEN null: pre-filled trivial offsets are kept;
                     // bytes content at this slot is undefined scratch.
-                    if (recordDict) {
-                        if (val != null && pageDict != null) {
-                            bbv.dictionaries[dest] = pageDict;
-                            bbv.dictIndices[dest] = pageDictIndices[srcPos + i];
-                        }
-                        else {
-                            bbv.dictionaries[dest] = null;
-                        }
-                    }
                 }
+                // Record per-value dictionary indices so stringAt can intern; a
+                // no-op for non-string columns, and plain/null values fall back
+                // to the packed-byte path (see BinaryBatchValues#recordDictIndices).
+                bbv.recordDictIndices(p.dictIndices(), p.dictionary(), srcPos, destPos, length);
                 markNulls(p.definitionLevels(), srcPos, destPos, length);
             }
         }
