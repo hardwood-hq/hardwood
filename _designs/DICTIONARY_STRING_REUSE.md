@@ -53,10 +53,10 @@ return new String(bytes, offsets[i], offsets[i+1]-offsets[i], UTF-8);  // unchan
 ```
 
 The `dictionary` slot and `dictIndices` array are allocated lazily, when the first
-dictionary-encoded page contributes to a batch; the worker resets the slot to `null` as each
-recycled batch begins. A non-string column allocates neither, and a string column whose chunk
-is entirely `PLAIN`-encoded allocates neither — paying only the single `dictionary != null`
-check in `stringAt`.
+dictionary-encoded page contributes to a batch; the worker resets the slot to `null` after
+taking the next free batch (at the end of `publishCurrentBatch`). A non-string column allocates
+neither, and a string column whose chunk is entirely `PLAIN`-encoded allocates neither — paying
+only the single `dictionary != null` check in `stringAt`.
 
 A batch flushes at file boundaries, not chunk boundaries, so one batch can span two column
 chunks (two dictionaries). The holder keeps the **first** chunk's dictionary; values from the
@@ -97,9 +97,14 @@ second chunk's dictionary.
 
 - **Generic-path interning** routes string leaves through `getString` *before* `convertValue`,
   because `convertValue` decodes a raw `byte[]` and cannot accept an already-interned `String`.
+- **Column-reader overhead (deferred — [#724](https://github.com/hardwood-hq/hardwood/issues/724)).**
+  `ColumnReader` shares `FlatColumnWorker` / `NestedColumnWorker`, so a `UTF8` / `JSON` column
+  allocates `dictIndices` and runs `ensureDictionary` every batch even though its `getStrings`
+  decodes bytes directly and never calls `stringAt` — pure bookkeeping the column-reader path
+  discards. `internStrings` gates by column type, not by consumer; gating it to the row-reader
+  exchange would remove the waste. Correctness is unaffected.
 - **Deferred:** `Dictionary.decodePage` builds the per-value index array for every
   `ByteArrayDictionary` page, including `INT96` / `FIXED_LEN_BYTE_ARRAY` columns that never
   intern — a small, transient per-page allocation that a column-type hint could skip (the
   batch-level `dictIndices` is already limited to string columns via `internStrings`). The column
-  reader's `getStrings` and a typed `PqMap` key/value interning test are likewise left as
-  follow-ups.
+  reader's `getStrings` adopting the per-chunk cache is likewise left as a follow-up.

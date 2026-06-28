@@ -21,6 +21,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.row.PqList;
+import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -188,5 +189,90 @@ class DictionaryStringReuseTest {
             rr.next();
             assertThat(rr.getBinary("category")).isEqualTo("A".getBytes(StandardCharsets.UTF_8));
         }
+    }
+
+    /// Cross-CHUNK straddle: `dict_cross_chunk.parquet` has two row groups (two
+    /// dictionaries) with disjoint pools — rows 0-99 from `{alpha,bravo,charlie}`,
+    /// rows 100-199 from `{delta,echo,foxtrot}` — and is small enough (200 rows,
+    /// below the 16384 batch floor) that the whole file is one row-reader batch
+    /// spanning both chunks. The batch keeps chunk 0's dictionary and byte-decodes
+    /// chunk 1's values; a regression that indexed chunk 1's ordinals into chunk
+    /// 0's dictionary would return chunk 0's strings (silently wrong) or go out of
+    /// bounds. The disjoint pools make any mis-resolution observable.
+    @Test
+    void dictionaryStraddlingTwoChunksResolvesEachAgainstItsOwnDictionary() throws Exception {
+        Path file = Paths.get("src/test/resources/dict_cross_chunk.parquet");
+        String[] poolA = {"alpha", "bravo", "charlie"};
+        String[] poolB = {"delta", "echo", "foxtrot"};
+
+        List<String> values = new ArrayList<>();
+        Set<String> chunk0Instances = Collections.newSetFromMap(new IdentityHashMap<>());
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rr = reader.rowReader()) {
+            int row = 0;
+            while (rr.hasNext()) {
+                rr.next();
+                String v = rr.getString("label");
+                values.add(v);
+                if (row < 100) {
+                    chunk0Instances.add(v);
+                }
+                row++;
+            }
+        }
+
+        assertThat(values).hasSize(200);
+        for (int i = 0; i < 200; i++) {
+            String[] pool = i < 100 ? poolA : poolB;
+            assertThat(values.get(i)).as("row %d", i).isEqualTo(pool[i % 3]);
+        }
+        // Row 102 is a chunk-1 value ("delta") absent from chunk 0's dictionary;
+        // if its ordinal were resolved against chunk 0's dictionary it would read
+        // a chunk-0 entry instead — the exact straddle regression.
+        assertThat(values.get(102)).isEqualTo("delta");
+        // Chunk 0 is the batch's adopted dictionary, so its three values still
+        // intern to one instance each — straddle does not disable interning for
+        // the kept chunk.
+        assertThat(chunk0Instances).hasSize(3);
+    }
+
+    /// The generic and typed `PqMap` key/value accessors return the interned
+    /// instance for equal dictionary values, like the list and struct paths.
+    /// `dict_string_map.parquet` has 200 rows of a `map<string,string>` `props`
+    /// column (keys `color`/`size`; values from a small dictionary).
+    @Test
+    void genericMapKeyAndValueAccessorsAreInterned() throws Exception {
+        Path file = Paths.get("src/test/resources/dict_string_map.parquet");
+
+        Set<String> keyInstances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> keyValues = new HashSet<>();
+        Set<String> valueInstances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> valueValues = new HashSet<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rr = reader.rowReader()) {
+            while (rr.hasNext()) {
+                rr.next();
+                PqMap props = rr.getMap("props");
+                for (PqMap.Entry entry : props.getEntries()) {
+                    String typedKey = entry.getStringKey();
+                    String typedValue = entry.getStringValue();
+                    keyInstances.add(typedKey);
+                    keyValues.add(typedKey);
+                    valueInstances.add(typedValue);
+                    valueValues.add(typedValue);
+                    // The generic accessors resolve the same cell through the same
+                    // per-chunk cache, so they hand back the same interned instance.
+                    assertThat((String) entry.getKey()).isSameAs(typedKey);
+                    assertThat((String) entry.getValue()).isSameAs(typedValue);
+                }
+            }
+        }
+
+        // Keys and values recur across rows; each distinct one is a single
+        // interned instance across the chunk.
+        assertThat(keyValues).containsExactlyInAnyOrder("color", "size");
+        assertThat(keyInstances).hasSameSizeAs(keyValues);
+        assertThat(valueValues.size()).isGreaterThan(1);
+        assertThat(valueInstances).hasSameSizeAs(valueValues);
     }
 }

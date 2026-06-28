@@ -11,7 +11,6 @@ import java.util.concurrent.ArrayBlockingQueue;
 import java.util.concurrent.TimeUnit;
 import java.util.function.Supplier;
 
-import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -279,10 +278,10 @@ public class BatchExchange<B> {
 
     /// Whether `column` is a `UTF8` / `JSON` `BYTE_ARRAY` column — the leaves
     /// whose row-reader values are materialised as `String` and so benefit from
-    /// dictionary-entry interning ([BinaryBatchValues#internStrings]).
+    /// dictionary-entry interning ([BinaryBatchValues#internStrings]). Resolves
+    /// through [ValueConverter#isStringLeaf(PhysicalType, LogicalType)] so the
+    /// recording gate matches the consumer gate exactly.
     private static boolean isStringColumn(ColumnSchema column) {
-        return column.type() == PhysicalType.BYTE_ARRAY
-                && (column.logicalType() instanceof LogicalType.StringType
-                    || column.logicalType() instanceof LogicalType.JsonType);
+        return ValueConverter.isStringLeaf(column.type(), column.logicalType());
     }
 }
