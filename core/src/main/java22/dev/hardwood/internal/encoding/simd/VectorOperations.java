@@ -29,12 +29,7 @@ public final class VectorOperations implements SimdOperations {
     // Use preferred species for best performance on current CPU
     private static final VectorSpecies<Integer> INT_SPECIES = IntVector.SPECIES_PREFERRED;
     private static final VectorSpecies<Long> LONG_SPECIES = LongVector.SPECIES_PREFERRED;
-    private static final VectorSpecies<Long> BIT_GROUP_LONG_SPECIES = LongVector.SPECIES_256;
-    private static final VectorSpecies<Integer> BIT_GROUP_INT_SPECIES = IntVector.SPECIES_128;
     private static final VectorSpecies<Byte> BYTE_UNPACK_SPECIES = byteSpeciesForIntLanes(INT_SPECIES.length());
-    private static final int[] BIT_UNPACK_INDEXES = bitUnpackIndexes(INT_SPECIES.length());
-    private static final int[] NIBBLE_UNPACK_INDEXES = stridedIndexes(INT_SPECIES.length(), 2);
-    private static final int[] TWO_BIT_UNPACK_INDEXES = stridedIndexes(INT_SPECIES.length(), 4);
 
     private static final int INT_VECTOR_LENGTH = INT_SPECIES.length();
     private static final int LONG_VECTOR_LENGTH = LONG_SPECIES.length();
@@ -133,20 +128,6 @@ public final class VectorOperations implements SimdOperations {
     public int unpackBitWidth1(byte[] data, int dataPos, int[] output, int outPos, int count) {
         int bytesConsumed = 0;
 
-        // Each byte contains 8 values for bit-width 1
-        // Process multiple bytes at once using SIMD to expand bits to integers
-        int fullBytes = count / 8;
-
-        if (fullBytes >= INT_VECTOR_LENGTH) {
-            int simdBytes = (fullBytes / INT_VECTOR_LENGTH) * INT_VECTOR_LENGTH;
-            bytesConsumed += unpackBitWidth1Simd(data, dataPos, output, outPos, simdBytes);
-            dataPos += simdBytes;
-            outPos += simdBytes * 8;
-            fullBytes -= simdBytes;
-            count -= simdBytes * 8;
-        }
-
-        // Process remaining bytes scalar
         while (count >= 8 && dataPos < data.length) {
             int b = data[dataPos++] & 0xFF;
             output[outPos] = b & 1;
@@ -165,21 +146,6 @@ public final class VectorOperations implements SimdOperations {
         return bytesConsumed;
     }
 
-    private int unpackBitWidth1Simd(byte[] data, int dataPos, int[] output, int outPos, int numBytes) {
-        for (int b = 0; b < numBytes; b += INT_VECTOR_LENGTH) {
-            IntVector bytes = (IntVector) ByteVector.fromArray(BYTE_UNPACK_SPECIES, data, dataPos + b)
-                    .convertShape(VectorOperators.ZERO_EXTEND_B2I, INT_SPECIES, 0);
-
-            for (int bit = 0; bit < 8; bit++) {
-                bytes.lanewise(VectorOperators.LSHR, bit)
-                        .lanewise(VectorOperators.AND, 1)
-                        .intoArray(output, outPos + b * 8 + bit, BIT_UNPACK_INDEXES, 0);
-            }
-        }
-
-        return numBytes;
-    }
-
     private static VectorSpecies<Byte> byteSpeciesForIntLanes(int intLanes) {
         if (intLanes <= ByteVector.SPECIES_64.length()) {
             return ByteVector.SPECIES_64;
@@ -191,18 +157,6 @@ public final class VectorOperations implements SimdOperations {
             return ByteVector.SPECIES_256;
         }
         return ByteVector.SPECIES_512;
-    }
-
-    private static int[] bitUnpackIndexes(int lanes) {
-        return stridedIndexes(lanes, 8);
-    }
-
-    private static int[] stridedIndexes(int lanes, int stride) {
-        int[] indexes = new int[lanes];
-        for (int i = 0; i < lanes; i++) {
-            indexes[i] = i * stride;
-        }
-        return indexes;
     }
 
     @Override
@@ -220,55 +174,6 @@ public final class VectorOperations implements SimdOperations {
                 count -= INT_VECTOR_LENGTH;
                 dataPos += INT_VECTOR_LENGTH;
                 bytesConsumed += INT_VECTOR_LENGTH;
-            }
-        }
-        else if (bitWidth == 4) {
-            while (count >= INT_VECTOR_LENGTH * 2 && dataPos + INT_VECTOR_LENGTH <= data.length) {
-                IntVector bytes = (IntVector) ByteVector.fromArray(BYTE_UNPACK_SPECIES, data, dataPos)
-                        .convertShape(VectorOperators.ZERO_EXTEND_B2I, INT_SPECIES, 0);
-                bytes.lanewise(VectorOperators.AND, 0x0F)
-                        .intoArray(output, outPos, NIBBLE_UNPACK_INDEXES, 0);
-                bytes.lanewise(VectorOperators.LSHR, 4)
-                        .lanewise(VectorOperators.AND, 0x0F)
-                        .intoArray(output, outPos + 1, NIBBLE_UNPACK_INDEXES, 0);
-
-                outPos += INT_VECTOR_LENGTH * 2;
-                count -= INT_VECTOR_LENGTH * 2;
-                dataPos += INT_VECTOR_LENGTH;
-                bytesConsumed += INT_VECTOR_LENGTH;
-            }
-        }
-        else if (bitWidth == 2) {
-            while (count >= INT_VECTOR_LENGTH * 4 && dataPos + INT_VECTOR_LENGTH <= data.length) {
-                IntVector bytes = (IntVector) ByteVector.fromArray(BYTE_UNPACK_SPECIES, data, dataPos)
-                        .convertShape(VectorOperators.ZERO_EXTEND_B2I, INT_SPECIES, 0);
-                for (int shift = 0; shift < 8; shift += 2) {
-                    bytes.lanewise(VectorOperators.LSHR, shift)
-                            .lanewise(VectorOperators.AND, 0x03)
-                            .intoArray(output, outPos + (shift / 2), TWO_BIT_UNPACK_INDEXES, 0);
-                }
-
-                outPos += INT_VECTOR_LENGTH * 4;
-                count -= INT_VECTOR_LENGTH * 4;
-                dataPos += INT_VECTOR_LENGTH;
-                bytesConsumed += INT_VECTOR_LENGTH;
-            }
-        }
-        else {
-            LongVector maskVec = LongVector.broadcast(BIT_GROUP_LONG_SPECIES, mask);
-            LongVector lowShifts = bitGroupShifts(bitWidth, 0);
-            LongVector highShifts = bitGroupShifts(bitWidth, 4);
-
-            while (count >= 8 && dataPos + bitWidth <= data.length) {
-                long bits = dataPos + 8 <= data.length
-                        ? readLittleEndianLong(data, dataPos)
-                        : readLittleEndianBytes(data, dataPos, bitWidth);
-                unpackBitGroupSimd(bits, maskVec, lowShifts, highShifts, output, outPos);
-
-                outPos += 8;
-                count -= 8;
-                dataPos += bitWidth;
-                bytesConsumed += bitWidth;
             }
         }
 
@@ -301,32 +206,6 @@ public final class VectorOperations implements SimdOperations {
         }
 
         return bytesConsumed;
-    }
-
-    private static LongVector bitGroupShifts(int bitWidth, int firstValue) {
-        long[] shifts = new long[BIT_GROUP_LONG_SPECIES.length()];
-        for (int i = 0; i < shifts.length; i++) {
-            shifts[i] = (long) (firstValue + i) * bitWidth;
-        }
-        return LongVector.fromArray(BIT_GROUP_LONG_SPECIES, shifts, 0);
-    }
-
-    private static void unpackBitGroupSimd(
-            long bits,
-            LongVector maskVec,
-            LongVector lowShifts,
-            LongVector highShifts,
-            int[] output,
-            int outPos) {
-        LongVector packed = LongVector.broadcast(BIT_GROUP_LONG_SPECIES, bits);
-        IntVector low = (IntVector) packed.lanewise(VectorOperators.LSHR, lowShifts)
-                .lanewise(VectorOperators.AND, maskVec)
-                .convertShape(VectorOperators.L2I, BIT_GROUP_INT_SPECIES, 0);
-        IntVector high = (IntVector) packed.lanewise(VectorOperators.LSHR, highShifts)
-                .lanewise(VectorOperators.AND, maskVec)
-                .convertShape(VectorOperators.L2I, BIT_GROUP_INT_SPECIES, 0);
-        low.intoArray(output, outPos);
-        high.intoArray(output, outPos + BIT_GROUP_INT_SPECIES.length());
     }
 
     private static long readLittleEndianLong(byte[] data, int dataPos) {
