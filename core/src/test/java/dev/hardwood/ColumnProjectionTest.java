@@ -365,6 +365,35 @@ public class ColumnProjectionTest {
     }
 
     @Test
+    void physicalSkipKeepsMandatoryMapKeyForValueOnlyProjection() throws Exception {
+        // Regression guard: a no-filter `skip` must complete containers exactly
+        // like the skip-less read path, so a MAP's mandatory key leaf is kept when
+        // only the value sub-field is projected. Same fixture as
+        // mapValueSubFieldProjectionShouldReadKeysAndValue; skip(1) drops row 0
+        // (employee1, employee2), leaving row 1 ({manager}) and the empty-map row 2.
+        Path parquetFile = Paths.get("src/test/resources/map_struct_value_test.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rows = reader.buildRowReader()
+                     .projection(ColumnProjection.columns("people.key_value.value.age"))
+                     .skip(1).build()) {
+
+            List<String> keys = new ArrayList<>();
+            List<Integer> ages = new ArrayList<>();
+            while (rows.hasNext()) {
+                rows.next();
+                PqMap people = rows.getMap("people");
+                for (PqMap.Entry entry : people.getEntries()) {
+                    keys.add(entry.getStringKey());
+                    ages.add(entry.getStructValue().getInt("age"));
+                }
+            }
+            assertThat(keys).containsExactly("manager");
+            assertThat(ages).containsExactly(45);
+        }
+    }
+
+    @Test
     void mapKeyOnlyProjectionDoesNotPullInValue() throws Exception {
         // Same map_struct_value_test.parquet fixture. Projecting only the key
         // sub-field people.key_value.value... is the mirror of the value-side

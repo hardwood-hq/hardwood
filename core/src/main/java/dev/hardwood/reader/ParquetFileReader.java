@@ -269,9 +269,11 @@ public class ParquetFileReader implements AutoCloseable {
             return discardLeadingRows(reader, skip);
         }
 
-        RowReader reader = buildRowReader(projection, filter, maxRows, filteredRowGroups, 0L, skip);
-        long firstRowGroupSkip = rowGroupIterators.get(rowGroupIterators.size() - 1).firstRowGroupSkip();
-        return discardLeadingRows(reader, firstRowGroupSkip);
+        // No filter: `skip` is a physical row offset over the concatenated relation.
+        // buildRowReader seeks to the row group the offset lands in (dropping earlier
+        // groups across files without fetching their data) and discards the within-group
+        // residue.
+        return buildRowReader(projection, filter, maxRows, filteredRowGroups, 0L, skip);
     }
 
     /// Advances `reader` past its first `count` rows via `next()` and returns it,
@@ -365,8 +367,15 @@ public class ParquetFileReader implements AutoCloseable {
         iterator.initialize(projectedSchema, resolved);
         rowGroupIterators.add(iterator);
 
-        long readerMaxRows = maxRows == 0 ? 0 : Math.addExact(maxRows, iterator.firstRowGroupSkip());
-        return createRowReader(iterator, schema, projectedSchema, context, resolved, readerMaxRows);
+        // Physical-skip residue: the iterator has seeked to the row group the offset
+        // lands in and exposes the leading rows of that group still to be dropped. The
+        // reader yields them (head(N) bounds *yielded* rows), so cap it at the
+        // residue-adjusted limit and then walk past the residue. Both are zero — and the
+        // discard a no-op — for non-skip reads and for the filtered (logical) skip path.
+        long firstRowGroupSkip = iterator.firstRowGroupSkip();
+        long readerMaxRows = maxRows == 0 ? 0 : Math.addExact(maxRows, firstRowGroupSkip);
+        RowReader reader = createRowReader(iterator, schema, projectedSchema, context, resolved, readerMaxRows);
+        return discardLeadingRows(reader, firstRowGroupSkip);
     }
 
     /// Creates a [RowReader] for the given pipeline components.

@@ -186,6 +186,9 @@ public class RowGroupIterator {
     /// @param physicalSkip leading physical rows to skip while building the
     ///        work list (0 = unused). Whole row groups are dropped; the residue
     ///        within the first kept row group is exposed via [#firstRowGroupSkip()].
+    ///        Mutually exclusive with `tailSkip` — one masks the first row group's
+    ///        leading rows, the other drops leading row groups, with no combined
+    ///        semantics.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
                             long maxRows, long tailSkip, long physicalSkip) {
         if (inputFiles.isEmpty()) {
@@ -196,6 +199,11 @@ public class RowGroupIterator {
         }
         if (physicalSkip < 0) {
             throw new IllegalArgumentException("physicalSkip must be non-negative, got " + physicalSkip);
+        }
+        if (tailSkip > 0 && physicalSkip > 0) {
+            throw new IllegalArgumentException(
+                    "tailSkip and physicalSkip are mutually exclusive, got tailSkip=" + tailSkip
+                            + ", physicalSkip=" + physicalSkip);
         }
         this.inputFiles = new ArrayList<>(inputFiles);
         this.context = context;

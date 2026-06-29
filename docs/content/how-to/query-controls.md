@@ -315,7 +315,7 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
-`skip == 0` is the no-op default. `skip >= totalRows` produces an empty reader (a SQL `OFFSET` past the end of the file, or of the concatenated relation for multi-file readers). Within the target row group, the reader still decodes the leading residue rows and discards them via `next()`; page-level skip via the OffsetIndex is tracked separately.
+`skip == 0` is the no-op default. `skip >= totalRows` produces an empty reader (a SQL `OFFSET` past the end of the file, or of the concatenated relation for multi-file readers). The seek lands at row-group granularity: rows before the offset within the target row group are still read.
 
 For multi-file readers, physical `skip(N)` is a global offset across the input files in order. Hardwood reads the footers of skipped files to count their rows, but skipped files' data pages are not fetched or decoded.
 

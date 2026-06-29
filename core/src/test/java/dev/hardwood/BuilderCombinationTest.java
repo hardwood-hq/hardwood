@@ -240,6 +240,16 @@ class BuilderCombinationTest {
 
     @Test
     void physicalMultiFileSkipDoesNotReadMiddleSkippedFileData() throws Exception {
+        // Footer-only read cost of part1, derived rather than hard-coded: a
+        // single-file open reads exactly the footer via the same metadata reader
+        // the multi-file seek uses lazily for a skipped file.
+        CountingInputFile probe = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part1.parquet")));
+        try (ParquetFileReader ignored = ParquetFileReader.open(probe)) {
+            // open() reads the footer
+        }
+        int footerOnlyReads = probe.readCount();
+
         CountingInputFile file0 = new CountingInputFile(InputFile.of(
                 Paths.get("src/test/resources/multi_file_part0.parquet")));
         CountingInputFile skippedMiddle = new CountingInputFile(InputFile.of(
@@ -251,8 +261,8 @@ class BuilderCombinationTest {
             assertThat(ids(reader.buildRowReader().skip(250).head(1)))
                     .containsExactly(150L);
             assertThat(skippedMiddle.readCount())
-                    .as("middle file should only be opened for metadata")
-                    .isEqualTo(3);
+                    .as("middle file should only be read for its footer, no data pages")
+                    .isEqualTo(footerOnlyReads);
             assertThat(skippedMiddle.bytesRead())
                     .as("middle file should not have data pages fetched")
                     .isLessThan(skippedMiddle.length());
