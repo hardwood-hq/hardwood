@@ -81,6 +81,19 @@ public class RowGroupIterator {
     /// [#setTailSkip(long)] once the gate decision is in.
     private long tailSkip;
 
+    /// Physical row offset (SQL `OFFSET` without a filter) over the concatenated
+    /// relation. Applied in [#buildWorkList]: row groups whose cumulative end is
+    /// at or before this offset are dropped (their footers are read to count
+    /// rows, but no data page of theirs is fetched), and the row group the offset
+    /// lands in becomes the first work item. `0` disables the seek.
+    private final long physicalSkip;
+
+    /// Leading rows of the first kept row group that fall before [#physicalSkip]
+    /// and must be decoded and discarded by the row reader after the iterator has
+    /// seeked to that row group. Computed in [#buildWorkList]; `0` unless a
+    /// no-filter `skip` lands inside a row group.
+    private long firstRowGroupResidue;
+
     // Set after first file
     private FileSchema referenceSchema;
     private ProjectedSchema projectedSchema;
@@ -155,7 +168,7 @@ public class RowGroupIterator {
     /// @param context the Hardwood context
     /// @param maxRows maximum rows to read (0 = unlimited)
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context, long maxRows) {
-        this(inputFiles, context, maxRows, 0);
+        this(inputFiles, context, maxRows, 0, 0);
     }
 
     /// Creates a RowGroupIterator with a tail-skip budget applied to the first
@@ -171,21 +184,63 @@ public class RowGroupIterator {
     ///        cross-column alignment.
     public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
                             long maxRows, long tailSkip) {
+        this(inputFiles, context, maxRows, tailSkip, 0);
+    }
+
+    /// Creates a RowGroupIterator with a physical-skip offset over the
+    /// concatenated relation, seeking past whole leading row groups.
+    ///
+    /// @param inputFiles one or more input files (must not be empty)
+    /// @param context the Hardwood context
+    /// @param maxRows maximum rows to read (0 = unlimited)
+    /// @param tailSkip leading rows of the first row group to skip via per-page
+    ///        masking (0 = unused); mutually exclusive with `physicalSkip`
+    /// @param physicalSkip absolute row offset to seek to before reading
+    ///        (0 = unused). Earlier row groups are dropped without fetching
+    ///        their data; the residue within the landing row group is exposed
+    ///        via [#residueRows] for the reader to discard.
+    public RowGroupIterator(List<InputFile> inputFiles, HardwoodContextImpl context,
+                            long maxRows, long tailSkip, long physicalSkip) {
         if (inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
         if (tailSkip < 0) {
             throw new IllegalArgumentException("tailSkip must be non-negative, got " + tailSkip);
         }
+        if (physicalSkip < 0) {
+            throw new IllegalArgumentException("physicalSkip must be non-negative, got " + physicalSkip);
+        }
+        if (tailSkip > 0 && physicalSkip > 0) {
+            throw new IllegalArgumentException(
+                    "tailSkip and physicalSkip are mutually exclusive, got tailSkip=" + tailSkip
+                            + ", physicalSkip=" + physicalSkip);
+        }
         this.inputFiles = new ArrayList<>(inputFiles);
         this.context = context;
         this.maxRows = maxRows;
         this.tailSkip = tailSkip;
+        this.physicalSkip = physicalSkip;
     }
 
     /// Returns the maximum rows limit (0 = unlimited).
     public long maxRows() {
         return maxRows;
+    }
+
+    /// Leading rows of the first kept row group that precede the physical `skip`
+    /// offset and must be discarded by the row reader once the iterator has
+    /// seeked to that row group. `0` unless a no-filter `skip` landed inside a
+    /// row group. Valid only after [#initialize].
+    public long residueRows() {
+        return firstRowGroupResidue;
+    }
+
+    /// The row reader's `maxRows` cap adjusted for the physical-skip residue: the
+    /// reader yields the residue rows (later discarded) ahead of the caller's
+    /// rows, so its LIMIT must cover both. Returns `0` (unlimited) when `maxRows`
+    /// is unset. Valid only after [#initialize].
+    public long effectiveMaxRows() {
+        return maxRows <= 0 ? maxRows : Math.addExact(maxRows, firstRowGroupResidue);
     }
 
     /// Sets the reference schema and pre-prepared first file, skipping [#openFirst()].
@@ -814,14 +869,18 @@ public class RowGroupIterator {
     /// LIMIT), so a matching row can sit past the first `N` scanned rows and
     /// every surviving page must remain fetchable. Statistics pushdown still
     /// prunes pages and row groups, and the matched-row cap is enforced at the
-    /// reader. Without a filter, returns `max(0, maxRows - workItem.rowsConsumedBefore())`,
-    /// which naturally trims the last partially-needed row group's fetch plan
-    /// while being a no-op (all pages kept) for fully-needed earlier ones.
+    /// reader. Without a filter, returns
+    /// `max(0, effectiveMaxRows - workItem.rowsConsumedBefore())`, which naturally
+    /// trims the last partially-needed row group's fetch plan while being a no-op
+    /// (all pages kept) for fully-needed earlier ones. The budget is the
+    /// residue-adjusted [#effectiveMaxRows], not the raw `maxRows`: the
+    /// physical-skip residue is fetched from the first kept row group and
+    /// discarded downstream, so it counts against the fetch budget too.
     private long perRgMaxRows(WorkItem workItem) {
         if (maxRows <= 0 || filterPredicate != null) {
             return 0;
         }
-        return Math.max(0, maxRows - workItem.rowsConsumedBefore());
+        return Math.max(0, effectiveMaxRows() - workItem.rowsConsumedBefore());
     }
 
     /// Returns the context.
@@ -855,10 +914,25 @@ public class RowGroupIterator {
     // ==================== Internal ====================
 
     /// Builds the work list by iterating all files and row groups.
+    ///
+    /// A no-filter [#physicalSkip] is applied here as a global offset over the
+    /// concatenated relation: row groups whose cumulative end is at or before the
+    /// offset are dropped (their footers are read to count rows, but no data page
+    /// of theirs is fetched), and the row group the offset lands in becomes the
+    /// first work item, with [#firstRowGroupResidue] recording how many of its
+    /// leading rows the reader must still discard. `rowsConsumedBefore` is rebased
+    /// so the first kept row group sits at local position `0`, keeping
+    /// [#perRgMaxRows] correct relative to the post-skip relation. A filter turns
+    /// `skip` into a logical OFFSET over matched rows (applied by the reader), so
+    /// it never seeks here.
     private void buildWorkList() {
-        long rowBudget = maxRows > 0 ? maxRows : Long.MAX_VALUE;
-        long rowsConsumed = 0;
         boolean hasFilter = filterPredicate != null;
+        long skip = hasFilter ? 0L : physicalSkip;
+
+        long cumulative = 0L;            // global, footer-derived rows walked so far
+        long localConsumed = 0L;         // rows in kept row groups (post-skip relation)
+        long rowBudget = Long.MAX_VALUE; // finalized once the offset's row group is found
+        boolean started = false;         // reached the row group the offset lands in?
 
         for (int fileIndex = 0; fileIndex < inputFiles.size() && rowBudget > 0; fileIndex++) {
             PreparedFile prepared = getPreparedFile(fileIndex);
@@ -866,6 +940,23 @@ public class RowGroupIterator {
 
             for (int rgIndex = 0; rgIndex < rowGroups.size() && rowBudget > 0; rgIndex++) {
                 RowGroup rg = rowGroups.get(rgIndex);
+                long rgRows = rg.numRows();
+
+                if (!started && cumulative + rgRows <= skip) {
+                    // Entire row group precedes the offset: counted, never fetched.
+                    cumulative += rgRows;
+                    continue;
+                }
+                if (!started) {
+                    started = true;
+                    firstRowGroupResidue = skip - cumulative;
+                    // Residue rows are fetched then discarded by the reader, so the
+                    // fetch budget covers them on top of the yielded maxRows.
+                    rowBudget = (maxRows > 0 && !hasFilter)
+                            ? Math.addExact(maxRows, firstRowGroupResidue)
+                            : Long.MAX_VALUE;
+                }
+
                 workItems.add(new WorkItem(
                         prepared.inputFile,
                         rg,
@@ -873,15 +964,16 @@ public class RowGroupIterator {
                         fileIndex,
                         rgIndex,
                         workItems.size(),
-                        rowsConsumed));
+                        localConsumed));
 
                 // maxRows limiting: deduct row count from budget.
                 // With a filter active, actual match count is unpredictable,
                 // so all row groups remain available.
-                if (!hasFilter) {
-                    rowBudget -= rg.numRows();
+                if (!hasFilter && maxRows > 0) {
+                    rowBudget -= rgRows;
                 }
-                rowsConsumed += rg.numRows();
+                localConsumed += rgRows;
+                cumulative += rgRows;
             }
 
             // Trigger prefetch of next file

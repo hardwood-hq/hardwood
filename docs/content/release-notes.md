@@ -13,6 +13,10 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
+## 1.1.0-SNAPSHOT
+
+- Physical `skip(N)` on multi-file row readers is now a true global offset over the concatenated input files; skipped files have their footers read for row counts, but their data pages are not decoded.
+
 ## 1.0.0.Final (2026-06-25)
 
 [Announcement blog post](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/) · [API changes](/api-changes/1.0.0.Final/)

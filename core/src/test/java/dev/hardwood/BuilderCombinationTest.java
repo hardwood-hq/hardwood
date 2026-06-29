@@ -237,6 +237,44 @@ class BuilderCombinationTest {
         }
     }
 
+    /// A file that is skipped but is *not* the first file: its footer is read
+    /// lazily to count rows while the global offset is being located, but none
+    /// of its data pages are fetched. `openAll` pre-reads file 0's footer, so
+    /// only a non-first skipped file exercises the lazy footer-without-data path.
+    @Test
+    void physicalMultiFileSkipDoesNotReadSkippedNonFirstFileData() throws Exception {
+        // Footer-only read cost of part1, derived rather than hard-coded: a
+        // single-file open reads exactly the footer via the same metadata reader
+        // the multi-file seek uses lazily.
+        CountingInputFile probe = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part1.parquet")));
+        try (ParquetFileReader ignored = ParquetFileReader.open(probe)) {
+            // open() reads the footer
+        }
+        int footerOnlyReads = probe.readCount();
+
+        // [part0 (0..149), part1 (150..249), part0 (0..149)] — 400 global rows.
+        // skip(260) lands in the third file at local offset 10; part1 in the
+        // middle is fully below the offset, so it is skipped.
+        CountingInputFile file0 = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part0.parquet")));
+        CountingInputFile file1 = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part1.parquet")));
+        CountingInputFile file2 = new CountingInputFile(InputFile.of(
+                Paths.get("src/test/resources/multi_file_part0.parquet")));
+
+        try (ParquetFileReader reader = ParquetFileReader.openAll(List.of(file0, file1, file2))) {
+            assertThat(ids(reader.buildRowReader().skip(260).head(1)))
+                    .containsExactly(10L);
+            assertThat(file1.readCount())
+                    .as("skipped non-first file: footer read for its row count, no data pages fetched")
+                    .isEqualTo(footerOnlyReads);
+            assertThat(file2.readCount())
+                    .as("target file's data pages are fetched")
+                    .isGreaterThan(footerOnlyReads);
+        }
+    }
+
     private static List<Long> ids(RowReaderBuilder builder) {
         List<Long> rows = new ArrayList<>();
         try (RowReader r = builder.build()) {
