@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.encoding;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Arrays;
 
 import dev.hardwood.internal.encoding.simd.SimdOperations;
@@ -26,7 +24,6 @@ public class RleBitPackingHybridDecoder {
     private static final ThreadLocal<int[]> TEMP_INDICES = new ThreadLocal<>();
 
     private final byte[] data;
-    private final ByteBuffer dataBuffer;
     private final int dataEnd;
     private final int bitWidth;
     private final int bitMask;
@@ -51,7 +48,6 @@ public class RleBitPackingHybridDecoder {
                     + ". Must be between 0 and 32");
         }
         this.data = data;
-        this.dataBuffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
         this.dataEnd = offset + length;
         this.pos = offset;
         this.bitWidth = bitWidth;
@@ -291,51 +287,12 @@ public class RleBitPackingHybridDecoder {
             }
         }
         else if (bitsInBuffer == 0 && width <= 8) {
-            while (count >= 8 && pos + 8 <= dataEnd) {
-                long bits = dataBuffer.getLong(pos);
-                pos += width;
-
-                output[outPos] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 1] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 2] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 3] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 4] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 5] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 6] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 7] = (int) (bits & mask);
-                outPos += 8;
-                count -= 8;
-            }
-
-            while (count >= 8 && pos + width <= dataEnd) {
-                long bits = 0;
-                for (int i = 0; i < width; i++) {
-                    bits |= ((long) (data[pos++] & 0xFF)) << (i * 8);
-                }
-                output[outPos] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 1] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 2] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 3] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 4] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 5] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 6] = (int) (bits & mask);
-                bits >>>= width;
-                output[outPos + 7] = (int) (bits & mask);
-                outPos += 8;
-                count -= 8;
+            int groups = Math.min(count / 8, (dataEnd - pos) / width);
+            if (groups > 0) {
+                int bytesConsumed = SIMD_OPS.unpackBitWidthN(data, pos, output, outPos, groups * 8, width);
+                pos += bytesConsumed;
+                outPos += groups * 8;
+                count -= groups * 8;
             }
         }
 

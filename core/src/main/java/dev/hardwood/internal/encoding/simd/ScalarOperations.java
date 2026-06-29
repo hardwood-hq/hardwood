@@ -84,10 +84,9 @@ public final class ScalarOperations implements SimdOperations {
 
         // Process 8 values at a time
         while (count >= 8 && dataPos + bitWidth <= data.length) {
-            long bits = 0;
-            for (int i = 0; i < bitWidth; i++) {
-                bits |= ((long) (data[dataPos + i] & 0xFF)) << (i * 8);
-            }
+            long bits = dataPos + 8 <= data.length
+                    ? readLittleEndianLong(data, dataPos)
+                    : readLittleEndianBytes(data, dataPos, bitWidth);
 
             output[outPos] = (int) (bits & mask);
             bits >>>= bitWidth;
@@ -112,6 +111,25 @@ public final class ScalarOperations implements SimdOperations {
         }
 
         return bytesConsumed;
+    }
+
+    private static long readLittleEndianLong(byte[] data, int dataPos) {
+        return ((long) data[dataPos] & 0xFF)
+                | (((long) data[dataPos + 1] & 0xFF) << 8)
+                | (((long) data[dataPos + 2] & 0xFF) << 16)
+                | (((long) data[dataPos + 3] & 0xFF) << 24)
+                | (((long) data[dataPos + 4] & 0xFF) << 32)
+                | (((long) data[dataPos + 5] & 0xFF) << 40)
+                | (((long) data[dataPos + 6] & 0xFF) << 48)
+                | (((long) data[dataPos + 7] & 0xFF) << 56);
+    }
+
+    private static long readLittleEndianBytes(byte[] data, int dataPos, int byteCount) {
+        long bits = 0;
+        for (int i = 0; i < byteCount; i++) {
+            bits |= ((long) (data[dataPos + i] & 0xFF)) << (i * 8);
+        }
+        return bits;
     }
 
     @Override
