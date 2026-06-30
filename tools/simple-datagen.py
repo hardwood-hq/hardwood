@@ -11,7 +11,7 @@ import numpy
 import pyarrow as pa
 import pyarrow.parquet as pq
 import pyarrow.parquet.encryption as pe
-from datetime import datetime, date, time, timezone
+from datetime import datetime, date, time, timezone, timedelta
 from decimal import Decimal
 import uuid
 
@@ -3762,14 +3762,22 @@ bloom_schema = pa.schema([
     ('code', pa.int32(), False),
     ('price', pa.float32(), False),
     ('ratio', pa.float64(), False),
+    ('dec', pa.decimal128(38, 0), False),
+    ('ts', pa.timestamp('us', tz='UTC'), False),
 ])
+bloom_ts_base = datetime(2024, 1, 1, tzinfo=timezone.utc)
 # 'name' values vary in length from 0 to 63 bytes so that hashing them exercises
 # every xxHash64 code path: the empty input (zero-length value), the 1-byte tail
 # (short names), the 4-byte tail, and the >=32-byte accumulator-lane loop (the long
 # names). 'code' is INT32 (4-byte values) and 'id' is INT64 (8-byte values), covering
 # the fixed-width paths too. 'price' (FLOAT) holds even multiples of 2 and 'ratio'
 # (DOUBLE) multiples of 0.5, so an in-range value such as 1.0 / 0.25 is never written
-# and can be proven absent only by the bloom filter, not by min/max statistics.
+# and can be proven absent only by the bloom filter, not by min/max statistics. 'dec'
+# is DECIMAL(38, 0), which PyArrow stores as FIXED_LEN_BYTE_ARRAY(16); it holds even
+# values too, covering the FLBA equality path with real fixed-length bytes. 'ts' is
+# TIMESTAMP(us, UTC) — physically INT64 — at even-second offsets from 2024-01-01, so a
+# logical-type predicate (Instant) resolves to the physical long and an odd-second
+# instant is in range but absent, exercising the logical→physical bloom path.
 bloom_names = ['x' * i for i in range(64)]
 bloom_table = pa.table({
     'id': list(range(64)),
@@ -3778,6 +3786,8 @@ bloom_table = pa.table({
     'code': [v * 3 for v in range(64)],
     'price': [float(v * 2) for v in range(64)],
     'ratio': [v * 0.5 for v in range(64)],
+    'dec': [Decimal(v * 2) for v in range(64)],
+    'ts': [bloom_ts_base + timedelta(seconds=v * 2) for v in range(64)],
 }, schema=bloom_schema)
 
 pq.write_table(
@@ -3792,13 +3802,15 @@ pq.write_table(
         'code': {'ndv': 64, 'fpp': 0.05},
         'price': {'ndv': 64, 'fpp': 0.05},
         'ratio': {'ndv': 64, 'fpp': 0.05},
+        'dec': {'ndv': 64, 'fpp': 0.05},
+        'ts': {'ndv': 64, 'fpp': 0.05},
     },
 )
 
 print("\nGenerated bloom_filter_test.parquet:")
 print("  - 1 row group, 64 rows, INT64 id + INT64 value + STRING name + INT32 code"
-      " + FLOAT price + DOUBLE ratio")
-print("  - Bloom filters on 'id', 'name', 'code', 'price', 'ratio'; 'value' has none")
+      " + FLOAT price + DOUBLE ratio + DECIMAL(38,0)/FLBA dec + TIMESTAMP(us,UTC) ts")
+print("  - Bloom filters on 'id', 'name', 'code', 'price', 'ratio', 'dec', 'ts'; 'value' has none")
 
 # =====================================================================
 # Local-wall-clock TIMESTAMP fixture (#568). PyArrow's `pa.timestamp(unit)`

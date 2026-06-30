@@ -214,7 +214,8 @@ Parameterized sub-structs — all fields ✅: `DecimalType` (scale, precision),
 ### BloomFilterHeader · BloomFilterAlgorithm · BloomFilterHash · BloomFilterCompression
 All fields ✅ — the bloom filter at `bloom_filter_offset` is read and decoded (header plus the
 split-block bitset), with an XXH64 membership-check primitive (#669). The decoded filter drives
-`eq`/`in` row-group pruning for INT32, INT64, and binary columns (#105). Dive surfacing is #507.
+row-group pruning: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the
+integer and binary types (#105). Dive surfacing is #507.
 
 ---
 

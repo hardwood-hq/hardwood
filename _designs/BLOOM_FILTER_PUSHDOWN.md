@@ -39,7 +39,7 @@ interface BloomFilterSource {
 
 ### `internal/predicate/RowGroupBloomFilterSource.java`
 
-The I/O-backed implementation over one `(InputFile, RowGroup)` pair. It reads a column's filter lazily — only when the evaluator probes it — and caches the result (including absence) for the lifetime of one row group's evaluation, so an `IN` list probing the same column reads the filter once. Evaluation of a row group is single-threaded (a sequential `stream().filter(...)`), so a plain `HashMap` cache suffices.
+The I/O-backed implementation over one `(InputFile, RowGroup)` pair. It reads a column's filter lazily — only when the evaluator probes it — and caches the result (including absence) for the lifetime of one row group's evaluation, so an `IN` list probing the same column reads the filter once. Evaluation of a row group is single-threaded (a sequential `stream().filter(...)`), so the cache — parallel `BloomFilter[]` / `boolean[]` arrays indexed by column position — needs no synchronization.
 
 Reading a filter:
 
@@ -61,23 +61,24 @@ A `null` source short-circuits every bloom check to "cannot drop", so the bloom 
 
 ### Callers
 
-Both row-group filtering sites construct a `RowGroupBloomFilterSource` for the row group under test and pass it to `canDropRowGroup`:
-
-- `RowGroupIterator.filterRowGroups` (the multi-file scan path)
-- `ParquetFileReader.filterRowGroups` (the single-file reader path)
+Bloom pruning is wired in a single place. `RowGroupIterator.filterRowGroups` constructs a `RowGroupBloomFilterSource` for each row group under test and passes it to `canDropRowGroup`. This is the only statistics/bloom evaluation site: both multi-file scans and the single-file reader path run through the same iterator, so the single-file path reaches it there too. `ParquetFileReader.filterRowGroups` applies only the byte-range `RowGroupPredicate` (split selection) and never constructs a bloom source or evaluates statistics.
 
 Row groups dropped by a bloom filter are counted in the existing `RowGroupFilterEvent.rowGroupsSkipped`, alongside statistics drops.
 
 ## Testing
 
 - **`RowGroupBloomFilterSource`**: reads a real filter from `bloom_filter_test.parquet` for a bloom-bearing column and returns `null` for the column without one (`value`).
-- **Evaluator, end-to-end** against `bloom_filter_test.parquet` (single row group, 64 rows; bloom filters on `id` INT64 `0..63`, `code` INT32 `0,3,…,189`, `name` STRING `""`…`"x"*63`, `price` FLOAT `0,2,…,126`, `ratio` DOUBLE `0,0.5,…,31.5`; `value` INT64 has none):
+- **Evaluator** (`BloomFilterPushDownTest`) against `bloom_filter_test.parquet` (single row group, 64 rows; bloom filters on `id` INT64 `0..63`, `code` INT32 `0,3,…,189`, `name` STRING `""`…`"x"*63`, `price` FLOAT `0,2,…,126`, `ratio` DOUBLE `0,0.5,…,31.5`, `dec` DECIMAL(38,0) stored as FLBA(16) `0,2,…,126`, `ts` TIMESTAMP(us,UTC) at even-second offsets from `2024-01-01`; `value` INT64 has none):
   - `eq("code", 1)` — `1 ∈ [0, 189]` so statistics keep the group, but `1` is not a multiple of 3, so the bloom filter drops it. This is the discriminating case statistics cannot catch.
   - `eq("code", 3)` — present; the group is kept.
   - `eq("name", "w")` — sorts within `["", "x"*63]` but was never written; bloom drops it.
   - `eq("price", 1.0f)` / `eq("ratio", 0.25)` — in range but never written; bloom drops them. `eq("price", 2.0f)` / `eq("ratio", 0.5)` — present; kept.
+  - `eq("dec", 1)` — in range but never written; bloom drops it. `eq("dec", 2)` — present; kept. Covers the FLBA equality path with real fixed-length bytes (a DECIMAL/FLBA column, since a raw unannotated FLBA column is not reachable through the public predicate API).
+  - `eq("ts", Instant)` — a logical-type predicate resolves to the physical INT64 (epoch micros); an odd-second instant is in range but never written, so the bloom filter drops it on the physical value. Confirms logical types (`Instant`/`LocalTime`/`LocalDate`/`BigDecimal`/`UUID`) prune through their resolved physical encoding.
   - `eq("price", -0.0f)` — `+0.0` is stored and `-0.0f == +0.0f`, so the `±0` carve-out keeps the group rather than pruning on the raw-bit hash.
   - `eq("value", …)` — no bloom filter; falls back to statistics only.
   - `in("code", [1, 2])` — all absent; dropped. `in("code", [1, 3])` — `3` present; kept.
   - An `AND` whose bloom-eligible leaf is absent drops the group; an `OR` requires every branch to drop.
+- **Reader, end-to-end** (`BloomFilterEndToEndTest`): the same prune is exercised through the public `ColumnReader`, `ColumnReaders`, and `RowReader` APIs — an absent in-range value yields zero rows (the only row group is dropped), a present value returns its single row — including the `ts` logical-type path through `RowReader`.
+- **parquet-java oracle** (`BloomFilterParquetJavaOracleTest`, test-scoped `org.apache.parquet:parquet-column`): cross-checks against the reference implementation in two parts that compose into decision-for-decision parity — (1) `XxHash64.hash` equals `BlockSplitBloomFilter.hash` for `INT32` / `INT64` / `FLOAT` / `DOUBLE` / binary; (2) on a bitset built and serialized by parquet-java, Hardwood's `BloomFilter.mightContain` matches `BlockSplitBloomFilter.findHash` for every stored value and a wide sweep of absent ones (false positives included).
 - The existing statistics-only `RowGroupFilterEvaluator` / `FilterPredicateTest` suites continue to pass unchanged via the two-argument overload.

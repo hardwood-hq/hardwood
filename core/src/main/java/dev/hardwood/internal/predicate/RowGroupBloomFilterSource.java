@@ -93,7 +93,7 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
         // hold the header (a fixed-shape struct: an i32 plus three single-variant unions, ~19
         // bytes at most), clamped so it never runs past EOF — and parse just the header to learn
         // the region's total length.
-        int probe = (int) Math.min(fileLength() - offset, HEADER_PROBE_BYTES);
+        int probe = Math.toIntExact(Math.min(fileLength() - offset, HEADER_PROBE_BYTES));
         ByteBuffer window = inputFile.readRange(offset, probe);
         ThriftCompactReader windowReader = new ThriftCompactReader(window);
         BloomFilterHeader header = BloomFilterHeaderReader.read(windowReader);
