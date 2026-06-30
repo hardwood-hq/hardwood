@@ -10,8 +10,6 @@ package dev.hardwood;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.time.Instant;
-import java.util.ArrayList;
-import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
@@ -47,7 +45,11 @@ class BloomFilterEndToEndTest {
                 assertThat(countRows(col)).isZero();
             }
             try (ColumnReader col = reader.buildColumnReader("code").filter(PRESENT).build()) {
-                assertThat(countRows(col)).isEqualTo(1);
+                // Exactly one row matches; one batch of one record, then exhausted.
+                assertThat(col.nextBatch()).isTrue();
+                assertThat(col.getRecordCount()).isEqualTo(1);
+                assertThat(col.getInts()[0]).isEqualTo(3);
+                assertThat(col.nextBatch()).isFalse();
             }
         }
     }
@@ -62,20 +64,11 @@ class BloomFilterEndToEndTest {
             try (ColumnReaders cols = reader.buildColumnReaders(projection).filter(PRESENT).build()) {
                 ColumnReader code = cols.getColumnReader("code");
                 ColumnReader id = cols.getColumnReader("id");
-                List<Long> matchedIds = new ArrayList<>();
-                while (code.nextBatch() & id.nextBatch()) {
-                    int count = code.getRecordCount();
-                    int[] codes = code.getInts();
-                    long[] ids = id.getLongs();
-                    for (int i = 0; i < count; i++) {
-                        // Exact filtering: every returned row satisfies the predicate, batch-independent.
-                        assertThat(codes[i]).as("exact filter yields only code==3").isEqualTo(3);
-                        matchedIds.add(ids[i]);
-                    }
-                }
-                // code = id*3, so code==3 matches exactly one row, id==1 — asserted once over the
-                // full result rather than per row, so it holds regardless of how batches split.
-                assertThat(matchedIds).containsExactly(1L);
+                assertThat(code.nextBatch() & id.nextBatch()).isTrue();
+                assertThat(code.getRecordCount()).isEqualTo(1);
+                assertThat(code.getInts()[0]).isEqualTo(3);
+                assertThat(id.getLongs()[0]).isEqualTo(1L); // code = id*3, so code==3 is id==1
+                assertThat(code.nextBatch() & id.nextBatch()).isFalse();
             }
         }
     }
@@ -87,13 +80,10 @@ class BloomFilterEndToEndTest {
                 assertThat(countRows(rows)).isZero();
             }
             try (RowReader rows = reader.buildRowReader().filter(PRESENT).build()) {
-                int total = 0;
-                while (rows.hasNext()) {
-                    rows.next();
-                    assertThat(rows.getInt("code")).isEqualTo(3);
-                    total++;
-                }
-                assertThat(total).isEqualTo(1);
+                assertThat(rows.hasNext()).isTrue();
+                rows.next();
+                assertThat(rows.getInt("code")).isEqualTo(3);
+                assertThat(rows.hasNext()).isFalse();
             }
         }
     }

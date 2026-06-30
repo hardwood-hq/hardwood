@@ -68,7 +68,7 @@ Row groups dropped by a bloom filter are counted in the existing `RowGroupFilter
 ## Testing
 
 - **`RowGroupBloomFilterSource`**: reads a real filter from `bloom_filter_test.parquet` for a bloom-bearing column and returns `null` for the column without one (`value`).
-- **Evaluator** (`BloomFilterPushDownTest`) against `bloom_filter_test.parquet` (single row group, 64 rows; bloom filters on `id` INT64 `0..63`, `code` INT32 `0,3,…,189`, `name` STRING `""`…`"x"*63`, `price` FLOAT `0,2,…,126`, `ratio` DOUBLE `0,0.5,…,31.5`, `dec` DECIMAL(38,0) stored as FLBA(16) `0,2,…,126`, `ts` TIMESTAMP(us,UTC) at even-second offsets from `2024-01-01`; `value` INT64 has none):
+- **Evaluator** (`BloomFilterPushDownTest`) against `bloom_filter_test.parquet` (single row group, 64 rows; bloom filters on `id` INT64 `0..63`, `code` INT32 `0,3,…,189`, `name` STRING `""`…`"x"*63`, `price` FLOAT `0,2,…,126`, `ratio` DOUBLE `0,0.5,…,31.5`, `dec` DECIMAL(38,0) stored as FLBA(16) `0,2,…,126`, `ts` TIMESTAMP(us,UTC) at even-second offsets from `2024-01-01`, `sparse` INT64 `0,1000,…,63000`; `value` INT64 has none):
   - `eq("code", 1)` — `1 ∈ [0, 189]` so statistics keep the group, but `1` is not a multiple of 3, so the bloom filter drops it. This is the discriminating case statistics cannot catch.
   - `eq("code", 3)` — present; the group is kept.
   - `eq("name", "w")` — sorts within `["", "x"*63]` but was never written; bloom drops it.
@@ -77,7 +77,7 @@ Row groups dropped by a bloom filter are counted in the existing `RowGroupFilter
   - `eq("ts", Instant)` — a logical-type predicate resolves to the physical INT64 (epoch micros); an odd-second instant is in range but never written, so the bloom filter drops it on the physical value. Confirms logical types (`Instant`/`LocalTime`/`LocalDate`/`BigDecimal`/`UUID`) prune through their resolved physical encoding.
   - `eq("price", -0.0f)` — `+0.0` is stored and `-0.0f == +0.0f`, so the `±0` carve-out keeps the group rather than pruning on the raw-bit hash.
   - `eq("value", …)` — no bloom filter; falls back to statistics only.
-  - `in("code", [1, 2])` — all absent; dropped. `in("code", [1, 3])` — `3` present; kept.
+  - `in("code", [1, 2])` (INT32), `in("sparse", [1, 2])` (INT64, `sparse` = `0,1000,…,63000`), and `inStrings("name", ["w", "q"])` (binary) — all values absent; dropped. The same lists with one present value (`3` / `1000` / `"xx"`) are kept. `eq("sparse", 1)` covers the INT64 `eq` drop that `id` (contiguous) cannot.
   - An `AND` whose bloom-eligible leaf is absent drops the group; an `OR` requires every branch to drop.
 - **Reader, end-to-end** (`BloomFilterEndToEndTest`): the same prune is exercised through the public `ColumnReader`, `ColumnReaders`, and `RowReader` APIs — an absent in-range value yields zero rows (the only row group is dropped), a present value returns its single row — including the `ts` logical-type path through `RowReader`.
 - **parquet-java oracle** (`BloomFilterParquetJavaOracleTest`, test-scoped `org.apache.parquet:parquet-column`): cross-checks against the reference implementation in two parts that compose into decision-for-decision parity — (1) `XxHash64.hash` equals `BlockSplitBloomFilter.hash` for `INT32` / `INT64` / `FLOAT` / `DOUBLE` / binary; (2) on a bitset built and serialized by parquet-java, Hardwood's `BloomFilter.mightContain` matches `BlockSplitBloomFilter.findHash` for every stored value and a wide sweep of absent ones (false positives included).
