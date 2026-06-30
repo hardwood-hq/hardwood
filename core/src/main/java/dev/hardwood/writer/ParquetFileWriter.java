@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 
@@ -34,10 +35,11 @@ import dev.hardwood.schema.FileSchema;
 
 /// Writes a Parquet file through a columnar API.
 ///
-/// This first increment writes flat schemas of `REQUIRED INT32` columns as a
-/// single row group with one uncompressed, PLAIN-encoded data page per column.
-/// Each column's values are supplied once via [#writeInts]; the row group and
-/// footer are finalized on [#close()].
+/// This increment writes flat schemas of `REQUIRED INT32` columns as a single row
+/// group of uncompressed, PLAIN-encoded data pages. A column larger than the target
+/// page size is split across multiple size-bounded data pages. Each column's values
+/// are supplied once via [#writeInts]; the row group and footer are finalized on
+/// [#close()].
 ///
 /// The file is produced front to back and is valid only after `close()` returns.
 public final class ParquetFileWriter implements Closeable {
@@ -46,10 +48,14 @@ public final class ParquetFileWriter implements Closeable {
     private static final int FORMAT_VERSION = 1;
     private static final String CREATED_BY = "hardwood";
 
-    /// A data page's body length and value count are i32 on the wire, so a single
-    /// page cannot exceed this many bytes. Until multi-page writing lands a column
-    /// is written as one page, so this also bounds a single column's values.
-    private static final long MAX_DATA_PAGE_BYTES = Integer.MAX_VALUE;
+    /// Target uncompressed size of a single data page; a column larger than this is
+    /// split across multiple pages. Keeping a page well under the i32 wire limit also
+    /// means a page's size and value-count fields can never overflow. Becomes a
+    /// `WriterConfig` knob in a later increment.
+    private static final int TARGET_PAGE_BYTES = 1 << 20; // 1 MiB
+
+    /// Number of `INT32` values that fit in one page at [#TARGET_PAGE_BYTES].
+    private static final int INT32_VALUES_PER_PAGE = TARGET_PAGE_BYTES / Integer.BYTES;
 
     private final OutputFile out;
     private final FileSchema schema;
@@ -99,20 +105,21 @@ public final class ParquetFileWriter implements Closeable {
             throw new IllegalStateException("Column already written: " + column.name());
         }
         checkRowCount(values.length, column);
-        checkPageFits(values.length, Integer.BYTES, column.name());
 
-        byte[] valueBytes = PlainEncoder.encodeInts(values);
-        ThriftCompactWriter header = new ThriftCompactWriter();
-        PageHeaderWriter.writeDataPageV1(header, values.length, valueBytes.length, valueBytes.length, Encoding.PLAIN);
-        byte[] headerBytes = header.toByteArray();
-
+        // data_page_offset points at the first page; the chunk's pages follow
+        // contiguously. A column larger than one page is split into several.
         long dataPageOffset = out.position();
-        out.write(ByteBuffer.wrap(headerBytes));
-        out.write(ByteBuffer.wrap(valueBytes));
+        long chunkSize = 0;
+        int pos = 0;
+        do {
+            int count = Math.min(INT32_VALUES_PER_PAGE, values.length - pos);
+            chunkSize += writeIntDataPage(values, pos, count);
+            pos += count;
+        }
+        while (pos < values.length);
 
-        // total_*_size cover the whole column chunk including page headers; the
-        // page is stored uncompressed so the two sizes are equal.
-        long chunkSize = (long) headerBytes.length + valueBytes.length;
+        // total_*_size cover the whole column chunk including page headers; pages
+        // are stored uncompressed so the two sizes are equal.
         columnMeta[columnIndex] = new ColumnMetaData(
                 PhysicalType.INT32,
                 List.of(Encoding.PLAIN),
@@ -128,6 +135,21 @@ public final class ParquetFileWriter implements Closeable {
                 null,
                 null,
                 null);
+    }
+
+    /// Encodes `count` values starting at `from` as one uncompressed PLAIN V1 data
+    /// page and writes it. Returns the bytes written (page header + body).
+    private long writeIntDataPage(int[] values, int from, int count) throws IOException {
+        int[] pageValues = (from == 0 && count == values.length)
+                ? values
+                : Arrays.copyOfRange(values, from, from + count);
+        byte[] valueBytes = PlainEncoder.encodeInts(pageValues);
+        ThriftCompactWriter header = new ThriftCompactWriter();
+        PageHeaderWriter.writeDataPageV1(header, count, valueBytes.length, valueBytes.length, Encoding.PLAIN);
+        byte[] headerBytes = header.toByteArray();
+        out.write(ByteBuffer.wrap(headerBytes));
+        out.write(ByteBuffer.wrap(valueBytes));
+        return (long) headerBytes.length + valueBytes.length;
     }
 
     @Override
@@ -191,19 +213,6 @@ public final class ParquetFileWriter implements Closeable {
         else if (numRows != length) {
             throw new IllegalArgumentException("Column " + column.name() + " has " + length
                     + " values but the row group already has " + numRows + " rows");
-        }
-    }
-
-    /// Fail fast when a column's values would not fit in a single data page. The
-    /// writer emits one page per column today, so an oversized column must be
-    /// rejected loudly rather than silently producing a page with overflowed i32
-    /// size fields. Multi-page writing removes this limit.
-    static void checkPageFits(int numValues, int bytesPerValue, String columnName) {
-        long pageBytes = (long) numValues * bytesPerValue;
-        if (pageBytes > MAX_DATA_PAGE_BYTES) {
-            throw new IllegalArgumentException("Column '" + columnName + "' has " + numValues
-                    + " values (" + pageBytes + " bytes), exceeding the single data-page limit of "
-                    + MAX_DATA_PAGE_BYTES + " bytes. Writing a column as multiple pages is not yet implemented.");
         }
     }
 

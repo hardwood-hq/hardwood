@@ -190,10 +190,10 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] Row group size tracking
 - [ ] Automatic row group flushing
 - [ ] Dictionary page writing
-- [ ] Data page encoding and writing
+- [x] Data page encoding and writing
 - [ ] Page compression
-- [ ] Footer writing
-- [ ] File finalization
+- [x] Footer writing
+- [x] File finalization
 
 ### 6.3 Record Shredding (Dremel Algorithm)
 - [ ] Implement schema traversal for shredding
