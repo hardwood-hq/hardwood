@@ -42,12 +42,12 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] `SchemaElementReader`
   - [x] `LogicalTypeReader` (union deserialization with nested structs)
 - [ ] Implement `ThriftCompactWriter`
-  - [ ] Varint encoding
-  - [ ] Zigzag encoding
-  - [ ] Field header writing
-  - [ ] Struct writing
-  - [ ] List/Map container writing
-  - [ ] String/Binary writing
+  - [x] Varint encoding
+  - [x] Zigzag encoding
+  - [x] Field header writing
+  - [x] Struct writing
+  - [ ] List/Map container writing (list done; map writing pending)
+  - [x] String/Binary writing
 
 ---
 
@@ -84,24 +84,24 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Block/miniblock structure
   - [x] Min delta calculation per block
   - [x] Bit width calculation per miniblock
-  - [ ] Encoder implementation
+  - [ ] Encoder implementation (optional encoding; sequenced after the flat writer milestone)
   - [x] Decoder implementation
 - [x] DELTA_LENGTH_BYTE_ARRAY
   - [x] Length encoding with DELTA_BINARY_PACKED
   - [x] Raw byte concatenation
-  - [ ] Encoder implementation
+  - [ ] Encoder implementation (optional encoding; sequenced after the flat writer milestone)
   - [x] Decoder implementation
 - [x] DELTA_BYTE_ARRAY
   - [x] Prefix length calculation
   - [x] Suffix extraction
-  - [ ] Encoder implementation
+  - [ ] Encoder implementation (optional encoding; sequenced after the flat writer milestone)
   - [x] Decoder implementation
 
 ### 2.5 Byte Stream Split (BYTE_STREAM_SPLIT)
 - [x] Float byte separation/interleaving
 - [x] Double byte separation/interleaving
 - [x] FIXED_LEN_BYTE_ARRAY support
-- [ ] Encoder implementation
+- [ ] Encoder implementation (optional encoding; sequenced after the flat writer milestone)
 - [x] Decoder implementation
 
 ---
@@ -118,7 +118,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Define `DataPageHeader` Thrift structure
 - [x] Define `DataPageHeaderV2` Thrift structure
 - [x] Define `DictionaryPageHeader` Thrift structure
-- [ ] Page header serialization
+- [x] Page header serialization
 - [x] Page header deserialization
 - [x] CRC32 validation on read (`CrcValidator`)
 - [ ] CRC32 calculation for writing
@@ -140,14 +140,14 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Codec, num values, sizes
   - [x] Page offsets (data, index, dictionary)
   - [x] Statistics
-- [ ] Column chunk serialization
+- [x] Column chunk serialization
 - [x] Column chunk deserialization
 
 ### 4.2 Row Group
 - [x] Implement `RowGroup` class
-- [ ] Row group metadata serialization
+- [x] Row group metadata serialization
 - [x] Row group metadata deserialization
-- [ ] Sorting column tracking (optional)
+- [ ] Sorting column tracking (optional; non-goal for the flat writer milestone)
 
 ---
 
@@ -167,12 +167,16 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Key-value metadata
   - [x] Created by string
   - [x] Column orders (decoded onto `FileMetaData.columnOrders`; #595)
-- [ ] FileMetaData serialization
+- [x] FileMetaData serialization
 - [x] FileMetaData deserialization
 
 ---
 
 ## Phase 6: Writer Implementation
+
+> Architecture and delivery sequencing for write support live in
+> [_designs/WRITER_SUPPORT.md](_designs/WRITER_SUPPORT.md) (#9), which is the plan of
+> record. The boxes below are the fine-grained inventory ticked as increments land.
 
 ### 6.1 Writer Architecture
 - [ ] Implement `ParquetWriter<T>` main class
@@ -199,6 +203,12 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] Nested structure handling
 - [ ] Repeated field handling
 - [ ] Optional field handling
+
+### 6.4 Logical Type Writing
+- [ ] Implement `LogicalTypeWriter` (`LogicalType` union serialization; inverse of `LogicalTypeReader`)
+- [ ] Serialize legacy `converted_type` / `scale` / `precision` on `SchemaElement`
+- [ ] `FileSchema.Builder` logical-type overload (and `FIXED_LEN_BYTE_ARRAY` type length)
+- [ ] Logical-type value conversion in the writer API (inverse of `LogicalTypeConverter`)
 
 ---
 
@@ -341,16 +351,18 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ## Phase 10: Public API Design
 
 ### 10.1 Schema Builder API
+> Superseded for the flat writer by `FileSchema.Builder` (#9); the items below
+> describe the fuller fluent/nested builder that lands with nested-write support.
 - [ ] Implement fluent `Types.buildMessage()` API
-- [ ] Primitive type builders with logical type support
+- [ ] Primitive type builders with logical type support (see Phase 6.4)
 - [ ] Group builders for nested structures
 - [ ] List and Map convenience builders
 
 ### 10.2 Writer API
 - [ ] Implement `ParquetWriter.builder(path)` fluent API
 - [ ] Configuration methods (schema, codec, sizes, etc.)
-- [ ] GenericRecord support
-- [ ] Custom record materializer support
+- [ ] GenericRecord support (Avro write adapter; later milestone)
+- [ ] Custom record materializer support (non-goal for now)
 
 ### 10.3 Reader API
 - [x] `ParquetFileReader` with static `open()` factory methods

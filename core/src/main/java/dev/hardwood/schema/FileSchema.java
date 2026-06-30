@@ -127,6 +127,35 @@ public class FileSchema {
         return true;
     }
 
+    /// Creates a builder for constructing a flat schema programmatically, for use
+    /// with the writer.
+    ///
+    /// @param name the schema (message) name, conventionally `"schema"`
+    public static Builder builder(String name) {
+        return new Builder(name);
+    }
+
+    /// Flattens this schema back into the depth-first [SchemaElement] list written
+    /// to the file footer, the inverse of [#fromSchemaElements].
+    ///
+    /// Only flat schemas are supported; nested schemas are handled by a later
+    /// writer increment.
+    ///
+    /// @throws UnsupportedOperationException if the schema is not flat
+    public List<SchemaElement> toSchemaElements() {
+        if (!isFlatSchema()) {
+            throw new UnsupportedOperationException("Only flat schemas can be serialized by the writer");
+        }
+        List<SchemaElement> elements = new ArrayList<>(columns.size() + 1);
+        elements.add(new SchemaElement(name, null, null, RepetitionType.REQUIRED, columns.size(),
+                null, null, null, null, null));
+        for (ColumnSchema column : columns) {
+            elements.add(new SchemaElement(column.name(), column.type(), column.typeLength(),
+                    column.repetitionType(), null, null, null, null, null, column.logicalType()));
+        }
+        return elements;
+    }
+
     /// Reconstruct schema from Thrift SchemaElement list.
     public static FileSchema fromSchemaElements(List<SchemaElement> elements) {
         if (elements.isEmpty()) {
@@ -398,6 +427,49 @@ public class FileSchema {
                 }
                 sb.append(";\n");
             }
+        }
+    }
+
+    /// Builder for constructing a flat [FileSchema] programmatically.
+    ///
+    /// Each added column becomes a top-level primitive leaf. Nested groups and
+    /// repeated columns are handled by a later writer increment.
+    public static final class Builder {
+
+        private final String name;
+        private final List<SchemaElement> columns = new ArrayList<>();
+
+        private Builder(String name) {
+            this.name = name;
+        }
+
+        /// Append a primitive column.
+        ///
+        /// @param columnName the column name
+        /// @param type the physical type
+        /// @param repetition `REQUIRED` or `OPTIONAL`
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`
+        public Builder addColumn(String columnName, PhysicalType type, RepetitionType repetition) {
+            if (repetition == RepetitionType.REPEATED) {
+                throw new IllegalArgumentException(
+                        "Repeated columns are not yet supported by the writer: " + columnName);
+            }
+            columns.add(new SchemaElement(columnName, type, null, repetition, null, null, null, null, null, null));
+            return this;
+        }
+
+        /// Build the schema.
+        ///
+        /// @throws IllegalArgumentException if no columns were added
+        public FileSchema build() {
+            if (columns.isEmpty()) {
+                throw new IllegalArgumentException("Schema must have at least one column");
+            }
+            List<SchemaElement> elements = new ArrayList<>(columns.size() + 1);
+            elements.add(new SchemaElement(name, null, null, RepetitionType.REQUIRED, columns.size(),
+                    null, null, null, null, null));
+            elements.addAll(columns);
+            return fromSchemaElements(elements);
         }
     }
 }

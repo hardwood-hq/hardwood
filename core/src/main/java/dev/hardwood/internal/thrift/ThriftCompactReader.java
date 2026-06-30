@@ -13,22 +13,27 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 
+import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
+
 /// Reader for Thrift Compact Protocol using direct ByteBuffer access.
 /// Reference: https://github.com/apache/thrift/blob/master/doc/specs/thrift-compact-protocol.md
 public class ThriftCompactReader {
 
-    private static final byte TYPE_BOOLEAN_TRUE = 0x01;
-    private static final byte TYPE_BOOLEAN_FALSE = 0x02;
-    private static final byte TYPE_BYTE = 0x03;
-    private static final byte TYPE_I16 = 0x04;
-    private static final byte TYPE_I32 = 0x05;
-    private static final byte TYPE_I64 = 0x06;
-    private static final byte TYPE_DOUBLE = 0x07;
-    private static final byte TYPE_BINARY = 0x08;
-    private static final byte TYPE_LIST = 0x09;
-    private static final byte TYPE_SET = 0x0A;
-    private static final byte TYPE_MAP = 0x0B;
-    private static final byte TYPE_STRUCT = 0x0C;
+    // The reader dispatches on the raw wire byte in a switch, whose case labels must
+    // be compile-time constants, so it references the shared byte codes in
+    // [ThriftCompactConstants.FieldType.Codes] rather than the enum values.
+    private static final byte TYPE_BOOLEAN_TRUE = Codes.BOOLEAN_TRUE;
+    private static final byte TYPE_BOOLEAN_FALSE = Codes.BOOLEAN_FALSE;
+    private static final byte TYPE_BYTE = Codes.BYTE;
+    private static final byte TYPE_I16 = Codes.I16;
+    private static final byte TYPE_I32 = Codes.I32;
+    private static final byte TYPE_I64 = Codes.I64;
+    private static final byte TYPE_DOUBLE = Codes.DOUBLE;
+    private static final byte TYPE_BINARY = Codes.BINARY;
+    private static final byte TYPE_LIST = Codes.LIST;
+    private static final byte TYPE_SET = Codes.SET;
+    private static final byte TYPE_MAP = Codes.MAP;
+    private static final byte TYPE_STRUCT = Codes.STRUCT;
 
     private final ByteBuffer buffer;
     private final int startPosition;
