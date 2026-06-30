@@ -10,13 +10,18 @@ package dev.hardwood.writer;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.thrift.PageHeaderReader;
+import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ColumnReader;
@@ -24,7 +29,6 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Round-trip tests: write a flat `REQUIRED INT32` file with [ParquetFileWriter],
@@ -166,15 +170,48 @@ class WriterRoundTripTest {
     }
 
     @Test
-    void rejectsColumnLargerThanOneDataPage() {
-        // 600M INT32 values = 2.4 GB > the 2 GB single-page limit. Checked via the
-        // helper so the boundary is exercised without a multi-GB allocation.
-        assertThatThrownBy(() -> ParquetFileWriter.checkPageFits(600_000_000, Integer.BYTES, "big"))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("multiple pages");
+    void largeColumnIsSplitAcrossMultiplePages() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+        // Comfortably more than one target page (262,144 INT32 values per 1 MiB page).
+        int n = 600_000;
+        int[] values = new int[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = i;
+        }
 
-        assertThatCode(() -> ParquetFileWriter.checkPageFits(1_000, Integer.BYTES, "small"))
-                .doesNotThrowAnyException();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeInts(0, values);
+        }
+        byte[] bytes = out.toByteArray();
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            assertThat(reader.getFileMetaData().numRows()).isEqualTo(n);
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            assertThat(countDataPages(bytes, meta.dataPageOffset(), meta.numValues())).isGreaterThan(1);
+            // Arrays.equals over containsExactly: the latter is O(n) with per-element
+            // boxing/description and is needlessly slow at 600k elements.
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    /// Walks the column chunk's contiguous data pages from `startOffset`, returning
+    /// how many pages it took to cover `totalValues`.
+    private static int countDataPages(byte[] file, long startOffset, long totalValues) throws Exception {
+        ByteBuffer buf = ByteBuffer.wrap(file);
+        int offset = Math.toIntExact(startOffset);
+        long seen = 0;
+        int pages = 0;
+        while (seen < totalValues) {
+            ThriftCompactReader reader = new ThriftCompactReader(buf, offset);
+            PageHeader header = PageHeaderReader.read(reader);
+            pages++;
+            seen += header.dataPageHeader().numValues();
+            offset += reader.getBytesRead() + header.compressedPageSize();
+        }
+        return pages;
     }
 
     private static int[] readInts(ParquetFileReader reader, int columnIndex) {
