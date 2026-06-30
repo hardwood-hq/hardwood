@@ -123,12 +123,17 @@ Better to ship a short review with 5 real defects than a long one where the main
 
 ### 7. Write the findings file
 
-Write to `_reviews/pr-<N>-review.md` (or `_reviews/branch-<name>-review.md` for non-PR runs). The `_reviews/` directory already exists; do not write findings to the repo root. Format:
+Write to `_reviews/pr-<N>-review.md` (or `_reviews/branch-<name>-review.md` for non-PR runs). The `_reviews/` directory already exists; do not write findings to the repo root.
+
+Stamp the **current session id** on its own line under the PR URL, so "which session produced this review?" is answerable from the file alone instead of by grepping transcripts. Derive the id from the scratchpad path the harness gives this session: it is the path component immediately before `/scratchpad` (e.g. `/tmp/claude-…/<session-id>/scratchpad`). If that path isn't to hand, fall back to the newest `*.jsonl` under `/claude-config/projects/-workspace/` — its basename is the session id. The id is a many-to-one pointer (a resumed session that reviews two PRs stamps the same id on both); that's expected — it identifies the session, not the review.
+
+Format:
 
 ```markdown
 # PR #<N> — <title> — Review actions
 
 <https://github.com/hardwood-hq/hardwood/pull/<N>>
+Session: <session-id>
 
 ## Summary
 
