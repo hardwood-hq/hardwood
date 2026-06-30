@@ -362,10 +362,7 @@ final class PqListImpl implements PqList {
         if (batch.isElementNull(projCol, valueIdx)) {
             return null;
         }
-        if (ValueConverter.isStringLeaf(elementSchema)) {
-            return batch.getString(projCol, valueIdx);
-        }
-        return ValueConverter.convertValue(batch.getValue(projCol, valueIdx), elementSchema);
+        return batch.decodeLeaf(projCol, valueIdx, elementSchema);
     }
 
     private Object getNestedElement(int index) {
