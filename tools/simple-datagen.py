@@ -3764,6 +3764,7 @@ bloom_schema = pa.schema([
     ('ratio', pa.float64(), False),
     ('dec', pa.decimal128(38, 0), False),
     ('ts', pa.timestamp('us', tz='UTC'), False),
+    ('sparse', pa.int64(), False),
 ])
 bloom_ts_base = datetime(2024, 1, 1, tzinfo=timezone.utc)
 # 'name' values vary in length from 0 to 63 bytes so that hashing them exercises
@@ -3777,7 +3778,10 @@ bloom_ts_base = datetime(2024, 1, 1, tzinfo=timezone.utc)
 # values too, covering the FLBA equality path with real fixed-length bytes. 'ts' is
 # TIMESTAMP(us, UTC) — physically INT64 — at even-second offsets from 2024-01-01, so a
 # logical-type predicate (Instant) resolves to the physical long and an odd-second
-# instant is in range but absent, exercising the logical→physical bloom path.
+# instant is in range but absent, exercising the logical→physical bloom path. 'sparse'
+# is a non-contiguous INT64 (multiples of 1000), so an in-range value such as 1 is never
+# written — the only INT64 column that can produce an `eq` / `in` bloom drop ('id' is
+# contiguous 0..63 with no in-range gap; 'value' carries no bloom filter).
 bloom_names = ['x' * i for i in range(64)]
 bloom_table = pa.table({
     'id': list(range(64)),
@@ -3788,6 +3792,7 @@ bloom_table = pa.table({
     'ratio': [v * 0.5 for v in range(64)],
     'dec': [Decimal(v * 2) for v in range(64)],
     'ts': [bloom_ts_base + timedelta(seconds=v * 2) for v in range(64)],
+    'sparse': [v * 1000 for v in range(64)],
 }, schema=bloom_schema)
 
 pq.write_table(
@@ -3804,13 +3809,16 @@ pq.write_table(
         'ratio': {'ndv': 64, 'fpp': 0.05},
         'dec': {'ndv': 64, 'fpp': 0.05},
         'ts': {'ndv': 64, 'fpp': 0.05},
+        'sparse': {'ndv': 64, 'fpp': 0.05},
     },
 )
 
 print("\nGenerated bloom_filter_test.parquet:")
 print("  - 1 row group, 64 rows, INT64 id + INT64 value + STRING name + INT32 code"
-      " + FLOAT price + DOUBLE ratio + DECIMAL(38,0)/FLBA dec + TIMESTAMP(us,UTC) ts")
-print("  - Bloom filters on 'id', 'name', 'code', 'price', 'ratio', 'dec', 'ts'; 'value' has none")
+      " + FLOAT price + DOUBLE ratio + DECIMAL(38,0)/FLBA dec + TIMESTAMP(us,UTC) ts"
+      " + INT64 sparse")
+print("  - Bloom filters on 'id', 'name', 'code', 'price', 'ratio', 'dec', 'ts', 'sparse';"
+      " 'value' has none")
 
 # =====================================================================
 # Local-wall-clock TIMESTAMP fixture (#568). PyArrow's `pa.timestamp(unit)`

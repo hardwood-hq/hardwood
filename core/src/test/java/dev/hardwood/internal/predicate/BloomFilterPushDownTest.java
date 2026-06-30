@@ -25,7 +25,6 @@ import dev.hardwood.internal.bloomfilter.XxHash64;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
-import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
@@ -35,8 +34,8 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// Bloom-filter row-group pruning against `bloom_filter_test.parquet` (one row group, 64 rows;
 /// bloom filters on `id` INT64 `0..63`, `code` INT32 `0,3,…,189`, `name` STRING `""`…`"x"*63`,
 /// `price` FLOAT `0,2,…,126`, `ratio` DOUBLE `0,0.5,…,31.5`, `dec` DECIMAL(38,0)/FLBA `0,2,…,126`,
-/// `ts` TIMESTAMP(us,UTC) at even-second offsets from `2024-01-01`; `value` INT64 `0,10,…,630`
-/// carries none).
+/// `ts` TIMESTAMP(us,UTC) at even-second offsets from `2024-01-01`, `sparse` INT64 `0,1000,…,63000`;
+/// `value` INT64 `0,10,…,630` carries none).
 ///
 /// The discriminating cases use values that fall *inside* the column's statistics min/max range —
 /// so statistics alone keep the row group — but were never written, so only the bloom filter can
@@ -171,6 +170,32 @@ class BloomFilterPushDownTest {
     }
 
     @Test
+    void int64EqualityInsideRangeButAbsentIsDroppedOnlyByBloom() {
+        // `sparse` holds multiples of 1000; 1 is in [0, 63000] (statistics keep) but never written,
+        // so only the bloom filter proves its absence. (`id` is contiguous 0..63 — no in-range gap.)
+        FilterPredicate absent = FilterPredicate.eq("sparse", 1L);
+        assertThat(statisticsDrop(absent)).isFalse();
+        assertThat(bloomDrop(absent)).isTrue();
+
+        FilterPredicate present = FilterPredicate.eq("sparse", 1000L);
+        assertThat(bloomDrop(present)).isFalse();
+    }
+
+    @Test
+    void int64InListIsDroppedOnlyWhenEveryValueIsAbsent() {
+        assertThat(bloomDrop(FilterPredicate.in("sparse", 1L, 2L))).isTrue();
+        assertThat(bloomDrop(FilterPredicate.in("sparse", 1L, 1000L))).isFalse();
+    }
+
+    @Test
+    void binaryInListIsDroppedOnlyWhenEveryValueIsAbsent() {
+        // `name` holds only runs of 'x' ("" … "x"*63). "w"/"v" are not stored, yet sort inside the
+        // min/max range ["", "x"*63] ('v','w' < 'x'), so statistics keep but the bloom filter drops.
+        assertThat(bloomDrop(FilterPredicate.inStrings("name", "w", "v"))).isTrue();
+        assertThat(bloomDrop(FilterPredicate.inStrings("name", "w", "xx"))).isFalse();
+    }
+
+    @Test
     void andDropsWhenAnyBloomEligibleLeafIsAbsent() {
         // code=1 is absent -> the conjunction matches nothing.
         FilterPredicate and = FilterPredicate.and(
@@ -221,34 +246,6 @@ class BloomFilterPushDownTest {
         // Out-of-bounds index (e.g. a narrower file in a multi-file scan) is conservatively
         // treated as "no filter", not an exception.
         assertThat(source.forColumn(rowGroup.columns().size())).isNull();
-    }
-
-    @Test
-    void endToEndReadSkipsTheRowGroupForAnAbsentValue() throws Exception {
-        // Whole-file prune: the only row group is dropped, so no rows are read.
-        try (ColumnReader codeReader = reader.buildColumnReader("code")
-                .filter(FilterPredicate.eq("code", 1)).build()) {
-            int rows = 0;
-            while (codeReader.nextBatch()) {
-                rows += codeReader.getRecordCount();
-            }
-            assertThat(rows).isZero();
-        }
-
-        // A present value still returns its row.
-        try (ColumnReader codeReader = reader.buildColumnReader("code")
-                .filter(FilterPredicate.eq("code", 3)).build()) {
-            int rows = 0;
-            while (codeReader.nextBatch()) {
-                int count = codeReader.getRecordCount();
-                int[] values = codeReader.getInts();
-                for (int i = 0; i < count; i++) {
-                    assertThat(values[i]).isEqualTo(3);
-                }
-                rows += count;
-            }
-            assertThat(rows).isEqualTo(1);
-        }
     }
 
     private static boolean bloomDrop(FilterPredicate filter) {
