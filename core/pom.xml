@@ -91,6 +91,12 @@
       <artifactId>duckdb_jdbc</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- parquet-java (reference implementation) — oracle for bloom-filter hashing/membership -->
+    <dependency>
+      <groupId>org.apache.parquet</groupId>
+      <artifactId>parquet-column</artifactId>
+      <scope>test</scope>
+    </dependency>
 
     <!-- Optional compression libraries -->
     <dependency>

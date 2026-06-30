@@ -24,19 +24,19 @@ final class BloomFilterSupport {
 
     /// Whether the column's bloom filter proves the `INT32` `value` is absent. Returns `false`
     /// (cannot prove absence) when no source is supplied or the column carries no filter.
-    static boolean absent(BloomFilterSource bloomFilters, int columnIndex, int value) {
+    static boolean valueAbsent(BloomFilterSource bloomFilters, int columnIndex, int value) {
         BloomFilter bloomFilter = filterFor(bloomFilters, columnIndex);
         return bloomFilter != null && !bloomFilter.mightContain(XxHash64.hash(value));
     }
 
     /// Single-value bloom check for `INT64` values; see the `INT32` overload.
-    static boolean absent(BloomFilterSource bloomFilters, int columnIndex, long value) {
+    static boolean valueAbsent(BloomFilterSource bloomFilters, int columnIndex, long value) {
         BloomFilter bloomFilter = filterFor(bloomFilters, columnIndex);
         return bloomFilter != null && !bloomFilter.mightContain(XxHash64.hash(value));
     }
 
     /// Single-value bloom check for binary values; see the `INT32` overload.
-    static boolean absent(BloomFilterSource bloomFilters, int columnIndex, byte[] value) {
+    static boolean valueAbsent(BloomFilterSource bloomFilters, int columnIndex, byte[] value) {
         BloomFilter bloomFilter = filterFor(bloomFilters, columnIndex);
         return bloomFilter != null && !bloomFilter.mightContain(XxHash64.hash(value));
     }
@@ -47,7 +47,7 @@ final class BloomFilterSupport {
     /// NaN bit pattern — but `FLOAT` equality treats `-0.0f == +0.0f` and `NaN != NaN`. Probing
     /// those by raw bits could prove a value absent that an equal stored value would match, so they
     /// are never pruned here (statistics still apply).
-    static boolean absent(BloomFilterSource bloomFilters, int columnIndex, float value) {
+    static boolean valueAbsent(BloomFilterSource bloomFilters, int columnIndex, float value) {
         if (value == 0.0f || Float.isNaN(value)) {
             return false;
         }
@@ -57,7 +57,7 @@ final class BloomFilterSupport {
 
     /// Single-value bloom check for `DOUBLE` values. See the `FLOAT` overload for the `±0` / `NaN`
     /// carve-out.
-    static boolean absent(BloomFilterSource bloomFilters, int columnIndex, double value) {
+    static boolean valueAbsent(BloomFilterSource bloomFilters, int columnIndex, double value) {
         if (value == 0.0 || Double.isNaN(value)) {
             return false;
         }

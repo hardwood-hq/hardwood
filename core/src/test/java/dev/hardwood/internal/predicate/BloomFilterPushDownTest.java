@@ -7,9 +7,11 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.math.BigDecimal;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -32,8 +34,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 
 /// Bloom-filter row-group pruning against `bloom_filter_test.parquet` (one row group, 64 rows;
 /// bloom filters on `id` INT64 `0..63`, `code` INT32 `0,3,…,189`, `name` STRING `""`…`"x"*63`,
-/// `price` FLOAT `0,2,…,126`, `ratio` DOUBLE `0,0.5,…,31.5`; `value` INT64 `0,10,…,630` carries
-/// none).
+/// `price` FLOAT `0,2,…,126`, `ratio` DOUBLE `0,0.5,…,31.5`, `dec` DECIMAL(38,0)/FLBA `0,2,…,126`,
+/// `ts` TIMESTAMP(us,UTC) at even-second offsets from `2024-01-01`; `value` INT64 `0,10,…,630`
+/// carries none).
 ///
 /// The discriminating cases use values that fall *inside* the column's statistics min/max range —
 /// so statistics alone keep the row group — but were never written, so only the bloom filter can
@@ -121,6 +124,33 @@ class BloomFilterPushDownTest {
         FilterPredicate negZero = FilterPredicate.eq("price", -0.0f);
         assertThat(statisticsDrop(negZero)).isFalse();
         assertThat(bloomDrop(negZero)).isFalse();
+    }
+
+    @Test
+    void fixedLenByteArrayDecimalEqualityInsideRangeButAbsentIsDroppedByBloom() {
+        // `dec` is DECIMAL(38,0) stored as FIXED_LEN_BYTE_ARRAY(16) and holds even values; 1 is in
+        // [0, 126] (statistics keep) but never written. Exercises the FLBA equality path with real
+        // fixed-length bytes and cross-checks that the FLBA decimal encoding matches the writer's.
+        FilterPredicate absent = FilterPredicate.eq("dec", new BigDecimal(1));
+        assertThat(statisticsDrop(absent)).isFalse();
+        assertThat(bloomDrop(absent)).isTrue();
+
+        FilterPredicate present = FilterPredicate.eq("dec", new BigDecimal(2));
+        assertThat(bloomDrop(present)).isFalse();
+    }
+
+    @Test
+    void timestampLogicalTypeEqualityUsesBloomOnThePhysicalLong() {
+        // `ts` is TIMESTAMP(us, UTC) — physically INT64 — at even-second offsets from 2024-01-01.
+        // An Instant predicate resolves to the physical long (epoch micros), so an odd-second
+        // instant lands in range but was never written: only the bloom filter, keyed on that
+        // INT64, can prove it absent. Confirms logical predicate types prune via their physical value.
+        FilterPredicate absent = FilterPredicate.eq("ts", Instant.parse("2024-01-01T00:00:01Z"));
+        assertThat(statisticsDrop(absent)).isFalse();
+        assertThat(bloomDrop(absent)).isTrue();
+
+        FilterPredicate present = FilterPredicate.eq("ts", Instant.parse("2024-01-01T00:00:02Z"));
+        assertThat(bloomDrop(present)).isFalse();
     }
 
     @Test

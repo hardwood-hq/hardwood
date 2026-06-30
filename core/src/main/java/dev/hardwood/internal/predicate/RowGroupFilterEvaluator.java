@@ -53,21 +53,21 @@ public class RowGroupFilterEvaluator {
                     yield true;
                 }
                 yield p.op() == FilterPredicate.Operator.EQ
-                        && BloomFilterSupport.absent(bloomFilters, p.columnIndex(), p.value());
+                        && BloomFilterSupport.valueAbsent(bloomFilters, p.columnIndex(), p.value());
             }
             case ResolvedPredicate.LongPredicate p -> {
                 if (statisticsDrop(p, p.columnIndex(), rowGroup)) {
                     yield true;
                 }
                 yield p.op() == FilterPredicate.Operator.EQ
-                        && BloomFilterSupport.absent(bloomFilters, p.columnIndex(), p.value());
+                        && BloomFilterSupport.valueAbsent(bloomFilters, p.columnIndex(), p.value());
             }
             case ResolvedPredicate.FloatPredicate p -> {
                 if (statisticsDrop(p, p.columnIndex(), rowGroup)) {
                     yield true;
                 }
                 yield p.op() == FilterPredicate.Operator.EQ
-                        && BloomFilterSupport.absent(bloomFilters, p.columnIndex(), p.value());
+                        && BloomFilterSupport.valueAbsent(bloomFilters, p.columnIndex(), p.value());
             }
             case ResolvedPredicate.Float16Predicate p ->
                     statisticsDrop(p, p.columnIndex(), rowGroup);
@@ -76,7 +76,7 @@ public class RowGroupFilterEvaluator {
                     yield true;
                 }
                 yield p.op() == FilterPredicate.Operator.EQ
-                        && BloomFilterSupport.absent(bloomFilters, p.columnIndex(), p.value());
+                        && BloomFilterSupport.valueAbsent(bloomFilters, p.columnIndex(), p.value());
             }
             case ResolvedPredicate.BooleanPredicate p ->
                     statisticsDrop(p, p.columnIndex(), rowGroup);
@@ -85,7 +85,7 @@ public class RowGroupFilterEvaluator {
                     yield true;
                 }
                 yield p.op() == FilterPredicate.Operator.EQ
-                        && BloomFilterSupport.absent(bloomFilters, p.columnIndex(), p.value());
+                        && BloomFilterSupport.valueAbsent(bloomFilters, p.columnIndex(), p.value());
             }
             case ResolvedPredicate.IntInPredicate p -> {
                 if (statisticsDrop(p, p.columnIndex(), rowGroup)) {
