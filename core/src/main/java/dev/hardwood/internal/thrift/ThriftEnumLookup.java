@@ -127,4 +127,29 @@ class ThriftEnumLookup {
         }
         throw new IllegalArgumentException("Unknown compression codec: " + value);
     }
+
+    static int thriftValue(PhysicalType type) {
+        return indexOf(PHYSICAL_TYPES, type, "physical type");
+    }
+
+    static int thriftValue(RepetitionType type) {
+        return indexOf(REPETITION_TYPES, type, "repetition type");
+    }
+
+    static int thriftValue(Encoding encoding) {
+        return indexOf(ENCODINGS, encoding, "encoding");
+    }
+
+    static int thriftValue(CompressionCodec codec) {
+        return indexOf(COMPRESSION_CODECS, codec, "compression codec");
+    }
+
+    private static <T> int indexOf(T[] table, T value, String what) {
+        for (int i = 0; i < table.length; i++) {
+            if (table[i] == value) {
+                return i;
+            }
+        }
+        throw new IllegalArgumentException("No Thrift value for " + what + ": " + value);
+    }
 }
