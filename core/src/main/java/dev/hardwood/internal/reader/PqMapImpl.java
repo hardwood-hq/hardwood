@@ -279,10 +279,7 @@ final class PqMapImpl implements PqMap {
         if (isValueNullAt(valueIdx)) {
             return null;
         }
-        if (ValueConverter.isStringLeaf(valueSchema)) {
-            return batch.getString(mapDesc.valueProjCol(), valueIdx);
-        }
-        return ValueConverter.convertValue(readValueAt(valueIdx), valueSchema);
+        return batch.decodeLeaf(mapDesc.valueProjCol(), valueIdx, valueSchema);
     }
 
     private Object rawValueAt(int valueIdx) {
@@ -494,14 +491,11 @@ final class PqMapImpl implements PqMap {
 
         @Override
         public Object getKey() {
-            if (ValueConverter.isStringLeaf(keySchema)) {
-                int keyProjCol = mapDesc.keyProjCol();
-                if (batch.isElementNull(keyProjCol, valueIdx)) {
-                    return null;
-                }
-                return batch.getString(keyProjCol, valueIdx);
+            int keyProjCol = mapDesc.keyProjCol();
+            if (batch.isElementNull(keyProjCol, valueIdx)) {
+                return null;
             }
-            return ValueConverter.convertValue(readKey(), keySchema);
+            return batch.decodeLeaf(keyProjCol, valueIdx, keySchema);
         }
 
         @Override

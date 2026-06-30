@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 /// Pre-computed batch-level index for all projected columns.
 ///
@@ -145,6 +146,15 @@ final class NestedBatchIndex {
     /// Get a UTF-8 decoded string for value `valueIndex` of a varlength column.
     String getString(int projectedCol, int valueIndex) {
         return ((BinaryBatchValues) valueArrays[projectedCol]).stringAt(valueIndex);
+    }
+
+    /// Decode value `valueIndex` of `projectedCol` to its boxed Java value: an
+    /// interned `String` for a `UTF8` / `JSON` leaf, otherwise the converted raw
+    /// value. The element must be known non-null.
+    Object decodeLeaf(int projectedCol, int valueIndex, SchemaNode schema) {
+        return ValueConverter.isStringLeaf(schema)
+                ? getString(projectedCol, valueIndex)
+                : ValueConverter.convertValue(getValue(projectedCol, valueIndex), schema);
     }
 
     // ==================== Index Navigation ====================

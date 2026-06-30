@@ -572,11 +572,9 @@ final class PqStructImpl implements PqStruct {
                 if (batch.isElementNull(p.projectedCol(), idx)) {
                     yield null;
                 }
-                if (decode && ValueConverter.isStringLeaf(p.schema())) {
-                    yield batch.getString(p.projectedCol(), idx);
-                }
-                Object raw = batch.getValue(p.projectedCol(), idx);
-                yield decode ? ValueConverter.convertValue(raw, p.schema()) : raw;
+                yield decode
+                        ? batch.decodeLeaf(p.projectedCol(), idx, p.schema())
+                        : batch.getValue(p.projectedCol(), idx);
             }
             case TopLevelFieldMap.FieldDesc.Struct s -> {
                 if (isStructNull(s)) {
