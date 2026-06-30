@@ -70,6 +70,10 @@ public final class FlatRowReader implements RowReader {
     private final StringToIntMap nameToIndex;
     private final PhysicalType[] physicalTypes;
     private final ColumnSchema[] columnSchemas;
+    /// Per-column decode strategy for [#getValue(int)], precomputed once from each
+    /// column's fixed `(physicalType, logicalType)` so the hot path is a single
+    /// table lookup instead of re-deriving the branch on every value.
+    private final LeafKind[] kinds;
 
     // Hot fields — directly owned, no inheritance.
     // `flatValidity[col]` is a packed bitmap (set bit = leaf is present); the
@@ -159,13 +163,37 @@ public final class FlatRowReader implements RowReader {
         this.nameToIndex = new StringToIntMap(columnCount);
         this.physicalTypes = new PhysicalType[columnCount];
         this.columnSchemas = new ColumnSchema[columnCount];
+        this.kinds = new LeafKind[columnCount];
         for (int i = 0; i < columnCount; i++) {
             int originalIndex = projectedSchema.toOriginalIndex(i);
             ColumnSchema col = fileSchema.getColumn(originalIndex);
             nameToIndex.put(col.name(), i);
             physicalTypes[i] = col.type();
             columnSchemas[i] = col;
+            kinds[i] = classifyLeaf(col.type(), col.logicalType());
         }
+    }
+
+    /// Decode strategy for [#getValue(int)], selected by a column's physical and
+    /// logical type. Matches the original branch order: a `UTF8` / `JSON` leaf is
+    /// served interned, an `INT96` leaf is the conventional timestamp, an
+    /// unannotated leaf returns its raw boxed value, and everything else converts.
+    private enum LeafKind {
+        STRING,
+        INT96_TIMESTAMP,
+        RAW,
+        CONVERT
+    }
+
+    private static LeafKind classifyLeaf(PhysicalType pt, LogicalType lt) {
+        if (ValueConverter.isStringLeaf(pt, lt)) {
+            return LeafKind.STRING;
+        }
+        if (pt == PhysicalType.INT96) {
+            // INT96 has no LogicalType but is conventionally a TIMESTAMP.
+            return LeafKind.INT96_TIMESTAMP;
+        }
+        return lt == null ? LeafKind.RAW : LeafKind.CONVERT;
     }
 
     /// Eagerly loads the first batch. Must be called after construction.
@@ -684,26 +712,18 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public Object getValue(int columnIndex) {
-        ColumnSchema col = columnSchemas[columnIndex];
-        LogicalType lt = col.logicalType();
-        // Dictionary-encoded UTF8/JSON: return the interned String (one per chunk).
-        if (ValueConverter.isStringLeaf(physicalTypes[columnIndex], lt)) {
-            return isNull(columnIndex)
-                    ? null
-                    : ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
-        }
-        Object raw = getRawValue(columnIndex);
-        if (raw == null) {
+        if (isNull(columnIndex)) {
             return null;
         }
-        if (physicalTypes[columnIndex] == PhysicalType.INT96) {
-            // INT96 has no LogicalType but is conventionally a TIMESTAMP.
-            return LogicalTypeConverter.int96ToInstant((byte[]) raw);
-        }
-        if (lt == null) {
-            return raw;
-        }
-        return LogicalTypeConverter.convert(raw, physicalTypes[columnIndex], lt);
+        return switch (kinds[columnIndex]) {
+            // Dictionary-encoded UTF8/JSON: return the interned String (one per chunk).
+            case STRING -> ((BinaryBatchValues) flatValueArrays[columnIndex]).stringAt(rowIndex);
+            case INT96_TIMESTAMP -> LogicalTypeConverter.int96ToInstant((byte[]) rawValueUnchecked(columnIndex));
+            case RAW -> rawValueUnchecked(columnIndex);
+            case CONVERT -> LogicalTypeConverter.convert(
+                    rawValueUnchecked(columnIndex), physicalTypes[columnIndex],
+                    columnSchemas[columnIndex].logicalType());
+        };
     }
 
     @Override
@@ -713,9 +733,13 @@ public final class FlatRowReader implements RowReader {
 
     @Override
     public Object getRawValue(int columnIndex) {
-        if (isNull(columnIndex)) {
-            return null;
-        }
+        return isNull(columnIndex) ? null : rawValueUnchecked(columnIndex);
+    }
+
+    /// Reads the raw column value at the current row, assuming the caller has
+    /// already established the value is present (`!isNull(columnIndex)`); the
+    /// returned value is never `null`.
+    private Object rawValueUnchecked(int columnIndex) {
         return switch (physicalTypes[columnIndex]) {
             case INT32 -> ((int[]) flatValueArrays[columnIndex])[rowIndex];
             case INT64 -> ((long[]) flatValueArrays[columnIndex])[rowIndex];
