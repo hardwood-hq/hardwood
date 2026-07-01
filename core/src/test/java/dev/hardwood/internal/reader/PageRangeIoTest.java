@@ -7,11 +7,8 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
 
@@ -51,7 +48,7 @@ class PageRangeIoTest {
     }
 
     private long readColumnReaderBytes(FilterPredicate filter) throws Exception {
-        ByteCountingInputFile inputFile = new ByteCountingInputFile(InputFile.of(TEST_FILE));
+        CountingInputFile inputFile = new CountingInputFile(InputFile.of(TEST_FILE));
         inputFile.open();
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             ColumnReader col = (filter != null)
@@ -79,7 +76,7 @@ class PageRangeIoTest {
     }
 
     private long readRowReaderBytes(FilterPredicate filter) throws Exception {
-        ByteCountingInputFile inputFile = new ByteCountingInputFile(InputFile.of(TEST_FILE));
+        CountingInputFile inputFile = new CountingInputFile(InputFile.of(TEST_FILE));
         inputFile.open();
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
             ColumnProjection projection = ColumnProjection.columns("id", "value");
@@ -108,7 +105,7 @@ class PageRangeIoTest {
     }
 
     private long readMultiFileBytes(FilterPredicate filter) throws Exception {
-        ByteCountingInputFile inputFile = new ByteCountingInputFile(InputFile.of(TEST_FILE));
+        CountingInputFile inputFile = new CountingInputFile(InputFile.of(TEST_FILE));
         inputFile.open();
         try (Hardwood hardwood = Hardwood.create();
              ParquetFileReader parquet = hardwood.openAll(List.of(inputFile))) {
@@ -139,7 +136,7 @@ class PageRangeIoTest {
         // `id`. The honest page-range baseline is therefore an unfiltered read
         // of *both* columns the filtered path touches: page pruning still fetches
         // fewer bytes than reading them in full.
-        ByteCountingInputFile unfilteredFile = new ByteCountingInputFile(InputFile.of(DICT_TEST_FILE));
+        CountingInputFile unfilteredFile = new CountingInputFile(InputFile.of(DICT_TEST_FILE));
         unfilteredFile.open();
         long unfilteredRows = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(unfilteredFile)) {
@@ -155,7 +152,7 @@ class PageRangeIoTest {
             }
         }
 
-        ByteCountingInputFile filteredFile = new ByteCountingInputFile(InputFile.of(DICT_TEST_FILE));
+        CountingInputFile filteredFile = new CountingInputFile(InputFile.of(DICT_TEST_FILE));
         filteredFile.open();
         long filteredRows = 0;
         try (ParquetFileReader reader = ParquetFileReader.open(filteredFile);
@@ -175,44 +172,4 @@ class PageRangeIoTest {
                 .isLessThan(unfilteredFile.bytesRead());
     }
 
-    /// InputFile wrapper that tracks total bytes fetched via readRange.
-    private static class ByteCountingInputFile implements InputFile {
-
-        private final InputFile delegate;
-        private final AtomicLong totalBytesRead = new AtomicLong();
-
-        ByteCountingInputFile(InputFile delegate) {
-            this.delegate = delegate;
-        }
-
-        long bytesRead() {
-            return totalBytesRead.get();
-        }
-
-        @Override
-        public void open() throws IOException {
-            delegate.open();
-        }
-
-        @Override
-        public ByteBuffer readRange(long offset, int length) throws IOException {
-            totalBytesRead.addAndGet(length);
-            return delegate.readRange(offset, length);
-        }
-
-        @Override
-        public long length() throws IOException {
-            return delegate.length();
-        }
-
-        @Override
-        public String name() {
-            return delegate.name();
-        }
-
-        @Override
-        public void close() throws IOException {
-            delegate.close();
-        }
-    }
 }

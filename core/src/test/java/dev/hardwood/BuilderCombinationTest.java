@@ -7,14 +7,10 @@
  */
 package dev.hardwood;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 import java.util.function.Consumer;
 import java.util.stream.LongStream;
 import java.util.stream.Stream;
@@ -24,6 +20,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.reader.CountingInputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
@@ -285,50 +282,5 @@ class BuilderCombinationTest {
 
     private static List<Long> longRange(long fromInclusive, long toInclusive) {
         return LongStream.rangeClosed(fromInclusive, toInclusive).boxed().toList();
-    }
-
-    private static final class CountingInputFile implements InputFile {
-        private final InputFile delegate;
-        private final AtomicInteger readCount = new AtomicInteger();
-        private final AtomicLong bytesRead = new AtomicLong();
-
-        private CountingInputFile(InputFile delegate) {
-            this.delegate = delegate;
-        }
-
-        int readCount() {
-            return readCount.get();
-        }
-
-        long bytesRead() {
-            return bytesRead.get();
-        }
-
-        @Override
-        public void open() throws IOException {
-            delegate.open();
-        }
-
-        @Override
-        public ByteBuffer readRange(long offset, int length) throws IOException {
-            readCount.incrementAndGet();
-            bytesRead.addAndGet(length);
-            return delegate.readRange(offset, length);
-        }
-
-        @Override
-        public long length() throws IOException {
-            return delegate.length();
-        }
-
-        @Override
-        public String name() {
-            return delegate.name();
-        }
-
-        @Override
-        public void close() throws IOException {
-            delegate.close();
-        }
     }
 }
