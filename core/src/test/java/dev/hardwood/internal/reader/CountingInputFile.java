@@ -14,29 +14,29 @@ import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
 
-/// An [InputFile] wrapper that delegates to another `InputFile` and
-/// counts the number of [#readRange] calls. Useful in tests that need to
-/// assert on I/O patterns (e.g. verifying coalesced reads).
-class CountingInputFile implements InputFile {
+/// An [InputFile] wrapper that delegates to another `InputFile` and counts both the number of
+/// [#readRange] calls and the total bytes read. Useful in tests that need to assert on I/O patterns
+/// (e.g. verifying coalesced reads, or that a single read served a request).
+public class CountingInputFile implements InputFile {
 
     private final InputFile delegate;
     private final AtomicInteger readRangeCount = new AtomicInteger();
     private final AtomicLong bytesRead = new AtomicLong();
 
-    CountingInputFile(InputFile delegate) {
+    public CountingInputFile(InputFile delegate) {
         this.delegate = delegate;
     }
 
     /// Convenience constructor that wraps a [ByteBuffer] as the delegate.
-    CountingInputFile(ByteBuffer buffer) {
+    public CountingInputFile(ByteBuffer buffer) {
         this(InputFile.of(buffer));
     }
 
-    int readCount() {
+    public int readCount() {
         return readRangeCount.get();
     }
 
-    long bytesRead() {
+    public long bytesRead() {
         return bytesRead.get();
     }
 

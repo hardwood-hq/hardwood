@@ -97,6 +97,12 @@
       <artifactId>parquet-column</artifactId>
       <scope>test</scope>
     </dependency>
+    <!-- Thrift structs (BloomFilterHeader/Util) — to serialize a legacy filter fixture in tests -->
+    <dependency>
+      <groupId>org.apache.parquet</groupId>
+      <artifactId>parquet-format-structures</artifactId>
+      <scope>test</scope>
+    </dependency>
 
     <!-- Optional compression libraries -->
     <dependency>

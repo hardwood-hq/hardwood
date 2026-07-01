@@ -44,9 +44,9 @@ The I/O-backed implementation over one `(InputFile, RowGroup)` pair. It reads a 
 Reading a filter:
 
 - `bloomFilterLength` present (the common case; written by current parquet-mr and PyArrow): one `readRange(offset, length)`, then `BloomFilterReader.read`.
-- `bloomFilterLength` absent (legacy writers): read a small fixed probe window to parse the header, derive the total length as `headerBytes + numBytes`, then `readRange(offset, total)` and `BloomFilterReader.read`.
+- `bloomFilterLength` absent (legacy writers): read a small fixed probe window to parse the header and derive the total length as `headerBytes + numBytes`. When the probe window already covers the whole filter, the bitset is sliced straight out of it (reusing the parsed header) with no second read; otherwise the exact region is re-fetched with `readRange(offset, total)` and parsed by `BloomFilterReader.read`.
 
-An `IOException` while reading a filter the footer declared is treated as corruption and surfaced as an `UncheckedIOException` carrying the file name (fail-early), consistent with `RowGroupIndexBuffers.fetch`.
+A `bloomFilterOffset` that is present but non-positive cannot name a real filter (it points at or before the file's magic header); it is logged at `WARNING` and treated as "no filter" — conservatively keeping the row group — rather than throwing. An `IOException` while reading a filter the footer declared is treated as corruption and surfaced as an `UncheckedIOException` carrying the file name (fail-early), consistent with `RowGroupIndexBuffers.fetch`.
 
 ### `RowGroupFilterEvaluator`
 
