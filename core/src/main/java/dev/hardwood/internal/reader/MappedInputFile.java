@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.MappedByteBuffer;
 import java.nio.channels.FileChannel;
+import java.nio.file.Files;
 import java.nio.file.Path;
 import java.nio.file.StandardOpenOption;
 
@@ -62,6 +63,9 @@ public class MappedInputFile implements InputFile {
     public void open() throws IOException {
         if (wholeFile != null || channel != null) {
             return;
+        }
+        if (!Files.exists(path)) {
+            throw new IOException("File not found: " + path);
         }
         FileChannel ch = FileChannel.open(path, StandardOpenOption.READ);
         boolean keepOpen = false;

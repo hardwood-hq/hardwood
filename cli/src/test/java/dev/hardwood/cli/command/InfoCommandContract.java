@@ -37,5 +37,7 @@ interface InfoCommandContract {
         Cli.Result result = Cli.launch("info", "-f", nonexistentFile());
 
         assertThat(result.exitCode()).isNotZero();
+        assertThat(result.errorOutput()).contains("File not found");
+        assertThat(result.errorOutput()).contains(nonexistentFile());
     }
 }

@@ -94,6 +94,9 @@ public class S3InputFile implements InputFile {
         String suffixRange = "bytes=-" + TAIL_SIZE;
         HttpResponse<byte[]> response = api.getBytes(bucket, key, suffixRange);
         int status = response.statusCode();
+        if (status == 404) {
+            throw new IOException("File not found: " + name());
+        }
         if (status != 206 && status != 200) {
             throw new IOException("Failed to open " + name()
                     + ": HTTP " + status + " " + new String(response.body()));
