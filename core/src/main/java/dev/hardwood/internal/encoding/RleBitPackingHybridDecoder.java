@@ -7,8 +7,6 @@
  */
 package dev.hardwood.internal.encoding;
 
-import java.nio.ByteBuffer;
-import java.nio.ByteOrder;
 import java.util.Arrays;
 
 import dev.hardwood.internal.encoding.simd.SimdOperations;
@@ -26,7 +24,6 @@ public class RleBitPackingHybridDecoder {
     private static final ThreadLocal<int[]> TEMP_INDICES = new ThreadLocal<>();
 
     private final byte[] data;
-    private final ByteBuffer dataBuffer;
     private final int dataEnd;
     private final int bitWidth;
     private final int bitMask;
@@ -51,7 +48,6 @@ public class RleBitPackingHybridDecoder {
                     + ". Must be between 0 and 32");
         }
         this.data = data;
-        this.dataBuffer = ByteBuffer.wrap(data).order(ByteOrder.LITTLE_ENDIAN);
         this.dataEnd = offset + length;
         this.pos = offset;
         this.bitWidth = bitWidth;
@@ -290,56 +286,25 @@ public class RleBitPackingHybridDecoder {
             count--;
         }
 
-        // Fast path for bit width 1 (common for definition levels)
-        if (width == 1) {
-            while (count >= 8 && pos < dataEnd) {
-                int b = data[pos++] & 0xFF;
-                output[outPos]     = b & 1;
-                output[outPos + 1] = (b >> 1) & 1;
-                output[outPos + 2] = (b >> 2) & 1;
-                output[outPos + 3] = (b >> 3) & 1;
-                output[outPos + 4] = (b >> 4) & 1;
-                output[outPos + 5] = (b >> 5) & 1;
-                output[outPos + 6] = (b >> 6) & 1;
-                output[outPos + 7] = (b >> 7) & 1;
-                outPos += 8;
-                count -= 8;
+        // Bulk decode complete 8-value groups only while byte-aligned. Tails
+        // stay on the bit-buffer path below so split reads preserve state.
+        if (bitsInBuffer == 0 && width == 1) {
+            int groups = Math.min(count / 8, dataEnd - pos);
+            if (groups > 0) {
+                int values = groups * 8;
+                int bytesConsumed = SIMD_OPS.unpackBitWidth1(data, pos, output, outPos, values);
+                pos += bytesConsumed;
+                outPos += bytesConsumed * 8;
+                count -= bytesConsumed * 8;
             }
         }
-        // For widths 2-8: read 8 bytes at once when possible, extract 8 values
-        else if (width <= 8) {
-            // Process 8 values at a time using bulk long reads when we have enough data
-            while (count >= 8 && pos + 8 <= dataEnd) {
-                long bits = dataBuffer.getLong(pos);
-                pos += width; // Only consume 'width' bytes for 8 values
-
-                output[outPos]     = (int) (bits & mask); bits >>>= width;
-                output[outPos + 1] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 2] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 3] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 4] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 5] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 6] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 7] = (int) (bits & mask);
-                outPos += 8;
-                count -= 8;
-            }
-            // Fallback when near end of buffer
-            while (count >= 8 && pos + width <= dataEnd) {
-                long bits = 0;
-                for (int i = 0; i < width; i++) {
-                    bits |= ((long) (data[pos++] & 0xFF)) << (i * 8);
-                }
-                output[outPos]     = (int) (bits & mask); bits >>>= width;
-                output[outPos + 1] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 2] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 3] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 4] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 5] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 6] = (int) (bits & mask); bits >>>= width;
-                output[outPos + 7] = (int) (bits & mask);
-                outPos += 8;
-                count -= 8;
+        else if (bitsInBuffer == 0 && width <= 8) {
+            int groups = Math.min(count / 8, (dataEnd - pos) / width);
+            if (groups > 0) {
+                int bytesConsumed = SIMD_OPS.unpackBitWidthN(data, pos, output, outPos, groups * 8, width);
+                pos += bytesConsumed;
+                outPos += groups * 8;
+                count -= groups * 8;
             }
         }
 
