@@ -7,7 +7,9 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.io.ByteArrayOutputStream;
 import java.math.BigDecimal;
+import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
@@ -15,6 +17,15 @@ import java.time.Instant;
 import java.util.ArrayList;
 import java.util.List;
 
+import org.apache.parquet.column.values.bloomfilter.BlockSplitBloomFilter;
+import org.apache.parquet.format.BloomFilterAlgorithm;
+import org.apache.parquet.format.BloomFilterCompression;
+import org.apache.parquet.format.BloomFilterHash;
+import org.apache.parquet.format.BloomFilterHeader;
+import org.apache.parquet.format.SplitBlockAlgorithm;
+import org.apache.parquet.format.Uncompressed;
+import org.apache.parquet.format.Util;
+import org.apache.parquet.format.XxHash;
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -22,6 +33,7 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.XxHash64;
+import dev.hardwood.internal.reader.CountingInputFile;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -239,6 +251,42 @@ class BloomFilterPushDownTest {
     }
 
     @Test
+    void readsBloomFilterWhenLengthAbsentAndFilterFitsProbeWindow() throws Exception {
+        // The other length-absent case: a filter small enough that the whole region fits inside the
+        // 64-byte header probe, so the source slices the bitset straight out of the probe window
+        // without a second read. The fixture's real filters all exceed the probe, so synthesize a
+        // minimal one-block (32-byte bitset) filter with parquet-java — the writer the oracle test
+        // already trusts — serialize header+bitset the way a legacy writer would, and place it a few
+        // bytes into an in-memory file with trailing padding so the probe over-reads past its end.
+        long presentHash = XxHash64.hash(42);
+        byte[] serialized = serializeMinimalFilter(presentHash);
+        assertThat(serialized.length).isLessThan(64); // must fit the probe for this path to trigger
+
+        int offset = 4;
+        byte[] fileBytes = new byte[offset + serialized.length + 32]; // leading + trailing padding
+        System.arraycopy(serialized, 0, fileBytes, offset, serialized.length);
+        CountingInputFile memory = new CountingInputFile(InputFile.of(ByteBuffer.wrap(fileBytes)));
+
+        BloomFilter filter = new RowGroupBloomFilterSource(memory, singleColumnRowGroup(offset)).forColumn(0);
+        assertThat(filter).isNotNull();
+        assertThat(filter.header().numBytes()).isEqualTo(32);
+        assertThat(filter.mightContain(presentHash)).isTrue(); // no false negative for a stored value
+        // One read proves the direct-slice branch ran: the re-fetch branch would read twice (probe
+        // window, then the full region). Both branches yield the same filter, so only the read count
+        // distinguishes them.
+        assertThat(memory.readCount()).isEqualTo(1);
+    }
+
+    @Test
+    void invalidBloomFilterOffsetIsTreatedAsAbsent() {
+        // A present but non-positive bloom_filter_offset cannot name a real filter (it points at or
+        // before the file's magic header). The source stays conservative — no filter, so the row
+        // group is kept — rather than throwing or reading garbage.
+        InputFile memory = InputFile.of(ByteBuffer.wrap(new byte[64]));
+        assertThat(new RowGroupBloomFilterSource(memory, singleColumnRowGroup(0)).forColumn(0)).isNull();
+    }
+
+    @Test
     void rowGroupBloomFilterSourceExposesFiltersPerColumn() {
         RowGroupBloomFilterSource source = new RowGroupBloomFilterSource(inputFile, rowGroup);
         assertThat(source.forColumn(NAME_COLUMN)).isNotNull();
@@ -257,5 +305,39 @@ class BloomFilterPushDownTest {
     private static boolean statisticsDrop(FilterPredicate filter) {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
         return RowGroupFilterEvaluator.canDropRowGroup(resolved, rowGroup);
+    }
+
+    /// A `BloomFilterHeader` thrift struct followed by a minimal one-block (32-byte) bitset holding
+    /// `presentHash`, serialized exactly as a Parquet writer lays it out at `bloom_filter_offset`.
+    private static byte[] serializeMinimalFilter(long presentHash) throws Exception {
+        BlockSplitBloomFilter reference = new BlockSplitBloomFilter(32); // one 32-byte split block
+        reference.insertHash(presentHash);
+        ByteArrayOutputStream bitset = new ByteArrayOutputStream();
+        reference.writeTo(bitset); // bitset only — the header is written separately below
+
+        BloomFilterHeader header = new BloomFilterHeader(bitset.size(),
+                BloomFilterAlgorithm.BLOCK(new SplitBlockAlgorithm()),
+                BloomFilterHash.XXHASH(new XxHash()),
+                BloomFilterCompression.UNCOMPRESSED(new Uncompressed()));
+        ByteArrayOutputStream out = new ByteArrayOutputStream();
+        Util.writeBloomFilterHeader(header, out);
+        bitset.writeTo(out);
+        return out.toByteArray();
+    }
+
+    /// A single-column row group whose only column carries a bloom filter at `bloomOffset` with no
+    /// declared length, forcing the header-probe path. Non-bloom metadata is copied from a real
+    /// column since the source reads only `bloomFilterOffset` / `bloomFilterLength`.
+    private static RowGroup singleColumnRowGroup(long bloomOffset) {
+        ColumnChunk template = rowGroup.columns().getFirst();
+        ColumnMetaData md = template.metaData();
+        ColumnMetaData withBloom = new ColumnMetaData(
+                md.type(), md.encodings(), md.pathInSchema(), md.codec(),
+                md.numValues(), md.totalUncompressedSize(), md.totalCompressedSize(),
+                md.keyValueMetadata(), md.dataPageOffset(), md.dictionaryPageOffset(),
+                md.statistics(), md.geospatialStatistics(), bloomOffset, null);
+        ColumnChunk chunk = new ColumnChunk(withBloom, template.offsetIndexOffset(),
+                template.offsetIndexLength(), template.columnIndexOffset(), template.columnIndexLength());
+        return new RowGroup(List.of(chunk), rowGroup.totalByteSize(), rowGroup.numRows());
     }
 }

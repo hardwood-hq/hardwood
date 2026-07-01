@@ -23,8 +23,8 @@ public final class XxHash64 {
     private static final long PRIME5 = 0x27D4EB2F165667C5L;
 
     /// The XXH64 seed. The Parquet specification fixes the bloom filter hash seed to 0, so the
-    /// accumulators and short-input start derive from a zero seed — see the hash strategy section
-    /// of <a href="https://github.com/apache/parquet-format/blob/master/BloomFilter.md">BloomFilter.md</a>.
+    /// accumulators and short-input start derive from a zero seed — see the Technical Approach
+    /// section of <a href="https://parquet.apache.org/docs/file-format/bloomfilter/#technical-approach">the Parquet Bloom filter spec</a>.
     private static final long SEED = 0;
 
     private XxHash64() {

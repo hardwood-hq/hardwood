@@ -23,7 +23,7 @@ public final class SplitBlockBloomFilter {
     /// One odd multiplier per word, used to derive eight independent bit positions from the low
     /// 32 bits of the hash. These exact constants are fixed by the Parquet specification — readers
     /// and writers must use the same values — see the `SALT` array in the `mask` function of
-    /// <a href="https://github.com/apache/parquet-format/blob/master/BloomFilter.md">BloomFilter.md</a>.
+    /// <a href="https://parquet.apache.org/docs/file-format/bloomfilter/#technical-approach">the Parquet Bloom filter spec</a>.
     private static final int[] SALT = {
             0x47b6137b, 0x44974d91, 0x8824ad5b, 0xa2b7289d,
             0x705495c7, 0x2df1424b, 0x9efc4947, 0x5c6bfb31

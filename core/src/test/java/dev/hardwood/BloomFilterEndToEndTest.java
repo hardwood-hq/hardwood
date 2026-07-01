@@ -13,6 +13,8 @@ import java.time.Instant;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.ColumnChunk;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
@@ -37,6 +39,19 @@ class BloomFilterEndToEndTest {
 
     private static final FilterPredicate ABSENT = FilterPredicate.eq("code", 1);
     private static final FilterPredicate PRESENT = FilterPredicate.eq("code", 3);
+
+    @Test
+    void fixtureCarriesBloomFiltersOnTheFilteredColumns() throws Exception {
+        // Precondition for every prune assertion below: `code` and `ts` must actually carry a bloom
+        // filter. Without one, an absent in-range value would still yield zero rows via record-level
+        // filtering, so the prune tests could pass even if row-group bloom pushdown were broken.
+        // BloomFilterPushDownTest separately proves statistics do not drop these values, so a filter
+        // present here is what makes the drop attributable to the bloom path.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
+            assertHasBloomFilter(reader, "code");
+            assertHasBloomFilter(reader, "ts");
+        }
+    }
 
     @Test
     void columnReaderPrunesRowGroupForAbsentValue() throws Exception {
@@ -102,6 +117,19 @@ class BloomFilterEndToEndTest {
                 assertThat(countRows(rows)).isEqualTo(1);
             }
         }
+    }
+
+    /// Asserts the fixture's single row group carries a bloom filter on `column`, looked up by name
+    /// so it does not depend on column ordering.
+    private static void assertHasBloomFilter(ParquetFileReader reader, String column) {
+        RowGroup rowGroup = reader.getFileMetaData().rowGroups().getFirst();
+        ColumnChunk chunk = rowGroup.columns().stream()
+                .filter(c -> c.metaData().pathInSchema().toString().equals(column))
+                .findFirst()
+                .orElseThrow(() -> new AssertionError("No column named '" + column + "' in the fixture"));
+        assertThat(chunk.metaData().bloomFilterOffset())
+                .as("bloom_filter_offset for column '%s'", column)
+                .isNotNull().isPositive();
     }
 
     private static int countRows(ColumnReader reader) {

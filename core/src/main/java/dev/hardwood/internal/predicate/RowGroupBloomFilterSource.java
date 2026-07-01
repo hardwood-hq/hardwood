@@ -30,6 +30,8 @@ import dev.hardwood.metadata.RowGroup;
 /// synchronization.
 public final class RowGroupBloomFilterSource implements BloomFilterSource {
 
+    private static final System.Logger LOG = System.getLogger(RowGroupBloomFilterSource.class.getName());
+
     /// Bytes read to parse the header when `bloom_filter_length` is absent. The header is a tiny
     /// Thrift struct (an i32 plus three single-variant unions), comfortably under this bound.
     private static final int HEADER_PROBE_BYTES = 64;
@@ -70,7 +72,17 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     private BloomFilter readFilter(int columnIndex) {
         ColumnMetaData metaData = rowGroup.columns().get(columnIndex).metaData();
         Long offset = metaData.bloomFilterOffset();
-        if (offset == null || offset <= 0) {
+        if (offset == null) {
+            return null;
+        }
+        if (offset <= 0) {
+            // The offset is present but points at or before the file's magic header, so it cannot
+            // name a real filter. Treat it as corruption but stay conservative — decline to prune
+            // rather than throw, keeping the row group (statistics still apply) — and warn so the
+            // malformed footer is visible instead of silently reducing pruning.
+            LOG.log(System.Logger.Level.WARNING, () -> ExceptionContext.filePrefix(inputFile.name())
+                    + "Ignoring invalid bloom_filter_offset " + offset + " for column " + columnIndex
+                    + "; keeping the row group (statistics still apply)");
             return null;
         }
         try {
