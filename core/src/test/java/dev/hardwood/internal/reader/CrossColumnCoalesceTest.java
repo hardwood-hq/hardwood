@@ -7,11 +7,7 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.io.IOException;
-import java.nio.ByteBuffer;
 import java.nio.file.Path;
-import java.util.concurrent.atomic.AtomicInteger;
-import java.util.concurrent.atomic.AtomicLong;
 
 import org.junit.jupiter.api.Test;
 
@@ -106,7 +102,7 @@ class CrossColumnCoalesceTest {
     }
 
     private static long readBytesWith(Path file, FilterPredicate filter) throws Exception {
-        ByteCountingInputFile counter = new ByteCountingInputFile(InputFile.of(file));
+        CountingInputFile counter = new CountingInputFile(InputFile.of(file));
         counter.open();
         try (ParquetFileReader reader = ParquetFileReader.open(counter);
                 RowReader rows = (filter == null
@@ -121,48 +117,5 @@ class CrossColumnCoalesceTest {
             }
         }
         return counter.bytesRead();
-    }
-
-    /// Tracks both call count and total bytes read per `readRange`.
-    private static class ByteCountingInputFile implements InputFile {
-
-        private final InputFile delegate;
-        private final AtomicInteger calls = new AtomicInteger();
-        private final AtomicLong bytes = new AtomicLong();
-
-        ByteCountingInputFile(InputFile delegate) {
-            this.delegate = delegate;
-        }
-
-        long bytesRead() {
-            return bytes.get();
-        }
-
-        @Override
-        public void open() throws IOException {
-            delegate.open();
-        }
-
-        @Override
-        public ByteBuffer readRange(long offset, int length) throws IOException {
-            calls.incrementAndGet();
-            bytes.addAndGet(length);
-            return delegate.readRange(offset, length);
-        }
-
-        @Override
-        public long length() throws IOException {
-            return delegate.length();
-        }
-
-        @Override
-        public String name() {
-            return delegate.name();
-        }
-
-        @Override
-        public void close() throws IOException {
-            delegate.close();
-        }
     }
 }

@@ -11,52 +11,15 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.stream.Stream;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
-import dev.hardwood.InputFile;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class RangeBackedInputFileTest {
-
-    /// In-memory delegate that hands out slices of a fixed byte[]. Counts
-    /// readRange invocations so tests can assert cache hits.
-    private static final class CountingDelegate implements InputFile {
-        private final byte[] data;
-        private final AtomicInteger reads = new AtomicInteger();
-
-        CountingDelegate(byte[] data) {
-            this.data = data;
-        }
-
-        int readCount() {
-            return reads.get();
-        }
-
-        @Override public void open() {
-        }
-
-        @Override public ByteBuffer readRange(long offset, int length) {
-            reads.incrementAndGet();
-            return ByteBuffer.wrap(data, Math.toIntExact(offset), length);
-        }
-
-        @Override public long length() {
-            return data.length;
-        }
-
-        @Override public String name() {
-            return "fake";
-        }
-
-        @Override public void close() {
-        }
-    }
 
     private static byte[] makeData(int size) {
         byte[] b = new byte[size];
@@ -69,7 +32,7 @@ class RangeBackedInputFileTest {
     @Test
     void repeatReadOfSameRangeHitsCache(@TempDir Path tempDir) throws IOException {
         byte[] data = makeData(4096);
-        CountingDelegate inner = new CountingDelegate(data);
+        CountingInputFile inner = new CountingInputFile(ByteBuffer.wrap(data));
         try (RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir)) {
             cached.open();
             ByteBuffer first = cached.readRange(100, 200);
@@ -86,7 +49,7 @@ class RangeBackedInputFileTest {
     @Test
     void subRangeOfCachedRangeHitsCache(@TempDir Path tempDir) throws IOException {
         byte[] data = makeData(4096);
-        CountingDelegate inner = new CountingDelegate(data);
+        CountingInputFile inner = new CountingInputFile(ByteBuffer.wrap(data));
         try (RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir)) {
             cached.open();
             cached.readRange(0, 1000);
@@ -103,7 +66,7 @@ class RangeBackedInputFileTest {
     @Test
     void gapBetweenCachedRangesIsFetched(@TempDir Path tempDir) throws IOException {
         byte[] data = makeData(4096);
-        CountingDelegate inner = new CountingDelegate(data);
+        CountingInputFile inner = new CountingInputFile(ByteBuffer.wrap(data));
         try (RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir)) {
             cached.open();
             cached.readRange(0, 100);
@@ -123,7 +86,7 @@ class RangeBackedInputFileTest {
     @Test
     void readReturnsCorrectBytesAfterPartialFill(@TempDir Path tempDir) throws IOException {
         byte[] data = makeData(4096);
-        CountingDelegate inner = new CountingDelegate(data);
+        CountingInputFile inner = new CountingInputFile(ByteBuffer.wrap(data));
         try (RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir)) {
             cached.open();
             // Populate two disjoint regions, then read a span covering both.
@@ -142,7 +105,7 @@ class RangeBackedInputFileTest {
 
     @Test
     void offsetOrLengthOutsideFileThrows(@TempDir Path tempDir) throws IOException {
-        CountingDelegate inner = new CountingDelegate(makeData(100));
+        CountingInputFile inner = new CountingInputFile(ByteBuffer.wrap(makeData(100)));
         try (RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir)) {
             cached.open();
             assertThatThrownBy(() -> cached.readRange(-1, 10))
@@ -154,7 +117,7 @@ class RangeBackedInputFileTest {
 
     @Test
     void closeDeletesTempFile(@TempDir Path tempDir) throws IOException {
-        CountingDelegate inner = new CountingDelegate(makeData(4096));
+        CountingInputFile inner = new CountingInputFile(ByteBuffer.wrap(makeData(4096)));
         long beforeOpen = countCacheFiles(tempDir);
         RangeBackedInputFile cached = new RangeBackedInputFile(inner, tempDir);
         cached.open();
