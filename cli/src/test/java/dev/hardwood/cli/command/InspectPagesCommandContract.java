@@ -150,6 +150,8 @@ interface InspectPagesCommandContract {
     default void failsOnNonexistentFile() {
         Cli.Result result = Cli.launch("inspect", "pages", "-f", nonexistentFile());
 
+        assertThat(result.errorOutput()).contains("File not found");
+        assertThat(result.errorOutput()).contains(nonexistentFile());
         assertThat(result.exitCode()).isNotZero();
     }
 }

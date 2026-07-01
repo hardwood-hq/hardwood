@@ -35,6 +35,8 @@ interface FooterCommandContract {
     default void failsOnNonexistentFile() {
         Cli.Result result = Cli.launch("footer", "-f", nonexistentFile());
 
+        assertThat(result.errorOutput()).contains("File not found");
+        assertThat(result.errorOutput()).contains(nonexistentFile());
         assertThat(result.exitCode()).isNotZero();
     }
 }
