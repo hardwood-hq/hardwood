@@ -11,6 +11,7 @@ import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.Arrays;
+import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
@@ -194,6 +195,32 @@ class WriterRoundTripTest {
             // Arrays.equals over containsExactly: the latter is O(n) with per-element
             // boxing/description and is needlessly slow at 600k elements.
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    @Test
+    void writesCorrectPageCrc() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeInts(0, new int[] { 1, 2, 3, 4, 5 });
+        }
+        byte[] bytes = out.toByteArray();
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            int offset = Math.toIntExact(meta.dataPageOffset());
+            ThriftCompactReader thrift = new ThriftCompactReader(ByteBuffer.wrap(bytes), offset);
+            PageHeader header = PageHeaderReader.read(thrift);
+            int bodyStart = offset + thrift.getBytesRead();
+
+            assertThat(header.crc()).as("page crc must be written").isNotNull();
+            CRC32 crc = new CRC32();
+            crc.update(bytes, bodyStart, header.compressedPageSize());
+            assertThat(header.crc().intValue()).isEqualTo((int) crc.getValue());
         }
     }
 
