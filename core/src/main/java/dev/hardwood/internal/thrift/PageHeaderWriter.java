@@ -24,9 +24,10 @@ public class PageHeaderWriter {
     /// @param uncompressedSize uncompressed size of the page body (levels + values)
     /// @param compressedSize compressed size of the page body; equals the
     ///        uncompressed size when the page is stored uncompressed
+    /// @param crc CRC-32 of the page body as stored (the bytes the reader validates)
     /// @param valuesEncoding the encoding of the values
     public static void writeDataPageV1(ThriftCompactWriter writer, int numValues,
-                                       int uncompressedSize, int compressedSize, Encoding valuesEncoding) {
+                                       int uncompressedSize, int compressedSize, int crc, Encoding valuesEncoding) {
         writer.pushFieldIdContext();
 
         // 1: type
@@ -40,6 +41,10 @@ public class PageHeaderWriter {
         // 3: compressed_page_size
         writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
         writer.writeI32(compressedSize);
+
+        // 4: crc (CRC-32 of the page body as stored on disk)
+        writer.writeFieldBegin(4, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(crc);
 
         // 5: data_page_header
         writer.writeFieldBegin(5, ThriftCompactConstants.FieldType.STRUCT);

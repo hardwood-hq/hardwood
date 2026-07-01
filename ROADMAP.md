@@ -121,7 +121,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Page header serialization
 - [x] Page header deserialization
 - [x] CRC32 validation on read (`CrcValidator`)
-- [ ] CRC32 calculation for writing
+- [x] CRC32 calculation for writing
 
 ### 3.3 Definition & Repetition Levels
 - [ ] Implement `LevelEncoder` using RLE/bit-packing hybrid

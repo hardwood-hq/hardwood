@@ -16,6 +16,7 @@ import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
+import java.util.zip.CRC32;
 
 import dev.hardwood.OutputFile;
 import dev.hardwood.internal.encoding.PlainEncoder;
@@ -144,8 +145,13 @@ public final class ParquetFileWriter implements Closeable {
                 ? values
                 : Arrays.copyOfRange(values, from, from + count);
         byte[] valueBytes = PlainEncoder.encodeInts(pageValues);
+        // CRC-32 over the page body as stored on disk (uncompressed here), which is
+        // what the reader validates against.
+        CRC32 crc = new CRC32();
+        crc.update(valueBytes);
         ThriftCompactWriter header = new ThriftCompactWriter();
-        PageHeaderWriter.writeDataPageV1(header, count, valueBytes.length, valueBytes.length, Encoding.PLAIN);
+        PageHeaderWriter.writeDataPageV1(header, count, valueBytes.length, valueBytes.length,
+                (int) crc.getValue(), Encoding.PLAIN);
         byte[] headerBytes = header.toByteArray();
         out.write(ByteBuffer.wrap(headerBytes));
         out.write(ByteBuffer.wrap(valueBytes));
