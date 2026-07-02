@@ -207,12 +207,15 @@ primitive buffer without a generic boxed page. This keeps two independent axes a
 per-type *buffer management* in the chunk buffer, per-encoding *body assembly* in
 `PageBuilder`.
 
-Through stage 4 the only page shape is `[def levels?][PLAIN values]`, so
+Through stage 6 the only page shape is `[def levels?][PLAIN values]` — struct
+shredding only deepens the definition levels, it adds no body variant — so
 `ColumnChunkBuffer` assembles it inline (its `sealPage`). `PageBuilder` is introduced at
-**stage 6**, when `RLE_DICTIONARY` bodies — and compressed bodies at stage 7 — add the
-body and framing variants that would otherwise accrete as branches inside the chunk
-buffer. Extracting the seam at that point, rather than earlier, lets it take its shape
-from the variants it must actually span instead of from the single `PLAIN` case.
+**stage 7**, when list shredding prepends the repetition-level stream
+(`[rep levels][def levels][values]`); `RLE_DICTIONARY` bodies (stage 9) and compressed
+bodies (stage 10) then add further body and framing variants that would otherwise
+accrete as branches inside the chunk buffer. Extracting the seam at the first variant,
+rather than earlier, lets it take its shape from the variants it must actually span
+instead of from the single `PLAIN` case.
 
 ### Schema construction
 
@@ -321,7 +324,7 @@ API), *Optimization*, *Spike* (design-only), or *Docs* (user-facing documentatio
 | 2 | Page chunking within a column chunk: a large `INT32` column written as multiple size-bounded `PLAIN` pages instead of one, replacing the single-page guard. Internal — the columnar API is unchanged. Each page carries a CRC-32 checksum over its on-disk body. | Dimension | Large columns written safely, bounded page size | 6.2 (multi-page data writing), 3.2 (CRC write) | [x] |
 | 3 | **Row-group cadence** (`REQUIRED INT32` only): the `ColumnBatch` submission API, multi-row-group append, size-based auto-flush (page + row-group targets), and `WriterConfig`. Locks how the caller feeds data and how the file is banded into row groups. | Dimension | The public write cadence is settled | 6.2 (row-group size tracking, automatic flushing) | [x] |
 | 4 | Nullable columns (`OPTIONAL INT32`): definition levels via `LevelEncoder`, and how nulls ride inside a `ColumnBatch`. | Dimension | The null / def-level data model is settled | 2.3, 3.3 | [x] |
-| 5 | **Nested write design**: the shredding model (rep/def-level computation from struct / list / map nesting), the nested `ColumnBatch` input contract (per-layer validity + offsets, the write-side analog of `getLayerValidity` / `getLayerOffsets`), and `FileSchema.Builder` group / repeated-field support. Produces `_designs/WRITER_NESTED.md`, the reference the shredding increments implement against. | Spike | The nested write contract is settled | 6.3 (design) | [ ] |
+| 5 | **Nested write design**: the shredding model (rep/def-level computation from struct / list / map nesting), the nested `ColumnBatch` input contract (per-layer validity + offsets, the write-side analog of `getLayerValidity` / `getLayerOffsets`), and `FileSchema.Builder` group / repeated-field support. Produces `_designs/WRITER_NESTED.md`, the reference the shredding increments implement against. | Spike | The nested write contract is settled | 6.3 (design) | [x] |
 | 6 | **Struct shredding** (`INT32` leaves): `REQUIRED` / `OPTIONAL` nested groups — definition levels of depth > 1 and per-layer validity, no repetition yet. | Dimension | Nested structs written and read back | 3.3 (multi-level def), 6.3 | [ ] |
 | 7 | **List shredding** (`INT32` leaves): `REPEATED` fields — repetition levels via `LevelEncoder`, offset-driven nested input. | Dimension | The repetition-level data model is settled | 3.3 (rep levels), 6.3 | [ ] |
 | 8 | **Map shredding** (`INT32` leaves): key/value repeated group, reusing the list machinery. | Dimension | The full nested shape (structs, lists, maps) is settled | 6.3 | [ ] |
