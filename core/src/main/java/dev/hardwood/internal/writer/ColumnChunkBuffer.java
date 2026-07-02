@@ -10,11 +10,15 @@ package dev.hardwood.internal.writer;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
+import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.CRC32;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.Validity;
+import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.internal.encoding.PlainEncoder;
 import dev.hardwood.internal.thrift.PageHeaderWriter;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
@@ -24,33 +28,64 @@ import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
-/// Accumulates one `REQUIRED INT32` column's values for the current row group, packing
-/// them into uncompressed `PLAIN` data pages of at most the page-value capacity. Values
-/// arrive across one or more batches; a page is sealed each time the pending buffer
-/// fills, and the tail is sealed at flush. The encoded pages are held until the row
-/// group is flushed, since a column chunk's `data_page_offset` is only known when its
-/// bytes are written.
+/// Accumulates one flat `INT32` column's values for the current row group, packing them
+/// into uncompressed `PLAIN` data pages of at most the page-value capacity. Values arrive
+/// across one or more batches; a page is sealed each time the pending buffer fills, and
+/// the tail is sealed at flush. The encoded pages are held until the row group is flushed,
+/// since a column chunk's `data_page_offset` is only known when its bytes are written.
+///
+/// For an `OPTIONAL` column each page carries a definition-level stream ahead of its
+/// values: `[4-byte LE def-level length][RLE def-levels][PLAIN of the non-null values]`.
+/// A `REQUIRED` column has no levels and writes its values directly.
 final class ColumnChunkBuffer {
 
     private final int[] pending;
+    private final int maxDefLevel;
+    private final int[] defLevels;
+    private final int[] compactValues;
     private final ByteArrayOutputStream pages = new ByteArrayOutputStream();
     private int pendingCount;
     private long numValues;
 
-    /// @param pageValues maximum number of `INT32` values per data page
-    ColumnChunkBuffer(int pageValues) {
+    /// @param pageValues maximum number of rows per data page
+    /// @param maxDefLevel the column's maximum definition level (0 for `REQUIRED`, 1 for a
+    ///        flat `OPTIONAL` column), which selects whether pages carry def levels
+    ColumnChunkBuffer(int pageValues, int maxDefLevel) {
         this.pending = new int[pageValues];
+        this.maxDefLevel = maxDefLevel;
+        if (maxDefLevel > 0) {
+            this.defLevels = new int[pageValues];
+            this.compactValues = new int[pageValues];
+        }
+        else {
+            this.defLevels = null;
+            this.compactValues = null;
+        }
     }
 
-    /// Appends `count` values starting at `srcPos` in `source`, sealing pages as the
-    /// pending buffer fills.
-    void append(IntColumnSource source, int srcPos, int count) {
+    /// Appends `count` rows starting at `srcPos` in `source`, sealing pages as the pending
+    /// buffer fills. `validity` carries the rows' nulls (indexed absolutely into the batch)
+    /// or is `null` when every appended row is present.
+    void append(IntColumnSource source, Validity validity, int srcPos, int count) {
         int remaining = count;
         int from = srcPos;
         while (remaining > 0) {
             int space = pending.length - pendingCount;
             int n = Math.min(space, remaining);
             source.copyInto(from, pending, pendingCount, n);
+            if (defLevels != null) {
+                // Lower the nulls straight into def levels: start all-present (also clearing
+                // the reused slots from a prior page), then drop to level 0 wherever the
+                // validity reports a null over this range — representation agnostic, so a
+                // dense or a future sparse validity feed the same code.
+                Arrays.fill(defLevels, pendingCount, pendingCount + n, maxDefLevel);
+                if (validity != null) {
+                    int end = from + n;
+                    for (int i = validity.nextNull(from, end); i != -1; i = validity.nextNull(i + 1, end)) {
+                        defLevels[pendingCount + (i - from)] = 0;
+                    }
+                }
+            }
             pendingCount += n;
             from += n;
             remaining -= n;
@@ -67,10 +102,13 @@ final class ColumnChunkBuffer {
         sealPage();
         long totalSize = pages.size();
         out.write(ByteBuffer.wrap(pages.toByteArray()));
+        List<Encoding> encodings = defLevels == null
+                ? List.of(Encoding.PLAIN)
+                : List.of(Encoding.RLE, Encoding.PLAIN);
         // Pages are stored uncompressed, so compressed and uncompressed sizes are equal.
         return new ColumnMetaData(
                 PhysicalType.INT32,
-                List.of(Encoding.PLAIN),
+                encodings,
                 column.fieldPath(),
                 CompressionCodec.UNCOMPRESSED,
                 numValues,
@@ -89,17 +127,38 @@ final class ColumnChunkBuffer {
         if (pendingCount == 0) {
             return;
         }
-        byte[] valueBytes = PlainEncoder.encodeInts(pending, 0, pendingCount);
+        byte[] body = maxDefLevel > 0 ? optionalBody() : PlainEncoder.encodeInts(pending, 0, pendingCount);
         // CRC-32 over the page body as stored on disk (uncompressed here), matching what
         // the reader validates.
         CRC32 crc = new CRC32();
-        crc.update(valueBytes);
+        crc.update(body);
         ThriftCompactWriter header = new ThriftCompactWriter();
-        PageHeaderWriter.writeDataPageV1(header, pendingCount, valueBytes.length, valueBytes.length,
+        PageHeaderWriter.writeDataPageV1(header, pendingCount, body.length, body.length,
                 (int) crc.getValue(), Encoding.PLAIN);
         pages.writeBytes(header.toByteArray());
-        pages.writeBytes(valueBytes);
+        pages.writeBytes(body);
         numValues += pendingCount;
         pendingCount = 0;
+    }
+
+    /// Builds an `OPTIONAL` page body: the def-level length prefix, the RLE def-level
+    /// stream, then the `PLAIN` values of the non-null rows only. The def levels were
+    /// already lowered into `defLevels` as rows were appended; here they only drive the
+    /// compaction of the non-null values.
+    private byte[] optionalBody() {
+        int nonNull = 0;
+        for (int i = 0; i < pendingCount; i++) {
+            if (defLevels[i] != 0) {
+                compactValues[nonNull++] = pending[i];
+            }
+        }
+        byte[] defBytes = LevelEncoder.encode(defLevels, 0, pendingCount, maxDefLevel);
+        byte[] valueBytes = PlainEncoder.encodeInts(compactValues, 0, nonNull);
+
+        ByteArrayOutputStream body = new ByteArrayOutputStream(4 + defBytes.length + valueBytes.length);
+        body.writeBytes(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(defBytes.length).array());
+        body.writeBytes(defBytes);
+        body.writeBytes(valueBytes);
+        return body.toByteArray();
     }
 }

@@ -55,7 +55,9 @@ public class RleBitPackingHybridDecoder {
         this.dataEnd = offset + length;
         this.pos = offset;
         this.bitWidth = bitWidth;
-        this.bitMask = (bitWidth == 0) ? 0 : (1 << bitWidth) - 1;
+        // (1 << 32) - 1 wraps to 0 in Java (the shift count is taken mod 32), so a width of
+        // 32 needs an explicit all-ones mask, matching the encoder's 32-bit handling.
+        this.bitMask = (bitWidth == 0) ? 0 : (bitWidth == 32) ? -1 : (1 << bitWidth) - 1;
     }
 
     public void readInts(int[] buffer, int offset, int count) {

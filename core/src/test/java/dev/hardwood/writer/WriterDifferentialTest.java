@@ -107,6 +107,75 @@ class WriterDifferentialTest {
     }
 
     @Test
+    void duckDbReadsNullableInts(@TempDir Path dir) throws Exception {
+        // Interior, leading and trailing nulls, with signed extremes at present rows.
+        int[] v = { 0, 0, -1, 0, Integer.MAX_VALUE, Integer.MIN_VALUE, 0 };
+        boolean[] nulls = { true, false, false, true, false, false, true };
+        int[] r = new int[v.length];
+        for (int i = 0; i < r.length; i++) {
+            r[i] = i;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .build();
+
+        Path file = dir.resolve("nullable.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch.ints(0, r).ints(1, v, nulls));
+        }
+
+        List<Integer> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                int value = rs.getInt("v");
+                actual.add(rs.wasNull() ? null : value);
+            }
+        }
+
+        List<Integer> expected = new ArrayList<>(v.length);
+        for (int i = 0; i < v.length; i++) {
+            expected.add(nulls[i] ? null : v[i]);
+        }
+        assertThat(actual).containsExactlyElementsOf(expected);
+    }
+
+    @Test
+    void duckDbReadsAllNullColumn(@TempDir Path dir) throws Exception {
+        int n = 1_000;
+        int[] r = new int[n];
+        boolean[] nulls = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            r[i] = i;
+            nulls[i] = true;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
+                .build();
+
+        Path file = dir.resolve("allnull.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch.ints(0, r).ints(1, new int[n], nulls));
+        }
+
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT count(*) AS n, count(v) AS present FROM read_parquet('"
+                                + file.toAbsolutePath() + "')")) {
+            rs.next();
+            assertThat(rs.getLong("n")).isEqualTo(n);
+            assertThat(rs.getLong("present")).isZero();
+        }
+    }
+
+    @Test
     void duckDbReadsMultipleRowGroups(@TempDir Path dir) throws Exception {
         int n = 5_000;
         int[] v = new int[n];
