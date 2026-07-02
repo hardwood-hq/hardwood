@@ -5,9 +5,9 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.internal.reader;
+package dev.hardwood.internal;
 
-import dev.hardwood.reader.Validity;
+import dev.hardwood.Validity;
 
 /// [Validity] whose per-item nullability is stored in a packed `long[]`
 /// (set bit = item is present). Constructed by [Validity#of] when at least

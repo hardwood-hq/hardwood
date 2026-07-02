@@ -22,7 +22,7 @@ import org.openjdk.jmh.annotations.Setup;
 import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 
-import dev.hardwood.reader.Validity;
+import dev.hardwood.Validity;
 
 /// Compares two ways of summing a `long[]` column while honoring a
 /// per-item null bitmap:
