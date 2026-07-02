@@ -4150,6 +4150,90 @@ pq.write_table(
 )
 print(f"  - diff_types.parquet:          {DIFF_TYPES_ROWS} rows, typed value-comparison corpus")
 
+# Fixed-size-list differential corpus: clean fixed-k LIST columns the read fast
+# path engages, validated against the DuckDB oracle. `vec_f32` is plain-encoded
+# (the primitive fast-path route), `vec_i32` is dictionary-encoded (the dict
+# route), and `vec_null` is a nullable list with scattered null rows that must
+# fall back to the regular path. `vec_i64`, `vec_f64`, and `vec_bool` cover the
+# remaining primitive element types the fast path bulk-copies (INT64/DOUBLE/
+# BOOLEAN) so every `copyValueRun` arm is exercised end-to-end; `vec_i64` uses
+# values beyond the INT32 range to prove the 64-bit copy is not truncated. All
+# required-element lists are uniform-length so the fast path applies; DuckDB reads
+# each as a SQL array.
+FSL_DIFF_ROWS = 120
+fsl_diff_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('vec_f32', pa.list_(pa.field('element', pa.float32(), nullable=False))),
+    ('vec_i32', pa.list_(pa.field('element', pa.int32(), nullable=False))),
+    ('vec_i64', pa.list_(pa.field('element', pa.int64(), nullable=False))),
+    ('vec_f64', pa.list_(pa.field('element', pa.float64(), nullable=False))),
+    ('vec_bool', pa.list_(pa.field('element', pa.bool_(), nullable=False))),
+    ('vec_null', pa.list_(pa.field('element', pa.float32(), nullable=False))),
+])
+fsl_diff_table = pa.table({
+    '__row__': list(range(FSL_DIFF_ROWS)),
+    'vec_f32': [[(r * 4 + i) * 0.5 for i in range(4)] for r in range(FSL_DIFF_ROWS)],
+    'vec_i32': [[(r * 3 + i) % 7 for i in range(3)] for r in range(FSL_DIFF_ROWS)],
+    'vec_i64': [[(r * 4 + i) * 10_000_000_000 for i in range(4)] for r in range(FSL_DIFF_ROWS)],
+    'vec_f64': [[(r * 8 + i) * 0.1 for i in range(8)] for r in range(FSL_DIFF_ROWS)],
+    'vec_bool': [[(r + i) % 2 == 0 for i in range(2)] for r in range(FSL_DIFF_ROWS)],
+    'vec_null': [None if r % 7 == 3 else [(r + i) * 1.25 for i in range(5)]
+                 for r in range(FSL_DIFF_ROWS)],
+}, schema=fsl_diff_schema)
+pq.write_table(
+    fsl_diff_table,
+    str(diff_dir / 'diff_fixed_size_list.parquet'),
+    use_dictionary=['vec_i32.list.element'],
+    compression=None,
+    data_page_version='2.0',
+)
+print(f"  - diff_fixed_size_list.parquet: {FSL_DIFF_ROWS} rows, fixed-size-list vs oracle")
+
+# Compressed variants of the same corpus. Decompression happens before the read
+# fast path inspects a page, so a compressed clean fixed-k column must still
+# engage and still match the oracle. Snappy and zstd cover the two codecs the
+# fast path is most likely to meet in the field.
+for _codec in ('snappy', 'zstd'):
+    pq.write_table(
+        fsl_diff_table,
+        str(diff_dir / f'diff_fixed_size_list_{_codec}.parquet'),
+        use_dictionary=['vec_i32.list.element'],
+        compression=_codec,
+        data_page_version='2.0',
+    )
+    print(f"  - diff_fixed_size_list_{_codec}.parquet: {FSL_DIFF_ROWS} rows, "
+          f"{_codec}-compressed fixed-size-list vs oracle")
+
+# Paged / multi-row-group corpus. Small data pages and row groups force the
+# fast-path column across many page and row-group boundaries. `vec_clean` is a
+# uniform-length required-element list (fast path throughout); `vec_mixed`
+# sprinkles null rows sparsely so some pages are all-clean (fast path) while
+# others carry a null and fall back — a batch spanning both kinds exercises the
+# batch-homogeneity flush. All validated against the DuckDB oracle.
+FSL_PAGED_ROWS = 400
+fsl_paged_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('vec_clean', pa.list_(pa.field('element', pa.float32(), nullable=False))),
+    ('vec_mixed', pa.list_(pa.field('element', pa.float32(), nullable=False))),
+])
+fsl_paged_table = pa.table({
+    '__row__': list(range(FSL_PAGED_ROWS)),
+    'vec_clean': [[(r * 4 + i) * 0.5 for i in range(4)] for r in range(FSL_PAGED_ROWS)],
+    'vec_mixed': [None if r % 55 == 20 else [(r + i) * 1.25 for i in range(4)]
+                  for r in range(FSL_PAGED_ROWS)],
+}, schema=fsl_paged_schema)
+pq.write_table(
+    fsl_paged_table,
+    str(diff_dir / 'diff_fixed_size_list_paged.parquet'),
+    use_dictionary=False,
+    compression=None,
+    data_page_version='2.0',
+    data_page_size=512,
+    row_group_size=96,
+)
+print(f"  - diff_fixed_size_list_paged.parquet: {FSL_PAGED_ROWS} rows, "
+      f"multi-page/multi-row-group fixed-size-list vs oracle")
+
 # Nulls corpus (filter null-semantics harness, #548 P2). A nullable column with
 # scattered nulls, so a comparison predicate must drop the null rows (SQL
 # three-valued logic) to agree with the oracle.
@@ -4386,3 +4470,70 @@ pq.write_table(
 )
 print("\nGenerated dict_string_map.parquet:")
 print(f"  - {STRING_MAP_ROWS} rows, props map<string,string> (dictionary-encoded keys + values)")
+
+# ---------------------------------------------------------------------------
+# Fixed-size-list fast-path fixtures.
+#
+# A LIST column where every row is a present list of exactly k float32 elements
+# (no null rows, no null elements) — the shape Arrow FixedSizeList / fixed-shape
+# tensors take under the standard 3-level LIST encoding. The element field is
+# required so the leaf max definition level is 2 (0 = list null, 1 = empty list,
+# 2 = element present) and every leaf sits at def == 2.
+#
+# Each configuration is written twice: DataPageV2 (which the reader's
+# fixed-size-list fast path detects) and DataPageV1 (which it never detects, so
+# it stays on the regular record-reconstruction path). Reading both and
+# comparing proves the fast path is a faithful, transparent optimization.
+def write_fixed_size_list(path_stem, k, rows, page_version, page_size=None):
+    values_field = pa.field('element', pa.float32(), nullable=False)
+    schema = pa.schema([
+        ('id', pa.int32(), False),
+        ('vec', pa.list_(values_field)),
+    ])
+    # Deterministic, high-cardinality values so encoders don't dictionary-encode.
+    flat = (numpy.arange(rows * k, dtype=numpy.float32) * numpy.float32(1.5)
+            + numpy.float32(0.25))
+    offsets = numpy.arange(rows + 1, dtype=numpy.int32) * k
+    vec = pa.ListArray.from_arrays(pa.array(offsets), pa.array(flat, type=pa.float32()))
+    table = pa.table(
+        {'id': pa.array(numpy.arange(rows, dtype=numpy.int32)), 'vec': vec},
+        schema=schema)
+    kwargs = dict(use_dictionary=False, compression=None, data_page_version=page_version)
+    if page_size is not None:
+        kwargs['data_page_size'] = page_size
+    pq.write_table(table, path_stem, **kwargs)
+
+
+for _k, _rows, _psize in [(1, 200, None), (4, 300, 512), (8, 128, None), (768, 40, None)]:
+    for _ver, _suffix in [('2.0', 'v2'), ('1.0', 'v1')]:
+        _path = f'core/src/test/resources/fixed_size_list_k{_k}_{_suffix}.parquet'
+        write_fixed_size_list(_path, _k, _rows, _ver, _psize)
+    print(f"Generated fixed_size_list_k{_k}_{{v1,v2}}.parquet: {_rows} rows x {_k} float32")
+
+
+# A fixed-size-list column whose first row group is wholly present (fast-path
+# pages) and whose second row group opens with a null list. Read with a small
+# batch size that spans the row-group boundary, the fixed-width run fills more
+# values than the initial level arrays hold, so when the null page forces the
+# open fast-path batch to materialize its levels, those arrays must grow. This
+# is the fixture for `FixedSizeListFastPathReadTest`'s lazy level-growth check.
+def write_fixed_size_list_leadfast(path):
+    k = 4
+    rows = 40
+    values_field = pa.field('element', pa.float32(), nullable=False)
+    schema = pa.schema([('vec', pa.list_(values_field))])
+    null_rows = {20, 27, 33}
+    data = [None if r in null_rows
+            else [(r * k + i) * 1.5 + 0.25 for i in range(k)]
+            for r in range(rows)]
+    table = pa.table({'vec': pa.array(data, type=pa.list_(values_field))}, schema=schema)
+    # row_group_size=20 puts rows 0..19 (all present -> fast pages) in the first
+    # group and the first null (row 20) at the head of the second group.
+    pq.write_table(table, path, use_dictionary=False, compression=None,
+                   data_page_version='2.0', row_group_size=20)
+
+
+_leadfast = 'core/src/test/resources/fixed_size_list_k4_leadfast_v2.parquet'
+write_fixed_size_list_leadfast(_leadfast)
+print("Generated fixed_size_list_k4_leadfast_v2.parquet: 40 rows x 4 float32, "
+      "3 null lists, present run then null across a row-group boundary")

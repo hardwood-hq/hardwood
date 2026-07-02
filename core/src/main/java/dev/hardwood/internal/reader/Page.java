@@ -30,6 +30,13 @@ public sealed interface Page {
 
     int[] repetitionLevels();
 
+    /// Number of elements per row when this page is a fixed-width fixed-size-list
+    /// page (every row a present list of exactly this many elements), or `0` when
+    /// it is a regular page. A fixed-width page carries `null` level arrays: its
+    /// boundaries are implicit at multiples of `fixedListK`. See
+    /// [FixedSizeListDetector].
+    int fixedListK();
+
     default boolean isNull(int index) {
         int[] defLevels = definitionLevels();
         if (defLevels == null) {
@@ -38,49 +45,95 @@ public sealed interface Page {
         return defLevels[index] < maxDefinitionLevel();
     }
 
-    record BooleanPage(boolean[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size)
-            implements Page {
+    /// Returns a copy of `page` marked as a fixed-width fixed-size-list page with
+    /// the given element count. The values are shared; the level arrays (already
+    /// `null` on a fixed-width decode) are carried through. This lets the fast path
+    /// reuse the regular value decoders and stamp the shape afterwards.
+    static Page withFixedListK(Page page, int fixedListK) {
+        return switch (page) {
+            case BooleanPage p -> new BooleanPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
+                    p.maxDefinitionLevel(), p.size(), fixedListK);
+            case IntPage p -> new IntPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
+                    p.maxDefinitionLevel(), p.size(), fixedListK);
+            case LongPage p -> new LongPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
+                    p.maxDefinitionLevel(), p.size(), fixedListK);
+            case FloatPage p -> new FloatPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
+                    p.maxDefinitionLevel(), p.size(), fixedListK);
+            case DoublePage p -> new DoublePage(p.values(), p.definitionLevels(), p.repetitionLevels(),
+                    p.maxDefinitionLevel(), p.size(), fixedListK);
+            case ByteArrayPage p -> new ByteArrayPage(p.values(), p.definitionLevels(), p.repetitionLevels(),
+                    p.maxDefinitionLevel(), p.size(), p.dictionary(), p.dictIndices(), fixedListK);
+        };
+    }
+
+    record BooleanPage(boolean[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
+            int size, int fixedListK) implements Page {
+        BooleanPage(boolean[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size) {
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, 0);
+        }
+
         public boolean get(int index) {
             return values[index];
         }
     }
 
-    record IntPage(int[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size)
-            implements Page {
+    record IntPage(int[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
+            int size, int fixedListK) implements Page {
+        IntPage(int[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size) {
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, 0);
+        }
+
         public int get(int index) {
             return values[index];
         }
     }
 
-    record LongPage(long[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size)
-            implements Page {
+    record LongPage(long[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
+            int size, int fixedListK) implements Page {
+        LongPage(long[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size) {
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, 0);
+        }
+
         public long get(int index) {
             return values[index];
         }
     }
 
-    record FloatPage(float[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size)
-            implements Page {
+    record FloatPage(float[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
+            int size, int fixedListK) implements Page {
+        FloatPage(float[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size) {
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, 0);
+        }
+
         public float get(int index) {
             return values[index];
         }
     }
 
-    record DoublePage(double[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size)
-            implements Page {
+    record DoublePage(double[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
+            int size, int fixedListK) implements Page {
+        DoublePage(double[] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel, int size) {
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, 0);
+        }
+
         public double get(int index) {
             return values[index];
         }
     }
 
     record ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
-            int size, Dictionary.ByteArrayDictionary dictionary, int[] dictIndices)
+            int size, Dictionary.ByteArrayDictionary dictionary, int[] dictIndices, int fixedListK)
             implements Page {
         /// Page from a non-dictionary (`PLAIN`) decode: no shared dictionary, so
         /// values cannot be interned per entry (`dictionary` / `dictIndices` null).
         ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
                 int size) {
-            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, null, null);
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, null, null, 0);
+        }
+
+        ByteArrayPage(byte[][] values, int[] definitionLevels, int[] repetitionLevels, int maxDefinitionLevel,
+                int size, Dictionary.ByteArrayDictionary dictionary, int[] dictIndices) {
+            this(values, definitionLevels, repetitionLevels, maxDefinitionLevel, size, dictionary, dictIndices, 0);
         }
 
         public byte[] get(int index) {

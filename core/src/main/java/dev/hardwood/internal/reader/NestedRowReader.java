@@ -93,6 +93,7 @@ public final class NestedRowReader implements RowReader {
     /// @param schema the file schema
     /// @param projectedSchema the projected column schema
     /// @param context the hardwood context
+    /// @param fixedListFastPathEnabled whether the fixed-size-list read fast path may engage
     /// @param filter resolved predicate, or `null` for no filtering
     /// @param maxRows maximum rows (0 = unlimited). Without a filter this caps scanned
     ///                rows at the [ColumnWorker] drain. With a filter it caps *matching*
@@ -102,6 +103,7 @@ public final class NestedRowReader implements RowReader {
                             FileSchema schema,
                             ProjectedSchema projectedSchema,
                             HardwoodContextImpl context,
+                            boolean fixedListFastPathEnabled,
                             ResolvedPredicate filter,
                             long maxRows) {
         int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema);
@@ -130,7 +132,7 @@ public final class NestedRowReader implements RowReader {
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), workerMaxRows,
-                    layers);
+                    layers, fixedListFastPathEnabled);
 
             buffers[i] = buffer;
             workers[i] = worker;

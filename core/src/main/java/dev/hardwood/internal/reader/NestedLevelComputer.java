@@ -124,6 +124,38 @@ public final class NestedLevelComputer {
         return offsets;
     }
 
+    /// Sentinel-suffixed record offsets for a fixed-width fixed-size-list batch, where
+    /// record `r` spans values `[r * k, (r + 1) * k)`: the array
+    /// `[0, k, 2k, ..., recordCount * k]`. Used by the fixed-size-list fast path
+    /// in place of a repetition-level scan.
+    public static int[] fixedListOffsets(int k, int recordCount) {
+        int[] offsets = new int[recordCount + 1];
+        for (int i = 0; i <= recordCount; i++) {
+            offsets[i] = Math.multiplyExact(i, k);
+        }
+        return offsets;
+    }
+
+    /// Layer-indexed offsets for a fixed-width fixed-size-list batch: each `REPEATED`
+    /// layer gets the arithmetic sentinel-suffixed offsets `[0, k, 2k, ...,
+    /// recordCount * k]` from [#fixedListOffsets]; `STRUCT` layers stay `null`.
+    /// Returns `null` when there are no layers. The arithmetic replacement for
+    /// [#computeLayerOffsets] on the fast path, where record boundaries are
+    /// implicit multiples of `k` rather than recovered from a repetition scan.
+    public static int[][] fixedListLayerOffsets(int k, int recordCount, Layers layers) {
+        if (layers == null || layers.count() == 0) {
+            return null;
+        }
+        int layerCount = layers.count();
+        int[][] result = new int[layerCount][];
+        for (int i = 0; i < layerCount; i++) {
+            if (layers.kinds()[i] == LayerKind.REPEATED) {
+                result[i] = fixedListOffsets(k, recordCount);
+            }
+        }
+        return result;
+    }
+
     // ==================== Layer Model ====================
 
     /// Layer descriptor for a column's schema chain. The arrays are positional:

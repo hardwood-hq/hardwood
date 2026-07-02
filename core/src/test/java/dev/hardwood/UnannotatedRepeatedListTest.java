@@ -13,6 +13,7 @@ import java.nio.file.Paths;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqIntList;
 import dev.hardwood.row.PqList;
@@ -60,6 +61,31 @@ class UnannotatedRepeatedListTest {
         Path file = Paths.get("src/test/resources/unannotated_repeated_annotated_list_test.parquet");
 
         try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+                RowReader rowReader = fileReader.rowReader()) {
+
+            assertThat(rowReader.hasNext()).isTrue();
+            rowReader.next();
+
+            PqIntList ints = rowReader.getList("foo").ints();
+            assertThat(ints.size()).isEqualTo(2);
+            assertThat(ints.get(0)).isEqualTo(42);
+            assertThat(ints.get(1)).isEqualTo(7);
+        }
+    }
+
+    /// The annotated `required group (LIST)` is a required list of required
+    /// elements (`maxDef == 1`), so it engages the fixed-size-list fast path. The
+    /// reconstructed row must still be `[42, 7]`, proving the fast path's
+    /// `maxDef == 1` reconstruction end to end.
+    @Test
+    void annotatedRequiredListReadsThroughFixedSizeListFastPath() throws Exception {
+        Path file = Paths.get("src/test/resources/unannotated_repeated_annotated_list_test.parquet");
+        ReaderConfig fastPathOn =
+                ReaderConfig.builder().option("hardwood.fixed-list-fast-path", "true").build();
+
+        try (HardwoodContext context = HardwoodContext.create();
+                ParquetFileReader fileReader =
+                        ParquetFileReader.open(InputFile.of(file), context, fastPathOn);
                 RowReader rowReader = fileReader.rowReader()) {
 
             assertThat(rowReader.hasNext()).isTrue();
