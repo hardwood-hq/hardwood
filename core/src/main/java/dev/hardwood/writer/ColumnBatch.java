@@ -7,6 +7,9 @@
  */
 package dev.hardwood.writer;
 
+import java.util.HashMap;
+import java.util.Map;
+
 import dev.hardwood.Experimental;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.writer.IntArrayColumnSource;
@@ -15,6 +18,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 /// One aligned slice of a file's columns. Every column in a batch must have the same
 /// number of values, which is the batch's row count.
@@ -56,6 +60,7 @@ public final class ColumnBatch {
     private final FileSchema schema;
     private final IntColumnSource[] sources;
     private final Validity[] validities;
+    private final Map<String, Validity> structValidities = new HashMap<>();
     private int rowCount = -1;
     private boolean consumed;
 
@@ -63,6 +68,61 @@ public final class ColumnBatch {
         this.schema = schema;
         this.sources = new IntColumnSource[schema.getColumnCount()];
         this.validities = new Validity[schema.getColumnCount()];
+    }
+
+    /// Sets the per-instance nulls of an `OPTIONAL` `struct` group, addressed by its
+    /// dot-separated path. Omitting the call leaves every instance of the group present.
+    /// The values of leaf columns beneath a null struct instance are ignored.
+    ///
+    /// @param structPath the group's path (e.g. `"address"`)
+    /// @param nulls the group's nulls; `nulls.isNull(i)` marks instance `i` absent
+    /// @return this batch, for chaining
+    /// @throws IllegalArgumentException if the path does not name an `OPTIONAL` `struct`
+    ///         group, or the group is already set in this batch
+    @Experimental
+    public ColumnBatch struct(String structPath, Validity nulls) {
+        if (consumed) {
+            throw new IllegalStateException("Batch has already been written and cannot be modified");
+        }
+        if (nulls == null) {
+            throw new IllegalArgumentException("nulls must not be null for struct " + structPath
+                    + "; omit the struct(...) call for an all-present group");
+        }
+        resolveStruct(structPath);
+        if (structValidities.putIfAbsent(structPath, nulls) != null) {
+            throw new IllegalArgumentException("Struct " + structPath + " is already set in this batch");
+        }
+        return this;
+    }
+
+    /// Resolves a dot-separated path to the `OPTIONAL` plain-`struct` group it names,
+    /// rejecting a missing path, a leaf, a `REQUIRED` group (no null bit to set), and a
+    /// `LIST`/`MAP` group (set through their own verbs).
+    private SchemaNode.GroupNode resolveStruct(String structPath) {
+        SchemaNode node = schema.getRootNode();
+        for (String segment : structPath.split("\\.", -1)) {
+            if (!(node instanceof SchemaNode.GroupNode group)) {
+                throw new IllegalArgumentException("No struct at path " + structPath);
+            }
+            node = null;
+            for (SchemaNode child : group.children()) {
+                if (child.name().equals(segment)) {
+                    node = child;
+                    break;
+                }
+            }
+            if (node == null) {
+                throw new IllegalArgumentException("No struct at path " + structPath);
+            }
+        }
+        if (!(node instanceof SchemaNode.GroupNode group) || !group.isStruct()) {
+            throw new IllegalArgumentException("Path " + structPath + " does not name a struct group");
+        }
+        if (group.repetitionType() != RepetitionType.OPTIONAL) {
+            throw new IllegalArgumentException("Struct " + structPath + " is " + group.repetitionType()
+                    + "; nulls are only valid for an OPTIONAL struct");
+        }
+        return group;
     }
 
     /// Adds the values for a `REQUIRED INT32` column, addressed by index.
@@ -249,5 +309,11 @@ public final class ColumnBatch {
     /// `null` for an all-present column (`REQUIRED`, or `OPTIONAL` set without a mask).
     Validity[] validities() {
         return validities;
+    }
+
+    /// The `STRUCT`-layer nulls set in this batch, keyed by group path. A path absent from
+    /// the map is an all-present group.
+    Map<String, Validity> structValidities() {
+        return structValidities;
     }
 }
