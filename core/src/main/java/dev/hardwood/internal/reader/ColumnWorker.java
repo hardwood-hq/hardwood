@@ -57,6 +57,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     private final DecompressorFactory decompressorFactory;
     private final Executor decodeExecutor;
 
+    /// Whether the fixed-size-list read fast path may engage. Defaults to `true`;
+    /// nested workers override it from the reader's context option. It is a no-op
+    /// for flat columns (the fast path requires `maxRepetitionLevel == 1`).
+    protected boolean fixedListFastPathEnabled = true;
+
     final BatchExchange<B> exchange;
     final ColumnSchema column;
     final PhysicalType physicalType;
@@ -240,7 +245,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     pageDecoder = new PageDecoder(
                             pageInfo.columnMetaData(),
                             pageInfo.columnSchema(),
-                            decompressorFactory);
+                            decompressorFactory,
+                            fixedListFastPathEnabled);
                 }
 
                 // Throttle: park while too many pages are in flight

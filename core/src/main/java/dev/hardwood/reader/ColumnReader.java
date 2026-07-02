@@ -470,16 +470,31 @@ public class ColumnReader implements AutoCloseable {
 
     /// Raw definition levels for the current batch. Returns `null` for flat
     /// columns; their validity is fully captured by [#getLeafValidity()].
+    ///
+    /// When the batch was decoded via the fixed-size-list fast path the level
+    /// arrays are not materialized during decode; this escape hatch synthesizes
+    /// them on demand (every leaf present, so `maxDefinitionLevel`) so callers
+    /// see the same levels the regular path would produce. It is expected to be
+    /// called rarely, so the arrays are rebuilt per call rather than cached.
     public int[] getDefinitionLevels() {
         checkBatchAvailable();
         if (!nested) {
             return null;
         }
-        return currentNestedBatch.definitionLevels;
+        int[] definitionLevels = currentNestedBatch.definitionLevels;
+        if (definitionLevels == null && currentNestedBatch.fixedListK > 0) {
+            definitionLevels = new int[currentNestedBatch.valueCount];
+            Arrays.fill(definitionLevels, column.maxDefinitionLevel());
+        }
+        return definitionLevels;
     }
 
     /// Raw repetition levels for the current batch. Returns `null` for columns
     /// whose `maxRepetitionLevel == 0`.
+    ///
+    /// On a fixed-size-list fast-path batch the levels are synthesized on demand
+    /// (each row is `0` followed by `k - 1` ones), matching the regular path. See
+    /// [#getDefinitionLevels()].
     public int[] getRepetitionLevels() {
         checkBatchAvailable();
         if (!nested) {
@@ -488,7 +503,15 @@ public class ColumnReader implements AutoCloseable {
         if (column.maxRepetitionLevel() == 0) {
             return null;
         }
-        return currentNestedBatch.repetitionLevels;
+        int[] repetitionLevels = currentNestedBatch.repetitionLevels;
+        if (repetitionLevels == null && currentNestedBatch.fixedListK > 0) {
+            int k = currentNestedBatch.fixedListK;
+            repetitionLevels = new int[currentNestedBatch.valueCount];
+            for (int i = 0; i < repetitionLevels.length; i++) {
+                repetitionLevels[i] = (i % k == 0) ? 0 : 1;
+            }
+        }
+        return repetitionLevels;
     }
 
     // ==================== Metadata ====================
@@ -686,10 +709,14 @@ public class ColumnReader implements AutoCloseable {
 
         NestedBatch out = new NestedBatch();
         out.fileName = src.fileName;
+        out.fixedListK = src.fixedListK;
         out.recordCount = count;
         out.valueCount = total;
         out.values = compactPrimitive(src.values, keptLeaves);
-        out.definitionLevels = gather(src.definitionLevels, keptLeaves);
+        // A fixed-width batch carries no level arrays; selection keeps whole
+        // k-element records, so it stays fixed-width and the real view is rebuilt
+        // arithmetically from the new record count.
+        out.definitionLevels = src.definitionLevels != null ? gather(src.definitionLevels, keptLeaves) : null;
         out.repetitionLevels = src.repetitionLevels != null ? gather(src.repetitionLevels, keptLeaves) : null;
         out.recordOffsets = newRecordOffsets;
         return out;
@@ -716,15 +743,32 @@ public class ColumnReader implements AutoCloseable {
         if (!nested) {
             throw new IllegalStateException(prefix() + "Real view not available for flat columns");
         }
-        currentRealView = NestedLevelComputer.computeRealView(
-                currentNestedBatch.definitionLevels,
-                currentNestedBatch.repetitionLevels,
-                currentNestedBatch.valueCount,
-                currentNestedBatch.recordCount,
-                column.maxDefinitionLevel(),
-                layers);
+        currentRealView = currentNestedBatch.fixedListK > 0
+                ? fixedListRealView(currentNestedBatch)
+                : NestedLevelComputer.computeRealView(
+                        currentNestedBatch.definitionLevels,
+                        currentNestedBatch.repetitionLevels,
+                        currentNestedBatch.valueCount,
+                        currentNestedBatch.recordCount,
+                        column.maxDefinitionLevel(),
+                        layers);
         realViewComputed = true;
         return currentRealView;
+    }
+
+    /// Real-items view for a fixed-width fixed-size-list batch: all leaves present, so
+    /// the single `REPEATED` layer carries arithmetic offsets and every validity
+    /// is `null`; `realToRawLeaf` is `null` because the dense value stream is
+    /// already the real-items stream (identity), so leaf values pass through
+    /// without compaction.
+    private NestedLevelComputer.RealView fixedListRealView(NestedBatch batch) {
+        int k = batch.fixedListK;
+        int recordCount = batch.recordCount;
+        int layerCount = layers.count();
+        return new NestedLevelComputer.RealView(
+                NestedLevelComputer.fixedListLayerOffsets(k, recordCount, layers),
+                new long[layerCount][], null,
+                Math.multiplyExact(recordCount, k), null);
     }
 
     /// Returns the leaf-values backing array sized to [#getValueCount()].
@@ -868,24 +912,26 @@ public class ColumnReader implements AutoCloseable {
     /// filtering. `filter` may be `null`.
     static ColumnReader create(String columnName, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context, ResolvedPredicate filter,
-                               int batchSize) {
-        return create(schema.getColumn(columnName), schema, inputFile, rowGroups, context, filter, batchSize);
+                               HardwoodContextImpl context, boolean fixedListFastPathEnabled,
+                               ResolvedPredicate filter, int batchSize) {
+        return create(schema.getColumn(columnName), schema, inputFile, rowGroups, context,
+                fixedListFastPathEnabled, filter, batchSize);
     }
 
     /// Create a ColumnReader for a column by index with optional page-level
     /// filtering. `filter` may be `null`.
     static ColumnReader create(int columnIndex, FileSchema schema,
                                InputFile inputFile, List<RowGroup> rowGroups,
-                               HardwoodContextImpl context, ResolvedPredicate filter,
-                               int batchSize) {
-        return create(schema.getColumn(columnIndex), schema, inputFile, rowGroups, context, filter, batchSize);
+                               HardwoodContextImpl context, boolean fixedListFastPathEnabled,
+                               ResolvedPredicate filter, int batchSize) {
+        return create(schema.getColumn(columnIndex), schema, inputFile, rowGroups, context,
+                fixedListFastPathEnabled, filter, batchSize);
     }
 
     private static ColumnReader create(ColumnSchema columnSchema, FileSchema schema,
                                        InputFile inputFile, List<RowGroup> rowGroups,
-                                       HardwoodContextImpl context, ResolvedPredicate filter,
-                                       int batchSize) {
+                                       HardwoodContextImpl context, boolean fixedListFastPathEnabled,
+                                       ResolvedPredicate filter, int batchSize) {
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema,
                 ColumnProjection.columns(columnSchema.fieldPath().toString()));
 
@@ -898,7 +944,8 @@ public class ColumnReader implements AutoCloseable {
         rowGroupIterator.setFirstFile(schema, rowGroups);
         rowGroupIterator.initialize(projectedSchema, filter);
 
-        return createFromIterator(columnSchema, schema, rowGroupIterator, context, 0, rowGroupIterator, resolvedBatchSize);
+        return createFromIterator(columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled,
+                0, rowGroupIterator, resolvedBatchSize);
     }
 
     /// Creates a ColumnReader from a pre-configured RowGroupIterator.
@@ -911,6 +958,7 @@ public class ColumnReader implements AutoCloseable {
     static ColumnReader createFromIterator(ColumnSchema columnSchema, FileSchema schema,
                                            RowGroupIterator rowGroupIterator,
                                            HardwoodContextImpl context,
+                                           boolean fixedListFastPathEnabled,
                                            int projectedColumnIndex,
                                            RowGroupIterator ownedIterator,
                                            int batchSize) {
@@ -930,7 +978,7 @@ public class ColumnReader implements AutoCloseable {
             NestedColumnWorker nestedWorker = new NestedColumnWorker(
                     pageSource, nestedBuf, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), 0,
-                    layers);
+                    layers, fixedListFastPathEnabled);
             nestedWorker.start();
             return ColumnReader.forNested(columnSchema, layers, nestedBuf, nestedWorker, ownedIterator);
         }

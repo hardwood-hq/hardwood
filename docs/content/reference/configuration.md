@@ -108,6 +108,33 @@ Events appear under the **Hardwood** category in JDK Mission Control (JMC) or an
 - **Decode hotspots** — `PageDecoded` events with large uncompressed sizes or high frequency
 - **Pipeline stalls** — `BatchWait` events indicate the reader is waiting for decoded data
 
+## Reader Options
+
+Read-time behaviour is configured with an immutable `ReaderConfig`, passed to `ParquetFileReader.open(...)`. It is separate from `HardwoodContext`, which holds the shared runtime resources (the decode thread pool and native decompression pools): a single context can back reads with different `ReaderConfig`s, so a behaviour knob never forces a fresh thread pool.
+
+```java
+import dev.hardwood.HardwoodContext;
+import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ReaderConfig;
+
+ReaderConfig config = ReaderConfig.builder()
+        .option("hardwood.fixed-list-fast-path", "true")
+        .build();
+
+try (HardwoodContext context = HardwoodContext.create();
+     ParquetFileReader reader = ParquetFileReader.open(inputFile, context, config)) {
+    // ...
+}
+```
+
+Obtain the defaults with `ReaderConfig.defaults()`. The `open(inputFile)` and `open(inputFile, context)` overloads use the defaults.
+
+Options are string-keyed and keys are matched case-sensitively; boolean option values are compared case-insensitively. An unrecognised key is ignored (so a transitional flag can be retired without breaking callers) but logged at `WARNING`, so a typo in a live key surfaces rather than silently taking the default.
+
+| Option | Default | Description |
+|--------|---------|-------------|
+| `hardwood.fixed-list-fast-path` | `false` | Set to `"true"` to decode fixed-size `LIST` columns (e.g. embedding vectors, where every row holds the same number of non-null elements) without reconstructing per-row definition and repetition levels. Off by default, so every column takes the general nested-decode path unless the option is enabled. |
+
 ## System Properties Reference
 
 | Property | Default | Description |

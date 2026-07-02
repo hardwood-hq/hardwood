@@ -31,8 +31,23 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     private int[] nestedRecordOffsets;
     private int nestedValueCount;
 
+    /// Capacity (in values) currently backing [#nestedValues]. Tracked
+    /// explicitly because the value array and the level arrays grow
+    /// independently: the fixed-size-list fast path fills only the value array
+    /// and leaves [#nestedDefLevels] / [#nestedRepLevels] at their smaller
+    /// capacity, since a fixed-width batch publishes with `null` levels. The
+    /// level arrays are grown to match only when a batch falls back to the
+    /// regular representation ([#materializeFixedWidthBatchLevels]).
+    private int nestedValuesCapacity;
+
     /// Whether we have seen the first value in the nested stream.
     private boolean nestedFirstValueSeen;
+
+    /// Elements per row of the batch currently being assembled when it is on the
+    /// fixed-size-list fast path, or `0` for a regular batch. A batch stays
+    /// homogeneous: [#assemblePage] flushes the open batch before switching
+    /// between the fast and regular paths (or between different `k`).
+    private int batchFixedK;
 
     /// Creates a new nested column worker.
     ///
@@ -46,21 +61,34 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// @param layers per-layer descriptor (kinds + def thresholds) for the
     ///        column's schema chain, or `null` for non-repeated columns. The
     ///        descriptor drives the layer-indexed `multiLevelOffsets` shape.
+    /// Convenience constructor with the fixed-size-list fast path enabled.
     public NestedColumnWorker(PageSource pageSource, BatchExchange<NestedBatch> exchange,
                               ColumnSchema column, int batchCapacity,
                               DecompressorFactory decompressorFactory,
                               Executor decodeExecutor, long maxRows,
                               NestedLevelComputer.Layers layers) {
+        this(pageSource, exchange, column, batchCapacity, decompressorFactory,
+             decodeExecutor, maxRows, layers, true);
+    }
+
+    public NestedColumnWorker(PageSource pageSource, BatchExchange<NestedBatch> exchange,
+                              ColumnSchema column, int batchCapacity,
+                              DecompressorFactory decompressorFactory,
+                              Executor decodeExecutor, long maxRows,
+                              NestedLevelComputer.Layers layers,
+                              boolean fixedListFastPathEnabled) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
               decodeExecutor, maxRows);
         this.maxRepetitionLevel = column.maxRepetitionLevel();
         this.layers = layers;
+        this.fixedListFastPathEnabled = fixedListFastPathEnabled;
     }
 
     @Override
     void initDrainState() {
         int initialCapacity = batchCapacity * 2;
         nestedValues = BatchExchange.allocateArray(column, initialCapacity);
+        nestedValuesCapacity = initialCapacity;
         nestedDefLevels = new int[initialCapacity];
         nestedRepLevels = new int[initialCapacity];
         nestedRecordOffsets = new int[batchCapacity];
@@ -68,6 +96,121 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
     @Override
     void assemblePage(Page page, PageRowMask mask) {
+        int k = page.fixedListK();
+        boolean pageFixedWidth = k > 0;
+        // A published batch must stay homogeneous — wholly fixed-width (levels
+        // omitted) or wholly regular — but batches must also cut at the same row
+        // boundaries across all columns, which is only true at batch-capacity and
+        // file boundaries. We therefore never flush at a page boundary: when the
+        // open fixed-width batch meets a regular page or a different k, we convert
+        // it to the regular representation in place (synthesizing its levels) and
+        // keep filling the same batch. A fixed-width page arriving into an
+        // already-regular batch is assembled with synthesized levels too.
+        if (batchFixedK > 0 && (!pageFixedWidth || k != batchFixedK)) {
+            materializeFixedWidthBatchLevels();
+        }
+        if (pageFixedWidth && (rowsInCurrentBatch == 0 || batchFixedK == k)) {
+            assembleFixedWidthPage(page, mask, k, false);
+        }
+        else if (pageFixedWidth) {
+            assembleFixedWidthPage(page, mask, k, true);
+        }
+        else {
+            assembleRegularPage(page, mask);
+        }
+    }
+
+    /// Converts the open fixed-width fast-path batch to the regular representation
+    /// by synthesizing the levels it omitted: every element is present (definition
+    /// level `maxDefinitionLevel`) and each record of `k` elements starts a new
+    /// list (repetition level `0` at the record start, `1` for the following
+    /// `k - 1` elements). The fixed-width path lays records out as contiguous
+    /// `k`-value runs from index `0`, so `v % k == 0` marks a record start. Called
+    /// when a batch that began fixed-width must absorb a regular or
+    /// differently-shaped page rather than being flushed early (which would
+    /// misalign sibling columns).
+    private void materializeFixedWidthBatchLevels() {
+        // The fast path grew only the value array, so the level arrays may be
+        // shorter than the values accumulated so far — size them up before
+        // synthesizing the omitted levels for every value.
+        ensureLevelCapacity(nestedValueCount);
+        int k = batchFixedK;
+        for (int v = 0; v < nestedValueCount; v++) {
+            nestedDefLevels[v] = maxDefinitionLevel;
+            nestedRepLevels[v] = (v % k == 0) ? 0 : 1;
+        }
+        batchFixedK = 0;
+    }
+
+    /// Assembly for a fixed-width `k`-element page: every record is a present list
+    /// of exactly `k` elements, so record boundaries are implicit and values are
+    /// bulk-copied per record with arithmetic record offsets. Masking and
+    /// batch/row splitting mirror [#assembleRegularPage] at record granularity.
+    ///
+    /// When `asRegularBatch` is `false` the batch stays on the fast path: the
+    /// level arrays are skipped and `batchFixedK` is stamped so the omitted
+    /// levels are the published representation. When it is `true` the page is
+    /// folded into an already-regular batch instead — the synthesized levels
+    /// (every element present, each record a `0` followed by `k - 1` ones) are
+    /// written and `batchFixedK` left `0`, keeping the batch wholly regular.
+    /// `batchFixedK` is (re)stamped inside the loop because a mid-page
+    /// [#publishCurrentBatch] (at batch capacity) resets it for the next batch.
+    private void assembleFixedWidthPage(Page page, PageRowMask mask, int k, boolean asRegularBatch) {
+        nestedFirstValueSeen = true;
+        int pageRecords = page.size() / k;
+        boolean maskAll = mask.isAll();
+        int intervalCount = maskAll ? 0 : mask.intervalCount();
+        int intervalCursor = 0;
+
+        for (int r = 0; r < pageRecords; r++) {
+            if (!maskAll) {
+                while (intervalCursor < intervalCount && r >= mask.end(intervalCursor)) {
+                    intervalCursor++;
+                }
+                if (intervalCursor >= intervalCount || r < mask.start(intervalCursor)) {
+                    continue;
+                }
+            }
+
+            if (rowsInCurrentBatch >= batchCapacity) {
+                publishCurrentBatch();
+                if (done) {
+                    return;
+                }
+            }
+            if (maxRows > 0 && totalRowsAssembled >= maxRows) {
+                if (rowsInCurrentBatch > 0) {
+                    publishCurrentBatch();
+                }
+                finishDrain();
+                return;
+            }
+
+            if (asRegularBatch) {
+                ensureNestedCapacity(nestedValueCount + k);
+            }
+            else {
+                ensureValueCapacity(nestedValueCount + k);
+            }
+            nestedRecordOffsets[rowsInCurrentBatch] = nestedValueCount;
+            int destStart = nestedValueCount;
+            copyValueRun(page, r * k, destStart, k);
+            if (asRegularBatch) {
+                for (int j = 0; j < k; j++) {
+                    nestedDefLevels[destStart + j] = maxDefinitionLevel;
+                    nestedRepLevels[destStart + j] = (j == 0) ? 0 : 1;
+                }
+            }
+            else {
+                batchFixedK = k;
+            }
+            nestedValueCount += k;
+            rowsInCurrentBatch++;
+            totalRowsAssembled++;
+        }
+    }
+
+    private void assembleRegularPage(Page page, PageRowMask mask) {
         int pageSize = page.size();
         int[] pageDefLevels = page.definitionLevels();
         int[] pageRepLevels = page.repetitionLevels();
@@ -146,12 +289,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             }
 
             // Ensure capacity for the new value
-            if (nestedValueCount >= nestedDefLevels.length) {
-                int newCapacity = nestedDefLevels.length * 2;
-                nestedValues = growValues(nestedValues, newCapacity);
-                nestedDefLevels = Arrays.copyOf(nestedDefLevels, newCapacity);
-                nestedRepLevels = Arrays.copyOf(nestedRepLevels, newCapacity);
-            }
+            ensureNestedCapacity(nestedValueCount + 1);
 
             // Copy value and levels
             nestedDefLevels[nestedValueCount] = pageDefLevels != null
@@ -169,8 +307,16 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         }
         currentBatch.recordCount = rowsInCurrentBatch;
         currentBatch.valueCount = nestedValueCount;
-        currentBatch.definitionLevels = Arrays.copyOf(nestedDefLevels, nestedValueCount);
-        currentBatch.repetitionLevels = Arrays.copyOf(nestedRepLevels, nestedValueCount);
+        currentBatch.fixedListK = batchFixedK;
+        if (batchFixedK > 0) {
+            // Fixed-width batch: boundaries are implicit, levels are omitted.
+            currentBatch.definitionLevels = null;
+            currentBatch.repetitionLevels = null;
+        }
+        else {
+            currentBatch.definitionLevels = Arrays.copyOf(nestedDefLevels, nestedValueCount);
+            currentBatch.repetitionLevels = Arrays.copyOf(nestedRepLevels, nestedValueCount);
+        }
         currentBatch.recordOffsets = Arrays.copyOf(nestedRecordOffsets, rowsInCurrentBatch);
         currentBatch.values = trimValues(nestedValues, nestedValueCount);
         currentBatch.fileName = currentBatchFileName;
@@ -201,6 +347,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
         rowsInCurrentBatch = 0;
         nestedValueCount = 0;
+        batchFixedK = 0;
         // The accumulator is reused for the next batch; clear its dictionary
         // slot so dictIndex state is rebuilt from scratch (the dictIndices array
         // is retained and overwritten in place).
@@ -218,6 +365,15 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// `REPEATED` layer). `multiLevelOffsets[k]` is `null` for `STRUCT`
     /// layers and sentinel-suffixed for `REPEATED` layers.
     private void computeIndex(NestedBatch batch) {
+        if (batch.fixedListK > 0) {
+            // All elements present, boundaries at multiples of k: no validity and
+            // arithmetic layer offsets, skipping the O(valueCount) level scans.
+            batch.elementValidity = null;
+            batch.multiLevelOffsets = NestedLevelComputer.fixedListLayerOffsets(
+                    batch.fixedListK, batch.recordCount, layers);
+            return;
+        }
+
         int[] defLevels = batch.definitionLevels;
         int valueCount = batch.valueCount;
 
@@ -266,6 +422,65 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                 // to the packed-byte path (see BinaryBatchValues#recordDictIndex).
                 bbv.recordDictIndex(p.dictIndices(), p.dictionary(), srcIndex, destIndex);
             }
+        }
+    }
+
+    /// Ensures both the value and level accumulators hold at least `needed`
+    /// slots. Used by the regular path, which writes values and levels at the
+    /// same indices. The two are grown independently ([#ensureValueCapacity],
+    /// [#ensureLevelCapacity]) and may end up at different capacities, but both
+    /// cover `[0, needed)`.
+    private void ensureNestedCapacity(int needed) {
+        ensureLevelCapacity(needed);
+        ensureValueCapacity(needed);
+    }
+
+    /// Ensures the value accumulator holds at least `needed` slots, growing it
+    /// (and, for [BinaryBatchValues], its offsets/bytes) independently of the
+    /// level arrays. The fixed-size-list fast path grows only this array.
+    private void ensureValueCapacity(int needed) {
+        if (needed <= nestedValuesCapacity) {
+            return;
+        }
+        int newCapacity = nestedValuesCapacity * 2;
+        if (newCapacity < needed) {
+            newCapacity = needed;
+        }
+        nestedValues = growValues(nestedValues, newCapacity);
+        nestedValuesCapacity = newCapacity;
+    }
+
+    /// Ensures the definition/repetition level arrays hold at least `needed`
+    /// slots. Only the regular representation writes levels, so the fast path
+    /// never calls this; a fixed-width batch that must fall back grows the level
+    /// arrays here, lazily, at the point of conversion.
+    private void ensureLevelCapacity(int needed) {
+        if (needed <= nestedDefLevels.length) {
+            return;
+        }
+        int newCapacity = nestedDefLevels.length * 2;
+        if (newCapacity < needed) {
+            newCapacity = needed;
+        }
+        nestedDefLevels = Arrays.copyOf(nestedDefLevels, newCapacity);
+        nestedRepLevels = Arrays.copyOf(nestedRepLevels, newCapacity);
+    }
+
+    /// Copies `count` consecutive values from `page` starting at `srcStart` into
+    /// the value accumulator at `destStart`. Primitive pages bulk-copy; byte
+    /// arrays fall back to the per-element append.
+    private void copyValueRun(Page page, int srcStart, int destStart, int count) {
+        switch (page) {
+            case Page.IntPage p -> System.arraycopy(p.values(), srcStart, (int[]) nestedValues, destStart, count);
+            case Page.LongPage p -> System.arraycopy(p.values(), srcStart, (long[]) nestedValues, destStart, count);
+            case Page.FloatPage p -> System.arraycopy(p.values(), srcStart, (float[]) nestedValues, destStart, count);
+            case Page.DoublePage p -> System.arraycopy(p.values(), srcStart, (double[]) nestedValues, destStart, count);
+            case Page.BooleanPage p -> System.arraycopy(p.values(), srcStart, (boolean[]) nestedValues, destStart, count);
+            // The fast path is gated to primitive numeric element types
+            // (PageDecoder#isFixedListElementSupported), so a byte-array page
+            // never reaches fixed-width assembly.
+            case Page.ByteArrayPage p -> throw new IllegalStateException(
+                    "byte-array element unexpected on the fixed-size-list fast path");
         }
     }
 

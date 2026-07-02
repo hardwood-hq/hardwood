@@ -37,6 +37,13 @@ public final class NestedBatch {
     // File name of the originating file (set by drain before publish)
     public String fileName;
 
+    /// Elements per row when this batch was assembled via the fixed-size-list
+    /// fast path (every record a present list of exactly this many elements),
+    /// or `0` for a regular batch. When set, `definitionLevels` /
+    /// `repetitionLevels` are `null` and the record/layer offsets are implicit
+    /// multiples of this value.
+    public int fixedListK;
+
     // Pre-computed index (computed by drain before publish). Validity bit set
     // iff present. Null means "all items at that layer are present in this
     // batch."
