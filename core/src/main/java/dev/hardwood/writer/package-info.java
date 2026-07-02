@@ -8,7 +8,8 @@
 
 /// Parquet file writer with a columnar API.
 ///
-/// [ParquetFileWriter] writes a flat schema to a [dev.hardwood.OutputFile] as a
-/// single row group, taking each column's values through a typed columnar method.
-/// Build the target schema with [dev.hardwood.schema.FileSchema#builder].
+/// [ParquetFileWriter] writes a flat schema of `REQUIRED` and `OPTIONAL INT32` columns to
+/// a [dev.hardwood.OutputFile], taking each column's values through [ColumnBatch] slices
+/// and banding them into size-bounded pages and row groups. Build the target schema with
+/// [dev.hardwood.schema.FileSchema#builder].
 package dev.hardwood.writer;

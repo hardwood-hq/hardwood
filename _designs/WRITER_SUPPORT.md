@@ -92,6 +92,39 @@ explicit boundary method. A caller holding whole columns submits them as one lar
 batch and the writer slices it into pages and row groups; a streaming producer submits
 many small batches and discards each after handing it over.
 
+### Null representation
+
+An `OPTIONAL` column carries its nulls as a `Validity` — the same type the reader returns
+from `getLeafValidity()`, promoted to the neutral `dev.hardwood` package so it is shared
+read/write vocabulary rather than reader-owned. Because `Validity` is an interface, the
+representation is chosen by the factory the caller uses: `NO_NULLS` (a singleton, no
+allocation), `of(long[])` for a packed present-bitmap, `ofNulls(boolean[])` to bridge a
+plain mask, and, in a later increment, a sparse form for the few-nulls case. The writer
+consumes whichever it is given the same way — `nextNull(from, end)` walks the null
+positions per page — so a new representation is a drop-in with no change to the write API.
+The polarity is null-centric (`Validity.isNull`), matching the reader, so a value read
+back as null is written by marking that row null.
+
+The values array is full length — one slot per row — and the entry at a null row is
+ignored. The common all-present case needs no `Validity` at all: the mask-less setter is
+the all-present form for both `REQUIRED` and `OPTIONAL` columns. A `boolean[]` overload is
+kept as convenience sugar over `Validity.ofNulls` (`nulls[i] == true` ⇒ null); it is the
+only null form whose length is validated against the values, since a `Validity` has no
+intrinsic length. A null mask is rejected on a `REQUIRED` column. `Validity` remains
+`@Experimental` — its shape may still shift — so the writer overload that takes it is
+experimental too until the concept is stabilized alongside the zero-copy `ColumnVector`
+SPI.
+
+The mask is lowered to definition levels at page seal: a flat `OPTIONAL` column has
+`maxDefinitionLevel == 1`, so each row's level is `1` when present and `0` when null. The
+levels are RLE/bit-packed (bit width 1) by `LevelEncoder` over the shared
+`RleBitPackingHybridEncoder`, and only the non-null values are `PLAIN`-encoded. A DataPage
+V1 body is therefore `[4-byte LE def-level length][RLE def-levels][PLAIN non-null values]`,
+with the page header's `num_values` counting all rows including nulls — the exact layout
+the reader parses. An all-present optional column encodes its levels as a single RLE run,
+which is what lets the reader take its all-present fast path. A `REQUIRED` column has no
+level stream and writes its values directly.
+
 Internally a batch's per-column arrays sit behind a bulk **value-source seam**
 (`IntColumnSource` and its per-type siblings: a `size()` plus a `copyInto` that fills a
 reused page-sized primitive buffer), with an `int[]`-backed implementation. Encoders,
@@ -254,7 +287,7 @@ API), *Optimization*, *Spike* (design-only), or *Docs* (user-facing documentatio
 | 1 | Tracer: flat `REQUIRED INT32`, one page / one row group, `PLAIN`, uncompressed. `OutputFile` (local + in-memory), `ThriftCompactWriter`, page-header + footer serialization. | Dimension | Produces a real, readable file | 1 (ThriftCompactWriter), 3.2 (page header ser.), 4.1/4.2 (chunk/row-group ser.), 5.2 (FileMetaData ser.) | [x] |
 | 2 | Page chunking within a column chunk: a large `INT32` column written as multiple size-bounded `PLAIN` pages instead of one, replacing the single-page guard. Internal — the columnar API is unchanged. Each page carries a CRC-32 checksum over its on-disk body. | Dimension | Large columns written safely, bounded page size | 6.2 (multi-page data writing), 3.2 (CRC write) | [x] |
 | 3 | **Row-group cadence** (`REQUIRED INT32` only): the `ColumnBatch` submission API, multi-row-group append, size-based auto-flush (page + row-group targets), and `WriterConfig`. Locks how the caller feeds data and how the file is banded into row groups. | Dimension | The public write cadence is settled | 6.2 (row-group size tracking, automatic flushing) | [x] |
-| 4 | Nullable columns (`OPTIONAL INT32`): definition levels via `LevelEncoder`, and how nulls ride inside a `ColumnBatch`. | Dimension | The null / def-level data model is settled | 2.3, 3.3 | [ ] |
+| 4 | Nullable columns (`OPTIONAL INT32`): definition levels via `LevelEncoder`, and how nulls ride inside a `ColumnBatch`. | Dimension | The null / def-level data model is settled | 2.3, 3.3 | [x] |
 | 5 | Nested design spike: confirm the settled `ColumnBatch` contract extends to repetition levels and shredding. Design only, no implementation. | Spike | De-risks the nested milestone as soon as the contract is settled | 6.3 (design) | [ ] |
 | 6 | Dictionary encoding (`INT32`, `REQUIRED` and `OPTIONAL`): dictionary page + `RLE_DICTIONARY` indices + plain fallback, exercised on a nullable column so the def-level / dictionary-index page layout is proven together. | Dimension | Dictionary column-chunk layout proven, including with nulls | 2.2 | [ ] |
 | 7 | Compression on the write path (`INT32`, one codec). | Dimension | Compress step + compressed/uncompressed size accounting proven | 6.2 (page compression) | [ ] |

@@ -19,6 +19,7 @@ import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
+import dev.hardwood.Validity;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -42,6 +43,12 @@ class WriterRoundTripTest {
         return FileSchema.builder("schema")
                 .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+    }
+
+    private static FileSchema oneOptionalColumn() {
+        return FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
     }
 
@@ -190,12 +197,198 @@ class WriterRoundTripTest {
     }
 
     @Test
-    void rejectsNonRequiredSchema() {
-        FileSchema schema = FileSchema.builder("schema")
-                .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
-                .build();
-        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
-                .isInstanceOf(UnsupportedOperationException.class);
+    void writesAndReadsBackNullableColumn() throws Exception {
+        // Interior and edge nulls, and both signed extremes at present positions.
+        int[] values = { 7, 0, -3, 0, Integer.MIN_VALUE, 0, Integer.MAX_VALUE };
+        boolean[] nulls = { false, true, false, true, false, true, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(readNullable(reader, 0)).containsExactly(7, null, -3, null, Integer.MIN_VALUE, null, Integer.MAX_VALUE);
+        }
+    }
+
+    @Test
+    void allPresentOptionalColumnReadsBackWithoutNulls() throws Exception {
+        // An OPTIONAL column supplied through the mask-less setter: every row is present,
+        // so the def levels collapse to a single RLE run and the reader reports no nulls.
+        int[] values = { 1, 2, 3, 4, 5 };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                ColumnReader column = reader.columnReader(0)) {
+            assertThat(column.nextBatch()).isTrue();
+            assertThat(column.getLeafValidity().hasNulls()).isFalse();
+            assertThat(Arrays.copyOf(column.getInts(), column.getRecordCount())).containsExactly(values);
+        }
+    }
+
+    @Test
+    void writesAndReadsBackAllNullColumn() throws Exception {
+        boolean[] nulls = { true, true, true, true };
+        int[] values = new int[nulls.length];
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(reader.getFileMetaData().numRows()).isEqualTo(4);
+            assertThat(readNullable(reader, 0)).containsExactly(null, null, null, null);
+        }
+    }
+
+    @Test
+    void nullsSurvivePageBoundaries() throws Exception {
+        // A tiny page target forces many pages; every third row is null, so nulls and
+        // values straddle page boundaries.
+        int n = 10_000;
+        int[] values = new int[n];
+        boolean[] nulls = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = i;
+            nulls[i] = i % 3 == 0;
+        }
+
+        WriterConfig config = WriterConfig.builder().pageTargetBytes(256).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(readNullable(reader, 0)).isEqualTo(expectedNullable(values, nulls));
+        }
+    }
+
+    @Test
+    void rewritesNullableColumnFromFixtureByPassingValidityThrough() throws Exception {
+        // Read a PyArrow-produced file whose OPTIONAL INT32 column has interior and trailing
+        // nulls, then write that column back by handing the reader's Validity straight to the
+        // writer — the read-to-write passthrough the Validity seam exists for. Reading the
+        // rewritten file must reproduce the original values and null positions exactly.
+        Path source = Path.of("src/test/resources/nullable_primitives_test.parquet");
+
+        Integer[] original;
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(source))) {
+            int col = reader.getFileSchema().getColumn("nullable_int").columnIndex();
+            assertThat(reader.getFileSchema().getColumn(col).type()).isEqualTo(PhysicalType.INT32);
+            assertThat(reader.getFileSchema().getColumn(col).repetitionType()).isEqualTo(RepetitionType.OPTIONAL);
+
+            original = new Integer[Math.toIntExact(reader.getFileMetaData().numRows())];
+            int pos = 0;
+            try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn());
+                    ColumnReader column = reader.columnReader(col)) {
+                while (column.nextBatch()) {
+                    int count = column.getRecordCount();
+                    int[] values = Arrays.copyOf(column.getInts(), count);
+                    Validity validity = column.getLeafValidity();
+                    for (int i = 0; i < count; i++) {
+                        original[pos + i] = validity.isNull(i) ? null : values[i];
+                    }
+                    // Hand the reader's Validity straight to the writer, no re-derivation.
+                    writer.writeBatch(batch -> batch.ints(0, values, validity));
+                    pos += count;
+                }
+            }
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(readNullable(reader, 0)).containsExactly(original);
+        }
+    }
+
+    @Test
+    void nullsSurviveRowGroupBoundaries() throws Exception {
+        int n = 5_000;
+        int[] values = new int[n];
+        boolean[] nulls = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = i * 2;
+            nulls[i] = (i & 1) == 1;
+        }
+
+        WriterConfig config = WriterConfig.builder().rowGroupTargetBytes(4096).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(reader.getFileMetaData().rowGroups().size()).isGreaterThan(1);
+            assertThat(readNullable(reader, 0)).isEqualTo(expectedNullable(values, nulls));
+        }
+    }
+
+    @Test
+    void writesNullableColumnViaValidity() throws Exception {
+        // Drive the primary Validity overload directly with a hand-built dense present
+        // bitmap (set-bit = present): rows 0 and 2 present, row 1 null.
+        int[] values = { 10, 20, 30 };
+        Validity nulls = Validity.of(new long[] { 0b101 });
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(readNullable(reader, 0)).containsExactly(10, null, 30);
+        }
+    }
+
+    @Test
+    void optionalColumnViaNoNullsValidityReadsBackWithoutNulls() throws Exception {
+        int[] values = { 1, 2, 3 };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values, Validity.NO_NULLS));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                ColumnReader column = reader.columnReader(0)) {
+            assertThat(column.nextBatch()).isTrue();
+            assertThat(column.getLeafValidity().hasNulls()).isFalse();
+            assertThat(Arrays.copyOf(column.getInts(), column.getRecordCount())).containsExactly(values);
+        }
+    }
+
+    @Test
+    void rejectsNullMaskOnRequiredColumn() throws Exception {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+            assertThatThrownBy(() -> writer.writeBatch(
+                    batch -> batch.ints(0, new int[] { 1, 2 }, new boolean[] { false, true })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsValidityOnRequiredColumn() throws Exception {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+            assertThatThrownBy(() -> writer.writeBatch(
+                    batch -> batch.ints(0, new int[] { 1, 2 }, Validity.NO_NULLS)))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsNullMaskLengthMismatch() throws Exception {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneOptionalColumn())) {
+            assertThatThrownBy(() -> writer.writeBatch(
+                    batch -> batch.ints(0, new int[] { 1, 2, 3 }, new boolean[] { false, true })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     @Test
@@ -339,6 +532,34 @@ class WriterRoundTripTest {
             }
             return result;
         }
+    }
+
+    /// Reads a flat column back into a boxed array, `null` at each null row, so both the
+    /// values and their null positions can be asserted in one comparison.
+    private static Integer[] readNullable(ParquetFileReader reader, int columnIndex) {
+        int rows = Math.toIntExact(reader.getFileMetaData().numRows());
+        Integer[] result = new Integer[rows];
+        try (ColumnReader column = reader.columnReader(columnIndex)) {
+            int pos = 0;
+            while (column.nextBatch()) {
+                int count = column.getRecordCount();
+                int[] batch = column.getInts();
+                Validity validity = column.getLeafValidity();
+                for (int i = 0; i < count; i++) {
+                    result[pos + i] = validity.isNull(i) ? null : batch[i];
+                }
+                pos += count;
+            }
+        }
+        return result;
+    }
+
+    private static Integer[] expectedNullable(int[] values, boolean[] nulls) {
+        Integer[] expected = new Integer[values.length];
+        for (int i = 0; i < values.length; i++) {
+            expected[i] = nulls[i] ? null : values[i];
+        }
+        return expected;
     }
 
     /// An [OutputFile] that throws while writing the second `PAR1` magic — the footer's

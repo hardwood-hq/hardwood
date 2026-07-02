@@ -18,24 +18,25 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.Validity;
 import dev.hardwood.internal.thrift.FileMetaDataWriter;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.internal.writer.IntColumnSource;
 import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
 /// Writes a Parquet file through a columnar batch API.
 ///
-/// This increment writes flat schemas of `REQUIRED INT32` columns. Data is supplied as
-/// [ColumnBatch] slices; the writer packs each column into size-bounded, uncompressed
-/// `PLAIN` data pages and flushes a row group once its buffered data reaches the
-/// configured target, so peak memory is bounded regardless of how much is written. The
-/// row groups and footer are finalized on [#close()].
+/// This increment writes flat schemas of `REQUIRED` and `OPTIONAL INT32` columns. Data is
+/// supplied as [ColumnBatch] slices; the writer packs each column into size-bounded,
+/// uncompressed `PLAIN` data pages — an `OPTIONAL` column's pages carrying an RLE
+/// definition-level stream ahead of the non-null values — and flushes a row group once
+/// its buffered data reaches the configured target, so peak memory is bounded regardless
+/// of how much is written. The row groups and footer are finalized on [#close()].
 ///
 /// The file is produced front to back and is valid only after `close()` returns.
 public final class ParquetFileWriter implements Closeable {
@@ -69,8 +70,8 @@ public final class ParquetFileWriter implements Closeable {
     /// @param schema the flat schema to write
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws UnsupportedOperationException if the schema is not a flat schema of
-    ///         `REQUIRED INT32` columns
+    /// @throws UnsupportedOperationException if the schema is not a flat schema of `INT32`
+    ///         columns
     public static ParquetFileWriter create(OutputFile out, FileSchema schema) throws IOException {
         return create(out, schema, WriterConfig.defaults());
     }
@@ -82,8 +83,8 @@ public final class ParquetFileWriter implements Closeable {
     /// @param config the writer configuration
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws UnsupportedOperationException if the schema is not a flat schema of
-    ///         `REQUIRED INT32` columns
+    /// @throws UnsupportedOperationException if the schema is not a flat schema of `INT32`
+    ///         columns
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config)
             throws IOException {
         if (!schema.isFlatSchema()) {
@@ -94,10 +95,6 @@ public final class ParquetFileWriter implements Closeable {
             if (column.type() != PhysicalType.INT32) {
                 throw new UnsupportedOperationException(
                         "Only INT32 columns are supported; column " + column.name() + " is " + column.type());
-            }
-            if (column.repetitionType() != RepetitionType.REQUIRED) {
-                throw new UnsupportedOperationException("Only REQUIRED columns are supported; column "
-                        + column.name() + " is " + column.repetitionType());
             }
         }
         out.create();
@@ -121,13 +118,14 @@ public final class ParquetFileWriter implements Closeable {
         ColumnBatch batch = new ColumnBatch(schema);
         filler.accept(batch);
         IntColumnSource[] sources = batch.completedSources();
+        Validity[] validities = batch.validities();
         batch.markConsumed();
         int rows = batch.rowCount();
         int pos = 0;
         while (pos < rows) {
             int space = maxRowsPerGroup - current.rowCount();
             int n = Math.min(space, rows - pos);
-            current.appendRows(sources, pos, n);
+            current.appendRows(sources, validities, pos, n);
             pos += n;
             if (current.rowCount() >= maxRowsPerGroup) {
                 flushRowGroup();

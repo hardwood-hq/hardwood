@@ -57,6 +57,35 @@ public interface Validity {
         return words == null ? NO_NULLS : new BackedValidity(words);
     }
 
+    /// Builds a `Validity` over a per-item null mask, where `nulls[i] == true` marks item
+    /// `i` null — the null-centric polarity of [#isNull]. Returns [#NO_NULLS] when no item
+    /// is null, so the all-present fast path is preserved. This is the convenience bridge
+    /// for callers holding a plain `boolean[]`; the packed [#of] and future sparse
+    /// factories give more compact shapes for their respective cases.
+    ///
+    /// @param nulls the per-item null mask; not retained
+    /// @return a `Validity` with the given nulls, or [#NO_NULLS] if there are none
+    static Validity ofNulls(boolean[] nulls) {
+        boolean hasNull = false;
+        for (boolean isNull : nulls) {
+            if (isNull) {
+                hasNull = true;
+                break;
+            }
+        }
+        if (!hasNull) {
+            return NO_NULLS;
+        }
+        // set-bit = present, so set a bit for every non-null item and leave nulls clear.
+        long[] words = new long[(nulls.length + 63) >>> 6];
+        for (int i = 0; i < nulls.length; i++) {
+            if (!nulls[i]) {
+                words[i >>> 6] |= 1L << i;
+            }
+        }
+        return new BackedValidity(words);
+    }
+
     /// `true` iff at least one item at this scope is null in the current
     /// batch. O(1). May help on hot loops as a per-batch fast-path gate:
     /// ```java
