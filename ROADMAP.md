@@ -69,11 +69,11 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] Fallback to plain encoding when dictionary grows too large
 
 ### 2.3 RLE/Bit-Packing Hybrid
-- [ ] Implement `RleBitPackingHybridEncoder`
-  - [ ] Bit width calculation
-  - [ ] RLE encoding (repeated values)
-  - [ ] Bit-packing encoding (groups of 8)
-  - [ ] Automatic mode switching
+- [x] Implement `RleBitPackingHybridEncoder`
+  - [x] Bit width calculation
+  - [x] RLE encoding (repeated values)
+  - [x] Bit-packing encoding (groups of 8)
+  - [x] Automatic mode switching
 - [x] Implement `RleBitPackingHybridDecoder`
   - [x] Header byte parsing (RLE vs bit-packed)
   - [x] RLE decoding
@@ -84,24 +84,24 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Block/miniblock structure
   - [x] Min delta calculation per block
   - [x] Bit width calculation per miniblock
-  - [ ] Encoder implementation (optional encoding; sequenced after the flat writer milestone)
+  - [ ] Encoder implementation (optional encoding; sequenced as a late writer-breadth increment)
   - [x] Decoder implementation
 - [x] DELTA_LENGTH_BYTE_ARRAY
   - [x] Length encoding with DELTA_BINARY_PACKED
   - [x] Raw byte concatenation
-  - [ ] Encoder implementation (optional encoding; sequenced after the flat writer milestone)
+  - [ ] Encoder implementation (optional encoding; sequenced as a late writer-breadth increment)
   - [x] Decoder implementation
 - [x] DELTA_BYTE_ARRAY
   - [x] Prefix length calculation
   - [x] Suffix extraction
-  - [ ] Encoder implementation (optional encoding; sequenced after the flat writer milestone)
+  - [ ] Encoder implementation (optional encoding; sequenced as a late writer-breadth increment)
   - [x] Decoder implementation
 
 ### 2.5 Byte Stream Split (BYTE_STREAM_SPLIT)
 - [x] Float byte separation/interleaving
 - [x] Double byte separation/interleaving
 - [x] FIXED_LEN_BYTE_ARRAY support
-- [ ] Encoder implementation (optional encoding; sequenced after the flat writer milestone)
+- [ ] Encoder implementation (optional encoding; sequenced as a late writer-breadth increment)
 - [x] Decoder implementation
 
 ---
@@ -124,7 +124,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] CRC32 calculation for writing
 
 ### 3.3 Definition & Repetition Levels
-- [ ] Implement `LevelEncoder` using RLE/bit-packing hybrid
+- [x] Implement `LevelEncoder` using RLE/bit-packing hybrid (definition levels; repetition levels with nested write support)
 - [x] Implement `LevelDecoder`
 - [x] Max level calculation from schema
 - [x] Null detection from definition levels
@@ -147,7 +147,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Implement `RowGroup` class
 - [x] Row group metadata serialization
 - [x] Row group metadata deserialization
-- [ ] Sorting column tracking (optional; non-goal for the flat writer milestone)
+- [ ] Sorting column tracking (optional; non-goal for write support)
 
 ---
 
@@ -351,8 +351,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ## Phase 10: Public API Design
 
 ### 10.1 Schema Builder API
-> Superseded for the flat writer by `FileSchema.Builder` (#9); the items below
-> describe the fuller fluent/nested builder that lands with nested-write support.
+> Superseded by `FileSchema.Builder` (#9); the items below describe the fuller
+> fluent/nested builder that would land with the nested-write increments.
 - [ ] Implement fluent `Types.buildMessage()` API
 - [ ] Primitive type builders with logical type support (see Phase 6.4)
 - [ ] Group builders for nested structures
