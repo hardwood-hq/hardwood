@@ -15,8 +15,10 @@ import jdk.incubator.vector.VectorSpecies;
 /// This is the multi-release JAR overlay that provides actual Vector API
 /// detection and SIMD operations when running on Java 22+.
 ///
-/// Use `-Dhardwood.simd.disabled=true` to force scalar operations
-/// for debugging or comparison.
+/// SIMD engages only when the incubating Vector API module is on the module
+/// path (`--add-modules jdk.incubator.vector`); without it, the Vector API
+/// reference fails to link and detection falls back to scalar operations. That
+/// launch flag is therefore the opt-out — omit it to run scalar.
 public final class VectorSupport {
 
     private static final System.Logger LOG = System.getLogger(VectorSupport.class.getName());
@@ -30,32 +32,24 @@ public final class VectorSupport {
         SimdOperations ops = new ScalarOperations();
         String implName = "scalar";
 
-        // Check if SIMD is disabled via system property
-        boolean disabled = Boolean.getBoolean("hardwood.simd.disabled");
+        try {
+            // Verify Vector API is working
+            VectorSpecies<Integer> species = IntVector.SPECIES_PREFERRED;
+            int vectorLength = species.length();
 
-        if (disabled) {
-            LOG.log(System.Logger.Level.INFO, "SIMD support: disabled via system property");
+            if (vectorLength >= 4) {
+                // Vector API is available and has reasonable vector width
+                ops = new VectorOperations();
+                available = true;
+                implName = "simd-" + species.vectorBitSize() + "bit";
+                LOG.log(System.Logger.Level.INFO, "SIMD support: enabled ({0}-bit vectors)", species.vectorBitSize());
+            }
+            else {
+                LOG.log(System.Logger.Level.INFO, "SIMD support: disabled (vector length {0} too small)", vectorLength);
+            }
         }
-        else {
-            try {
-                // Verify Vector API is working
-                VectorSpecies<Integer> species = IntVector.SPECIES_PREFERRED;
-                int vectorLength = species.length();
-
-                if (vectorLength >= 4) {
-                    // Vector API is available and has reasonable vector width
-                    ops = new VectorOperations();
-                    available = true;
-                    implName = "simd-" + species.vectorBitSize() + "bit";
-                    LOG.log(System.Logger.Level.INFO, "SIMD support: enabled ({0}-bit vectors)", species.vectorBitSize());
-                }
-                else {
-                    LOG.log(System.Logger.Level.INFO, "SIMD support: disabled (vector length {0} too small)", vectorLength);
-                }
-            }
-            catch (Throwable t) {
-                LOG.log(System.Logger.Level.INFO, "SIMD support: disabled (Vector API not available: {0})", t.getMessage());
-            }
+        catch (Throwable t) {
+            LOG.log(System.Logger.Level.INFO, "SIMD support: disabled (Vector API not available: {0})", t.getMessage());
         }
 
         AVAILABLE = available;
