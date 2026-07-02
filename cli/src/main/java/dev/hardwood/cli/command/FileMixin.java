@@ -12,29 +12,25 @@ import java.io.IOException;
 import java.nio.file.Files;
 import java.nio.file.Path;
 
+import org.aesh.command.option.Option;
+
 import dev.hardwood.InputFile;
 import dev.hardwood.aws.auth.SdkCredentialsProviders;
 import dev.hardwood.s3.RangeBacking;
 import dev.hardwood.s3.S3Source;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
 public class FileMixin {
 
     private static final String[] REMOTE_PREFIXES = { "s3://" };
     private static final String[] UNSUPPORTED_REMOTE_PREFIXES = { "gs://", "gcs://", "hdfs://" };
 
-    @CommandLine.Option(names = { "-f", "--file" }, required = true, paramLabel = "FILE", description = "Path to the Parquet file.")
+    @Option(shortName = 'f', name = "file", required = true, description = "Path to the Parquet file.")
     String file;
-
-    @Spec
-    CommandSpec spec;
 
     boolean isRemoteUri() {
         for (String prefix : UNSUPPORTED_REMOTE_PREFIXES) {
             if (file.startsWith(prefix)) {
-                spec.commandLine().getErr().println("Remote paths are not implemented yet for this command.");
+                System.err.println("Remote paths are not implemented yet for this command.");
                 return true;
             }
         }
@@ -60,7 +56,7 @@ public class FileMixin {
         }
         for (String prefix : UNSUPPORTED_REMOTE_PREFIXES) {
             if (file.startsWith(prefix)) {
-                spec.commandLine().getErr().println("Remote URIs are not implemented yet.");
+                System.err.println("Remote URIs are not implemented yet.");
                 return null;
             }
         }
@@ -88,7 +84,7 @@ public class FileMixin {
             builder.region(region);
         }
         else if (endpointUrl == null) {
-            throw new CommandLine.ParameterException(spec.commandLine(),
+            throw new IllegalArgumentException(
                     "Unable to determine AWS region. Set AWS_REGION or configure a default region in ~/.aws/config.");
         }
 

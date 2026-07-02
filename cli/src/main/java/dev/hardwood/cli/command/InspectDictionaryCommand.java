@@ -11,7 +11,13 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Mixin;
+import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.IndexValueFormatter;
@@ -27,34 +33,27 @@ import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "dictionary", description = "Print dictionary entries for a column.")
-public class InspectDictionaryCommand implements Callable<Integer> {
+@CommandDefinition(name = "dictionary", description = "Print dictionary entries for a column.", generateHelp = true)
+public class InspectDictionaryCommand implements Command<CommandInvocation> {
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
+    @Mixin
     FileMixin fileMixin;
-    @Spec
-    CommandSpec spec;
-    @CommandLine.Option(names = {"-c", "--column"}, required = true, paramLabel = "COLUMN", description = "Column name to inspect.")
+
+    @Option(shortName = 'c', name = "column", required = true, description = "Column name to inspect.")
     String column;
-    @CommandLine.Option(names = "--limit", defaultValue = "50", paramLabel = "N",
-            description = "Maximum dictionary entries per row group to print (0 = unlimited).")
+
+    @Option(name = "limit", defaultValue = "50", description = "Maximum dictionary entries per row group to print (0 = unlimited).")
     int limit;
 
     @Override
-    public Integer call() {
+    public CommandResult execute(CommandInvocation ci) {
         if (fileMixin.toInputFile() == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
         if (limit < 0) {
-            spec.commandLine().getErr().println("--limit must be greater than or equal to 0");
-            return CommandLine.ExitCode.USAGE;
+            System.err.println("--limit must be greater than or equal to 0");
+            return CommandResult.FAILURE;
         }
 
         FileMetaData metadata;
@@ -64,8 +63,8 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             schema = reader.getFileSchema();
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
         ColumnSchema columnSchema;
@@ -73,8 +72,8 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             columnSchema = schema.getColumn(column);
         }
         catch (IllegalArgumentException e) {
-            spec.commandLine().getErr().println("Unknown column: " + column);
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Unknown column: " + column);
+            return CommandResult.FAILURE;
         }
 
         InputFile inputFile = fileMixin.toInputFile();
@@ -83,19 +82,19 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             printDictionaries(metadata, columnSchema, context, inputFile);
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading dictionary: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading dictionary: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
         finally {
             try {
                 inputFile.close();
             }
             catch (IOException e) {
-                spec.commandLine().getErr().println("Error closing file: " + e.getMessage());
+                System.err.println("Error closing file: " + e.getMessage());
             }
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     private void printDictionaries(FileMetaData metadata, ColumnSchema columnSchema,
@@ -114,12 +113,10 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             RowGroup rg = rowGroups.get(rgIdx);
             ColumnChunk chunk = rg.columns().get(columnSchema.columnIndex());
 
-            // Read just the dictionary prefix of the column chunk
             Long dictOffset = chunk.metaData().dictionaryPageOffset();
             long chunkStart = (dictOffset != null && dictOffset > 0)
                     ? dictOffset
                     : chunk.metaData().dataPageOffset();
-            // Read enough for the dictionary page (typically a few KB)
             int dictReadSize = Math.toIntExact(Math.min(
                     chunk.metaData().totalCompressedSize(), 4 * 1024 * 1024));
             ByteBuffer dictRegion = inputFile.readRange(chunkStart, dictReadSize);
@@ -143,15 +140,15 @@ public class InspectDictionaryCommand implements Callable<Integer> {
             }
         }
 
-        spec.commandLine().getOut().println(columnLabel);
+        System.out.println(columnLabel);
         for (String message : messages) {
-            spec.commandLine().getOut().println(message);
+            System.out.println(message);
         }
         if (!rows.isEmpty()) {
             String[] headers = includeLength
                     ? new String[]{"RG", "Index", "Length", "Value"}
                     : new String[]{"RG", "Index", "Value"};
-            spec.commandLine().getOut().println(RowTable.renderTable(headers, rows, separatorsBefore, List.of()));
+            System.out.println(RowTable.renderTable(headers, rows, separatorsBefore, List.of()));
         }
     }
 
@@ -201,9 +198,6 @@ public class InspectDictionaryCommand implements Callable<Integer> {
                 });
             }
             else {
-                // INT96 dictionaries also flow through ByteArrayDictionary but
-                // store a fixed 12-byte payload, so the Length column is
-                // suppressed (the header omits it for non-BYTE_ARRAY columns).
                 addRow(rows, rgIdx, i, formatted);
             }
         }

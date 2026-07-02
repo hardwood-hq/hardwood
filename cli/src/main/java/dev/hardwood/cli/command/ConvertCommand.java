@@ -12,7 +12,13 @@ import java.io.IOException;
 import java.io.PrintWriter;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Mixin;
+import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.table.RowTable;
@@ -23,47 +29,38 @@ import dev.hardwood.row.PqVariant;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "convert", description = "Convert Parquet file to CSV or JSON.")
-public class ConvertCommand implements Callable<Integer> {
+@CommandDefinition(name = "convert", description = "Convert Parquet file to CSV or JSON.", generateHelp = true)
+public class ConvertCommand implements Command<CommandInvocation> {
 
     enum Format {
         CSV,
         JSON
     }
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
+    @Mixin
     FileMixin fileMixin;
 
-    @Spec
-    CommandSpec spec;
-
-    @CommandLine.Option(names = {"-F", "--format"}, required = true, description = "Output format: csv, json.")
+    @Option(shortName = 'F', name = "format", required = true, description = "Output format: csv, json.")
     Format format;
 
-    @CommandLine.Option(names = {"-o", "--output"}, description = "Output file path (default: stdout).")
+    @Option(shortName = 'o', name = "output", description = "Output file path (default: stdout).")
     String outputFile;
 
-    @CommandLine.Option(names = {"-c", "--columns"}, description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
+    @Option(shortName = 'c', name = "columns", description = "Comma-separated list of columns to include. Supports nested fields via dot notation (e.g. 'account.id').")
     String columns;
 
-    @CommandLine.Option(names = {"-n", "--rows"}, defaultValue = RowLimits.ALL, description = "Number of rows to convert. Positive values convert the first N rows (head), negative values convert the last N rows (tail), 'ALL' converts every row.")
+    @Option(shortName = 'n', name = "rows", defaultValue = RowLimits.ALL, description = "Number of rows to convert. Positive values convert the first N rows (head), negative values convert the last N rows (tail), 'ALL' converts every row.")
     String n;
 
     @Override
-    public Integer call() {
+    public CommandResult execute(CommandInvocation ci) {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
-        int rowLimit = RowLimits.parse(n, spec);
+        int rowLimit = RowLimits.parse(n);
         ColumnProjection projection = parseColumnProjection();
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
@@ -85,15 +82,15 @@ public class ConvertCommand implements Callable<Integer> {
             }
         }
         catch (IllegalArgumentException e) {
-            spec.commandLine().getErr().println(e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println(e.getMessage());
+            return CommandResult.FAILURE;
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     private ColumnProjection parseColumnProjection() {
@@ -122,7 +119,7 @@ public class ConvertCommand implements Callable<Integer> {
         if (outputFile != null) {
             return new PrintWriter(new FileWriter(outputFile));
         }
-        return spec.commandLine().getOut();
+        return new PrintWriter(System.out, true);
     }
 
     // ==================== CSV ====================
@@ -157,7 +154,6 @@ public class ConvertCommand implements Callable<Integer> {
     private static void flattenValues(Object value, SchemaNode schema, List<String> values) {
         if (schema instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap() && !group.isVariant()) {
             if (value == null) {
-                // null struct — emit null for each leaf
                 for (SchemaNode child : group.children()) {
                     flattenNulls(child, values);
                 }

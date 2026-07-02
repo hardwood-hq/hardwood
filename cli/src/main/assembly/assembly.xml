@@ -35,9 +35,21 @@
             <outputDirectory>./bin</outputDirectory>
             <destName>hardwood${executable-suffix}</destName>
         </file>
+        <!-- Shell completion scripts (generated at build time via aesh) -->
         <file>
             <source>${project.build.directory}/hardwood_completion</source>
             <outputDirectory>./bin</outputDirectory>
+            <filtered>false</filtered>
+        </file>
+        <file>
+            <source>${project.build.directory}/hardwood_completion.zsh</source>
+            <outputDirectory>./bin</outputDirectory>
+            <filtered>false</filtered>
+        </file>
+        <file>
+            <source>${project.build.directory}/hardwood_completion.fish</source>
+            <outputDirectory>./bin</outputDirectory>
+            <filtered>false</filtered>
         </file>
     </files>
     <fileSets>

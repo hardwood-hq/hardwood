@@ -9,40 +9,21 @@ package dev.hardwood.cli.command;
 
 import org.junit.jupiter.api.Test;
 
-import io.quarkus.test.junit.main.Launch;
-import io.quarkus.test.junit.main.LaunchResult;
-import io.quarkus.test.junit.main.QuarkusMainLauncher;
-import io.quarkus.test.junit.main.QuarkusMainTest;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
-@QuarkusMainTest
 class HardwoodCommandTest {
 
     @Test
-    @Launch("--help")
-    void helpFlagPrintsUsage(LaunchResult result) {
+    void helpFlagPrintsUsage() {
+        Cli.Result result = Cli.launch("--help");
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("Usage:", "hardwood");
+        assertThat(result.output()).contains("hardwood");
     }
 
     @Test
-    @Launch("help")
-    void helpSubcommandPrintsUsage(LaunchResult result) {
+    void versionFlagPrintsVersion() {
+        Cli.Result result = Cli.launch("--version");
         assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("Usage:", "hardwood");
-    }
-
-    @Test
-    @Launch("--version")
-    void versionFlagPrintsVersion(LaunchResult result) {
-        assertThat(result.exitCode()).isZero();
-        assertThat(result.getOutput()).contains("hardwood");
-    }
-
-    @Test
-    void helpForUnknownSubcommandFails(QuarkusMainLauncher launcher) {
-        LaunchResult result = launcher.launch("help", "unknown");
-        assertThat(result.exitCode()).isNotZero();
+        assertThat(result.output()).contains("hardwood");
     }
 }

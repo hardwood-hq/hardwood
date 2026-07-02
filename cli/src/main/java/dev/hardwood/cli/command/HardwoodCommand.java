@@ -7,17 +7,16 @@
  */
 package dev.hardwood.cli.command;
 
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Option;
+
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Version;
-import io.quarkus.picocli.runtime.PicocliCommandLineFactory;
-import io.quarkus.picocli.runtime.annotations.TopCommand;
-import jakarta.enterprise.inject.Produces;
-import picocli.CommandLine;
-import picocli.CommandLine.IVersionProvider;
 
-@TopCommand()
-@CommandLine.Command(name = "hardwood", mixinStandardHelpOptions = true, versionProvider = VersionProviderWithConfigProvider.class, subcommands = {
-        HelpCommand.class,
+@CommandDefinition(name = "hardwood", description = "A command-line interface for hardwood", generateHelp = true, groupCommands = {
         InfoCommand.class,
         SchemaCommand.class,
         ConvertCommand.class,
@@ -25,23 +24,19 @@ import picocli.CommandLine.IVersionProvider;
         InspectCommand.class,
         PrintCommand.class,
         DiveCommand.class
-}, description = "A command-line interface for hardwood"
+})
+public class HardwoodCommand implements Command<CommandInvocation> {
 
-)
-
-public class HardwoodCommand {
-    @Produces
-    CommandLine getCommandLineInstance(PicocliCommandLineFactory factory) {
-        return factory.create().setCaseInsensitiveEnumValuesAllowed(true);
-    }
-}
-
-class VersionProviderWithConfigProvider implements IVersionProvider {
+    @Option(name = "version", hasValue = false, description = "Print version information and exit.")
+    boolean version;
 
     @Override
-    public String[] getVersion() {
-        String applicationName = "hardwood";
-        String applicationVersion = Version.getVersion();
-        return new String[]{ Fmt.fmt("%s %s", applicationName, applicationVersion) };
+    public CommandResult execute(CommandInvocation commandInvocation) {
+        if (version) {
+            System.out.println(Fmt.fmt("hardwood %s", Version.getVersion()));
+            return CommandResult.SUCCESS;
+        }
+        System.out.println(commandInvocation.getHelpInfo());
+        return CommandResult.SUCCESS;
     }
 }

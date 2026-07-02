@@ -10,7 +10,13 @@ package dev.hardwood.cli.command;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.concurrent.Callable;
+
+import org.aesh.command.Command;
+import org.aesh.command.CommandDefinition;
+import org.aesh.command.CommandResult;
+import org.aesh.command.invocation.CommandInvocation;
+import org.aesh.command.option.Mixin;
+import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.metadata.LogicalType;
@@ -18,12 +24,9 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
-import picocli.CommandLine.Spec;
 
-@CommandLine.Command(name = "schema", description = "Print the file schema.")
-public class SchemaCommand implements Callable<Integer> {
+@CommandDefinition(name = "schema", description = "Print the file schema.", generateHelp = true)
+public class SchemaCommand implements Command<CommandInvocation> {
 
     enum Format {
         NATIVE,
@@ -31,21 +34,17 @@ public class SchemaCommand implements Callable<Integer> {
         PROTO
     }
 
-    @CommandLine.Mixin
-    HelpMixin help;
-
-    @CommandLine.Mixin
+    @Mixin
     FileMixin fileMixin;
-    @Spec
-    CommandSpec spec;
-    @CommandLine.Option(names = {"-F", "--format"}, defaultValue = "NATIVE", description = "Output format: NATIVE (default), AVRO, PROTO.")
+
+    @Option(shortName = 'F', name = "format", defaultValue = "NATIVE", description = "Output format: NATIVE (default), AVRO, PROTO.")
     Format format;
 
     @Override
-    public Integer call() {
+    public CommandResult execute(CommandInvocation ci) {
         InputFile inputFile = fileMixin.toInputFile();
         if (inputFile == null) {
-            return CommandLine.ExitCode.SOFTWARE;
+            return CommandResult.FAILURE;
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
@@ -57,14 +56,14 @@ public class SchemaCommand implements Callable<Integer> {
                 case PROTO -> toProtoSchema(schema);
             };
 
-            spec.commandLine().getOut().println(output);
+            System.out.println(output);
         }
         catch (IOException e) {
-            spec.commandLine().getErr().println("Error reading file: " + e.getMessage());
-            return CommandLine.ExitCode.SOFTWARE;
+            System.err.println("Error reading file: " + e.getMessage());
+            return CommandResult.FAILURE;
         }
 
-        return CommandLine.ExitCode.OK;
+        return CommandResult.SUCCESS;
     }
 
     // ── Avro ─────────────────────────────────────────────────────────────────

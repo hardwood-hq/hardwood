@@ -11,8 +11,6 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ParquetFileReader.RowReaderBuilder;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
-import picocli.CommandLine;
-import picocli.CommandLine.Model.CommandSpec;
 
 /// Shared `-n / --rows` parsing and application for CLI commands that
 /// support head / tail / ALL row limiting (`print`, `convert`, ...).
@@ -25,9 +23,9 @@ final class RowLimits {
 
     /// Parses the raw `-n` argument into a row-limit integer:
     /// positive for head, negative for tail, `0` for no limit (`ALL`).
-    /// Throws [CommandLine.ParameterException] for invalid input, including
+    /// Throws [IllegalArgumentException] for invalid input, including
     /// an explicit `0` (which would otherwise collide with the no-limit sentinel).
-    static int parse(String value, CommandSpec spec) {
+    static int parse(String value) {
         if (ALL.equalsIgnoreCase(value)) {
             return 0;
         }
@@ -36,11 +34,11 @@ final class RowLimits {
             parsed = Integer.parseInt(value);
         }
         catch (NumberFormatException e) {
-            throw new CommandLine.ParameterException(spec.commandLine(),
+            throw new IllegalArgumentException(
                     "Invalid value for option '-n': expected a non-zero integer or 'ALL', got '" + value + "'");
         }
         if (parsed == 0) {
-            throw new CommandLine.ParameterException(spec.commandLine(),
+            throw new IllegalArgumentException(
                     "Invalid value for option '-n': expected a non-zero integer or 'ALL', got '0'");
         }
         return parsed;
