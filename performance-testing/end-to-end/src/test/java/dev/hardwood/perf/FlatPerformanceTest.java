@@ -41,12 +41,12 @@ import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
+import dev.hardwood.Validity;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.reader.Validity;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.SchemaNode;
 

@@ -24,9 +24,9 @@ import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
+import dev.hardwood.Validity;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.reader.Validity;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.withinPercentage;
