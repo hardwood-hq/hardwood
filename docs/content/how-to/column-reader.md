@@ -46,7 +46,7 @@ try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
 }
 ```
 
-The [Validity](/api/latest/dev/hardwood/reader/Validity.html) type wraps the underlying null bitmap behind `isNull(i)` / `isNotNull(i)` / `hasNulls()`. When no item in a batch is null, `getLeafValidity()` (and `getLayerValidity(k)`) returns the shared `Validity.NO_NULLS` singleton — `hasNulls()` returns `false` in O(1) and gates the no-per-element-check fast path, no per-batch allocation. Hot inner loops should hoist `hasNulls()` into a local boolean before iterating; see [Hot loops](#hot-loops-hoist-hasnulls-outside-the-loop) for why.
+The [Validity](/api/latest/dev/hardwood/Validity.html) type wraps the underlying null bitmap behind `isNull(i)` / `isNotNull(i)` / `hasNulls()`. When no item in a batch is null, `getLeafValidity()` (and `getLayerValidity(k)`) returns the shared `Validity.NO_NULLS` singleton — `hasNulls()` returns `false` in O(1) and gates the no-per-element-check fast path, no per-batch allocation. Hot inner loops should hoist `hasNulls()` into a local boolean before iterating; see [Hot loops](#hot-loops-hoist-hasnulls-outside-the-loop) for why.
 
 Typed accessors are available for each fixed-width physical type: `getInts()`, `getLongs()`, `getFloats()`, `getDoubles()`, `getBooleans()`. For varlength leaves (`BINARY`, `FIXED_LEN_BYTE_ARRAY`, `INT96`) the primary accessors are `getBinaryValues()` (a `byte[]` buffer) plus `getBinaryOffsets()` (a sentinel-suffixed `int[]` of length `getValueCount() + 1`); the byte slice for value `i` is `[offsets[i], offsets[i+1])`. The convenience accessors `getBinaries()` and `getStrings()` materialise one `byte[]` or `String` per leaf — useful for low-volume / debug paths but allocate per-row, so hot loops should read the buffers directly.
 
@@ -135,7 +135,7 @@ All three navigation methods return `null` when the group isn't of the expected 
 
 `ColumnReader` exposes a nested column's schema chain as a sequence of **layers**, numbered
 `0..getLayerCount() - 1` outermost-to-innermost, with the leaf queried separately. Each layer has a
-[Validity](/api/latest/dev/hardwood/reader/Validity.html) via `getLayerValidity(k)`; `REPEATED`
+[Validity](/api/latest/dev/hardwood/Validity.html) via `getLayerValidity(k)`; `REPEATED`
 layers (lists and maps) additionally have `getLayerOffsets(k)`; and the leaf has its own
 `getLeafValidity()`.
 
