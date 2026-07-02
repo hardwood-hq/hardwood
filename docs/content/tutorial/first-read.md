@@ -153,9 +153,9 @@ typed primitive arrays a batch at a time — no per-row calls. Total the fares:
 
 ```java
 import dev.hardwood.InputFile;
+import dev.hardwood.Validity;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
-import dev.hardwood.reader.Validity;
 
 import java.nio.file.Path;
 
@@ -181,7 +181,7 @@ try (ParquetFileReader reader =
 ```
 
 That's the columnar path: iterate batches, read the primitive array, and check the
-[`Validity`](/api/latest/dev/hardwood/reader/Validity.html) bitmap for nulls. On analytical work
+[`Validity`](/api/latest/dev/hardwood/Validity.html) bitmap for nulls. On analytical work
 like this it's markedly faster than reading row by row.
 
 ## What you've learned

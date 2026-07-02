@@ -9,8 +9,6 @@ package dev.hardwood;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.reader.Validity;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Unit tests for [Validity]'s predicate and index-helper methods. The
@@ -220,5 +218,51 @@ class ValidityTest {
         assertThat(v.nullCount(64)).isEqualTo(1);
         assertThat(v.nextNull(0, 64)).isEqualTo(17);
         assertThat(v.nextNotNull(17, 64)).isEqualTo(18);
+    }
+
+    @Test
+    void ofNullsWithNoNullsIsNoNullsSingleton() {
+        assertThat(Validity.ofNulls(new boolean[] { false, false, false })).isSameAs(Validity.NO_NULLS);
+    }
+
+    @Test
+    void ofNullsEmptyMaskIsNoNullsSingleton() {
+        assertThat(Validity.ofNulls(new boolean[0])).isSameAs(Validity.NO_NULLS);
+    }
+
+    @Test
+    void ofNullsMixedMaskReportsNulls() {
+        // Null at indices 1 and 3; present elsewhere. ofNulls stores set-bit = present.
+        Validity v = Validity.ofNulls(new boolean[] { false, true, false, true, false });
+
+        assertThat(v.hasNulls()).isTrue();
+        assertThat(v.isNull(0)).isFalse();
+        assertThat(v.isNull(1)).isTrue();
+        assertThat(v.isNull(3)).isTrue();
+        assertThat(v.isNotNull(4)).isTrue();
+        assertThat(v.nullCount(5)).isEqualTo(2);
+        assertThat(v.nextNull(0, 5)).isEqualTo(1);
+        assertThat(v.nextNull(2, 5)).isEqualTo(3);
+    }
+
+    @Test
+    void ofNullsAllNullReportsEveryItemNull() {
+        Validity v = Validity.ofNulls(new boolean[] { true, true, true });
+
+        assertThat(v.hasNulls()).isTrue();
+        assertThat(v.nullCount(3)).isEqualTo(3);
+        assertThat(v.nextNotNull(0, 3)).isEqualTo(-1);
+    }
+
+    @Test
+    void ofNullsSpansWordBoundary() {
+        boolean[] nulls = new boolean[130];
+        nulls[65] = true;
+        nulls[128] = true;
+        Validity v = Validity.ofNulls(nulls);
+
+        assertThat(v.nullCount(130)).isEqualTo(2);
+        assertThat(v.nextNull(0, 130)).isEqualTo(65);
+        assertThat(v.nextNull(66, 130)).isEqualTo(128);
     }
 }

@@ -69,11 +69,11 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] Fallback to plain encoding when dictionary grows too large
 
 ### 2.3 RLE/Bit-Packing Hybrid
-- [ ] Implement `RleBitPackingHybridEncoder`
-  - [ ] Bit width calculation
-  - [ ] RLE encoding (repeated values)
-  - [ ] Bit-packing encoding (groups of 8)
-  - [ ] Automatic mode switching
+- [x] Implement `RleBitPackingHybridEncoder`
+  - [x] Bit width calculation
+  - [x] RLE encoding (repeated values)
+  - [x] Bit-packing encoding (groups of 8)
+  - [x] Automatic mode switching
 - [x] Implement `RleBitPackingHybridDecoder`
   - [x] Header byte parsing (RLE vs bit-packed)
   - [x] RLE decoding
@@ -124,7 +124,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] CRC32 calculation for writing
 
 ### 3.3 Definition & Repetition Levels
-- [ ] Implement `LevelEncoder` using RLE/bit-packing hybrid
+- [x] Implement `LevelEncoder` using RLE/bit-packing hybrid (definition levels; repetition levels with nested write support)
 - [x] Implement `LevelDecoder`
 - [x] Max level calculation from schema
 - [x] Null detection from definition levels

@@ -5,14 +5,14 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.reader;
+package dev.hardwood;
 
-import dev.hardwood.Experimental;
-import dev.hardwood.internal.reader.BackedValidity;
-import dev.hardwood.internal.reader.NoNullsValidity;
+import dev.hardwood.internal.BackedValidity;
+import dev.hardwood.internal.NoNullsValidity;
 
-/// Per-item null bitmap at a [ColumnReader] scope (a `STRUCT` /
-/// `REPEATED` layer or the leaf).
+/// Per-item nullability over a run of items, shared by the reader and the writer: the
+/// reader returns it (a column-reader leaf or `STRUCT` / `REPEATED` layer scope), and the
+/// writer accepts it as a column's null mask.
 ///
 /// A `Validity` is one of two shapes:
 ///
@@ -55,6 +55,35 @@ public interface Validity {
     /// indices into [#isNull] / [#isNotNull] within the same bound.
     static Validity of(long[] words) {
         return words == null ? NO_NULLS : new BackedValidity(words);
+    }
+
+    /// Builds a `Validity` over a per-item null mask, where `nulls[i] == true` marks item
+    /// `i` null — the null-centric polarity of [#isNull]. Returns [#NO_NULLS] when no item
+    /// is null, so the all-present fast path is preserved. This is the convenience bridge
+    /// for callers holding a plain `boolean[]`; the packed [#of] and future sparse
+    /// factories give more compact shapes for their respective cases.
+    ///
+    /// @param nulls the per-item null mask; not retained
+    /// @return a `Validity` with the given nulls, or [#NO_NULLS] if there are none
+    static Validity ofNulls(boolean[] nulls) {
+        boolean hasNull = false;
+        for (boolean isNull : nulls) {
+            if (isNull) {
+                hasNull = true;
+                break;
+            }
+        }
+        if (!hasNull) {
+            return NO_NULLS;
+        }
+        // set-bit = present, so set a bit for every non-null item and leave nulls clear.
+        long[] words = new long[(nulls.length + 63) >>> 6];
+        for (int i = 0; i < nulls.length; i++) {
+            if (!nulls[i]) {
+                words[i >>> 6] |= 1L << i;
+            }
+        }
+        return new BackedValidity(words);
     }
 
     /// `true` iff at least one item at this scope is null in the current

@@ -15,7 +15,7 @@ Hardwood is organized into public API packages and internal implementation packa
 
 | Package | Visibility | Purpose |
 |---------|-----------|---------|
-| [`dev.hardwood`](/api/latest/dev/hardwood/package-summary.html) | **Public API** | Entry point for creating readers and managing shared resources (thread pool, decompressor pool). |
+| [`dev.hardwood`](/api/latest/dev/hardwood/package-summary.html) | **Public API** | Entry point for creating readers, managing shared resources (thread pool, decompressor pool), and the shared `Validity` null bitmap. |
 | [`dev.hardwood.reader`](/api/latest/dev/hardwood/reader/package-summary.html) | **Public API** | Single-file and multi-file readers for row-oriented and column-oriented access. |
 | [`dev.hardwood.metadata`](/api/latest/dev/hardwood/metadata/package-summary.html) | **Public API** | Parquet file metadata: row groups, column chunks, physical/logical types, and compression codecs. |
 | [`dev.hardwood.schema`](/api/latest/dev/hardwood/schema/package-summary.html) | **Public API** | Schema representation: file schema, column schemas, and column projection. |

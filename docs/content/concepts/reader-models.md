@@ -25,7 +25,7 @@ fits depends on whether your code thinks in *records* or in *columns*.
   `getString("name")`, `getStruct("address")`. You move one row at a time and pull the fields you
   want by name or index.
 - **`ColumnReader`** hands you a column at a time, a batch at a time, as a typed primitive array
-  (`double[]`, `int[]`, …) plus a [`Validity`](/api/latest/dev/hardwood/reader/Validity.html)
+  (`double[]`, `int[]`, …) plus a [`Validity`](/api/latest/dev/hardwood/Validity.html)
   bitmap for nulls. You loop over the array directly.
 
 Both read the same bytes through the same pipeline. The difference is entirely in what they hand

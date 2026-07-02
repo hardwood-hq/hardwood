@@ -38,12 +38,12 @@ import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.MessageTypeParser;
 import org.assertj.core.api.ThrowableAssert;
 
+import dev.hardwood.Validity;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.reader.Validity;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;

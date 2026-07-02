@@ -53,7 +53,7 @@ separately. A flat column reports `getLayerCount() == 0`.
 
 For each layer, two buffers describe the items at that layer:
 
-- `getLayerValidity(k)` — a [Validity](/api/latest/dev/hardwood/reader/Validity.html) indexed by
+- `getLayerValidity(k)` — a [Validity](/api/latest/dev/hardwood/Validity.html) indexed by
   item position; `isNull(i)` / `isNotNull(i)` answer the per-item question, `hasNulls()` is the
   O(1) fast-path gate. Returns the shared `Validity.NO_NULLS` singleton when no item at layer `k`
   is null in this batch.
