@@ -74,11 +74,7 @@ SIMD support: enabled (256-bit vectors)
 
 The vector width depends on your CPU (128-bit for SSE/NEON, 256-bit for AVX2, 512-bit for AVX-512).
 
-To disable SIMD and force scalar operations (for debugging or comparison), set the system property:
-
-```bash
--Dhardwood.simd.disabled=true
-```
+SIMD engages only when the incubator module is added, so to run scalar operations (for debugging or comparison) simply omit the `--add-modules jdk.incubator.vector` argument.
 
 ## JFR (Java Flight Recorder) Events
 
@@ -117,4 +113,3 @@ Events appear under the **Hardwood** category in JDK Mission Control (JMC) or an
 | Property | Default | Description |
 |----------|---------|-------------|
 | `hardwood.uselibdeflate` | `true` | Set to `false` to disable libdeflate for GZIP decompression |
-| `hardwood.simd.disabled` | `false` | Set to `true` to force scalar operations instead of SIMD |

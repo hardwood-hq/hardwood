@@ -11,10 +11,8 @@ package dev.hardwood.internal.encoding.simd;
 ///
 /// This is the base implementation for Java 21 that always returns the scalar
 /// fallback. On Java 22+, the multi-release JAR overlay provides the real
-/// implementation with Vector API support.
-///
-/// Use `-Dhardwood.simd.disabled=true` to force scalar operations
-/// even on Java 22+ for debugging or comparison.
+/// implementation with Vector API support, engaged by adding the incubating
+/// Vector API module (`--add-modules jdk.incubator.vector`).
 public final class VectorSupport {
 
     private static final System.Logger LOG = System.getLogger(VectorSupport.class.getName());
