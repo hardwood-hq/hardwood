@@ -29,6 +29,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 
@@ -552,6 +553,106 @@ class WriterRoundTripTest {
             }
         }
         return result;
+    }
+
+    @Test
+    void writesAndReadsBackStructWithRequiredAndOptionalLeaves() throws Exception {
+        // optional group address { required int32 street; optional int32 zip }
+        // record 0: address null (street/zip absent); 1: present, zip null; 2,3: fully present.
+        FileSchema schema = FileSchema.builder("schema")
+                .struct("address", RepetitionType.OPTIONAL, s -> s
+                        .addColumn("street", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .addColumn("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        Validity addressNulls = Validity.ofNulls(new boolean[] { true, false, false, false });
+        int[] street = { 0, 10, 20, 30 };
+        int[] zip = { 0, 0, 200, 300 };
+        boolean[] zipNulls = { false, true, false, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .struct("address", addressNulls)
+                    .ints("address.street", street)
+                    .ints("address.zip", zip, zipNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int streetIdx = reader.getFileSchema().getColumn("address.street").columnIndex();
+            int zipIdx = reader.getFileSchema().getColumn("address.zip").columnIndex();
+
+            // street is absent only where the struct is null; zip also where zip itself is null.
+            assertThat(readNullable(reader, streetIdx)).containsExactly(null, 10, 20, 30);
+            assertThat(readNullable(reader, zipIdx)).containsExactly(null, null, 200, 300);
+
+            // The STRUCT layer distinguishes a null struct from a present struct with a null leaf.
+            try (ColumnReader column = reader.columnReader(zipIdx)) {
+                assertThat(column.nextBatch()).isTrue();
+                assertThat(column.getLayerCount()).isEqualTo(1);
+                assertThat(column.getLayerKind(0)).isEqualTo(LayerKind.STRUCT);
+                Validity struct = column.getLayerValidity(0);
+                assertThat(struct.isNull(0)).isTrue();
+                assertThat(struct.isNull(1)).isFalse();
+                assertThat(struct.isNull(2)).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void writesAndReadsBackNestedOptionalStructDepthTwo() throws Exception {
+        // optional group a { optional int32 b } — definition levels span 0, 1 and 2.
+        // record 0: a null (def 0); 1: a present, b null (def 1); 2: fully present (def 2).
+        FileSchema schema = FileSchema.builder("schema")
+                .struct("a", RepetitionType.OPTIONAL, s -> s
+                        .addColumn("b", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        Validity aNulls = Validity.ofNulls(new boolean[] { true, false, false });
+        int[] b = { 0, 0, 42 };
+        boolean[] bNulls = { false, true, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch.struct("a", aNulls).ints("a.b", b, bNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int bIdx = reader.getFileSchema().getColumn("a.b").columnIndex();
+            assertThat(reader.getFileSchema().getColumn(bIdx).maxDefinitionLevel()).isEqualTo(2);
+            assertThat(readNullable(reader, bIdx)).containsExactly(null, null, 42);
+
+            try (ColumnReader column = reader.columnReader(bIdx)) {
+                assertThat(column.nextBatch()).isTrue();
+                Validity struct = column.getLayerValidity(0);
+                assertThat(struct.isNull(0)).isTrue();  // a null
+                assertThat(struct.isNull(1)).isFalse(); // a present (b null)
+                assertThat(struct.isNull(2)).isFalse();
+            }
+        }
+    }
+
+    @Test
+    void writesAndReadsBackRequiredStruct() throws Exception {
+        // required group g { optional int32 x } — no STRUCT layer; x behaves like a flat
+        // optional column, but the group nesting must still round-trip through the footer.
+        FileSchema schema = FileSchema.builder("schema")
+                .struct("g", RepetitionType.REQUIRED, s -> s
+                        .addColumn("x", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] x = { 1, 0, 3 };
+        boolean[] xNulls = { false, true, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch.ints("g.x", x, xNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int xIdx = reader.getFileSchema().getColumn("g.x").columnIndex();
+            assertThat(readNullable(reader, xIdx)).containsExactly(1, null, 3);
+        }
     }
 
     private static Integer[] expectedNullable(int[] values, boolean[] nulls) {

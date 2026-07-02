@@ -19,6 +19,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.Validity;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
@@ -173,6 +174,52 @@ class WriterDifferentialTest {
             assertThat(rs.getLong("n")).isEqualTo(n);
             assertThat(rs.getLong("present")).isZero();
         }
+    }
+
+    @Test
+    void duckDbReadsStruct(@TempDir Path dir) throws Exception {
+        // required int32 r; optional group address { required int32 street; optional int32 zip }.
+        // DuckDB resolves address.street / address.zip and must see the field absent wherever
+        // the struct is null, and zip absent where zip itself is null.
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .struct("address", RepetitionType.OPTIONAL, s -> s
+                        .addColumn("street", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .addColumn("zip", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] r = { 0, 1, 2, 3 };
+        Validity addressNulls = Validity.ofNulls(new boolean[] { true, false, false, false });
+        int[] street = { 0, 10, 20, 30 };
+        int[] zip = { 0, 0, 200, 300 };
+        boolean[] zipNulls = { false, true, false, false };
+
+        Path file = dir.resolve("struct.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch
+                    .ints("r", r)
+                    .struct("address", addressNulls)
+                    .ints("address.street", street)
+                    .ints("address.zip", zip, zipNulls));
+        }
+
+        List<Integer> streets = new ArrayList<>();
+        List<Integer> zips = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT address.street AS street, address.zip AS zip FROM read_parquet('"
+                                + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                int st = rs.getInt("street");
+                streets.add(rs.wasNull() ? null : st);
+                int zp = rs.getInt("zip");
+                zips.add(rs.wasNull() ? null : zp);
+            }
+        }
+
+        assertThat(streets).containsExactly(null, 10, 20, 30);
+        assertThat(zips).containsExactly(null, null, 200, 300);
     }
 
     @Test

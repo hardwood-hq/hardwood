@@ -12,7 +12,6 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.OutputFile;
-import dev.hardwood.Validity;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -40,13 +39,13 @@ public final class RowGroupBuffer {
     /// Appends the same row range to every column and advances the row count.
     ///
     /// @param sources one value source per column, in schema order
-    /// @param validities one [Validity] per column, in schema order; an entry is `null` for
-    ///        an all-present column
+    /// @param shredder bound to the current batch; supplies each levelled column's
+    ///        definition levels
     /// @param from index of the first row to append
     /// @param count number of rows to append
-    public void appendRows(IntColumnSource[] sources, Validity[] validities, int from, int count) {
+    public void appendRows(IntColumnSource[] sources, RecordShredder shredder, int from, int count) {
         for (int c = 0; c < columns.length; c++) {
-            columns[c].append(sources[c], validities[c], from, count);
+            columns[c].append(sources[c], shredder, c, from, count);
         }
         rowCount += count;
     }
