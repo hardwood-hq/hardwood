@@ -5,9 +5,9 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.internal.reader;
+package dev.hardwood.internal;
 
-import dev.hardwood.reader.Validity;
+import dev.hardwood.Validity;
 
 /// [Validity] for the case where every item at a scope is non-null in the
 /// current batch. Stateless; use the [#INSTANCE] singleton (exposed to

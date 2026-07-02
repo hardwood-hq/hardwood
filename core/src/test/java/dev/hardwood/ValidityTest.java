@@ -9,8 +9,6 @@ package dev.hardwood;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.reader.Validity;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Unit tests for [Validity]'s predicate and index-helper methods. The

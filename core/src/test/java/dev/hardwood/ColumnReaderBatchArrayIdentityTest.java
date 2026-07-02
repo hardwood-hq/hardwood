@@ -20,7 +20,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Pins the public-API non-aliasing contract documented on [ColumnReader]:
-/// every array and [dev.hardwood.reader.Validity] handed back by an accessor
+/// every array and [dev.hardwood.Validity] handed back by an accessor
 /// is freshly allocated by the [ColumnReader#nextBatch()] that produced it,
 /// and a later `nextBatch()` never reuses or overwrites an array returned for
 /// an earlier batch. That guarantee is what lets a caller retain a returned
@@ -37,7 +37,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// family plus a `list<int32>`, four rows with the null pattern
 /// `present / null / null / present`. Read with `batchSize(2)` it yields two
 /// batches that each carry a real (backed) validity bitmap — never the shared
-/// [dev.hardwood.reader.Validity#NO_NULLS] singleton — so the validity check
+/// [dev.hardwood.Validity#NO_NULLS] singleton — so the validity check
 /// compares freshly allocated backing `long[]`s rather than the always-fresh
 /// wrapper.
 class ColumnReaderBatchArrayIdentityTest {
@@ -73,7 +73,7 @@ class ColumnReaderBatchArrayIdentityTest {
     /// The leaf validity is reported through an always-fresh wrapper, so the
     /// load-bearing pin is its backing bitmap: `getLeafValidity().words()` must
     /// be a distinct `long[]` per batch. Both batches carry nulls, so neither
-    /// collapses to the [dev.hardwood.reader.Validity#NO_NULLS] singleton.
+    /// collapses to the [dev.hardwood.Validity#NO_NULLS] singleton.
     @Test
     void leafValidityBitmapFreshPerBatch() throws Exception {
         assertBackingFreshPerBatch("ints", col -> col.getLeafValidity().words());

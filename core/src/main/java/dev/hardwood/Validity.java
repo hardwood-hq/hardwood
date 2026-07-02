@@ -5,14 +5,14 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.reader;
+package dev.hardwood;
 
-import dev.hardwood.Experimental;
-import dev.hardwood.internal.reader.BackedValidity;
-import dev.hardwood.internal.reader.NoNullsValidity;
+import dev.hardwood.internal.BackedValidity;
+import dev.hardwood.internal.NoNullsValidity;
 
-/// Per-item null bitmap at a [ColumnReader] scope (a `STRUCT` /
-/// `REPEATED` layer or the leaf).
+/// Per-item nullability over a run of items, shared by the reader and the writer: the
+/// reader returns it (a column-reader leaf or `STRUCT` / `REPEATED` layer scope), and the
+/// writer accepts it as a column's null mask.
 ///
 /// A `Validity` is one of two shapes:
 ///
