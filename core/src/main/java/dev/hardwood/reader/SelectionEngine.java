@@ -20,6 +20,7 @@ import java.util.Map;
 import java.util.Set;
 import java.util.UUID;
 
+import dev.hardwood.Validity;
 import dev.hardwood.internal.predicate.BatchFilterCompiler;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.internal.predicate.CompiledBatchFilter;

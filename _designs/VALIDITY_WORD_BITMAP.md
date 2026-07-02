@@ -34,7 +34,7 @@ This gives perf-sensitive consumers three loop shapes against the same `Validity
 
 ## Components
 
-### `Validity` (`core/src/main/java/dev/hardwood/reader/Validity.java`)
+### `Validity` (`core/src/main/java/dev/hardwood/Validity.java`)
 
 `Backed` stores `long[] words` instead of `BitSet bits`. Method implementations:
 

@@ -21,7 +21,6 @@ import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.reader.Validity;
 import dev.hardwood.row.PqList;
 
 import static org.assertj.core.api.Assertions.assertThat;

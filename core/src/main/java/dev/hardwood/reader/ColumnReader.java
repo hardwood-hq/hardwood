@@ -12,6 +12,7 @@ import java.util.List;
 
 import dev.hardwood.Experimental;
 import dev.hardwood.InputFile;
+import dev.hardwood.Validity;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchExchange;
