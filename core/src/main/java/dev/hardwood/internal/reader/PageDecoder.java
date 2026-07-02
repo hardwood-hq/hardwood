@@ -40,15 +40,28 @@ public class PageDecoder {
     private final ColumnSchema column;
     private final DecompressorFactory decompressorFactory;
 
+    /// Whether the fixed-size-list read fast path may engage for this column,
+    /// resolved from the reader's [dev.hardwood.HardwoodContext] option (default
+    /// enabled).
+    private final boolean fixedListFastPathEnabled;
+
+    /// Constructor for page decoding, with the fixed-size-list fast path enabled.
+    public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
+        this(columnMetaData, column, decompressorFactory, true);
+    }
+
     /// Constructor for page decoding.
     ///
     /// @param columnMetaData metadata for the column
     /// @param column column schema
     /// @param decompressorFactory factory for creating decompressors
-    public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
+    /// @param fixedListFastPathEnabled whether the fixed-size-list fast path may engage
+    public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory,
+                       boolean fixedListFastPathEnabled) {
         this.columnMetaData = columnMetaData;
         this.column = column;
         this.decompressorFactory = decompressorFactory;
+        this.fixedListFastPathEnabled = fixedListFastPathEnabled;
     }
 
     /// Checks if this PageDecoder is compatible with the given column metadata.
@@ -192,27 +205,70 @@ public class PageDecoder {
         return 32 - Integer.numberOfLeadingZeros(maxValue);
     }
 
+    /// The fixed-size-list fast path is restricted to primitive numeric element
+    /// types, which decode into contiguous primitive arrays the clean-page
+    /// assembly can bulk-copy. Byte-array-backed types (`BYTE_ARRAY`,
+    /// `FIXED_LEN_BYTE_ARRAY`, `INT96`) take the regular path.
+    private boolean isFixedListElementSupported() {
+        return switch (column.type()) {
+            case BOOLEAN, INT32, INT64, FLOAT, DOUBLE -> true;
+            default -> false;
+        };
+    }
+
     private Page parseDataPage(DataPageHeader header, byte[] data, Dictionary dictionary) throws IOException {
+        int numValues = header.numValues();
         int offset = 0;
 
-        int[] repetitionLevels = null;
+        int repLevelLength = 0;
+        int repLevelOffset = 0;
         if (column.maxRepetitionLevel() > 0) {
-            int repLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+            repLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
             offset += 4;
-            repetitionLevels = decodeRepetitionLevels(data, offset, repLevelLength, header.numValues(), column.maxRepetitionLevel());
+            repLevelOffset = offset;
             offset += repLevelLength;
         }
 
-        int[] definitionLevels = null;
+        int defLevelLength = 0;
+        int defLevelOffset = 0;
         if (column.maxDefinitionLevel() > 0) {
-            int defLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
+            defLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
             offset += 4;
-            definitionLevels = decodeDefinitionLevels(data, offset, defLevelLength, header.numValues());
+            defLevelOffset = offset;
             offset += defLevelLength;
         }
+        int valuesOffset = offset;
+
+        // Fixed-size-list fast path: the V1 header carries no num_rows, so the
+        // detector derives it. The levels are inline and (unlike V2) always
+        // present here in decompressed form; the detector only understands the
+        // RLE hybrid, so legacy BIT_PACKED levels are left to the regular path.
+        if (fixedListFastPathEnabled && isFixedListElementSupported()
+                && column.maxRepetitionLevel() == 1 && column.maxDefinitionLevel() == 2
+                && header.repetitionLevelEncoding() == Encoding.RLE
+                && header.definitionLevelEncoding() == Encoding.RLE
+                && repLevelLength > 0 && defLevelLength > 0) {
+            FixedSizeListShape shape = FixedSizeListDetector.detect(
+                    data, repLevelOffset, repLevelLength,
+                    data, defLevelOffset, defLevelLength,
+                    numValues, FixedSizeListDetector.ROWS_UNKNOWN,
+                    column.maxRepetitionLevel(), column.maxDefinitionLevel());
+            if (shape instanceof FixedSizeListShape.CleanFixedK(int k)) {
+                Page page = decodeTypedValues(
+                        header.encoding(), data, valuesOffset, numValues, null, null, dictionary);
+                return Page.withFixedListK(page, k);
+            }
+        }
+
+        int[] repetitionLevels = column.maxRepetitionLevel() > 0
+                ? decodeRepetitionLevels(data, repLevelOffset, repLevelLength, numValues, column.maxRepetitionLevel())
+                : null;
+        int[] definitionLevels = column.maxDefinitionLevel() > 0
+                ? decodeDefinitionLevels(data, defLevelOffset, defLevelLength, numValues)
+                : null;
 
         return decodeTypedValues(
-                header.encoding(), data, offset, header.numValues(),
+                header.encoding(), data, valuesOffset, numValues,
                 definitionLevels, repetitionLevels, dictionary);
     }
 
@@ -222,37 +278,69 @@ public class PageDecoder {
         int defLevelLen = header.definitionLevelsByteLength();
         int valuesOffset = repLevelLen + defLevelLen;
         int compressedValuesLen = pageData.remaining() - valuesOffset;
+        int numValues = header.numValues();
 
-        int[] repetitionLevels = null;
+        byte[] repLevelData = null;
         if (column.maxRepetitionLevel() > 0 && repLevelLen > 0) {
-            byte[] repLevelData = new byte[repLevelLen];
+            repLevelData = new byte[repLevelLen];
             pageData.slice(0, repLevelLen).get(repLevelData);
-            repetitionLevels = decodeRepetitionLevels(repLevelData, 0, repLevelLen, header.numValues(), column.maxRepetitionLevel());
         }
 
-        int[] definitionLevels = null;
+        byte[] defLevelData = null;
         if (column.maxDefinitionLevel() > 0 && defLevelLen > 0) {
-            byte[] defLevelData = new byte[defLevelLen];
+            defLevelData = new byte[defLevelLen];
             pageData.slice(repLevelLen, defLevelLen).get(defLevelData);
-            definitionLevels = decodeDefinitionLevels(defLevelData, 0, defLevelLen, header.numValues());
         }
 
-        byte[] valuesData;
-        int uncompressedValuesSize = uncompressedPageSize - repLevelLen - defLevelLen;
+        // Fixed-size-list fast path: when the level streams prove every row is a
+        // present list of exactly k elements, skip level materialization and
+        // decode only the values, stamping the shape onto the page. The regular
+        // value decoders already read densely from a null definition-level array
+        // (the all-present convention), so no value-decode change is needed.
+        if (fixedListFastPathEnabled && isFixedListElementSupported()
+                && repLevelData != null && defLevelData != null
+                && column.maxRepetitionLevel() == 1 && column.maxDefinitionLevel() == 2) {
+            FixedSizeListShape shape = FixedSizeListDetector.detect(
+                    repLevelData, 0, repLevelLen, defLevelData, 0, defLevelLen,
+                    numValues, header.numRows(),
+                    column.maxRepetitionLevel(), column.maxDefinitionLevel());
+            if (shape instanceof FixedSizeListShape.CleanFixedK(int k)) {
+                byte[] valuesData = readValueRegion(header, pageData, uncompressedPageSize,
+                        repLevelLen, defLevelLen, valuesOffset, compressedValuesLen);
+                Page page = decodeTypedValues(
+                        header.encoding(), valuesData, 0, numValues, null, null, dictionary);
+                return Page.withFixedListK(page, k);
+            }
+        }
 
+        int[] repetitionLevels = repLevelData != null
+                ? decodeRepetitionLevels(repLevelData, 0, repLevelLen, numValues, column.maxRepetitionLevel())
+                : null;
+        int[] definitionLevels = defLevelData != null
+                ? decodeDefinitionLevels(defLevelData, 0, defLevelLen, numValues)
+                : null;
+
+        byte[] valuesData = readValueRegion(header, pageData, uncompressedPageSize,
+                repLevelLen, defLevelLen, valuesOffset, compressedValuesLen);
+        return decodeTypedValues(
+                header.encoding(), valuesData, 0, numValues,
+                definitionLevels, repetitionLevels, dictionary);
+    }
+
+    /// Extracts the value region of a `DataPageV2` body, decompressing it when
+    /// the page marks its values compressed. The level regions precede the
+    /// values and are never compressed.
+    private byte[] readValueRegion(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
+            int repLevelLen, int defLevelLen, int valuesOffset, int compressedValuesLen) throws IOException {
         if (header.isCompressed() && compressedValuesLen > 0) {
             ByteBuffer compressedValues = pageData.slice(valuesOffset, compressedValuesLen);
             Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
-            valuesData = decompressor.decompress(compressedValues, uncompressedValuesSize);
+            int uncompressedValuesSize = uncompressedPageSize - repLevelLen - defLevelLen;
+            return decompressor.decompress(compressedValues, uncompressedValuesSize);
         }
-        else {
-            valuesData = new byte[compressedValuesLen];
-            pageData.slice(valuesOffset, compressedValuesLen).get(valuesData);
-        }
-
-        return decodeTypedValues(
-                header.encoding(), valuesData, 0, header.numValues(),
-                definitionLevels, repetitionLevels, dictionary);
+        byte[] valuesData = new byte[compressedValuesLen];
+        pageData.slice(valuesOffset, compressedValuesLen).get(valuesData);
+        return valuesData;
     }
 
     /// Decode values into Page using primitive arrays where possible.

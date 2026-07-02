@@ -124,6 +124,18 @@ public final class NestedLevelComputer {
         return offsets;
     }
 
+    /// Sentinel-suffixed record offsets for a clean fixed-size-list batch, where
+    /// record `r` spans values `[r * k, (r + 1) * k)`: the array
+    /// `[0, k, 2k, ..., recordCount * k]`. Used by the fixed-size-list fast path
+    /// in place of a repetition-level scan.
+    public static int[] fixedListOffsets(int k, int recordCount) {
+        int[] offsets = new int[recordCount + 1];
+        for (int i = 0; i <= recordCount; i++) {
+            offsets[i] = Math.multiplyExact(i, k);
+        }
+        return offsets;
+    }
+
     // ==================== Layer Model ====================
 
     /// Layer descriptor for a column's schema chain. The arrays are positional:

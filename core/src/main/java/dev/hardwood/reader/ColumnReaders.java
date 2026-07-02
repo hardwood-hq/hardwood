@@ -55,6 +55,7 @@ public class ColumnReaders implements AutoCloseable {
     private boolean batchAvailable;
 
     ColumnReaders(HardwoodContextImpl context,
+                  boolean fixedListFastPathEnabled,
                   RowGroupIterator rowGroupIterator,
                   FileSchema schema,
                   ProjectedSchema projectedSchema,
@@ -69,7 +70,7 @@ public class ColumnReaders implements AutoCloseable {
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
 
             ColumnReader reader = ColumnReader.createFromIterator(
-                    columnSchema, schema, rowGroupIterator, context, i, null, batchSize);
+                    columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize);
 
             readersByName.put(columnSchema.fieldPath().toString(), reader);
             readersByIndex[i] = reader;
@@ -91,6 +92,7 @@ public class ColumnReaders implements AutoCloseable {
     /// matching records each batch. Predicate columns not in `payloadProjection`
     /// are decoded to evaluate the predicate but are not exposed.
     static ColumnReaders filtered(HardwoodContextImpl context,
+                                  boolean fixedListFastPathEnabled,
                                   RowGroupIterator rowGroupIterator,
                                   FileSchema schema,
                                   ProjectedSchema augProjected,
@@ -103,7 +105,7 @@ public class ColumnReaders implements AutoCloseable {
         for (int i = 0; i < augCount; i++) {
             ColumnSchema columnSchema = schema.getColumn(augProjected.toOriginalIndex(i));
             ColumnReader reader = ColumnReader.createFromIterator(
-                    columnSchema, schema, rowGroupIterator, context, i, null, batchSize);
+                    columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize);
             allReaders[i] = reader;
             byPath.put(columnSchema.fieldPath().toString(), reader);
         }
