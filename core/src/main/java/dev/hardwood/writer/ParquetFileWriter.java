@@ -23,6 +23,7 @@ import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.internal.thrift.FileMetaDataWriter;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
 import dev.hardwood.internal.writer.IntColumnSource;
+import dev.hardwood.internal.writer.RecordShredder;
 import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.PhysicalType;
@@ -32,12 +33,13 @@ import dev.hardwood.schema.FileSchema;
 
 /// Writes a Parquet file through a columnar batch API.
 ///
-/// This increment writes flat schemas of `REQUIRED` and `OPTIONAL INT32` columns. Data is
-/// supplied as [ColumnBatch] slices; the writer packs each column into size-bounded,
-/// uncompressed `PLAIN` data pages — an `OPTIONAL` column's pages carrying an RLE
-/// definition-level stream ahead of the non-null values — and flushes a row group once
-/// its buffered data reaches the configured target, so peak memory is bounded regardless
-/// of how much is written. The row groups and footer are finalized on [#close()].
+/// This increment writes `INT32` columns — flat `REQUIRED` / `OPTIONAL` and nested inside
+/// `REQUIRED` / `OPTIONAL` `struct` groups (no repetition yet). Data is supplied as
+/// [ColumnBatch] slices; the writer packs each column into size-bounded, uncompressed
+/// `PLAIN` data pages — a levelled column's pages carrying an RLE definition-level stream
+/// ahead of the non-null values — and flushes a row group once its buffered data reaches
+/// the configured target, so peak memory is bounded regardless of how much is written.
+/// The row groups and footer are finalized on [#close()].
 ///
 /// The file is produced front to back and is valid only after `close()` returns.
 public final class ParquetFileWriter implements Closeable {
@@ -50,6 +52,7 @@ public final class ParquetFileWriter implements Closeable {
     private final WriterConfig config;
     private final int pageValues;
     private final int maxRowsPerGroup;
+    private final RecordShredder shredder;
     private final List<RowGroup> rowGroups = new ArrayList<>();
 
     private RowGroupBuffer current;
@@ -62,16 +65,17 @@ public final class ParquetFileWriter implements Closeable {
         this.config = config;
         this.pageValues = pageRowCapacity(config.pageTargetBytes(), schema);
         this.maxRowsPerGroup = maxRowsPerGroup(config.rowGroupTargetBytes(), schema);
+        this.shredder = new RecordShredder(schema);
         this.current = new RowGroupBuffer(schema, pageValues);
     }
 
     /// Opens a writer with the default [WriterConfig].
     ///
     /// @param out the destination
-    /// @param schema the flat schema to write
+    /// @param schema the schema to write
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws UnsupportedOperationException if the schema is not a flat schema of `INT32`
+    /// @throws UnsupportedOperationException if the schema has a non-`INT32` or repeated
     ///         columns
     public static ParquetFileWriter create(OutputFile out, FileSchema schema) throws IOException {
         return create(out, schema, WriterConfig.defaults());
@@ -80,22 +84,24 @@ public final class ParquetFileWriter implements Closeable {
     /// Opens a writer, writing the leading magic bytes.
     ///
     /// @param out the destination
-    /// @param schema the flat schema to write
+    /// @param schema the schema to write
     /// @param config the writer configuration
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws UnsupportedOperationException if the schema is not a flat schema of `INT32`
+    /// @throws UnsupportedOperationException if the schema has a non-`INT32` or repeated
     ///         columns
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config)
             throws IOException {
-        if (!schema.isFlatSchema()) {
-            throw new UnsupportedOperationException("Only flat schemas are supported by the writer");
-        }
         for (int c = 0; c < schema.getColumnCount(); c++) {
             ColumnSchema column = schema.getColumn(c);
             if (column.type() != PhysicalType.INT32) {
                 throw new UnsupportedOperationException(
                         "Only INT32 columns are supported; column " + column.name() + " is " + column.type());
+            }
+            if (column.maxRepetitionLevel() > 0) {
+                throw new UnsupportedOperationException(
+                        "Repeated columns (lists and maps) are not yet supported by the writer; column "
+                                + column.name() + " is repeated");
             }
         }
         out.create();
@@ -119,14 +125,14 @@ public final class ParquetFileWriter implements Closeable {
         ColumnBatch batch = new ColumnBatch(schema);
         filler.accept(batch);
         IntColumnSource[] sources = batch.completedSources();
-        Validity[] validities = batch.validities();
+        shredder.bind(batch.validities(), batch.structValidities());
         batch.markConsumed();
         int rows = batch.rowCount();
         int pos = 0;
         while (pos < rows) {
             int space = maxRowsPerGroup - current.rowCount();
             int n = Math.min(space, rows - pos);
-            current.appendRows(sources, validities, pos, n);
+            current.appendRows(sources, shredder, pos, n);
             pos += n;
             if (current.rowCount() >= maxRowsPerGroup) {
                 flushRowGroup();

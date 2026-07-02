@@ -10,6 +10,7 @@ package dev.hardwood.schema;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Locale;
+import java.util.function.Consumer;
 
 import dev.hardwood.internal.util.StringToIntMap;
 import dev.hardwood.metadata.ConvertedType;
@@ -136,24 +137,29 @@ public class FileSchema {
     }
 
     /// Flattens this schema back into the depth-first [SchemaElement] list written
-    /// to the file footer, the inverse of [#fromSchemaElements].
-    ///
-    /// Only flat schemas are supported; nested schemas are handled by a later
-    /// writer increment.
-    ///
-    /// @throws UnsupportedOperationException if the schema is not flat
+    /// to the file footer, the inverse of [#fromSchemaElements]: the root element
+    /// followed by each node in pre-order, groups carrying their child count.
     public List<SchemaElement> toSchemaElements() {
-        if (!isFlatSchema()) {
-            throw new UnsupportedOperationException("Only flat schemas can be serialized by the writer");
-        }
         List<SchemaElement> elements = new ArrayList<>(columns.size() + 1);
-        elements.add(new SchemaElement(name, null, null, RepetitionType.REQUIRED, columns.size(),
-                null, null, null, null, null));
-        for (ColumnSchema column : columns) {
-            elements.add(new SchemaElement(column.name(), column.type(), column.typeLength(),
-                    column.repetitionType(), null, null, null, null, null, column.logicalType()));
-        }
+        elements.add(new SchemaElement(name, null, null, rootNode.repetitionType(),
+                rootNode.children().size(), null, null, null, null, null));
+        appendElements(rootNode.children(), elements);
         return elements;
+    }
+
+    private void appendElements(List<SchemaNode> nodes, List<SchemaElement> out) {
+        for (SchemaNode node : nodes) {
+            switch (node) {
+                case SchemaNode.PrimitiveNode leaf -> out.add(new SchemaElement(
+                        leaf.name(), leaf.type(), columns.get(leaf.columnIndex()).typeLength(),
+                        leaf.repetitionType(), null, null, null, null, null, leaf.logicalType()));
+                case SchemaNode.GroupNode group -> {
+                    out.add(new SchemaElement(group.name(), null, null, group.repetitionType(),
+                            group.children().size(), group.convertedType(), null, null, null, group.logicalType()));
+                    appendElements(group.children(), out);
+                }
+            }
+        }
     }
 
     /// Reconstruct schema from Thrift SchemaElement list.
@@ -430,14 +436,15 @@ public class FileSchema {
         }
     }
 
-    /// Builder for constructing a flat [FileSchema] programmatically.
+    /// Builder for constructing a [FileSchema] programmatically.
     ///
-    /// Each added column becomes a top-level primitive leaf. Nested groups and
-    /// repeated columns are handled by a later writer increment.
+    /// Fields are added as top-level primitive leaves ([#addColumn]) or nested
+    /// `struct` groups ([#struct]). Repeated fields (lists and maps) are handled by a
+    /// later writer increment.
     public static final class Builder {
 
         private final String name;
-        private final List<SchemaElement> columns = new ArrayList<>();
+        private final StructBuilder content = new StructBuilder();
 
         private Builder(String name) {
             this.name = name;
@@ -450,26 +457,95 @@ public class FileSchema {
         /// @param repetition `REQUIRED` or `OPTIONAL`
         /// @throws IllegalArgumentException if `repetition` is `REPEATED`
         public Builder addColumn(String columnName, PhysicalType type, RepetitionType repetition) {
-            if (repetition == RepetitionType.REPEATED) {
-                throw new IllegalArgumentException(
-                        "Repeated columns are not yet supported by the writer: " + columnName);
-            }
-            columns.add(new SchemaElement(columnName, type, null, repetition, null, null, null, null, null, null));
+            content.addColumn(columnName, type, repetition);
+            return this;
+        }
+
+        /// Append a `struct` group whose fields are declared by `filler`.
+        ///
+        /// @param structName the group name
+        /// @param repetition `REQUIRED` or `OPTIONAL`
+        /// @param filler declares the group's fields
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or the group has no fields
+        public Builder struct(String structName, RepetitionType repetition, Consumer<StructBuilder> filler) {
+            content.struct(structName, repetition, filler);
             return this;
         }
 
         /// Build the schema.
         ///
-        /// @throws IllegalArgumentException if no columns were added
+        /// @throws IllegalArgumentException if no fields were added
         public FileSchema build() {
-            if (columns.isEmpty()) {
+            if (content.children.isEmpty()) {
                 throw new IllegalArgumentException("Schema must have at least one column");
             }
-            List<SchemaElement> elements = new ArrayList<>(columns.size() + 1);
-            elements.add(new SchemaElement(name, null, null, RepetitionType.REQUIRED, columns.size(),
+            List<SchemaElement> elements = new ArrayList<>();
+            elements.add(new SchemaElement(name, null, null, RepetitionType.REQUIRED, content.children.size(),
                     null, null, null, null, null));
-            elements.addAll(columns);
+            flatten(content.children, elements);
             return fromSchemaElements(elements);
+        }
+    }
+
+    /// Declares the fields of a `struct` group. Nested structs compose by calling
+    /// [#struct] again inside the filler.
+    public static final class StructBuilder {
+
+        private final List<BuilderNode> children = new ArrayList<>();
+
+        private StructBuilder() {
+        }
+
+        /// Append a primitive field.
+        ///
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED`
+        public StructBuilder addColumn(String columnName, PhysicalType type, RepetitionType repetition) {
+            if (repetition == RepetitionType.REPEATED) {
+                throw new IllegalArgumentException(
+                        "Repeated columns are not yet supported by the writer: " + columnName);
+            }
+            children.add(new BuilderLeaf(columnName, type, repetition));
+            return this;
+        }
+
+        /// Append a nested `struct` field.
+        ///
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or the group has no fields
+        public StructBuilder struct(String structName, RepetitionType repetition, Consumer<StructBuilder> filler) {
+            if (repetition == RepetitionType.REPEATED) {
+                throw new IllegalArgumentException(
+                        "Repeated groups are not yet supported by the writer: " + structName);
+            }
+            StructBuilder nested = new StructBuilder();
+            filler.accept(nested);
+            if (nested.children.isEmpty()) {
+                throw new IllegalArgumentException("Struct must have at least one field: " + structName);
+            }
+            children.add(new BuilderStruct(structName, repetition, nested.children));
+            return this;
+        }
+    }
+
+    private sealed interface BuilderNode {}
+
+    private record BuilderLeaf(String name, PhysicalType type, RepetitionType repetition) implements BuilderNode {}
+
+    private record BuilderStruct(String name, RepetitionType repetition, List<BuilderNode> children)
+            implements BuilderNode {}
+
+    /// Flattens the builder's field tree into the depth-first [SchemaElement] list
+    /// [#fromSchemaElements] consumes, a group element followed by its children.
+    private static void flatten(List<BuilderNode> nodes, List<SchemaElement> out) {
+        for (BuilderNode node : nodes) {
+            switch (node) {
+                case BuilderLeaf leaf -> out.add(new SchemaElement(
+                        leaf.name(), leaf.type(), null, leaf.repetition(), null, null, null, null, null, null));
+                case BuilderStruct group -> {
+                    out.add(new SchemaElement(group.name(), null, null, group.repetition(),
+                            group.children().size(), null, null, null, null, null));
+                    flatten(group.children(), out);
+                }
+            }
         }
     }
 }

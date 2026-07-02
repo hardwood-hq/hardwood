@@ -11,13 +11,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
-import java.util.Arrays;
 import java.util.List;
 import java.util.Map;
 import java.util.zip.CRC32;
 
 import dev.hardwood.OutputFile;
-import dev.hardwood.Validity;
 import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.internal.encoding.PlainEncoder;
 import dev.hardwood.internal.thrift.PageHeaderWriter;
@@ -64,9 +62,10 @@ final class ColumnChunkBuffer {
     }
 
     /// Appends `count` rows starting at `srcPos` in `source`, sealing pages as the pending
-    /// buffer fills. `validity` carries the rows' nulls (indexed absolutely into the batch)
-    /// or is `null` when every appended row is present.
-    void append(IntColumnSource source, Validity validity, int srcPos, int count) {
+    /// buffer fills. For a levelled column (`maxDefLevel > 0`) the definition levels of the
+    /// appended rows are filled by `shredder` for this column, so a struct-nested column's
+    /// intermediate nulls lower to the correct level; a `REQUIRED` flat column ignores it.
+    void append(IntColumnSource source, RecordShredder shredder, int columnIndex, int srcPos, int count) {
         int remaining = count;
         int from = srcPos;
         while (remaining > 0) {
@@ -74,17 +73,7 @@ final class ColumnChunkBuffer {
             int n = Math.min(space, remaining);
             source.copyInto(from, pending, pendingCount, n);
             if (defLevels != null) {
-                // Lower the nulls straight into def levels: start all-present (also clearing
-                // the reused slots from a prior page), then drop to level 0 wherever the
-                // validity reports a null over this range — representation agnostic, so a
-                // dense or a future sparse validity feed the same code.
-                Arrays.fill(defLevels, pendingCount, pendingCount + n, maxDefLevel);
-                if (validity != null) {
-                    int end = from + n;
-                    for (int i = validity.nextNull(from, end); i != -1; i = validity.nextNull(i + 1, end)) {
-                        defLevels[pendingCount + (i - from)] = 0;
-                    }
-                }
+                shredder.fillDefinitionLevels(columnIndex, from, n, defLevels, pendingCount);
             }
             pendingCount += n;
             from += n;
@@ -148,7 +137,9 @@ final class ColumnChunkBuffer {
     private byte[] optionalBody() {
         int nonNull = 0;
         for (int i = 0; i < pendingCount; i++) {
-            if (defLevels[i] != 0) {
+            // A value is present only at the full definition level; any lower level is a
+            // null at the leaf or at some enclosing struct, and carries no value.
+            if (defLevels[i] == maxDefLevel) {
                 compactValues[nonNull++] = pending[i];
             }
         }
