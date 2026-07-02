@@ -7,6 +7,7 @@
  */
 package dev.hardwood.writer;
 
+import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
@@ -25,6 +26,7 @@ import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
@@ -36,20 +38,27 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// then read it back with [ParquetFileReader] and assert the values survive.
 class WriterRoundTripTest {
 
-    @Test
-    void writesAndReadsBackTwoIntColumns() throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
+    private static FileSchema twoColumns() {
+        return FileSchema.builder("schema")
                 .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
+    }
 
+    private static FileSchema oneColumn() {
+        return FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+    }
+
+    @Test
+    void writesAndReadsBackTwoIntColumns() throws Exception {
         int[] a = { 1, 2, 3, 4, 5 };
         int[] b = { 10, 20, 30, 40, 50 };
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
-            writer.writeInts(0, a);
-            writer.writeInts(1, b);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, twoColumns())) {
+            writer.writeBatch(batch -> batch.ints(0, a).ints(1, b));
         }
 
         ByteBuffer bytes = ByteBuffer.wrap(out.toByteArray());
@@ -65,15 +74,29 @@ class WriterRoundTripTest {
     }
 
     @Test
+    void writesColumnsAddressedByName() throws Exception {
+        int[] a = { 1, 2, 3 };
+        int[] b = { 4, 5, 6 };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, twoColumns())) {
+            // Names may be given in any order; they resolve to the schema's columns.
+            writer.writeBatch(batch -> batch.ints("b", b).ints("a", a));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(readInts(reader, 0)).containsExactly(a);
+            assertThat(readInts(reader, 1)).containsExactly(b);
+        }
+    }
+
+    @Test
     void writesToLocalFileWithAtomicRename(@TempDir Path dir) throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .build();
         int[] ids = { 7, 8, 9 };
 
         Path file = dir.resolve("out.parquet");
-        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
-            writer.writeInts(0, ids);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), oneColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, ids));
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
@@ -83,98 +106,137 @@ class WriterRoundTripTest {
     }
 
     @Test
-    void emptyColumnRoundTrips() throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .build();
-
+    void multipleBatchesAccumulateIntoOneRowGroup() throws Exception {
         ByteBufferOutputFile out = new ByteBufferOutputFile();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
-            writer.writeInts(0, new int[0]);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, new int[] { 1, 2 }));
+            writer.writeBatch(batch -> batch.ints(0, new int[] { 3, 4 }));
+            writer.writeBatch(batch -> batch.ints(0, new int[] { 5 }));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(reader.getFileMetaData().numRows()).isEqualTo(5);
+            // Default 128 MiB target: the three small batches stay in one row group.
+            assertThat(reader.getFileMetaData().rowGroups()).hasSize(1);
+            assertThat(readInts(reader, 0)).containsExactly(1, 2, 3, 4, 5);
+        }
+    }
+
+    @Test
+    void emptyBatchProducesEmptyFile() throws Exception {
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, new int[0]));
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(0);
+            assertThat(reader.getFileMetaData().rowGroups()).isEmpty();
         }
     }
 
     @Test
-    void rejectsWritingTheSameColumnTwice() throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .build();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
-            writer.writeInts(0, new int[] { 1, 2, 3 });
-            assertThatThrownBy(() -> writer.writeInts(0, new int[] { 4, 5, 6 }))
-                    .isInstanceOf(IllegalStateException.class);
+    void rejectsDuplicateColumnInBatch() throws Exception {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+            assertThatThrownBy(() -> writer.writeBatch(
+                    batch -> batch.ints(0, new int[] { 1, 2, 3 }).ints(0, new int[] { 4, 5, 6 })))
+                    .isInstanceOf(IllegalArgumentException.class);
         }
     }
 
     @Test
-    void rejectsRowCountMismatchAcrossColumns() throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .build();
-        ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema);
-        writer.writeInts(0, new int[] { 1, 2, 3 });
-        assertThatThrownBy(() -> writer.writeInts(1, new int[] { 1, 2 }))
-                .isInstanceOf(IllegalArgumentException.class);
+    void rejectsSameColumnByIndexAndName() throws Exception {
+        // The schema binding lets the batch see that "id" is column 0, so the collision
+        // is caught eagerly rather than at write time.
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+            assertThatThrownBy(() -> writer.writeBatch(
+                    batch -> batch.ints(0, new int[] { 1, 2, 3 }).ints("id", new int[] { 4, 5, 6 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
     }
 
     @Test
-    void rejectsNonInt32Column() throws Exception {
+    void rejectsUnknownColumnName() throws Exception {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch.ints("nope", new int[] { 1 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsRaggedBatch() throws Exception {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), twoColumns())) {
+            assertThatThrownBy(() -> writer.writeBatch(
+                    batch -> batch.ints(0, new int[] { 1, 2, 3 }).ints(1, new int[] { 1, 2 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsBatchNotCoveringAllColumns() throws Exception {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), twoColumns())) {
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch.ints(0, new int[] { 1, 2, 3 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsNonInt32Schema() {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
                 .build();
-        ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema);
-        assertThatThrownBy(() -> writer.writeInts(0, new int[] { 1 }))
+        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class);
     }
 
     @Test
-    void rejectsNonRequiredColumn() throws Exception {
+    void rejectsNonRequiredSchema() {
         FileSchema schema = FileSchema.builder("schema")
                 .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL)
                 .build();
-        ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema);
-        assertThatThrownBy(() -> writer.writeInts(0, new int[] { 1 }))
+        assertThatThrownBy(() -> ParquetFileWriter.create(new ByteBufferOutputFile(), schema))
                 .isInstanceOf(UnsupportedOperationException.class);
+    }
+
+    @Test
+    void rejectsMutatingBatchAfterWrite() throws Exception {
+        // A filler that stashes the batch and mutates it after writeBatch returns must
+        // fail loudly rather than silently drop the values.
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
+            ColumnBatch[] escaped = new ColumnBatch[1];
+            writer.writeBatch(batch -> {
+                escaped[0] = batch;
+                batch.ints(0, new int[] { 1, 2, 3 });
+            });
+            assertThatThrownBy(() -> escaped[0].ints(0, new int[] { 4 })).isInstanceOf(IllegalStateException.class);
+        }
     }
 
     @Test
     void rejectsUseAfterClose() throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .build();
-        ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema);
-        writer.writeInts(0, new int[] { 1, 2, 3 });
+        ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn());
+        writer.writeBatch(batch -> batch.ints(0, new int[] { 1, 2, 3 }));
         writer.close();
-        assertThatThrownBy(() -> writer.writeInts(0, new int[] { 4 }))
+        assertThatThrownBy(() -> writer.writeBatch(batch -> batch.ints(0, new int[] { 4 })))
                 .isInstanceOf(IllegalStateException.class);
     }
 
     @Test
     void failedCloseLeavesNoFileAtTarget(@TempDir Path dir) throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .addColumn("b", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .build();
         Path file = dir.resolve("partial.parquet");
 
-        ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema);
-        writer.writeInts(0, new int[] { 1, 2, 3 }); // column "b" never written
+        // Fail while writing the footer's trailing magic: the data pages and part of the
+        // footer are on disk, so close() must discard rather than publish a broken file.
+        FailOnSecondMagic out = new FailOnSecondMagic(OutputFile.of(file));
+        ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn());
+        writer.writeBatch(batch -> batch.ints(0, new int[] { 1, 2, 3 }));
 
-        assertThatThrownBy(writer::close).isInstanceOf(IllegalStateException.class);
-        // The footer never completed, so nothing must be published at the target.
+        assertThatThrownBy(writer::close).isInstanceOf(IOException.class);
         assertThat(Files.exists(file)).isFalse();
     }
 
     @Test
     void largeColumnIsSplitAcrossMultiplePages() throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .build();
         // Comfortably more than one target page (262,144 INT32 values per 1 MiB page).
         int n = 600_000;
         int[] values = new int[n];
@@ -183,15 +245,17 @@ class WriterRoundTripTest {
         }
 
         ByteBufferOutputFile out = new ByteBufferOutputFile();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
-            writer.writeInts(0, values);
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values));
         }
         byte[] bytes = out.toByteArray();
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(n);
+            // One 128 MiB row group; 600k values at 262,144 per 1 MiB page ⇒ exactly 3 pages.
+            assertThat(reader.getFileMetaData().rowGroups()).hasSize(1);
             ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
-            assertThat(countDataPages(bytes, meta.dataPageOffset(), meta.numValues())).isGreaterThan(1);
+            assertThat(countDataPages(bytes, meta.dataPageOffset(), meta.numValues())).isEqualTo(3);
             // Arrays.equals over containsExactly: the latter is O(n) with per-element
             // boxing/description and is needlessly slow at 600k elements.
             assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
@@ -199,14 +263,35 @@ class WriterRoundTripTest {
     }
 
     @Test
-    void writesCorrectPageCrc() throws Exception {
-        FileSchema schema = FileSchema.builder("schema")
-                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
-                .build();
+    void largeColumnIsSplitAcrossMultipleRowGroups() throws Exception {
+        int n = 5_000;
+        int[] values = new int[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = i;
+        }
 
+        // 4 KiB target ⇒ 1024 rows per row group ⇒ the single batch spans several groups.
+        WriterConfig config = WriterConfig.builder().rowGroupTargetBytes(4096).build();
         ByteBufferOutputFile out = new ByteBufferOutputFile();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
-            writer.writeInts(0, new int[] { 1, 2, 3, 4, 5 });
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(reader.getFileMetaData().numRows()).isEqualTo(n);
+            // 5000 rows at 1024 per group ⇒ four full groups and a 904-row tail, pinning
+            // the cadence arithmetic rather than merely asserting "more than one".
+            assertThat(reader.getFileMetaData().rowGroups().stream().map(RowGroup::numRows))
+                    .containsExactly(1024L, 1024L, 1024L, 1024L, 904L);
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    @Test
+    void writesCorrectPageCrc() throws Exception {
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, new int[] { 1, 2, 3, 4, 5 }));
         }
         byte[] bytes = out.toByteArray();
 
@@ -253,6 +338,54 @@ class WriterRoundTripTest {
                 pos += count;
             }
             return result;
+        }
+    }
+
+    /// An [OutputFile] that throws while writing the second `PAR1` magic — the footer's
+    /// trailing marker — leaving a file whose footer never completed.
+    private static final class FailOnSecondMagic implements OutputFile {
+
+        private final OutputFile delegate;
+        private int magicWrites;
+
+        FailOnSecondMagic(OutputFile delegate) {
+            this.delegate = delegate;
+        }
+
+        @Override
+        public void create() throws IOException {
+            delegate.create();
+        }
+
+        @Override
+        public void write(ByteBuffer data) throws IOException {
+            if (isMagic(data) && ++magicWrites == 2) {
+                throw new IOException("injected footer write failure");
+            }
+            delegate.write(data);
+        }
+
+        @Override
+        public long position() {
+            return delegate.position();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
+
+        @Override
+        public void discard() throws IOException {
+            delegate.discard();
+        }
+
+        private static boolean isMagic(ByteBuffer data) {
+            if (data.remaining() != 4) {
+                return false;
+            }
+            int p = data.position();
+            return data.get(p) == 'P' && data.get(p + 1) == 'A' && data.get(p + 2) == 'R' && data.get(p + 3) == '1';
         }
     }
 }

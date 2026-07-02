@@ -22,8 +22,10 @@ batch API**:
 - **Flat columns only** — `REQUIRED` and `OPTIONAL` fields. No repetition, therefore
   no Dremel shredding and no repetition levels. This is the write-side counterpart of
   the reader's `FlatRowReader` fast path and covers the majority of analytics files.
-- **Columnar batch input** — the user supplies typed arrays per column, mirroring
-  `ColumnReader`. A row-oriented writer and integration adapters layer on top later.
+- **Columnar batch input** — the user fills a `ColumnBatch` the writer hands to a
+  filler: an aligned slice carrying one typed array per column, addressed by index or
+  name, mirroring `ColumnReader`. The writer re-chunks batches into pages and row groups
+  internally. A row-oriented writer and integration adapters layer on top later.
 - **DataPage V1** as the written page format, for maximum reader compatibility.
 
 Logical-type annotations (STRING, DATE, TIMESTAMP, DECIMAL, UUID, …) are in scope
@@ -62,6 +64,46 @@ row-group size (default 128 MiB of uncompressed data) bounds peak memory — thi
 the write-side inverse of the reader's whole-file mmap. Page size (default 1 MiB)
 bounds the granularity within a column chunk.
 
+Three nested layout tiers stack here — a **page** encodes/compresses a slice of a
+column, a **column chunk** is one column's pages for one row group, and a **row group**
+holds one column chunk per column. All three are internal; only the page-size and
+row-group-size targets are user-visible, as `WriterConfig` knobs.
+
+### Ingestion cadence
+
+Data arrives as **`ColumnBatch` objects** — an aligned slice carrying one typed array
+per column. `ParquetFileWriter.writeBatch` takes a filler: it creates the batch bound to
+the schema, passes it to the filler to be populated, then submits it, so there is no
+separate build or submit step to forget. Because the batch is schema-bound, its columns
+can be addressed by index or name and every identifier is validated as values are added:
+an unknown name, an out-of-range index, a non-`INT32` column, or setting the same column
+twice (by either index or name) all fail eagerly rather than at write time. A batch is
+atomic: every column's array must have the same length, which is the batch's row count,
+and a ragged batch is rejected. The batch is only an *arrival* unit and is independent of the three
+layout tiers: the writer distributes a batch's values into the per-column page buffers,
+cuts pages at the page-size target, and appends encoded pages to the per-column column
+chunk buffers. When the buffered row group crosses the row-group-size target it is
+flushed — column chunks written in schema order, offsets recorded — and the buffers
+reset. A batch larger than the row-group target is split at the boundary, so peak
+memory stays bounded by the row-group size regardless of batch size.
+
+Row-group boundaries are chosen by the writer from the size target; there is no
+explicit boundary method. A caller holding whole columns submits them as one large
+batch and the writer slices it into pages and row groups; a streaming producer submits
+many small batches and discards each after handing it over.
+
+Internally a batch's per-column arrays sit behind a bulk **value-source seam**
+(`IntColumnSource` and its per-type siblings: a `size()` plus a `copyInto` that fills a
+reused page-sized primitive buffer), with an `int[]`-backed implementation. Encoders,
+statistics and dictionary building consume page-sized ranges through this seam rather
+than the caller's array directly, so intermediate memory stays bounded to one page. A
+public `ColumnVector` / `IntColumn` SPI over the same seam — letting a caller write from
+a custom columnar container without an intervening copy, plus a zero-copy fast path when
+a caller's buffer already holds contiguous little-endian `PLAIN` bytes — is a later
+additive layer, sequenced after nulls and dictionary settle the value and validity
+facets it must expose. The primitive-array setters are sugar over the seam, so adding
+the SPI never changes the `writeBatch` signature or the row-group machinery.
+
 ### OutputFile abstraction
 
 A sequential write counterpart to `InputFile`, far simpler than the random-access
@@ -94,10 +136,10 @@ the thrift codec sit alongside their decode counterparts as shared substrate.
 
 | Layer | Package | Components |
 |-------|---------|------------|
-| Public API | `dev.hardwood.writer` | `ParquetFileWriter`, `ColumnBatchWriter`, `WriterConfig` |
+| Public API | `dev.hardwood.writer` | `ParquetFileWriter`, `ColumnBatch`, `WriterConfig` |
 | Public API | `dev.hardwood` | `OutputFile` |
 | Public API | `dev.hardwood.schema` | `FileSchema.Builder` (produces the existing immutable `FileSchema`) |
-| Orchestration | `dev.hardwood.internal.writer` | `RowGroupBuffer`, `ColumnChunkBuffer`, `PageBuilder`, `StatisticsCollector`, `OutputFile` backends |
+| Orchestration | `dev.hardwood.internal.writer` | `RowGroupBuffer`, `ColumnChunkBuffer`, `PageBuilder`, `IntColumnSource` (value-source seam), `StatisticsCollector`, `OutputFile` backends |
 | Value encoding | `dev.hardwood.internal.encoding` | `PlainEncoder`, `RleBitPackingHybridEncoder`, `LevelEncoder`, `DictionaryEncoder` (alongside the existing decoders) |
 | Compression | `dev.hardwood.internal.compression` | `Compressor` / `CompressorFactory` (alongside `Decompressor`) |
 | Metadata serialization | `dev.hardwood.internal.thrift` | `ThriftCompactWriter`, `FileMetaDataWriter`, `SchemaElementWriter`, `RowGroupWriter`, `ColumnChunkWriter`, `ColumnMetaDataWriter`, `PageHeaderWriter` (the `*Writer` inverses of the existing `*Reader`s) |
@@ -199,9 +241,8 @@ validation above, so `main` never holds functionality that cannot produce a read
 file.
 
 The sequencing is **dimension-first**: prove the thinnest slice through each
-architectural dimension — paging, the columnar API contract (nulls + streaming),
-dictionary pages, compression, statistics — on a single type (`INT32`) before going
-wide. Type, encoding, and codec **breadth** is the same proven mechanism repeated, so
+architectural dimension — paging, row-group cadence, nulls, dictionary pages,
+compression, statistics — on a single type (`INT32`) before going wide. Type, encoding, and codec **breadth** is the same proven mechanism repeated, so
 it is deferred until every dimension is settled; otherwise a late dimension would
 reshape an already-multiplied surface (adding nulls or the streaming API after N typed
 methods exist rewrites all N). Each increment carries a **Kind**: *Dimension* (changes
@@ -212,20 +253,22 @@ API), *Optimization*, *Spike* (design-only), or *Docs* (user-facing documentatio
 |---|-----------|------|----------------|---------------|-----------|
 | 1 | Tracer: flat `REQUIRED INT32`, one page / one row group, `PLAIN`, uncompressed. `OutputFile` (local + in-memory), `ThriftCompactWriter`, page-header + footer serialization. | Dimension | Produces a real, readable file | 1 (ThriftCompactWriter), 3.2 (page header ser.), 4.1/4.2 (chunk/row-group ser.), 5.2 (FileMetaData ser.) | [x] |
 | 2 | Page chunking within a column chunk: a large `INT32` column written as multiple size-bounded `PLAIN` pages instead of one, replacing the single-page guard. Internal — the columnar API is unchanged. Each page carries a CRC-32 checksum over its on-disk body. | Dimension | Large columns written safely, bounded page size | 6.2 (multi-page data writing), 3.2 (CRC write) | [x] |
-| 3 | **Columnar API contract** (`INT32` only): nullable columns (definition levels via `LevelEncoder`) **and** multi-row-group append with size-based flushing **and** `WriterConfig`, designed together. Locks how the caller supplies nulls and feeds data. | Dimension | The public write contract is settled | 2.3, 3.3, 6.1, 6.2 | [ ] |
-| 4 | Dictionary encoding (`INT32`): dictionary page + `RLE_DICTIONARY` indices + plain fallback. | Dimension | Dictionary column-chunk layout proven | 2.2 | [ ] |
-| 5 | Compression on the write path (`INT32`, one codec). | Dimension | Compress step + compressed/uncompressed size accounting proven | 6.2 (page compression) | [ ] |
-| 6 | Column statistics (`INT32`: `min`/`max`/`null_count`, `ColumnOrder`-correct) accumulated during encode. | Dimension | Produced files support pushdown | 9.1 (stats) | [ ] |
-| 7 | Nested design spike: confirm the columnar API contract extends to repetition levels and shredding. Design only, no implementation. | Spike | De-risks the nested milestone before breadth locks the API | 6.3 (design) | [ ] |
-| 8 | All primitive physical types (incl. `FIXED_LEN_BYTE_ARRAY` type length and `BYTE_ARRAY` min/max truncation), each inheriting paging, nulls, dictionary, compression and stats. | Breadth | Write any flat column type | 2.1, 9.1 (truncation) | [ ] |
-| 9 | Logical-type annotations: `LogicalTypeWriter` serializes the `LogicalType` union and legacy `converted_type`/`scale`/`precision`; `FileSchema.Builder` logical-type overload. | Breadth | Columns read back with their logical type (STRING, DATE, TIMESTAMP, DECIMAL, …) | 6.4 (annotation) | [ ] |
-| 10 | Remaining codecs + optional delta and byte-stream-split encoders. | Breadth | Full codec / encoding choice | 2.4, 2.5 | [ ] |
-| 11 | Parallel column encoding + row-group pipelining. | Optimization | Write throughput | — | [ ] |
-| 12 | Row-oriented `ParquetWriter` ergonomic layer on the columnar core, including logical-type value conversion (inverse of `LogicalTypeConverter`). | Layer | Mainstream-friendly API | 6.1 (`ParquetWriter`), 6.4 (value conversion) | [ ] |
-| 13 | User-facing documentation under `docs/content/` for the writer public API (`OutputFile`, `ParquetFileWriter`, `FileSchema.Builder`): a `how-to` guide and a `reference` page, covering the settled surface including the row-oriented layer. | Docs | Documented, stable public API | — | [ ] |
+| 3 | **Row-group cadence** (`REQUIRED INT32` only): the `ColumnBatch` submission API, multi-row-group append, size-based auto-flush (page + row-group targets), and `WriterConfig`. Locks how the caller feeds data and how the file is banded into row groups. | Dimension | The public write cadence is settled | 6.2 (row-group size tracking, automatic flushing) | [x] |
+| 4 | Nullable columns (`OPTIONAL INT32`): definition levels via `LevelEncoder`, and how nulls ride inside a `ColumnBatch`. | Dimension | The null / def-level data model is settled | 2.3, 3.3 | [ ] |
+| 5 | Nested design spike: confirm the settled `ColumnBatch` contract extends to repetition levels and shredding. Design only, no implementation. | Spike | De-risks the nested milestone as soon as the contract is settled | 6.3 (design) | [ ] |
+| 6 | Dictionary encoding (`INT32`, `REQUIRED` and `OPTIONAL`): dictionary page + `RLE_DICTIONARY` indices + plain fallback, exercised on a nullable column so the def-level / dictionary-index page layout is proven together. | Dimension | Dictionary column-chunk layout proven, including with nulls | 2.2 | [ ] |
+| 7 | Compression on the write path (`INT32`, one codec). | Dimension | Compress step + compressed/uncompressed size accounting proven | 6.2 (page compression) | [ ] |
+| 8 | Column statistics (`INT32`: `min`/`max`/`null_count`, `ColumnOrder`-correct) accumulated during encode. | Dimension | Produced files support pushdown | 9.1 (stats) | [ ] |
+| 9 | All primitive physical types (incl. `FIXED_LEN_BYTE_ARRAY` type length and `BYTE_ARRAY` min/max truncation), each inheriting paging, nulls, dictionary, compression and stats. Variable-width values end the constant-bytes-per-row assumption, so the row-group flush moves from the fixed rows-per-group proxy (`rowGroupTargetBytes / (columnCount × 4)`) to tracking the actual buffered uncompressed bytes. | Breadth | Write any flat column type | 2.1, 9.1 (truncation) | [ ] |
+| 10 | Logical-type annotations: `LogicalTypeWriter` serializes the `LogicalType` union and legacy `converted_type`/`scale`/`precision`; `FileSchema.Builder` logical-type overload. | Breadth | Columns read back with their logical type (STRING, DATE, TIMESTAMP, DECIMAL, …) | 6.4 (annotation) | [ ] |
+| 11 | Remaining codecs + optional delta and byte-stream-split encoders. | Breadth | Full codec / encoding choice | 2.4, 2.5 | [ ] |
+| 12 | Parallel column encoding + row-group pipelining. | Optimization | Write throughput | — | [ ] |
+| 13 | Row-oriented `ParquetWriter` ergonomic layer on the columnar core, including logical-type value conversion (inverse of `LogicalTypeConverter`). | Layer | Mainstream-friendly API | 6.1 (`ParquetWriter`), 6.4 (value conversion) | [ ] |
+| 14 | User-facing documentation under `docs/content/` for the writer public API (`OutputFile`, `ParquetFileWriter`, `FileSchema.Builder`): a `how-to` guide and a `reference` page, covering the settled surface including the row-oriented layer. | Docs | Documented, stable public API | — | [ ] |
 
-Increments 1–6 prove every architectural dimension on `INT32`; 7 is a design checkpoint;
-8–12 are breadth and layers that build on the settled shape; 13 documents the finished
+Increments 1–8 settle every architectural dimension on `INT32`, with stage 5 a
+design-only checkpoint confirming the settled contract extends to nested repetition;
+9–13 are breadth and layers that build on the settled shape; 14 documents the finished
 public surface. Together they constitute the flat-writer milestone (1.1). Later milestones, each their own design and sequence: nested
 shredding implementation (Dremel: structs → lists → maps), DataPage V2, the optional index
 structures and Bloom filters, the Avro write adapter, a CLI write/convert command, and the
@@ -234,12 +277,12 @@ S3 `OutputFile` backend.
 ## User documentation
 
 User-facing documentation under `docs/content/` is delivered as the closing increment
-of the milestone (stage 13), once the full public surface — including the row-oriented
+of the milestone (stage 14), once the full public surface — including the row-oriented
 layer — is settled. Documenting the provisional `INT32`-only surface earlier would be
 throwaway, so deferring is a recorded, intentional exception to the CLAUDE.md rule that
 a new public API ships with a docs update — not an oversight. The public surface
 (`OutputFile`, `ParquetFileWriter`, `FileSchema.Builder`) gets its `how-to`/`reference`
-pages at stage 13.
+pages at stage 14.
 
 ## Roadmap reconciliation
 

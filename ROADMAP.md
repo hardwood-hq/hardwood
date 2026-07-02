@@ -187,8 +187,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 
 ### 6.2 Write Flow
 - [ ] Record buffering
-- [ ] Row group size tracking
-- [ ] Automatic row group flushing
+- [x] Row group size tracking
+- [x] Automatic row group flushing
 - [ ] Dictionary page writing
 - [x] Data page encoding and writing
 - [ ] Page compression
