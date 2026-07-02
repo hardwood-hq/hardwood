@@ -11,6 +11,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.LinkedHashSet;
 import java.util.List;
+import java.util.Set;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
@@ -74,19 +75,55 @@ public class ParquetFileReader implements AutoCloseable {
     private final FileMetaData firstFileMetaData;
     private final FileSchema schema;
     private final HardwoodContextImpl context;
+    private final boolean fixedListFastPathEnabled;
     private final boolean ownsContext;
     private final boolean ownsInputFiles;
     private final List<RowGroupIterator> rowGroupIterators = new ArrayList<>();
 
     private ParquetFileReader(List<InputFile> inputFiles, FileMetaData firstFileMetaData,
-                              FileSchema schema, HardwoodContextImpl context,
+                              FileSchema schema, HardwoodContextImpl context, boolean fixedListFastPathEnabled,
                               boolean ownsContext, boolean ownsInputFiles) {
         this.inputFiles = inputFiles;
         this.firstFileMetaData = firstFileMetaData;
         this.schema = schema;
         this.context = context;
+        this.fixedListFastPathEnabled = fixedListFastPathEnabled;
         this.ownsContext = ownsContext;
         this.ownsInputFiles = ownsInputFiles;
+    }
+
+    /// Reader option key: set to `"false"` to disable the fixed-size-list read
+    /// fast path (enabled by default). A transitional escape hatch — string-keyed
+    /// via [ReaderConfig] so it can be retired without breaking callers.
+    private static final String FIXED_LIST_FAST_PATH_OPTION = "hardwood.fixed-list-fast-path";
+
+    /// The [ReaderConfig] option keys the reader recognises. Unknown keys are
+    /// ignored (so a flag can be retired without breaking callers) but logged at
+    /// `WARNING`, so a typo in a live key surfaces instead of taking the default.
+    private static final Set<String> KNOWN_READER_OPTIONS = Set.of(FIXED_LIST_FAST_PATH_OPTION);
+
+    private static final System.Logger LOG = System.getLogger(ParquetFileReader.class.getName());
+
+    /// Resolves the fixed-size-list fast-path flag from a [ReaderConfig] (enabled
+    /// unless the option is explicitly `"false"`).
+    private static boolean resolveFixedListFastPath(ReaderConfig readerConfig) {
+        return !"false".equalsIgnoreCase(
+                readerConfig.options().getOrDefault(FIXED_LIST_FAST_PATH_OPTION, "true"));
+    }
+
+    /// Logs a `WARNING` for each [ReaderConfig] option key the reader does not
+    /// recognise. Unknown keys are still ignored — the string-keyed design lets a
+    /// flag be retired without breaking old callers — but a typo in a live key
+    /// (e.g. a dropped hyphen) would otherwise silently fall back to the default,
+    /// which the fail-early convention forbids.
+    private static void warnUnknownReaderOptions(ReaderConfig readerConfig) {
+        for (String key : readerConfig.options().keySet()) {
+            if (!KNOWN_READER_OPTIONS.contains(key)) {
+                LOG.log(System.Logger.Level.WARNING,
+                        "Ignoring unknown reader option ''{0}'' (recognised options: {1})",
+                        key, KNOWN_READER_OPTIONS);
+            }
+        }
     }
 
     /// Open a single Parquet file with a dedicated context.
@@ -106,24 +143,42 @@ public class ParquetFileReader implements AutoCloseable {
         return openAll(List.of(inputFile), context);
     }
 
+    /// Open a single Parquet file with a shared context and an explicit
+    /// [ReaderConfig]. The context (shared runtime resources) and the config
+    /// (per-read behaviour) are independent, so one context can back reads with
+    /// different configs.
+    public static ParquetFileReader open(InputFile inputFile, HardwoodContext context,
+                                         ReaderConfig readerConfig) throws IOException {
+        return openAll(List.of(inputFile), context, readerConfig);
+    }
+
     /// Open multiple Parquet files with a dedicated context. The schema
     /// is read from the first file and is assumed to be common across all
     /// files. Files are opened on demand by the iterator; the first file is
     /// opened eagerly so any I/O or metadata error surfaces immediately.
     public static ParquetFileReader openAll(List<? extends InputFile> inputFiles) throws IOException {
-        return openInternal(inputFiles, HardwoodContextImpl.create(), true);
+        return openInternal(inputFiles, HardwoodContextImpl.create(), ReaderConfig.defaults(), true);
     }
 
     /// Open multiple Parquet files with a shared context.
     public static ParquetFileReader openAll(List<? extends InputFile> inputFiles, HardwoodContext context) throws IOException {
-        return openInternal(inputFiles, (HardwoodContextImpl) context, false);
+        return openInternal(inputFiles, (HardwoodContextImpl) context, ReaderConfig.defaults(), false);
+    }
+
+    /// Open multiple Parquet files with a shared context and an explicit
+    /// [ReaderConfig].
+    public static ParquetFileReader openAll(List<? extends InputFile> inputFiles, HardwoodContext context,
+                                            ReaderConfig readerConfig) throws IOException {
+        return openInternal(inputFiles, (HardwoodContextImpl) context, readerConfig, false);
     }
 
     private static ParquetFileReader openInternal(List<? extends InputFile> inputFiles, HardwoodContextImpl context,
-                                                   boolean ownsContext) throws IOException {
+                                                   ReaderConfig readerConfig, boolean ownsContext) throws IOException {
         if (inputFiles == null || inputFiles.isEmpty()) {
             throw new IllegalArgumentException("At least one file must be provided");
         }
+        warnUnknownReaderOptions(readerConfig);
+        boolean fixedListFastPathEnabled = resolveFixedListFastPath(readerConfig);
         List<InputFile> files = List.copyOf(inputFiles);
         InputFile first = files.get(0);
         first.open();
@@ -148,7 +203,7 @@ public class ParquetFileReader implements AutoCloseable {
             fileOpenedEvent.columnCount = schema.getColumnCount();
             fileOpenedEvent.commit();
 
-            return new ParquetFileReader(files, firstFileMetaData, schema, context, ownsContext, true);
+            return new ParquetFileReader(files, firstFileMetaData, schema, context, fixedListFastPathEnabled, ownsContext, true);
         }
         catch (Exception e) {
             try {
@@ -400,7 +455,7 @@ public class ParquetFileReader implements AutoCloseable {
             return FlatRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows);
         }
         else {
-            return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows);
+            return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, fixedListFastPathEnabled, filter, maxRows);
         }
     }
 
@@ -419,7 +474,7 @@ public class ParquetFileReader implements AutoCloseable {
         }
         InputFile inputFile = inputFiles.get(0);
         List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
-        return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, null, batchSize);
+        return ColumnReader.create(columnName, schema, inputFile, rowGroups, context, fixedListFastPathEnabled, null, batchSize);
     }
 
     ColumnReader buildColumnReader(int columnIndex, FilterPredicate filter) {
@@ -436,7 +491,7 @@ public class ParquetFileReader implements AutoCloseable {
         }
         InputFile inputFile = inputFiles.get(0);
         List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
-        return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, null, batchSize);
+        return ColumnReader.create(columnIndex, schema, inputFile, rowGroups, context, fixedListFastPathEnabled, null, batchSize);
     }
 
     ColumnReaders buildColumnReaders(ColumnProjection projection, FilterPredicate filter) {
@@ -457,7 +512,7 @@ public class ParquetFileReader implements AutoCloseable {
             iterator.setFirstFile(schema, rowGroups);
             ProjectedSchema projected = iterator.initialize(projection, null);
             rowGroupIterators.add(iterator);
-            return new ColumnReaders(context, iterator, schema, projected,
+            return new ColumnReaders(context, fixedListFastPathEnabled, iterator, schema, projected,
                     resolveBatchSize(batchSize, projected));
         }
 
@@ -474,7 +529,7 @@ public class ParquetFileReader implements AutoCloseable {
         // Size against the augmented projection — the predicate columns allocate
         // per-batch arrays too, so they count toward the byte budget.
         return ColumnReaders.filtered(
-                context, iterator, schema, augProjected, payloadProjected, resolved,
+                context, fixedListFastPathEnabled, iterator, schema, augProjected, payloadProjected, resolved,
                 resolveBatchSize(batchSize, augProjected));
     }
 
