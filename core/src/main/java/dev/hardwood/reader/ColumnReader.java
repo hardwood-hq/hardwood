@@ -462,54 +462,6 @@ public class ColumnReader implements AutoCloseable {
         return result;
     }
 
-    // ==================== Raw Levels (escape hatch) ====================
-
-    /// Raw definition levels for the current batch. Returns `null` for flat
-    /// columns; their validity is fully captured by [#getLeafValidity()].
-    ///
-    /// When the batch was decoded via the fixed-size-list fast path the level
-    /// arrays are not materialized during decode; this escape hatch synthesizes
-    /// them on demand (every leaf present, so `maxDefinitionLevel`) so callers
-    /// see the same levels the regular path would produce. It is expected to be
-    /// called rarely, so the arrays are rebuilt per call rather than cached.
-    public int[] getDefinitionLevels() {
-        checkBatchAvailable();
-        if (!nested) {
-            return null;
-        }
-        int[] definitionLevels = currentNestedBatch.definitionLevels;
-        if (definitionLevels == null && currentNestedBatch.fixedListK > 0) {
-            definitionLevels = new int[currentNestedBatch.valueCount];
-            Arrays.fill(definitionLevels, column.maxDefinitionLevel());
-        }
-        return definitionLevels;
-    }
-
-    /// Raw repetition levels for the current batch. Returns `null` for columns
-    /// whose `maxRepetitionLevel == 0`.
-    ///
-    /// On a fixed-size-list fast-path batch the levels are synthesized on demand
-    /// (each row is `0` followed by `k - 1` ones), matching the regular path. See
-    /// [#getDefinitionLevels()].
-    public int[] getRepetitionLevels() {
-        checkBatchAvailable();
-        if (!nested) {
-            return null;
-        }
-        if (column.maxRepetitionLevel() == 0) {
-            return null;
-        }
-        int[] repetitionLevels = currentNestedBatch.repetitionLevels;
-        if (repetitionLevels == null && currentNestedBatch.fixedListK > 0) {
-            int k = currentNestedBatch.fixedListK;
-            repetitionLevels = new int[currentNestedBatch.valueCount];
-            for (int i = 0; i < repetitionLevels.length; i++) {
-                repetitionLevels[i] = (i % k == 0) ? 0 : 1;
-            }
-        }
-        return repetitionLevels;
-    }
-
     // ==================== Metadata ====================
 
     public ColumnSchema getColumnSchema() {
