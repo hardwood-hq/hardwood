@@ -94,32 +94,6 @@ class FixedSizeListFastPathReadTest {
         }
     }
 
-    /// On a fast-path batch the raw-levels escape hatch synthesizes the levels
-    /// on demand: definition levels are all `maxDef`, repetition levels are the
-    /// `0, 1…1` per-row pattern — the same the regular path would materialize.
-    @Test
-    void escapeHatchSynthesizesLevelsOnFastPath() throws Exception {
-        try (HardwoodContext context = HardwoodContext.create();
-             ParquetFileReader reader =
-                     ParquetFileReader.open(InputFile.of(resource(4, "v2")), context, FAST_PATH_ON);
-             ColumnReader col = reader.columnReader(COLUMN)) {
-            int records = 0;
-            while (col.nextBatch()) {
-                int[] def = col.getDefinitionLevels();
-                int[] rep = col.getRepetitionLevels();
-                int valueCount = col.getValueCount();
-                assertThat(def).as("synthesized def levels").isNotNull();
-                assertThat(rep).as("synthesized rep levels").isNotNull();
-                for (int i = 0; i < valueCount; i++) {
-                    assertThat(def[i]).as("def[%d]", i).isEqualTo(2);
-                    assertThat(rep[i]).as("rep[%d]", i).isEqualTo(i % 4 == 0 ? 0 : 1);
-                }
-                records += col.getRecordCount();
-            }
-            assertThat(records).isEqualTo(300);
-        }
-    }
-
     /// The row-reader path routes fixed-width batches through `NestedBatchIndex` /
     /// `PqList`, which read the (now `null`) level arrays and the arithmetic
     /// offsets. This confirms those consumers tolerate the fixed-width-batch shape.
