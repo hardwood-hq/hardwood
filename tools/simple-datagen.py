@@ -4171,6 +4171,54 @@ pq.write_table(
 )
 print(f"  - diff_nulls.parquet:          {DIFF_NULLS_ROWS} rows, nullable column for filter null-semantics")
 
+
+# Nullable Typed differential corpus (value-comparison harness, #548 P2). One row group,
+# every physical/logical type the value comparator covers, all columns OPTIONAL with
+# deterministic ~1/3 null pattern.
+DIFF_TYPES_OPTIONAL_ROWS = 200
+diff_types_optional_schema = pa.schema([
+    ('__row__', pa.int64(), False),
+    ('i32', pa.int32(), True),
+    ('i64', pa.int64(), True),
+    ('f32', pa.float32(), True),
+    ('f64', pa.float64(), True),
+    ('flag', pa.bool_(), True),
+    ('s', pa.string(), True),
+    ('d', pa.date32(), True),
+    ('ts', pa.timestamp('us', tz='UTC'), True),
+    ('dec', pa.decimal128(10, 2), True),
+    ('bin', pa.binary(), True),
+])
+
+def _null_every_third(r, value):
+    # deterministic ~1/3 null rate, avoided using random instead r is used directly.
+    return None if r % 3 == 0 else value
+
+_date_base = date(2000, 1, 1).toordinal()
+diff_types_optional_table = pa.table({
+    '__row__': list(range(DIFF_TYPES_OPTIONAL_ROWS)),
+    'i32': [_null_every_third(r, r - 100) for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+    'i64': [_null_every_third(r, r * 1000 - 50) for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+    'f32': [_null_every_third(r, r * 0.5) for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+    'f64': [_null_every_third(r, r / 8.0) for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+    'flag': [_null_every_third(r, r % 2 == 0) for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+    's': [_null_every_third(r, f'row-{r}') for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+    'd': [_null_every_third(r, date.fromordinal(_date_base + r)) for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+    'ts': [_null_every_third(r, datetime.fromtimestamp(1577836800 + r, tz=timezone.utc)
+                              .replace(microsecond=(r * 137) % 1000000))
+           for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+    'dec': [_null_every_third(r, Decimal(f'{r}.25')) for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+    'bin': [_null_every_third(r, bytes([r % 256, (r + 1) % 256, (r + 2) % 256]))
+            for r in range(DIFF_TYPES_OPTIONAL_ROWS)],
+}, schema=diff_types_optional_schema)
+pq.write_table(
+    diff_types_table,
+    str(diff_dir / 'diff_types_optional.parquet'),
+    use_dictionary=False,
+    compression=None,
+    data_page_version='2.0',
+)
+print(f"  - diff_types_optional.parquet:          {DIFF_TYPES_OPTIONAL_ROWS} rows, typed nullable value-comparison corpus")
 # ============================================================================
 # Encrypted Test Files (Parquet Modular Encryption)
 # ============================================================================
