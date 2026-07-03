@@ -37,6 +37,10 @@ public class SchemaElementWriter {
                 writer.writeFieldBegin(5, ThriftCompactConstants.FieldType.I32);
                 writer.writeI32(element.numChildren());
             }
+            if (element.convertedType() != null) {
+                writer.writeFieldBegin(6, ThriftCompactConstants.FieldType.I32);
+                writer.writeI32(ThriftEnumLookup.thriftValue(element.convertedType()));
+            }
             writer.writeFieldStop();
         }
         finally {
@@ -45,13 +49,15 @@ public class SchemaElementWriter {
     }
 
     /// Fail fast on annotations the writer cannot yet serialize, rather than
-    /// silently dropping them and producing a schema that does not round-trip.
+    /// silently dropping them and producing a schema that does not round-trip. The
+    /// `converted_type` is serialized (field 6), so only the modern logical-type union,
+    /// the decimal scale/precision, and field ids remain unsupported.
     private static void rejectUnsupported(SchemaElement element) {
-        if (element.convertedType() != null || element.logicalType() != null
-                || element.scale() != null || element.precision() != null
-                || element.fieldId() != null) {
+        if (element.logicalType() != null || element.scale() != null
+                || element.precision() != null || element.fieldId() != null) {
             throw new UnsupportedOperationException(
-                    "Writer does not yet support converted/logical types or field ids: " + element.name());
+                    "Writer does not yet support logical types, decimal scale/precision, or field ids: "
+                            + element.name());
         }
     }
 }

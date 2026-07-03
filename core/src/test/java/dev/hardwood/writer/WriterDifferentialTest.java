@@ -223,6 +223,51 @@ class WriterDifferentialTest {
     }
 
     @Test
+    void duckDbReadsListOfInts(@TempDir Path dir) throws Exception {
+        // required int32 r; optional list<optional int32> phones. Absent list, empty list,
+        // and a null element must all survive to DuckDB distinctly.
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .list("phones", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] r = { 0, 1, 2, 3 };
+        int[] offsets = { 0, 2, 2, 2, 5 };
+        Validity listNulls = Validity.ofNulls(new boolean[] { false, false, true, false });
+        int[] elements = { 1, 2, 3, 0, 5 };
+        boolean[] elementNulls = { false, false, false, true, false };
+
+        Path file = dir.resolve("listofints.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch
+                    .ints("r", r)
+                    .list("phones", offsets, listNulls)
+                    .ints("phones.list.element", elements, elementNulls));
+        }
+
+        List<List<Integer>> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT phones FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                java.sql.Array array = rs.getArray("phones");
+                if (rs.wasNull()) {
+                    actual.add(null);
+                    continue;
+                }
+                List<Integer> list = new ArrayList<>();
+                for (Object element : (Object[]) array.getArray()) {
+                    list.add(element == null ? null : ((Number) element).intValue());
+                }
+                actual.add(list);
+            }
+        }
+
+        assertThat(actual).containsExactly(List.of(1, 2), List.of(), null, java.util.Arrays.asList(3, null, 5));
+    }
+
+    @Test
     void duckDbReadsMultipleRowGroups(@TempDir Path dir) throws Exception {
         int n = 5_000;
         int[] v = new int[n];

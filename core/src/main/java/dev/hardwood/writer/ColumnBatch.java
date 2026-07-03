@@ -61,6 +61,8 @@ public final class ColumnBatch {
     private final IntColumnSource[] sources;
     private final Validity[] validities;
     private final Map<String, Validity> structValidities = new HashMap<>();
+    private final Map<String, int[]> listOffsets = new HashMap<>();
+    private final Map<String, Validity> listValidities = new HashMap<>();
     private int rowCount = -1;
     private boolean consumed;
 
@@ -121,6 +123,86 @@ public final class ColumnBatch {
         if (group.repetitionType() != RepetitionType.OPTIONAL) {
             throw new IllegalArgumentException("Struct " + structPath + " is " + group.repetitionType()
                     + "; nulls are only valid for an OPTIONAL struct");
+        }
+        return group;
+    }
+
+    /// Sets the entry offsets of a `LIST`, addressed by the list group's dot-separated path.
+    /// `offsets` has length `parentCount + 1`; `offsets[i+1] - offsets[i]` is the number of
+    /// entries of list `i`, and a zero delta is an empty list. The list's element leaf is
+    /// filled separately through [#ints], its values holding the concatenated entries.
+    ///
+    /// @param listPath the list group's path (e.g. `"phones"`)
+    /// @param offsets the entry offsets
+    /// @return this batch, for chaining
+    /// @throws IllegalArgumentException if the path does not name a `LIST`, the list is
+    ///         already set, or `offsets` is empty
+    @Experimental
+    public ColumnBatch list(String listPath, int[] offsets) {
+        storeList(listPath, offsets, null);
+        return this;
+    }
+
+    /// Sets the entry offsets of a `LIST` together with its per-instance nulls (which lists
+    /// are themselves absent), distinct from an empty list carrying a zero-delta offset.
+    ///
+    /// @param listPath the list group's path
+    /// @param offsets the entry offsets
+    /// @param nulls the list nulls; `nulls.isNull(i)` marks list `i` absent
+    /// @return this batch, for chaining
+    /// @throws IllegalArgumentException if the path does not name an `OPTIONAL` `LIST`, the
+    ///         list is already set, or `offsets` is empty
+    @Experimental
+    public ColumnBatch list(String listPath, int[] offsets, Validity nulls) {
+        if (nulls == null) {
+            throw new IllegalArgumentException("nulls must not be null for list " + listPath
+                    + "; use the two-argument list(...) for an all-present list");
+        }
+        storeList(listPath, offsets, nulls);
+        return this;
+    }
+
+    private void storeList(String listPath, int[] offsets, Validity nulls) {
+        if (consumed) {
+            throw new IllegalStateException("Batch has already been written and cannot be modified");
+        }
+        if (offsets == null || offsets.length == 0) {
+            throw new IllegalArgumentException("offsets must be non-empty for list " + listPath);
+        }
+        SchemaNode.GroupNode group = resolveList(listPath);
+        if (nulls != null && group.repetitionType() != RepetitionType.OPTIONAL) {
+            throw new IllegalArgumentException("List " + listPath + " is " + group.repetitionType()
+                    + "; nulls are only valid for an OPTIONAL list");
+        }
+        if (listOffsets.putIfAbsent(listPath, offsets) != null) {
+            throw new IllegalArgumentException("List " + listPath + " is already set in this batch");
+        }
+        if (nulls != null) {
+            listValidities.put(listPath, nulls);
+        }
+    }
+
+    /// Resolves a dot-separated path to the `LIST` group it names, rejecting a missing path,
+    /// a leaf, and a non-`LIST` group.
+    private SchemaNode.GroupNode resolveList(String listPath) {
+        SchemaNode node = schema.getRootNode();
+        for (String segment : listPath.split("\\.", -1)) {
+            if (!(node instanceof SchemaNode.GroupNode group)) {
+                throw new IllegalArgumentException("No list at path " + listPath);
+            }
+            node = null;
+            for (SchemaNode child : group.children()) {
+                if (child.name().equals(segment)) {
+                    node = child;
+                    break;
+                }
+            }
+            if (node == null) {
+                throw new IllegalArgumentException("No list at path " + listPath);
+            }
+        }
+        if (!(node instanceof SchemaNode.GroupNode group) || !group.isList()) {
+            throw new IllegalArgumentException("Path " + listPath + " does not name a list group");
         }
         return group;
     }
@@ -269,12 +351,16 @@ public final class ColumnBatch {
         if (sources[columnIndex] != null) {
             throw new IllegalArgumentException("Column " + describe(columnIndex) + " is already set in this batch");
         }
-        if (rowCount < 0) {
-            rowCount = values.length;
-        }
-        else if (rowCount != values.length) {
-            throw new IllegalArgumentException("Ragged batch: column " + describe(columnIndex) + " has "
-                    + values.length + " values but the batch row count is " + rowCount);
+        // A repeated leaf's values count its concatenated elements, not the batch's records,
+        // so it stays out of the record-count agreement the flat columns must satisfy.
+        if (column.maxRepetitionLevel() == 0) {
+            if (rowCount < 0) {
+                rowCount = values.length;
+            }
+            else if (rowCount != values.length) {
+                throw new IllegalArgumentException("Ragged batch: column " + describe(columnIndex) + " has "
+                        + values.length + " values but the batch row count is " + rowCount);
+            }
         }
         sources[columnIndex] = new IntArrayColumnSource(values);
         validities[columnIndex] = validity;
@@ -315,5 +401,16 @@ public final class ColumnBatch {
     /// the map is an all-present group.
     Map<String, Validity> structValidities() {
         return structValidities;
+    }
+
+    /// The `LIST` entry offsets set in this batch, keyed by list group path.
+    Map<String, int[]> listOffsets() {
+        return listOffsets;
+    }
+
+    /// The `LIST`-layer nulls set in this batch, keyed by list group path. A path absent
+    /// from the map is an all-present list.
+    Map<String, Validity> listValidities() {
+        return listValidities;
     }
 }

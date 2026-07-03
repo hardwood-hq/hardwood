@@ -12,13 +12,14 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.writer.RecordShredder.ColumnLevels;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.FileSchema;
 
-/// Buffers the column chunks of a single row group. Values are appended in aligned
-/// ranges across all columns; at flush the column chunks are written contiguously in
+/// Buffers the column chunks of a single row group. A record range's shredded levels are
+/// appended across all columns; at flush the column chunks are written contiguously in
 /// schema order, each recording the file offset at which its first page lands.
 public final class RowGroupBuffer {
 
@@ -26,31 +27,30 @@ public final class RowGroupBuffer {
     private final ColumnChunkBuffer[] columns;
     private int rowCount;
 
-    /// @param schema the flat file schema
-    /// @param pageValues maximum number of rows per data page
+    /// @param schema the file schema
+    /// @param pageValues maximum number of level triples per data page
     public RowGroupBuffer(FileSchema schema, int pageValues) {
         this.schema = schema;
         this.columns = new ColumnChunkBuffer[schema.getColumnCount()];
         for (int c = 0; c < columns.length; c++) {
-            columns[c] = new ColumnChunkBuffer(pageValues, schema.getColumn(c).maxDefinitionLevel());
+            columns[c] = new ColumnChunkBuffer(pageValues,
+                    schema.getColumn(c).maxDefinitionLevel(), schema.getColumn(c).maxRepetitionLevel());
         }
     }
 
-    /// Appends the same row range to every column and advances the row count.
+    /// Appends the same record range to every column and advances the row count.
     ///
-    /// @param sources one value source per column, in schema order
-    /// @param shredder bound to the current batch; supplies each levelled column's
-    ///        definition levels
-    /// @param from index of the first row to append
-    /// @param count number of rows to append
-    public void appendRows(IntColumnSource[] sources, RecordShredder shredder, int from, int count) {
+    /// @param levels one column's shredded levels per column, in schema order
+    /// @param from index of the first record to append
+    /// @param count number of records to append
+    public void appendRecords(ColumnLevels[] levels, int from, int count) {
         for (int c = 0; c < columns.length; c++) {
-            columns[c].append(sources[c], shredder, c, from, count);
+            columns[c].append(levels[c], from, count);
         }
         rowCount += count;
     }
 
-    /// The number of rows buffered so far.
+    /// The number of records buffered so far.
     public int rowCount() {
         return rowCount;
     }

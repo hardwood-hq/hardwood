@@ -472,6 +472,17 @@ public class FileSchema {
             return this;
         }
 
+        /// Append a `LIST` group whose element is declared by `element`.
+        ///
+        /// @param listName the list group name
+        /// @param repetition `REQUIRED` or `OPTIONAL` (whether the list itself may be null)
+        /// @param element declares the list's element
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no element is declared
+        public Builder list(String listName, RepetitionType repetition, Consumer<ElementBuilder> element) {
+            content.list(listName, repetition, element);
+            return this;
+        }
+
         /// Build the schema.
         ///
         /// @throws IllegalArgumentException if no fields were added
@@ -524,6 +535,67 @@ public class FileSchema {
             children.add(new BuilderStruct(structName, repetition, nested.children));
             return this;
         }
+
+        /// Append a nested `LIST` field.
+        ///
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no element is declared
+        public StructBuilder list(String listName, RepetitionType repetition, Consumer<ElementBuilder> element) {
+            if (repetition == RepetitionType.REPEATED) {
+                throw new IllegalArgumentException(
+                        "Repeated groups are not yet supported by the writer: " + listName);
+            }
+            ElementBuilder builder = new ElementBuilder();
+            element.accept(builder);
+            children.add(new BuilderList(listName, repetition, builder.require(listName)));
+            return this;
+        }
+    }
+
+    /// Declares the element of a `LIST`: a primitive, a nested `struct`, or a nested `LIST`.
+    public static final class ElementBuilder {
+
+        private BuilderNode element;
+
+        private ElementBuilder() {
+        }
+
+        /// Declare a primitive element.
+        public void primitive(PhysicalType type, RepetitionType repetition) {
+            set(new BuilderLeaf("element", type, repetition));
+        }
+
+        /// Declare a `struct` element.
+        ///
+        /// @throws IllegalArgumentException if the struct has no fields
+        public void struct(RepetitionType repetition, Consumer<StructBuilder> filler) {
+            StructBuilder nested = new StructBuilder();
+            filler.accept(nested);
+            if (nested.children.isEmpty()) {
+                throw new IllegalArgumentException("List element struct must have at least one field");
+            }
+            set(new BuilderStruct("element", repetition, nested.children));
+        }
+
+        /// Declare a nested `LIST` element.
+        public void list(RepetitionType repetition, Consumer<ElementBuilder> element) {
+            ElementBuilder inner = new ElementBuilder();
+            element.accept(inner);
+            set(new BuilderList("element", repetition, inner.require("element")));
+        }
+
+        private void set(BuilderNode node) {
+            if (element != null) {
+                throw new IllegalArgumentException("List element is already declared");
+            }
+            element = node;
+        }
+
+        private BuilderNode require(String listName) {
+            if (element == null) {
+                throw new IllegalArgumentException("List must declare an element: " + listName);
+            }
+            return element;
+        }
     }
 
     private sealed interface BuilderNode {}
@@ -533,8 +605,12 @@ public class FileSchema {
     private record BuilderStruct(String name, RepetitionType repetition, List<BuilderNode> children)
             implements BuilderNode {}
 
+    private record BuilderList(String name, RepetitionType repetition, BuilderNode element) implements BuilderNode {}
+
     /// Flattens the builder's field tree into the depth-first [SchemaElement] list
-    /// [#fromSchemaElements] consumes, a group element followed by its children.
+    /// [#fromSchemaElements] consumes, a group element followed by its children. A `LIST`
+    /// expands to the canonical 3-level shape: the annotated group, a synthetic `repeated
+    /// group list`, then the element.
     private static void flatten(List<BuilderNode> nodes, List<SchemaElement> out) {
         for (BuilderNode node : nodes) {
             switch (node) {
@@ -544,6 +620,13 @@ public class FileSchema {
                     out.add(new SchemaElement(group.name(), null, null, group.repetition(),
                             group.children().size(), null, null, null, null, null));
                     flatten(group.children(), out);
+                }
+                case BuilderList list -> {
+                    out.add(new SchemaElement(list.name(), null, null, list.repetition(), 1,
+                            ConvertedType.LIST, null, null, null, null));
+                    out.add(new SchemaElement("list", null, null, RepetitionType.REPEATED, 1,
+                            null, null, null, null, null));
+                    flatten(List.of(list.element()), out);
                 }
             }
         }
