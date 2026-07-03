@@ -87,6 +87,17 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         int intervalCursor = 0;
         int recordIndex = -1;
 
+        // The page's values and level arrays are level-aligned (one slot per
+        // position, nulls carried as placeholders), and every kept position maps
+        // 1:1 to a batch slot. So a maximal span of consecutive kept positions is
+        // a contiguous slice in both the page and the batch: its values and levels
+        // are filled with bulk copies when the span closes ([#flushRun]) rather
+        // than element by element. Only record-boundary bookkeeping, masking, and
+        // batch splitting stay per-position; a span closes at a masked gap, a batch
+        // publish, the maxRows cut, or page end.
+        int runStart = -1;
+        int runBaseCount = 0;
+
         for (int i = 0; i < pageSize; i++) {
             int repLevel = pageRepLevels != null ? pageRepLevels[i] : 0;
             boolean atRecordStart = repLevel == 0;
@@ -103,6 +114,12 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
             if (!maskAll && (intervalCursor >= intervalCount
                     || recordIndex < mask.start(intervalCursor))) {
+                // Masked-out position: close the open run before the gap.
+                if (runStart >= 0) {
+                    flushRun(page, pageDefLevels, pageRepLevels,
+                            runStart, runBaseCount, nestedValueCount - runBaseCount);
+                    runStart = -1;
+                }
                 continue;
             }
 
@@ -111,8 +128,14 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             // we also start record 0. Masked-out records are already filtered by the
             // `continue` above, so they never reach this branch.
             if (atRecordStart && (nestedValueCount > 0 || rowsInCurrentBatch > 0)) {
-                // Previous record is complete — check if batch is full
+                // Previous record is complete — check if batch is full. Publishing
+                // reads the accumulators, so the open run must be flushed first.
                 if (rowsInCurrentBatch >= batchCapacity) {
+                    if (runStart >= 0) {
+                        flushRun(page, pageDefLevels, pageRepLevels,
+                                runStart, runBaseCount, nestedValueCount - runBaseCount);
+                        runStart = -1;
+                    }
                     publishCurrentBatch();
                     if (done) {
                         return;
@@ -121,6 +144,11 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
                 // Check maxRows after publishing
                 if (maxRows > 0 && totalRowsAssembled >= maxRows) {
+                    if (runStart >= 0) {
+                        flushRun(page, pageDefLevels, pageRepLevels,
+                                runStart, runBaseCount, nestedValueCount - runBaseCount);
+                        runStart = -1;
+                    }
                     if (rowsInCurrentBatch > 0) {
                         publishCurrentBatch();
                     }
@@ -145,20 +173,88 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                 totalRowsAssembled++;
             }
 
-            // Ensure capacity for the new value
-            if (nestedValueCount >= nestedDefLevels.length) {
-                int newCapacity = nestedDefLevels.length * 2;
-                nestedValues = growValues(nestedValues, newCapacity);
-                nestedDefLevels = Arrays.copyOf(nestedDefLevels, newCapacity);
-                nestedRepLevels = Arrays.copyOf(nestedRepLevels, newCapacity);
+            // Extend the open run to cover this position; its value and levels are
+            // written in bulk when the run closes.
+            if (runStart < 0) {
+                runStart = i;
+                runBaseCount = nestedValueCount;
             }
-
-            // Copy value and levels
-            nestedDefLevels[nestedValueCount] = pageDefLevels != null
-                    ? pageDefLevels[i] : maxDefinitionLevel;
-            nestedRepLevels[nestedValueCount] = repLevel;
-            copyOneValue(page, i, nestedValues, nestedValueCount);
             nestedValueCount++;
+        }
+
+        if (runStart >= 0) {
+            flushRun(page, pageDefLevels, pageRepLevels,
+                    runStart, runBaseCount, nestedValueCount - runBaseCount);
+        }
+    }
+
+    /// Fills the batch slots `[destStart, destStart + len)` for a run of `len`
+    /// consecutive kept page positions starting at `srcStart`. Values are
+    /// bulk-copied with [#copyValueRun] for primitive element types (byte-array
+    /// types keep the per-element append, since their batch representation is not a
+    /// flat array), and the definition and repetition levels are a contiguous slice
+    /// of the page's level arrays — an `System.arraycopy` when present, or a fill
+    /// with `maxDefinitionLevel` / `0` for the all-present case where a page level
+    /// array is `null`. The result is identical to writing each position
+    /// individually; only the per-element capacity check, bounds-checked level
+    /// stores, and value-array type check are hoisted out of the inner loop.
+    private void flushRun(Page page, int[] pageDefLevels, int[] pageRepLevels,
+                          int srcStart, int destStart, int len) {
+        if (len == 0) {
+            return;
+        }
+        ensureNestedCapacity(destStart + len);
+        if (page instanceof Page.ByteArrayPage) {
+            for (int j = 0; j < len; j++) {
+                copyOneValue(page, srcStart + j, nestedValues, destStart + j);
+            }
+        }
+        else {
+            copyValueRun(page, srcStart, destStart, len);
+        }
+        if (pageDefLevels != null) {
+            System.arraycopy(pageDefLevels, srcStart, nestedDefLevels, destStart, len);
+        }
+        else {
+            Arrays.fill(nestedDefLevels, destStart, destStart + len, maxDefinitionLevel);
+        }
+        if (pageRepLevels != null) {
+            System.arraycopy(pageRepLevels, srcStart, nestedRepLevels, destStart, len);
+        }
+        else {
+            Arrays.fill(nestedRepLevels, destStart, destStart + len, 0);
+        }
+    }
+
+    /// Grows the value and level accumulators to hold at least `needed` slots,
+    /// preserving the existing contents. The three arrays share `nestedDefLevels`
+    /// as the capacity marker.
+    private void ensureNestedCapacity(int needed) {
+        if (needed <= nestedDefLevels.length) {
+            return;
+        }
+        int newCapacity = nestedDefLevels.length * 2;
+        if (newCapacity < needed) {
+            newCapacity = needed;
+        }
+        nestedValues = growValues(nestedValues, newCapacity);
+        nestedDefLevels = Arrays.copyOf(nestedDefLevels, newCapacity);
+        nestedRepLevels = Arrays.copyOf(nestedRepLevels, newCapacity);
+    }
+
+    /// Copies `count` consecutive values from `page` starting at `srcStart` into
+    /// the value accumulator at `destStart`. Primitive pages bulk-copy; the caller
+    /// ([#flushRun]) routes byte-array pages to the per-element append instead, so
+    /// a byte-array page never reaches here.
+    private void copyValueRun(Page page, int srcStart, int destStart, int count) {
+        switch (page) {
+            case Page.IntPage p -> System.arraycopy(p.values(), srcStart, (int[]) nestedValues, destStart, count);
+            case Page.LongPage p -> System.arraycopy(p.values(), srcStart, (long[]) nestedValues, destStart, count);
+            case Page.FloatPage p -> System.arraycopy(p.values(), srcStart, (float[]) nestedValues, destStart, count);
+            case Page.DoublePage p -> System.arraycopy(p.values(), srcStart, (double[]) nestedValues, destStart, count);
+            case Page.BooleanPage p -> System.arraycopy(p.values(), srcStart, (boolean[]) nestedValues, destStart, count);
+            case Page.ByteArrayPage p -> throw new IllegalStateException(
+                    "byte-array run must use the per-element copy path, not copyValueRun");
         }
     }
 
