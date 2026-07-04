@@ -49,4 +49,10 @@ public final class NestedBatch {
     // batch."
     public long[] elementValidity;
     public int[][] multiLevelOffsets;
+
+    /// Real-items view, computed by the drain on the [dev.hardwood.reader.ColumnReader]
+    /// (real-items) path so the serial consumer reads it without a level scan.
+    /// `null` on the all-items path and on batches derived by consumer-side record
+    /// selection (for which the consumer builds a view lazily from the sliced levels).
+    public NestedLevelComputer.RealView realView;
 }

@@ -738,15 +738,23 @@ public class ColumnReader implements AutoCloseable {
         if (!nested) {
             throw new IllegalStateException(prefix() + "Real view not available for flat columns");
         }
-        currentRealView = currentNestedBatch.fixedListK > 0
-                ? fixedListRealView(currentNestedBatch)
-                : NestedLevelComputer.computeRealView(
-                        currentNestedBatch.definitionLevels,
-                        currentNestedBatch.repetitionLevels,
-                        currentNestedBatch.valueCount,
-                        currentNestedBatch.recordCount,
-                        column.maxDefinitionLevel(),
-                        layers);
+        if (currentNestedBatch.realView != null) {
+            // Computed on the drain (real-items ColumnReader path).
+            currentRealView = currentNestedBatch.realView;
+        }
+        else {
+            // A batch derived by consumer-side record selection carries no drain
+            // view; build it from the sliced levels.
+            currentRealView = currentNestedBatch.fixedListK > 0
+                    ? fixedListRealView(currentNestedBatch)
+                    : NestedLevelComputer.computeRealView(
+                            currentNestedBatch.definitionLevels,
+                            currentNestedBatch.repetitionLevels,
+                            currentNestedBatch.valueCount,
+                            currentNestedBatch.recordCount,
+                            column.maxDefinitionLevel(),
+                            layers);
+        }
         realViewComputed = true;
         return currentRealView;
     }
@@ -979,7 +987,7 @@ public class ColumnReader implements AutoCloseable {
             NestedColumnWorker nestedWorker = new NestedColumnWorker(
                     pageSource, nestedBuf, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), 0,
-                    layers, fixedListFastPathEnabled);
+                    layers, true, fixedListFastPathEnabled);
             nestedWorker.start();
             return ColumnReader.forNested(columnSchema, layers, nestedBuf, nestedWorker, ownedIterator);
         }
