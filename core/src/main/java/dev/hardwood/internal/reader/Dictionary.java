@@ -10,6 +10,7 @@ package dev.hardwood.internal.reader;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
 
+import dev.hardwood.internal.encoding.HybridStreamCursor;
 import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.metadata.PhysicalType;
@@ -25,6 +26,19 @@ public sealed interface Dictionary {
     /// logic into the Dictionary implementation.
     Page decodePage(RleBitPackingHybridDecoder indexDecoder, int numValues,
                     int[] definitionLevels, int[] repetitionLevels, int maxDefLevel);
+
+    /// Decode dictionary values into a Page for the fused cursor path.
+    /// The returned page contains no materialized values, only the cursors.
+    default Page decodePage(HybridStreamCursor indexCursor, int numValues,
+                            HybridStreamCursor defLevelCursor, int maxDefLevel) {
+        return switch (this) {
+            case IntDictionary dict -> new Page.IntPage(null, null, null, maxDefLevel, numValues, dict, defLevelCursor, indexCursor, 0);
+            case LongDictionary dict -> new Page.LongPage(null, null, null, maxDefLevel, numValues, dict, defLevelCursor, indexCursor, 0);
+            case FloatDictionary dict -> new Page.FloatPage(null, null, null, maxDefLevel, numValues, dict, defLevelCursor, indexCursor, 0);
+            case DoubleDictionary dict -> new Page.DoublePage(null, null, null, maxDefLevel, numValues, dict, defLevelCursor, indexCursor, 0);
+            case ByteArrayDictionary dict -> new Page.ByteArrayPage(null, null, null, maxDefLevel, numValues, dict, null, defLevelCursor, indexCursor, 0);
+        };
+    }
 
     /// Parse dictionary values from decompressed data.
     ///

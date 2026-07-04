@@ -167,6 +167,37 @@ public final class BinaryBatchValues {
         dictIndices[destPos] = dictIndex;
     }
 
+    public void recordRepeatedDictIndex(Dictionary.ByteArrayDictionary pageDict, int destPos, int count, int index) {
+        if (!internStrings) {
+            return;
+        }
+        if (ensureDictionary(pageDict, destPos)) {
+            Arrays.fill(dictIndices, destPos, destPos + count, index);
+        } else {
+            Arrays.fill(dictIndices, destPos, destPos + count, -1);
+        }
+    }
+
+    public void recordMappedDictIndices(Dictionary.ByteArrayDictionary pageDict, int[] mappedIndices, int destPos, int count) {
+        if (!internStrings) {
+            return;
+        }
+        if (ensureDictionary(pageDict, destPos)) {
+            System.arraycopy(mappedIndices, 0, dictIndices, destPos, count);
+        } else {
+            Arrays.fill(dictIndices, destPos, destPos + count, -1);
+        }
+    }
+
+    public void fillNullDictIndices(int destPos, int count) {
+        if (!internStrings) {
+            return;
+        }
+        if (dictionary != null) {
+            Arrays.fill(dictIndices, destPos, destPos + count, -1);
+        }
+    }
+
     /// Switches the batch onto the dictionary representation on the first
     /// dictionary page that contributes: adopts `pageDict`, allocates
     /// [#dictIndices] (sized to the value capacity), and backfills the plain

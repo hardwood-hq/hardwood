@@ -149,6 +149,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// Initializes subclass-specific drain state (called at the start of `runDrain`).
     abstract void initDrainState();
 
+    /// Whether this worker supports the fused decode path (e.g., FlatColumnWorker).
+    abstract boolean supportsFusedPath();
+
     /// Assembles a single decoded page into the current batch.
     /// `mask` selects which records of the page to keep — [PageRowMask#ALL]
     /// when filter pushdown is inactive (or matched the whole page), otherwise
@@ -246,7 +249,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                             pageInfo.columnMetaData(),
                             pageInfo.columnSchema(),
                             decompressorFactory,
-                            fixedListFastPathEnabled);
+                            fixedListFastPathEnabled,
+                            supportsFusedPath());
                 }
 
                 // Throttle: park while too many pages are in flight

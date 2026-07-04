@@ -143,7 +143,7 @@ public class PageHandlingBenchmark {
     @Benchmark
     public void b_decodePages(Blackhole blackhole) throws IOException {
         for (PageInfo pageInfo : allPages) {
-            PageDecoder pageDecoder = new PageDecoder(pageInfo.columnMetaData(), pageInfo.columnSchema(), context.decompressorFactory());
+            PageDecoder pageDecoder = new PageDecoder(pageInfo.columnMetaData(), pageInfo.columnSchema(), context.decompressorFactory(), false);
             Page page = pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
             blackhole.consume(page);
         }

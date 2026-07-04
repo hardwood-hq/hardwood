@@ -92,7 +92,8 @@ public class RleBitPackingHybridDecoder {
 
         if (remaining > 0) {
             throw new IllegalStateException("Insufficient RLE/Bit-Packing data: decoded "
-                    + (count - remaining) + " of " + count + " requested values");
+                    + (count - remaining) + " of " + count + " requested values"
+                    + " (bitWidth=" + bitWidth + ", pos=" + pos + ", dataEnd=" + dataEnd + ")");
         }
     }
 
@@ -293,7 +294,7 @@ public class RleBitPackingHybridDecoder {
         }
 
         // Fast path for bit width 1 (common for definition levels)
-        if (width == 1) {
+        if (width == 1 && bitsInBuffer == 0) {
             while (count >= 8 && pos < dataEnd) {
                 int b = data[pos++] & 0xFF;
                 output[outPos]     = b & 1;
@@ -309,7 +310,7 @@ public class RleBitPackingHybridDecoder {
             }
         }
         // For widths 2-8: read 8 bytes at once when possible, extract 8 values
-        else if (width <= 8) {
+        else if (width <= 8 && bitsInBuffer == 0) {
             // Process 8 values at a time using bulk long reads when we have enough data
             while (count >= 8 && pos + 8 <= dataEnd) {
                 long bits = dataBuffer.getLong(pos);

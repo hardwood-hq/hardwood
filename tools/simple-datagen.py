@@ -4471,6 +4471,7 @@ pq.write_table(
 print("\nGenerated dict_string_map.parquet:")
 print(f"  - {STRING_MAP_ROWS} rows, props map<string,string> (dictionary-encoded keys + values)")
 
+
 # ---------------------------------------------------------------------------
 # Fixed-size-list fast-path fixtures.
 #
@@ -4537,3 +4538,41 @@ _leadfast = 'core/src/test/resources/fixed_size_list_k4_leadfast_v2.parquet'
 write_fixed_size_list_leadfast(_leadfast)
 print("Generated fixed_size_list_k4_leadfast_v2.parquet: 40 rows x 4 float32, "
       "3 null lists, present run then null across a row-group boundary")
+=======
+# ============================================================================
+# Fused decode path: tiny dictionary pages (hardwood-hq/hardwood#680 follow-up)
+# ============================================================================
+#
+# Exercises the run-fused flat decode path against the materialising oracle
+# (FlatColumnWorkerParityTest). Two conditions must both appear:
+#   1. Many tiny dictionary pages per read batch with UNCOMPRESSED codec, so a
+#      page's fused cursor outlives the reused thread-local decompression buffer
+#      that the next page's decode overwrites -- the cursor must own its bytes.
+#   2. A page whose values all reference a single dictionary entry, which the
+#      writer encodes with index bit width 0 (no index bytes at all); the fused
+#      scatter must still map every value to entry 0.
+# `const_col` supplies (2); the low-cardinality and nullable columns spread
+# values across many tiny pages for (1). `data_page_size` is deliberately tiny
+# to force page splits.
+FUSED_TINY_ROWS = 4000
+fused_tiny = pa.table({
+    'id': pa.array(range(FUSED_TINY_ROWS), type=pa.int32()),
+    'const_col': pa.array([7] * FUSED_TINY_ROWS, type=pa.int32()),
+    'lowcard_int': pa.array([i % 5 for i in range(FUSED_TINY_ROWS)], type=pa.int32()),
+    'nullable_int': pa.array(
+        [None if i % 13 == 0 else (i % 7) for i in range(FUSED_TINY_ROWS)], type=pa.int32()),
+    'lowcard_str': pa.array(
+        ['aa', 'bb', 'cc'][i % 3] if i % 11 else None for i in range(FUSED_TINY_ROWS)),
+    'lowcard_long': pa.array([(i % 4) * 1000 for i in range(FUSED_TINY_ROWS)], type=pa.int64()),
+})
+pq.write_table(
+    fused_tiny,
+    'core/src/test/resources/fused_tiny_pages_dict.parquet',
+    use_dictionary=True,
+    compression=None,
+    data_page_version='1.0',
+    data_page_size=96,
+)
+print("\nGenerated fused_tiny_pages_dict.parquet:")
+print(f"  - {FUSED_TINY_ROWS} rows, tiny uncompressed dictionary pages; const_col forces index bit width 0")
+
