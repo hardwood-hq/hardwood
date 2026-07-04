@@ -75,8 +75,11 @@ Forward-looking items tracked for post-1.0. None are committed to a specific rel
 - **Questions, ideas, design discussion** — [GitHub Discussions](https://github.com/hardwood-hq/hardwood/discussions). The best first stop for "how do I…", "is X possible…", or "what's the right way to…".
 - **Bug reports and feature requests** — the [GitHub issue tracker](https://github.com/hardwood-hq/hardwood/issues). Please check whether a similar issue already exists.
 
-## Talks & posts
+## Articles, talks & podcasts
 
-- [Hardwood: A New Parser for Apache Parquet](https://www.morling.dev/blog/hardwood-new-parser-for-apache-parquet/) — project announcement.
-- [Open Source Friday with Gunnar Morling](https://www.youtube.com/watch?v=teqFSSQEtCw) — GitHub Open Source Friday.
-- [Chasing Efficient Java Development: From 1BRC to Developing Hardwood AI Natively](https://www.infoq.com/podcasts/chasing-efficient-java-development/) — InfoQ podcast on building Hardwood.
+- [Hardwood: A New Parser for Apache Parquet](https://www.morling.dev/blog/hardwood-new-parser-for-apache-parquet/) (project announcement)
+- [Hardwood 1.0: A Fast, Lightweight Apache Parquet Reader for the JVM](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/) (release announcement)
+- [Hardwood Promises High-Speed JVM Apache Parquet Processing with Zero Mandatory Dependencies](https://www.infoq.com/news/2026/07/hardwood-java-parquet/) (InfoQ article)
+- [Hardwood: Building a Parquet Parser From Scratch (With a Little Help From AI)](https://speakerdeck.com/gunnarmorling/hardwood-building-a-parquet-parser-from-scratch-with-a-little-help-from-ai) (conference talk)
+- [GitHub Open Source Friday with Gunnar Morling](https://www.youtube.com/watch?v=teqFSSQEtCw) (GitHub podcast)
+- [Chasing Efficient Java Development: From 1BRC to Developing Hardwood AI Natively](https://www.infoq.com/podcasts/chasing-efficient-java-development/) (InfoQ podcast)
