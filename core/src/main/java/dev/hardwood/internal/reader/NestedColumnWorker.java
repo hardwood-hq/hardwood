@@ -376,14 +376,20 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// layers and sentinel-suffixed for `REPEATED` layers.
     private void computeIndex(NestedBatch batch) {
         if (realItemsMode) {
-            // The ColumnReader reads only the real-items view, so compute it here on
-            // the drain (off the serial consumer) and skip the all-items index.
-            batch.realView = buildRealView(batch);
+            // The ColumnReader reads only the real-items view and values, so build
+            // both here on the drain (off the serial consumer) and skip the
+            // all-items index. When the batch has phantom positions the leaf values
+            // are gathered now too; otherwise the raw values pass through unchanged.
+            NestedLevelComputer.RealView rv = buildRealView(batch);
+            batch.realView = rv;
+            int[] map = rv.realToRawLeaf();
+            batch.realValues = map != null ? LeafCompaction.compact(batch.values, map) : null;
             batch.elementValidity = null;
             batch.multiLevelOffsets = null;
             return;
         }
         batch.realView = null;
+        batch.realValues = null;
 
         if (batch.fixedListK > 0) {
             // All elements present, boundaries at multiples of k: no validity and

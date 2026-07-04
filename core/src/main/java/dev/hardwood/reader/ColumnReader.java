@@ -19,6 +19,7 @@ import dev.hardwood.internal.reader.BatchSizing;
 import dev.hardwood.internal.reader.BinaryBatchValues;
 import dev.hardwood.internal.reader.FlatColumnWorker;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.LeafCompaction;
 import dev.hardwood.internal.reader.NestedBatch;
 import dev.hardwood.internal.reader.NestedColumnWorker;
 import dev.hardwood.internal.reader.NestedLevelComputer;
@@ -621,7 +622,7 @@ public class ColumnReader implements AutoCloseable {
     private static void compactFlatBatchInPlace(BatchExchange.Batch batch, int[] kept, int count) {
         Object values = batch.values;
         if (values instanceof BinaryBatchValues binary) {
-            batch.values = compactBinary(binary, kept, count);
+            batch.values = LeafCompaction.compactBinary(binary, kept, count);
         }
         else {
             compactPrimitiveInPlace(values, kept, count);
@@ -707,7 +708,7 @@ public class ColumnReader implements AutoCloseable {
         out.fixedListK = src.fixedListK;
         out.recordCount = count;
         out.valueCount = total;
-        out.values = compactPrimitive(src.values, keptLeaves);
+        out.values = LeafCompaction.compact(src.values, keptLeaves);
         // A fixed-width batch carries no level arrays; selection keeps whole
         // k-element records, so it stays fixed-width and the real view is rebuilt
         // arithmetically from the new record count.
@@ -775,10 +776,12 @@ public class ColumnReader implements AutoCloseable {
     }
 
     /// Returns the leaf-values backing array sized to [#getValueCount()].
-    /// For flat columns this is the underlying batch array; for nested
-    /// columns it's either pass-through (no compaction needed when the chain
-    /// has no `REPEATED` layers) or a freshly compacted typed array, cached
-    /// per batch.
+    /// For flat columns this is the underlying batch array. For nested columns
+    /// it is, in order: the drain's pre-compacted `realValues` when present;
+    /// otherwise pass-through of the batch values when no compaction is needed
+    /// (no `REPEATED` layer, or an all-present batch with no phantom positions);
+    /// otherwise a freshly compacted typed array (batches derived by record
+    /// selection). Cached per batch.
     private Object realLeafValues() {
         if (!nested) {
             return currentFlatBatch.values;
@@ -786,84 +789,17 @@ public class ColumnReader implements AutoCloseable {
         if (cachedRealValues != null) {
             return cachedRealValues;
         }
-        NestedLevelComputer.RealView rv = ensureRealView();
-        Object raw = currentNestedBatch.values;
-        int[] map = rv.realToRawLeaf();
-        if (map == null) {
-            cachedRealValues = raw;   // pass-through: STRUCT-only chain
+        NestedBatch batch = currentNestedBatch;
+        if (batch.realValues != null) {
+            cachedRealValues = batch.realValues;   // pre-compacted on the drain
         }
         else {
-            cachedRealValues = compactPrimitive(raw, map);
+            int[] map = ensureRealView().realToRawLeaf();
+            cachedRealValues = map == null
+                    ? batch.values                 // pass-through, no compaction
+                    : LeafCompaction.compact(batch.values, map);
         }
         return cachedRealValues;
-    }
-
-    private static Object compactPrimitive(Object raw, int[] map) {
-        int n = map.length;
-        return switch (raw) {
-            case int[] a -> {
-                int[] out = new int[n];
-                for (int i = 0; i < n; i++) out[i] = a[map[i]];
-                yield out;
-            }
-            case long[] a -> {
-                long[] out = new long[n];
-                for (int i = 0; i < n; i++) out[i] = a[map[i]];
-                yield out;
-            }
-            case float[] a -> {
-                float[] out = new float[n];
-                for (int i = 0; i < n; i++) out[i] = a[map[i]];
-                yield out;
-            }
-            case double[] a -> {
-                double[] out = new double[n];
-                for (int i = 0; i < n; i++) out[i] = a[map[i]];
-                yield out;
-            }
-            case boolean[] a -> {
-                boolean[] out = new boolean[n];
-                for (int i = 0; i < n; i++) out[i] = a[map[i]];
-                yield out;
-            }
-            case BinaryBatchValues bbv -> compactBinary(bbv, map, map.length);
-            default -> throw new IllegalStateException("Unexpected leaf array type: " + raw.getClass());
-        };
-    }
-
-    /// Compacts a varlength leaf to the records at `map[0..count)`. `map` may be
-    /// an oversized reusable buffer (flat in-place path) or an exact gather index
-    /// (nested path); only its `[0, count)` prefix is read. A dictionary-encoded
-    /// string leaf carries its chunk dictionary and gathered entry indices through,
-    /// so `getStrings()` still reuses the interned instances.
-    private static BinaryBatchValues compactBinary(BinaryBatchValues raw, int[] map, int count) {
-        int totalBytes = 0;
-        int[] outOffsets = new int[count + 1];
-        for (int i = 0; i < count; i++) {
-            int rawIdx = map[i];
-            int len = raw.offsets[rawIdx + 1] - raw.offsets[rawIdx];
-            outOffsets[i] = totalBytes;
-            totalBytes += len;
-        }
-        outOffsets[count] = totalBytes;
-        byte[] outBytes = new byte[totalBytes];
-        boolean interned = raw.dictionary != null;
-        int[] outDictIndices = interned ? new int[count] : null;
-        for (int i = 0; i < count; i++) {
-            int rawIdx = map[i];
-            int rawStart = raw.offsets[rawIdx];
-            int len = raw.offsets[rawIdx + 1] - rawStart;
-            System.arraycopy(raw.bytes, rawStart, outBytes, outOffsets[i], len);
-            if (interned) {
-                outDictIndices[i] = raw.dictIndices[rawIdx];
-            }
-        }
-        BinaryBatchValues out = new BinaryBatchValues(outBytes, outOffsets);
-        if (interned) {
-            out.dictionary = raw.dictionary;
-            out.dictIndices = outDictIndices;
-        }
-        return out;
     }
 
     private void ensureRealBinary() {
