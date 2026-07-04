@@ -371,9 +371,10 @@ public final class NestedLevelComputer {
     /// `realToRawLeaf` maps each real-leaf index to the raw position in the
     /// batch's value array (so `compactInts(rawValues, realToRawLeaf)` etc.
     /// produces real-items-only typed arrays). `null` means the leaf is in
-    /// 1-to-1 correspondence with the raw value stream — i.e. the chain has
-    /// no `REPEATED` layers — and the raw values array can pass through
-    /// without compaction.
+    /// 1-to-1 correspondence with the raw value stream — either the chain has
+    /// no `REPEATED` layers, or this batch has no phantom (null/empty parent)
+    /// positions, so the map would be the identity — and the raw values array
+    /// can pass through without compaction.
     public record RealView(int[][] layerOffsets, long[][] layerValidity,
                            long[] leafValidity, int valueCount,
                            int[] realToRawLeaf) {}
@@ -486,9 +487,14 @@ public final class NestedLevelComputer {
         }
         int realLeafCount = realCount[layerCount];
         int[] trimmedRealToRaw = null;
-        if (realToRaw != null) {
-            trimmedRealToRaw = realLeafCount == realToRaw.length
-                    ? realToRaw : Arrays.copyOf(realToRaw, realLeafCount);
+        // `realToRaw` is sized to `rawValueCount`, so `realLeafCount == rawValueCount`
+        // means every raw position is a real leaf: no phantom (null/empty parent)
+        // positions, and the map is the identity `realToRaw[i] == i`. Leave it null —
+        // the identical pass-through signal a REPEATED-free chain uses — so the
+        // consumer reads the batch's (already per-batch fresh) value array directly
+        // instead of allocating and gathering a compacted copy.
+        if (realToRaw != null && realLeafCount != realToRaw.length) {
+            trimmedRealToRaw = Arrays.copyOf(realToRaw, realLeafCount);
         }
         return new RealView(offsets, layerValidity, leafValidity, realLeafCount,
                 trimmedRealToRaw);

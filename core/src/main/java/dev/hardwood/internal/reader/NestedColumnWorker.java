@@ -24,6 +24,13 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     private final int maxRepetitionLevel;
     private final NestedLevelComputer.Layers layers;
 
+    /// Whether this worker feeds the real-items [dev.hardwood.reader.ColumnReader]
+    /// path. When `true` the drain computes the batch's [NestedLevelComputer.RealView]
+    /// (moving that scan off the serial consumer) and skips the all-items index; when
+    /// `false` it feeds the [NestedRowReader] all-items path and computes the
+    /// element-validity / multi-level-offset index and raw levels as before.
+    private final boolean realItemsMode;
+
     // --- Nested assembly state (drain thread only) ---
     private Object nestedValues;
     private int[] nestedDefLevels;
@@ -61,14 +68,15 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// @param layers per-layer descriptor (kinds + def thresholds) for the
     ///        column's schema chain, or `null` for non-repeated columns. The
     ///        descriptor drives the layer-indexed `multiLevelOffsets` shape.
-    /// Convenience constructor with the fixed-size-list fast path enabled.
+    /// Convenience constructor feeding the all-items path with the fixed-size-list
+    /// fast path enabled.
     public NestedColumnWorker(PageSource pageSource, BatchExchange<NestedBatch> exchange,
                               ColumnSchema column, int batchCapacity,
                               DecompressorFactory decompressorFactory,
                               Executor decodeExecutor, long maxRows,
                               NestedLevelComputer.Layers layers) {
         this(pageSource, exchange, column, batchCapacity, decompressorFactory,
-             decodeExecutor, maxRows, layers, true);
+             decodeExecutor, maxRows, layers, false, true);
     }
 
     public NestedColumnWorker(PageSource pageSource, BatchExchange<NestedBatch> exchange,
@@ -76,11 +84,13 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                               DecompressorFactory decompressorFactory,
                               Executor decodeExecutor, long maxRows,
                               NestedLevelComputer.Layers layers,
+                              boolean realItemsMode,
                               boolean fixedListFastPathEnabled) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
               decodeExecutor, maxRows);
         this.maxRepetitionLevel = column.maxRepetitionLevel();
         this.layers = layers;
+        this.realItemsMode = realItemsMode;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
     }
 
@@ -365,6 +375,16 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// `REPEATED` layer). `multiLevelOffsets[k]` is `null` for `STRUCT`
     /// layers and sentinel-suffixed for `REPEATED` layers.
     private void computeIndex(NestedBatch batch) {
+        if (realItemsMode) {
+            // The ColumnReader reads only the real-items view, so compute it here on
+            // the drain (off the serial consumer) and skip the all-items index.
+            batch.realView = buildRealView(batch);
+            batch.elementValidity = null;
+            batch.multiLevelOffsets = null;
+            return;
+        }
+        batch.realView = null;
+
         if (batch.fixedListK > 0) {
             // All elements present, boundaries at multiples of k: no validity and
             // arithmetic layer offsets, skipping the O(valueCount) level scans.
@@ -387,6 +407,26 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         else {
             batch.multiLevelOffsets = null;
         }
+    }
+
+    /// Real-items view for the batch, built on the drain so the serial consumer
+    /// reads it without a scan. A fixed-width fast-path batch has every element
+    /// present with implicit `k`-multiple boundaries, so its offsets are
+    /// arithmetic and every validity is `null`; the regular path scans the batch's
+    /// def/rep levels. Mirrors the lazy `ensureRealView` computation the consumer
+    /// used to perform, moved to the parallel drain.
+    private NestedLevelComputer.RealView buildRealView(NestedBatch batch) {
+        if (batch.fixedListK > 0) {
+            int layerCount = layers.count();
+            return new NestedLevelComputer.RealView(
+                    NestedLevelComputer.fixedListLayerOffsets(
+                            batch.fixedListK, batch.recordCount, layers),
+                    new long[layerCount][], null,
+                    Math.multiplyExact(batch.recordCount, batch.fixedListK), null);
+        }
+        return NestedLevelComputer.computeRealView(
+                batch.definitionLevels, batch.repetitionLevels,
+                batch.valueCount, batch.recordCount, maxDefinitionLevel, layers);
     }
 
     // ==================== Nested Helpers ====================
