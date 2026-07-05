@@ -7,7 +7,6 @@
  */
 package dev.hardwood.reader;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
@@ -449,18 +448,14 @@ public class ColumnReader implements AutoCloseable {
         if (cachedStrings != null) {
             return cachedStrings;
         }
-        ensureRealBinary();
+        BinaryBatchValues bbv = realLeafBinary();
         int n = getValueCount();
         Validity validity = getLeafValidity();
         String[] result = new String[n];
         for (int i = 0; i < n; i++) {
-            if (validity.isNull(i)) {
-                result[i] = null;
-                continue;
-            }
-            int start = cachedRealBinaryOffsets[i];
-            int len = cachedRealBinaryOffsets[i + 1] - start;
-            result[i] = new String(cachedRealBinaryBytes, start, len, StandardCharsets.UTF_8);
+            // stringAt interns via the chunk dictionary when the batch kept it,
+            // else decodes from bytes; nulls must be guarded (never interned).
+            result[i] = validity.isNull(i) ? null : bbv.stringAt(i);
         }
         cachedStrings = result;
         return result;
@@ -811,25 +806,19 @@ public class ColumnReader implements AutoCloseable {
         if (cachedRealBinaryBytes != null) {
             return;
         }
-        Object raw;
-        BinaryBatchValues bbv;
-        if (!nested) {
-            raw = currentFlatBatch.values;
-            if (!(raw instanceof BinaryBatchValues)) {
-                throw typeMismatch("byte[]");
-            }
-            bbv = (BinaryBatchValues) raw;
-            cachedRealBinaryBytes = bbv.bytes;
-            cachedRealBinaryOffsets = trimOffsetsToLeafCount(bbv.offsets, recordCount);
-            return;
-        }
-        // Nested: realLeafValues() may compact, may pass through.
-        Object leaf = realLeafValues();
-        if (!(leaf instanceof BinaryBatchValues compacted)) {
+        BinaryBatchValues bbv = realLeafBinary();
+        int leafCount = nested ? getValueCount() : recordCount;
+        cachedRealBinaryBytes = bbv.bytes;
+        cachedRealBinaryOffsets = trimOffsetsToLeafCount(bbv.offsets, leafCount);
+    }
+
+    /// The current batch's varlength leaf values, after any nested compaction.
+    private BinaryBatchValues realLeafBinary() {
+        Object leaf = nested ? realLeafValues() : currentFlatBatch.values;
+        if (!(leaf instanceof BinaryBatchValues bbv)) {
             throw typeMismatch("byte[]");
         }
-        cachedRealBinaryBytes = compacted.bytes;
-        cachedRealBinaryOffsets = trimOffsetsToLeafCount(compacted.offsets, getValueCount());
+        return bbv;
     }
 
     /// The per-batch [BinaryBatchValues] is sized to the worker's batch

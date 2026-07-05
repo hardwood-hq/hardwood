@@ -275,4 +275,86 @@ class DictionaryStringReuseTest {
         assertThat(valueValues.size()).isGreaterThan(1);
         assertThat(valueInstances).hasSameSizeAs(valueValues);
     }
+
+    /// The column reader's `getStrings()` interns on the unfiltered flat path: it
+    /// resolves through the same per-chunk cache as the row reader, so equal
+    /// values in a batch are one shared instance rather than a fresh decode each.
+    /// `dictionary_uncompressed.parquet` is a flat `category` column
+    /// `[A, B, A, C, B]` — A and B each appear twice in a single batch.
+    @Test
+    void columnReaderInternsFlatDictionaryStrings() throws Exception {
+        Path file = Paths.get("src/test/resources/dictionary_uncompressed.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader category = reader.columnReader("category")) {
+            assertThat(category.nextBatch()).isTrue();
+            String[] values = category.getStrings();
+
+            assertThat(values).containsExactly("A", "B", "A", "C", "B");
+            // The two "A"s and the two "B"s each collapse to one interned instance.
+            assertThat(values[0]).isSameAs(values[2]);
+            assertThat(values[1]).isSameAs(values[4]);
+            assertThat(category.nextBatch()).isFalse();
+        }
+    }
+
+    /// The column reader interns on the struct-only nested path too: a `STRUCT`
+    /// chain has no repeated layer, so the leaf passes through compaction with its
+    /// dictionary intact. `dict_nested_repeats.parquet` leaf 0 is `info.name`,
+    /// drawn from a 4-value pool with the struct null on every 13th row.
+    @Test
+    void columnReaderInternsStructOnlyNestedDictionaryStrings() throws Exception {
+        Path file = Paths.get("src/test/resources/dict_nested_repeats.parquet");
+
+        Set<String> instances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> values = new HashSet<>();
+        boolean sawNull = false;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader name = reader.buildColumnReader(0).build()) {
+            while (name.nextBatch()) {
+                for (String n : name.getStrings()) {
+                    if (n == null) {
+                        sawNull = true;
+                        continue;
+                    }
+                    instances.add(n);
+                    values.add(n);
+                }
+            }
+        }
+
+        // Values repeat across the batch; every distinct one is a single interned
+        // instance on the struct-only pass-through path.
+        assertThat(values).containsExactlyInAnyOrder("alpha", "beta", "gamma", "delta");
+        assertThat(instances).hasSameSizeAs(values);
+        // Null struct positions still read back as null.
+        assertThat(sawNull).isTrue();
+    }
+
+    /// Regression guard for the compacted path: reading the `tags` list drops the
+    /// chunk dictionary during compaction (Phase 1 does not thread it through), so
+    /// `getStrings()` falls back to per-value decode — which must still return the
+    /// exact written values in leaf order. `dict_nested_repeats.parquet` leaf 1 is
+    /// the `tags` `list<string>` element.
+    @Test
+    void columnReaderListDictionaryStringsFallBackToCorrectValues() throws Exception {
+        Path file = Paths.get("src/test/resources/dict_nested_repeats.parquet");
+        String[] pool = {"alpha", "beta", "gamma", "delta"};
+        List<String> expected = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            for (int j = 0; j < i % 3; j++) {
+                expected.add(pool[(i + j) % 4]);
+            }
+        }
+
+        List<String> actual = new ArrayList<>();
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader tags = reader.buildColumnReader(1).build()) {
+            while (tags.nextBatch()) {
+                Collections.addAll(actual, tags.getStrings());
+            }
+        }
+
+        assertThat(actual).isEqualTo(expected);
+    }
 }

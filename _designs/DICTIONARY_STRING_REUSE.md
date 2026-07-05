@@ -72,8 +72,12 @@ second chunk's dictionary.
   allocated lazily and only for these columns; all other columns are unaffected.
 - The packed-byte representation is retained, so `getBinary` / raw-byte access keep their
   existing contract.
-- Out of scope: non-string dictionary leaves, and the column reader's own `getStrings`
-  materialisation (a separate API) — they can adopt the same per-chunk cache later.
+- `UTF8` / `JSON` `BYTE_ARRAY` columns on the column-reader path (`ColumnReader.getStrings()`)
+  resolve through the same per-chunk cache wherever the batch keeps its dictionary — the
+  unfiltered-flat and struct-only-nested reads. Filtered-flat and repeated (list/map) reads
+  compact the batch and drop the dictionary, so those values fall back to per-value decode.
+- Out of scope: non-string dictionary leaves, and threading the dictionary through `ColumnReader`
+  batch compaction so the filtered and repeated reads also intern (see the follow-up note below).
 
 ## Correctness
 
@@ -97,14 +101,16 @@ second chunk's dictionary.
 
 - **Generic-path interning** routes string leaves through `getString` *before* `convertValue`,
   because `convertValue` decodes a raw `byte[]` and cannot accept an already-interned `String`.
-- **Column-reader overhead (deferred — [#724](https://github.com/hardwood-hq/hardwood/issues/724)).**
+- **Column-reader interning ([#724](https://github.com/hardwood-hq/hardwood/issues/724)).**
   `ColumnReader` shares `FlatColumnWorker` / `NestedColumnWorker`, so a `UTF8` / `JSON` column
-  allocates `dictIndices` and runs `ensureDictionary` every batch even though its `getStrings`
-  decodes bytes directly and never calls `stringAt` — pure bookkeeping the column-reader path
-  discards. `internStrings` gates by column type, not by consumer; gating it to the row-reader
-  exchange would remove the waste. Correctness is unaffected.
+  records `dictIndices` and runs `ensureDictionary` every batch (`internStrings` gates by column
+  type, not by consumer). `ColumnReader.getStrings()` consumes that bookkeeping through `stringAt`
+  wherever the batch keeps its dictionary — the unfiltered-flat and struct-only-nested reads —
+  matching the row reader's dedup. The filtered-flat and repeated reads compact the batch
+  (`compactBinary` builds a fresh `BinaryBatchValues` without the dictionary), so those values
+  decode per-value; threading the dictionary through compaction so they intern too is the
+  remaining follow-up.
 - **Deferred:** `Dictionary.decodePage` builds the per-value index array for every
   `ByteArrayDictionary` page, including `INT96` / `FIXED_LEN_BYTE_ARRAY` columns that never
   intern — a small, transient per-page allocation that a column-type hint could skip (the
-  batch-level `dictIndices` is already limited to string columns via `internStrings`). The column
-  reader's `getStrings` adopting the per-chunk cache is likewise left as a follow-up.
+  batch-level `dictIndices` is already limited to string columns via `internStrings`).
