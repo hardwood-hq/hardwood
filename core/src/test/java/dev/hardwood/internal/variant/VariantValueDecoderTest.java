@@ -14,17 +14,20 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Arrays;
 import java.util.Base64;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.variant.VariantValueDecoder.ArrayLayout;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
 import dev.hardwood.row.VariantType;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Verifies the Variant binary decoder against the canonical primitive/object/array
 /// fixtures from [`apache/parquet-testing/variant/`](https://github.com/apache/parquet-testing/tree/master/variant).
@@ -303,5 +306,49 @@ class VariantValueDecoderTest {
         assertThat(names.get(0).asString()).isEqualTo("Apple");
         assertThat(names.get(1).asString()).isEqualTo("Ray");
         assertThat(names.get(2).isNull()).isTrue();
+    }
+
+    @Test
+    void objectElementCountOverflowRejected() {
+        // OBJECT header 0x7E: offset_size=id_size=4, is_large (4-byte count). Count
+        // 0x33333333 overflows the 32-bit id/offset-table arithmetic.
+        byte[] buf = { 0x7E, 0x33, 0x33, 0x33, 0x33 };
+        assertThatThrownBy(() -> VariantValueDecoder.parseObject(buf, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("object element")
+                .hasMessageContaining("858993459")
+                .hasMessageContaining(String.valueOf(buf.length));
+    }
+
+    @Test
+    void arrayElementCountOverflowRejected() {
+        // ARRAY header 0x1F: offset_size=4, is_large (4-byte count). Count 0x33333333
+        // overflows the 32-bit offset-table arithmetic.
+        byte[] buf = { 0x1F, 0x33, 0x33, 0x33, 0x33 };
+        assertThatThrownBy(() -> VariantValueDecoder.parseArray(buf, 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("array element")
+                .hasMessageContaining("858993459")
+                .hasMessageContaining(String.valueOf(buf.length));
+    }
+
+    @Test
+    void largeButValidArrayStillDecodes() {
+        // A large but in-bounds count must still decode; the guard rejects only
+        // counts too big to fit, not the 4-byte (is_large) count encoding.
+        int n = 300;
+        byte[][] elements = new byte[n][];
+        for (int i = 0; i < n; i++) {
+            byte[] element = new byte[2];
+            VariantValueEncoder.writeInt8(element, 0, i & 0x7F);
+            elements[i] = element;
+        }
+        byte[] scratch = new byte[4096];
+        int end = VariantValueEncoder.writeArray(scratch, 0, elements);
+        byte[] value = Arrays.copyOf(scratch, end);
+
+        ArrayLayout layout = VariantValueDecoder.parseArray(value, 0);
+        assertThat(layout.numElements()).isEqualTo(n);
+        assertThat(layout.valuesStart()).isLessThanOrEqualTo(value.length);
     }
 }

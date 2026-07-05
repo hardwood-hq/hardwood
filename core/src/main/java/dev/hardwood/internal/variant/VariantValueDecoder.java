@@ -250,15 +250,18 @@ public final class VariantValueDecoder {
         int idSize = ((valueHeader >>> VariantBinary.OBJECT_FIELD_ID_SIZE_SHIFT) & VariantBinary.OBJECT_FIELD_ID_SIZE_MASK) + 1;
         boolean isLarge = (valueHeader & VariantBinary.OBJECT_IS_LARGE_MASK) != 0;
         int numSize = isLarge ? 4 : 1;
-        int pos = offset + 1;
-        int numElements = VariantBinary.readUnsignedLE(buf, pos, numSize);
-        pos += numSize;
-        int idsStart = pos;
-        pos += numElements * idSize;
-        int offsetsStart = pos;
-        pos += (numElements + 1) * offsetSize;
-        int valuesStart = pos;
-        return new ObjectLayout(numElements, idSize, offsetSize, idsStart, offsetsStart, valuesStart);
+        int numElements = VariantBinary.readUnsignedLE(buf, offset + 1, numSize);
+        int idsStart = offset + 1 + numSize;
+        // Widen the id/offset-table arithmetic to long over the *unsigned* count:
+        // a hostile numElements would otherwise overflow the 32-bit product and
+        // wrap valuesStart to an in-bounds-looking offset that slips past the
+        // value accessors' bounds checks.
+        long elements = Integer.toUnsignedLong(numElements);
+        long offsetsStart = idsStart + elements * idSize;
+        long valuesStart = offsetsStart + (elements + 1L) * offsetSize;
+        int valuesStartInt = VariantBinary.checkHeaderFits("object element", numElements, valuesStart, buf.length);
+        return new ObjectLayout(numElements, idSize, offsetSize,
+                idsStart, Math.toIntExact(offsetsStart), valuesStartInt);
     }
 
     public static ArrayLayout parseArray(byte[] buf, int offset) {
@@ -271,13 +274,14 @@ public final class VariantValueDecoder {
         int offsetSize = (valueHeader & VariantBinary.ARRAY_FIELD_OFFSET_SIZE_MASK) + 1;
         boolean isLarge = (valueHeader & VariantBinary.ARRAY_IS_LARGE_MASK) != 0;
         int numSize = isLarge ? 4 : 1;
-        int pos = offset + 1;
-        int numElements = VariantBinary.readUnsignedLE(buf, pos, numSize);
-        pos += numSize;
-        int offsetsStart = pos;
-        pos += (numElements + 1) * offsetSize;
-        int valuesStart = pos;
-        return new ArrayLayout(numElements, offsetSize, offsetsStart, valuesStart);
+        int numElements = VariantBinary.readUnsignedLE(buf, offset + 1, numSize);
+        int offsetsStart = offset + 1 + numSize;
+        // Widen the offset-table arithmetic to long over the *unsigned* count so a
+        // hostile numElements cannot overflow the 32-bit product and wrap
+        // valuesStart into an in-bounds-looking offset.
+        long valuesStart = offsetsStart + (Integer.toUnsignedLong(numElements) + 1L) * offsetSize;
+        int valuesStartInt = VariantBinary.checkHeaderFits("array element", numElements, valuesStart, buf.length);
+        return new ArrayLayout(numElements, offsetSize, offsetsStart, valuesStartInt);
     }
 
     /// Returns the byte length of the Variant value whose header byte lives at

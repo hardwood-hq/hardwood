@@ -54,11 +54,12 @@ public final class VariantMetadata {
                     "Variant metadata dictionary_size is not a valid unsigned int: " + dictionarySize);
         }
         this.offsetsStart = headerEnd + offsetSize;
-        int offsetsLen = (dictionarySize + 1) * offsetSize;
-        if (buf.length < offsetsStart + offsetsLen) {
-            throw new IllegalArgumentException("Variant metadata buffer truncated before offset table");
-        }
-        this.stringsStart = offsetsStart + offsetsLen;
+        // Widen the offset-table arithmetic to long: a hostile dictionary_size
+        // would otherwise overflow the 32-bit product and wrap the offset-table
+        // extent to an in-bounds-looking value that bypasses this truncation check.
+        long stringsSectionStart = offsetsStart + ((long) dictionarySize + 1L) * offsetSize;
+        this.stringsStart = VariantBinary.checkHeaderFits(
+                "metadata dictionary", dictionarySize, stringsSectionStart, buf.length);
         int totalStringBytes = readOffset(dictionarySize);
         if (buf.length < stringsStart + totalStringBytes) {
             throw new IllegalArgumentException("Variant metadata buffer truncated before end of strings section");
