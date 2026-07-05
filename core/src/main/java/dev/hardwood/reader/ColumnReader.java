@@ -842,7 +842,7 @@ public class ColumnReader implements AutoCloseable {
         rowGroupIterator.initialize(projectedSchema, filter);
 
         return createFromIterator(columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled,
-                0, rowGroupIterator, resolvedBatchSize);
+                0, rowGroupIterator, resolvedBatchSize, NestedColumnWorker.IndexMode.REAL_VIEW);
     }
 
     /// Creates a ColumnReader from a pre-configured RowGroupIterator.
@@ -858,7 +858,8 @@ public class ColumnReader implements AutoCloseable {
                                            boolean fixedListFastPathEnabled,
                                            int projectedColumnIndex,
                                            RowGroupIterator ownedIterator,
-                                           int batchSize) {
+                                           int batchSize,
+                                           NestedColumnWorker.IndexMode indexMode) {
         NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                 schema.getRootNode(), columnSchema.columnIndex());
         boolean nested = layers.count() > 0 || columnSchema.maxRepetitionLevel() > 0;
@@ -875,7 +876,7 @@ public class ColumnReader implements AutoCloseable {
             NestedColumnWorker nestedWorker = new NestedColumnWorker(
                     pageSource, nestedBuf, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), 0,
-                    layers, true, fixedListFastPathEnabled);
+                    layers, indexMode, fixedListFastPathEnabled);
             nestedWorker.start();
             return ColumnReader.forNested(columnSchema, layers, nestedBuf, nestedWorker, ownedIterator);
         }

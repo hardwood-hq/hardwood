@@ -132,7 +132,7 @@ public final class NestedRowReader implements RowReader {
             NestedColumnWorker worker = new NestedColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), workerMaxRows,
-                    layers, false, fixedListFastPathEnabled);
+                    layers, NestedColumnWorker.IndexMode.ALL_ITEMS, fixedListFastPathEnabled);
 
             buffers[i] = buffer;
             workers[i] = worker;

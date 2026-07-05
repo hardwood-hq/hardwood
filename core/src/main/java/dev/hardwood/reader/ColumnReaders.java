@@ -12,6 +12,7 @@ import java.util.Map;
 
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
+import dev.hardwood.internal.reader.NestedColumnWorker;
 import dev.hardwood.internal.reader.RowGroupIterator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.schema.ColumnSchema;
@@ -70,7 +71,8 @@ public class ColumnReaders implements AutoCloseable {
             ColumnSchema columnSchema = schema.getColumn(originalIndex);
 
             ColumnReader reader = ColumnReader.createFromIterator(
-                    columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize);
+                    columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize,
+                    NestedColumnWorker.IndexMode.REAL_VIEW);
 
             readersByName.put(columnSchema.fieldPath().toString(), reader);
             readersByIndex[i] = reader;
@@ -105,7 +107,8 @@ public class ColumnReaders implements AutoCloseable {
         for (int i = 0; i < augCount; i++) {
             ColumnSchema columnSchema = schema.getColumn(augProjected.toOriginalIndex(i));
             ColumnReader reader = ColumnReader.createFromIterator(
-                    columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize);
+                    columnSchema, schema, rowGroupIterator, context, fixedListFastPathEnabled, i, null, batchSize,
+                    NestedColumnWorker.IndexMode.REAL_VIEW_KEEP_LEVELS);
             allReaders[i] = reader;
             byPath.put(columnSchema.fieldPath().toString(), reader);
         }
