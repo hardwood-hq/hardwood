@@ -331,13 +331,13 @@ class DictionaryStringReuseTest {
         assertThat(sawNull).isTrue();
     }
 
-    /// Regression guard for the compacted path: reading the `tags` list drops the
-    /// chunk dictionary during compaction (Phase 1 does not thread it through), so
-    /// `getStrings()` falls back to per-value decode — which must still return the
-    /// exact written values in leaf order. `dict_nested_repeats.parquet` leaf 1 is
-    /// the `tags` `list<string>` element.
+    /// The compacted nested path interns too: reading the `tags` list compacts the
+    /// leaf (`compactBinary`), which carries the chunk dictionary through — so
+    /// `getStrings()` returns the exact values in leaf order *and* reuses one
+    /// interned instance per distinct value. `dict_nested_repeats.parquet` leaf 1
+    /// is the `tags` `list<string>` element.
     @Test
-    void columnReaderListDictionaryStringsFallBackToCorrectValues() throws Exception {
+    void columnReaderInternsListDictionaryStrings() throws Exception {
         Path file = Paths.get("src/test/resources/dict_nested_repeats.parquet");
         String[] pool = {"alpha", "beta", "gamma", "delta"};
         List<String> expected = new ArrayList<>();
@@ -348,13 +348,39 @@ class DictionaryStringReuseTest {
         }
 
         List<String> actual = new ArrayList<>();
+        Set<String> instances = Collections.newSetFromMap(new IdentityHashMap<>());
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
                 ColumnReader tags = reader.buildColumnReader(1).build()) {
             while (tags.nextBatch()) {
-                Collections.addAll(actual, tags.getStrings());
+                String[] batch = tags.getStrings();
+                Collections.addAll(actual, batch);
+                Collections.addAll(instances, batch);
             }
         }
 
+        // Parity in leaf order, and every distinct value is one interned instance.
         assertThat(actual).isEqualTo(expected);
+        assertThat(new HashSet<>(actual)).containsExactlyInAnyOrder("alpha", "beta", "gamma", "delta");
+        assertThat(instances).hasSize(4);
+    }
+
+    /// The compacted flat path interns too: a filter drops rows and compacts the
+    /// leaf (`compactBinary`), which carries the chunk dictionary through.
+    /// `dictionary_uncompressed.parquet` is `id` + dictionary `category`
+    /// `[A, B, A, C, B]`; `id < 4` keeps `[A, B, A]`, so the two kept "A"s are one
+    /// interned instance.
+    @Test
+    void columnReaderInternsFilteredFlatDictionaryStrings() throws Exception {
+        Path file = Paths.get("src/test/resources/dictionary_uncompressed.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader category = reader.buildColumnReader("category")
+                        .filter(FilterPredicate.lt("id", 4L)).build()) {
+            assertThat(category.nextBatch()).isTrue();
+            String[] values = category.getStrings();
+
+            assertThat(values).containsExactly("A", "B", "A");
+            assertThat(values[0]).isSameAs(values[2]);
+        }
     }
 }

@@ -781,7 +781,9 @@ public class ColumnReader implements AutoCloseable {
 
     /// Compacts a varlength leaf to the records at `map[0..count)`. `map` may be
     /// an oversized reusable buffer (flat in-place path) or an exact gather index
-    /// (nested path); only its `[0, count)` prefix is read.
+    /// (nested path); only its `[0, count)` prefix is read. A dictionary-encoded
+    /// string leaf carries its chunk dictionary and gathered entry indices through,
+    /// so `getStrings()` still reuses the interned instances.
     private static BinaryBatchValues compactBinary(BinaryBatchValues raw, int[] map, int count) {
         int totalBytes = 0;
         int[] outOffsets = new int[count + 1];
@@ -793,13 +795,23 @@ public class ColumnReader implements AutoCloseable {
         }
         outOffsets[count] = totalBytes;
         byte[] outBytes = new byte[totalBytes];
+        boolean interned = raw.dictionary != null;
+        int[] outDictIndices = interned ? new int[count] : null;
         for (int i = 0; i < count; i++) {
             int rawIdx = map[i];
             int rawStart = raw.offsets[rawIdx];
             int len = raw.offsets[rawIdx + 1] - rawStart;
             System.arraycopy(raw.bytes, rawStart, outBytes, outOffsets[i], len);
+            if (interned) {
+                outDictIndices[i] = raw.dictIndices[rawIdx];
+            }
         }
-        return new BinaryBatchValues(outBytes, outOffsets);
+        BinaryBatchValues out = new BinaryBatchValues(outBytes, outOffsets);
+        if (interned) {
+            out.dictionary = raw.dictionary;
+            out.dictIndices = outDictIndices;
+        }
+        return out;
     }
 
     private void ensureRealBinary() {

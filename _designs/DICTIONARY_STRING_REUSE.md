@@ -73,11 +73,10 @@ second chunk's dictionary.
 - The packed-byte representation is retained, so `getBinary` / raw-byte access keep their
   existing contract.
 - `UTF8` / `JSON` `BYTE_ARRAY` columns on the column-reader path (`ColumnReader.getStrings()`)
-  resolve through the same per-chunk cache wherever the batch keeps its dictionary — the
-  unfiltered-flat and struct-only-nested reads. Filtered-flat and repeated (list/map) reads
-  compact the batch and drop the dictionary, so those values fall back to per-value decode.
-- Out of scope: non-string dictionary leaves, and threading the dictionary through `ColumnReader`
-  batch compaction so the filtered and repeated reads also intern (see the follow-up note below).
+  resolve through the same per-chunk cache across every read — unfiltered-flat and
+  struct-only-nested keep their dictionary directly, and filtered-flat and repeated (list/map)
+  reads carry it through batch compaction (`compactBinary`).
+- Out of scope: non-string dictionary leaves.
 
 ## Correctness
 
@@ -105,11 +104,9 @@ second chunk's dictionary.
   `ColumnReader` shares `FlatColumnWorker` / `NestedColumnWorker`, so a `UTF8` / `JSON` column
   records `dictIndices` and runs `ensureDictionary` every batch (`internStrings` gates by column
   type, not by consumer). `ColumnReader.getStrings()` consumes that bookkeeping through `stringAt`
-  wherever the batch keeps its dictionary — the unfiltered-flat and struct-only-nested reads —
-  matching the row reader's dedup. The filtered-flat and repeated reads compact the batch
-  (`compactBinary` builds a fresh `BinaryBatchValues` without the dictionary), so those values
-  decode per-value; threading the dictionary through compaction so they intern too is the
-  remaining follow-up.
+  on every read, matching the row reader's dedup: unfiltered-flat and struct-only-nested reads
+  keep the dictionary directly, and the filtered-flat and repeated reads gather the entry indices
+  through `compactBinary` so the compacted batch still resolves against the chunk dictionary.
 - **Deferred:** `Dictionary.decodePage` builds the per-value index array for every
   `ByteArrayDictionary` page, including `INT96` / `FIXED_LEN_BYTE_ARRAY` columns that never
   intern — a small, transient per-page allocation that a column-type hint could skip (the
