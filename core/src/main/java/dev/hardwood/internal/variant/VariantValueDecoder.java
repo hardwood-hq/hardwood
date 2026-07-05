@@ -102,8 +102,7 @@ public final class VariantValueDecoder {
         if (basic == VariantBinary.BASIC_TYPE_PRIMITIVE) {
             int tag = VariantBinary.valueHeader(buf[offset]);
             if (tag == VariantBinary.PRIM_STRING) {
-                int length = readIntLE(buf, offset + 1, 4);
-                checkBounds(buf, offset + 5, length);
+                int length = stringPayloadLength(buf, offset);
                 return new String(buf, offset + 5, length, StandardCharsets.UTF_8);
             }
         }
@@ -115,8 +114,7 @@ public final class VariantValueDecoder {
         if (t != VariantType.BINARY) {
             throw VariantErrors.expected(VariantType.BINARY, t);
         }
-        int length = readIntLE(buf, offset + 1, 4);
-        checkBounds(buf, offset + 5, length);
+        int length = stringPayloadLength(buf, offset);
         byte[] out = new byte[length];
         System.arraycopy(buf, offset + 5, out, 0, length);
         return out;
@@ -259,7 +257,7 @@ public final class VariantValueDecoder {
         long elements = Integer.toUnsignedLong(numElements);
         long offsetsStart = idsStart + elements * idSize;
         long valuesStart = offsetsStart + (elements + 1L) * offsetSize;
-        int valuesStartInt = VariantBinary.checkHeaderFits("object element", numElements, valuesStart, buf.length);
+        int valuesStartInt = VariantBinary.checkFits("object element", numElements, valuesStart, buf.length);
         return new ObjectLayout(numElements, idSize, offsetSize,
                 idsStart, Math.toIntExact(offsetsStart), valuesStartInt);
     }
@@ -280,7 +278,7 @@ public final class VariantValueDecoder {
         // hostile numElements cannot overflow the 32-bit product and wrap
         // valuesStart into an in-bounds-looking offset.
         long valuesStart = offsetsStart + (Integer.toUnsignedLong(numElements) + 1L) * offsetSize;
-        int valuesStartInt = VariantBinary.checkHeaderFits("array element", numElements, valuesStart, buf.length);
+        int valuesStartInt = VariantBinary.checkFits("array element", numElements, valuesStart, buf.length);
         return new ArrayLayout(numElements, offsetSize, offsetsStart, valuesStartInt);
     }
 
@@ -293,6 +291,7 @@ public final class VariantValueDecoder {
         int basic = header & VariantBinary.BASIC_TYPE_MASK;
         if (basic == VariantBinary.BASIC_TYPE_SHORT_STRING) {
             int length = header >>> VariantBinary.VALUE_HEADER_SHIFT;
+            VariantBinary.checkFits("short string length", length, (long) offset + 1 + length, buf.length);
             return 1 + length;
         }
         if (basic == VariantBinary.BASIC_TYPE_PRIMITIVE) {
@@ -336,10 +335,20 @@ public final class VariantValueDecoder {
             case VariantBinary.PRIM_DECIMAL16 -> 1 + 16; // scale byte + 128-bit
             case VariantBinary.PRIM_UUID -> 16;
             case VariantBinary.PRIM_STRING,
-                 VariantBinary.PRIM_BINARY -> 4 + readIntLE(buf, offset + 1, 4);
+                 VariantBinary.PRIM_BINARY -> 4 + stringPayloadLength(buf, offset);
             default -> throw new IllegalArgumentException(
                     "Unknown Variant primitive tag " + tag + " at offset " + offset);
         };
+    }
+
+    /// Reads and validates the 4-byte length prefix of a long string/binary
+    /// primitive at `buf[offset]`, rejecting a truncated field or out-of-buffer length.
+    private static int stringPayloadLength(byte[] buf, int offset) {
+        checkBounds(buf, offset + 1, 4);
+        int declaredLength = readIntLE(buf, offset + 1, 4);
+        VariantBinary.checkFits("string/binary length", declaredLength,
+                (long) offset + 5 + Integer.toUnsignedLong(declaredLength), buf.length);
+        return declaredLength;
     }
 
     /// Reads the field id stored at index `i` in an object's id array.

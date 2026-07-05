@@ -16,6 +16,7 @@ import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Pins the fail-early error paths on the Variant read surface. Each accessor
@@ -23,6 +24,10 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// assertion here so silent-regression to wrong-but-plausible output is
 /// caught immediately.
 class PqVariantInvalidInputTest {
+
+    /// Minimal valid metadata (version 1, empty dictionary) for pairing with
+    /// hand-built malformed value buffers.
+    private static final byte[] EMPTY_METADATA = { 0x01, 0x00, 0x00 };
 
     @Test
     void objectGetOnMissingFieldThrows() throws IOException {
@@ -78,6 +83,51 @@ class PqVariantInvalidInputTest {
         assertThatThrownBy(() -> new VariantMetadata(bytes))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Unsupported Variant metadata version");
+    }
+
+    @Test
+    void oversizedPrimitiveLengthRejected() {
+        // PRIM_BINARY (0x3C), 4-byte length 0x7FFFFFFF — runs far past the buffer.
+        byte[] value = { 0x3C, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
+        assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("string/binary length");
+    }
+
+    @Test
+    void shortStringLengthExceedsBufferRejected() {
+        // SHORT_STRING (0x29) declaring length 10 with no payload bytes present.
+        byte[] value = { 0x29 };
+        assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("short string length");
+    }
+
+    @Test
+    void truncatedPrimitiveSizeRejected() {
+        // PRIM_STRING (0x40) whose 4-byte length prefix is truncated to 2 bytes.
+        byte[] value = { 0x40, 0x05, 0x00 };
+        assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("truncated");
+    }
+
+    @Test
+    void binaryAccessorOversizedLengthRejected() {
+        // asBinary: 0x80000000 reads back negative and slipped past the old check.
+        byte[] value = { 0x3C, 0x00, 0x00, 0x00, (byte) 0x80 };
+        assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).asBinary())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("string/binary length");
+    }
+
+    @Test
+    void validPrimitiveStringDecodes() {
+        // The guard rejects only out-of-range lengths — a well-formed string reads.
+        byte[] value = { 0x40, 0x03, 0x00, 0x00, 0x00, 'a', 'b', 'c' };
+        PqVariant v = new PqVariantImpl(EMPTY_METADATA, value);
+        assertThat(v.asString()).isEqualTo("abc");
+        assertThat(v.value()).isEqualTo(value);
     }
 
     private static PqVariant load(String caseName) throws IOException {

@@ -58,7 +58,7 @@ public final class VariantMetadata {
         // would otherwise overflow the 32-bit product and wrap the offset-table
         // extent to an in-bounds-looking value that bypasses this truncation check.
         long stringsSectionStart = offsetsStart + ((long) dictionarySize + 1L) * offsetSize;
-        this.stringsStart = VariantBinary.checkHeaderFits(
+        this.stringsStart = VariantBinary.checkFits(
                 "metadata dictionary", dictionarySize, stringsSectionStart, buf.length);
         int totalStringBytes = readOffset(dictionarySize);
         if (buf.length < stringsStart + totalStringBytes) {
