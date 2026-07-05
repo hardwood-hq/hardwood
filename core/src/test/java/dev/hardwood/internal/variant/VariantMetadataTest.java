@@ -70,6 +70,17 @@ class VariantMetadataTest {
     }
 
     @Test
+    void dictionarySizeOffsetOverflowRejected() {
+        // Header 0xC1: version=1, offset_size=4. Count 0x33333333 clears the
+        // negative-size guard but overflows (dictionary_size + 1) * offset_size.
+        byte[] bytes = { (byte) 0xC1, 0x33, 0x33, 0x33, 0x33 };
+        assertThatThrownBy(() -> new VariantMetadata(bytes))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("metadata dictionary")
+                .hasMessageContaining("858993459");
+    }
+
+    @Test
     void truncatedBufferRejected() {
         byte[] bytes = { 0x01 }; // header only, no dictionary size bytes
         assertThatThrownBy(() -> new VariantMetadata(bytes))

@@ -107,6 +107,30 @@ public final class VariantBinary {
         return result;
     }
 
+    /// Validates that a Variant object/array/metadata header fits inside a buffer
+    /// of `bufferLength` bytes. `headerEnd` is the exclusive end offset of the
+    /// header's id and offset tables — the caller computes it in `long` from the
+    /// **unsigned** element or dictionary `count`, so a hostile count cannot wrap
+    /// the 32-bit product into an in-bounds-looking offset that later slips past
+    /// the per-access bounds checks. Returns `headerEnd` narrowed to `int` once it
+    /// is known to fit.
+    ///
+    /// @param region human-readable name of the count, used in the error message
+    /// @param count declared element/dictionary count (interpreted as unsigned 32-bit)
+    /// @param headerEnd exclusive end offset of the id/offset tables, computed in `long`
+    /// @param bufferLength length of the enclosing buffer
+    /// @return `headerEnd` as an `int`
+    /// @throws IllegalArgumentException if the header does not fit the buffer
+    static int checkHeaderFits(String region, int count, long headerEnd, int bufferLength) {
+        if (headerEnd > bufferLength) {
+            throw new IllegalArgumentException(
+                    "Variant " + region + " count " + Integer.toUnsignedString(count)
+                            + " does not fit in a buffer of " + bufferLength
+                            + " bytes (header tables alone require " + headerEnd + " bytes)");
+        }
+        return Math.toIntExact(headerEnd);
+    }
+
     /// Map a Variant value-header byte to its [VariantType]. Returns `null` for
     /// unrecognized primitive type tags so callers can fail-early with context.
     public static VariantType typeOf(byte header) {
