@@ -296,21 +296,18 @@ public final class VariantValueDecoder {
         }
         if (basic == VariantBinary.BASIC_TYPE_PRIMITIVE) {
             int tag = header >>> VariantBinary.VALUE_HEADER_SHIFT;
-            return 1 + primitivePayloadLength(buf, offset, tag);
+            int length = 1 + primitivePayloadLength(buf, offset, tag);
+            VariantBinary.checkFits("primitive value", length, (long) offset + length, buf.length);
+            return length;
         }
         if (basic == VariantBinary.BASIC_TYPE_OBJECT) {
             ObjectLayout layout = parseObject(buf, offset);
-            int lastOff = VariantBinary.readUnsignedLE(buf,
-                    layout.offsetsStart() + layout.numElements() * layout.offsetSize(),
-                    layout.offsetSize());
-            return layout.valuesStart() - offset + lastOff;
+            return objectOrArrayValueLength(buf, offset, layout.valuesStart(),
+                    layout.offsetsStart() + layout.numElements() * layout.offsetSize(), layout.offsetSize());
         }
-        // ARRAY
         ArrayLayout layout = parseArray(buf, offset);
-        int lastOff = VariantBinary.readUnsignedLE(buf,
-                layout.offsetsStart() + layout.numElements() * layout.offsetSize(),
-                layout.offsetSize());
-        return layout.valuesStart() - offset + lastOff;
+        return objectOrArrayValueLength(buf, offset, layout.valuesStart(),
+                layout.offsetsStart() + layout.numElements() * layout.offsetSize(), layout.offsetSize());
     }
 
     private static int primitivePayloadLength(byte[] buf, int offset, int tag) {
@@ -349,6 +346,14 @@ public final class VariantValueDecoder {
         VariantBinary.checkFits("string/binary length", declaredLength,
                 (long) offset + 5 + Integer.toUnsignedLong(declaredLength), buf.length);
         return declaredLength;
+    }
+
+    /// Byte length of an OBJECT/ARRAY value, with the offset-table's final offset
+    /// validated against the buffer.
+    private static int objectOrArrayValueLength(byte[] buf, int offset, int valuesStart, int lastOffsetPos, int offsetSize) {
+        int lastOff = VariantBinary.readUnsignedLE(buf, lastOffsetPos, offsetSize);
+        long end = (long) valuesStart + Integer.toUnsignedLong(lastOff);
+        return VariantBinary.checkFits("object/array value", lastOff, end, buf.length) - offset;
     }
 
     /// Reads the field id stored at index `i` in an object's id array.

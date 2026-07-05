@@ -130,6 +130,34 @@ class PqVariantInvalidInputTest {
         assertThat(v.value()).isEqualTo(value);
     }
 
+    @Test
+    void stringAccessorOversizedLengthRejected() {
+        // asString: PRIM_STRING (0x40) with a 0x7FFFFFFF length prefix.
+        byte[] value = { 0x40, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
+        assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).asString())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("string/binary length");
+    }
+
+    @Test
+    void objectValueExtentRejected() {
+        // Empty OBJECT (0x0E) whose sole offset-table entry claims a 0x7FFFFFFF-byte
+        // values section — value() would size a copy far past the buffer.
+        byte[] value = { 0x0E, 0x00, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
+        assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("object/array value");
+    }
+
+    @Test
+    void fixedWidthPrimitiveTruncationRejected() {
+        // PRIM_INT64 (0x18) header claiming an 8-byte payload with only 2 bytes present.
+        byte[] value = { 0x18, 0x01, 0x02 };
+        assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("primitive value");
+    }
+
     private static PqVariant load(String caseName) throws IOException {
         byte[] metadata = readResource("/variant/" + caseName + ".metadata");
         byte[] value = readResource("/variant/" + caseName + ".value");
