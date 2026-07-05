@@ -383,4 +383,35 @@ class DictionaryStringReuseTest {
             assertThat(values[0]).isSameAs(values[2]);
         }
     }
+
+    /// The per-chunk interned cache spans batches on the column-reader path: with
+    /// a small batch size the 600k-row single-chunk `label` column
+    /// (`dict_cross_batch.parquet`, 3 distinct values) yields many batches, yet
+    /// each distinct value resolves to one instance across all of them — ruling
+    /// out a per-batch cache (which would exceed 3 instances).
+    @Test
+    void columnReaderInternsAcrossBatchesWithinChunk() throws Exception {
+        Path file = Paths.get("src/test/resources/dict_cross_batch.parquet");
+
+        Set<String> instances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> values = new HashSet<>();
+        long rows = 0;
+        int batches = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader label = reader.buildColumnReader("label").batchSize(8192).build()) {
+            while (label.nextBatch()) {
+                batches++;
+                for (String value : label.getStrings()) {
+                    instances.add(value);
+                    values.add(value);
+                    rows++;
+                }
+            }
+        }
+
+        assertThat(rows).isEqualTo(600_000L);
+        assertThat(batches).isGreaterThan(1);
+        assertThat(values).hasSize(3);
+        assertThat(instances).hasSize(3);
+    }
 }

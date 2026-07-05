@@ -1,6 +1,6 @@
-# Dictionary String reuse on the row-reader path
+# Dictionary String reuse
 
-Status: Implemented (flat and nested row-reader paths) — issue [#636](https://github.com/hardwood-hq/hardwood/issues/636)
+Status: Implemented — row reader ([#636](https://github.com/hardwood-hq/hardwood/issues/636)) and column reader ([#724](https://github.com/hardwood-hq/hardwood/issues/724)), across flat and nested paths
 
 ## Problem
 
