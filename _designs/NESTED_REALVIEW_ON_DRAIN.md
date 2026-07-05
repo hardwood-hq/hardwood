@@ -11,18 +11,19 @@
 -->
 # RealView on the drain; drop ColumnReader-path level materialization
 
-Status: **Stage 1 implemented; Stage 2 planned**
+Status: **Implemented**
 
 Tracking issue: #751
 
-This change lands in two stages. **Stage 1** moves `computeRealView` onto the
-drain while the batch keeps carrying raw def/rep levels — it captures the primary
-win (the critical-path scan runs on idle threads) at low risk, with no dependency
-on #749 and no change to the record-selection path. **Stage 2** drops the raw
-level materialization on the `ColumnReader` path; it depends on #749 and rewrites
-record selection to slice the `RealView`. The stages are split because profiling
-attributes the wall-clock win to the *move*, not the level-drop, so Stage 1
-delivers most of the benefit on its own.
+This change landed in two stages. **Stage 1** moved `computeRealView` onto the
+drain while the batch kept carrying raw def/rep levels — the primary win (the
+critical-path scan runs on idle threads) at low risk, with no dependency on #749
+and no change to the record-selection path. **Stage 2** (this document's end
+state) drops the raw level materialization on the unfiltered `ColumnReader` path,
+which removes per-batch memory traffic on the now-bandwidth-bound drain. It depends
+on #749 (the raw-level escape-hatch accessors removed) and distinguishes the
+filtered from the unfiltered path with a per-worker `IndexMode` — the filtered path
+simply keeps the levels, so record selection is unchanged.
 
 ## Problem
 
@@ -66,14 +67,24 @@ wait. Separately, the per-batch def/rep level copy and the drain's all-items ind
   *zero* raw-level readers left, so the levels can be dropped outright — no
   on-demand level synthesis is needed.
 
-## Stage 1 — RealView on the drain (implemented)
+## End state
 
-### Real-items mode flag
+### IndexMode
 
-`NestedColumnWorker` takes a `realItemsMode` boolean. `ColumnReader` constructs
-its worker with `true`, `NestedRowReader` with `false`; the convenience
-constructor (tests) defaults to `false`. The flag selects what the drain computes
-at publish time; nothing else in assembly changes.
+`NestedColumnWorker` takes an `IndexMode`, chosen by the constructing reader, that
+selects what the drain derives per batch at publish time (nothing else in assembly
+changes):
+
+- **`ALL_ITEMS`** — the `RowReader` path (and the convenience constructor tests
+  use). Computes the all-items `elementValidity` + `multiLevelOffsets` index and
+  keeps the raw def/rep levels, which `NestedBatchIndex` and its consumers read.
+- **`REAL_VIEW`** — the unfiltered `ColumnReader` path. Builds the `RealView` (and
+  compacted values) on the drain and drops the raw levels and the all-items index;
+  nothing downstream reads them.
+- **`REAL_VIEW_KEEP_LEVELS`** — the exact-filtered `ColumnReader` path. Keeps the
+  raw levels so `applySelection` can slice them per kept record, and skips the
+  all-items index; the drain derives no view (the consumer rebuilds it after
+  selection).
 
 ### NestedBatch carries the RealView
 
@@ -82,71 +93,66 @@ populates it (`computeIndex` → `buildRealView`); on the all-items path it stay
 `null` and today's fields (`definitionLevels`, `repetitionLevels`,
 `elementValidity`, `multiLevelOffsets`) are populated as they are now.
 
-### Drain publish, real-items mode
+### Drain publish
 
-In `computeIndex`, when `realItemsMode`:
+In `computeIndex`:
 
-- Build the `RealView` from the batch's def/rep levels (already set on the batch
-  at this point), and **skip** the all-items index (`computeElementValidity`,
-  `computeLayerOffsets`) — it serves only the `RowReader`, so
-  `batch.elementValidity` / `batch.multiLevelOffsets` stay `null`.
-- Fixed-size-list fast-path batches (`fixedListK > 0`) already omit levels; the
-  drain stamps the arithmetic `RealView` (layer offsets from
-  `fixedListLayerOffsets`, all-present validity, `realToRawLeaf == null`) the
-  consumer used to build in `fixedListRealView`.
-- Raw def/rep levels are **still materialized** on the batch in Stage 1 (dropped
-  in Stage 2). Value compaction stays on the consumer.
+- **`REAL_VIEW`** builds the `RealView` from the **drain accumulators**
+  (`nestedDefLevels` / `nestedRepLevels`, still intact for `[0, valueCount)` until
+  the counts reset after publish), so `publishCurrentBatch` leaves the batch's
+  `definitionLevels` / `repetitionLevels` **`null`** — the per-batch level
+  `Arrays.copyOf` pair is dropped. The all-items index is skipped
+  (`elementValidity` / `multiLevelOffsets` stay `null`). Fixed-size-list fast-path
+  batches (`fixedListK > 0`) already omit levels; the drain stamps the arithmetic
+  `RealView` (offsets from `fixedListLayerOffsets`, all-present validity,
+  `realToRawLeaf == null`). Value compaction into `realValues` is also done here
+  (see the value-compaction design); otherwise the raw values pass through.
+- **`REAL_VIEW_KEEP_LEVELS`** keeps the raw levels (copied as before) and derives
+  nothing else — no view, no all-items index. The batch is compacted by
+  `applySelection` before the consumer reads it.
+- **`ALL_ITEMS`** keeps the raw levels and computes `elementValidity` +
+  `multiLevelOffsets`, as before.
 
 ### Consumer
 
 `ColumnReader.ensureRealView()` returns `currentNestedBatch.realView` when the
-drain set it, and otherwise falls back to the existing lazy
-`computeRealView` / `fixedListRealView` — the path a batch derived by
-consumer-side record selection still takes, since selection builds its batch
-without a drain view. This keeps the selection path unchanged in Stage 1.
+drain set it (`REAL_VIEW`), and otherwise falls back to the lazy
+`computeRealView` / `fixedListRealView` from the batch's levels — the path taken by
+`REAL_VIEW_KEEP_LEVELS` batches and by the batches `compactNestedBatch` derives
+from them. Because the filtered path keeps its levels, **record selection is
+unchanged**: `compactNestedBatch` slices the raw `(levels, values, recordOffsets)`
+triplet exactly as before, and the consumer rebuilds the view from the sliced
+levels.
 
 ### RowReader path
 
-Unchanged. `realItemsMode == false` keeps materializing def/rep levels and the
-all-items index, so `NestedBatchIndex` and its consumers see exactly today's
-batch.
-
-## Stage 2 — drop ColumnReader-path level materialization (planned)
-
-With **#749** landed (the public `getDefinitionLevels()` / `getRepetitionLevels()`
-escape hatches removed), the real-items path has zero raw-level readers left, so:
-
-- `computeIndex` builds the `RealView` directly from the drain accumulators and
-  leaves `batch.definitionLevels` / `batch.repetitionLevels` **`null`**, dropping
-  the per-batch level `Arrays.copyOf` pair.
-- `applySelection` → `compactNestedBatch` can no longer slice raw levels; it
-  **slices the parent `RealView`** for the kept records. Selection keeps whole
-  top-level records — contiguous real-leaf spans — so `layerOffsets`,
-  `layerValidity`, `leafValidity`, and `realToRawLeaf` are gathered/renumbered
-  directly rather than reconstructed from levels.
+Unchanged. `ALL_ITEMS` keeps materializing def/rep levels and the all-items index,
+so `NestedBatchIndex` and its consumers see exactly today's batch.
 
 ## Scope
 
-- **In:** the real-items `ColumnReader` path — RealView on the drain (Stage 1),
-  and dropping the def/rep level copy plus the selection-path RealView slice
-  (Stage 2).
-- **Out:** value compaction stays on the consumer (moving it, and reusing consumer
-  scratch across batches, is the separate buffer-reuse lever). The `RowReader`
-  all-items path is untouched. Bulk-copy assembly (#750) is orthogonal.
+- **In:** the `ColumnReader` real-items path — `RealView` on the drain, and
+  dropping the def/rep level copy and the all-items index on the unfiltered
+  (`REAL_VIEW`) path.
+- **Out:** value compaction on the drain is a separate change. The `RowReader`
+  all-items path and the exact-filter record-selection logic are untouched.
+  Bulk-copy assembly (#750) is orthogonal.
 
 ## Dependencies
 
-- **#749** (Stage 2 only) — remove the public raw-level escape-hatch accessors.
-  Required before the levels can be dropped: without it the `ColumnReader` path
-  would still have a raw-level reader.
+- **#749** — the public `getDefinitionLevels()` / `getRepetitionLevels()`
+  escape-hatch accessors removed. Required before the levels can be dropped on the
+  `REAL_VIEW` path: without it the `ColumnReader` would still have a raw-level
+  reader.
 
 ## Benefits
 
 - The dominant critical-path scan moves off the serial consumer onto the ~96%-idle
   parallel drain threads — a latency win independent of any instruction-count
   change.
-- The per-batch def/rep level `Arrays.copyOf` pair is eliminated on real-items
-  reads.
+- On the unfiltered path the per-batch def/rep level `Arrays.copyOf` pair is
+  eliminated, cutting drain memory traffic — which matters because the drain is
+  bandwidth-bound once reconstruction has moved onto it.
 - The drain stops computing the all-items `elementValidity` + `multiLevelOffsets`
   for `ColumnReader` batches, and the duplicated level scan (drain index vs
   consumer `RealView`) collapses to one scan.
@@ -172,5 +178,24 @@ cross-core rebalance the change targets is not visible pinned to one core):
 `rowNested` is unchanged (none 147.6 → 147.3, dense 214.8 → 214.1). The win is
 largest on `dense`, where the `RealView` scan does the most validity bookkeeping,
 so moving it off the serial consumer helps most. The residual gap to `rowNested`
-is the consumer-side value compaction and per-batch allocation — the targets of
-the buffer-reuse lever and Stage 2.
+was the consumer-side value compaction and per-batch allocation, addressed by the
+follow-on value-compaction work; Stage 2 (this document's end state) then removed
+the raw-level materialization on top.
+
+## Results (Stage 2)
+
+Dropping the raw-level copy on the unfiltered path removes per-batch drain memory
+traffic, so its effect tracks memory bandwidth. On the single-channel N300 (drain
+bandwidth-bound), isolating Stage 2 against the otherwise-identical prior build:
+
+| benchmark | pre-Stage 2 | Stage 2 | Δ |
+|---|--:|--:|--:|
+| `columnNested` none | 179.0 | 165.2 | −7.7% |
+| `columnNested` dense | 277.1 | 263.5 | −4.9% |
+| `columnMulti` (8 col) none | 129.8 | 113.2 | −12.8% |
+| `columnMulti` (8 col) dense | 173.2 | 164.8 | −4.8% |
+
+The win is largest on the wide, all-present case, where the most level bytes are
+dropped (eight columns × two copies × the largest per-batch value counts). On a
+bandwidth-rich machine (Apple Silicon, unified memory) the same A/B is neutral —
+the traffic reduction has no scarce resource to free.
