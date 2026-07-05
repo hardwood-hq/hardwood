@@ -107,28 +107,27 @@ public final class VariantBinary {
         return result;
     }
 
-    /// Validates that a Variant object/array/metadata header fits inside a buffer
-    /// of `bufferLength` bytes. `headerEnd` is the exclusive end offset of the
-    /// header's id and offset tables — the caller computes it in `long` from the
-    /// **unsigned** element or dictionary `count`, so a hostile count cannot wrap
-    /// the 32-bit product into an in-bounds-looking offset that later slips past
-    /// the per-access bounds checks. Returns `headerEnd` narrowed to `int` once it
-    /// is known to fit.
+    /// Validates that `end`, an exclusive buffer offset derived from an untrusted
+    /// count or length, lies within `bufferLength`, returning it narrowed to `int`.
+    /// The caller computes `end` in `long` from the **unsigned** value, so a hostile
+    /// count/length cannot wrap the 32-bit arithmetic into an in-bounds-looking
+    /// offset that later slips past the per-access bounds checks. Used for
+    /// object/array/metadata header tables and for string/binary payload lengths alike.
     ///
-    /// @param region human-readable name of the count, used in the error message
-    /// @param count declared element/dictionary count (interpreted as unsigned 32-bit)
-    /// @param headerEnd exclusive end offset of the id/offset tables, computed in `long`
+    /// @param region human-readable name of the count/length, used in the error message
+    /// @param declared declared count or length (interpreted as unsigned 32-bit)
+    /// @param end exclusive end offset computed in `long` from `declared`
     /// @param bufferLength length of the enclosing buffer
-    /// @return `headerEnd` as an `int`
-    /// @throws IllegalArgumentException if the header does not fit the buffer
-    static int checkHeaderFits(String region, int count, long headerEnd, int bufferLength) {
-        if (headerEnd > bufferLength) {
+    /// @return `end` as an `int`
+    /// @throws IllegalArgumentException if `end` exceeds `bufferLength`
+    static int checkFits(String region, int declared, long end, int bufferLength) {
+        if (end > bufferLength) {
             throw new IllegalArgumentException(
-                    "Variant " + region + " count " + Integer.toUnsignedString(count)
-                            + " does not fit in a buffer of " + bufferLength
-                            + " bytes (header tables alone require " + headerEnd + " bytes)");
+                    "Variant " + region + " (" + Integer.toUnsignedString(declared)
+                            + ") does not fit within its " + bufferLength
+                            + "-byte buffer (needs " + end + " bytes)");
         }
-        return Math.toIntExact(headerEnd);
+        return Math.toIntExact(end);
     }
 
     /// Map a Variant value-header byte to its [VariantType]. Returns `null` for
