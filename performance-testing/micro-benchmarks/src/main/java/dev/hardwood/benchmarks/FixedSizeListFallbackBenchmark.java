@@ -34,8 +34,8 @@ import dev.hardwood.reader.ReaderConfig;
 /// Measures the price the fixed-size-list detector pays on a page that is *almost*
 /// fixed-width: every row is a present list of length `k` except one row of a
 /// different length. The detector's def-gate passes (all present), so it scans the
-/// repetition levels, discovers the odd row, and the whole (single) page falls back
-/// to the regular decode — the detector work is wasted.
+/// repetition levels, discovers the odd row, and the page falls back to the regular
+/// decode — the detector work is wasted.
 ///
 /// The wasted cost is `detectorThenFallback − regularNoDetector`: both do the same
 /// regular decode of the same file; only the former also runs the (failing)
@@ -44,8 +44,10 @@ import dev.hardwood.reader.ReaderConfig;
 /// `k = 4` exercises the bit-packed rep regime, `k = 768` the RLE-interior regime.
 /// `flatFloor` is the plain-column decode floor.
 ///
-/// Each file is a single data page (large `data_page_size`), so the fallback is
-/// whole-file rather than per-page. Generate the corpus with
+/// The corpus generator writes each file as one page per row group with exactly one
+/// odd row in every page, so every page falls back — the whole file, page by page
+/// (never leaving a genuinely-fixed page for the fast path to accelerate, which
+/// would confound the measurement). Generate the corpus with
 /// `generate_fixed_size_list_data.py`, then run with `-p dataDir=<dir>`.
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
