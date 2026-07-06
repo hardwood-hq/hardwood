@@ -150,6 +150,16 @@ class PqVariantInvalidInputTest {
     }
 
     @Test
+    void arrayValueExtentRejected() {
+        // Empty ARRAY (0x0F) whose sole offset-table entry claims a 0x7FFFFFFF-byte
+        // values section — exercises the array branch of the extent guard.
+        byte[] value = { 0x0F, 0x00, (byte) 0xFF, (byte) 0xFF, (byte) 0xFF, 0x7F };
+        assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("object/array value");
+    }
+
+    @Test
     void fixedWidthPrimitiveTruncationRejected() {
         // PRIM_INT64 (0x18) header claiming an 8-byte payload with only 2 bytes present.
         byte[] value = { 0x18, 0x01, 0x02 };
