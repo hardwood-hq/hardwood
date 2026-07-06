@@ -18,11 +18,13 @@ final class PqVariantArrayImpl implements PqVariantArray {
     private final VariantMetadata metadata;
     private final byte[] valueBuf;
     private final ArrayLayout layout;
+    private final int depth;
 
-    PqVariantArrayImpl(VariantMetadata metadata, byte[] valueBuf, int arrayHeaderOffset) {
+    PqVariantArrayImpl(VariantMetadata metadata, byte[] valueBuf, int arrayHeaderOffset, int depth) {
         this.metadata = metadata;
         this.valueBuf = valueBuf;
         this.layout = VariantValueDecoder.parseArray(valueBuf, arrayHeaderOffset);
+        this.depth = depth;
     }
 
     @Override
@@ -36,6 +38,6 @@ final class PqVariantArrayImpl implements PqVariantArray {
             throw new IndexOutOfBoundsException("Index " + index + " out of bounds for size " + layout.numElements());
         }
         int off = VariantValueDecoder.arrayElementOffset(valueBuf, layout, index);
-        return new PqVariantImpl(metadata, valueBuf, off);
+        return new PqVariantImpl(metadata, valueBuf, off, VariantValueDecoder.descend(depth));
     }
 }

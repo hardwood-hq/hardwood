@@ -32,11 +32,13 @@ final class PqVariantObjectImpl implements PqVariantObject {
     private final VariantMetadata metadata;
     private final byte[] valueBuf;
     private final ObjectLayout layout;
+    private final int depth;
 
-    PqVariantObjectImpl(VariantMetadata metadata, byte[] valueBuf, int objectHeaderOffset) {
+    PqVariantObjectImpl(VariantMetadata metadata, byte[] valueBuf, int objectHeaderOffset, int depth) {
         this.metadata = metadata;
         this.valueBuf = valueBuf;
         this.layout = VariantValueDecoder.parseObject(valueBuf, objectHeaderOffset);
+        this.depth = depth;
     }
 
     /// Locate the child-array index for the given field name, or -1 if absent.
@@ -75,7 +77,7 @@ final class PqVariantObjectImpl implements PqVariantObject {
     }
 
     private PqVariant wrap(int valueOffset) {
-        return new PqVariantImpl(metadata, valueBuf, valueOffset);
+        return new PqVariantImpl(metadata, valueBuf, valueOffset, VariantValueDecoder.descend(depth));
     }
 
     // ==================== Metadata ====================
@@ -227,7 +229,7 @@ final class PqVariantObjectImpl implements PqVariantObject {
         if (t != VariantType.OBJECT) {
             throw VariantErrors.expected(VariantType.OBJECT, t);
         }
-        return new PqVariantObjectImpl(metadata, valueBuf, off);
+        return new PqVariantObjectImpl(metadata, valueBuf, off, VariantValueDecoder.descend(depth));
     }
 
     @Override
@@ -240,7 +242,7 @@ final class PqVariantObjectImpl implements PqVariantObject {
         if (t != VariantType.ARRAY) {
             throw VariantErrors.expected(VariantType.ARRAY, t);
         }
-        return new PqVariantArrayImpl(metadata, valueBuf, off);
+        return new PqVariantArrayImpl(metadata, valueBuf, off, VariantValueDecoder.descend(depth));
     }
 
     @Override

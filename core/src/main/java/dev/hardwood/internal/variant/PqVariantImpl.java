@@ -29,6 +29,7 @@ public final class PqVariantImpl implements PqVariant {
     private final VariantMetadata metadata;
     private final byte[] valueBuf;
     private final int valueOffset;
+    private final int depth;
 
     /// Construct a top-level Variant from raw `metadata` and `value` bytes. The
     /// value header starts at `valueBuf[0]`.
@@ -37,9 +38,17 @@ public final class PqVariantImpl implements PqVariant {
     }
 
     public PqVariantImpl(VariantMetadata metadata, byte[] valueBuf, int valueOffset) {
+        this(metadata, valueBuf, valueOffset, 0);
+    }
+
+    /// Construct a Variant nested at `depth` in its enclosing value tree. Child
+    /// flyweights carry the depth so navigation can be capped, see
+    /// [VariantValueDecoder#descend(int)].
+    PqVariantImpl(VariantMetadata metadata, byte[] valueBuf, int valueOffset, int depth) {
         this.metadata = metadata;
         this.valueBuf = valueBuf;
         this.valueOffset = valueOffset;
+        this.depth = depth;
     }
 
     VariantMetadata metadataView() {
@@ -180,7 +189,7 @@ public final class PqVariantImpl implements PqVariant {
         if (VariantBinary.basicType(valueBuf[valueOffset]) != VariantBinary.BASIC_TYPE_OBJECT) {
             throw VariantErrors.expected(VariantType.OBJECT, type());
         }
-        return new PqVariantObjectImpl(metadata, valueBuf, valueOffset);
+        return new PqVariantObjectImpl(metadata, valueBuf, valueOffset, depth);
     }
 
     @Override
@@ -188,6 +197,6 @@ public final class PqVariantImpl implements PqVariant {
         if (VariantBinary.basicType(valueBuf[valueOffset]) != VariantBinary.BASIC_TYPE_ARRAY) {
             throw VariantErrors.expected(VariantType.ARRAY, type());
         }
-        return new PqVariantArrayImpl(metadata, valueBuf, valueOffset);
+        return new PqVariantArrayImpl(metadata, valueBuf, valueOffset, depth);
     }
 }
