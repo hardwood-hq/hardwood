@@ -45,10 +45,18 @@ K_SWEEP = [3, 4, 8, 16, 128, 768, 1536]
 TOTAL_VALUES = 8_000_000  # leaf floats per file; rows = TOTAL_VALUES // k
 
 # Almost-fixed corpus for FixedSizeListFallbackBenchmark (the detector's fallback
-# price). k=4 is the bit-packed regime, k=768 the RLE interior.
+# price). k=4 is the bit-packed regime, k=768 the RLE interior. Every real Parquet
+# page must carry exactly one odd row so the detector fails and each page falls
+# back — the whole file, page by page. PyArrow paginates by both a byte budget and
+# a rows cap, so a fixed logical stride does not line up with real page boundaries
+# (a wide-k file ends up with one odd row spread across many genuinely-fixed pages,
+# which the fast path then legitimately accelerates). Make it deterministic instead:
+# one row group == one page (row_group_size rows, data_page_size large enough not to
+# split it), sized per k for a ~1 MiB page and kept under the rows cap.
 NONFIXED_K = [4, 768]
 NONFIXED_VALUES = 2_000_000
-PAGE_ROWS = 20_000  # PyArrow's default rows-per-page cap
+NONFIXED_PAGE_BYTES = 1 << 20    # ~1 MiB target per page
+NONFIXED_ROW_CAP = 16_000        # stay under PyArrow's rows-per-page cap
 
 DEFAULT_OUTPUT_DIR = os.path.join(
     "performance-testing", "test-data-setup", "target", "benchmark-data"
@@ -90,25 +98,40 @@ def write_pair(output_dir, k, rng):
 
 def write_nonfixed(output_dir, k, rng):
     """Almost-fixed LIST files for FixedSizeListFallbackBenchmark: every row is a
-    present list of length k except one odd row (k + 1) placed in every page, so
-    the detector's def-gate passes (all present) but its rep scan fails and the
-    page falls back. `last` puts the odd row at each page's end (a near-full scan
-    before failing), `second` near its start (an early exit); a `flat` floor for
-    the same value count is written too."""
+    present list of length k except one odd row (k + 1) in every page, so the
+    detector's def-gate passes (all present) but its rep scan fails and each page
+    falls back — the whole file, page by page. Each row group is one page of
+    rows_per_page rows; `last` puts the odd row at the page's end (a near-full rep
+    scan before failing), `second` at its second row (an early exit). A flat floor
+    for the same value count is written too."""
     rows = NONFIXED_VALUES // k
+    rows_per_page = max(2, min(NONFIXED_ROW_CAP, NONFIXED_PAGE_BYTES // (k * 4)))
+    pages = -(-rows // rows_per_page)  # ceil
     for pos in ("last", "second"):
         lengths = np.full(rows, k, dtype=np.int64)
-        for start in range(0, rows, PAGE_ROWS):
-            page_end = min(start + PAGE_ROWS, rows)
-            lengths[start + 1 if pos == "second" else page_end - 1] = k + 1
+        for start in range(0, rows, rows_per_page):
+            page_end = min(start + rows_per_page, rows)
+            # Every page gets exactly one odd row; a 1-row tail page has no distinct
+            # 'second' slot, so the odd row is its only (== last) row there.
+            idx = start + 1 if (pos == "second" and page_end - start >= 2) else page_end - 1
+            lengths[idx] = k + 1
         flat = rng.standard_normal(int(lengths.sum()), dtype=np.float32)
         offsets = np.concatenate([[0], np.cumsum(lengths)]).astype(np.int32)
         vec = pa.ListArray.from_arrays(pa.array(offsets), pa.array(flat, type=pa.float32()))
         table = pa.table(
             {"vec": vec},
             schema=pa.schema([("vec", pa.list_(pa.field("element", pa.float32(), nullable=False)))]))
-        pq.write_table(table, os.path.join(output_dir, f"nonfixed_k{k}_{pos}.parquet"),
-                       use_dictionary=False, compression=None, data_page_version="2.0")
+        path = os.path.join(output_dir, f"nonfixed_k{k}_{pos}.parquet")
+        pq.write_table(table, path, use_dictionary=False, compression=None,
+                       data_page_version="2.0", row_group_size=rows_per_page,
+                       data_page_size=NONFIXED_PAGE_BYTES * 8)
+        # Fail loudly if PyArrow did not honour the one-page-per-row-group layout
+        # this benchmark depends on (otherwise pages without an odd row fast-path).
+        groups = pq.ParquetFile(path).metadata.num_row_groups
+        if groups != pages:
+            raise SystemExit(
+                f"nonfixed k={k} {pos}: {groups} row groups, expected {pages} "
+                f"(rows={rows}, rows_per_page={rows_per_page}) — page layout not as intended")
 
     flat = rng.standard_normal(NONFIXED_VALUES, dtype=np.float32)
     flat_table = pa.table(
@@ -116,7 +139,8 @@ def write_nonfixed(output_dir, k, rng):
         schema=pa.schema([("value", pa.float32(), False)]))
     pq.write_table(flat_table, os.path.join(output_dir, f"nonfixed_k{k}_flat.parquet"),
                    use_dictionary=False, compression=None, data_page_version="2.0")
-    print(f"k={k:5d}: non-fixed last/second (odd row per page) + flat floor")
+    print(f"k={k:5d}: non-fixed last/second ({pages} pages x ~{rows_per_page} rows, "
+          f"odd row each) + flat floor")
 
 
 def main():
