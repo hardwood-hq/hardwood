@@ -275,4 +275,143 @@ class DictionaryStringReuseTest {
         assertThat(valueValues.size()).isGreaterThan(1);
         assertThat(valueInstances).hasSameSizeAs(valueValues);
     }
+
+    /// The column reader's `getStrings()` interns on the unfiltered flat path: it
+    /// resolves through the same per-chunk cache as the row reader, so equal
+    /// values in a batch are one shared instance rather than a fresh decode each.
+    /// `dictionary_uncompressed.parquet` is a flat `category` column
+    /// `[A, B, A, C, B]` — A and B each appear twice in a single batch.
+    @Test
+    void columnReaderInternsFlatDictionaryStrings() throws Exception {
+        Path file = Paths.get("src/test/resources/dictionary_uncompressed.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader category = reader.columnReader("category")) {
+            assertThat(category.nextBatch()).isTrue();
+            String[] values = category.getStrings();
+
+            assertThat(values).containsExactly("A", "B", "A", "C", "B");
+            // The two "A"s and the two "B"s each collapse to one interned instance.
+            assertThat(values[0]).isSameAs(values[2]);
+            assertThat(values[1]).isSameAs(values[4]);
+            assertThat(category.nextBatch()).isFalse();
+        }
+    }
+
+    /// The column reader interns on the struct-only nested path too: a `STRUCT`
+    /// chain has no repeated layer, so the leaf passes through compaction with its
+    /// dictionary intact. `dict_nested_repeats.parquet` leaf 0 is `info.name`,
+    /// drawn from a 4-value pool with the struct null on every 13th row.
+    @Test
+    void columnReaderInternsStructOnlyNestedDictionaryStrings() throws Exception {
+        Path file = Paths.get("src/test/resources/dict_nested_repeats.parquet");
+
+        Set<String> instances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> values = new HashSet<>();
+        boolean sawNull = false;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader name = reader.buildColumnReader(0).build()) {
+            while (name.nextBatch()) {
+                for (String n : name.getStrings()) {
+                    if (n == null) {
+                        sawNull = true;
+                        continue;
+                    }
+                    instances.add(n);
+                    values.add(n);
+                }
+            }
+        }
+
+        // Values repeat across the batch; every distinct one is a single interned
+        // instance on the struct-only pass-through path.
+        assertThat(values).containsExactlyInAnyOrder("alpha", "beta", "gamma", "delta");
+        assertThat(instances).hasSameSizeAs(values);
+        // Null struct positions still read back as null.
+        assertThat(sawNull).isTrue();
+    }
+
+    /// The compacted nested path interns too: reading the `tags` list compacts the
+    /// leaf (`compactBinary`), which carries the chunk dictionary through — so
+    /// `getStrings()` returns the exact values in leaf order *and* reuses one
+    /// interned instance per distinct value. `dict_nested_repeats.parquet` leaf 1
+    /// is the `tags` `list<string>` element.
+    @Test
+    void columnReaderInternsListDictionaryStrings() throws Exception {
+        Path file = Paths.get("src/test/resources/dict_nested_repeats.parquet");
+        String[] pool = {"alpha", "beta", "gamma", "delta"};
+        List<String> expected = new ArrayList<>();
+        for (int i = 0; i < 200; i++) {
+            for (int j = 0; j < i % 3; j++) {
+                expected.add(pool[(i + j) % 4]);
+            }
+        }
+
+        List<String> actual = new ArrayList<>();
+        Set<String> instances = Collections.newSetFromMap(new IdentityHashMap<>());
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader tags = reader.buildColumnReader(1).build()) {
+            while (tags.nextBatch()) {
+                String[] batch = tags.getStrings();
+                Collections.addAll(actual, batch);
+                Collections.addAll(instances, batch);
+            }
+        }
+
+        // Parity in leaf order, and every distinct value is one interned instance.
+        assertThat(actual).isEqualTo(expected);
+        assertThat(new HashSet<>(actual)).containsExactlyInAnyOrder("alpha", "beta", "gamma", "delta");
+        assertThat(instances).hasSize(4);
+    }
+
+    /// The compacted flat path interns too: a filter drops rows and compacts the
+    /// leaf (`compactBinary`), which carries the chunk dictionary through.
+    /// `dictionary_uncompressed.parquet` is `id` + dictionary `category`
+    /// `[A, B, A, C, B]`; `id < 4` keeps `[A, B, A]`, so the two kept "A"s are one
+    /// interned instance.
+    @Test
+    void columnReaderInternsFilteredFlatDictionaryStrings() throws Exception {
+        Path file = Paths.get("src/test/resources/dictionary_uncompressed.parquet");
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader category = reader.buildColumnReader("category")
+                        .filter(FilterPredicate.lt("id", 4L)).build()) {
+            assertThat(category.nextBatch()).isTrue();
+            String[] values = category.getStrings();
+
+            assertThat(values).containsExactly("A", "B", "A");
+            assertThat(values[0]).isSameAs(values[2]);
+        }
+    }
+
+    /// The per-chunk interned cache spans batches on the column-reader path: with
+    /// a small batch size the 600k-row single-chunk `label` column
+    /// (`dict_cross_batch.parquet`, 3 distinct values) yields many batches, yet
+    /// each distinct value resolves to one instance across all of them — ruling
+    /// out a per-batch cache (which would exceed 3 instances).
+    @Test
+    void columnReaderInternsAcrossBatchesWithinChunk() throws Exception {
+        Path file = Paths.get("src/test/resources/dict_cross_batch.parquet");
+
+        Set<String> instances = Collections.newSetFromMap(new IdentityHashMap<>());
+        Set<String> values = new HashSet<>();
+        long rows = 0;
+        int batches = 0;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file));
+                ColumnReader label = reader.buildColumnReader("label").batchSize(8192).build()) {
+            while (label.nextBatch()) {
+                batches++;
+                for (String value : label.getStrings()) {
+                    instances.add(value);
+                    values.add(value);
+                    rows++;
+                }
+            }
+        }
+
+        assertThat(rows).isEqualTo(600_000L);
+        assertThat(batches).isGreaterThan(1);
+        assertThat(values).hasSize(3);
+        assertThat(instances).hasSize(3);
+    }
 }

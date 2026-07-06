@@ -7,7 +7,6 @@
  */
 package dev.hardwood.reader;
 
-import java.nio.charset.StandardCharsets;
 import java.util.Arrays;
 import java.util.List;
 
@@ -449,18 +448,14 @@ public class ColumnReader implements AutoCloseable {
         if (cachedStrings != null) {
             return cachedStrings;
         }
-        ensureRealBinary();
+        BinaryBatchValues bbv = realLeafBinary();
         int n = getValueCount();
         Validity validity = getLeafValidity();
         String[] result = new String[n];
         for (int i = 0; i < n; i++) {
-            if (validity.isNull(i)) {
-                result[i] = null;
-                continue;
-            }
-            int start = cachedRealBinaryOffsets[i];
-            int len = cachedRealBinaryOffsets[i + 1] - start;
-            result[i] = new String(cachedRealBinaryBytes, start, len, StandardCharsets.UTF_8);
+            // stringAt interns via the chunk dictionary when the batch kept it,
+            // else decodes from bytes; nulls must be guarded (never interned).
+            result[i] = validity.isNull(i) ? null : bbv.stringAt(i);
         }
         cachedStrings = result;
         return result;
@@ -830,7 +825,9 @@ public class ColumnReader implements AutoCloseable {
 
     /// Compacts a varlength leaf to the records at `map[0..count)`. `map` may be
     /// an oversized reusable buffer (flat in-place path) or an exact gather index
-    /// (nested path); only its `[0, count)` prefix is read.
+    /// (nested path); only its `[0, count)` prefix is read. A dictionary-encoded
+    /// string leaf carries its chunk dictionary and gathered entry indices through,
+    /// so `getStrings()` still reuses the interned instances.
     private static BinaryBatchValues compactBinary(BinaryBatchValues raw, int[] map, int count) {
         int totalBytes = 0;
         int[] outOffsets = new int[count + 1];
@@ -842,38 +839,42 @@ public class ColumnReader implements AutoCloseable {
         }
         outOffsets[count] = totalBytes;
         byte[] outBytes = new byte[totalBytes];
+        boolean interned = raw.dictionary != null;
+        int[] outDictIndices = interned ? new int[count] : null;
         for (int i = 0; i < count; i++) {
             int rawIdx = map[i];
             int rawStart = raw.offsets[rawIdx];
             int len = raw.offsets[rawIdx + 1] - rawStart;
             System.arraycopy(raw.bytes, rawStart, outBytes, outOffsets[i], len);
+            if (interned) {
+                outDictIndices[i] = raw.dictIndices[rawIdx];
+            }
         }
-        return new BinaryBatchValues(outBytes, outOffsets);
+        BinaryBatchValues out = new BinaryBatchValues(outBytes, outOffsets);
+        if (interned) {
+            out.dictionary = raw.dictionary;
+            out.dictIndices = outDictIndices;
+        }
+        return out;
     }
 
     private void ensureRealBinary() {
         if (cachedRealBinaryBytes != null) {
             return;
         }
-        Object raw;
-        BinaryBatchValues bbv;
-        if (!nested) {
-            raw = currentFlatBatch.values;
-            if (!(raw instanceof BinaryBatchValues)) {
-                throw typeMismatch("byte[]");
-            }
-            bbv = (BinaryBatchValues) raw;
-            cachedRealBinaryBytes = bbv.bytes;
-            cachedRealBinaryOffsets = trimOffsetsToLeafCount(bbv.offsets, recordCount);
-            return;
-        }
-        // Nested: realLeafValues() may compact, may pass through.
-        Object leaf = realLeafValues();
-        if (!(leaf instanceof BinaryBatchValues compacted)) {
+        BinaryBatchValues bbv = realLeafBinary();
+        int leafCount = nested ? getValueCount() : recordCount;
+        cachedRealBinaryBytes = bbv.bytes;
+        cachedRealBinaryOffsets = trimOffsetsToLeafCount(bbv.offsets, leafCount);
+    }
+
+    /// The current batch's varlength leaf values, after any nested compaction.
+    private BinaryBatchValues realLeafBinary() {
+        Object leaf = nested ? realLeafValues() : currentFlatBatch.values;
+        if (!(leaf instanceof BinaryBatchValues bbv)) {
             throw typeMismatch("byte[]");
         }
-        cachedRealBinaryBytes = compacted.bytes;
-        cachedRealBinaryOffsets = trimOffsetsToLeafCount(compacted.offsets, getValueCount());
+        return bbv;
     }
 
     /// The per-batch [BinaryBatchValues] is sized to the worker's batch
