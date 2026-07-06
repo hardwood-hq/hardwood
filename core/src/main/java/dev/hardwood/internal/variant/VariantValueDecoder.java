@@ -27,6 +27,23 @@ public final class VariantValueDecoder {
 
     private VariantValueDecoder() {}
 
+    // ==================== Nesting-depth guard ====================
+
+    /// Maximum object/array nesting depth of a Variant value; deeper navigation is
+    /// rejected to prevent stack-exhausting recursion. Matches the parquet-java convention.
+    static final int MAX_NESTING_DEPTH = 500;
+
+    /// Returns `parentDepth + 1`, rejecting it if it would exceed [#MAX_NESTING_DEPTH].
+    /// Called wherever navigation descends into an object field or array element.
+    static int descend(int parentDepth) {
+        int childDepth = parentDepth + 1;
+        if (childDepth > MAX_NESTING_DEPTH) {
+            throw new IllegalArgumentException(
+                    "Variant value nesting exceeds the maximum depth of " + MAX_NESTING_DEPTH);
+        }
+        return childDepth;
+    }
+
     // ==================== Type introspection ====================
 
     /// Returns the [VariantType] of the value starting at `buf[offset]`.

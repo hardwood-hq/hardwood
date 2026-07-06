@@ -9,12 +9,14 @@ package dev.hardwood.internal.variant;
 
 import java.io.IOException;
 import java.io.InputStream;
+import java.util.Arrays;
 
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantArray;
 import dev.hardwood.row.PqVariantObject;
+import dev.hardwood.row.VariantType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -28,6 +30,13 @@ class PqVariantInvalidInputTest {
     /// Minimal valid metadata (version 1, empty dictionary) for pairing with
     /// hand-built malformed value buffers.
     private static final byte[] EMPTY_METADATA = { 0x01, 0x00, 0x00 };
+
+    /// Metadata with a single-entry dictionary `["a"]` (version 1, offset_size 1),
+    /// for pairing with hand-built nested-object value buffers keyed on `"a"`.
+    private static final byte[] SINGLE_FIELD_METADATA = { 0x01, 0x01, 0x00, 0x01, 0x61 };
+
+    /// A leaf INT8 value (`42`) to sit at the bottom of a nesting chain.
+    private static final byte[] LEAF_INT8 = { 0x0C, 42 };
 
     @Test
     void objectGetOnMissingFieldThrows() throws IOException {
@@ -166,6 +175,119 @@ class PqVariantInvalidInputTest {
         assertThatThrownBy(() -> new PqVariantImpl(EMPTY_METADATA, value).value())
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("primitive value");
+    }
+
+    @Test
+    void deeplyNestedArrayRejected() {
+        // Arrays nested far past the limit must fail fast when navigated, rather
+        // than being descended into unbounded recursion.
+        PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH + 100));
+        assertThatThrownBy(() -> descendArrayToLeaf(root))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nesting")
+                .hasMessageContaining(String.valueOf(VariantValueDecoder.MAX_NESTING_DEPTH));
+    }
+
+    @Test
+    void arrayNestedAtLimitNavigatesFully() {
+        // Exactly at the limit: the whole chain navigates and the leaf reads back.
+        PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH));
+        assertThat(descendArrayToLeaf(root).asInt()).isEqualTo(42);
+    }
+
+    @Test
+    void arrayNestedOnePastLimitRejected() {
+        // One level beyond the limit is the boundary that must be rejected.
+        PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH + 1));
+        assertThatThrownBy(() -> descendArrayToLeaf(root))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nesting");
+    }
+
+    @Test
+    void deeplyNestedObjectRejected() {
+        // The object descent path (getObject) is guarded the same way as arrays.
+        int levels = VariantValueDecoder.MAX_NESTING_DEPTH + 100;
+        PqVariant root = new PqVariantImpl(SINGLE_FIELD_METADATA, nestInObjects(levels));
+        assertThatThrownBy(() -> descendObject(root.asObject(), levels))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nesting")
+                .hasMessageContaining(String.valueOf(VariantValueDecoder.MAX_NESTING_DEPTH));
+    }
+
+    @Test
+    void objectNestedAtLimitNavigatesFully() {
+        // Object path navigates to exactly the limit: getObject to the innermost
+        // level, then getVariant reads the leaf at the 500th (allowed) descent.
+        PqVariantObject object = new PqVariantImpl(SINGLE_FIELD_METADATA,
+                nestInObjects(VariantValueDecoder.MAX_NESTING_DEPTH)).asObject();
+        for (int i = 1; i < VariantValueDecoder.MAX_NESTING_DEPTH; i++) {
+            object = object.getObject("a");
+        }
+        assertThat(object.getVariant("a").asInt()).isEqualTo(42);
+    }
+
+    @Test
+    void arrayIterationNestingRejected() {
+        // for-each iteration descends through the guarded get(int), so deep nesting
+        // is rejected on the iteration path too.
+        PqVariant root = new PqVariantImpl(EMPTY_METADATA, nestInArrays(VariantValueDecoder.MAX_NESTING_DEPTH + 100));
+        assertThatThrownBy(() -> descendArrayByIteration(root))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("nesting");
+    }
+
+    /// Descend through array-of-array values via [PqVariantArray#get(int)] until a
+    /// non-array leaf is reached, returning it.
+    private static PqVariant descendArrayToLeaf(PqVariant value) {
+        PqVariant current = value;
+        while (current.type() == VariantType.ARRAY) {
+            current = current.asArray().get(0);
+        }
+        return current;
+    }
+
+    /// Descend through array-of-array values via for-each iteration, which routes
+    /// through [PqVariantArray#get(int)].
+    private static void descendArrayByIteration(PqVariant value) {
+        PqVariant current = value;
+        while (current.type() == VariantType.ARRAY) {
+            for (PqVariant element : current.asArray()) {
+                current = element;
+                break;
+            }
+        }
+    }
+
+    /// Descend `levels` deep through object-in-object values via
+    /// [PqVariantObject#getObject(String)] on field `"a"`.
+    private static void descendObject(PqVariantObject object, int levels) {
+        PqVariantObject current = object;
+        for (int i = 0; i < levels; i++) {
+            current = current.getObject("a");
+        }
+    }
+
+    /// Wrap [#LEAF_INT8] in `levels` single-element arrays, innermost first.
+    private static byte[] nestInArrays(int levels) {
+        byte[] current = LEAF_INT8;
+        for (int i = 0; i < levels; i++) {
+            byte[] buf = new byte[current.length + 16];
+            int end = VariantValueEncoder.writeArray(buf, 0, new byte[][] { current });
+            current = Arrays.copyOf(buf, end);
+        }
+        return current;
+    }
+
+    /// Wrap [#LEAF_INT8] in `levels` single-field objects keyed on `"a"` (id 0).
+    private static byte[] nestInObjects(int levels) {
+        byte[] current = LEAF_INT8;
+        for (int i = 0; i < levels; i++) {
+            byte[] buf = new byte[current.length + 16];
+            int end = VariantValueEncoder.writeObject(buf, 0, new int[] { 0 }, new byte[][] { current }, 0);
+            current = Arrays.copyOf(buf, end);
+        }
+        return current;
     }
 
     private static PqVariant load(String caseName) throws IOException {
