@@ -43,9 +43,11 @@ public final class NestedListGate {
                     Path listPath = NestedListFileGenerator.listFile(dir, elem, density);
                     Path flatPath = NestedListFileGenerator.listFlatFile(dir, elem, density);
                     double column = NestedReads.sumColumn(listPath, NestedListFileGenerator.LIST_LEAF, elem, context);
+                    double structural = NestedReads.sumColumnStructural(listPath, NestedListFileGenerator.LIST_LEAF, elem, context);
                     double row = NestedReads.sumRowsList(listPath, "vec", elem, context);
                     double flat = NestedReads.sumColumn(flatPath, "value", elem, context);
                     requireClose("list " + elem + "/" + density + " column vs flat floor", column, flat);
+                    requireClose("list " + elem + "/" + density + " structural vs column", structural, column);
                     requireClose("list " + elem + "/" + density + " row vs column", row, column);
                     System.out.printf("  OK  list elem=%-8s density=%-7s sum=%s%n",
                             elem.token(), density.token(), column);
