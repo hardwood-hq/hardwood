@@ -36,8 +36,13 @@ import dev.hardwood.benchmarks.nested.NestedListFileGenerator.NullDensity;
 /// bulk-copy of present runs, #751 `RealView` on the drain) target, kept numeric so
 /// the measured time is level handling and value copy rather than string decode.
 ///
-/// - `columnNested` — the [dev.hardwood.reader.ColumnReader] real-items path: pull
-///   each batch's compacted leaf array and fold it. This is what #750/#751 accelerate.
+/// - `columnNested` — the [dev.hardwood.reader.ColumnReader] real-items path as a
+///   flat leaf consumer: pull each batch's compacted leaf array, count, and leaf
+///   validity and fold it. This is what #750/#751 accelerate.
+/// - `columnNestedStructural` — the same real-items path as a list-reconstructing
+///   consumer: read `getLayerOffsets`/`getLayerValidity` and walk the lists. It
+///   forces the per-layer view every batch, so it measures whether that view is
+///   built on the drain or lazily on the serial consumer.
 /// - `rowNested` — the [dev.hardwood.reader.RowReader] all-items path: materialize the
 ///   `PqList` per row and fold its elements. #751 must not regress this path.
 /// - `flatFloor` — the identical leaf stream as a plain primitive column read through
@@ -95,6 +100,11 @@ public class NestedListReadBenchmark {
     @Benchmark
     public double columnNested() throws IOException {
         return NestedReads.sumColumn(listPath, NestedListFileGenerator.LIST_LEAF, elemKind, context);
+    }
+
+    @Benchmark
+    public double columnNestedStructural() throws IOException {
+        return NestedReads.sumColumnStructural(listPath, NestedListFileGenerator.LIST_LEAF, elemKind, context);
     }
 
     @Benchmark

@@ -13,6 +13,7 @@ import java.nio.file.Path;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.reader.Validity;
@@ -122,6 +123,92 @@ public final class NestedReads {
             throws IOException {
         try (ParquetFileReader reader = open(path, context)) {
             return elem == Elem.INT64 ? sumLongColumn(reader, leaf) : sumDoubleColumn(reader, leaf);
+        }
+    }
+
+    // ============== Column (real-items) folds — structural consumer ==============
+    //
+    // Reconstructs the lists per batch via getLayerOffsets/getLayerValidity, the
+    // access pattern a list-shaped consumer (not a flat leaf vector read) uses. It
+    // reads the same leaf stream as foldLong/foldDouble, so the sum agrees, but it
+    // forces the per-layer view every batch — where foldLong/foldDouble touch only
+    // the leaf values, count, and leaf validity. This is the workload that exposes
+    // whether the RealView is built on the drain or lazily on the consumer.
+
+    /// Index of the (single) REPEATED layer — the list boundary. Found by kind so
+    /// the fold is agnostic to whether an optional wrapper adds a STRUCT layer.
+    private static int listLayer(ColumnReader col) {
+        for (int k = col.getLayerCount() - 1; k >= 0; k--) {
+            if (col.getLayerKind(k) == LayerKind.REPEATED) {
+                return k;
+            }
+        }
+        throw new IllegalStateException("no REPEATED layer in column");
+    }
+
+    private static double foldLongStructural(ColumnReader col) {
+        double sum = 0;
+        int layer = -1;
+        while (col.nextBatch()) {
+            if (layer < 0) {
+                layer = listLayer(col);
+            }
+            int[] offsets = col.getLayerOffsets(layer);
+            Validity listValidity = col.getLayerValidity(layer);
+            boolean listHasNulls = listValidity.hasNulls();
+            long[] values = col.getLongs();
+            Validity leafValidity = col.getLeafValidity();
+            boolean leafHasNulls = leafValidity.hasNulls();
+            int lists = offsets.length - 1;
+            for (int l = 0; l < lists; l++) {
+                if (listHasNulls && listValidity.isNull(l)) {
+                    continue;
+                }
+                for (int i = offsets[l]; i < offsets[l + 1]; i++) {
+                    if (!leafHasNulls || leafValidity.isNotNull(i)) {
+                        sum += values[i];
+                    }
+                }
+            }
+        }
+        return sum;
+    }
+
+    private static double foldDoubleStructural(ColumnReader col) {
+        double sum = 0;
+        int layer = -1;
+        while (col.nextBatch()) {
+            if (layer < 0) {
+                layer = listLayer(col);
+            }
+            int[] offsets = col.getLayerOffsets(layer);
+            Validity listValidity = col.getLayerValidity(layer);
+            boolean listHasNulls = listValidity.hasNulls();
+            double[] values = col.getDoubles();
+            Validity leafValidity = col.getLeafValidity();
+            boolean leafHasNulls = leafValidity.hasNulls();
+            int lists = offsets.length - 1;
+            for (int l = 0; l < lists; l++) {
+                if (listHasNulls && listValidity.isNull(l)) {
+                    continue;
+                }
+                for (int i = offsets[l]; i < offsets[l + 1]; i++) {
+                    if (!leafHasNulls || leafValidity.isNotNull(i)) {
+                        sum += values[i];
+                    }
+                }
+            }
+        }
+        return sum;
+    }
+
+    /// Folds a single numeric list leaf through the column reader as a structural
+    /// (list-reconstructing) consumer. Opens and closes its own reader.
+    public static double sumColumnStructural(Path path, String leaf, Elem elem, HardwoodContext context)
+            throws IOException {
+        try (ParquetFileReader reader = open(path, context);
+             ColumnReader col = reader.columnReader(leaf)) {
+            return elem == Elem.INT64 ? foldLongStructural(col) : foldDoubleStructural(col);
         }
     }
 
