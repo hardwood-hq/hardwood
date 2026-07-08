@@ -391,12 +391,31 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         if (indexMode == IndexMode.REAL_VIEW) {
             // Unfiltered ColumnReader: the consumer reads only the real-items view
             // and values, so build both here on the drain (off the serial consumer)
-            // and skip the all-items index. When the batch has phantom positions the
-            // leaf values are gathered now too; otherwise the raw values pass through.
-            NestedLevelComputer.RealView rv = buildRealView(batch);
-            batch.realView = rv;
-            int[] map = rv.realToRawLeaf();
-            batch.realValues = map != null ? LeafCompaction.compact(batch.values, map) : null;
+            // and skip the all-items index. An all-present batch has no phantom
+            // positions, so its offsets equal the all-items offsets: build just the
+            // lean offsets view (no per-layer validity or gather map) and pass the
+            // dense values through. A batch with phantom positions builds the full
+            // view and gathers the real leaf values. The view is built eagerly on the
+            // drain — not deferred to a lazy ensureRealView() on the consumer — so a
+            // structural read gets its offsets without a consumer-side scan; a flat
+            // leaf read simply ignores them.
+            boolean allPresent = batch.fixedListK > 0 || allDefsMax(batch.valueCount);
+            batch.allPresent = allPresent;
+            if (allPresent) {
+                batch.realValues = batch.values;
+                // With no phantom positions the real-items offsets equal the all-items
+                // offsets, so build just the boundaries (skipping the full projection's
+                // per-layer presence, leaf-validity, and gather-map work). A structural
+                // consumer reads these drain-built offsets without a consumer-side scan;
+                // a flat leaf consumer ignores them.
+                batch.realView = buildAllPresentView(batch);
+            }
+            else {
+                NestedLevelComputer.RealView rv = buildRealView(batch);
+                batch.realView = rv;
+                int[] map = rv.realToRawLeaf();
+                batch.realValues = map != null ? LeafCompaction.compact(batch.values, map) : batch.values;
+            }
             batch.elementValidity = null;
             batch.multiLevelOffsets = null;
             return;
@@ -438,27 +457,43 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         }
     }
 
-    /// Real-items view for the batch, built on the drain so the serial consumer
-    /// reads it without a scan. A fixed-width fast-path batch has every element
-    /// present with implicit `k`-multiple boundaries, so its offsets are
-    /// arithmetic and every validity is `null`; the regular path scans the def/rep
-    /// levels. The levels are read from the accumulators ([#nestedDefLevels] /
-    /// [#nestedRepLevels], still intact for `[0, valueCount)` until the counts reset
-    /// after publish) rather than the batch, so the `REAL_VIEW` path can leave the
-    /// batch's level arrays `null`. Mirrors the lazy `ensureRealView` computation
-    /// the consumer used to perform, moved to the parallel drain.
-    private NestedLevelComputer.RealView buildRealView(NestedBatch batch) {
-        if (batch.fixedListK > 0) {
-            int layerCount = layers.count();
-            return new NestedLevelComputer.RealView(
-                    NestedLevelComputer.fixedListLayerOffsets(
-                            batch.fixedListK, batch.recordCount, layers),
-                    new long[layerCount][], null,
-                    Math.multiplyExact(batch.recordCount, batch.fixedListK), null);
+    /// True when every leaf in the batch is present (def at max) — no null/empty
+    /// parents, so a flat consumer needs neither compaction nor per-layer offsets.
+    private boolean allDefsMax(int n) {
+        for (int i = 0; i < n; i++) {
+            if (nestedDefLevels[i] != maxDefinitionLevel) {
+                return false;
+            }
         }
+        return true;
+    }
+
+    /// Full real-items view for a batch with phantom (null/empty parent) positions,
+    /// built on the drain so the serial consumer reads it without a scan. Scans the
+    /// def/rep levels from the accumulators ([#nestedDefLevels] / [#nestedRepLevels],
+    /// still intact for `[0, valueCount)` until the counts reset after publish) rather
+    /// than the batch, so the `REAL_VIEW` path can leave the batch's level arrays
+    /// `null`. An all-present batch takes the cheaper [#buildAllPresentView] instead.
+    private NestedLevelComputer.RealView buildRealView(NestedBatch batch) {
         return NestedLevelComputer.computeRealView(
                 nestedDefLevels, nestedRepLevels,
                 batch.valueCount, batch.recordCount, maxDefinitionLevel, layers);
+    }
+
+    /// Lean real-items view for an all-present batch: only the layer offsets, which
+    /// (absent phantom positions) equal the all-items offsets. Every validity is
+    /// `null` (all present) and `realToRawLeaf` is `null` (the dense values are the
+    /// real-leaf values). Cheaper than [#buildRealView] — no per-layer presence,
+    /// leaf-validity, or gather-map scan — so a flat leaf consumer pays little for it
+    /// while a structural consumer reads the list boundaries off the drain.
+    private NestedLevelComputer.RealView buildAllPresentView(NestedBatch batch) {
+        int layerCount = layers.count();
+        int[][] offsets = batch.fixedListK > 0
+                ? NestedLevelComputer.fixedListLayerOffsets(batch.fixedListK, batch.recordCount, layers)
+                : NestedLevelComputer.computeLayerOffsets(
+                        nestedRepLevels, batch.valueCount, batch.recordCount, layers);
+        return new NestedLevelComputer.RealView(
+                offsets, new long[layerCount][], null, batch.valueCount, null);
     }
 
     // ==================== Nested Helpers ====================

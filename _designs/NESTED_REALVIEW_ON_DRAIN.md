@@ -13,17 +13,22 @@
 
 Status: **Implemented**
 
-Tracking issue: #751
+Tracking issues: #751, #766
 
-This change landed in two stages. **Stage 1** moved `computeRealView` onto the
-drain while the batch kept carrying raw def/rep levels — the primary win (the
-critical-path scan runs on idle threads) at low risk, with no dependency on #749
-and no change to the record-selection path. **Stage 2** (this document's end
-state) drops the raw level materialization on the unfiltered `ColumnReader` path,
-which removes per-batch memory traffic on the now-bandwidth-bound drain. It depends
-on #749 (the raw-level escape-hatch accessors removed) and distinguishes the
-filtered from the unfiltered path with a per-worker `IndexMode` — the filtered path
-simply keeps the levels, so record selection is unchanged.
+On the unfiltered `ColumnReader` (real-items) path the drain computes the
+real-items view and drops the raw def/rep level materialization, so the serial
+consumer reads a ready-made view instead of scanning levels on the critical path.
+A per-worker `IndexMode` separates this path from the `RowReader` all-items path
+and the exact-filter path, both of which keep the levels; record selection is
+unchanged. Dropping the raw levels depends on #749 (the escape-hatch accessors
+removed), so no downstream reader needs them.
+
+For an **all-present** batch — one with no null or empty parents — the drain
+builds only a **lean offsets view** (`computeLayerOffsets` alone), skipping the
+per-layer validity and gather-map work of the full `computeRealView` scan. It is
+built unconditionally on the drain, so reconstruction stays off the serial
+consumer for every consumer shape, including a list-reconstructing read that needs
+the offsets.
 
 ## Problem
 
@@ -66,6 +71,11 @@ wait. Separately, the per-batch def/rep level copy and the drain's all-items ind
   `getRepetitionLevels()` escape hatches removed), the `ColumnReader` path has
   *zero* raw-level readers left, so the levels can be dropped outright — no
   on-demand level synthesis is needed.
+- An **all-present** batch (every leaf definition level at max) has no phantom
+  positions, so its real-items `layerOffsets` equal the all-items offsets and
+  every validity is trivially all-present. Its view reduces to the list
+  boundaries, which `computeLayerOffsets` produces without the per-layer
+  presence, leaf-validity, and gather-map work of the full `computeRealView`.
 
 ## End state
 
@@ -78,9 +88,11 @@ changes):
 - **`ALL_ITEMS`** — the `RowReader` path (and the convenience constructor tests
   use). Computes the all-items `elementValidity` + `multiLevelOffsets` index and
   keeps the raw def/rep levels, which `NestedBatchIndex` and its consumers read.
-- **`REAL_VIEW`** — the unfiltered `ColumnReader` path. Builds the `RealView` (and
-  compacted values) on the drain and drops the raw levels and the all-items index;
-  nothing downstream reads them.
+- **`REAL_VIEW`** — the unfiltered `ColumnReader` path. Builds the real-items view
+  on the drain and drops the raw levels and the all-items index; nothing downstream
+  reads them. An all-present batch builds only a **lean offsets view** (see
+  [All-present lean view](#all-present-lean-view)); a batch with phantom positions
+  builds the full `RealView` and compacts its values.
 - **`REAL_VIEW_KEEP_LEVELS`** — the exact-filtered `ColumnReader` path. Keeps the
   raw levels so `applySelection` can slice them per kept record, and skips the
   all-items index; the drain derives no view (the consumer rebuilds it after
@@ -89,7 +101,8 @@ changes):
 ### NestedBatch carries the RealView
 
 `NestedBatch` gains a `RealView realView` field. On the real-items path the drain
-populates it (`computeIndex` → `buildRealView`); on the all-items path it stays
+populates it (`computeIndex` → `buildAllPresentView` for all-present batches,
+`buildRealView` otherwise); on the all-items path it stays
 `null` and today's fields (`definitionLevels`, `repetitionLevels`,
 `elementValidity`, `multiLevelOffsets`) are populated as they are now.
 
@@ -97,21 +110,52 @@ populates it (`computeIndex` → `buildRealView`); on the all-items path it stay
 
 In `computeIndex`:
 
-- **`REAL_VIEW`** builds the `RealView` from the **drain accumulators**
+- **`REAL_VIEW`** derives its view from the **drain accumulators**
   (`nestedDefLevels` / `nestedRepLevels`, still intact for `[0, valueCount)` until
   the counts reset after publish), so `publishCurrentBatch` leaves the batch's
   `definitionLevels` / `repetitionLevels` **`null`** — the per-batch level
   `Arrays.copyOf` pair is dropped. The all-items index is skipped
-  (`elementValidity` / `multiLevelOffsets` stay `null`). Fixed-size-list fast-path
-  batches (`fixedListK > 0`) already omit levels; the drain stamps the arithmetic
-  `RealView` (offsets from `fixedListLayerOffsets`, all-present validity,
-  `realToRawLeaf == null`). Value compaction into `realValues` is also done here
-  (see the value-compaction design); otherwise the raw values pass through.
+  (`elementValidity` / `multiLevelOffsets` stay `null`). What it builds depends on
+  whether the batch has phantom (null/empty parent) positions:
+  - **All-present** (every leaf definition level at max, including the
+    fixed-size-list fast path where `fixedListK > 0`): the drain builds a **lean
+    offsets view** — `layerOffsets` from `computeLayerOffsets` (or
+    `fixedListLayerOffsets` on the fast path), every validity `null`, and
+    `realToRawLeaf == null`. The dense values already are the real-leaf values, so
+    `realValues` is the batch values unchanged.
+  - **Phantom-bearing**: the drain builds the full `RealView` (`computeRealView`)
+    and compacts the leaf values into `realValues` through `realToRawLeaf`
+    (`LeafCompaction`); a batch whose phantom map is the identity passes its values
+    through uncompacted.
 - **`REAL_VIEW_KEEP_LEVELS`** keeps the raw levels (copied as before) and derives
   nothing else — no view, no all-items index. The batch is compacted by
   `applySelection` before the consumer reads it.
 - **`ALL_ITEMS`** keeps the raw levels and computes `elementValidity` +
   `multiLevelOffsets`, as before.
+
+### All-present lean view
+
+An all-present batch has no null or empty parents, so no raw position is a
+phantom: its real-items offsets are identical to the all-items offsets, every
+item at every layer is present, and the leaf values need no gather. The drain
+therefore skips the full `computeRealView` scan — which would build per-layer
+validity bitmaps and a `realToRawLeaf` gather map only to fill them with
+all-present / identity values — and computes the list boundaries alone with
+`computeLayerOffsets`.
+
+The lean view is built unconditionally on the drain, so it serves both
+`ColumnReader` consumer shapes without a consumer-side scan:
+
+- a **flat leaf** read (`getValueCount` plus the typed values — the
+  vector/embedding pattern) ignores the offsets and reads the pass-through values
+  directly; leaf validity is all-present, so `getLeafValidity` returns the
+  no-nulls sentinel;
+- a **list-reconstructing** read (`getLayerOffsets` / `getLayerValidity`) reads the
+  drain-built boundaries and the all-present validities.
+
+Deferring the view to a lazy consumer-side build would put a structural read's
+offset scan back on the serial consumer; building the lean view eagerly avoids
+that while costing a flat leaf read only the cheap boundary scan it discards.
 
 ### Consumer
 
@@ -131,12 +175,13 @@ so `NestedBatchIndex` and its consumers see exactly today's batch.
 
 ## Scope
 
-- **In:** the `ColumnReader` real-items path — `RealView` on the drain, and
-  dropping the def/rep level copy and the all-items index on the unfiltered
-  (`REAL_VIEW`) path.
-- **Out:** value compaction on the drain is a separate change. The `RowReader`
-  all-items path and the exact-filter record-selection logic are untouched.
-  Bulk-copy assembly (#750) is orthogonal.
+- **In:** the `ColumnReader` real-items path — the real-items view on the drain
+  (the lean offsets view for all-present batches, the full `RealView` otherwise),
+  and dropping the def/rep level copy and the all-items index on the unfiltered
+  (`REAL_VIEW`) path. Leaf-value compaction into `realValues` on the phantom-bearing
+  path is tracked as #757 and lands on the same path.
+- **Out:** the `RowReader` all-items path and the exact-filter record-selection
+  logic are untouched. Bulk-copy assembly (#750) is orthogonal.
 
 ## Dependencies
 
@@ -164,31 +209,34 @@ so `NestedBatchIndex` and its consumers see exactly today's batch.
   nested differential suite).
 - `NestedListReadBenchmark`: `columnNested` improves in wall time; `rowNested` and
   `flatFloor` do not regress.
+- `NestedListReadBenchmark.columnNestedStructural` — a list-reconstructing consumer
+  reading `getLayerOffsets` / `getLayerValidity` — folds to the same sum as
+  `columnNested`, `rowNested`, and the flat floor, and reads the drain-built lean
+  view without a consumer-side scan.
 
-## Results (Stage 1)
+## Results
 
-`NestedListReadBenchmark`, `LIST<float64>`, 8 M leaves, N300, unpinned (the
-cross-core rebalance the change targets is not visible pinned to one core):
+The design's benefit was isolated in three parts; the numbers come from different
+measurement points and machines rather than a single main-to-end-state run.
 
-| `columnNested` | baseline ms/op | Stage 1 ms/op | Δ |
+**Reconstruction off the serial consumer** — `NestedListReadBenchmark`,
+`LIST<float64>`, 8 M leaves, N300, unpinned (the cross-core rebalance is not visible
+pinned to one core). Moving the `computeRealView` scan onto the ~96%-idle drain
+threads:
+
+| `columnNested` | before ms/op | after ms/op | Δ |
 |---|--:|--:|--:|
 | none | 197.1 ± 4.1 | 188.4 ± 2.2 | −4.4% |
 | dense | 312.6 ± 14.1 | 271.9 ± 12.2 | −13.0% |
 
 `rowNested` is unchanged (none 147.6 → 147.3, dense 214.8 → 214.1). The win is
-largest on `dense`, where the `RealView` scan does the most validity bookkeeping,
-so moving it off the serial consumer helps most. The residual gap to `rowNested`
-was the consumer-side value compaction and per-batch allocation, addressed by the
-follow-on value-compaction work; Stage 2 (this document's end state) then removed
-the raw-level materialization on top.
+largest on `dense`, where the scan does the most validity bookkeeping.
 
-## Results (Stage 2)
+**Dropping the per-batch level copy** — same benchmark, N300, single-channel, so the
+effect tracks memory bandwidth. Eliminating the def/rep `Arrays.copyOf` pair on the
+unfiltered path:
 
-Dropping the raw-level copy on the unfiltered path removes per-batch drain memory
-traffic, so its effect tracks memory bandwidth. On the single-channel N300 (drain
-bandwidth-bound), isolating Stage 2 against the otherwise-identical prior build:
-
-| benchmark | pre-Stage 2 | Stage 2 | Δ |
+| benchmark | before | after | Δ |
 |---|--:|--:|--:|
 | `columnNested` none | 179.0 | 165.2 | −7.7% |
 | `columnNested` dense | 277.1 | 263.5 | −4.9% |
@@ -196,6 +244,18 @@ bandwidth-bound), isolating Stage 2 against the otherwise-identical prior build:
 | `columnMulti` (8 col) dense | 173.2 | 164.8 | −4.8% |
 
 The win is largest on the wide, all-present case, where the most level bytes are
-dropped (eight columns × two copies × the largest per-batch value counts). On a
-bandwidth-rich machine (Apple Silicon, unified memory) the same A/B is neutral —
-the traffic reduction has no scarce resource to free.
+dropped. On a bandwidth-rich machine (Apple Silicon, unified memory) the same change
+is neutral — the traffic reduction has no scarce resource to free.
+
+**The lean all-present view** — in-container, no perf isolation, directional and
+pending N300 confirmation; `LIST<float64>`, 2 M leaves, `none`. Building only the
+offsets (vs the full `computeRealView`) drops both `ColumnReader` shapes below the
+`rowNested` all-items path:
+
+| benchmark | full drain build | lean view | `rowNested` |
+|---|--:|--:|--:|
+| `columnNested` (flat leaf) | 15.2 | 10.9 | 12.9 |
+| `columnNestedStructural` | 15.4 | 11.4 | 12.9 |
+
+Phantom-bearing (`sparse` / `dense`) batches still build the full `RealView` and
+remain slower than `rowNested`; leaning that path is tracked separately.

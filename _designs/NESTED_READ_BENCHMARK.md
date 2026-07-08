@@ -148,15 +148,21 @@ null density `d ∈ {none, sparse, dense}`:
 Same file, three read paths, plus the floor:
 
 - `columnNested` — open a `ColumnReader` on the leaf, and for each batch fold the
-  compacted real-items leaf array (`getFloats()`/`getLongs()`/… over `getValueCount()`).
-  This is the path #750 and #751 accelerate.
+  compacted real-items leaf array (`getFloats()`/`getLongs()`/… over `getValueCount()`)
+  with `getLeafValidity()`. A flat-leaf consumer (values, count, leaf validity — no
+  offsets); the vector/embedding read pattern. This is the path #750 and #751
+  accelerate.
+- `columnNestedStructural` — the same `ColumnReader` path as a list-reconstructing
+  consumer: read `getLayerOffsets()`/`getLayerValidity()` and walk the lists. It reads
+  the per-layer view every batch, so it measures whether that view is built on the
+  drain or lazily on the serial consumer.
 - `rowNested` — open a `RowReader`, materialize the `PqList` per row, and fold its
   numeric elements. The ergonomic all-items path; #751 must not regress it.
 - `flatFloor` — a `ColumnReader` over the flat-twin leaf. The absolute decode floor.
 
-The gap between `columnNested`/`rowNested` and `flatFloor` is the reconstruction cost;
-these three methods let a change move the nested numbers toward the floor while the
-floor itself stays put.
+The gap between the `columnNested*`/`rowNested` paths and `flatFloor` is the
+reconstruction cost; these methods let a change move the nested numbers toward the
+floor while the floor itself stays put.
 
 ### `MixedSchemaReadBenchmark`
 
