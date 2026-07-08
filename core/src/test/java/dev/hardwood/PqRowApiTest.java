@@ -425,7 +425,7 @@ public class PqRowApiTest {
             // address is a struct, not a list — surfaces as a ClassCastException
             // from the underlying FieldDesc cast.
             assertThatThrownBy(() -> rowReader.getList("address"))
-                    .isInstanceOf(ClassCastException.class);
+                    .isInstanceOf(UnsupportedOperationException.class);
         }
     }
 

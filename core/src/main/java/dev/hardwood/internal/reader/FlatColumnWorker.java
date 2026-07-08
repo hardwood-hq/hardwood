@@ -29,6 +29,8 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     /// "all leaves present in this batch."
     private boolean currentBatchHasAbsents;
 
+    private int[] currentBatchDefLevels;
+
     /// Creates a new flat column worker.
     ///
     /// @param pageSource yields [PageInfo] objects for this column
@@ -56,6 +58,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     void initDrainState() {
         currentValidity = maxDefinitionLevel > 0 ? new long[(batchCapacity + 63) >>> 6] : null;
         currentBatchHasAbsents = false;
+        currentBatchDefLevels = maxDefinitionLevel > 0 ? new int[batchCapacity] : null;
     }
 
     @Override
@@ -136,6 +139,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
         long t0 = System.nanoTime();
         try {
+            currentBatch.defLevels = currentBatchDefLevels;
             if (!exchange.publish(currentBatch)) {
                 done = true; // stopped during publish
                 return;
@@ -239,6 +243,9 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             if (currentBatchHasAbsents) {
                 BitmapWords.setRange(currentValidity, destPos, destPos + length);
             }
+            if (currentBatchDefLevels != null) {
+                Arrays.fill(currentBatchDefLevels, destPos, destPos + length, maxDefinitionLevel);
+            }
             return;
         }
         for (int i = 0; i < length; i++) {
@@ -251,6 +258,10 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
             else if (currentBatchHasAbsents) {
                 int bit = destPos + i;
                 currentValidity[bit >>> 6] |= 1L << bit;
+            }
+
+            if (currentBatchDefLevels != null) {
+                currentBatchDefLevels[destPos + i] = defLevels[srcPos + i];
             }
         }
     }

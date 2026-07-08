@@ -7,23 +7,12 @@
  */
 package dev.hardwood.internal.reader;
 
-import java.math.BigDecimal;
-import java.time.Instant;
-import java.time.LocalDate;
-import java.time.LocalDateTime;
-import java.time.LocalTime;
-import java.util.UUID;
-
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
 import dev.hardwood.internal.variant.PqVariantImpl;
 import dev.hardwood.internal.variant.VariantMetadata;
-import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
 import dev.hardwood.row.PqVariant;
-import dev.hardwood.schema.SchemaNode;
 
 /// Flyweight [PqStruct] that navigates directly over column arrays.
 ///
@@ -33,17 +22,16 @@ import dev.hardwood.schema.SchemaNode;
 ///       Used for top-level structs.</li>
 /// - **Position mode**: uses a fixed value index directly.
 ///       Used for struct elements within lists/maps.</li>
-final class PqStructImpl implements PqStruct {
+final class PqStructImpl extends AbstractPqStruct {
 
     private final NestedBatchIndex batch;
-    private final TopLevelFieldMap.FieldDesc.Struct desc;
     private final int rowIndex;     // >= 0 for record mode
     private final int valueIndex;   // >= 0 for position mode, -1 for record mode
 
     /// Record mode: value index resolved from batch offsets.
     PqStructImpl(NestedBatchIndex batch, TopLevelFieldMap.FieldDesc.Struct desc, int rowIndex) {
+        super(desc);
         this.batch = batch;
-        this.desc = desc;
         this.rowIndex = rowIndex;
         this.valueIndex = -1;
     }
@@ -56,179 +44,82 @@ final class PqStructImpl implements PqStruct {
 
     private PqStructImpl(NestedBatchIndex batch, TopLevelFieldMap.FieldDesc.Struct desc,
                              int rowIndex, int valueIndex) {
+        super(desc);
         this.batch = batch;
-        this.desc = desc;
         this.rowIndex = rowIndex;
         this.valueIndex = valueIndex;
     }
 
-    private int resolveValueIndex(int projCol) {
+    @Override
+    protected boolean isElementNull(int projCol, int idx) {
+        return batch.isElementNull(projCol, idx);
+    }
+
+    @Override
+    protected Object valueArrays(int projCol) {
+        return batch.valueArrays[projCol];
+    }
+
+    @Override
+    protected int resolveValueIndex(int projCol) {
         return valueIndex >= 0 ? valueIndex : batch.getValueIndex(projCol, rowIndex);
     }
 
-    // ==================== Primitive Types ====================
-
     @Override
-    public int getInt(String name) {
-        return readInt(lookupPrimitive(name));
+    protected PqStruct readStruct(TopLevelFieldMap.FieldDesc.Struct structDesc) {
+        if (isStructNull(structDesc)) {
+            return null;
+        }
+        if (valueIndex >= 0) {
+            return PqStructImpl.atPosition(batch, structDesc, valueIndex);
+        }
+        return new PqStructImpl(batch, structDesc, rowIndex);
     }
 
     @Override
-    public int getInt(int fieldIndex) {
-        return readInt(primitiveAt(fieldIndex));
+    protected boolean isFieldNull(TopLevelFieldMap.FieldDesc child) {
+        return switch (child) {
+            case TopLevelFieldMap.FieldDesc.Primitive p -> {
+                int idx = resolveValueIndex(p.projectedCol());
+                yield batch.isElementNull(p.projectedCol(), idx);
+            }
+            case TopLevelFieldMap.FieldDesc.Struct s -> isStructNull(s);
+            case TopLevelFieldMap.FieldDesc.ListOf l ->
+                    PqListImpl.isListNull(batch, l, rowIndex, valueIndex);
+            case TopLevelFieldMap.FieldDesc.MapOf m ->
+                    PqMapImpl.isMapNull(batch, m, rowIndex, valueIndex);
+            case TopLevelFieldMap.FieldDesc.Variant v -> isVariantNull(v);
+        };
     }
 
     @Override
-    public long getLong(String name) {
-        return readLong(lookupPrimitive(name));
-    }
-
-    @Override
-    public long getLong(int fieldIndex) {
-        return readLong(primitiveAt(fieldIndex));
-    }
-
-    @Override
-    public float getFloat(String name) {
-        return readFloat(lookupPrimitive(name));
-    }
-
-    @Override
-    public float getFloat(int fieldIndex) {
-        return readFloat(primitiveAt(fieldIndex));
-    }
-
-    @Override
-    public double getDouble(String name) {
-        return readDouble(lookupPrimitive(name));
-    }
-
-    @Override
-    public double getDouble(int fieldIndex) {
-        return readDouble(primitiveAt(fieldIndex));
-    }
-
-    @Override
-    public boolean getBoolean(String name) {
-        return readBoolean(lookupPrimitive(name));
-    }
-
-    @Override
-    public boolean getBoolean(int fieldIndex) {
-        return readBoolean(primitiveAt(fieldIndex));
-    }
-
-    // ==================== Object Types ====================
-
-    @Override
-    public String getString(String name) {
-        return readString(lookupPrimitive(name));
-    }
-
-    @Override
-    public String getString(int fieldIndex) {
-        return readString(primitiveAt(fieldIndex));
-    }
-
-    @Override
-    public byte[] getBinary(String name) {
-        return readBinary(lookupPrimitive(name));
-    }
-
-    @Override
-    public byte[] getBinary(int fieldIndex) {
-        return readBinary(primitiveAt(fieldIndex));
-    }
-
-    @Override
-    public LocalDate getDate(String name) {
-        return readLogicalType(lookupPrimitive(name), LocalDate.class);
-    }
-
-    @Override
-    public LocalDate getDate(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), LocalDate.class);
-    }
-
-    @Override
-    public LocalTime getTime(String name) {
-        return readLogicalType(lookupPrimitive(name), LocalTime.class);
-    }
-
-    @Override
-    public LocalTime getTime(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), LocalTime.class);
-    }
-
-    @Override
-    public Instant getTimestamp(String name) {
-        TopLevelFieldMap.FieldDesc.Primitive child = lookupPrimitive(name);
-        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), true);
-        return readLogicalType(child, Instant.class);
-    }
-
-    @Override
-    public Instant getTimestamp(int fieldIndex) {
-        TopLevelFieldMap.FieldDesc.Primitive child = primitiveAt(fieldIndex);
-        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), true);
-        return readLogicalType(child, Instant.class);
-    }
-
-    @Override
-    public LocalDateTime getLocalTimestamp(String name) {
-        TopLevelFieldMap.FieldDesc.Primitive child = lookupPrimitive(name);
-        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), false);
-        return readLogicalType(child, LocalDateTime.class);
-    }
-
-    @Override
-    public LocalDateTime getLocalTimestamp(int fieldIndex) {
-        TopLevelFieldMap.FieldDesc.Primitive child = primitiveAt(fieldIndex);
-        TimestampAccessorKind.require(child.name(), child.schema().logicalType(), false);
-        return readLogicalType(child, LocalDateTime.class);
-    }
-
-    @Override
-    public BigDecimal getDecimal(String name) {
-        return readLogicalType(lookupPrimitive(name), BigDecimal.class);
-    }
-
-    @Override
-    public BigDecimal getDecimal(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), BigDecimal.class);
-    }
-
-    @Override
-    public UUID getUuid(String name) {
-        return readLogicalType(lookupPrimitive(name), UUID.class);
-    }
-
-    @Override
-    public UUID getUuid(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), UUID.class);
-    }
-
-    @Override
-    public PqInterval getInterval(String name) {
-        return readLogicalType(lookupPrimitive(name), PqInterval.class);
-    }
-
-    @Override
-    public PqInterval getInterval(int fieldIndex) {
-        return readLogicalType(primitiveAt(fieldIndex), PqInterval.class);
-    }
-
-    // ==================== Nested Types ====================
-
-    @Override
-    public PqStruct getStruct(String name) {
-        return readStruct(structAt(lookupChild(name), name));
-    }
-
-    @Override
-    public PqStruct getStruct(int fieldIndex) {
-        TopLevelFieldMap.FieldDesc child = desc.children()[fieldIndex];
-        return readStruct(structAt(child, child.name()));
+    protected Object readValueImpl(TopLevelFieldMap.FieldDesc child, boolean decode) {
+        return switch (child) {
+            case TopLevelFieldMap.FieldDesc.Primitive p -> {
+                int idx = resolveValueIndex(p.projectedCol());
+                Object raw = readRaw(p, idx);
+                if (raw == null) yield null;
+                if (!decode) yield raw;
+                if (ValueConverter.isStringLeaf(p.schema().type(), p.schema().logicalType())) {
+                    yield ((BinaryBatchValues) valueArrays(p.projectedCol())).stringAt(idx);
+                }
+                yield ValueConverter.convertValue(raw, p.schema());
+            }
+            case TopLevelFieldMap.FieldDesc.Struct s -> {
+                if (isStructNull(s)) {
+                    yield null;
+                }
+                yield valueIndex >= 0
+                        ? PqStructImpl.atPosition(batch, s, valueIndex)
+                        : new PqStructImpl(batch, s, rowIndex);
+            }
+            case TopLevelFieldMap.FieldDesc.ListOf l ->
+                    PqListImpl.createGenericList(batch, l, rowIndex, valueIndex);
+            case TopLevelFieldMap.FieldDesc.MapOf m ->
+                    PqMapImpl.create(batch, m, rowIndex, valueIndex);
+            // Variants are self-describing; there's no raw-vs-decoded split.
+            case TopLevelFieldMap.FieldDesc.Variant v -> readVariant(v, v.schema().name());
+        };
     }
 
     @Override
@@ -264,147 +155,7 @@ final class PqStructImpl implements PqStruct {
         return readVariant(variantAt(child, child.name()), child.name());
     }
 
-    // ==================== Generic Fallback ====================
-
-    @Override
-    public Object getValue(String name) {
-        return readValueImpl(lookupChild(name), true);
-    }
-
-    @Override
-    public Object getValue(int fieldIndex) {
-        return readValueImpl(desc.children()[fieldIndex], true);
-    }
-
-    @Override
-    public Object getRawValue(String name) {
-        return readValueImpl(lookupChild(name), false);
-    }
-
-    @Override
-    public Object getRawValue(int fieldIndex) {
-        return readValueImpl(desc.children()[fieldIndex], false);
-    }
-
-    // ==================== Metadata ====================
-
-    @Override
-    public boolean isNull(String name) {
-        return isFieldNull(lookupChild(name));
-    }
-
-    @Override
-    public boolean isNull(int fieldIndex) {
-        return isFieldNull(desc.children()[fieldIndex]);
-    }
-
-    @Override
-    public int getFieldCount() {
-        return desc.children().length;
-    }
-
-    @Override
-    public String getFieldName(int index) {
-        return desc.children()[index].name();
-    }
-
     // ==================== Primitive Read Helpers ====================
-
-    private int readInt(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
-        }
-        return ((int[]) batch.valueArrays[projCol])[idx];
-    }
-
-    private long readLong(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
-        }
-        return ((long[]) batch.valueArrays[projCol])[idx];
-    }
-
-    private float readFloat(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
-        }
-        if (child.schema().type() == PhysicalType.FLOAT) {
-            return ((float[]) batch.valueArrays[projCol])[idx];
-        }
-        // FLOAT16 path: convertToFloat16 returns primitive float so the value
-        // flows through without per-row autoboxing. readLogicalType isn't reused
-        // here because its `LogicalTypeConverter.convert` step boxes via Object.
-        return LogicalTypeConverter.convertToFloat16(
-                ((BinaryBatchValues) batch.valueArrays[projCol]).byteArrayAt(idx),
-                child.schema().type());
-    }
-
-    private double readDouble(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
-        }
-        return ((double[]) batch.valueArrays[projCol])[idx];
-    }
-
-    private boolean readBoolean(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            throw new NullPointerException("Field '" + child.name() + "' is null");
-        }
-        return ((boolean[]) batch.valueArrays[projCol])[idx];
-    }
-
-    private String readString(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        return batch.getString(projCol, idx);
-    }
-
-    private byte[] readBinary(TopLevelFieldMap.FieldDesc.Primitive child) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        return batch.getBinary(projCol, idx);
-    }
-
-    private <T> T readLogicalType(TopLevelFieldMap.FieldDesc.Primitive child, Class<T> resultClass) {
-        int projCol = child.projectedCol();
-        int idx = resolveValueIndex(projCol);
-        if (batch.isElementNull(projCol, idx)) {
-            return null;
-        }
-        Object rawValue = batch.getValue(projCol, idx);
-        if (resultClass.isInstance(rawValue)) {
-            return resultClass.cast(rawValue);
-        }
-        SchemaNode.PrimitiveNode prim = child.schema();
-        Object converted = LogicalTypeConverter.convert(rawValue, prim.type(), prim.logicalType());
-        return resultClass.cast(converted);
-    }
-
-    private PqStruct readStruct(TopLevelFieldMap.FieldDesc.Struct structDesc) {
-        if (isStructNull(structDesc)) {
-            return null;
-        }
-        if (valueIndex >= 0) {
-            return PqStructImpl.atPosition(batch, structDesc, valueIndex);
-        }
-        return new PqStructImpl(batch, structDesc, rowIndex);
-    }
 
     private PqVariant readVariant(TopLevelFieldMap.FieldDesc.Variant variantDesc, String fieldName) {
         if (variantDesc.metadataCol() < 0) {
@@ -450,39 +201,6 @@ final class PqStructImpl implements PqStruct {
 
     // ==================== Child Resolution ====================
 
-    private TopLevelFieldMap.FieldDesc lookupChild(String name) {
-        TopLevelFieldMap.FieldDesc child = desc.getChild(name);
-        if (child == null) {
-            throw new IllegalArgumentException("Field not found: " + name);
-        }
-        return child;
-    }
-
-    private TopLevelFieldMap.FieldDesc.Primitive lookupPrimitive(String name) {
-        return primitiveOf(lookupChild(name), name);
-    }
-
-    private TopLevelFieldMap.FieldDesc.Primitive primitiveAt(int fieldIndex) {
-        TopLevelFieldMap.FieldDesc child = desc.children()[fieldIndex];
-        return primitiveOf(child, child.name());
-    }
-
-    private static TopLevelFieldMap.FieldDesc.Primitive primitiveOf(
-            TopLevelFieldMap.FieldDesc child, String fieldName) {
-        if (!(child instanceof TopLevelFieldMap.FieldDesc.Primitive prim)) {
-            throw new IllegalArgumentException("Field '" + fieldName + "' is not a primitive type");
-        }
-        return prim;
-    }
-
-    private static TopLevelFieldMap.FieldDesc.Struct structAt(
-            TopLevelFieldMap.FieldDesc child, String fieldName) {
-        if (!(child instanceof TopLevelFieldMap.FieldDesc.Struct structDesc)) {
-            throw new IllegalArgumentException("Field '" + fieldName + "' is not a struct");
-        }
-        return structDesc;
-    }
-
     private static TopLevelFieldMap.FieldDesc.ListOf listAt(
             TopLevelFieldMap.FieldDesc child, String fieldName) {
         if (!(child instanceof TopLevelFieldMap.FieldDesc.ListOf listDesc)) {
@@ -508,21 +226,6 @@ final class PqStructImpl implements PqStruct {
     }
 
     // ==================== Null Checks ====================
-
-    private boolean isFieldNull(TopLevelFieldMap.FieldDesc child) {
-        return switch (child) {
-            case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int idx = resolveValueIndex(p.projectedCol());
-                yield batch.isElementNull(p.projectedCol(), idx);
-            }
-            case TopLevelFieldMap.FieldDesc.Struct s -> isStructNull(s);
-            case TopLevelFieldMap.FieldDesc.ListOf l ->
-                    PqListImpl.isListNull(batch, l, rowIndex, valueIndex);
-            case TopLevelFieldMap.FieldDesc.MapOf m ->
-                    PqMapImpl.isMapNull(batch, m, rowIndex, valueIndex);
-            case TopLevelFieldMap.FieldDesc.Variant v -> isVariantNull(v);
-        };
-    }
 
     private boolean isVariantNull(TopLevelFieldMap.FieldDesc.Variant desc) {
         int col = desc.metadataCol() >= 0 ? desc.metadataCol() : desc.valueCol();
@@ -563,46 +266,5 @@ final class PqStructImpl implements PqStruct {
         }
         int defLevel = batch.getDefLevel(leafCol, pos);
         return defLevel < structDesc.schema().maxDefinitionLevel();
-    }
-
-    private Object readValueImpl(TopLevelFieldMap.FieldDesc child, boolean decode) {
-        return switch (child) {
-            case TopLevelFieldMap.FieldDesc.Primitive p -> {
-                int idx = resolveValueIndex(p.projectedCol());
-                if (batch.isElementNull(p.projectedCol(), idx)) {
-                    yield null;
-                }
-                yield decode
-                        ? batch.decodeLeaf(p.projectedCol(), idx, p.schema())
-                        : batch.getValue(p.projectedCol(), idx);
-            }
-            case TopLevelFieldMap.FieldDesc.Struct s -> {
-                if (isStructNull(s)) {
-                    yield null;
-                }
-                yield valueIndex >= 0
-                        ? PqStructImpl.atPosition(batch, s, valueIndex)
-                        : new PqStructImpl(batch, s, rowIndex);
-            }
-            case TopLevelFieldMap.FieldDesc.ListOf l ->
-                    PqListImpl.createGenericList(batch, l, rowIndex, valueIndex);
-            case TopLevelFieldMap.FieldDesc.MapOf m ->
-                    PqMapImpl.create(batch, m, rowIndex, valueIndex);
-            // Variants are self-describing; there's no raw-vs-decoded split.
-            case TopLevelFieldMap.FieldDesc.Variant v -> readVariant(v, v.schema().name());
-        };
-    }
-
-    @Override
-    public String toString() {
-        StringBuilder sb = new StringBuilder("PqStruct{");
-        int n = getFieldCount();
-        for (int i = 0; i < n; i++) {
-            if (i > 0) sb.append(", ");
-            sb.append(getFieldName(i)).append('=');
-            FlyweightFormatter.appendValue(sb, getValue(i));
-        }
-        sb.append('}');
-        return sb.toString();
     }
 }

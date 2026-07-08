@@ -62,6 +62,8 @@ public class BatchExchange<B> {
         /// When non-null, sized to `(batchCapacity + 63) >>> 6` and overwritten on every
         /// drain-side test call.
         public long[] matches;
+        ///  one def level per value position for this batch.
+        public int[] defLevels;
     }
 
     private final ArrayBlockingQueue<B> readyQueue;
