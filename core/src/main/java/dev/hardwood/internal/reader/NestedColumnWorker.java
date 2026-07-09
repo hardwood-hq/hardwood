@@ -393,10 +393,10 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             // positions, so its offsets equal the all-items offsets: build just the
             // lean offsets view (no per-layer validity or gather map) and pass the
             // dense values through. A batch with phantom positions builds the full
-            // view and gathers the real leaf values. The view is built eagerly on the
-            // drain — not deferred to a lazy ensureRealView() on the consumer — so a
-            // structural read gets its offsets without a consumer-side scan; a flat
-            // leaf read simply ignores them.
+            // view and gathers the real leaf values. Building the view eagerly on the
+            // drain keeps reconstruction off the serial consumer for both shapes: a
+            // structural read gets its offsets without a consumer-side scan, and a
+            // flat leaf read simply ignores them.
             boolean allPresent = batch.fixedListK > 0 || allDefsMax(batch.valueCount);
             if (allPresent) {
                 batch.realValues = batch.values;

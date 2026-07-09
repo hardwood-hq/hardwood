@@ -153,9 +153,9 @@ The lean view is built unconditionally on the drain, so it serves both
 - a **list-reconstructing** read (`getLayerOffsets` / `getLayerValidity`) reads the
   drain-built boundaries and the all-present validities.
 
-Deferring the view to a lazy consumer-side build would put a structural read's
-offset scan back on the serial consumer; building the lean view eagerly avoids
-that while costing a flat leaf read only the cheap boundary scan it discards.
+Building the lean view eagerly on the drain keeps a structural read's offset scan
+off the serial consumer, while costing a flat leaf read only the cheap boundary
+scan it discards.
 
 ### Consumer
 
