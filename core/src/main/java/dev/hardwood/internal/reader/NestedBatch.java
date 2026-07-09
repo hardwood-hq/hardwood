@@ -61,8 +61,4 @@ public final class NestedBatch {
     /// `null` when no gather is needed (`realView.realToRawLeaf() == null`: the raw
     /// [#values] already pass through) or on paths that compact lazily.
     public Object realValues;
-
-    /// True when the batch has no null/empty parents: the dense value stream is
-    /// already the real-leaf stream and the RealView structure can be deferred.
-    public boolean allPresent;
 }

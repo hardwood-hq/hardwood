@@ -21,7 +21,6 @@ import dev.hardwood.schema.ColumnSchema;
 /// levels into [NestedBatch] holders.
 public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
 
-    private final int maxRepetitionLevel;
     private final NestedLevelComputer.Layers layers;
 
     /// Which derived structures the drain computes per batch, selected by the
@@ -99,7 +98,6 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                               boolean fixedListFastPathEnabled) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
               decodeExecutor, maxRows);
-        this.maxRepetitionLevel = column.maxRepetitionLevel();
         this.layers = layers;
         this.indexMode = indexMode;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
@@ -400,7 +398,6 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             // structural read gets its offsets without a consumer-side scan; a flat
             // leaf read simply ignores them.
             boolean allPresent = batch.fixedListK > 0 || allDefsMax(batch.valueCount);
-            batch.allPresent = allPresent;
             if (allPresent) {
                 batch.realValues = batch.values;
                 // With no phantom positions the real-items offsets equal the all-items
