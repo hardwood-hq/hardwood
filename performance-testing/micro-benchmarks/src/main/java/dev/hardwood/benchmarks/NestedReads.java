@@ -12,11 +12,11 @@ import java.nio.file.Path;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
+import dev.hardwood.Validity;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
-import dev.hardwood.reader.Validity;
 import dev.hardwood.row.PqDoubleList;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqLongList;
