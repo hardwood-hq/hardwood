@@ -514,6 +514,11 @@ public class ParquetFileReader implements AutoCloseable {
             iterator.setFirstFile(schema, rowGroups);
             ProjectedSchema projected = iterator.initialize(projection, null);
             rowGroupIterators.add(iterator);
+            // Every row group pruned (e.g. a byte-range row-group filter dropped
+            // them all): nothing to decode.
+            if (iterator.getWorkItems().isEmpty()) {
+                return ColumnReaders.noRows(schema, projected);
+            }
             return new ColumnReaders(context, fixedListFastPathEnabled, iterator, schema, projected,
                     resolveBatchSize(batchSize, projected));
         }
@@ -528,6 +533,14 @@ public class ParquetFileReader implements AutoCloseable {
         ProjectedSchema augProjected = iterator.initialize(augmented, resolved);
         ProjectedSchema payloadProjected = ProjectedSchema.create(schema, projection);
         rowGroupIterators.add(iterator);
+        // Statistics/bloom pruning dropped every row group — no record can match.
+        // Skip building the per-column readers (worker threads + ~batch-sized
+        // buffers) and the selection engine entirely; expose exhausted no-op
+        // readers over the payload columns. The iterator is registered above and
+        // closed by close(), so its file handles/prefetch futures still release.
+        if (iterator.getWorkItems().isEmpty()) {
+            return ColumnReaders.noRows(schema, payloadProjected);
+        }
         // Size against the augmented projection — the predicate columns allocate
         // per-batch arrays too, so they count toward the byte budget.
         return ColumnReaders.filtered(
