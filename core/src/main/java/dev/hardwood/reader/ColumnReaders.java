@@ -131,6 +131,27 @@ public class ColumnReaders implements AutoCloseable {
         return new ColumnReaders(readersByName, payloadReaders, coordinator);
     }
 
+    /// Builds a [ColumnReaders] for the case where row-group pruning
+    /// (statistics/bloom) dropped every row group, so no record can match.
+    /// Exposes the `payloadProjected` columns as immediately-exhausted no-op
+    /// readers — no worker threads, no batch buffers, no [SelectionEngine] or
+    /// [FilterCoordinator]. The shared [RowGroupIterator] is owned and closed by
+    /// the [ParquetFileReader]; these readers hold no reference to it. Used by
+    /// [ParquetFileReader#buildColumnReaders] to skip the whole per-column decode
+    /// setup when there is nothing to decode.
+    static ColumnReaders noRows(FileSchema schema, ProjectedSchema payloadProjected) {
+        int payloadCount = payloadProjected.getProjectedColumnCount();
+        Map<String, ColumnReader> readersByName = new LinkedHashMap<>(payloadCount);
+        ColumnReader[] payloadReaders = new ColumnReader[payloadCount];
+        for (int p = 0; p < payloadCount; p++) {
+            ColumnSchema columnSchema = schema.getColumn(payloadProjected.toOriginalIndex(p));
+            ColumnReader reader = ColumnReader.exhausted(schema, columnSchema);
+            payloadReaders[p] = reader;
+            readersByName.put(columnSchema.fieldPath().toString(), reader);
+        }
+        return new ColumnReaders(readersByName, payloadReaders, null);
+    }
+
     /// Get the number of projected columns.
     public int getColumnCount() {
         return readersByIndex.length;

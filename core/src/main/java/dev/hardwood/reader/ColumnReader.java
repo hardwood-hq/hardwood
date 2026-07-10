@@ -140,6 +140,20 @@ public class ColumnReader implements AutoCloseable {
         return new ColumnReader(column, true, layers, nestedBuffer, columnWorker, rowGroupIterator);
     }
 
+    /// A reader that yields no batches, for when row-group pruning has dropped
+    /// every row group so nothing can match. Allocates no batch buffer and
+    /// starts no worker thread — [#nextBatch()] reports exhausted immediately.
+    static ColumnReader exhausted(FileSchema schema, ColumnSchema column) {
+        NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
+                schema.getRootNode(), column.columnIndex());
+        boolean nested = layers.count() > 0 || column.maxRepetitionLevel() > 0;
+        ColumnReader reader = nested
+                ? forNested(column, layers, null, null, null)
+                : forFlat(column, null, null, null);
+        reader.exhausted = true;
+        return reader;
+    }
+
     // ==================== Batch Iteration ====================
 
     /// Advance to the next batch.
