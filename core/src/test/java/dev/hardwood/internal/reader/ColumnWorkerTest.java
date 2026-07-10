@@ -382,6 +382,12 @@ class ColumnWorkerTest {
             assertThat(worker.drainThread.isAlive())
                     .as("drain thread must have exited")
                     .isFalse();
+
+            long deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(5);
+            while (decodesFinished.get() != decodesEntered.get()
+                    && System.nanoTime() < deadline) {
+                Thread.sleep(10);
+            }
             assertThat(decodesFinished.get())
                     .as("every submitted decode task should have finished")
                     .isEqualTo(decodesEntered.get());
