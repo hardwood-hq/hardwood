@@ -28,12 +28,15 @@ public final class RowGroupBuffer {
 
     /// @param schema the file schema
     /// @param pageValues maximum number of level triples per data page
-    public RowGroupBuffer(FileSchema schema, int pageValues) {
+    /// @param enableDictionary whether columns are dictionary-encoded (with `PLAIN` fallback)
+    /// @param dictionaryLimitBytes the dictionary size past which a chunk falls back to `PLAIN`
+    public RowGroupBuffer(FileSchema schema, int pageValues, boolean enableDictionary, int dictionaryLimitBytes) {
         this.schema = schema;
         this.columns = new ColumnChunkBuffer[schema.getColumnCount()];
         for (int c = 0; c < columns.length; c++) {
             columns[c] = new ColumnChunkBuffer(pageValues,
-                    schema.getColumn(c).maxDefinitionLevel(), schema.getColumn(c).maxRepetitionLevel());
+                    schema.getColumn(c).maxDefinitionLevel(), schema.getColumn(c).maxRepetitionLevel(),
+                    enableDictionary, dictionaryLimitBytes);
         }
     }
 
@@ -65,8 +68,8 @@ public final class RowGroupBuffer {
         List<ColumnChunk> chunks = new ArrayList<>(columns.length);
         long totalByteSize = 0;
         for (int c = 0; c < columns.length; c++) {
-            long dataPageOffset = out.position();
-            ColumnMetaData meta = columns[c].flushTo(out, schema.getColumn(c), dataPageOffset);
+            long chunkStartOffset = out.position();
+            ColumnMetaData meta = columns[c].flushTo(out, schema.getColumn(c), chunkStartOffset);
             chunks.add(new ColumnChunk(meta, null, null, null, null));
             totalByteSize += meta.totalUncompressedSize();
         }

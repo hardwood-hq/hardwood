@@ -17,6 +17,9 @@ public class PageHeaderWriter {
     /// Thrift `PageType.DATA_PAGE`.
     private static final int PAGE_TYPE_DATA_PAGE = 0;
 
+    /// Thrift `PageType.DICTIONARY_PAGE`.
+    private static final int PAGE_TYPE_DICTIONARY_PAGE = 2;
+
     /// Serialize a DataPage V1 page header.
     ///
     /// @param writer the destination
@@ -51,6 +54,60 @@ public class PageHeaderWriter {
         writeDataPageHeader(writer, numValues, valuesEncoding);
 
         writer.writeFieldStop();
+    }
+
+    /// Serialize a dictionary page header.
+    ///
+    /// @param writer the destination
+    /// @param numValues number of distinct values in the dictionary
+    /// @param uncompressedSize uncompressed size of the dictionary body
+    /// @param compressedSize compressed size of the dictionary body; equals the
+    ///        uncompressed size when the page is stored uncompressed
+    /// @param crc CRC-32 of the page body as stored (the bytes the reader validates)
+    /// @param valuesEncoding the encoding of the dictionary values (`PLAIN`)
+    public static void writeDictionaryPageV1(ThriftCompactWriter writer, int numValues,
+                                             int uncompressedSize, int compressedSize, int crc, Encoding valuesEncoding) {
+        writer.pushFieldIdContext();
+
+        // 1: type
+        writer.writeFieldBegin(1, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(PAGE_TYPE_DICTIONARY_PAGE);
+
+        // 2: uncompressed_page_size
+        writer.writeFieldBegin(2, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(uncompressedSize);
+
+        // 3: compressed_page_size
+        writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(compressedSize);
+
+        // 4: crc (CRC-32 of the page body as stored on disk)
+        writer.writeFieldBegin(4, ThriftCompactConstants.FieldType.I32);
+        writer.writeI32(crc);
+
+        // 7: dictionary_page_header
+        writer.writeFieldBegin(7, ThriftCompactConstants.FieldType.STRUCT);
+        writeDictionaryPageHeader(writer, numValues, valuesEncoding);
+
+        writer.writeFieldStop();
+    }
+
+    private static void writeDictionaryPageHeader(ThriftCompactWriter writer, int numValues, Encoding valuesEncoding) {
+        short saved = writer.pushFieldIdContext();
+        try {
+            // 1: num_values
+            writer.writeFieldBegin(1, ThriftCompactConstants.FieldType.I32);
+            writer.writeI32(numValues);
+
+            // 2: encoding
+            writer.writeFieldBegin(2, ThriftCompactConstants.FieldType.I32);
+            writer.writeI32(ThriftEnumLookup.thriftValue(valuesEncoding));
+
+            writer.writeFieldStop();
+        }
+        finally {
+            writer.popFieldIdContext(saved);
+        }
     }
 
     private static void writeDataPageHeader(ThriftCompactWriter writer, int numValues, Encoding valuesEncoding) {

@@ -29,6 +29,7 @@ import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
@@ -505,6 +506,185 @@ class WriterRoundTripTest {
             crc.update(bytes, bodyStart, header.compressedPageSize());
             assertThat(header.crc().intValue()).isEqualTo((int) crc.getValue());
         }
+    }
+
+    @Test
+    void dictionaryEncodesLowCardinalityColumn() throws Exception {
+        // 1000 rows drawn from four distinct values: a small dictionary, narrow indices.
+        int n = 1_000;
+        int[] values = new int[n];
+        int[] palette = { 7, 42, -3, 1_000_000 };
+        for (int i = 0; i < n; i++) {
+            values[i] = palette[i % palette.length];
+        }
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            ColumnMetaData meta = columnMeta(reader, 0);
+            assertThat(meta.dictionaryPageOffset()).as("dictionary page written").isNotNull();
+            assertThat(meta.encodings()).contains(Encoding.RLE_DICTIONARY, Encoding.PLAIN);
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    @Test
+    void dictionaryFallsBackToPlainOnOverflow() throws Exception {
+        // 1000 distinct values with an 8-byte dictionary limit: the dictionary fills after two
+        // entries, so the chunk seals a dictionary prefix and finishes as PLAIN.
+        int n = 1_000;
+        int[] values = new int[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = i * 31 + 5;
+        }
+
+        WriterConfig config = WriterConfig.builder().dictionaryPageLimitBytes(8).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            ColumnMetaData meta = columnMeta(reader, 0);
+            // A dictionary page was written (the pre-fallback prefix) and PLAIN pages followed.
+            assertThat(meta.dictionaryPageOffset()).isNotNull();
+            assertThat(meta.encodings()).contains(Encoding.RLE_DICTIONARY, Encoding.PLAIN);
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    @Test
+    void dictionaryEncodesSingleDistinctValue() throws Exception {
+        // Every row the same value: a one-entry dictionary and a zero-bit index stream.
+        int[] values = new int[500];
+        Arrays.fill(values, -99);
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(columnMeta(reader, 0).dictionaryPageOffset()).isNotNull();
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    @Test
+    void dictionaryEncodesNullableColumn() throws Exception {
+        // Low cardinality with interior nulls: only present rows carry an index.
+        int[] values = { 5, 0, 5, 0, 9, 0, 5, 9 };
+        boolean[] nulls = { false, true, false, true, false, true, false, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(columnMeta(reader, 0).dictionaryPageOffset()).isNotNull();
+            assertThat(readNullable(reader, 0)).containsExactly(5, null, 5, null, 9, null, 5, 9);
+        }
+    }
+
+    @Test
+    void allNullColumnWritesNoDictionaryPage() throws Exception {
+        // No present values, so the dictionary stays empty and no dictionary page is written.
+        boolean[] nulls = { true, true, true, true };
+        int[] values = new int[nulls.length];
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            ColumnMetaData meta = columnMeta(reader, 0);
+            assertThat(meta.dictionaryPageOffset()).isNull();
+            assertThat(meta.encodings()).doesNotContain(Encoding.RLE_DICTIONARY);
+            assertThat(readNullable(reader, 0)).containsExactly(null, null, null, null);
+        }
+    }
+
+    @Test
+    void disablingDictionaryWritesPlainPages() throws Exception {
+        // With dictionary disabled, no dictionary page and PLAIN data pages — the pre-stage-9
+        // layout — even for a column the dictionary would otherwise encode.
+        int[] values = new int[200];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i % 3;
+        }
+
+        WriterConfig config = WriterConfig.builder().enableDictionary(false).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            ColumnMetaData meta = columnMeta(reader, 0);
+            assertThat(meta.dictionaryPageOffset()).isNull();
+            assertThat(meta.encodings()).containsExactly(Encoding.PLAIN);
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    @Test
+    void dictionaryEncodesListColumn() throws Exception {
+        // A LIST<INT32> of low cardinality: the index value section sits behind the rep/def
+        // level streams, proving dictionary encoding composes with repetition.
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] offsets = { 0, 2, 2, 2, 5 };
+        Validity listNulls = Validity.ofNulls(new boolean[] { false, false, true, false });
+        int[] elements = { 8, 8, 8, 0, 3 };
+        boolean[] elementNulls = { false, false, false, true, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .list("v", offsets, listNulls)
+                    .ints("v.list.element", elements, elementNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int leaf = reader.getFileSchema().getColumn("v.list.element").columnIndex();
+            assertThat(columnMeta(reader, leaf).dictionaryPageOffset()).isNotNull();
+            assertThat(readListOfInts(reader, leaf))
+                    .containsExactly(List.of(8, 8), List.of(), null, Arrays.asList(8, null, 3));
+        }
+    }
+
+    @Test
+    void dictionaryValuesSurvivePageAndRowGroupBoundaries() throws Exception {
+        // Low cardinality over many rows with tiny page and row-group targets, so dictionary
+        // index pages straddle both boundaries and each row group builds its own dictionary.
+        int n = 4_000;
+        int[] values = new int[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = (i % 5) * 100;
+        }
+
+        WriterConfig config = WriterConfig.builder().pageTargetBytes(64).rowGroupTargetBytes(512).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(reader.getFileMetaData().rowGroups().size()).isGreaterThan(1);
+            assertThat(columnMeta(reader, 0).dictionaryPageOffset()).isNotNull();
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    private static ColumnMetaData columnMeta(ParquetFileReader reader, int columnIndex) {
+        return reader.getFileMetaData().rowGroups().get(0).columns().get(columnIndex).metaData();
     }
 
     /// Walks the column chunk's contiguous data pages from `startOffset`, returning

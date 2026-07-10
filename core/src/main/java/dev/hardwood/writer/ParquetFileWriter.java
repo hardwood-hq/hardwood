@@ -35,11 +35,13 @@ import dev.hardwood.schema.FileSchema;
 /// This increment writes `INT32` columns — flat `REQUIRED` / `OPTIONAL`, nested inside
 /// `REQUIRED` / `OPTIONAL` `struct` groups, and inside `LIST`s and `MAP`s (including lists
 /// of lists, lists of structs, and maps of any in-scope value). Data is supplied as
-/// [ColumnBatch] slices; the writer packs each column into size-bounded, uncompressed
-/// `PLAIN` data pages — a levelled column's pages carrying an RLE definition-level stream
-/// ahead of the non-null values — and flushes a row group once its buffered data reaches
-/// the configured target, so peak memory is bounded regardless of how much is written.
-/// The row groups and footer are finalized on [#close()].
+/// [ColumnBatch] slices; the writer packs each column into size-bounded, uncompressed data
+/// pages — a levelled column's pages carrying an RLE definition-level stream ahead of the
+/// values — and flushes a row group once its buffered data reaches the configured target, so
+/// peak memory is bounded regardless of how much is written. Columns are dictionary-encoded
+/// by default (a dictionary page plus `RLE_DICTIONARY` index pages), falling back to `PLAIN`
+/// when the dictionary grows past the configured limit; both are configurable through
+/// [WriterConfig]. The row groups and footer are finalized on [#close()].
 ///
 /// The file is produced front to back and is valid only after `close()` returns.
 public final class ParquetFileWriter implements Closeable {
@@ -66,7 +68,11 @@ public final class ParquetFileWriter implements Closeable {
         this.pageValues = pageRowCapacity(config.pageTargetBytes(), schema);
         this.maxRowsPerGroup = maxRowsPerGroup(config.rowGroupTargetBytes(), schema);
         this.shredder = new RecordShredder(schema, pageValues);
-        this.current = new RowGroupBuffer(schema, pageValues);
+        this.current = newRowGroupBuffer();
+    }
+
+    private RowGroupBuffer newRowGroupBuffer() {
+        return new RowGroupBuffer(schema, pageValues, config.enableDictionary(), config.dictionaryPageLimitBytes());
     }
 
     /// Opens a writer with the default [WriterConfig].
@@ -165,7 +171,7 @@ public final class ParquetFileWriter implements Closeable {
         RowGroup rowGroup = current.flushTo(out);
         rowGroups.add(rowGroup);
         numRows += rowGroup.numRows();
-        current = new RowGroupBuffer(schema, pageValues);
+        current = newRowGroupBuffer();
     }
 
     private void writeFooter() throws IOException {

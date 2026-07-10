@@ -28,14 +28,22 @@ public final class WriterConfig {
     /// Default `created_by` identifier written into the file footer.
     public static final String DEFAULT_CREATED_BY = "hardwood";
 
+    /// Default dictionary page-size limit: 1 MiB of dictionary values before a column
+    /// chunk falls back to `PLAIN`.
+    public static final int DEFAULT_DICTIONARY_PAGE_LIMIT_BYTES = 1 << 20;
+
     private final int pageTargetBytes;
     private final long rowGroupTargetBytes;
     private final String createdBy;
+    private final boolean enableDictionary;
+    private final int dictionaryPageLimitBytes;
 
     private WriterConfig(Builder builder) {
         this.pageTargetBytes = builder.pageTargetBytes;
         this.rowGroupTargetBytes = builder.rowGroupTargetBytes;
         this.createdBy = builder.createdBy;
+        this.enableDictionary = builder.enableDictionary;
+        this.dictionaryPageLimitBytes = builder.dictionaryPageLimitBytes;
     }
 
     /// The default configuration.
@@ -63,12 +71,24 @@ public final class WriterConfig {
         return createdBy;
     }
 
+    /// Whether eligible columns are dictionary-encoded (with `PLAIN` fallback on overflow).
+    public boolean enableDictionary() {
+        return enableDictionary;
+    }
+
+    /// The dictionary size in bytes at which a column chunk falls back to `PLAIN`.
+    public int dictionaryPageLimitBytes() {
+        return dictionaryPageLimitBytes;
+    }
+
     /// Builder for [WriterConfig].
     public static final class Builder {
 
         private int pageTargetBytes = DEFAULT_PAGE_TARGET_BYTES;
         private long rowGroupTargetBytes = DEFAULT_ROW_GROUP_TARGET_BYTES;
         private String createdBy = DEFAULT_CREATED_BY;
+        private boolean enableDictionary = true;
+        private int dictionaryPageLimitBytes = DEFAULT_DICTIONARY_PAGE_LIMIT_BYTES;
 
         private Builder() {
         }
@@ -99,6 +119,24 @@ public final class WriterConfig {
                 throw new IllegalArgumentException("createdBy must not be null");
             }
             this.createdBy = createdBy;
+            return this;
+        }
+
+        /// Enables or disables dictionary encoding. When disabled, every column chunk is
+        /// written as `PLAIN` with no dictionary page.
+        public Builder enableDictionary(boolean enableDictionary) {
+            this.enableDictionary = enableDictionary;
+            return this;
+        }
+
+        /// Sets the dictionary size in bytes past which a column chunk falls back to `PLAIN`;
+        /// must be at least one `INT32` (4 bytes) so at least one value always fits.
+        public Builder dictionaryPageLimitBytes(int dictionaryPageLimitBytes) {
+            if (dictionaryPageLimitBytes < Integer.BYTES) {
+                throw new IllegalArgumentException("dictionaryPageLimitBytes must be at least "
+                        + Integer.BYTES + " but was " + dictionaryPageLimitBytes);
+            }
+            this.dictionaryPageLimitBytes = dictionaryPageLimitBytes;
             return this;
         }
 

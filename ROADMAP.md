@@ -62,11 +62,11 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Bit-packed boolean encoding/decoding
 
 ### 2.2 Dictionary Encoding (RLE_DICTIONARY)
-- [ ] Implement `DictionaryEncoder<T>` (valueToIndex map, indexToValue list)
+- [x] Implement `DictionaryEncoder` (valueToIndex map, indexToValue list; INT32, other types with stage 12 breadth)
 - [x] Implement `DictionaryDecoder<T>`
-- [ ] Dictionary page serialization
+- [x] Dictionary page serialization
 - [x] Dictionary page deserialization
-- [ ] Fallback to plain encoding when dictionary grows too large
+- [x] Fallback to plain encoding when dictionary grows too large
 
 ### 2.3 RLE/Bit-Packing Hybrid
 - [x] Implement `RleBitPackingHybridEncoder`
@@ -189,7 +189,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] Record buffering
 - [x] Row group size tracking
 - [x] Automatic row group flushing
-- [ ] Dictionary page writing
+- [x] Dictionary page writing
 - [x] Data page encoding and writing
 - [ ] Page compression
 - [x] Footer writing

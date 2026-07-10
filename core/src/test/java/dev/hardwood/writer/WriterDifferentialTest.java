@@ -270,6 +270,127 @@ class WriterDifferentialTest {
     }
 
     @Test
+    void duckDbReadsDictionaryEncodedInts(@TempDir Path dir) throws Exception {
+        // Low cardinality: a small dictionary and narrow RLE_DICTIONARY indices that DuckDB
+        // must resolve through the dictionary page.
+        int n = 500;
+        int[] palette = { 11, -7, 11, 100_000, -7 };
+        int[] v = new int[n];
+        int[] r = new int[n];
+        for (int i = 0; i < n; i++) {
+            v[i] = palette[i % palette.length];
+            r[i] = i;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+
+        Path file = dir.resolve("dict.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch.ints(0, r).ints(1, v));
+        }
+
+        List<Integer> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                actual.add(rs.getInt("v"));
+            }
+        }
+
+        List<Integer> expected = new ArrayList<>(n);
+        for (int value : v) {
+            expected.add(value);
+        }
+        assertThat(actual).containsExactlyElementsOf(expected);
+    }
+
+    @Test
+    void duckDbReadsDictionaryFallbackColumn(@TempDir Path dir) throws Exception {
+        // High cardinality with a tiny dictionary limit forces a mixed chunk: a dictionary
+        // prefix then PLAIN pages. DuckDB must read both page encodings in one column chunk.
+        int n = 5_000;
+        int[] v = new int[n];
+        for (int i = 0; i < n; i++) {
+            v[i] = i * 7 - 3;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+        WriterConfig config = WriterConfig.builder().dictionaryPageLimitBytes(64).build();
+        Path file = dir.resolve("fallback.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
+            writer.writeBatch(batch -> batch.ints(0, v));
+        }
+
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT count(*) AS n, sum(v) AS s, min(v) AS mn, max(v) AS mx FROM read_parquet('"
+                                + file.toAbsolutePath() + "')")) {
+            rs.next();
+            assertThat(rs.getLong("n")).isEqualTo(n);
+            long sum = 0;
+            for (int value : v) {
+                sum += value;
+            }
+            assertThat(rs.getLong("s")).isEqualTo(sum);
+            assertThat(rs.getInt("mn")).isEqualTo(-3);
+            assertThat(rs.getInt("mx")).isEqualTo((n - 1) * 7 - 3);
+        }
+    }
+
+    @Test
+    void duckDbReadsDictionaryEncodedList(@TempDir Path dir) throws Exception {
+        // A dictionary-encoded LIST<INT32> element column: the index section behind the rep/def
+        // levels must resolve through the dictionary for DuckDB to reassemble the lists.
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .list("v", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] r = { 0, 1, 2, 3 };
+        int[] offsets = { 0, 2, 2, 2, 5 };
+        Validity listNulls = Validity.ofNulls(new boolean[] { false, false, true, false });
+        int[] elements = { 4, 4, 4, 0, 9 };
+        boolean[] elementNulls = { false, false, false, true, false };
+
+        Path file = dir.resolve("dictlist.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch
+                    .ints("r", r)
+                    .list("v", offsets, listNulls)
+                    .ints("v.list.element", elements, elementNulls));
+        }
+
+        List<List<Integer>> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                Array array = rs.getArray("v");
+                if (rs.wasNull()) {
+                    actual.add(null);
+                    continue;
+                }
+                List<Integer> list = new ArrayList<>();
+                for (Object element : (Object[]) array.getArray()) {
+                    list.add(element == null ? null : ((Number) element).intValue());
+                }
+                actual.add(list);
+            }
+        }
+
+        assertThat(actual).containsExactly(List.of(4, 4), List.of(), null, Arrays.asList(4, null, 9));
+    }
+
+    @Test
     void duckDbReadsMapOfIntToInt(@TempDir Path dir) throws Exception {
         // required int32 r; optional map<int32, optional int32> props. An absent map, an
         // empty map, and a null value must all survive to DuckDB distinctly.
