@@ -110,7 +110,7 @@
         <configuration>
           <archive>
             <manifestEntries combine.children="append">
-              <Automatic-Module-Name>dev.hardwood.aws</Automatic-Module-Name>
+              <Automatic-Module-Name>dev.hardwood.awsauth</Automatic-Module-Name>
             </manifestEntries>
           </archive>
         </configuration>
