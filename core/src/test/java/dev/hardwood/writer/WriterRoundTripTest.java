@@ -789,6 +789,146 @@ class WriterRoundTripTest {
     }
 
     @Test
+    void writesAndReadsBackRequiredList() throws Exception {
+        // required list<required int32> — the list itself is never null, so there is no outer
+        // optional level; def levels only distinguish an empty list from a present element.
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+
+        int[] offsets = { 0, 2, 2, 3 }; // record 0: [1,2]; record 1: []; record 2: [3]
+        int[] elements = { 1, 2, 3 };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch.list("v", offsets).ints("v.list.element", elements));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int leaf = reader.getFileSchema().getColumn("v.list.element").columnIndex();
+            assertThat(readListOfInts(reader, leaf)).containsExactly(List.of(1, 2), List.of(), List.of(3));
+        }
+    }
+
+    @Test
+    void writesAndReadsBackListOfStructWithNullStructElement() throws Exception {
+        // optional list< optional struct { required int32 x } >, one record whose middle
+        // element is a null struct — distinct from an absent list and from a null leaf.
+        FileSchema schema = FileSchema.builder("schema")
+                .list("people", RepetitionType.OPTIONAL, el -> el.struct(RepetitionType.OPTIONAL, s -> s
+                        .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)))
+                .build();
+
+        int[] offsets = { 0, 3 };
+        Validity structNulls = Validity.ofNulls(new boolean[] { false, true, false });
+        int[] x = { 1, 0, 3 };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .list("people", offsets)
+                    .struct("people.list.element", structNulls)
+                    .ints("people.list.element.x", x));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                ColumnReader column = reader.columnReader(
+                        reader.getFileSchema().getColumn("people.list.element.x").columnIndex())) {
+            assertThat(column.nextBatch()).isTrue();
+            assertThat(column.getRecordCount()).isEqualTo(1);
+            // Three struct-element slots, the middle one an absent struct; the leaf is not
+            // compacted, so its slot survives and reads back null with the two present values.
+            assertThat(column.getLayerOffsets(0)).containsExactly(0, 3);
+            assertThat(column.getValueCount()).isEqualTo(3);
+            Validity structValidity = column.getLayerValidity(1);
+            assertThat(structValidity.isNull(0)).isFalse();
+            assertThat(structValidity.isNull(1)).isTrue();
+            assertThat(structValidity.isNull(2)).isFalse();
+            Validity leafValidity = column.getLeafValidity();
+            assertThat(leafValidity.isNull(1)).isTrue();
+            int[] xs = column.getInts();
+            assertThat(xs[0]).isEqualTo(1);
+            assertThat(xs[2]).isEqualTo(3);
+        }
+    }
+
+    @Test
+    void rejectsNullableStructEnclosingList() throws Exception {
+        // A nullable struct directly enclosing a repeated field is not yet supported and must
+        // be rejected eagerly rather than shredded into an unverified file.
+        FileSchema schema = FileSchema.builder("schema")
+                .struct("s", RepetitionType.OPTIONAL, sb -> sb
+                        .list("phones", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL)))
+                .build();
+
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch
+                    .list("s.phones", new int[] { 0, 1 })
+                    .ints("s.phones.list.element", new int[] { 1 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsNonMonotonicListOffsets() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch
+                    .list("v", new int[] { 0, 2, 1 })
+                    .ints("v.list.element", new int[] { 7 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsListOffsetsDisagreeingWithElementCount() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+            // offsets claim 2 elements, but only 3 are supplied.
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch
+                    .list("v", new int[] { 0, 2 })
+                    .ints("v.list.element", new int[] { 1, 2, 3 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsNullListWithNonEmptyOffsets() throws Exception {
+        // A null list is absent, so its offset delta must be zero. A non-zero span
+        // contradicts the null bit and would silently drop the stray element.
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+            // record 0 is null yet its offsets span one element (99); record 1 is [5].
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch
+                    .list("v", new int[] { 0, 1, 2 }, Validity.ofNulls(new boolean[] { true, false }))
+                    .ints("v.list.element", new int[] { 99, 5 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsColumnsImplyingDifferentRecordCounts() throws Exception {
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+            // r has 3 records but v's offsets describe only 2.
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch
+                    .ints("r", new int[] { 0, 1, 2 })
+                    .list("v", new int[] { 0, 1, 2 })
+                    .ints("v.list.element", new int[] { 5, 6 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
     void singleLargeListRecordSpansManyPages() throws Exception {
         // One record whose list is far larger than a page: streaming must seal pages part-way
         // through the record, and the reader must reassemble it across pages via rep levels.

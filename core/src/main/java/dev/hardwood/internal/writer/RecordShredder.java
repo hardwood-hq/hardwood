@@ -53,6 +53,7 @@ public final class RecordShredder {
     private final boolean[] leafOptional;
     private final int[] maxDef;
     private final int[] maxRep;
+    private final String[] columnNames;
     private final ValueWindow[] windows;
 
     // Per-batch binding.
@@ -71,12 +72,14 @@ public final class RecordShredder {
         this.leafOptional = new boolean[columnCount];
         this.maxDef = new int[columnCount];
         this.maxRep = new int[columnCount];
+        this.columnNames = new String[columnCount];
         this.windows = new ValueWindow[columnCount];
         walk(schema.getRootNode(), new ArrayList<>(), new ArrayList<>(), false);
         for (int c = 0; c < columnCount; c++) {
             ColumnSchema column = schema.getColumn(c);
             maxDef[c] = column.maxDefinitionLevel();
             maxRep[c] = column.maxRepetitionLevel();
+            columnNames[c] = column.fieldPath().toString();
             windows[c] = new ValueWindow(valueWindowCapacity);
         }
     }
@@ -130,8 +133,8 @@ public final class RecordShredder {
         throw new IllegalStateException("Unsupported repeated group at " + path + " (not LIST/MAP annotated)");
     }
 
-    /// Binds the shredder to one batch's inputs and derives the record count. Each column's
-    /// value window is reset to the batch's source.
+    /// Binds the shredder to one batch's inputs, validates them, and derives the record
+    /// count. Each column's value window is reset to the batch's source.
     public void bind(IntColumnSource[] sources, Validity[] leafValidities,
                      Map<String, Validity> structValidities, Map<String, Validity> listValidities,
                      Map<String, int[]> listOffsets) {
@@ -140,7 +143,7 @@ public final class RecordShredder {
         this.structValidities = structValidities;
         this.listValidities = listValidities;
         this.listOffsets = listOffsets;
-        this.recordCount = deriveRecordCount();
+        this.recordCount = validateAndDeriveRecordCount();
         for (int c = 0; c < windows.length; c++) {
             windows[c].reset(sources[c]);
         }
@@ -203,19 +206,37 @@ public final class RecordShredder {
         }
     }
 
-    /// The record count implied by column 0, walking its layers from leaf to root: each
-    /// `REPEATED` layer replaces the running count with its parent count (`offsets.length -
-    /// 1`), each `STRUCT` layer preserves it. A `STRUCT` layer enclosing a repeated field
-    /// would break this invariant and is rejected, since its offset scope would not be the
-    /// record scope.
-    private int deriveRecordCount() {
-        Layer[] path = layers[0];
-        int count = sources[0].size();
+    /// Validates every column's per-layer inputs and derives the batch's record count,
+    /// rejecting a ragged nested batch eagerly. Column 0 sets the record count; every other
+    /// column must imply the same, so a short or long column — flat or nested — is caught.
+    private int validateAndDeriveRecordCount() {
+        int records = impliedRecordCount(0);
+        for (int c = 1; c < layers.length; c++) {
+            int implied = impliedRecordCount(c);
+            if (implied != records) {
+                throw new IllegalArgumentException("Column " + columnNames[c] + " implies " + implied
+                        + " records but the batch has " + records);
+            }
+        }
+        return records;
+    }
+
+    /// The record count implied by one column, walking its layers from leaf to root while
+    /// validating the offset chain: each `REPEATED` layer replaces the running count with its
+    /// parent count (`offsets.length - 1`), each `STRUCT` layer preserves it. A `STRUCT`
+    /// layer enclosing a repeated field would break this invariant and is rejected, since its
+    /// offset scope would not be the record scope.
+    private int impliedRecordCount(int columnIndex) {
+        Layer[] path = layers[columnIndex];
+        int count = sources[columnIndex].size();
         boolean seenRepeated = false;
         for (int k = path.length - 1; k >= 0; k--) {
             Layer layer = path[k];
             if (layer.kind() == Layer.Kind.REPEATED) {
-                count = offsetsFor(layer).length - 1;
+                int[] offsets = offsetsFor(layer);
+                validateOffsets(offsets, count, layer.key());
+                validateNullListsEmpty(offsets, layer.key());
+                count = offsets.length - 1;
                 seenRepeated = true;
             }
             else if (seenRepeated && layer.nullable()) {
@@ -224,6 +245,45 @@ public final class RecordShredder {
             }
         }
         return count;
+    }
+
+    /// Checks a list's entry offsets: they start at 0, are non-decreasing, and end at the
+    /// item count of the layer they index into, so the shred never indexes out of range or
+    /// silently drops or duplicates entries.
+    private static void validateOffsets(int[] offsets, int innerCount, String key) {
+        if (offsets[0] != 0) {
+            throw new IllegalArgumentException("List " + key + " offsets must start at 0 but start at " + offsets[0]);
+        }
+        for (int i = 1; i < offsets.length; i++) {
+            if (offsets[i] < offsets[i - 1]) {
+                throw new IllegalArgumentException("List " + key + " offsets are not non-decreasing at index " + i);
+            }
+        }
+        int last = offsets[offsets.length - 1];
+        if (last != innerCount) {
+            throw new IllegalArgumentException("List " + key + " offsets end at " + last
+                    + " but its contents have " + innerCount + " items");
+        }
+    }
+
+    /// Rejects a null list whose offsets span elements: a null list is absent, so its
+    /// element delta must be zero. Without this the shredder takes the null branch and
+    /// silently drops the stray elements, producing a plausible but wrong file. The
+    /// validity's length is not checked — [Validity] is intentionally length-less — so only
+    /// the null-positions-within-range are verified.
+    private void validateNullListsEmpty(int[] offsets, String key) {
+        Validity validity = listValidities.get(key);
+        if (validity == null) {
+            return;
+        }
+        int parentCount = offsets.length - 1;
+        for (int i = validity.nextNull(0, parentCount); i != -1; i = validity.nextNull(i + 1, parentCount)) {
+            if (offsets[i + 1] != offsets[i]) {
+                throw new IllegalArgumentException("List " + key + " is null at index " + i
+                        + " but its offsets span " + (offsets[i + 1] - offsets[i])
+                        + " elements; a null list has none");
+            }
+        }
     }
 
     private int[] offsetsFor(Layer layer) {
