@@ -11,7 +11,9 @@ import java.io.IOException;
 import java.nio.ByteBuffer;
 import java.nio.file.Files;
 import java.nio.file.Path;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Test;
@@ -653,6 +655,265 @@ class WriterRoundTripTest {
             int xIdx = reader.getFileSchema().getColumn("g.x").columnIndex();
             assertThat(readNullable(reader, xIdx)).containsExactly(1, null, 3);
         }
+    }
+
+    @Test
+    void writesAndReadsBackListOfInts() throws Exception {
+        // optional group phones (LIST) { repeated group list { optional int32 element } }
+        // record 0: [1,2]; 1: [] (empty); 2: null (absent list); 3: [3, null, 5].
+        FileSchema schema = FileSchema.builder("schema")
+                .list("phones", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] offsets = { 0, 2, 2, 2, 5 };
+        Validity listNulls = Validity.ofNulls(new boolean[] { false, false, true, false });
+        int[] elements = { 1, 2, 3, 0, 5 };
+        boolean[] elementNulls = { false, false, false, true, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .list("phones", offsets, listNulls)
+                    .ints("phones.list.element", elements, elementNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int leaf = reader.getFileSchema().getColumn("phones.list.element").columnIndex();
+            assertThat(readListOfInts(reader, leaf))
+                    .containsExactly(List.of(1, 2), List.of(), null, Arrays.asList(3, null, 5));
+        }
+    }
+
+    @Test
+    void writesAndReadsBackListOfLists() throws Exception {
+        // optional [[optional int]] — two repetition levels.
+        // record 0: [[1,2],[3]]; 1: []; 2: null; 3: [[]] (one empty inner); 4: [null] (one null inner).
+        FileSchema schema = FileSchema.builder("schema")
+                .list("m", RepetitionType.OPTIONAL,
+                        el -> el.list(RepetitionType.OPTIONAL, inner -> inner.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL)))
+                .build();
+
+        int[] outerOffsets = { 0, 2, 2, 2, 3, 4 };
+        Validity outerNulls = Validity.ofNulls(new boolean[] { false, false, true, false, false });
+        int[] innerOffsets = { 0, 2, 3, 3, 3 };
+        Validity innerNulls = Validity.ofNulls(new boolean[] { false, false, false, true });
+        int[] elements = { 1, 2, 3 };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .list("m", outerOffsets, outerNulls)
+                    .list("m.list.element", innerOffsets, innerNulls)
+                    .ints("m.list.element.list.element", elements));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())));
+                ColumnReader column = reader.columnReader(
+                        reader.getFileSchema().getColumn("m.list.element.list.element").columnIndex())) {
+            assertThat(column.nextBatch()).isTrue();
+            assertThat(column.getRecordCount()).isEqualTo(5);
+            assertThat(column.getLayerCount()).isEqualTo(2);
+
+            List<List<List<Integer>>> actual = new ArrayList<>();
+            int[] outer = column.getLayerOffsets(0);
+            int[] inner = column.getLayerOffsets(1);
+            Validity outerV = column.getLayerValidity(0);
+            Validity innerV = column.getLayerValidity(1);
+            int[] values = column.getInts();
+            for (int r = 0; r < column.getRecordCount(); r++) {
+                if (outerV.isNull(r)) {
+                    actual.add(null);
+                    continue;
+                }
+                List<List<Integer>> lists = new ArrayList<>();
+                for (int i = outer[r]; i < outer[r + 1]; i++) {
+                    if (innerV.isNull(i)) {
+                        lists.add(null);
+                        continue;
+                    }
+                    List<Integer> ints = new ArrayList<>();
+                    for (int e = inner[i]; e < inner[i + 1]; e++) {
+                        ints.add(values[e]);
+                    }
+                    lists.add(ints);
+                }
+                actual.add(lists);
+            }
+            assertThat(actual).containsExactly(
+                    List.of(List.of(1, 2), List.of(3)),
+                    List.of(),
+                    null,
+                    List.of(List.of()),
+                    Arrays.asList((List<Integer>) null));
+        }
+    }
+
+    @Test
+    void writesAndReadsBackListOfStructs() throws Exception {
+        // optional [ { required int32 x; optional int32 y } ]
+        FileSchema schema = FileSchema.builder("schema")
+                .list("people", RepetitionType.OPTIONAL, el -> el.struct(RepetitionType.OPTIONAL, s -> s
+                        .addColumn("x", PhysicalType.INT32, RepetitionType.REQUIRED)
+                        .addColumn("y", PhysicalType.INT32, RepetitionType.OPTIONAL)))
+                .build();
+
+        // record 0: [{1,10},{2,null}]; 1: [{3,30}].
+        int[] offsets = { 0, 2, 3 };
+        int[] x = { 1, 2, 3 };
+        int[] y = { 10, 0, 30 };
+        boolean[] yNulls = { false, true, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .list("people", offsets)
+                    .ints("people.list.element.x", x)
+                    .ints("people.list.element.y", y, yNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int xIdx = reader.getFileSchema().getColumn("people.list.element.x").columnIndex();
+            int yIdx = reader.getFileSchema().getColumn("people.list.element.y").columnIndex();
+            try (ColumnReader xr = reader.columnReader(xIdx); ColumnReader yr = reader.columnReader(yIdx)) {
+                assertThat(xr.nextBatch()).isTrue();
+                assertThat(yr.nextBatch()).isTrue();
+                assertThat(xr.getLayerOffsets(0)).containsExactly(0, 2, 3);
+                assertThat(Arrays.copyOf(xr.getInts(), xr.getValueCount())).containsExactly(1, 2, 3);
+                int[] ys = yr.getInts();
+                Validity yv = yr.getLeafValidity();
+                assertThat(yv.isNull(1)).isTrue();
+                assertThat(ys[0]).isEqualTo(10);
+                assertThat(ys[2]).isEqualTo(30);
+            }
+        }
+    }
+
+    @Test
+    void singleLargeListRecordSpansManyPages() throws Exception {
+        // One record whose list is far larger than a page: streaming must seal pages part-way
+        // through the record, and the reader must reassemble it across pages via rep levels.
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+
+        int n = 5_000;
+        int[] offsets = { 0, n };
+        int[] elements = new int[n];
+        List<Integer> expected = new ArrayList<>(n);
+        for (int i = 0; i < n; i++) {
+            elements[i] = i;
+            expected.add(i);
+        }
+
+        WriterConfig config = WriterConfig.builder().pageTargetBytes(64).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            writer.writeBatch(batch -> batch.list("v", offsets).ints("v.list.element", elements));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(reader.getFileMetaData().numRows()).isEqualTo(1);
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            assertThat(meta.numValues()).isEqualTo(n); // the single record's elements span multiple pages
+            int leaf = reader.getFileSchema().getColumn("v.list.element").columnIndex();
+            assertThat(readListOfInts(reader, leaf)).containsExactly(expected);
+        }
+    }
+
+    @Test
+    void listsSurvivePageAndRowGroupBoundaries() throws Exception {
+        // Many records with varying list lengths, absent lists, and interior null elements,
+        // written with tiny page and row-group targets so lists straddle both boundaries.
+        FileSchema schema = FileSchema.builder("schema")
+                .list("v", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int records = 2_000;
+        List<List<Integer>> expected = new ArrayList<>();
+        List<Integer> offsets = new ArrayList<>();
+        List<Boolean> listNulls = new ArrayList<>();
+        List<Integer> elements = new ArrayList<>();
+        List<Boolean> elementNulls = new ArrayList<>();
+        offsets.add(0);
+        int element = 0;
+        for (int r = 0; r < records; r++) {
+            if (r % 7 == 0) {
+                listNulls.add(true);
+                expected.add(null);
+            }
+            else {
+                listNulls.add(false);
+                List<Integer> list = new ArrayList<>();
+                int length = r % 4; // 0..3, so empty and non-empty both occur
+                for (int k = 0; k < length; k++) {
+                    boolean isNull = element % 5 == 0;
+                    int value = r * 10 + k;
+                    elements.add(value);
+                    elementNulls.add(isNull);
+                    list.add(isNull ? null : value);
+                    element++;
+                }
+                expected.add(list);
+            }
+            offsets.add(elements.size());
+        }
+
+        WriterConfig config = WriterConfig.builder().pageTargetBytes(64).rowGroupTargetBytes(256).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema, config)) {
+            writer.writeBatch(batch -> batch
+                    .list("v", toIntArray(offsets), Validity.ofNulls(toBooleanArray(listNulls)))
+                    .ints("v.list.element", toIntArray(elements), toBooleanArray(elementNulls)));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(reader.getFileMetaData().rowGroups().size()).isGreaterThan(1);
+            int leaf = reader.getFileSchema().getColumn("v.list.element").columnIndex();
+            assertThat(readListOfInts(reader, leaf)).isEqualTo(expected);
+        }
+    }
+
+    private static int[] toIntArray(List<Integer> list) {
+        int[] array = new int[list.size()];
+        for (int i = 0; i < array.length; i++) {
+            array[i] = list.get(i);
+        }
+        return array;
+    }
+
+    private static boolean[] toBooleanArray(List<Boolean> list) {
+        boolean[] array = new boolean[list.size()];
+        for (int i = 0; i < array.length; i++) {
+            array[i] = list.get(i);
+        }
+        return array;
+    }
+
+    /// Reconstructs a `LIST` of `INT32` as one list per record — `null` for an absent list,
+    /// empty for an empty one, a `null` entry for a null element.
+    private static List<List<Integer>> readListOfInts(ParquetFileReader reader, int columnIndex) {
+        List<List<Integer>> out = new ArrayList<>();
+        try (ColumnReader column = reader.columnReader(columnIndex)) {
+            while (column.nextBatch()) {
+                int records = column.getRecordCount();
+                int[] offsets = column.getLayerOffsets(0);
+                Validity listValidity = column.getLayerValidity(0);
+                int[] values = column.getInts();
+                Validity leafValidity = column.getLeafValidity();
+                for (int r = 0; r < records; r++) {
+                    if (listValidity.isNull(r)) {
+                        out.add(null);
+                        continue;
+                    }
+                    List<Integer> list = new ArrayList<>();
+                    for (int e = offsets[r]; e < offsets[r + 1]; e++) {
+                        list.add(leafValidity.isNull(e) ? null : values[e]);
+                    }
+                    out.add(list);
+                }
+            }
+        }
+        return out;
     }
 
     private static Integer[] expectedNullable(int[] values, boolean[] nulls) {

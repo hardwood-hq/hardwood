@@ -198,10 +198,10 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 ### 6.3 Record Shredding (Dremel Algorithm)
 - [x] Implement schema traversal for shredding
 - [x] Definition level calculation
-- [ ] Repetition level calculation
+- [x] Repetition level calculation
 - [x] Primitive value emission
-- [x] Nested structure handling (structs; lists/maps pending)
-- [ ] Repeated field handling
+- [x] Nested structure handling (structs and lists; maps pending)
+- [x] Repeated field handling
 - [x] Optional field handling
 
 ### 6.4 Logical Type Writing

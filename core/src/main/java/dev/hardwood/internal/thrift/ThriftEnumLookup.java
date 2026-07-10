@@ -136,6 +136,10 @@ class ThriftEnumLookup {
         return indexOf(REPETITION_TYPES, type, "repetition type");
     }
 
+    static int thriftValue(ConvertedType type) {
+        return indexOf(CONVERTED_TYPES, type, "converted type");
+    }
+
     static int thriftValue(Encoding encoding) {
         return indexOf(ENCODINGS, encoding, "encoding");
     }

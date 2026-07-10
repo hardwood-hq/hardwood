@@ -26,61 +26,60 @@ import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
-/// Accumulates one flat `INT32` column's values for the current row group, packing them
-/// into uncompressed `PLAIN` data pages of at most the page-value capacity. Values arrive
-/// across one or more batches; a page is sealed each time the pending buffer fills, and
-/// the tail is sealed at flush. The encoded pages are held until the row group is flushed,
-/// since a column chunk's `data_page_offset` is only known when its bytes are written.
+/// Accumulates one `INT32` column's level entries for the current row group, packing them
+/// into uncompressed `PLAIN` data pages of at most the page capacity. The [RecordShredder]
+/// streams a record range's entries into this buffer through [#accept] (as a
+/// [RecordShredder.LevelSink]); a page is sealed each time the pending buffer fills — even
+/// part-way through a record — and the tail is sealed at flush. The encoded pages are held
+/// until the row group is flushed, since a column chunk's `data_page_offset` is only known
+/// when its bytes are written.
 ///
-/// For an `OPTIONAL` column each page carries a definition-level stream ahead of its
-/// values: `[4-byte LE def-level length][RLE def-levels][PLAIN of the non-null values]`.
-/// A `REQUIRED` column has no levels and writes its values directly.
-final class ColumnChunkBuffer {
+/// A page body is `[rep levels?][def levels?][PLAIN present values]`, each level stream
+/// prefixed by its 4-byte little-endian length. The page capacity bounds the number of
+/// level entries (`num_values`), which for a repeated column exceeds the record count.
+final class ColumnChunkBuffer implements RecordShredder.LevelSink {
 
-    private final int[] pending;
     private final int maxDefLevel;
-    private final int[] defLevels;
-    private final int[] compactValues;
+    private final int maxRepLevel;
+    private final int[] pendingRep;
+    private final int[] pendingDef;
+    private final int[] pendingValues;
     private final ByteArrayOutputStream pages = new ByteArrayOutputStream();
-    private int pendingCount;
-    private long numValues;
+    private int pendingCount;      // level entries buffered for the current page
+    private int pendingValueCount; // present values buffered for the current page
+    private long numValues;        // total level entries across sealed pages
 
-    /// @param pageValues maximum number of rows per data page
-    /// @param maxDefLevel the column's maximum definition level (0 for `REQUIRED`, 1 for a
-    ///        flat `OPTIONAL` column), which selects whether pages carry def levels
-    ColumnChunkBuffer(int pageValues, int maxDefLevel) {
-        this.pending = new int[pageValues];
+    /// @param pageValues maximum number of level entries per data page
+    /// @param maxDefLevel the column's maximum definition level (0 selects no def stream)
+    /// @param maxRepLevel the column's maximum repetition level (0 selects no rep stream)
+    ColumnChunkBuffer(int pageValues, int maxDefLevel, int maxRepLevel) {
         this.maxDefLevel = maxDefLevel;
-        if (maxDefLevel > 0) {
-            this.defLevels = new int[pageValues];
-            this.compactValues = new int[pageValues];
-        }
-        else {
-            this.defLevels = null;
-            this.compactValues = null;
-        }
+        this.maxRepLevel = maxRepLevel;
+        this.pendingValues = new int[pageValues];
+        this.pendingDef = maxDefLevel > 0 ? new int[pageValues] : null;
+        this.pendingRep = maxRepLevel > 0 ? new int[pageValues] : null;
     }
 
-    /// Appends `count` rows starting at `srcPos` in `source`, sealing pages as the pending
-    /// buffer fills. For a levelled column (`maxDefLevel > 0`) the definition levels of the
-    /// appended rows are filled by `shredder` for this column, so a struct-nested column's
-    /// intermediate nulls lower to the correct level; a `REQUIRED` flat column ignores it.
-    void append(IntColumnSource source, RecordShredder shredder, int columnIndex, int srcPos, int count) {
-        int remaining = count;
-        int from = srcPos;
-        while (remaining > 0) {
-            int space = pending.length - pendingCount;
-            int n = Math.min(space, remaining);
-            source.copyInto(from, pending, pendingCount, n);
-            if (defLevels != null) {
-                shredder.fillDefinitionLevels(columnIndex, from, n, defLevels, pendingCount);
-            }
-            pendingCount += n;
-            from += n;
-            remaining -= n;
-            if (pendingCount == pending.length) {
-                sealPage();
-            }
+    /// Shreds records `[fromRecord, fromRecord + count)` of this column straight into the
+    /// page buffers, sealing pages as they fill.
+    void append(RecordShredder shredder, int columnIndex, int fromRecord, int count) {
+        shredder.shred(columnIndex, fromRecord, count, this);
+    }
+
+    @Override
+    public void accept(int repetitionLevel, int definitionLevel, boolean present, int value) {
+        if (maxRepLevel > 0) {
+            pendingRep[pendingCount] = repetitionLevel;
+        }
+        if (maxDefLevel > 0) {
+            pendingDef[pendingCount] = definitionLevel;
+        }
+        if (present) {
+            pendingValues[pendingValueCount++] = value;
+        }
+        pendingCount++;
+        if (pendingCount == pendingValues.length) {
+            sealPage();
         }
     }
 
@@ -91,9 +90,9 @@ final class ColumnChunkBuffer {
         sealPage();
         long totalSize = pages.size();
         out.write(ByteBuffer.wrap(pages.toByteArray()));
-        List<Encoding> encodings = defLevels == null
-                ? List.of(Encoding.PLAIN)
-                : List.of(Encoding.RLE, Encoding.PLAIN);
+        List<Encoding> encodings = maxDefLevel > 0 || maxRepLevel > 0
+                ? List.of(Encoding.RLE, Encoding.PLAIN)
+                : List.of(Encoding.PLAIN);
         // Pages are stored uncompressed, so compressed and uncompressed sizes are equal.
         return new ColumnMetaData(
                 PhysicalType.INT32,
@@ -116,7 +115,7 @@ final class ColumnChunkBuffer {
         if (pendingCount == 0) {
             return;
         }
-        byte[] body = maxDefLevel > 0 ? optionalBody() : PlainEncoder.encodeInts(pending, 0, pendingCount);
+        byte[] body = buildBody();
         // CRC-32 over the page body as stored on disk (uncompressed here), matching what
         // the reader validates.
         CRC32 crc = new CRC32();
@@ -128,28 +127,27 @@ final class ColumnChunkBuffer {
         pages.writeBytes(body);
         numValues += pendingCount;
         pendingCount = 0;
+        pendingValueCount = 0;
     }
 
-    /// Builds an `OPTIONAL` page body: the def-level length prefix, the RLE def-level
-    /// stream, then the `PLAIN` values of the non-null rows only. The def levels were
-    /// already lowered into `defLevels` as rows were appended; here they only drive the
-    /// compaction of the non-null values.
-    private byte[] optionalBody() {
-        int nonNull = 0;
-        for (int i = 0; i < pendingCount; i++) {
-            // A value is present only at the full definition level; any lower level is a
-            // null at the leaf or at some enclosing struct, and carries no value.
-            if (defLevels[i] == maxDefLevel) {
-                compactValues[nonNull++] = pending[i];
-            }
+    /// Frames the page body: the repetition and definition level streams (each RLE, each
+    /// prefixed by a 4-byte little-endian length) ahead of the `PLAIN` present values. A
+    /// stream is omitted when its max level is 0, exactly the layout the reader parses.
+    private byte[] buildBody() {
+        ByteArrayOutputStream body = new ByteArrayOutputStream();
+        if (maxRepLevel > 0) {
+            writeLevels(body, pendingRep, maxRepLevel);
         }
-        byte[] defBytes = LevelEncoder.encode(defLevels, 0, pendingCount, maxDefLevel);
-        byte[] valueBytes = PlainEncoder.encodeInts(compactValues, 0, nonNull);
-
-        ByteArrayOutputStream body = new ByteArrayOutputStream(4 + defBytes.length + valueBytes.length);
-        body.writeBytes(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(defBytes.length).array());
-        body.writeBytes(defBytes);
-        body.writeBytes(valueBytes);
+        if (maxDefLevel > 0) {
+            writeLevels(body, pendingDef, maxDefLevel);
+        }
+        body.writeBytes(PlainEncoder.encodeInts(pendingValues, 0, pendingValueCount));
         return body.toByteArray();
+    }
+
+    private void writeLevels(ByteArrayOutputStream body, int[] levels, int maxLevel) {
+        byte[] encoded = LevelEncoder.encode(levels, 0, pendingCount, maxLevel);
+        body.writeBytes(ByteBuffer.allocate(4).order(ByteOrder.LITTLE_ENDIAN).putInt(encoded.length).array());
+        body.writeBytes(encoded);
     }
 }
