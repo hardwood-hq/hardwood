@@ -382,6 +382,7 @@ class ColumnWorkerTest {
             assertThat(worker.drainThread.isAlive())
                     .as("drain thread must have exited")
                     .isFalse();
+            awaitCounter(decodesFinished, decodesEntered.get(), 5, TimeUnit.SECONDS);
             assertThat(decodesFinished.get())
                     .as("every submitted decode task should have finished")
                     .isEqualTo(decodesEntered.get());
@@ -510,5 +511,13 @@ class ColumnWorkerTest {
             sum += Long.bitCount(w);
         }
         return sum;
+    }
+
+    private static void awaitCounter(
+            AtomicInteger actual, int expected, long timeout, TimeUnit unit) throws InterruptedException {
+        long deadline = System.nanoTime() + unit.toNanos(timeout);
+        while (actual.get() != expected && System.nanoTime() < deadline) {
+            Thread.sleep(10);
+        }
     }
 }
