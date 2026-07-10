@@ -21,9 +21,11 @@ import dev.hardwood.schema.SchemaNode;
 /// definition level streams — the write-side inverse of the reader's `NestedLevelComputer`.
 ///
 /// A leaf's path is modelled as an ordered list of layers, outermost first: one per
-/// `OPTIONAL` `struct` group (`STRUCT`) and one per `LIST` group (`REPEATED`); `REQUIRED`
-/// groups and the synthetic `repeated` scaffolding of a list contribute no layer, only
-/// definition/repetition depth. For each top-level record the shredder descends the layers
+/// `OPTIONAL` `struct` group (`STRUCT`) and one per `LIST` or `MAP` group (`REPEATED`);
+/// `REQUIRED` groups and the synthetic `repeated` scaffolding of a list (`list`) or map
+/// (`key_value`) contribute no layer, only definition/repetition depth. A `MAP`'s `key` and
+/// `value` leaves share the one `REPEATED` layer keyed on the map group, so both are driven
+/// by the same offsets. For each top-level record the shredder descends the layers
 /// driven by the caller's validity and offsets, emitting one `(rep, def)` pair per leaf
 /// slot including the phantom slots that mark a null struct, a null list, or an empty list.
 /// A value is present exactly at `def == maxDefinitionLevel`.
@@ -86,7 +88,7 @@ public final class RecordShredder {
 
     /// Classifies each group on the way to a leaf into the layer list the shredder walks.
     private void walk(SchemaNode.GroupNode group, List<String> path, List<Layer> layerStack,
-                      boolean insideListScaffolding) {
+                      boolean insideRepeatedScaffolding) {
         for (SchemaNode child : group.children()) {
             switch (child) {
                 case SchemaNode.PrimitiveNode leaf -> {
@@ -95,11 +97,11 @@ public final class RecordShredder {
                 }
                 case SchemaNode.GroupNode nested -> {
                     path.add(nested.name());
-                    Layer added = classify(nested, String.join(".", path), layerStack, insideListScaffolding);
+                    Layer added = classify(nested, String.join(".", path), layerStack, insideRepeatedScaffolding);
                     if (added != null) {
                         layerStack.add(added);
                     }
-                    walk(nested, path, layerStack, nested.isList());
+                    walk(nested, path, layerStack, nested.isList() || nested.isMap());
                     if (added != null) {
                         layerStack.remove(layerStack.size() - 1);
                     }
@@ -110,8 +112,8 @@ public final class RecordShredder {
     }
 
     private static Layer classify(SchemaNode.GroupNode group, String path, List<Layer> layerStack,
-                                  boolean insideListScaffolding) {
-        if (group.isList()) {
+                                  boolean insideRepeatedScaffolding) {
+        if (group.isList() || group.isMap()) {
             boolean nullable = group.repetitionType() == RepetitionType.OPTIONAL;
             int repDepth = 1;
             for (Layer layer : layerStack) {
@@ -121,8 +123,8 @@ public final class RecordShredder {
             }
             return new Layer(Layer.Kind.REPEATED, path, nullable, nullable ? 1 : 0, 1, repDepth);
         }
-        if (insideListScaffolding && group.repetitionType() == RepetitionType.REPEATED) {
-            return null; // synthetic `repeated group list` inside a LIST — no layer
+        if (insideRepeatedScaffolding && group.repetitionType() == RepetitionType.REPEATED) {
+            return null; // synthetic `repeated group` inside a LIST (list) or MAP (key_value) — no layer
         }
         if (group.repetitionType() == RepetitionType.OPTIONAL) {
             return new Layer(Layer.Kind.STRUCT, path, true, 1, 0, 0);

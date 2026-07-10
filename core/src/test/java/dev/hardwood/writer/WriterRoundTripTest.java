@@ -13,7 +13,9 @@ import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.LinkedHashMap;
 import java.util.List;
+import java.util.Map;
 import java.util.zip.CRC32;
 
 import org.junit.jupiter.api.Test;
@@ -850,6 +852,202 @@ class WriterRoundTripTest {
             assertThat(xs[0]).isEqualTo(1);
             assertThat(xs[2]).isEqualTo(3);
         }
+    }
+
+    @Test
+    void writesAndReadsBackMapOfIntToInt() throws Exception {
+        // optional map<int32, optional int32> props — key/value share one REPEATED layer.
+        // record 0: {1:10, 2:null}; 1: {} (empty); 2: null (absent map); 3: {3:30}.
+        FileSchema schema = FileSchema.builder("schema")
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
+                        v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] offsets = { 0, 2, 2, 2, 3 };
+        Validity mapNulls = Validity.ofNulls(new boolean[] { false, false, true, false });
+        int[] keys = { 1, 2, 3 };
+        int[] values = { 10, 0, 30 };
+        boolean[] valueNulls = { false, true, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .map("props", offsets, mapNulls)
+                    .ints("props.key_value.key", keys)
+                    .ints("props.key_value.value", values, valueNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
+            int valIdx = reader.getFileSchema().getColumn("props.key_value.value").columnIndex();
+            assertThat(reader.getFileSchema().getColumn(valIdx).maxDefinitionLevel()).isEqualTo(3);
+            try (ColumnReader kr = reader.columnReader(keyIdx); ColumnReader vr = reader.columnReader(valIdx)) {
+                assertThat(kr.nextBatch()).isTrue();
+                assertThat(vr.nextBatch()).isTrue();
+                assertThat(vr.getRecordCount()).isEqualTo(4);
+                assertThat(vr.getLayerCount()).isEqualTo(1);
+                assertThat(vr.getLayerKind(0)).isEqualTo(LayerKind.REPEATED);
+                assertThat(readMapOfInts(kr, vr)).containsExactly(
+                        mapOf(1, 10, 2, null), Map.of(), null, mapOf(3, 30, null, null));
+            }
+        }
+    }
+
+    @Test
+    void writesAndReadsBackRequiredMap() throws Exception {
+        // required map<int32, required int32> — the map itself is never null, so only an
+        // empty map (zero-delta) and a present entry are distinguished.
+        FileSchema schema = FileSchema.builder("schema")
+                .map("props", RepetitionType.REQUIRED, PhysicalType.INT32,
+                        v -> v.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+
+        int[] offsets = { 0, 2, 2, 3 }; // record 0: {1:10, 2:20}; 1: {}; 2: {3:30}
+        int[] keys = { 1, 2, 3 };
+        int[] values = { 10, 20, 30 };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .map("props", offsets)
+                    .ints("props.key_value.key", keys)
+                    .ints("props.key_value.value", values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
+            int valIdx = reader.getFileSchema().getColumn("props.key_value.value").columnIndex();
+            try (ColumnReader kr = reader.columnReader(keyIdx); ColumnReader vr = reader.columnReader(valIdx)) {
+                assertThat(kr.nextBatch()).isTrue();
+                assertThat(vr.nextBatch()).isTrue();
+                assertThat(readMapOfInts(kr, vr)).containsExactly(
+                        mapOf(1, 10, 2, 20), Map.of(), Map.of(3, 30));
+            }
+        }
+    }
+
+    @Test
+    void writesAndReadsBackMapOfIntToListOfInts() throws Exception {
+        // optional map<int32, required list<required int32>> — a REPEATED value layer nested
+        // inside the MAP's REPEATED layer, two repetition levels driven by two offset arrays.
+        FileSchema schema = FileSchema.builder("schema")
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
+                        v -> v.list(RepetitionType.REQUIRED, el -> el.primitive(PhysicalType.INT32, RepetitionType.REQUIRED)))
+                .build();
+
+        // record 0: {1:[10,20], 2:[30]}; 1: {} (empty); 2: null (absent map).
+        int[] mapOffsets = { 0, 2, 2, 2 };
+        Validity mapNulls = Validity.ofNulls(new boolean[] { false, false, true });
+        int[] keys = { 1, 2 };
+        int[] listOffsets = { 0, 2, 3 };
+        int[] elements = { 10, 20, 30 };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .map("props", mapOffsets, mapNulls)
+                    .ints("props.key_value.key", keys)
+                    .list("props.key_value.value", listOffsets)
+                    .ints("props.key_value.value.list.element", elements));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
+            int elemIdx = reader.getFileSchema().getColumn("props.key_value.value.list.element").columnIndex();
+            try (ColumnReader kr = reader.columnReader(keyIdx); ColumnReader er = reader.columnReader(elemIdx)) {
+                assertThat(kr.nextBatch()).isTrue();
+                assertThat(er.nextBatch()).isTrue();
+                assertThat(er.getLayerCount()).isEqualTo(2);
+
+                List<Map<Integer, List<Integer>>> actual = new ArrayList<>();
+                int[] mapOffs = er.getLayerOffsets(0);
+                Validity mapV = er.getLayerValidity(0);
+                int[] listOffs = er.getLayerOffsets(1);
+                int[] ks = kr.getInts();
+                int[] vals = er.getInts();
+                for (int r = 0; r < er.getRecordCount(); r++) {
+                    if (mapV.isNull(r)) {
+                        actual.add(null);
+                        continue;
+                    }
+                    Map<Integer, List<Integer>> map = new LinkedHashMap<>();
+                    for (int e = mapOffs[r]; e < mapOffs[r + 1]; e++) {
+                        List<Integer> list = new ArrayList<>();
+                        for (int i = listOffs[e]; i < listOffs[e + 1]; i++) {
+                            list.add(vals[i]);
+                        }
+                        map.put(ks[e], list);
+                    }
+                    actual.add(map);
+                }
+                assertThat(actual).containsExactly(
+                        Map.of(1, List.of(10, 20), 2, List.of(30)), Map.of(), null);
+            }
+        }
+    }
+
+    @Test
+    void rejectsListVerbOnMapPath() throws Exception {
+        // A map addressed with the list verb is a wrong-kind facet and must fail eagerly.
+        FileSchema schema = FileSchema.builder("schema")
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
+                        v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch.list("props", new int[] { 0, 1 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsNullMapWithNonEmptyOffsets() throws Exception {
+        // A null map is absent, so its offset delta must be zero, mirroring the null-list rule.
+        FileSchema schema = FileSchema.builder("schema")
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
+                        v -> v.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch
+                    .map("props", new int[] { 0, 1, 2 }, Validity.ofNulls(new boolean[] { true, false }))
+                    .ints("props.key_value.key", new int[] { 99, 5 })
+                    .ints("props.key_value.value", new int[] { 1, 2 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    /// Reconstructs a `MAP` of `INT32` to `INT32` as one map per record — `null` for an
+    /// absent map, empty for an empty one, a `null` entry value for a null value. The key
+    /// and value columns share the map's REPEATED layer offsets, so entries align by index.
+    private static List<Map<Integer, Integer>> readMapOfInts(ColumnReader keys, ColumnReader values) {
+        List<Map<Integer, Integer>> out = new ArrayList<>();
+        int[] offsets = values.getLayerOffsets(0);
+        Validity mapValidity = values.getLayerValidity(0);
+        int[] ks = keys.getInts();
+        int[] vs = values.getInts();
+        Validity valueValidity = values.getLeafValidity();
+        for (int r = 0; r < values.getRecordCount(); r++) {
+            if (mapValidity.isNull(r)) {
+                out.add(null);
+                continue;
+            }
+            Map<Integer, Integer> map = new LinkedHashMap<>();
+            for (int e = offsets[r]; e < offsets[r + 1]; e++) {
+                map.put(ks[e], valueValidity.isNull(e) ? null : vs[e]);
+            }
+            out.add(map);
+        }
+        return out;
+    }
+
+    /// Builds a small ordered map of up to two `Integer` entries, allowing a `null` value
+    /// (which `Map.of` forbids). A `null` key marks the second entry absent.
+    private static Map<Integer, Integer> mapOf(Integer k1, Integer v1, Integer k2, Integer v2) {
+        Map<Integer, Integer> map = new LinkedHashMap<>();
+        map.put(k1, v1);
+        if (k2 != null) {
+            map.put(k2, v2);
+        }
+        return map;
     }
 
     @Test
