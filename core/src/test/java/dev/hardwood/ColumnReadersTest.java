@@ -317,6 +317,42 @@ class ColumnReadersTest {
     }
 
     @Test
+    void testTypedArraysAreSizedToRecordCount() throws Exception {
+        Path filePath = Paths.get("src/test/resources/primitive_types_test.parquet");
+
+        try (Hardwood hardwood = Hardwood.create();
+             ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(List.of(filePath)));
+             ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns(
+                     "int_col", "long_col", "float_col", "double_col", "bool_col", "string_col"))) {
+
+            ColumnReader intReader = columns.getColumnReader("int_col");
+            ColumnReader longReader = columns.getColumnReader("long_col");
+            ColumnReader floatReader = columns.getColumnReader("float_col");
+            ColumnReader doubleReader = columns.getColumnReader("double_col");
+            ColumnReader boolReader = columns.getColumnReader("bool_col");
+            ColumnReader stringReader = columns.getColumnReader("string_col");
+
+            assertThat(intReader.nextBatch() & longReader.nextBatch()
+                    & floatReader.nextBatch() & doubleReader.nextBatch()
+                    & boolReader.nextBatch() & stringReader.nextBatch()).isTrue();
+
+            int count = intReader.getRecordCount();
+            assertThat(count).isEqualTo(3);
+
+            assertThat(intReader.getInts()).hasSize(count);
+            assertThat(longReader.getLongs()).hasSize(count);
+            assertThat(floatReader.getFloats()).hasSize(count);
+            assertThat(doubleReader.getDoubles()).hasSize(count);
+            assertThat(boolReader.getBooleans()).hasSize(count);
+
+            assertThat(stringReader.getBinaries().length).isEqualTo(count);
+
+            assertThat(intReader.getInts()).containsExactly(1, 2, 3);
+            assertThat(doubleReader.getDoubles()).containsExactly(10.5, 20.5, 30.5);
+        }
+    }
+
+    @Test
     void testNullsAcrossFileBoundary() throws Exception {
         Path filePath = Paths.get("src/test/resources/plain_uncompressed_with_nulls.parquet");
         List<Path> files = List.of(filePath, filePath);
