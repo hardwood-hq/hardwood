@@ -200,7 +200,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Definition level calculation
 - [x] Repetition level calculation
 - [x] Primitive value emission
-- [x] Nested structure handling (structs and lists; maps pending)
+- [x] Nested structure handling (structs, lists, and maps)
 - [x] Repeated field handling
 - [x] Optional field handling
 

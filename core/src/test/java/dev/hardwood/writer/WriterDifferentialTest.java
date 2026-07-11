@@ -270,6 +270,63 @@ class WriterDifferentialTest {
     }
 
     @Test
+    void duckDbReadsMapOfIntToInt(@TempDir Path dir) throws Exception {
+        // required int32 r; optional map<int32, optional int32> props. An absent map, an
+        // empty map, and a null value must all survive to DuckDB distinctly.
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
+                        v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] r = { 0, 1, 2, 3 };
+        int[] offsets = { 0, 2, 2, 2, 3 };
+        Validity mapNulls = Validity.ofNulls(new boolean[] { false, false, true, false });
+        int[] keys = { 1, 2, 3 };
+        int[] values = { 10, 0, 30 };
+        boolean[] valueNulls = { false, true, false };
+
+        Path file = dir.resolve("mapofints.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch
+                    .ints("r", r)
+                    .map("props", offsets, mapNulls)
+                    .ints("props.key_value.key", keys)
+                    .ints("props.key_value.value", values, valueNulls));
+        }
+
+        List<Boolean> nullFlags = new ArrayList<>();
+        List<List<Integer>> keyLists = new ArrayList<>();
+        List<List<Integer>> valueLists = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT props IS NULL AS is_null, map_keys(props) AS ks, map_values(props) AS vs "
+                                + "FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                nullFlags.add(rs.getBoolean("is_null"));
+                keyLists.add(toIntList(rs.getArray("ks")));
+                valueLists.add(toIntList(rs.getArray("vs")));
+            }
+        }
+
+        assertThat(nullFlags).containsExactly(false, false, true, false);
+        assertThat(keyLists).containsExactly(List.of(1, 2), List.of(), null, List.of(3));
+        assertThat(valueLists).containsExactly(Arrays.asList(10, null), List.of(), null, List.of(30));
+    }
+
+    private static List<Integer> toIntList(Array array) throws Exception {
+        if (array == null) {
+            return null;
+        }
+        List<Integer> list = new ArrayList<>();
+        for (Object element : (Object[]) array.getArray()) {
+            list.add(element == null ? null : ((Number) element).intValue());
+        }
+        return list;
+    }
+
+    @Test
     void duckDbReadsMultipleRowGroups(@TempDir Path dir) throws Exception {
         int n = 5_000;
         int[] v = new int[n];

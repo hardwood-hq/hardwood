@@ -438,9 +438,9 @@ public class FileSchema {
 
     /// Builder for constructing a [FileSchema] programmatically.
     ///
-    /// Fields are added as top-level primitive leaves ([#addColumn]) or nested
-    /// `struct` groups ([#struct]). Repeated fields (lists and maps) are handled by a
-    /// later writer increment.
+    /// Fields are added as top-level primitive leaves ([#addColumn]), nested `struct`
+    /// groups ([#struct]), `LIST` groups ([#list]), or `MAP` groups ([#map]). The `LIST`
+    /// and `MAP` groups emit the canonical 3-level and 2-level physical layouts.
     public static final class Builder {
 
         private final String name;
@@ -480,6 +480,20 @@ public class FileSchema {
         /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no element is declared
         public Builder list(String listName, RepetitionType repetition, Consumer<ElementBuilder> element) {
             content.list(listName, repetition, element);
+            return this;
+        }
+
+        /// Append a `MAP` group whose value is declared by `value`. The key is a required
+        /// primitive of `keyType` per the canonical layout.
+        ///
+        /// @param mapName the map group name
+        /// @param repetition `REQUIRED` or `OPTIONAL` (whether the map itself may be null)
+        /// @param keyType the physical type of the required `key`
+        /// @param value declares the map's value, like a list element
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no value is declared
+        public Builder map(String mapName, RepetitionType repetition, PhysicalType keyType,
+                           Consumer<ElementBuilder> value) {
+            content.map(mapName, repetition, keyType, value);
             return this;
         }
 
@@ -549,19 +563,40 @@ public class FileSchema {
             children.add(new BuilderList(listName, repetition, builder.require(listName)));
             return this;
         }
+
+        /// Append a nested `MAP` field.
+        ///
+        /// @throws IllegalArgumentException if `repetition` is `REPEATED` or no value is declared
+        public StructBuilder map(String mapName, RepetitionType repetition, PhysicalType keyType,
+                                 Consumer<ElementBuilder> value) {
+            if (repetition == RepetitionType.REPEATED) {
+                throw new IllegalArgumentException(
+                        "Repeated groups are not yet supported by the writer: " + mapName);
+            }
+            children.add(buildMap(mapName, repetition, keyType, value));
+            return this;
+        }
     }
 
-    /// Declares the element of a `LIST`: a primitive, a nested `struct`, or a nested `LIST`.
+    /// Declares the element of a `LIST`, or the value of a `MAP`: a primitive, a nested
+    /// `struct`, a nested `LIST`, or a nested `MAP`. The declared node is named `element`
+    /// inside a list and `value` inside a map.
     public static final class ElementBuilder {
 
+        private final String childName;
         private BuilderNode element;
 
         private ElementBuilder() {
+            this("element");
+        }
+
+        private ElementBuilder(String childName) {
+            this.childName = childName;
         }
 
         /// Declare a primitive element.
         public void primitive(PhysicalType type, RepetitionType repetition) {
-            set(new BuilderLeaf("element", type, repetition));
+            set(new BuilderLeaf(childName, type, repetition));
         }
 
         /// Declare a `struct` element.
@@ -571,31 +606,47 @@ public class FileSchema {
             StructBuilder nested = new StructBuilder();
             filler.accept(nested);
             if (nested.children.isEmpty()) {
-                throw new IllegalArgumentException("List element struct must have at least one field");
+                throw new IllegalArgumentException(childName + " struct must have at least one field");
             }
-            set(new BuilderStruct("element", repetition, nested.children));
+            set(new BuilderStruct(childName, repetition, nested.children));
         }
 
         /// Declare a nested `LIST` element.
         public void list(RepetitionType repetition, Consumer<ElementBuilder> element) {
             ElementBuilder inner = new ElementBuilder();
             element.accept(inner);
-            set(new BuilderList("element", repetition, inner.require("element")));
+            set(new BuilderList(childName, repetition, inner.require(childName)));
+        }
+
+        /// Declare a nested `MAP` element.
+        ///
+        /// @throws IllegalArgumentException if no value is declared
+        public void map(RepetitionType repetition, PhysicalType keyType, Consumer<ElementBuilder> value) {
+            set(buildMap(childName, repetition, keyType, value));
         }
 
         private void set(BuilderNode node) {
             if (element != null) {
-                throw new IllegalArgumentException("List element is already declared");
+                throw new IllegalArgumentException("The " + childName + " is already declared");
             }
             element = node;
         }
 
-        private BuilderNode require(String listName) {
+        private BuilderNode require(String name) {
             if (element == null) {
-                throw new IllegalArgumentException("List must declare an element: " + listName);
+                throw new IllegalArgumentException("Must declare the " + childName + " of " + name);
             }
             return element;
         }
+    }
+
+    /// Builds a `MAP` node named `name` with a required `key` primitive of `keyType` and a
+    /// `value` declared through the shared [ElementBuilder]. Shared by every `map` verb.
+    private static BuilderMap buildMap(String name, RepetitionType repetition, PhysicalType keyType,
+                                       Consumer<ElementBuilder> value) {
+        ElementBuilder builder = new ElementBuilder("value");
+        value.accept(builder);
+        return new BuilderMap(name, repetition, keyType, builder.require(name));
     }
 
     private sealed interface BuilderNode {}
@@ -607,10 +658,15 @@ public class FileSchema {
 
     private record BuilderList(String name, RepetitionType repetition, BuilderNode element) implements BuilderNode {}
 
+    private record BuilderMap(String name, RepetitionType repetition, PhysicalType keyType, BuilderNode value)
+            implements BuilderNode {}
+
     /// Flattens the builder's field tree into the depth-first [SchemaElement] list
     /// [#fromSchemaElements] consumes, a group element followed by its children. A `LIST`
-    /// expands to the canonical 3-level shape: the annotated group, a synthetic `repeated
-    /// group list`, then the element.
+    /// expands to the canonical 3-level shape (the annotated group, a synthetic `repeated
+    /// group list`, then the element); a `MAP` expands to the canonical 2-level shape (the
+    /// annotated group, a synthetic `repeated group key_value`, then the required `key` and
+    /// the value).
     private static void flatten(List<BuilderNode> nodes, List<SchemaElement> out) {
         for (BuilderNode node : nodes) {
             switch (node) {
@@ -627,6 +683,15 @@ public class FileSchema {
                     out.add(new SchemaElement("list", null, null, RepetitionType.REPEATED, 1,
                             null, null, null, null, null));
                     flatten(List.of(list.element()), out);
+                }
+                case BuilderMap map -> {
+                    out.add(new SchemaElement(map.name(), null, null, map.repetition(), 1,
+                            ConvertedType.MAP, null, null, null, null));
+                    out.add(new SchemaElement("key_value", null, null, RepetitionType.REPEATED, 2,
+                            null, null, null, null, null));
+                    out.add(new SchemaElement("key", map.keyType(), null, RepetitionType.REQUIRED, null,
+                            null, null, null, null, null));
+                    flatten(List.of(map.value()), out);
                 }
             }
         }

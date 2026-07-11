@@ -8,6 +8,7 @@
 package dev.hardwood.writer;
 
 import java.util.HashMap;
+import java.util.Locale;
 import java.util.Map;
 
 import dev.hardwood.Experimental;
@@ -139,7 +140,7 @@ public final class ColumnBatch {
     ///         already set, or `offsets` is empty
     @Experimental
     public ColumnBatch list(String listPath, int[] offsets) {
-        storeList(listPath, offsets, null);
+        storeRepeated("List", listPath, offsets, null, resolveRepeated(listPath, false));
         return this;
     }
 
@@ -158,37 +159,77 @@ public final class ColumnBatch {
             throw new IllegalArgumentException("nulls must not be null for list " + listPath
                     + "; use the two-argument list(...) for an all-present list");
         }
-        storeList(listPath, offsets, nulls);
+        storeRepeated("List", listPath, offsets, nulls, resolveRepeated(listPath, false));
         return this;
     }
 
-    private void storeList(String listPath, int[] offsets, Validity nulls) {
+    /// Sets the entry offsets of a `MAP`, addressed by the map group's dot-separated path.
+    /// A thin alias over [#list(String, int[])]: the map's `key` and `value` leaves share
+    /// this one offsets array, `offsets[i+1] - offsets[i]` being the number of entries of
+    /// map `i`, and a zero delta an empty map. The key and value leaves are filled through
+    /// [#ints] at `<mapPath>.key_value.key` and `<mapPath>.key_value.value`.
+    ///
+    /// @param mapPath the map group's path (e.g. `"props"`)
+    /// @param offsets the entry offsets
+    /// @return this batch, for chaining
+    /// @throws IllegalArgumentException if the path does not name a `MAP`, the map is
+    ///         already set, or `offsets` is empty
+    @Experimental
+    public ColumnBatch map(String mapPath, int[] offsets) {
+        storeRepeated("Map", mapPath, offsets, null, resolveRepeated(mapPath, true));
+        return this;
+    }
+
+    /// Sets the entry offsets of a `MAP` together with its per-instance nulls (which maps
+    /// are themselves absent), distinct from an empty map carrying a zero-delta offset.
+    ///
+    /// @param mapPath the map group's path
+    /// @param offsets the entry offsets
+    /// @param nulls the map nulls; `nulls.isNull(i)` marks map `i` absent
+    /// @return this batch, for chaining
+    /// @throws IllegalArgumentException if the path does not name an `OPTIONAL` `MAP`, the
+    ///         map is already set, or `offsets` is empty
+    @Experimental
+    public ColumnBatch map(String mapPath, int[] offsets, Validity nulls) {
+        if (nulls == null) {
+            throw new IllegalArgumentException("nulls must not be null for map " + mapPath
+                    + "; use the two-argument map(...) for an all-present map");
+        }
+        storeRepeated("Map", mapPath, offsets, nulls, resolveRepeated(mapPath, true));
+        return this;
+    }
+
+    /// Stores the offsets and optional nulls of a `LIST` or `MAP` layer, which share one
+    /// offsets-plus-validity representation keyed by the group's path. `kind` names the
+    /// shape in error messages ("List" / "Map"); `group` is the already-resolved node.
+    private void storeRepeated(String kind, String path, int[] offsets, Validity nulls,
+                               SchemaNode.GroupNode group) {
         if (consumed) {
             throw new IllegalStateException("Batch has already been written and cannot be modified");
         }
         if (offsets == null || offsets.length == 0) {
-            throw new IllegalArgumentException("offsets must be non-empty for list " + listPath);
+            throw new IllegalArgumentException("offsets must be non-empty for " + kind.toLowerCase(Locale.ROOT) + " " + path);
         }
-        SchemaNode.GroupNode group = resolveList(listPath);
         if (nulls != null && group.repetitionType() != RepetitionType.OPTIONAL) {
-            throw new IllegalArgumentException("List " + listPath + " is " + group.repetitionType()
-                    + "; nulls are only valid for an OPTIONAL list");
+            throw new IllegalArgumentException(kind + " " + path + " is " + group.repetitionType()
+                    + "; nulls are only valid for an OPTIONAL " + kind.toLowerCase(Locale.ROOT));
         }
-        if (listOffsets.putIfAbsent(listPath, offsets) != null) {
-            throw new IllegalArgumentException("List " + listPath + " is already set in this batch");
+        if (listOffsets.putIfAbsent(path, offsets) != null) {
+            throw new IllegalArgumentException(kind + " " + path + " is already set in this batch");
         }
         if (nulls != null) {
-            listValidities.put(listPath, nulls);
+            listValidities.put(path, nulls);
         }
     }
 
-    /// Resolves a dot-separated path to the `LIST` group it names, rejecting a missing path,
-    /// a leaf, and a non-`LIST` group.
-    private SchemaNode.GroupNode resolveList(String listPath) {
+    /// Resolves a dot-separated path to the `LIST` (when `expectMap` is false) or `MAP`
+    /// group it names, rejecting a missing path, a leaf, and a group of the other kind.
+    private SchemaNode.GroupNode resolveRepeated(String path, boolean expectMap) {
+        String kind = expectMap ? "map" : "list";
         SchemaNode node = schema.getRootNode();
-        for (String segment : listPath.split("\\.", -1)) {
+        for (String segment : path.split("\\.", -1)) {
             if (!(node instanceof SchemaNode.GroupNode group)) {
-                throw new IllegalArgumentException("No list at path " + listPath);
+                throw new IllegalArgumentException("No " + kind + " at path " + path);
             }
             node = null;
             for (SchemaNode child : group.children()) {
@@ -198,11 +239,11 @@ public final class ColumnBatch {
                 }
             }
             if (node == null) {
-                throw new IllegalArgumentException("No list at path " + listPath);
+                throw new IllegalArgumentException("No " + kind + " at path " + path);
             }
         }
-        if (!(node instanceof SchemaNode.GroupNode group) || !group.isList()) {
-            throw new IllegalArgumentException("Path " + listPath + " does not name a list group");
+        if (!(node instanceof SchemaNode.GroupNode group) || (expectMap ? !group.isMap() : !group.isList())) {
+            throw new IllegalArgumentException("Path " + path + " does not name a " + kind + " group");
         }
         return group;
     }
@@ -405,13 +446,14 @@ public final class ColumnBatch {
         return structValidities;
     }
 
-    /// The `LIST` entry offsets set in this batch, keyed by list group path.
+    /// The `LIST` and `MAP` entry offsets set in this batch, keyed by group path. A map
+    /// reuses this storage — its `key` and `value` leaves share the one offsets array.
     Map<String, int[]> listOffsets() {
         return listOffsets;
     }
 
-    /// The `LIST`-layer nulls set in this batch, keyed by list group path. A path absent
-    /// from the map is an all-present list.
+    /// The `LIST`- and `MAP`-layer nulls set in this batch, keyed by group path. A path
+    /// absent from the map is an all-present list or map.
     Map<String, Validity> listValidities() {
         return listValidities;
     }

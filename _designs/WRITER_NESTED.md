@@ -1,6 +1,6 @@
 # Nested write support (#9, stage 5)
 
-**Status: Settled (stage 5 complete); implemented in stages 6–8.** Tracking issue: #9. Delivery stage 5 (Spike) of
+**Status: Settled (stage 5 complete); implemented in stages 6–8 (complete).** Tracking issue: #9. Delivery stage 5 (Spike) of
 [WRITER_SUPPORT.md](WRITER_SUPPORT.md). This document is the reference the
 shredding increments (stages 6–8: structs, lists, maps) implement against.
 
