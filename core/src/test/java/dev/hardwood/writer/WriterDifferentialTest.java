@@ -448,6 +448,47 @@ class WriterDifferentialTest {
     }
 
     @Test
+    void duckDbReadsZstdCompressedColumn(@TempDir Path dir) throws Exception {
+        // ZSTD is the default codec, so this file's pages are compressed. DuckDB shares no code
+        // with hardwood's compressor, so its agreement proves the compressed bytes are
+        // spec-correct. Dictionary is disabled to force compressible PLAIN page bodies.
+        int n = 20_000;
+        int[] v = new int[n];
+        int[] r = new int[n];
+        for (int i = 0; i < n; i++) {
+            v[i] = i % 100;
+            r[i] = i;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+        WriterConfig config = WriterConfig.builder().enableDictionary(false).build();
+        Path file = dir.resolve("zstd.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
+            writer.writeBatch(batch -> batch.ints(0, r).ints(1, v));
+        }
+
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT count(*) AS n, sum(v) AS s, max(v) AS mx FROM read_parquet('"
+                                + file.toAbsolutePath() + "')")) {
+            rs.next();
+            long sum = 0;
+            long max = 0;
+            for (int value : v) {
+                sum += value;
+                max = Math.max(max, value);
+            }
+            assertThat(rs.getLong("n")).isEqualTo(n);
+            assertThat(rs.getLong("s")).isEqualTo(sum);
+            assertThat(rs.getLong("mx")).isEqualTo(max);
+        }
+    }
+
+    @Test
     void duckDbReadsMultipleRowGroups(@TempDir Path dir) throws Exception {
         int n = 5_000;
         int[] v = new int[n];

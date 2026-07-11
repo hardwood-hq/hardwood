@@ -9,6 +9,8 @@ package dev.hardwood.writer;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.metadata.CompressionCodec;
+
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -22,6 +24,22 @@ class WriterConfigTest {
         assertThat(config.pageTargetBytes()).isEqualTo(WriterConfig.DEFAULT_PAGE_TARGET_BYTES);
         assertThat(config.rowGroupTargetBytes()).isEqualTo(WriterConfig.DEFAULT_ROW_GROUP_TARGET_BYTES);
         assertThat(config.createdBy()).isEqualTo(WriterConfig.DEFAULT_CREATED_BY);
+        assertThat(config.codec()).isEqualTo(WriterConfig.DEFAULT_CODEC);
+        // zstd-jni is on the build classpath, so the classpath-conditional default resolves to
+        // ZSTD here; it degrades to UNCOMPRESSED only when the library is absent.
+        assertThat(WriterConfig.DEFAULT_CODEC).isEqualTo(CompressionCodec.ZSTD);
+    }
+
+    @Test
+    void codecOverrideIsRetained() {
+        assertThat(WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED).build().codec())
+                .isEqualTo(CompressionCodec.UNCOMPRESSED);
+    }
+
+    @Test
+    void rejectsNullCodec() {
+        assertThatThrownBy(() -> WriterConfig.builder().codec(null))
+                .isInstanceOf(IllegalArgumentException.class);
     }
 
     @Test

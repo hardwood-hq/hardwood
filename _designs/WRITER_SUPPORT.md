@@ -248,7 +248,9 @@ The writer auto-selects sensible per-column encodings and exposes overrides thro
   optional and deferred to a later breadth increment.
 - **Compression**: `UNCOMPRESSED` first, then `SNAPPY` / `ZSTD` / `GZIP` / `LZ4` —
   the existing codec libraries are bidirectional, so the encode side reuses them.
-  Default codec is `ZSTD`.
+  The default codec is `ZSTD` when the zstd-jni library is on the classpath and
+  `UNCOMPRESSED` otherwise, so a caller who did not ask to compress is not forced to
+  carry the optional dependency; selecting a codec explicitly still requires its library.
 
 `WriterConfig` knobs: row-group size, page size, dictionary page-size limit, codec,
 and the written `created_by` string.
@@ -329,7 +331,7 @@ API), *Optimization*, *Spike* (design-only), or *Docs* (user-facing documentatio
 | 7 | **List shredding** (`INT32` leaves): `REPEATED` fields — repetition levels via `LevelEncoder`, offset-driven nested input. | Dimension | The repetition-level data model is settled | 3.3 (rep levels), 6.3 | [x] |
 | 8 | **Map shredding** (`INT32` leaves): key/value repeated group, reusing the list machinery. | Dimension | The full nested shape (structs, lists, maps) is settled | 6.3 | [x] |
 | 9 | Dictionary encoding (`INT32`): dictionary page + `RLE_DICTIONARY` indices + plain fallback, exercised on nullable and nested columns so the level + dictionary-index page layout is proven together. Settled in `_designs/WRITER_DICTIONARY.md`. | Dimension | Dictionary column-chunk layout proven, incl. nulls and nesting | 2.2 | [x] |
-| 10 | Compression on the write path (`INT32`, one codec). | Dimension | Compress step + compressed/uncompressed size accounting proven | 6.2 (page compression) | [ ] |
+| 10 | Compression on the write path (`INT32`, one codec). | Dimension | Compress step + compressed/uncompressed size accounting proven | 6.2 (page compression) | [x] |
 | 11 | Column statistics (`INT32`: `min`/`max`/`null_count`, `ColumnOrder`-correct) accumulated during encode. | Dimension | Produced files support pushdown | 9.1 (stats) | [ ] |
 | 12 | All primitive physical types (incl. `FIXED_LEN_BYTE_ARRAY` type length and `BYTE_ARRAY` min/max truncation), each inheriting paging, nulls, nesting, dictionary, compression and stats. Variable-width values end the constant-bytes-per-row assumption, so the row-group flush moves from the fixed rows-per-group proxy (`rowGroupTargetBytes / (columnCount × 4)`) to tracking the actual buffered uncompressed bytes. | Breadth | Write any column type, flat or nested | 2.1, 9.1 (truncation) | [ ] |
 | 13 | Logical-type annotations: `LogicalTypeWriter` serializes the `LogicalType` union and legacy `converted_type`/`scale`/`precision`; `FileSchema.Builder` logical-type overload. Both annotations are emitted together for every type with a legacy equivalent (STRING, DATE, DECIMAL, the INT/UINT widths, TIME/TIMESTAMP millis+micros, ENUM, JSON, BSON, `LIST`, `MAP`), the union taking read precedence and the `converted_type` kept for pre-union readers; only types without a legacy equivalent (UUID, FLOAT16, NANOS units, VARIANT, GEOMETRY/GEOGRAPHY) are union-only. This makes stage 13 additive to the `converted_type`-only annotations stages 6–8 already write. | Breadth | Columns read back with their logical type (STRING, DATE, TIMESTAMP, DECIMAL, …) | 6.4 (annotation) | [ ] |

@@ -18,6 +18,8 @@ import java.util.Map;
 import java.util.function.Consumer;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.compression.Compressor;
+import dev.hardwood.internal.compression.CompressorFactory;
 import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.internal.thrift.FileMetaDataWriter;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
@@ -35,13 +37,14 @@ import dev.hardwood.schema.FileSchema;
 /// This increment writes `INT32` columns — flat `REQUIRED` / `OPTIONAL`, nested inside
 /// `REQUIRED` / `OPTIONAL` `struct` groups, and inside `LIST`s and `MAP`s (including lists
 /// of lists, lists of structs, and maps of any in-scope value). Data is supplied as
-/// [ColumnBatch] slices; the writer packs each column into size-bounded, uncompressed data
-/// pages — a levelled column's pages carrying an RLE definition-level stream ahead of the
-/// values — and flushes a row group once its buffered data reaches the configured target, so
-/// peak memory is bounded regardless of how much is written. Columns are dictionary-encoded
-/// by default (a dictionary page plus `RLE_DICTIONARY` index pages), falling back to `PLAIN`
-/// when the dictionary grows past the configured limit; both are configurable through
-/// [WriterConfig]. The row groups and footer are finalized on [#close()].
+/// [ColumnBatch] slices; the writer packs each column into size-bounded data pages — a
+/// levelled column's pages carrying an RLE definition-level stream ahead of the values — and
+/// flushes a row group once its buffered data reaches the configured target, so peak memory is
+/// bounded regardless of how much is written. Columns are dictionary-encoded by default (a
+/// dictionary page plus `RLE_DICTIONARY` index pages), falling back to `PLAIN` when the
+/// dictionary grows past the configured limit. Each page body is compressed with the
+/// configured codec (`ZSTD` by default, or `UNCOMPRESSED`). All of these are configurable
+/// through [WriterConfig]. The row groups and footer are finalized on [#close()].
 ///
 /// The file is produced front to back and is valid only after `close()` returns.
 public final class ParquetFileWriter implements Closeable {
@@ -55,24 +58,27 @@ public final class ParquetFileWriter implements Closeable {
     private final int pageValues;
     private final int maxRowsPerGroup;
     private final RecordShredder shredder;
+    private final Compressor compressor;
     private final List<RowGroup> rowGroups = new ArrayList<>();
 
     private RowGroupBuffer current;
     private long numRows;
     private boolean closed;
 
-    private ParquetFileWriter(OutputFile out, FileSchema schema, WriterConfig config) {
+    private ParquetFileWriter(OutputFile out, FileSchema schema, WriterConfig config, Compressor compressor) {
         this.out = out;
         this.schema = schema;
         this.config = config;
         this.pageValues = pageRowCapacity(config.pageTargetBytes(), schema);
         this.maxRowsPerGroup = maxRowsPerGroup(config.rowGroupTargetBytes(), schema);
         this.shredder = new RecordShredder(schema, pageValues);
+        this.compressor = compressor;
         this.current = newRowGroupBuffer();
     }
 
     private RowGroupBuffer newRowGroupBuffer() {
-        return new RowGroupBuffer(schema, pageValues, config.enableDictionary(), config.dictionaryPageLimitBytes());
+        return new RowGroupBuffer(schema, pageValues, config.enableDictionary(), config.dictionaryPageLimitBytes(),
+                compressor, config.codec());
     }
 
     /// Opens a writer with the default [WriterConfig].
@@ -93,7 +99,8 @@ public final class ParquetFileWriter implements Closeable {
     /// @param config the writer configuration
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws UnsupportedOperationException if the schema has a non-`INT32` column
+    /// @throws UnsupportedOperationException if the schema has a non-`INT32` column, or the
+    ///         configured codec cannot be written
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config)
             throws IOException {
         for (int c = 0; c < schema.getColumnCount(); c++) {
@@ -103,9 +110,12 @@ public final class ParquetFileWriter implements Closeable {
                         "Only INT32 columns are supported; column " + column.name() + " is " + column.type());
             }
         }
+        // Resolve the codec before touching the output, so an unsupported codec or a missing
+        // codec library fails before any bytes are written rather than leaving a partial file.
+        Compressor compressor = new CompressorFactory().getCompressor(config.codec());
         out.create();
         out.write(ByteBuffer.wrap(MAGIC));
-        return new ParquetFileWriter(out, schema, config);
+        return new ParquetFileWriter(out, schema, config, compressor);
     }
 
     /// Writes one aligned batch of column values, flushing row groups as the buffered

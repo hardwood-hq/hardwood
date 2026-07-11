@@ -9,6 +9,7 @@ package dev.hardwood.internal.writer;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.util.ArrayList;
@@ -17,6 +18,7 @@ import java.util.Map;
 import java.util.zip.CRC32;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.internal.encoding.DictionaryEncoder;
 import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.internal.encoding.PlainEncoder;
@@ -30,7 +32,7 @@ import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
 /// Accumulates one `INT32` column's level entries for the current row group, packing them
-/// into uncompressed data pages of at most the page capacity. The [RecordShredder] streams a
+/// into data pages of at most the page capacity. The [RecordShredder] streams a
 /// record range's entries into this buffer through [#accept] (as a [RecordShredder.LevelSink]);
 /// a page is sealed each time the pending buffer fills — even part-way through a record — and
 /// the tail is sealed at flush. The encoded pages are held until the row group is flushed,
@@ -39,7 +41,11 @@ import dev.hardwood.schema.ColumnSchema;
 /// A page body is `[rep levels?][def levels?][value section]`, each level stream prefixed by
 /// its 4-byte little-endian length. When dictionary encoding is enabled the value section is
 /// `[1-byte index bit width][RLE/bit-packed indices]` (`RLE_DICTIONARY`); otherwise, and after
-/// a fallback, it is `[PLAIN present values]`.
+/// a fallback, it is `[PLAIN present values]`. The assembled body (levels and values together)
+/// is compressed with the chunk's [Compressor] before framing, and the page header records
+/// both the uncompressed and the stored compressed size; the dictionary page body is
+/// compressed the same way. The CRC-32 is taken over the stored bytes, matching what the
+/// reader validates.
 ///
 /// Dictionary encoding is column-chunk scoped: present values are interned in first-seen order
 /// through a [DictionaryEncoder], and each page's indices reference the dictionary page written
@@ -55,10 +61,15 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     private final int[] pendingRep;
     private final int[] pendingDef;
     private final int[] pendingValues; // indices while dictionary-encoding, raw values once plain
-    private final ByteArrayOutputStream pages = new ByteArrayOutputStream();
+    private final ByteArrayOutputStream pages = new ByteArrayOutputStream(); // stored (compressed) data pages
     private int pendingCount;      // level entries buffered for the current page
     private int pendingValueCount; // present values buffered for the current page
     private long numValues;        // total level entries across sealed pages
+    private long dataPagesUncompressedSize; // sum of header + uncompressed body across data pages
+    private long dictionaryPageUncompressedSize; // header + uncompressed body of the dictionary page
+
+    private final Compressor compressor;
+    private final CompressionCodec codec;
 
     private final DictionaryEncoder dictionary; // null when dictionary encoding is disabled
     private final int dictionaryLimitBytes;
@@ -69,8 +80,11 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     /// @param maxRepLevel the column's maximum repetition level (0 selects no rep stream)
     /// @param enableDictionary whether to dictionary-encode this chunk (with `PLAIN` fallback)
     /// @param dictionaryLimitBytes the dictionary size past which the chunk falls back to `PLAIN`
+    /// @param compressor compresses each page body before framing
+    /// @param codec the codec `compressor` applies, recorded in the chunk metadata
     ColumnChunkBuffer(int pageValues, int maxDefLevel, int maxRepLevel,
-                      boolean enableDictionary, int dictionaryLimitBytes) {
+                      boolean enableDictionary, int dictionaryLimitBytes,
+                      Compressor compressor, CompressionCodec codec) {
         this.maxDefLevel = maxDefLevel;
         this.maxRepLevel = maxRepLevel;
         this.pendingValues = new int[pageValues];
@@ -79,6 +93,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         this.dictionary = enableDictionary ? new DictionaryEncoder() : null;
         this.dictionaryLimitBytes = dictionaryLimitBytes;
         this.dictionaryActive = enableDictionary;
+        this.compressor = compressor;
+        this.codec = codec;
     }
 
     /// Shreds records `[fromRecord, fromRecord + count)` of this column straight into the
@@ -125,25 +141,30 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         boolean hasDictionary = dictionary != null && dictionary.size() > 0;
         long dataPageOffset = chunkStartOffset;
         Long dictionaryPageOffset = null;
-        long dictionaryPageSize = 0;
+        long dictionaryCompressedSize = 0;
+        long dictionaryUncompressedSize = 0;
         if (hasDictionary) {
             byte[] dictionaryPage = buildDictionaryPage();
             dictionaryPageOffset = chunkStartOffset;
             dataPageOffset = chunkStartOffset + dictionaryPage.length;
-            dictionaryPageSize = dictionaryPage.length;
+            dictionaryCompressedSize = dictionaryPage.length;
+            dictionaryUncompressedSize = dictionaryPageUncompressedSize;
             out.write(ByteBuffer.wrap(dictionaryPage));
         }
-        long totalSize = dictionaryPageSize + pages.size();
+        // Page headers are stored uncompressed either way; only the bodies differ, so the
+        // compressed total is what was actually written and the uncompressed total restores
+        // each body to its pre-compression size.
+        long totalCompressed = dictionaryCompressedSize + pages.size();
+        long totalUncompressed = dictionaryUncompressedSize + dataPagesUncompressedSize;
         out.write(ByteBuffer.wrap(pages.toByteArray()));
-        // Pages are stored uncompressed, so compressed and uncompressed sizes are equal.
         return new ColumnMetaData(
                 PhysicalType.INT32,
                 encodings(hasDictionary),
                 column.fieldPath(),
-                CompressionCodec.UNCOMPRESSED,
+                codec,
                 numValues,
-                totalSize,
-                totalSize,
+                totalUncompressed,
+                totalCompressed,
                 Map.of(),
                 dataPageOffset,
                 dictionaryPageOffset,
@@ -167,16 +188,19 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
         }
         boolean dictionaryPage = dictionaryActive && dictionary != null && dictionary.size() > 0;
         byte[] body = buildBody(dictionaryPage);
-        // CRC-32 over the page body as stored on disk (uncompressed here), matching what the
-        // reader validates.
+        byte[] stored = compress(body);
+        // CRC-32 over the page body as stored on disk (compressed), matching what the reader
+        // validates.
         CRC32 crc = new CRC32();
-        crc.update(body);
+        crc.update(stored);
         ThriftCompactWriter header = new ThriftCompactWriter();
         Encoding valuesEncoding = dictionaryPage ? Encoding.RLE_DICTIONARY : Encoding.PLAIN;
-        PageHeaderWriter.writeDataPageV1(header, pendingCount, body.length, body.length,
+        PageHeaderWriter.writeDataPageV1(header, pendingCount, body.length, stored.length,
                 (int) crc.getValue(), valuesEncoding);
-        pages.writeBytes(header.toByteArray());
-        pages.writeBytes(body);
+        byte[] headerBytes = header.toByteArray();
+        pages.writeBytes(headerBytes);
+        pages.writeBytes(stored);
+        dataPagesUncompressedSize += headerBytes.length + body.length;
         numValues += pendingCount;
         pendingCount = 0;
         pendingValueCount = 0;
@@ -209,18 +233,34 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     }
 
     /// Builds the dictionary page: a `DICTIONARY_PAGE` header over the distinct values,
-    /// `PLAIN`-encoded in index order.
+    /// `PLAIN`-encoded in index order and compressed with the chunk's codec. Records the
+    /// page's uncompressed size (header plus uncompressed body) for the chunk metadata.
     private byte[] buildDictionaryPage() {
         byte[] body = PlainEncoder.encodeInts(dictionary.values(), 0, dictionary.size());
+        byte[] stored = compress(body);
         CRC32 crc = new CRC32();
-        crc.update(body);
+        crc.update(stored);
         ThriftCompactWriter header = new ThriftCompactWriter();
-        PageHeaderWriter.writeDictionaryPageV1(header, dictionary.size(), body.length, body.length,
+        PageHeaderWriter.writeDictionaryPageV1(header, dictionary.size(), body.length, stored.length,
                 (int) crc.getValue(), Encoding.PLAIN);
+        byte[] headerBytes = header.toByteArray();
+        dictionaryPageUncompressedSize = headerBytes.length + body.length;
         ByteArrayOutputStream page = new ByteArrayOutputStream();
-        page.writeBytes(header.toByteArray());
-        page.writeBytes(body);
+        page.writeBytes(headerBytes);
+        page.writeBytes(stored);
         return page.toByteArray();
+    }
+
+    /// Compresses a page body with the chunk's codec. Compressing an in-memory buffer that
+    /// fails is unrecoverable, so a codec error surfaces as an unchecked exception rather than
+    /// forcing a checked-exception path through the [RecordShredder.LevelSink] callback.
+    private byte[] compress(byte[] body) {
+        try {
+            return compressor.compress(body, 0, body.length);
+        }
+        catch (IOException e) {
+            throw new UncheckedIOException("Failed to " + codec + "-compress a page body", e);
+        }
     }
 
     /// The deduplicated set of encodings the chunk actually uses: `RLE` for the level streams

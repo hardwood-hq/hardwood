@@ -12,8 +12,10 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.internal.compression.Compressor;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.schema.FileSchema;
 
@@ -30,13 +32,16 @@ public final class RowGroupBuffer {
     /// @param pageValues maximum number of level triples per data page
     /// @param enableDictionary whether columns are dictionary-encoded (with `PLAIN` fallback)
     /// @param dictionaryLimitBytes the dictionary size past which a chunk falls back to `PLAIN`
-    public RowGroupBuffer(FileSchema schema, int pageValues, boolean enableDictionary, int dictionaryLimitBytes) {
+    /// @param compressor compresses each page body before it is buffered
+    /// @param codec the codec `compressor` applies, recorded in each chunk's metadata
+    public RowGroupBuffer(FileSchema schema, int pageValues, boolean enableDictionary, int dictionaryLimitBytes,
+                          Compressor compressor, CompressionCodec codec) {
         this.schema = schema;
         this.columns = new ColumnChunkBuffer[schema.getColumnCount()];
         for (int c = 0; c < columns.length; c++) {
             columns[c] = new ColumnChunkBuffer(pageValues,
                     schema.getColumn(c).maxDefinitionLevel(), schema.getColumn(c).maxRepetitionLevel(),
-                    enableDictionary, dictionaryLimitBytes);
+                    enableDictionary, dictionaryLimitBytes, compressor, codec);
         }
     }
 

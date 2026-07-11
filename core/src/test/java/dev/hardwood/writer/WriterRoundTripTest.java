@@ -29,6 +29,7 @@ import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -779,6 +780,107 @@ class WriterRoundTripTest {
                 assertThat(readMapOfInts(kr, vr)).containsExactly(
                         mapOf(1, 5, 2, null), Map.of(), null, mapOf(3, 5, 4, 9));
             }
+        }
+    }
+
+    @Test
+    void compressesPagesWithZstdByDefault() throws Exception {
+        // The default codec is ZSTD, so a file written with no override records ZSTD and reads
+        // back through the reader's ZSTD path.
+        int[] values = new int[1_000];
+        int[] palette = { 3, 3, 7, 3, 9 };
+        for (int i = 0; i < values.length; i++) {
+            values[i] = palette[i % palette.length];
+        }
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(columnMeta(reader, 0).codec()).isEqualTo(CompressionCodec.ZSTD);
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    @Test
+    void zstdShrinksACompressiblePageAndAccountsForBothSizes() throws Exception {
+        // A large single-valued PLAIN column (dictionary disabled) has a highly compressible
+        // body, so ZSTD stores far fewer bytes than it holds — proving the compress step ran
+        // and that the compressed and uncompressed sizes are tracked independently, at both the
+        // chunk-metadata and the page-header level.
+        int n = 10_000;
+        int[] values = new int[n];
+        Arrays.fill(values, 42);
+
+        WriterConfig config = WriterConfig.builder().enableDictionary(false).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+        byte[] bytes = out.toByteArray();
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            ColumnMetaData meta = columnMeta(reader, 0);
+            assertThat(meta.codec()).isEqualTo(CompressionCodec.ZSTD);
+            assertThat(meta.totalCompressedSize()).isLessThan(meta.totalUncompressedSize());
+
+            int offset = Math.toIntExact(meta.dataPageOffset());
+            ThriftCompactReader thrift = new ThriftCompactReader(ByteBuffer.wrap(bytes), offset);
+            PageHeader header = PageHeaderReader.read(thrift);
+            assertThat(header.compressedPageSize()).isLessThan(header.uncompressedPageSize());
+            // The CRC covers the stored (compressed) bytes.
+            int bodyStart = offset + thrift.getBytesRead();
+            CRC32 crc = new CRC32();
+            crc.update(bytes, bodyStart, header.compressedPageSize());
+            assertThat(header.crc().intValue()).isEqualTo((int) crc.getValue());
+
+            assertThat(Arrays.equals(readInts(reader, 0), values)).isTrue();
+        }
+    }
+
+    @Test
+    void uncompressedCodecStoresBodiesVerbatim() throws Exception {
+        // With the UNCOMPRESSED codec the stored bytes are the body bytes, so the chunk's
+        // compressed and uncompressed sizes are equal.
+        int[] values = { 1, 2, 3, 4, 5 };
+
+        WriterConfig config = WriterConfig.builder().codec(CompressionCodec.UNCOMPRESSED).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            ColumnMetaData meta = columnMeta(reader, 0);
+            assertThat(meta.codec()).isEqualTo(CompressionCodec.UNCOMPRESSED);
+            assertThat(meta.totalCompressedSize()).isEqualTo(meta.totalUncompressedSize());
+            assertThat(readInts(reader, 0)).containsExactly(values);
+        }
+    }
+
+    @Test
+    void compressionComposesWithNullsAcrossPages() throws Exception {
+        // ZSTD compression under a tiny page target: many compressed pages, each carrying a
+        // def-level stream and PLAIN values, must all decompress and reassemble the nulls.
+        int n = 4_000;
+        int[] values = new int[n];
+        boolean[] nulls = new boolean[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = i;
+            nulls[i] = i % 4 == 0;
+        }
+
+        WriterConfig config = WriterConfig.builder().pageTargetBytes(256).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            assertThat(columnMeta(reader, 0).codec()).isEqualTo(CompressionCodec.ZSTD);
+            assertThat(readNullable(reader, 0)).isEqualTo(expectedNullable(values, nulls));
         }
     }
 
