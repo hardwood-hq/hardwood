@@ -750,23 +750,50 @@ public class ColumnReader implements AutoCloseable {
     /// otherwise a freshly compacted typed array (batches derived by record
     /// selection). Cached per batch.
     private Object realLeafValues() {
-        if (!nested) {
-            return currentFlatBatch.values;
-        }
         if (cachedRealValues != null) {
             return cachedRealValues;
         }
+        cachedRealValues = trimToValueCount(rawLeafValues());
+        return cachedRealValues;
+    }
+
+    /// The untrimmed leaf-values backing store. For flat columns this is the
+    /// underlying batch array. For nested columns it is, in order: the drain's
+    /// pre-compacted `realValues` when present; otherwise pass-through of the
+    /// batch values when no compaction is needed (no `REPEATED` layer, or an
+    /// all-present batch with no phantom positions); otherwise a freshly
+    /// compacted typed array (batches derived by record selection).
+
+    private Object rawLeafValues() {
+        if (!nested) {
+            return currentFlatBatch.values;
+        }
         NestedBatch batch = currentNestedBatch;
         if (batch.realValues != null) {
-            cachedRealValues = batch.realValues;   // pre-compacted on the drain
+            return batch.realValues;               // pre-compacted on the drain
         }
-        else {
-            int[] map = ensureRealView().realToRawLeaf();
-            cachedRealValues = map == null
-                    ? batch.values                 // pass-through, no compaction
-                    : LeafCompaction.compact(batch.values, map);
-        }
-        return cachedRealValues;
+        int[] map = ensureRealView().realToRawLeaf();
+        return map == null
+                ? batch.values                     // pass-through, no compaction
+                : LeafCompaction.compact(batch.values, map);
+    }
+
+    /// Trims a primitive leaf array to exactly [#getValueCount()] entries so the
+    /// capacity tail — stale or zero-filled values past the batch's real leaf
+    /// count — is never exposed through the typed accessors. Already-exact arrays
+    /// and non-array payloads ([BinaryBatchValues], whose offsets are trimmed on
+    /// their own path) pass through untouched, so only the final short batch of a
+    /// column ever pays a copy.
+    private Object trimToValueCount(Object values) {
+        int n = getValueCount();
+        return switch (values) {
+            case int[] a -> a.length == n ? a : Arrays.copyOf(a, n);
+            case long[] a -> a.length == n ? a : Arrays.copyOf(a, n);
+            case float[] a -> a.length == n ? a : Arrays.copyOf(a, n);
+            case double[] a -> a.length == n ? a : Arrays.copyOf(a, n);
+            case boolean[] a -> a.length == n ? a : Arrays.copyOf(a, n);
+            default -> values;
+        };
     }
 
     private void ensureRealBinary() {
