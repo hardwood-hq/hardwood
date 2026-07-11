@@ -11,8 +11,8 @@ import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
 
 /// Writer for ColumnMetaData to Thrift Compact Protocol, the inverse of
-/// [ColumnMetaDataReader]. Serializes the required fields only; optional
-/// statistics, index offsets and dictionary offsets are written by later
+/// [ColumnMetaDataReader]. Serializes the required fields plus the optional
+/// `dictionary_page_offset`; statistics and index offsets are written by later
 /// increments.
 public class ColumnMetaDataWriter {
 
@@ -56,6 +56,12 @@ public class ColumnMetaDataWriter {
             // 9: data_page_offset
             writer.writeFieldBegin(9, ThriftCompactConstants.FieldType.I64);
             writer.writeI64(metaData.dataPageOffset());
+
+            // 11: dictionary_page_offset (present only for a dictionary-encoded chunk)
+            if (metaData.dictionaryPageOffset() != null) {
+                writer.writeFieldBegin(11, ThriftCompactConstants.FieldType.I64);
+                writer.writeI64(metaData.dictionaryPageOffset());
+            }
 
             writer.writeFieldStop();
         }
