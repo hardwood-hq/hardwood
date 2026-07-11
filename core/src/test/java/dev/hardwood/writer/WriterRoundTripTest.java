@@ -683,6 +683,105 @@ class WriterRoundTripTest {
         }
     }
 
+    @Test
+    void dictionaryEncodesColumnWithLeadingNullPage() throws Exception {
+        // A leading run of nulls long enough to fill the first page seals it as PLAIN before any
+        // value is interned; later pages then dictionary-encode. The resulting PLAIN-before-
+        // RLE_DICTIONARY chunk must still read back, since page encoding is per-page.
+        int n = 60;
+        int leadingNulls = 24; // exceeds the ~15 level entries a 64-byte page holds for INT32
+        int[] values = new int[n];
+        boolean[] nulls = new boolean[n];
+        Integer[] expected = new Integer[n];
+        for (int i = 0; i < n; i++) {
+            if (i < leadingNulls) {
+                nulls[i] = true;
+                expected[i] = null;
+            } else {
+                values[i] = (i % 3) * 100;
+                expected[i] = values[i];
+            }
+        }
+
+        WriterConfig config = WriterConfig.builder().pageTargetBytes(64).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            ColumnMetaData meta = columnMeta(reader, 0);
+            assertThat(meta.dictionaryPageOffset()).as("dictionary page still written").isNotNull();
+            assertThat(meta.encodings()).contains(Encoding.RLE_DICTIONARY, Encoding.PLAIN);
+            assertThat(readNullable(reader, 0)).containsExactly(expected);
+        }
+    }
+
+    @Test
+    void dictionaryEncodesStructColumn() throws Exception {
+        // A low-cardinality INT32 leaf inside an OPTIONAL struct: the dictionary index section
+        // sits behind the struct's definition-level stream, proving dictionary encoding composes
+        // with a STRUCT layer.
+        FileSchema schema = FileSchema.builder("schema")
+                .struct("s", RepetitionType.OPTIONAL, sb -> sb
+                        .addColumn("v", PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        // structs: {v:7}, null struct, {v:null}, {v:7}, {v:3} — the null-struct slot is a phantom.
+        Validity structNulls = Validity.ofNulls(new boolean[] { false, true, false, false, false });
+        int[] v = { 7, 0, 0, 7, 3 };
+        boolean[] vNulls = { false, false, true, false, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .struct("s", structNulls)
+                    .ints("s.v", v, vNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int leaf = reader.getFileSchema().getColumn("s.v").columnIndex();
+            assertThat(columnMeta(reader, leaf).dictionaryPageOffset()).isNotNull();
+            assertThat(readNullable(reader, leaf)).containsExactly(7, null, null, 7, 3);
+        }
+    }
+
+    @Test
+    void dictionaryEncodesMapValueColumn() throws Exception {
+        // A low-cardinality INT32 map value: the dictionary index section sits behind the MAP's
+        // rep/def level streams, proving dictionary encoding composes with a MAP layer.
+        FileSchema schema = FileSchema.builder("schema")
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
+                        v -> v.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] offsets = { 0, 2, 2, 2, 4 };
+        Validity mapNulls = Validity.ofNulls(new boolean[] { false, false, true, false });
+        int[] keys = { 1, 2, 3, 4 };
+        int[] values = { 5, 0, 5, 9 };
+        boolean[] valueNulls = { false, true, false, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .map("props", offsets, mapNulls)
+                    .ints("props.key_value.key", keys)
+                    .ints("props.key_value.value", values, valueNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
+            int valIdx = reader.getFileSchema().getColumn("props.key_value.value").columnIndex();
+            assertThat(columnMeta(reader, valIdx).dictionaryPageOffset()).isNotNull();
+            try (ColumnReader kr = reader.columnReader(keyIdx); ColumnReader vr = reader.columnReader(valIdx)) {
+                assertThat(kr.nextBatch()).isTrue();
+                assertThat(vr.nextBatch()).isTrue();
+                assertThat(readMapOfInts(kr, vr)).containsExactly(
+                        mapOf(1, 5, 2, null), Map.of(), null, mapOf(3, 5, 4, 9));
+            }
+        }
+    }
+
     private static ColumnMetaData columnMeta(ParquetFileReader reader, int columnIndex) {
         return reader.getFileMetaData().rowGroups().get(0).columns().get(columnIndex).metaData();
     }

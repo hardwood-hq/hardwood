@@ -138,11 +138,16 @@ a **new** distinct value that would push the dictionary past the limit:
 - the dictionary page is still written (it holds the values assigned before fallback), because
   the already-sealed `RLE_DICTIONARY` pages reference it.
 
-A chunk therefore holds either all `RLE_DICTIONARY` data pages (no overflow) or a prefix of
-`RLE_DICTIONARY` pages followed by `PLAIN` pages (overflow). Each data page declares its own
-encoding in its header, so the reader decodes each correctly; mixing the two within a chunk is
-valid Parquet. A chunk whose very first value would overflow (limit smaller than one value) is
-never possible — one distinct value always fits — so at least the dictionary path is always
+Each data page declares its own encoding in its header, so the reader decodes each
+independently and any mix of `PLAIN` and `RLE_DICTIONARY` data pages within one chunk is valid
+Parquet. In the common cases a chunk is either all `RLE_DICTIONARY` (no overflow) or an
+`RLE_DICTIONARY` prefix followed by `PLAIN` pages (overflow). The one exception is a page
+sealed while the dictionary is still empty: a leading run of nulls long enough to fill a page
+seals as `PLAIN` before any value is interned, which can place a `PLAIN` page *ahead* of the
+`RLE_DICTIONARY` pages. Because encoding is per-page, this reads back correctly — but nothing
+downstream may assume a set `dictionary_page_offset` implies the first data page is
+`RLE_DICTIONARY`. A chunk whose very first value would overflow (limit smaller than one value)
+is never possible — one distinct value always fits — so at least the dictionary path is always
 attempted; the degenerate tiny-limit case simply falls back after the first page.
 
 Dictionary encoding is **on by default** for every `INT32` column and can be disabled per

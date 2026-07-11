@@ -45,8 +45,9 @@ import dev.hardwood.schema.ColumnSchema;
 /// through a [DictionaryEncoder], and each page's indices reference the dictionary page written
 /// ahead of the data pages at flush. When the dictionary would exceed `dictionaryLimitBytes`
 /// the chunk **falls back** — the pending page is sealed as `RLE_DICTIONARY` and every
-/// subsequent page is `PLAIN` — so a chunk holds either all-dictionary pages or a dictionary
-/// prefix followed by plain pages, both valid Parquet.
+/// subsequent page is `PLAIN`. Encoding is per-page (each page's header declares its own), so a
+/// chunk may hold any mix of the two; a page sealed while the dictionary is still empty (a
+/// leading run of nulls filling a page) is `PLAIN` even ahead of later `RLE_DICTIONARY` pages.
 final class ColumnChunkBuffer implements RecordShredder.LevelSink {
 
     private final int maxDefLevel;
