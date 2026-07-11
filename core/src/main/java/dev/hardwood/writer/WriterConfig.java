@@ -7,6 +7,8 @@
  */
 package dev.hardwood.writer;
 
+import dev.hardwood.metadata.CompressionCodec;
+
 /// Tuning knobs for [ParquetFileWriter].
 ///
 /// The two size targets bound the writer's output granularity and peak memory:
@@ -32,11 +34,18 @@ public final class WriterConfig {
     /// chunk falls back to `PLAIN`.
     public static final int DEFAULT_DICTIONARY_PAGE_LIMIT_BYTES = 1 << 20;
 
+    /// Default page compression codec: `ZSTD` when the zstd-jni library is on the classpath,
+    /// otherwise `UNCOMPRESSED`. Choosing a codec explicitly through [Builder#codec] still
+    /// requires that codec's library and fails at writer creation when it is missing; this
+    /// default only avoids imposing the ZSTD dependency on callers who did not ask to compress.
+    public static final CompressionCodec DEFAULT_CODEC = defaultCodec();
+
     private final int pageTargetBytes;
     private final long rowGroupTargetBytes;
     private final String createdBy;
     private final boolean enableDictionary;
     private final int dictionaryPageLimitBytes;
+    private final CompressionCodec codec;
 
     private WriterConfig(Builder builder) {
         this.pageTargetBytes = builder.pageTargetBytes;
@@ -44,6 +53,7 @@ public final class WriterConfig {
         this.createdBy = builder.createdBy;
         this.enableDictionary = builder.enableDictionary;
         this.dictionaryPageLimitBytes = builder.dictionaryPageLimitBytes;
+        this.codec = builder.codec;
     }
 
     /// The default configuration.
@@ -81,6 +91,23 @@ public final class WriterConfig {
         return dictionaryPageLimitBytes;
     }
 
+    /// The codec each page body is compressed with.
+    public CompressionCodec codec() {
+        return codec;
+    }
+
+    /// `ZSTD` when its library is loadable, otherwise `UNCOMPRESSED`. The class is only probed
+    /// for presence, not initialized, so picking the default never triggers the native load.
+    private static CompressionCodec defaultCodec() {
+        try {
+            Class.forName("com.github.luben.zstd.Zstd", false, WriterConfig.class.getClassLoader());
+            return CompressionCodec.ZSTD;
+        }
+        catch (ClassNotFoundException e) {
+            return CompressionCodec.UNCOMPRESSED;
+        }
+    }
+
     /// Builder for [WriterConfig].
     public static final class Builder {
 
@@ -89,6 +116,7 @@ public final class WriterConfig {
         private String createdBy = DEFAULT_CREATED_BY;
         private boolean enableDictionary = true;
         private int dictionaryPageLimitBytes = DEFAULT_DICTIONARY_PAGE_LIMIT_BYTES;
+        private CompressionCodec codec = DEFAULT_CODEC;
 
         private Builder() {
         }
@@ -137,6 +165,17 @@ public final class WriterConfig {
                         + Integer.BYTES + " but was " + dictionaryPageLimitBytes);
             }
             this.dictionaryPageLimitBytes = dictionaryPageLimitBytes;
+            return this;
+        }
+
+        /// Sets the codec each page body is compressed with; must be non-null. Only
+        /// `UNCOMPRESSED` and `ZSTD` are currently supported on the write path, and a
+        /// non-`UNCOMPRESSED` codec requires its library on the classpath.
+        public Builder codec(CompressionCodec codec) {
+            if (codec == null) {
+                throw new IllegalArgumentException("codec must not be null");
+            }
+            this.codec = codec;
             return this;
         }
 

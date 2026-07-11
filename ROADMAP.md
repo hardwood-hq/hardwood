@@ -191,7 +191,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Automatic row group flushing
 - [x] Dictionary page writing
 - [x] Data page encoding and writing
-- [ ] Page compression
+- [x] Page compression
 - [x] Footer writing
 - [x] File finalization
 
