@@ -987,6 +987,85 @@ class WriterRoundTripTest {
     }
 
     @Test
+    void writesAndReadsBackMapOfIntToStruct() throws Exception {
+        // optional map<int32, optional struct { required int32 a, optional int32 b }> — a STRUCT
+        // value layer nested inside the MAP's REPEATED layer. A null struct value is distinct
+        // from an absent map, an empty map, and a null leaf inside a present struct.
+        FileSchema schema = FileSchema.builder("schema")
+                .map("props", RepetitionType.OPTIONAL, PhysicalType.INT32,
+                        v -> v.struct(RepetitionType.OPTIONAL, s -> s
+                                .addColumn("a", PhysicalType.INT32, RepetitionType.REQUIRED)
+                                .addColumn("b", PhysicalType.INT32, RepetitionType.OPTIONAL)))
+                .build();
+
+        // record 0: {1:{a:10,b:20}, 2:null}; 1: {} (empty); 2: null (absent map); 3: {3:{a:30,b:null}}.
+        int[] offsets = { 0, 2, 2, 2, 3 };
+        Validity mapNulls = Validity.ofNulls(new boolean[] { false, false, true, false });
+        int[] keys = { 1, 2, 3 };
+        Validity structNulls = Validity.ofNulls(new boolean[] { false, true, false });
+        int[] a = { 10, 0, 30 }; // the null-struct slot (entry 1) is a phantom, its value ignored
+        int[] b = { 20, 0, 0 };
+        boolean[] bNulls = { false, false, true };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .map("props", offsets, mapNulls)
+                    .ints("props.key_value.key", keys)
+                    .struct("props.key_value.value", structNulls)
+                    .ints("props.key_value.value.a", a)
+                    .ints("props.key_value.value.b", b, bNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int keyIdx = reader.getFileSchema().getColumn("props.key_value.key").columnIndex();
+            int aIdx = reader.getFileSchema().getColumn("props.key_value.value.a").columnIndex();
+            int bIdx = reader.getFileSchema().getColumn("props.key_value.value.b").columnIndex();
+            try (ColumnReader kr = reader.columnReader(keyIdx);
+                    ColumnReader ar = reader.columnReader(aIdx);
+                    ColumnReader br = reader.columnReader(bIdx)) {
+                assertThat(kr.nextBatch()).isTrue();
+                assertThat(ar.nextBatch()).isTrue();
+                assertThat(br.nextBatch()).isTrue();
+                assertThat(ar.getLayerCount()).isEqualTo(2);
+                assertThat(ar.getLayerKind(0)).isEqualTo(LayerKind.REPEATED);
+                assertThat(ar.getLayerKind(1)).isEqualTo(LayerKind.STRUCT);
+
+                // Reconstruct each entry's struct as [a, b] (b nullable); a null struct is a null
+                // map value, an absent map a null record.
+                int[] mapOffs = ar.getLayerOffsets(0);
+                Validity mapV = ar.getLayerValidity(0);
+                Validity structV = ar.getLayerValidity(1);
+                int[] ks = kr.getInts();
+                int[] as = ar.getInts();
+                int[] bs = br.getInts();
+                Validity bLeaf = br.getLeafValidity();
+                List<Map<Integer, List<Integer>>> actual = new ArrayList<>();
+                for (int r = 0; r < ar.getRecordCount(); r++) {
+                    if (mapV.isNull(r)) {
+                        actual.add(null);
+                        continue;
+                    }
+                    Map<Integer, List<Integer>> map = new LinkedHashMap<>();
+                    for (int e = mapOffs[r]; e < mapOffs[r + 1]; e++) {
+                        map.put(ks[e], structV.isNull(e)
+                                ? null
+                                : Arrays.asList(as[e], bLeaf.isNull(e) ? null : bs[e]));
+                    }
+                    actual.add(map);
+                }
+
+                Map<Integer, List<Integer>> rec0 = new LinkedHashMap<>();
+                rec0.put(1, List.of(10, 20));
+                rec0.put(2, null);
+                Map<Integer, List<Integer>> rec3 = new LinkedHashMap<>();
+                rec3.put(3, Arrays.asList(30, null));
+                assertThat(actual).containsExactly(rec0, Map.of(), null, rec3);
+            }
+        }
+    }
+
+    @Test
     void rejectsListVerbOnMapPath() throws Exception {
         // A map addressed with the list verb is a wrong-kind facet and must fail eagerly.
         FileSchema schema = FileSchema.builder("schema")
@@ -995,6 +1074,20 @@ class WriterRoundTripTest {
                 .build();
         try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
             assertThatThrownBy(() -> writer.writeBatch(batch -> batch.list("props", new int[] { 0, 1 })))
+                    .isInstanceOf(IllegalArgumentException.class);
+        }
+    }
+
+    @Test
+    void rejectsMapVerbOnListPath() throws Exception {
+        // The mirror of rejectsListVerbOnMapPath: a list addressed with the map verb is a
+        // wrong-kind facet and must fail eagerly.
+        FileSchema schema = FileSchema.builder("schema")
+                .list("items", RepetitionType.OPTIONAL,
+                        el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+            assertThatThrownBy(() -> writer.writeBatch(batch -> batch.map("items", new int[] { 0, 1 })))
                     .isInstanceOf(IllegalArgumentException.class);
         }
     }
