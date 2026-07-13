@@ -14,6 +14,7 @@ import java.time.LocalDateTime;
 import java.time.LocalTime;
 import java.util.Arrays;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 
 import dev.hardwood.internal.predicate.RecordFilterCompiler;
@@ -209,6 +210,13 @@ public final class NestedRowReader implements RowReader {
 
     @Override
     public void next() {
+        // Fail early on an unguarded next() past the batch rather than letting
+        // rowIndex point into the capacity tail and expose phantom/stale rows.
+        // After any hasNext() == true this check never trips (a freshly loaded
+        // batch resets rowIndex to -1).
+        if (rowIndex + 1 >= batchSize) {
+            throw new NoSuchElementException("No row available. Call hasNext() first.");
+        }
         rowIndex++;
         dataView.setRowIndex(rowIndex);
     }

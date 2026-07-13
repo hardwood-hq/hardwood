@@ -15,6 +15,7 @@ import java.time.LocalDate;
 import java.time.LocalTime;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.NoSuchElementException;
 import java.util.UUID;
 
 import org.junit.jupiter.api.Test;
@@ -64,6 +65,45 @@ public class PqRowApiTest {
             assertThat(rowReader.getLong("value")).isEqualTo(300L);
 
             assertThat(rowReader.hasNext()).isFalse();
+        }
+    }
+
+    @Test
+    void unguardedNextPastEndThrowsInsteadOfReturningPhantomData() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/plain_uncompressed.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.rowReader()) {
+
+            // Drain all real rows through the documented hasNext()/next() loop.
+            while (rowReader.hasNext()) {
+                rowReader.next();
+            }
+
+            // A further next() with no hasNext() guard used to walk rowIndex into
+            // the capacity tail, where an all-present column's validity sentinel
+            // let getLong() return a phantom/stale value with no exception. It must
+            // now fail early instead (#781).
+            assertThatThrownBy(rowReader::next)
+                    .isInstanceOf(NoSuchElementException.class)
+                    .hasMessageContaining("Call hasNext() first");
+        }
+    }
+
+    @Test
+    void unguardedNextPastEndThrowsForNestedReader() throws Exception {
+        Path parquetFile = Paths.get("src/test/resources/nested_struct_test.parquet");
+
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(parquetFile));
+             RowReader rowReader = fileReader.rowReader()) {
+
+            while (rowReader.hasNext()) {
+                rowReader.next();
+            }
+
+            assertThatThrownBy(rowReader::next)
+                    .isInstanceOf(NoSuchElementException.class)
+                    .hasMessageContaining("Call hasNext() first");
         }
     }
 

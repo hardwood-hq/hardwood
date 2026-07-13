@@ -358,6 +358,14 @@ public final class FlatRowReader implements RowReader {
             matchedRowsYielded++;
         }
         else {
+            // Fail early on an unguarded next() past the batch: without this bound
+            // rowIndex would walk into the capacity tail, where an all-present
+            // column's ALL_PRESENT sentinel lets the accessor return phantom/stale
+            // leaf values instead of throwing. After any hasNext() == true this
+            // check never trips (a freshly loaded batch resets rowIndex to -1).
+            if (rowIndex + 1 >= batchSize) {
+                throw new NoSuchElementException("No row available. Call hasNext() first.");
+            }
             rowIndex++;
         }
     }
