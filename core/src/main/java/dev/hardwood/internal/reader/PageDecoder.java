@@ -17,6 +17,7 @@ import dev.hardwood.internal.encoding.ByteStreamSplitDecoder;
 import dev.hardwood.internal.encoding.DeltaBinaryPackedDecoder;
 import dev.hardwood.internal.encoding.DeltaByteArrayDecoder;
 import dev.hardwood.internal.encoding.DeltaLengthByteArrayDecoder;
+import dev.hardwood.internal.encoding.HybridStreamCursor;
 import dev.hardwood.internal.encoding.PlainDecoder;
 import dev.hardwood.internal.encoding.RleBitPackingHybridDecoder;
 import dev.hardwood.internal.metadata.DataPageHeader;
@@ -46,11 +47,12 @@ public class PageDecoder {
     /// enabled).
     private final boolean fixedListFastPathEnabled;
 
+    private final boolean allowFusedPath;
+
     /// Constructor for page decoding, with the fixed-size-list fast path enabled.
     public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
-        this(columnMetaData, column, decompressorFactory, true);
+        this(columnMetaData, column, decompressorFactory, true, false);
     }
-
     /// Constructor for page decoding.
     ///
     /// @param columnMetaData metadata for the column
@@ -59,10 +61,23 @@ public class PageDecoder {
     /// @param fixedListFastPathEnabled whether the fixed-size-list fast path may engage
     public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory,
                        boolean fixedListFastPathEnabled) {
+        this(columnMetaData, column, decompressorFactory, fixedListFastPathEnabled, false);
+    }
+
+    /// Constructor for page decoding with fused decode path control.
+    ///
+    /// @param columnMetaData metadata for the column
+    /// @param column column schema
+    /// @param decompressorFactory factory for creating decompressors
+    /// @param fixedListFastPathEnabled whether the fixed-size-list fast path may engage
+    /// @param allowFusedPath whether the column worker supports the fused decode path
+    public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory,
+                       boolean fixedListFastPathEnabled, boolean allowFusedPath) {
         this.columnMetaData = columnMetaData;
         this.column = column;
         this.decompressorFactory = decompressorFactory;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
+        this.allowFusedPath = allowFusedPath;
     }
 
     /// Checks if this PageDecoder is compatible with the given column metadata.
@@ -162,23 +177,25 @@ public class PageDecoder {
         return levels;
     }
 
-    /// Decode definition levels, applying the all-present fast path: when the
-    /// stream is a single RLE run of `maxDef` (the common case for an optional
-    /// but fully-populated column), skip materializing the per-value level array
-    /// and represent "all present" as a `null` level array — the same
-    /// representation used for required columns throughout the reader.
-    ///
-    /// Restricted to flat columns; nested record assembly consumes the def-level
-    /// array directly and stays on the materializing path.
-    private int[] decodeDefinitionLevels(byte[] levelData, int offset, int length, int numValues) {
+    /// Decode definition levels. Returns a [HybridStreamCursor] for the fused
+    /// path (lazy, run-structured) — the caller is responsible for routing to
+    /// this method only when `useFusedPath` is true.
+    private HybridStreamCursor decodeDefinitionLevelsCursor(byte[] levelData, int offset, int length) {
+        int bitWidth = getBitWidth(column.maxDefinitionLevel());
+        return new HybridStreamCursor(levelData, offset, length, bitWidth);
+    }
+
+    private int[] decodeDefinitionLevelsArray(byte[] levelData, int offset, int length, int numValues) {
         int maxDef = column.maxDefinitionLevel();
         int bitWidth = getBitWidth(maxDef);
         RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, bitWidth);
-        // The probe loads the first run; if it is not the all-present fast path,
-        // readInts below resumes from that same loaded run on the same instance.
-        if (column.maxRepetitionLevel() == 0 && decoder.isSingleRleRunOf(maxDef, numValues)) {
-            return null;
+        
+        if (column.maxRepetitionLevel() == 0) {
+            if (decoder.isSingleRleRunOf(maxDef, numValues)) {
+                return null;
+            }
         }
+        
         int[] levels = new int[numValues];
         decoder.readInts(levels, 0, numValues);
         return levels;
@@ -251,6 +268,12 @@ public class PageDecoder {
 
         int defLevelLength = 0;
         int defLevelOffset = 0;
+        Encoding encoding = header.encoding();
+        boolean useFusedPath = allowFusedPath && (encoding == Encoding.RLE_DICTIONARY || encoding == Encoding.PLAIN_DICTIONARY) 
+                && column.maxRepetitionLevel() == 0 && column.maxDefinitionLevel() > 0;
+        
+        int[] definitionLevels = null;
+        HybridStreamCursor defLevelCursor = null;
         if (column.maxDefinitionLevel() > 0) {
             defLevelLength = ByteBuffer.wrap(data, offset, 4).order(ByteOrder.LITTLE_ENDIAN).getInt();
             offset += 4;
@@ -275,7 +298,7 @@ public class PageDecoder {
                     column.maxRepetitionLevel(), column.maxDefinitionLevel());
             if (shape instanceof FixedSizeListShape.FixedWidth(int k)) {
                 Page page = decodeTypedValues(
-                        header.encoding(), data, valuesOffset, numValues, null, null, dictionary);
+                        header.encoding(), data, valuesOffset, numValues, null, null, null, dictionary);
                 return Page.withFixedListK(page, k);
             }
         }
@@ -283,13 +306,17 @@ public class PageDecoder {
         int[] repetitionLevels = column.maxRepetitionLevel() > 0
                 ? decodeRepetitionLevels(data, repLevelOffset, repLevelLength, numValues, column.maxRepetitionLevel())
                 : null;
-        int[] definitionLevels = column.maxDefinitionLevel() > 0
-                ? decodeDefinitionLevels(data, defLevelOffset, defLevelLength, numValues)
-                : null;
+        if (column.maxDefinitionLevel() > 0) {
+            if (useFusedPath) {
+                defLevelCursor = decodeDefinitionLevelsCursor(data, defLevelOffset, defLevelLength);
+            } else {
+                definitionLevels = decodeDefinitionLevelsArray(data, defLevelOffset, defLevelLength, numValues);
+            }
+        }
 
         return decodeTypedValues(
-                header.encoding(), data, valuesOffset, numValues,
-                definitionLevels, repetitionLevels, dictionary);
+                encoding, data, valuesOffset, numValues,
+                definitionLevels, defLevelCursor, repetitionLevels, dictionary);
     }
 
     private Page parseDataPageV2(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
@@ -307,9 +334,16 @@ public class PageDecoder {
         }
 
         byte[] defLevelData = null;
+        Encoding encoding = header.encoding();
+        boolean useFusedPath = allowFusedPath && (encoding == Encoding.RLE_DICTIONARY || encoding == Encoding.PLAIN_DICTIONARY) 
+                && column.maxRepetitionLevel() == 0 && column.maxDefinitionLevel() > 0;
+
+        int[] definitionLevels = null;
+        HybridStreamCursor defLevelCursor = null;
         if (column.maxDefinitionLevel() > 0 && defLevelLen > 0) {
             defLevelData = new byte[defLevelLen];
             pageData.slice(repLevelLen, defLevelLen).get(defLevelData);
+
         }
 
         // Fixed-size-list fast path: when the level streams prove every row is a
@@ -328,7 +362,7 @@ public class PageDecoder {
                 byte[] valuesData = readValueRegion(header, pageData, uncompressedPageSize,
                         repLevelLen, defLevelLen, valuesOffset, compressedValuesLen);
                 Page page = decodeTypedValues(
-                        header.encoding(), valuesData, 0, numValues, null, null, dictionary);
+                        header.encoding(), valuesData, 0, numValues, null, null, null, dictionary);
                 return Page.withFixedListK(page, k);
             }
         }
@@ -336,15 +370,19 @@ public class PageDecoder {
         int[] repetitionLevels = repLevelData != null
                 ? decodeRepetitionLevels(repLevelData, 0, repLevelLen, numValues, column.maxRepetitionLevel())
                 : null;
-        int[] definitionLevels = defLevelData != null
-                ? decodeDefinitionLevels(defLevelData, 0, defLevelLen, numValues)
-                : null;
+        if (defLevelData != null) {
+            if (useFusedPath) {
+                defLevelCursor = decodeDefinitionLevelsCursor(defLevelData, 0, defLevelLen);
+            } else {
+                definitionLevels = decodeDefinitionLevelsArray(defLevelData, 0, defLevelLen, numValues);
+            }
+        }
 
         byte[] valuesData = readValueRegion(header, pageData, uncompressedPageSize,
                 repLevelLen, defLevelLen, valuesOffset, compressedValuesLen);
         return decodeTypedValues(
-                header.encoding(), valuesData, 0, numValues,
-                definitionLevels, repetitionLevels, dictionary);
+                encoding, valuesData, 0, numValues,
+                definitionLevels, defLevelCursor, repetitionLevels, dictionary);
     }
 
     /// Extracts the value region of a `DataPageV2` body, decompressing it when
@@ -366,7 +404,7 @@ public class PageDecoder {
     /// Decode values into Page using primitive arrays where possible.
     private Page decodeTypedValues(Encoding encoding, byte[] data, int offset,
                                    int numValues,
-                                   int[] definitionLevels, int[] repetitionLevels,
+                                   int[] definitionLevels, HybridStreamCursor defLevelCursor, int[] repetitionLevels,
                                    Dictionary dictionary) throws IOException {
         int maxDefLevel = column.maxDefinitionLevel();
         PhysicalType type = column.type();
@@ -468,9 +506,15 @@ public class PageDecoder {
                     throw new IOException("Invalid dictionary index bit width: " + bitWidth
                             + " for column '" + column.name() + "'. Must be between 0 and 32");
                 }
-                RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(data, offset, data.length - offset, bitWidth);
-
-                return dictionary.decodePage(indexDecoder, numValues, definitionLevels, repetitionLevels, maxDefLevel);
+                
+                // If using the fused path (defLevelCursor != null), supply the indexCursor directly.
+                if (defLevelCursor != null) {
+                    HybridStreamCursor indexCursor = new HybridStreamCursor(data, offset, data.length - offset, bitWidth);
+                    return dictionary.decodePage(indexCursor, numValues, defLevelCursor, maxDefLevel);
+                } else {
+                    RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(data, offset, data.length - offset, bitWidth);
+                    return dictionary.decodePage(indexDecoder, numValues, definitionLevels, repetitionLevels, maxDefLevel);
+                }
             }
             case RLE -> {
                 // RLE encoding for boolean values uses bit-width of 1

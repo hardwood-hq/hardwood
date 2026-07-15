@@ -11,6 +11,7 @@ import java.util.Arrays;
 import java.util.concurrent.Executor;
 
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.internal.encoding.HybridStreamCursor;
 import dev.hardwood.internal.predicate.ColumnBatchMatcher;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
@@ -21,6 +22,13 @@ import dev.hardwood.schema.ColumnSchema;
 /// and null tracking via a packed `long[]` validity bitmap (set-bit-= -present).
 public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
+    /// Guard for the run-fused flat decode path, off by default. Set
+    /// `-Dhardwood.internal.fusedDecode=true` to enable the fused path
+    /// (used to A/B the fused optimization; the default materializing path
+    /// is used as the stable fallback).
+    private static final boolean FUSED_DECODE_ENABLED =
+            Boolean.parseBoolean(System.getProperty("hardwood.internal.fusedDecode", "false"));
+
     private long[] currentValidity;
     private final ColumnBatchMatcher columnFilter;
     /// Tracks whether any absent (null) leaf has been seen in the current
@@ -28,6 +36,12 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     /// time, [BatchExchange.Batch#validity] is set to `null` to signal
     /// "all leaves present in this batch."
     private boolean currentBatchHasAbsents;
+
+    private HybridStreamCursor currentDefLevelCursor;
+    private HybridStreamCursor currentIndexCursor;
+    private int cursorLogicalPosition;
+    private int[] tempIndices;
+    private int[] tempDefs;
 
     /// Creates a new flat column worker.
     ///
@@ -42,6 +56,11 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     ///                    published batch, writing matches into the batch's `matches`
     ///                    array. `null` leaves the worker on the existing path — no
     ///                    filter evaluation.
+    @Override
+    protected boolean supportsFusedPath() {
+        return FUSED_DECODE_ENABLED;
+    }
+
     public FlatColumnWorker(PageSource pageSource, BatchExchange<BatchExchange.Batch> exchange,
                             ColumnSchema column, int batchCapacity,
                             DecompressorFactory decompressorFactory,
@@ -56,10 +75,28 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     void initDrainState() {
         currentValidity = maxDefinitionLevel > 0 ? new long[(batchCapacity + 63) >>> 6] : null;
         currentBatchHasAbsents = false;
+        tempIndices = new int[batchCapacity];
+        tempDefs = new int[batchCapacity];
     }
 
     @Override
     void assemblePage(Page page, PageRowMask mask) {
+        if (page.defLevelCursor() != null) {
+            // Invariant: a cursor is only produced when maxDefinitionLevel > 0
+            // (the PageDecoder gate enforces this). Guard here so a future gate
+            // relaxation surfaces as a loud assertion rather than a silent wrong bitmap.
+            if (maxDefinitionLevel == 0) {
+                throw new IllegalStateException(
+                        "Cursor supplied for required column '" + column.name() + "' (maxDefinitionLevel=0)");
+            }
+            this.currentDefLevelCursor = page.defLevelCursor();
+            this.currentIndexCursor = page.indexCursor();
+            this.cursorLogicalPosition = 0;
+        } else {
+            this.currentDefLevelCursor = null;
+            this.currentIndexCursor = null;
+        }
+
         if (mask.isAll()) {
             copyPageRange(page, 0, page.size());
             return;
@@ -79,6 +116,10 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
     private void copyPageRange(Page page, int rangeStart, int rangeEnd) {
         int pagePosition = rangeStart;
 
+        if (currentDefLevelCursor != null) {
+            skipCursorsTo(pagePosition);
+        }
+
         while (pagePosition < rangeEnd) {
             int spaceInBatch = batchCapacity - rowsInCurrentBatch;
             int toCopy = Math.min(spaceInBatch, rangeEnd - pagePosition);
@@ -93,7 +134,12 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                 toCopy = (int) Math.min(toCopy, remaining);
             }
 
-            copyPageData(page, pagePosition, rowsInCurrentBatch, toCopy);
+            if (currentDefLevelCursor != null) {
+                copyPageDataFused(page, rowsInCurrentBatch, toCopy);
+                cursorLogicalPosition += toCopy;
+            } else {
+                copyPageData(page, pagePosition, rowsInCurrentBatch, toCopy);
+            }
 
             rowsInCurrentBatch += toCopy;
             totalRowsAssembled += toCopy;
@@ -252,6 +298,220 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                 int bit = destPos + i;
                 currentValidity[bit >>> 6] |= 1L << bit;
             }
+        }
+    }
+
+    private void skipCursorsTo(int targetPos) {
+        int toSkip = targetPos - cursorLogicalPosition;
+        if (toSkip <= 0) return;
+        
+        while (toSkip > 0) {
+            if (currentDefLevelCursor.remaining() == 0) {
+                if (!currentDefLevelCursor.advance()) {
+                     break;
+                }
+            }
+            int runSkip = Math.min(toSkip, currentDefLevelCursor.remaining());
+            
+            if (currentDefLevelCursor.isRle()) {
+                if (currentDefLevelCursor.value() == maxDefinitionLevel) {
+                    skipIndexCursor(runSkip);
+                }
+                currentDefLevelCursor.skip(runSkip);
+            } else {
+                int unpacked = currentDefLevelCursor.unpack(tempDefs, 0, runSkip);
+                int presentCount = 0;
+                for (int i = 0; i < unpacked; i++) {
+                    if (tempDefs[i] == maxDefinitionLevel) presentCount++;
+                }
+                skipIndexCursor(presentCount);
+            }
+            toSkip -= runSkip;
+        }
+        cursorLogicalPosition = targetPos;
+    }
+
+    private void skipIndexCursor(int toSkip) {
+        if (currentIndexCursor == null || currentIndexCursor.bitWidth() == 0) return;
+        while (toSkip > 0) {
+            if (currentIndexCursor.remaining() == 0) {
+                if (!currentIndexCursor.advance()) break;
+            }
+            int runSkip = Math.min(toSkip, currentIndexCursor.remaining());
+            currentIndexCursor.skip(runSkip);
+            toSkip -= runSkip;
+        }
+    }
+
+    private void copyPageDataFused(Page page, int destPos, int length) {
+        int copied = 0;
+        while (copied < length) {
+            if (currentDefLevelCursor.remaining() == 0) {
+                if (!currentDefLevelCursor.advance()) break;
+            }
+            int toCopy = Math.min(length - copied, currentDefLevelCursor.remaining());
+            if (currentDefLevelCursor.isRle()) {
+                if (currentDefLevelCursor.value() == maxDefinitionLevel) {
+                    if (currentBatchHasAbsents) {
+                        BitmapWords.setRange(currentValidity, destPos + copied, destPos + copied + toCopy);
+                    }
+                    copyIndexValues(page, destPos + copied, toCopy);
+                } else {
+                    if (!currentBatchHasAbsents) {
+                        currentBatchHasAbsents = true;
+                        BitmapWords.setRange(currentValidity, 0, destPos + copied);
+                    }
+                    fillNulls(page, destPos + copied, toCopy);
+                }
+                currentDefLevelCursor.skip(toCopy);
+            } else {
+                int unpacked = currentDefLevelCursor.unpack(tempDefs, 0, toCopy);
+                // Coalesce consecutive present/absent def levels into runs so the
+                // index scatter stays bulk on present stretches (and null fills
+                // stay bulk on absent stretches) — a per-value loop here would
+                // reduce a null-heavy page to a slow value-at-a-time index decode.
+                int i = 0;
+                while (i < unpacked) {
+                    boolean present = tempDefs[i] == maxDefinitionLevel;
+                    int runStart = i;
+                    do {
+                        i++;
+                    } while (i < unpacked && (tempDefs[i] == maxDefinitionLevel) == present);
+                    int runLen = i - runStart;
+                    int dst = destPos + copied + runStart;
+                    if (present) {
+                        if (currentBatchHasAbsents) {
+                            BitmapWords.setRange(currentValidity, dst, dst + runLen);
+                        }
+                        copyIndexValues(page, dst, runLen);
+                    } else {
+                        if (!currentBatchHasAbsents) {
+                            currentBatchHasAbsents = true;
+                            BitmapWords.setRange(currentValidity, 0, dst);
+                        }
+                        fillNulls(page, dst, runLen);
+                    }
+                }
+            }
+            copied += toCopy;
+        }
+    }
+
+    private void copyIndexValues(Page page, int destPos, int count) {
+        if (currentIndexCursor == null) return;
+        // Bit width 0 carries no index bytes: every value maps to dictionary
+        // entry 0 (the whole page references a single dictionary entry). The
+        // cursor faithfully represents an empty stream, so drive the constant
+        // fill here rather than advancing it.
+        if (currentIndexCursor.bitWidth() == 0) {
+            copySingleIndexRepeated(page, destPos, 0, count);
+            return;
+        }
+        int copied = 0;
+        while (copied < count) {
+            if (currentIndexCursor.remaining() == 0) {
+                if (!currentIndexCursor.advance()) break;
+            }
+            int toCopy = Math.min(count - copied, currentIndexCursor.remaining());
+
+            if (currentIndexCursor.isRle()) {
+                int indexValue = currentIndexCursor.value();
+                copySingleIndexRepeated(page, destPos + copied, indexValue, toCopy);
+                currentIndexCursor.skip(toCopy);
+            } else {
+                int unpacked = currentIndexCursor.unpack(tempIndices, 0, toCopy);
+                copyMappedIndices(page, tempIndices, destPos + copied, unpacked);
+            }
+            copied += toCopy;
+        }
+    }
+
+    private void copySingleIndexRepeated(Page page, int destPos, int index, int count) {
+        Object values = currentBatch.values;
+        Dictionary dict = page.dictionary();
+        switch (dict) {
+            case Dictionary.IntDictionary d -> Arrays.fill((int[]) values, destPos, destPos + count, d.values()[index]);
+            case Dictionary.LongDictionary d -> Arrays.fill((long[]) values, destPos, destPos + count, d.values()[index]);
+            case Dictionary.FloatDictionary d -> Arrays.fill((float[]) values, destPos, destPos + count, d.values()[index]);
+            case Dictionary.DoubleDictionary d -> Arrays.fill((double[]) values, destPos, destPos + count, d.values()[index]);
+            case Dictionary.ByteArrayDictionary d -> {
+                BinaryBatchValues bbv = (BinaryBatchValues) values;
+                byte[] val = d.values()[index];
+                for (int i = 0; i < count; i++) {
+                    bbv.appendAt(destPos + i, val, 0, val.length);
+                }
+                bbv.recordRepeatedDictIndex(d, destPos, count, index);
+            }
+        }
+    }
+
+    private void copyMappedIndices(Page page, int[] indices, int destPos, int count) {
+        Object values = currentBatch.values;
+        Dictionary dict = page.dictionary();
+        switch (dict) {
+            case Dictionary.IntDictionary d -> {
+                int[] batchVals = (int[]) values;
+                int[] dictVals = d.values();
+                for (int i = 0; i < count; i++) batchVals[destPos + i] = dictVals[indices[i]];
+            }
+            case Dictionary.LongDictionary d -> {
+                long[] batchVals = (long[]) values;
+                long[] dictVals = d.values();
+                for (int i = 0; i < count; i++) batchVals[destPos + i] = dictVals[indices[i]];
+            }
+            case Dictionary.FloatDictionary d -> {
+                float[] batchVals = (float[]) values;
+                float[] dictVals = d.values();
+                for (int i = 0; i < count; i++) batchVals[destPos + i] = dictVals[indices[i]];
+            }
+            case Dictionary.DoubleDictionary d -> {
+                double[] batchVals = (double[]) values;
+                double[] dictVals = d.values();
+                for (int i = 0; i < count; i++) batchVals[destPos + i] = dictVals[indices[i]];
+            }
+            case Dictionary.ByteArrayDictionary d -> {
+                BinaryBatchValues bbv = (BinaryBatchValues) values;
+                byte[][] dictVals = d.values();
+                for (int i = 0; i < count; i++) {
+                    byte[] val = dictVals[indices[i]];
+                    bbv.appendAt(destPos + i, val, 0, val.length);
+                }
+                bbv.recordMappedDictIndices(d, indices, destPos, count);
+            }
+        }
+    }
+
+    /// Writes the null representation for `count` absent leaves at `destPos`.
+    ///
+    /// The batch value array is recycled across batches, so a null slot is not
+    /// implicitly zero — it holds whatever a prior batch wrote there. The
+    /// materializing path overwrites every slot (including null ones, which are
+    /// zero in the freshly-decoded page array), so the fused path must zero the
+    /// null slots too to keep the value at absent positions deterministic.
+    private void fillNulls(Page page, int destPos, int count) {
+        Object values = currentBatch.values;
+        switch (page.dictionary()) {
+            case Dictionary.IntDictionary ignored -> Arrays.fill((int[]) values, destPos, destPos + count, 0);
+            case Dictionary.LongDictionary ignored -> Arrays.fill((long[]) values, destPos, destPos + count, 0L);
+            case Dictionary.FloatDictionary ignored -> Arrays.fill((float[]) values, destPos, destPos + count, 0f);
+            case Dictionary.DoubleDictionary ignored -> Arrays.fill((double[]) values, destPos, destPos + count, 0d);
+            case Dictionary.ByteArrayDictionary ignored -> {
+                BinaryBatchValues bbv = (BinaryBatchValues) values;
+                // FIXED_LEN_BYTE_ARRAY: the pre-zeroed offset slots are kept as-is for
+                // null positions, matching the materialising path which also skips
+                // appendAt for FIXED_LEN nulls (the bytes content is undefined scratch).
+                // Variable-length types need an explicit zero-length entry so offsets
+                // stay consistent across the batch.
+                boolean fixedLen = physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY;
+                if (!fixedLen) {
+                    for (int i = 0; i < count; i++) {
+                        bbv.appendAt(destPos + i, EMPTY_BYTES, 0, 0);
+                    }
+                }
+                // Clear dictIndices for nulls so we don't accidentally intern them
+                bbv.fillNullDictIndices(destPos, count);
+            }
+            case null -> { /* no dictionary: fused path is dictionary-only */ }
         }
     }
 }

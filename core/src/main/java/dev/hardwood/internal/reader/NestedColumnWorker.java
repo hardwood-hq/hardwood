@@ -104,6 +104,11 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     }
 
     @Override
+    boolean supportsFusedPath() {
+        return false;
+    }
+
+    @Override
     void initDrainState() {
         int initialCapacity = batchCapacity * 2;
         nestedValues = BatchExchange.allocateArray(column, initialCapacity);

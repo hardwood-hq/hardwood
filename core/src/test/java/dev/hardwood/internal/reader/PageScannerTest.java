@@ -84,10 +84,10 @@ public class PageScannerTest {
 
                     PageDecoder idxDecoder = new PageDecoder(
                             idxInfo.columnMetaData(), idxInfo.columnSchema(),
-                            context.decompressorFactory());
+                            context.decompressorFactory(), false);
                     PageDecoder seqDecoder = new PageDecoder(
                             seqInfo.columnMetaData(), seqInfo.columnSchema(),
-                            context.decompressorFactory());
+                            context.decompressorFactory(), false);
 
                     Page idxPage = idxDecoder.decodePage(idxInfo.pageData(), idxInfo.dictionary());
                     Page seqPage = seqDecoder.decodePage(seqInfo.pageData(), seqInfo.dictionary());
