@@ -55,6 +55,12 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// capacity, since a fixed-width batch publishes with `null` levels. The
     /// level arrays are grown to match only when a batch falls back to the
     /// regular representation ([#materializeFixedWidthBatchLevels]).
+    ///
+    /// On the fast path this is additionally pinned to exactly `batchCapacity * k`
+    /// at a fresh batch's start ([#prepareFixedWidthValues]), so a full fixed-width
+    /// batch fills the array precisely — the condition
+    /// `nestedValueCount == nestedValuesCapacity` that lets [#publishCurrentBatch]
+    /// hand the array straight to the batch instead of trimming a copy out of it.
     private int nestedValuesCapacity;
 
     /// Whether we have seen the first value in the nested stream.
@@ -187,6 +193,13 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// [#publishCurrentBatch] (at batch capacity) resets it for the next batch.
     private void assembleFixedWidthPage(Page page, PageRowMask mask, int k, boolean asRegularBatch) {
         nestedFirstValueSeen = true;
+        // On a fresh fast-path batch, size the value accumulator to exactly
+        // batchCapacity * k so a full batch fills it precisely and publish can hand
+        // the array straight to the batch (no trim copy). A continuation page (batch
+        // already partly filled) leaves the sizing from the batch's start untouched.
+        if (!asRegularBatch && nestedValueCount == 0) {
+            prepareFixedWidthValues(k);
+        }
         int pageRecords = page.size() / k;
         boolean maskAll = mask.isAll();
         // Kept record ranges are contiguous k-runs, so each range is copied in
@@ -450,7 +463,18 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             currentBatch.repetitionLevels = Arrays.copyOf(nestedRepLevels, nestedValueCount);
         }
         currentBatch.recordOffsets = Arrays.copyOf(nestedRecordOffsets, rowsInCurrentBatch);
-        currentBatch.values = trimValues(nestedValues, nestedValueCount);
+        if (batchFixedK > 0 && nestedValueCount == nestedValuesCapacity) {
+            // Pure fixed-width full batch: the accumulator was pre-sized to exactly
+            // batchCapacity * k (prepareFixedWidthValues), so it is already the batch's
+            // final values array — hand it off without the trim copy and start the next
+            // batch on a fresh array of the same size. A partial fixed-width batch (file
+            // tail or maxRows cutoff) has fewer values than capacity and still trims.
+            currentBatch.values = nestedValues;
+            nestedValues = BatchExchange.allocateArray(column, nestedValuesCapacity);
+        }
+        else {
+            currentBatch.values = trimValues(nestedValues, nestedValueCount);
+        }
         currentBatch.fileName = currentBatchFileName;
 
         // Compute index structures before publishing so the consumer thread
@@ -652,6 +676,23 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     private void ensureNestedCapacity(int needed) {
         ensureLevelCapacity(needed);
         ensureValueCapacity(needed);
+    }
+
+    /// Sizes the value accumulator to exactly `batchCapacity * k` at the start of a
+    /// fresh fixed-width batch. A full fixed-width batch is then exactly
+    /// `batchCapacity` records (`batchCapacity * k` values) and fills the array to
+    /// its capacity, so [#publishCurrentBatch] can hand the array to the batch
+    /// directly rather than trimming a copy out of a reused accumulator — the
+    /// single-copy behaviour the flat path already has. Reallocates only when the
+    /// capacity does not already match (the first fixed-width batch, or a change in
+    /// `k`); a same-`k` steady state reuses the array freshly allocated at the
+    /// previous handoff.
+    private void prepareFixedWidthValues(int k) {
+        int cap = Math.multiplyExact(batchCapacity, k);
+        if (nestedValuesCapacity != cap) {
+            nestedValues = BatchExchange.allocateArray(column, cap);
+            nestedValuesCapacity = cap;
+        }
     }
 
     /// Ensures the value accumulator holds at least `needed` slots, growing it

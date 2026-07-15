@@ -225,6 +225,18 @@ marker (`0` for a regular page/batch). All types live in
   value array alone rather than tripling it with two same-length `int` level
   arrays, which matters most for large *k*, where a batch holds *k* values per
   row.
+- **Batch value hand-off** — on the fast path the value accumulator is sized to
+  exactly `batchCapacity · k` at the start of a fresh fixed-width batch
+  (`prepareFixedWidthValues`), so a full batch fills it precisely. At publish such a
+  batch hands that array straight to the `NestedBatch` and starts the next batch on a
+  fresh array, rather than copying the values out of the reused accumulator
+  (`trimValues`). This leaves the fast path with the single value copy the flat path
+  also makes — page → batch — instead of the two the accumulator model otherwise
+  incurs (page → accumulator → trimmed copy); the flat floor never makes that second
+  copy, so eliminating it removes the corresponding streaming pass over the value
+  array (the dominant residual cost on memory-bandwidth-bound hosts). A partial batch
+  (file tail or `maxRows` cutoff) and any batch that fell back to the regular
+  representation have a value count below the pinned capacity and still trim.
 - **Column reader** — `ColumnReader.ensureRealView` builds the real-items view
   directly for a fixed-width batch (arithmetic offsets, null validity, identity
   pass-through of the dense values) instead of scanning levels;
@@ -268,10 +280,13 @@ Findings:
   across the whole *k* sweep, at **3.2–4.2×** over the naive `LIST` decode. The
   naive path is 5.2–8.1× slower than the flat floor; the fast path lands at
   ~1.6–2.1× of it.
-- The residual over the flat floor is **value decode plus the value copy into the
-  batch**, not level handling — the honest ceiling. A native fixed-size-list type would
-  need to justify itself on that residual, not on the reconstruction cost this
-  fast path already removes.
+- The residual over the flat floor is **value decode, the single page → batch value
+  copy the flat path also makes, and the level scan plus arithmetic index build** —
+  not level materialisation, the honest ceiling. (The value array is handed off at
+  publish rather than copied a second time, so the fast path makes no more value
+  copies than the flat floor; see the *Batch value hand-off* implementation note.) A
+  native fixed-size-list type would need to justify itself on that residual, not on
+  the reconstruction cost this fast path already removes.
 - The SWAR tiled compare makes small-*k* detection negligible (0.31 ms,
   ~2% of the fast path; without it the scalar bit walk was ~5 ms, ~39% at k=4).
   It does not move the recovered fraction: in the full read, detection overlaps

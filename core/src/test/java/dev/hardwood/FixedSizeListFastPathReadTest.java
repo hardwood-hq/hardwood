@@ -163,6 +163,77 @@ class FixedSizeListFastPathReadTest {
         }
     }
 
+    /// The fast-path value hand-off across many full batches. A purely fixed-width
+    /// file (k=8, 128 rows, no nulls) read with `batchSize = 10` fills twelve
+    /// complete 10-row batches — each handed straight to the published batch by
+    /// [prepareFixedWidthValues]/publishCurrentBatch instead of trimmed out of the
+    /// accumulator — then a final 8-row partial batch (128 % 10 != 0), which is below
+    /// the pinned capacity and still trims. Default (large) batch sizes never fill a
+    /// small fixture to capacity, so this is the only place the hand-off runs.
+    ///
+    /// Two things are asserted. First, values stay correct across every hand-off
+    /// boundary (vs. the reconstruction path and the generator formula). Second — the
+    /// invariant the hand-off trades `trimValues` for — a handed-off array is never
+    /// aliased into the reused accumulator: each batch's array is retained alongside a
+    /// snapshot and, after the whole file is drained (the producer assembles later
+    /// batches ahead of the consumer), must be unchanged. Aliasing would make the
+    /// drain overwrite an earlier batch's values while it is still live.
+    @Test
+    void fixedWidthValueHandoffAcrossFullBatches() throws Exception {
+        int k = 8;
+        int batchSize = 10;
+        Path file = resource(k, "v2");
+
+        List<float[]> retained = new ArrayList<>();
+        List<float[]> snapshots = new ArrayList<>();
+        List<float[]> viaFast = new ArrayList<>();
+        try (HardwoodContext context = HardwoodContext.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file), context, FAST_PATH_ON);
+             ColumnReader col = reader.buildColumnReader(COLUMN).batchSize(batchSize).build()) {
+            while (col.nextBatch()) {
+                int recordCount = col.getRecordCount();
+                int[] offsets = col.getLayerOffsets(0);
+                float[] values = col.getFloats();
+                retained.add(values);
+                snapshots.add(values.clone());
+                for (int r = 0; r < recordCount; r++) {
+                    float[] vec = new float[offsets[r + 1] - offsets[r]];
+                    System.arraycopy(values, offsets[r], vec, 0, vec.length);
+                    viaFast.add(vec);
+                }
+            }
+        }
+
+        // The hand-off boundary was actually crossed (more than one batch) with a
+        // partial tail — otherwise the coverage below would be vacuous.
+        assertThat(retained.size()).as("batch count (full hand-offs + partial tail)").isGreaterThan(1);
+        assertThat(viaFast).hasSize(128);
+
+        // Aliasing tripwire: no later batch's assembly clobbered an earlier handed-off
+        // array while it was still live.
+        for (int b = 0; b < retained.size(); b++) {
+            assertThat(retained.get(b)).as("batch %d values stable after later batches drained", b)
+                    .containsExactly(snapshots.get(b));
+        }
+
+        // Cross-check the reconstruction path and the deterministic generator formula.
+        List<float[]> viaRegular;
+        try (HardwoodContext context = HardwoodContext.create()) {
+            viaRegular = readMixedRecords(file, COLUMN, batchSize, context,
+                    ReaderConfig.builder().option("hardwood.fixed-list-fast-path", "false").build());
+        }
+        assertThat(viaFast).as("fast vs reconstruction record count").hasSameSizeAs(viaRegular);
+        for (int r = 0; r < viaFast.size(); r++) {
+            assertThat(viaFast.get(r)).as("record %d fast vs reconstruction", r)
+                    .containsExactly(viaRegular.get(r));
+            float[] expected = new float[k];
+            for (int i = 0; i < k; i++) {
+                expected[i] = (r * k + i) * 1.5f + 0.25f;
+            }
+            assertThat(viaFast.get(r)).as("record %d generator formula", r).containsExactly(expected);
+        }
+    }
+
     /// Reads a nullable fixed-size-list column record by record, returning `null`
     /// for a null row and the element slice otherwise, flattened across batches.
     private static List<float[]> readMixedRecords(Path file, String column, int batchSize,
