@@ -44,6 +44,12 @@ public final class NestedBatch {
     /// multiples of this value.
     public int fixedListK;
 
+    /// True when every leaf in this batch is present (no null or empty parents) —
+    /// set by the assembler when every contributing page was gated all-present, so
+    /// the drain can skip the `O(valueCount)` definition-level scan that would
+    /// otherwise re-derive the same fact.
+    public boolean allPresent;
+
     // Pre-computed index (computed by drain before publish). Validity bit set
     // iff present. Null means "all items at that layer are present in this
     // batch."

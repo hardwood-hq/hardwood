@@ -66,6 +66,13 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
     /// between the fast and regular paths (or between different `k`).
     private int batchFixedK;
 
+    /// Whether every page that has contributed to the batch currently being
+    /// assembled was gated all-present. When true at publish, the drain skips the
+    /// `allDefsMax` re-scan. Reset to the in-flight page's status after each publish
+    /// (a page may span batches), and AND-ed with each page's [Page#allPresent].
+    private boolean currentBatchAllPresent = true;
+    private boolean currentPageAllPresent = true;
+
     /// Creates a new nested column worker.
     ///
     /// @param pageSource yields [PageInfo] objects for this column
@@ -111,10 +118,14 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         nestedDefLevels = new int[initialCapacity];
         nestedRepLevels = new int[initialCapacity];
         nestedRecordOffsets = new int[batchCapacity];
+        currentBatchAllPresent = true;
+        currentPageAllPresent = true;
     }
 
     @Override
     void assemblePage(Page page, PageRowMask mask) {
+        currentPageAllPresent = page.allPresent();
+        currentBatchAllPresent &= currentPageAllPresent;
         int k = page.fixedListK();
         boolean pageFixedWidth = k > 0;
         // A published batch must stay homogeneous — wholly fixed-width (levels
@@ -426,6 +437,7 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         currentBatch.recordCount = rowsInCurrentBatch;
         currentBatch.valueCount = nestedValueCount;
         currentBatch.fixedListK = batchFixedK;
+        currentBatch.allPresent = currentBatchAllPresent;
         if (batchFixedK > 0 || indexMode == IndexMode.REAL_VIEW) {
             // Fixed-width batches omit levels (boundaries are implicit); the
             // unfiltered real-view path derives the view from the accumulators in
@@ -468,6 +480,9 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         rowsInCurrentBatch = 0;
         nestedValueCount = 0;
         batchFixedK = 0;
+        // A page can span batches, so the next batch inherits the in-flight page's
+        // presence; later pages AND into it (see assemblePage).
+        currentBatchAllPresent = currentPageAllPresent;
         // The accumulator is reused for the next batch; clear its dictionary
         // slot so dictIndex state is rebuilt from scratch (the dictIndices array
         // is retained and overwritten in place).
@@ -496,7 +511,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             // drain keeps reconstruction off the serial consumer for both shapes: a
             // structural read gets its offsets without a consumer-side scan, and a
             // flat leaf read simply ignores them.
-            boolean allPresent = batch.fixedListK > 0 || allDefsMax(batch.valueCount);
+            boolean allPresent = batch.fixedListK > 0 || batch.allPresent
+                    || allDefsMax(batch.valueCount);
             if (allPresent) {
                 batch.realValues = batch.values;
                 // With no phantom positions the real-items offsets equal the all-items
