@@ -20,8 +20,9 @@ import dev.hardwood.schema.FileSchema;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Verifies the byte-budgeted batch sizing the column- and row-reader paths
-/// share: the size depends on the projected columns' physical widths and is
-/// clamped to `[16 384, MAX_BATCH]`, rather than being a fixed record count.
+/// share: the size depends on the projected columns' physical widths scaled by
+/// their list fan-out, clamped to at most `MAX_BATCH`, rather than being a fixed
+/// record count.
 class BatchSizingTest {
 
     /// `int_col` (INT32), `long_col` (INT64), `float_col` (FLOAT),
@@ -63,6 +64,28 @@ class BatchSizingTest {
             int expected = (int) (TARGET_BYTES / 32);
             assertThat(sizeFor(reader, "long_col", "double_col", "string_col")).isEqualTo(expected);
             assertThat(expected).isBetween(16_384, BatchSizing.MAX_BATCH);
+        }
+    }
+
+    @Test
+    void fanoutScalesTheByteBudgetByValuesPerRow() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(PRIMITIVES))) {
+            FileSchema schema = reader.getFileSchema();
+            ProjectedSchema projected =
+                    ProjectedSchema.create(schema, ColumnProjection.columns("float_col"));
+
+            // Fan-out 1 (a flat float column): 4 bytes/row budgets far above the clamp.
+            assertThat(BatchSizing.computeOptimalBatchSize(projected, new double[] { 1.0 }))
+                    .isEqualTo(BatchSizing.MAX_BATCH);
+
+            // Fan-out 768 (a 768-wide LIST<float32>): each row is 768 * 4 = 3072 bytes,
+            // so the batch follows the byte budget down to 2 048 rows — far below the
+            // 16 384 rows a fan-out-blind sizing would have forced, which would have made
+            // the value array ~768x the L2 target.
+            assertThat(BatchSizing.computeOptimalBatchSize(projected, new double[] { 768.0 }))
+                    .isEqualTo((int) (TARGET_BYTES / (768 * 4)))
+                    .isEqualTo(2048)
+                    .isLessThan(16_384);
         }
     }
 

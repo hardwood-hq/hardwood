@@ -22,6 +22,7 @@ import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowMatcher;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.FieldPath;
+import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqList;
@@ -99,6 +100,7 @@ public final class NestedRowReader implements RowReader {
     /// @param maxRows maximum rows (0 = unlimited). Without a filter this caps scanned
     ///                rows at the [ColumnWorker] drain. With a filter it caps *matching*
     ///                rows (SQL LIMIT), enforced over matches by the FilteredRowReader wrapper.
+    /// @param rowGroups first-file row groups, for fan-out-aware batch sizing
     /// @return a [NestedRowReader] or [FilteredRowReader]
     public static RowReader create(RowGroupIterator rowGroupIterator,
                             FileSchema schema,
@@ -106,8 +108,10 @@ public final class NestedRowReader implements RowReader {
                             HardwoodContextImpl context,
                             boolean fixedListFastPathEnabled,
                             ResolvedPredicate filter,
-                            long maxRows) {
-        int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema);
+                            long maxRows,
+                            List<RowGroup> rowGroups) {
+        int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema,
+                BatchSizing.valuesPerRow(projectedSchema, rowGroups));
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
         // With a row-level filter, `maxRows` caps *matching* rows (SQL LIMIT), so the
         // workers scan unbounded, and the FilteredRowReader wrapper enforces the cap.

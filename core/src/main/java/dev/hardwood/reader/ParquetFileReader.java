@@ -388,7 +388,7 @@ public class ParquetFileReader implements AutoCloseable {
             iterator.setTailSkip(skip);
         }
 
-        RowReader reader = createRowReader(iterator, schema, projectedSchema, context, null, 0);
+        RowReader reader = createRowReader(iterator, schema, projectedSchema, context, null, 0, subset);
 
         if (!fastSkip) {
             // Fallback: at least one projected column closes the per-page
@@ -431,7 +431,8 @@ public class ParquetFileReader implements AutoCloseable {
         // discard a no-op — for non-skip reads and for the filtered (logical) skip path.
         long firstRowGroupSkip = iterator.firstRowGroupSkip();
         long readerMaxRows = maxRows == 0 ? 0 : Math.addExact(maxRows, firstRowGroupSkip);
-        RowReader reader = createRowReader(iterator, schema, projectedSchema, context, resolved, readerMaxRows);
+        RowReader reader = createRowReader(iterator, schema, projectedSchema, context, resolved, readerMaxRows,
+                firstFileRowGroups);
         return discardLeadingRows(reader, firstRowGroupSkip);
     }
 
@@ -447,17 +448,19 @@ public class ParquetFileReader implements AutoCloseable {
     /// @param context hardwood context
     /// @param filter resolved predicate, or `null` for no filtering
     /// @param maxRows maximum rows (0 = unlimited)
+    /// @param rowGroups first-file row groups, for fan-out-aware batch sizing (nested path)
     private RowReader createRowReader (RowGroupIterator rowGroupIterator,
                             FileSchema schema,
                             ProjectedSchema projectedSchema,
                             HardwoodContextImpl context,
                             ResolvedPredicate filter,
-                            long maxRows) {
+                            long maxRows,
+                            List<RowGroup> rowGroups) {
         if (schema.isFlatSchema()) {
             return FlatRowReader.create(rowGroupIterator, schema, projectedSchema, context, filter, maxRows);
         }
         else {
-            return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, fixedListFastPathEnabled, filter, maxRows);
+            return NestedRowReader.create(rowGroupIterator, schema, projectedSchema, context, fixedListFastPathEnabled, filter, maxRows, rowGroups);
         }
     }
 
@@ -520,7 +523,7 @@ public class ParquetFileReader implements AutoCloseable {
                 return ColumnReaders.noRows(schema, projected);
             }
             return new ColumnReaders(context, fixedListFastPathEnabled, iterator, schema, projected,
-                    resolveBatchSize(batchSize, projected));
+                    resolveBatchSize(batchSize, projected, rowGroups));
         }
 
         // Exact filtering (#624): decode the payload columns *and* the predicate
@@ -545,16 +548,20 @@ public class ParquetFileReader implements AutoCloseable {
         // per-batch arrays too, so they count toward the byte budget.
         return ColumnReaders.filtered(
                 context, fixedListFastPathEnabled, iterator, schema, augProjected, payloadProjected, resolved,
-                resolveBatchSize(batchSize, augProjected));
+                resolveBatchSize(batchSize, augProjected, rowGroups));
     }
 
     /// Resolves a requested batch size to a concrete record count. A positive
     /// `requested` (set explicitly via the builders' `batchSize(int)`) is used
     /// verbatim; the [#AUTO_BATCH_SIZE] sentinel is turned into a byte-budgeted
-    /// size derived from the projected column widths, the same logic the
-    /// `RowReader` path uses, so both regimes agree.
-    private static int resolveBatchSize(int requested, ProjectedSchema projected) {
-        return requested > 0 ? requested : BatchSizing.computeOptimalBatchSize(projected);
+    /// size derived from the projected column widths scaled by their list fan-out
+    /// (from `rowGroups` metadata), the same logic the `RowReader` path uses, so
+    /// both regimes agree.
+    private static int resolveBatchSize(int requested, ProjectedSchema projected, List<RowGroup> rowGroups) {
+        return requested > 0
+                ? requested
+                : BatchSizing.computeOptimalBatchSize(projected,
+                        BatchSizing.valuesPerRow(projected, rowGroups));
     }
 
     /// Builds the union of `projection` and the predicate's leaf columns so the

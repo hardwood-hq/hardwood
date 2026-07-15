@@ -876,7 +876,8 @@ public class ColumnReader implements AutoCloseable {
 
         int resolvedBatchSize = batchSize > 0
                 ? batchSize
-                : BatchSizing.computeOptimalBatchSize(projectedSchema);
+                : BatchSizing.computeOptimalBatchSize(projectedSchema,
+                        BatchSizing.valuesPerRow(projectedSchema, rowGroups));
 
         RowGroupIterator rowGroupIterator = new RowGroupIterator(
                 List.of(inputFile), context, 0);
