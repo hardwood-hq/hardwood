@@ -178,54 +178,60 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         nestedFirstValueSeen = true;
         int pageRecords = page.size() / k;
         boolean maskAll = mask.isAll();
-        int intervalCount = maskAll ? 0 : mask.intervalCount();
-        int intervalCursor = 0;
-
-        for (int r = 0; r < pageRecords; r++) {
-            if (!maskAll) {
-                while (intervalCursor < intervalCount && r >= mask.end(intervalCursor)) {
-                    intervalCursor++;
+        // Kept record ranges are contiguous k-runs, so each range is copied in
+        // batch-capacity-sized chunks with one arraycopy per chunk rather than one
+        // per record. Unmasked = the whole page; masked = each interval (page-local
+        // record indices), clamped to the page.
+        int rangeCount = maskAll ? 1 : mask.intervalCount();
+        for (int rangeIdx = 0; rangeIdx < rangeCount; rangeIdx++) {
+            int r = maskAll ? 0 : Math.max(0, mask.start(rangeIdx));
+            int rangeEnd = maskAll ? pageRecords : Math.min(pageRecords, mask.end(rangeIdx));
+            while (r < rangeEnd) {
+                if (rowsInCurrentBatch >= batchCapacity) {
+                    publishCurrentBatch();
+                    if (done) {
+                        return;
+                    }
                 }
-                if (intervalCursor >= intervalCount || r < mask.start(intervalCursor)) {
-                    continue;
-                }
-            }
-
-            if (rowsInCurrentBatch >= batchCapacity) {
-                publishCurrentBatch();
-                if (done) {
+                if (maxRows > 0 && totalRowsAssembled >= maxRows) {
+                    if (rowsInCurrentBatch > 0) {
+                        publishCurrentBatch();
+                    }
+                    finishDrain();
                     return;
                 }
-            }
-            if (maxRows > 0 && totalRowsAssembled >= maxRows) {
-                if (rowsInCurrentBatch > 0) {
-                    publishCurrentBatch();
-                }
-                finishDrain();
-                return;
-            }
 
-            if (asRegularBatch) {
-                ensureNestedCapacity(nestedValueCount + k);
-            }
-            else {
-                ensureValueCapacity(nestedValueCount + k);
-            }
-            nestedRecordOffsets[rowsInCurrentBatch] = nestedValueCount;
-            int destStart = nestedValueCount;
-            copyValueRun(page, r * k, destStart, k);
-            if (asRegularBatch) {
-                for (int j = 0; j < k; j++) {
-                    nestedDefLevels[destStart + j] = maxDefinitionLevel;
-                    nestedRepLevels[destStart + j] = (j == 0) ? 0 : 1;
+                int records = Math.min(rangeEnd - r, batchCapacity - rowsInCurrentBatch);
+                if (maxRows > 0) {
+                    records = (int) Math.min(records, maxRows - totalRowsAssembled);
                 }
+                int span = records * k;
+                int destStart = nestedValueCount;
+                if (asRegularBatch) {
+                    ensureNestedCapacity(nestedValueCount + span);
+                }
+                else {
+                    ensureValueCapacity(nestedValueCount + span);
+                }
+                copyValueRun(page, r * k, destStart, span);
+                for (int j = 0; j < records; j++) {
+                    nestedRecordOffsets[rowsInCurrentBatch + j] = destStart + j * k;
+                }
+                if (asRegularBatch) {
+                    Arrays.fill(nestedDefLevels, destStart, destStart + span, maxDefinitionLevel);
+                    Arrays.fill(nestedRepLevels, destStart, destStart + span, 1);
+                    for (int j = 0; j < records; j++) {
+                        nestedRepLevels[destStart + j * k] = 0;
+                    }
+                }
+                else {
+                    batchFixedK = k;
+                }
+                nestedValueCount += span;
+                rowsInCurrentBatch += records;
+                totalRowsAssembled += records;
+                r += records;
             }
-            else {
-                batchFixedK = k;
-            }
-            nestedValueCount += k;
-            rowsInCurrentBatch++;
-            totalRowsAssembled++;
         }
     }
 
@@ -242,6 +248,16 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
                         "Invalid column chunk for '" + column.name()
                         + "': first repetition level must be 0 but was " + pageRepLevels[0]);
             }
+        }
+
+        // Whole-page all-present fast path: every leaf is present (PageDecoder's
+        // O(1) def-gate), so on an unmasked page the values are one contiguous,
+        // record-aligned run that can be bulk-copied instead of walked per element.
+        // Byte-array leaves stay on the per-element path — their values are appended
+        // into a shared buffer, not arraycopy-able.
+        if (page.allPresent() && mask.isAll() && !(page instanceof Page.ByteArrayPage)) {
+            assembleAllPresentPage(page, pageRepLevels);
+            return;
         }
 
         boolean maskAll = mask.isAll();
@@ -317,6 +333,89 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             copyOneValue(page, i, nestedValues, nestedValueCount);
             nestedValueCount++;
         }
+    }
+
+    /// Whole-page assembly for an all-present, unmasked page. Every leaf is present
+    /// ([Page#allPresent]), so the page's values are 1:1 with positions and
+    /// contiguous. The record and batch-capacity bookkeeping mirrors
+    /// [#assembleRegularPage] — a record opens at each `repLevel == 0`, a full batch
+    /// is published at the next record boundary — but the per-element value copy and
+    /// level stores are deferred and flushed as bulk operations once per batch (see
+    /// [#flushRun]). Records may span pages, so the batch is left open at page end
+    /// for the next page to continue.
+    private void assembleAllPresentPage(Page page, int[] pageRepLevels) {
+        int pageSize = page.size();
+        if (pageSize == 0) {
+            return;
+        }
+        // The current batch's pending run of not-yet-flushed values: page positions
+        // [runStartPage, i), written at batch value index starting at runStartDest.
+        int runStartPage = 0;
+        int runStartDest = nestedValueCount;
+
+        for (int i = 0; i < pageSize; i++) {
+            if (pageRepLevels != null && pageRepLevels[i] != 0) {
+                continue; // continuation of the open record, not a boundary
+            }
+            int batchValueIndex = runStartDest + (i - runStartPage);
+            if (batchValueIndex > 0 || rowsInCurrentBatch > 0) {
+                // A record just closed; open the next, publishing first if the batch
+                // is full (records are never split across batches).
+                if (rowsInCurrentBatch >= batchCapacity) {
+                    flushRun(page, pageRepLevels, runStartPage, i, runStartDest);
+                    publishCurrentBatch();
+                    if (done) {
+                        return;
+                    }
+                    runStartPage = i;
+                    runStartDest = 0;
+                }
+                if (maxRows > 0 && totalRowsAssembled >= maxRows) {
+                    flushRun(page, pageRepLevels, runStartPage, i, runStartDest);
+                    if (rowsInCurrentBatch > 0) {
+                        publishCurrentBatch();
+                    }
+                    finishDrain();
+                    return;
+                }
+                if (nestedRecordOffsets.length <= rowsInCurrentBatch) {
+                    nestedRecordOffsets = Arrays.copyOf(nestedRecordOffsets,
+                            nestedRecordOffsets.length * 2);
+                }
+                nestedRecordOffsets[rowsInCurrentBatch] = runStartDest + (i - runStartPage);
+                rowsInCurrentBatch++;
+                totalRowsAssembled++;
+            }
+            else {
+                // First kept value of the stream — open record 0.
+                nestedRecordOffsets[0] = 0;
+                rowsInCurrentBatch = 1;
+                totalRowsAssembled++;
+            }
+        }
+        flushRun(page, pageRepLevels, runStartPage, pageSize, runStartDest);
+    }
+
+    /// Flushes the pending run of an all-present page — page positions
+    /// `[fromPage, toPage)` written at batch value index `destStart` — as three bulk
+    /// operations: the values via [#copyValueRun], the constant definition levels via
+    /// `Arrays.fill`, and the repetition levels via `System.arraycopy` (all `0` when
+    /// the column is not repeated). Advances [#nestedValueCount] past the run.
+    private void flushRun(Page page, int[] pageRepLevels, int fromPage, int toPage, int destStart) {
+        int span = toPage - fromPage;
+        if (span <= 0) {
+            return;
+        }
+        ensureNestedCapacity(destStart + span);
+        copyValueRun(page, fromPage, destStart, span);
+        Arrays.fill(nestedDefLevels, destStart, destStart + span, maxDefinitionLevel);
+        if (pageRepLevels != null) {
+            System.arraycopy(pageRepLevels, fromPage, nestedRepLevels, destStart, span);
+        }
+        else {
+            Arrays.fill(nestedRepLevels, destStart, destStart + span, 0);
+        }
+        nestedValueCount = destStart + span;
     }
 
     @Override

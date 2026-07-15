@@ -168,15 +168,17 @@ public class PageDecoder {
     /// and represent "all present" as a `null` level array — the same
     /// representation used for required columns throughout the reader.
     ///
-    /// Restricted to flat columns; nested record assembly consumes the def-level
-    /// array directly and stays on the materializing path.
+    /// Applies to flat and nested columns alike: nested assembly treats a `null`
+    /// definition-level array as all-present (every leaf at `maxDef`) and takes a
+    /// whole-page bulk-copy path; the repetition levels are still materialised, so
+    /// record boundaries are preserved.
     private int[] decodeDefinitionLevels(byte[] levelData, int offset, int length, int numValues) {
         int maxDef = column.maxDefinitionLevel();
         int bitWidth = getBitWidth(maxDef);
         RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, bitWidth);
         // The probe loads the first run; if it is not the all-present fast path,
         // readInts below resumes from that same loaded run on the same instance.
-        if (column.maxRepetitionLevel() == 0 && decoder.isSingleRleRunOf(maxDef, numValues)) {
+        if (decoder.isSingleRleRunOf(maxDef, numValues)) {
             return null;
         }
         int[] levels = new int[numValues];

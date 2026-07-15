@@ -37,12 +37,20 @@ public sealed interface Page {
     /// [FixedSizeListDetector].
     int fixedListK();
 
+    /// True when every leaf on this page is present — no null or empty parents.
+    /// Represented as a `null` definition-level array (the reader's all-present
+    /// convention, produced by [PageDecoder]'s O(1) def-gate for both flat and
+    /// nested columns), so callers test presence without inspecting per-value
+    /// levels. A repetition-level array is still present for nested columns.
+    default boolean allPresent() {
+        return definitionLevels() == null;
+    }
+
     default boolean isNull(int index) {
-        int[] defLevels = definitionLevels();
-        if (defLevels == null) {
+        if (allPresent()) {
             return false;
         }
-        return defLevels[index] < maxDefinitionLevel();
+        return definitionLevels()[index] < maxDefinitionLevel();
     }
 
     /// Returns a copy of `page` marked as a fixed-width fixed-size-list page with

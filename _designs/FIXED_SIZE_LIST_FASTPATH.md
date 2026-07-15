@@ -199,8 +199,8 @@ marker (`0` for a regular page/batch). All types live in
   slices levels pre-decompression; V1 reads them from the decompressed body —
   the only difference between the two seams.
 - **Assembly** — `NestedColumnWorker.assembleFixedWidthPage` bulk-copies each
-  record's values and sets record offsets arithmetically, skipping the
-  per-element level copy. A published batch stays homogeneous — wholly
+  contiguous run of kept records in one `copyValueRun` and sets record offsets
+  arithmetically, skipping the per-element level copy. A published batch stays homogeneous — wholly
   fixed-width (levels omitted) or wholly regular — but batch boundaries must fall
   at the same rows across every column, which holds only at batch-capacity and
   file boundaries. The assembler therefore never cuts a batch at a page boundary:
@@ -268,8 +268,8 @@ Findings:
   across the whole *k* sweep, at **3.2–4.2×** over the naive `LIST` decode. The
   naive path is 5.2–8.1× slower than the flat floor; the fast path lands at
   ~1.6–2.1× of it.
-- The residual over the flat floor is **value decode plus per-record assembly**,
-  not level handling — the honest ceiling. A native fixed-size-list type would
+- The residual over the flat floor is **value decode plus the value copy into the
+  batch**, not level handling — the honest ceiling. A native fixed-size-list type would
   need to justify itself on that residual, not on the reconstruction cost this
   fast path already removes.
 - The SWAR tiled compare makes small-*k* detection negligible (0.31 ms,
