@@ -154,6 +154,15 @@ Dictionary encoding is **on by default** for every `INT32` column and can be dis
 writer through `WriterConfig.enableDictionary(false)`, in which case every chunk is `PLAIN`
 from the start with no dictionary page — the stage 1–8 behaviour.
 
+The mid-chunk fallback described here is the stage-9 mechanism: the encoding is chosen
+value-by-value from a byte-limit heuristic, so a chunk can carry an `RLE_DICTIONARY` prefix
+followed by `PLAIN` pages. Stage 16 ([WRITER_SUPPORT.md](WRITER_SUPPORT.md)) replaces the
+heuristic with a row-group-global decision taken once the group is buffered — each chunk is
+encoded `RLE_DICTIONARY` or `PLAIN` as a whole from its true cardinality, so no chunk mixes
+encodings and no dictionary page is written for a chunk that ends up `PLAIN`. The
+per-page-encoding invariant above still holds; it is simply no longer exercised within a
+single chunk.
+
 ## `ColumnMetaData` wiring
 
 `ColumnMetaDataWriter` gains two things:
