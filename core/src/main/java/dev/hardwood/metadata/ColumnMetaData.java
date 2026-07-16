@@ -38,9 +38,22 @@ public record ColumnMetaData(
         long totalCompressedSize,
         Map<String, String> keyValueMetadata,
         long dataPageOffset,
+        Long indexPageOffset,
         Long dictionaryPageOffset,
         Statistics statistics,
         GeospatialStatistics geospatialStatistics,
         Long bloomFilterOffset,
         Integer bloomFilterLength) {
+
+    public ColumnMetaData(PhysicalType type, List<Encoding> encodings, FieldPath pathInSchema,
+            CompressionCodec codec, long numValues, long totalUncompressedSize,
+            long totalCompressedSize, Map<String, String> keyValueMetadata, long dataPageOffset,
+            Long dictionaryPageOffset, Statistics statistics,
+            GeospatialStatistics geospatialStatistics, Long bloomFilterOffset,
+            Integer bloomFilterLength) {
+        this(type, encodings, pathInSchema, codec, numValues, totalUncompressedSize,
+                totalCompressedSize, keyValueMetadata, dataPageOffset, null,
+                dictionaryPageOffset, statistics, geospatialStatistics, bloomFilterOffset,
+                bloomFilterLength);
+    }
 }

@@ -31,8 +31,22 @@ run the CLI via Docker without installing it locally — see the [Docker section
 | `hardwood schema` | Print the file schema, including logical-type annotations such as `VARIANT(1)` on Variant groups |
 | `hardwood print` | Print rows as an ASCII table (head, tail, or all); Variant columns are decoded to JSON-like text |
 | `hardwood convert` | Convert a Parquet file to CSV or JSON (head, tail, or all); Variant columns are emitted as a JSON string in CSV and as a native JSON subtree in JSON |
+| `hardwood merge` | Merge same-schema local Parquet files without decoding or re-encoding their pages |
 | `hardwood footer` | Print decoded footer length, offset, and file structure |
 | `hardwood inspect pages` | List data and dictionary pages per column chunk; includes per-page min/max when the file has a page index |
+
+## Merge files
+
+```shell
+hardwood merge --output combined.parquet part-1.parquet part-2.parquet
+```
+
+`merge` preserves the input order and keeps every input row group intact. Input
+schemas and column orders must match exactly. Compression codecs and encodings may
+differ because Parquet records them per column chunk. Conflicting file-level
+key/value metadata is rejected. The command accepts local paths and writes the
+destination atomically; an incomplete output is discarded if validation or copying
+fails.
 | `hardwood inspect dictionary` | Print dictionary entries for a column |
 | `hardwood inspect columns` | Show compressed and uncompressed byte sizes per column, ranked |
 | `hardwood inspect rowgroups` | Display per-row-group column chunk metadata (sizes, codec) |

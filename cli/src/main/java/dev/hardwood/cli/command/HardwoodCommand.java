@@ -21,6 +21,7 @@ import picocli.CommandLine.IVersionProvider;
         InfoCommand.class,
         SchemaCommand.class,
         ConvertCommand.class,
+        MergeCommand.class,
         FooterCommand.class,
         InspectCommand.class,
         PrintCommand.class,

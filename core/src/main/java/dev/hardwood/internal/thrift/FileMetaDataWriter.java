@@ -40,10 +40,32 @@ public class FileMetaDataWriter {
             RowGroupWriter.write(writer, rowGroup);
         }
 
+        if (!metaData.keyValueMetadata().isEmpty()) {
+            writer.writeFieldBegin(5, ThriftCompactConstants.FieldType.LIST);
+            KeyValueMetadataWriter.write(writer, metaData.keyValueMetadata());
+        }
+
         // 6: created_by (optional)
         if (metaData.createdBy() != null) {
             writer.writeFieldBegin(6, ThriftCompactConstants.FieldType.BINARY);
             writer.writeString(metaData.createdBy());
+        }
+
+        if (!metaData.columnOrders().isEmpty()) {
+            writer.writeFieldBegin(7, ThriftCompactConstants.FieldType.LIST);
+            writer.writeListBegin(metaData.columnOrders().size(), ThriftCompactConstants.ElementType.STRUCT);
+            for (dev.hardwood.metadata.ColumnOrder order : metaData.columnOrders()) {
+                if (order != dev.hardwood.metadata.ColumnOrder.TYPE_DEFINED_ORDER) {
+                    throw new UnsupportedOperationException("Cannot serialize column order: " + order);
+                }
+                short saved = writer.pushFieldIdContext();
+                writer.writeFieldBegin(1, ThriftCompactConstants.FieldType.STRUCT);
+                short union = writer.pushFieldIdContext();
+                writer.writeFieldStop();
+                writer.popFieldIdContext(union);
+                writer.writeFieldStop();
+                writer.popFieldIdContext(saved);
+            }
         }
 
         writer.writeFieldStop();

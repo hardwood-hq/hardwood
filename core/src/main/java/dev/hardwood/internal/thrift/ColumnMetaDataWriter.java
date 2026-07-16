@@ -53,14 +53,41 @@ public class ColumnMetaDataWriter {
             writer.writeFieldBegin(7, ThriftCompactConstants.FieldType.I64);
             writer.writeI64(metaData.totalCompressedSize());
 
+            if (!metaData.keyValueMetadata().isEmpty()) {
+                writer.writeFieldBegin(8, ThriftCompactConstants.FieldType.LIST);
+                KeyValueMetadataWriter.write(writer, metaData.keyValueMetadata());
+            }
+
             // 9: data_page_offset
             writer.writeFieldBegin(9, ThriftCompactConstants.FieldType.I64);
             writer.writeI64(metaData.dataPageOffset());
+
+            if (metaData.indexPageOffset() != null) {
+                writer.writeFieldBegin(10, ThriftCompactConstants.FieldType.I64);
+                writer.writeI64(metaData.indexPageOffset());
+            }
 
             // 11: dictionary_page_offset (present only for a dictionary-encoded chunk)
             if (metaData.dictionaryPageOffset() != null) {
                 writer.writeFieldBegin(11, ThriftCompactConstants.FieldType.I64);
                 writer.writeI64(metaData.dictionaryPageOffset());
+            }
+
+            if (metaData.statistics() != null) {
+                writer.writeFieldBegin(12, ThriftCompactConstants.FieldType.STRUCT);
+                StatisticsWriter.write(writer, metaData.statistics());
+            }
+
+            if (metaData.bloomFilterOffset() != null) {
+                writer.writeFieldBegin(14, ThriftCompactConstants.FieldType.I64);
+                writer.writeI64(metaData.bloomFilterOffset());
+            }
+            if (metaData.bloomFilterLength() != null) {
+                writer.writeFieldBegin(15, ThriftCompactConstants.FieldType.I32);
+                writer.writeI32(metaData.bloomFilterLength());
+            }
+            if (metaData.geospatialStatistics() != null) {
+                throw new UnsupportedOperationException("Cannot serialize geospatial statistics");
             }
 
             writer.writeFieldStop();
