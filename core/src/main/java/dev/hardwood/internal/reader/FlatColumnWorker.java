@@ -23,6 +23,7 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
 
     private long[] currentValidity;
     private final ColumnBatchMatcher columnFilter;
+    private final boolean flushOnFilterBoundaries;
     /// Tracks whether any absent (null) leaf has been seen in the current
     /// batch; cleared by [#publishCurrentBatch]. When still false at publish
     /// time, [BatchExchange.Batch#validity] is set to `null` to signal
@@ -47,15 +48,47 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                             DecompressorFactory decompressorFactory,
                             Executor decodeExecutor, long maxRows,
                             ColumnBatchMatcher columnFilter) {
+        this(pageSource, exchange, column, batchCapacity, decompressorFactory,
+              decodeExecutor, maxRows, columnFilter, false);
+    }
+
+    /// @param flushOnFilterBoundaries whether the drain flushes the current batch at
+    ///                    row-group boundaries where the filter-always-matches decision
+    ///                    changes. Must be uniform across all workers of one projection —
+    ///                    batches stay row-aligned only when every worker flushes at the
+    ///                    same rows.
+    public FlatColumnWorker(PageSource pageSource, BatchExchange<BatchExchange.Batch> exchange,
+                            ColumnSchema column, int batchCapacity,
+                            DecompressorFactory decompressorFactory,
+                            Executor decodeExecutor, long maxRows,
+                            ColumnBatchMatcher columnFilter, boolean flushOnFilterBoundaries) {
         super(pageSource, exchange, column, batchCapacity, decompressorFactory,
               decodeExecutor, maxRows);
         this.columnFilter = columnFilter;
+        this.flushOnFilterBoundaries = flushOnFilterBoundaries;
     }
 
     @Override
     void initDrainState() {
         currentValidity = maxDefinitionLevel > 0 ? new long[(batchCapacity + 63) >>> 6] : null;
         currentBatchHasAbsents = false;
+    }
+
+    @Override
+    boolean flushOnFilterAlwaysMatchesTransition() {
+        return flushOnFilterBoundaries;
+    }
+
+    /// Writes the mask a matcher would produce when every record matches: all-ones
+    /// for `[0, recordCount)` bits, tail bits of the last active word zeroed, words
+    /// beyond the active range untouched.
+    private static void fillAllOnes(long[] words, int recordCount) {
+        int fullWords = recordCount >>> 6;
+        int tail = recordCount & 63;
+        Arrays.fill(words, 0, fullWords, -1L);
+        if (tail != 0) {
+            words[fullWords] = -1L >>> (64 - tail);
+        }
     }
 
     @Override
@@ -127,11 +160,19 @@ public class FlatColumnWorker extends ColumnWorker<BatchExchange.Batch> {
                 ? Arrays.copyOf(currentValidity, (rowsInCurrentBatch + 63) >>> 6)
                 : null;
         currentBatch.fileName = currentBatchFileName;
+        currentBatch.filterAlwaysMatches = flushOnFilterBoundaries && currentBatchFilterAlwaysMatches;
 
         if (columnFilter != null) {
-            // Drain-side filter: evaluate while the just-filled value array is hot in
-            // this drain core's L1. Writes into currentBatch.matches in place.
-            columnFilter.test(currentBatch, currentBatch.matches);
+            if (currentBatchFilterAlwaysMatches) {
+                // Statistics proved every record of this batch's row group matches the
+                // predicate: emit the all-ones mask directly instead of evaluating records.
+                fillAllOnes(currentBatch.matches, rowsInCurrentBatch);
+            }
+            else {
+                // Drain-side filter: evaluate while the just-filled value array is hot in
+                // this drain core's L1. Writes into currentBatch.matches in place.
+                columnFilter.test(currentBatch, currentBatch.matches);
+            }
         }
 
         long t0 = System.nanoTime();

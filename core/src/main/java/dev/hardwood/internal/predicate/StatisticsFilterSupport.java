@@ -77,6 +77,82 @@ final class StatisticsFilterSupport {
         };
     }
 
+    /// Evaluates a resolved leaf predicate against [MinMaxStats] as a three-valued
+    /// [StatsDecision].
+    ///
+    /// [StatsDecision#ALWAYS_MATCHES] requires the whole `[min, max]` interval to satisfy
+    /// the predicate **and** a proven-zero null count — a null row satisfies no value
+    /// predicate, so without it a fully-matching range still cannot promise every row.
+    /// Truncated (inexact) bounds are safe by construction: they only widen the interval,
+    /// and a predicate satisfied by the widened interval is satisfied by the actual values.
+    static StatsDecision decideLeaf(ResolvedPredicate leaf, MinMaxStats stats) {
+        // IS NOT NULL is decided by the null count alone; min/max are irrelevant.
+        if (leaf instanceof ResolvedPredicate.IsNotNullPredicate) {
+            return isNullFree(stats) ? StatsDecision.ALWAYS_MATCHES : StatsDecision.MIGHT_MATCH;
+        }
+        if (canDropLeaf(leaf, stats)) {
+            return StatsDecision.CANNOT_MATCH;
+        }
+        if (!isNullFree(stats) || stats.minValue() == null || stats.maxValue() == null) {
+            return StatsDecision.MIGHT_MATCH;
+        }
+        return alwaysMatchesLeaf(leaf, stats) ? StatsDecision.ALWAYS_MATCHES : StatsDecision.MIGHT_MATCH;
+    }
+
+    private static boolean isNullFree(MinMaxStats stats) {
+        Long nullCount = stats.nullCount();
+        return nullCount != null && nullCount == 0;
+    }
+
+    /// Whether the min/max statistics prove the leaf matches every row. Assumes the caller
+    /// has already established a zero null count and present bounds.
+    private static boolean alwaysMatchesLeaf(ResolvedPredicate leaf, MinMaxStats stats) {
+        return switch (leaf) {
+            case ResolvedPredicate.IntPredicate p -> alwaysMatches(p.op(), p.value(),
+                    StatisticsDecoder.decodeInt(stats.minValue()),
+                    StatisticsDecoder.decodeInt(stats.maxValue()));
+            case ResolvedPredicate.LongPredicate p -> alwaysMatches(p.op(), p.value(),
+                    StatisticsDecoder.decodeLong(stats.minValue()),
+                    StatisticsDecoder.decodeLong(stats.maxValue()));
+            case ResolvedPredicate.BooleanPredicate p -> alwaysMatches(p.op(), p.value() ? 1 : 0,
+                    StatisticsDecoder.decodeBoolean(stats.minValue()) ? 1 : 0,
+                    StatisticsDecoder.decodeBoolean(stats.maxValue()) ? 1 : 0);
+            // NaN values sit outside the min/max ordering, and nan_count is not read yet:
+            // a floating-point unit whose [min, max] fully satisfies the predicate may
+            // still hold non-matching NaN rows. Never promise a full match for FP columns.
+            case ResolvedPredicate.FloatPredicate ignored -> false;
+            case ResolvedPredicate.Float16Predicate ignored -> false;
+            case ResolvedPredicate.DoublePredicate ignored -> false;
+            case ResolvedPredicate.BinaryPredicate p -> {
+                if (p.signed()) {
+                    yield alwaysMatchesCompared(p.op(),
+                            BinaryComparator.compareSigned(p.value(), stats.minValue()),
+                            BinaryComparator.compareSigned(p.value(), stats.maxValue()),
+                            BinaryComparator.compareSigned(stats.minValue(), stats.maxValue()));
+                }
+                yield alwaysMatchesCompared(p.op(),
+                        BinaryComparator.compareUnsigned(p.value(), stats.minValue()),
+                        BinaryComparator.compareUnsigned(p.value(), stats.maxValue()),
+                        BinaryComparator.compareUnsigned(stats.minValue(), stats.maxValue()));
+            }
+            case ResolvedPredicate.IntInPredicate p ->
+                    alwaysMatchesIntIn(p.values(),
+                            StatisticsDecoder.decodeInt(stats.minValue()),
+                            StatisticsDecoder.decodeInt(stats.maxValue()));
+            case ResolvedPredicate.LongInPredicate p ->
+                    alwaysMatchesLongIn(p.values(),
+                            StatisticsDecoder.decodeLong(stats.minValue()),
+                            StatisticsDecoder.decodeLong(stats.maxValue()));
+            case ResolvedPredicate.BinaryInPredicate p ->
+                    alwaysMatchesBinaryIn(p.values(), stats.minValue(), stats.maxValue());
+            case ResolvedPredicate.IsNullPredicate ignored -> false;
+            case ResolvedPredicate.IsNotNullPredicate ignored -> false;
+            case ResolvedPredicate.And ignored -> false;
+            case ResolvedPredicate.Or ignored -> false;
+            case ResolvedPredicate.GeospatialPredicate ignored -> false;
+        };
+    }
+
     // ==================== Range comparison logic ====================
 
     /// Determines if a range can be dropped given integer-comparable min/max statistics.
@@ -156,6 +232,37 @@ final class StatisticsFilterSupport {
         };
     }
 
+    /// Determines if every value in `[min, max]` satisfies the operator, given
+    /// integer-comparable min/max statistics. Works for int, long, boolean (mapped to 0/1).
+    static boolean alwaysMatches(FilterPredicate.Operator op, long value, long min, long max) {
+        return switch (op) {
+            case EQ -> min == max && value == min;
+            case NOT_EQ -> value < min || value > max;
+            case LT -> max < value;
+            case LT_EQ -> max <= value;
+            case GT -> min > value;
+            case GT_EQ -> min >= value;
+        };
+    }
+
+    /// Determines if every value in `[min, max]` satisfies the operator, given pre-computed
+    /// comparison results for binary values.
+    ///
+    /// @param cmpMin comparison of value vs min (negative if value < min)
+    /// @param cmpMax comparison of value vs max (positive if value > max)
+    /// @param minEqMax comparison of min vs max (0 if min == max)
+    static boolean alwaysMatchesCompared(FilterPredicate.Operator op, int cmpMin, int cmpMax,
+            int minEqMax) {
+        return switch (op) {
+            case EQ -> minEqMax == 0 && cmpMin == 0;
+            case NOT_EQ -> cmpMin < 0 || cmpMax > 0;
+            case LT -> cmpMax > 0;
+            case LT_EQ -> cmpMax >= 0;
+            case GT -> cmpMin < 0;
+            case GT_EQ -> cmpMin <= 0;
+        };
+    }
+
     // ==================== IN predicate range checks ====================
 
     static boolean canDropIntIn(int[] values, int min, int max) {
@@ -184,5 +291,45 @@ final class StatisticsFilterSupport {
             }
         }
         return true;
+    }
+
+    // ==================== IN predicate always-match checks ====================
+    // An IN predicate matches every row only in the single-point case: min == max
+    // and that one value is a member of the set.
+
+    static boolean alwaysMatchesIntIn(int[] values, int min, int max) {
+        if (min != max) {
+            return false;
+        }
+        for (int value : values) {
+            if (value == min) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean alwaysMatchesLongIn(long[] values, long min, long max) {
+        if (min != max) {
+            return false;
+        }
+        for (long value : values) {
+            if (value == min) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    static boolean alwaysMatchesBinaryIn(byte[][] values, byte[] min, byte[] max) {
+        if (BinaryComparator.compareUnsigned(min, max) != 0) {
+            return false;
+        }
+        for (byte[] value : values) {
+            if (BinaryComparator.compareUnsigned(value, min) == 0) {
+                return true;
+            }
+        }
+        return false;
     }
 }

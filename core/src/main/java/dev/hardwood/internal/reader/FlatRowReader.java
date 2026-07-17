@@ -226,6 +226,14 @@ public final class FlatRowReader implements RowReader {
                                    HardwoodContextImpl context,
                                    ResolvedPredicate filter,
                                    long maxRows) {
+        // When statistics prove every surviving row group matches the filter in
+        // full, the read is equivalent to an unfiltered read: skip matcher
+        // compilation and per-row evaluation entirely, and let maxRows cap
+        // scanned rows directly (scanned == matching).
+        if (filter != null && rowGroupIterator.isFilterSatisfiedByStatistics()) {
+            filter = null;
+        }
+
         int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema);
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
 
@@ -272,7 +280,7 @@ public final class FlatRowReader implements RowReader {
             FlatColumnWorker worker = new FlatColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), workerMaxRows,
-                    columnFilter);
+                    columnFilter, drainSide);
 
             buffers[i] = buffer;
             workers[i] = worker;

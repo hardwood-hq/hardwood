@@ -28,6 +28,7 @@ import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
+import dev.hardwood.internal.predicate.StatsDecision;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -88,6 +89,7 @@ public class RowGroupIterator {
     private FileSchema referenceSchema;
     private ProjectedSchema projectedSchema;
     private ResolvedPredicate filterPredicate;
+    private boolean filterSatisfiedByStatistics;
 
     /// AND-necessary leaves per column index, derived once from `filterPredicate`.
     /// Feeds [SequentialFetchPlan]'s inline-stats page-drop check.
@@ -127,7 +129,8 @@ public class RowGroupIterator {
             int fileIndex,
             int rowGroupIndex,
             int workItemIndex,
-            long rowsConsumedBefore
+            long rowsConsumedBefore,
+            boolean filterAlwaysMatches
     ) {}
 
     /// Cached shared metadata for one row group, reused across columns.
@@ -898,12 +901,14 @@ public class RowGroupIterator {
         long physicalSkipRemaining = physicalSkip;
         boolean hasFilter = filterPredicate != null;
 
+        boolean allKeptAlwaysMatch = true;
         for (int fileIndex = 0; fileIndex < inputFiles.size() && rowBudget > 0; fileIndex++) {
             PreparedFile prepared = getPreparedFile(fileIndex);
-            List<RowGroup> rowGroups = filterRowGroups(prepared.rowGroups, prepared.inputFile);
+            List<FilteredRowGroup> rowGroups = filterRowGroups(prepared.rowGroups, prepared.inputFile);
 
             for (int rgIndex = 0; rgIndex < rowGroups.size() && rowBudget > 0; rgIndex++) {
-                RowGroup rg = rowGroups.get(rgIndex);
+                FilteredRowGroup decided = rowGroups.get(rgIndex);
+                RowGroup rg = decided.rowGroup();
                 long rgRows = rg.numRows();
                 if (physicalSkipRemaining >= rgRows) {
                     physicalSkipRemaining -= rgRows;
@@ -916,6 +921,7 @@ public class RowGroupIterator {
                     firstRowGroupSkip = leadingSkip;
                 }
 
+                allKeptAlwaysMatch &= decided.alwaysMatches();
                 workItems.add(new WorkItem(
                         prepared.inputFile,
                         rg,
@@ -923,7 +929,8 @@ public class RowGroupIterator {
                         fileIndex,
                         rgIndex,
                         workItems.size(),
-                        rowsConsumed));
+                        rowsConsumed,
+                        decided.alwaysMatches()));
 
                 // maxRows limiting: deduct row count from budget.
                 // With a filter active, actual match count is unpredictable,
@@ -938,8 +945,19 @@ public class RowGroupIterator {
             triggerPrefetch(fileIndex + 1);
         }
 
+        filterSatisfiedByStatistics = hasFilter && !workItems.isEmpty() && allKeptAlwaysMatch;
+
         LOG.log(System.Logger.Level.DEBUG, "Built work list: {0} row groups across {1} files",
                 workItems.size(), inputFiles.size());
+    }
+
+    /// Whether statistics prove that every row of every work-list row group satisfies the
+    /// filter predicate — every unit either fully matched or was dropped. Readers may then
+    /// skip per-row predicate evaluation entirely and treat the read as unfiltered.
+    ///
+    /// Only meaningful after [#initialize]; `false` when no filter is set.
+    public boolean isFilterSatisfiedByStatistics() {
+        return filterSatisfiedByStatistics;
     }
 
     /// Gets or loads a prepared file, blocking if necessary.
@@ -1026,20 +1044,37 @@ public class RowGroupIterator {
         }
     }
 
-    private List<RowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile) {
+    /// A row group surviving predicate push-down, and whether its statistics prove
+    /// every row matches (so per-row filtering can be skipped for it).
+    private record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches) {}
+
+    private List<FilteredRowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile) {
         if (filterPredicate == null) {
-            return rowGroups;
+            return rowGroups.stream()
+                    .map(rg -> new FilteredRowGroup(rg, false))
+                    .toList();
         }
-        List<RowGroup> filtered = rowGroups.stream()
-                .filter(rg -> !RowGroupFilterEvaluator.canDropRowGroup(filterPredicate, rg,
-                        new RowGroupBloomFilterSource(inputFile, rg)))
-                .toList();
+        List<FilteredRowGroup> filtered = new ArrayList<>(rowGroups.size());
+        int fullyMatching = 0;
+        for (RowGroup rg : rowGroups) {
+            StatsDecision decision = RowGroupFilterEvaluator.decideRowGroup(filterPredicate, rg,
+                    new RowGroupBloomFilterSource(inputFile, rg));
+            if (decision == StatsDecision.CANNOT_MATCH) {
+                continue;
+            }
+            boolean alwaysMatches = decision == StatsDecision.ALWAYS_MATCHES;
+            if (alwaysMatches) {
+                fullyMatching++;
+            }
+            filtered.add(new FilteredRowGroup(rg, alwaysMatches));
+        }
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();
         event.file = inputFile.name();
         event.totalRowGroups = rowGroups.size();
         event.rowGroupsKept = filtered.size();
         event.rowGroupsSkipped = rowGroups.size() - filtered.size();
+        event.rowGroupsFullyMatching = fullyMatching;
         event.commit();
 
         return filtered;

@@ -50,6 +50,12 @@ public class PageSource {
         return currentWorkItem != null ? currentWorkItem.inputFile().name() : null;
     }
 
+    /// Whether statistics proved the current work item's row group matches the filter
+    /// predicate in full. Only valid on the retriever thread.
+    public boolean isCurrentFilterAlwaysMatches() {
+        return currentWorkItem != null && currentWorkItem.filterAlwaysMatches();
+    }
+
     public PageInfo next() {
         while (true) {
             if (currentPlan != null && currentPlan.hasNext()) {

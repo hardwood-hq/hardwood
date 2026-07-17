@@ -110,6 +110,14 @@ public final class NestedRowReader implements RowReader {
                             ResolvedPredicate filter,
                             long maxRows,
                             List<RowGroup> rowGroups) {
+        // When statistics prove every surviving row group matches the filter in
+        // full, the read is equivalent to an unfiltered read: skip matcher
+        // compilation and per-row evaluation entirely, and let maxRows cap
+        // scanned rows directly (scanned == matching).
+        if (filter != null && rowGroupIterator.isFilterSatisfiedByStatistics()) {
+            filter = null;
+        }
+
         int batchSize = BatchSizing.computeOptimalBatchSize(projectedSchema,
                 BatchSizing.valuesPerRow(projectedSchema, rowGroups));
         int projectedColumnCount = projectedSchema.getProjectedColumnCount();
