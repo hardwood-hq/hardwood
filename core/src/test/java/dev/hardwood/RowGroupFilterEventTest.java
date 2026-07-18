@@ -71,6 +71,24 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
     }
 
     @Test
+    void predicatePushDownReportsFullyMatchingRowGroups() throws Exception {
+        // gt(150) skips RG1 (1-100), partially matches RG2 (101-200), and fully
+        // matches RG3 (201-300): exactly one group must be reported as fully
+        // matching. Pins that the ALWAYS_MATCHES decision actually fires — the
+        // row-set correctness tests would still pass if it silently degraded to
+        // MIGHT_MATCH.
+        readIdColumn(reader -> reader.buildColumnReaders(ColumnProjection.columns("id"))
+                .filter(FilterPredicate.gt("id", 150L))
+                .build());
+
+        List<RecordedEvent> pushDown = events(PUSH_DOWN_EVENT).toList();
+        assertThat(pushDown).hasSize(1);
+        assertThat(pushDown.getFirst().getInt("rowGroupsFullyMatching"))
+                .as("only RG3 is proven fully matching; partial RG2 must not count")
+                .isEqualTo(1);
+    }
+
+    @Test
     void byteRangeEmitsByteRangeEventNotPushDownEvent() throws Exception {
         readIdColumn(reader -> reader.buildColumnReaders(ColumnProjection.columns("id"))
                 .filter(RowGroupPredicate.byteRange(0, fileLen))

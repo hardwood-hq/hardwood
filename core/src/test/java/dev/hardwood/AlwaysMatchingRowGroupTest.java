@@ -49,6 +49,31 @@ class AlwaysMatchingRowGroupTest {
     }
 
     @Test
+    void nonFilterColumnsStayRowAlignedAcrossMixedGroups() throws Exception {
+        // gtEq(150) drops RG1, partially matches RG2 (150-200), and fully matches RG3
+        // (201-300). Reading all three columns crosses the batch-flush boundary between
+        // the evaluated group and the always-matching group on every worker, so any
+        // desync between the filter column and the non-filter columns surfaces as a
+        // value/label misaligned with its id.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE));
+             RowReader rows = reader.buildRowReader()
+                     .filter(FilterPredicate.gtEq("id", 150L))
+                     .build()) {
+            long expected = 150;
+            while (rows.hasNext()) {
+                rows.next();
+                long id = rows.getLong("id");
+                assertThat(id).isEqualTo(expected);
+                assertThat(rows.getLong("value")).isEqualTo(id);
+                String prefix = id <= 200 ? "rg2_" : "rg3_";
+                assertThat(rows.getString("label")).isEqualTo(prefix + id);
+                expected++;
+            }
+            assertThat(expected).as("all rows with id in [150, 300] returned").isEqualTo(301);
+        }
+    }
+
+    @Test
     void fullyMatchingRangePredicateKeepsEveryRow() throws Exception {
         // AND of two bounds, both satisfied by all three row groups.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE));
