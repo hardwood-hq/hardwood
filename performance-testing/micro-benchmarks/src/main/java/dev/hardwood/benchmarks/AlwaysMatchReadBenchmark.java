@@ -43,14 +43,21 @@ import dev.hardwood.reader.RowReader;
 ///
 /// - `noFilter` — unfiltered scan, the floor the always-match path converges to
 /// - `full` — cutoff below the file minimum: every group fully matches, the
-///   filter is discarded before any worker starts
-/// - `half` — cutoff mid-file: dropped groups, one partially matching group
-///   (evaluated per row), and fully matching groups (skipped) in one read
+///   filter is discarded before any worker starts (wholesale path)
+/// - `mixed` — cutoff strictly inside a row group: dropped groups, one partially
+///   matching group (evaluated per row), and fully matching groups (skipped) in
+///   one read, so the per-batch flush and mask-skip are what is measured
+///
+/// `mixed` deliberately offsets the cutoff off the group boundary: an aligned
+/// cutoff satisfies the boundary group's min as well, which would leave every
+/// surviving group fully matching and collapse the scenario back onto `full`.
 ///
 /// Each selectivity runs on two read paths: `rowReaderString` filters on the
 /// string column through the record-matcher path (where per-row evaluation is
-/// most expensive), `columnReaderLong` filters on `id` while draining `value`
-/// through the vectorized batch-matcher path.
+/// most expensive), `columnReaderLong` filters on `id` while draining `value`.
+/// The latter reads through `SelectionEngine`, which does not yet consume the
+/// always-match proof (a #795 follow-up), so it stands as a control rather than
+/// a scenario expected to improve.
 ///
 /// Run:
 /// ```shell
@@ -62,8 +69,8 @@ import dev.hardwood.reader.RowReader;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
 @Fork(value = 1, jvmArgs = { "-Xms1g", "-Xmx1g", "--add-modules", "jdk.incubator.vector" })
-@Warmup(iterations = 3, time = 1)
-@Measurement(iterations = 5, time = 1)
+@Warmup(iterations = 5, time = 1)
+@Measurement(iterations = 9, time = 1)
 public class AlwaysMatchReadBenchmark {
 
     private static final int LABEL_WIDTH = 12;
@@ -74,7 +81,7 @@ public class AlwaysMatchReadBenchmark {
     @Param({ "sorted_filter.parquet" })
     private String fileName;
 
-    @Param({ "noFilter", "full", "half" })
+    @Param({ "noFilter", "full", "mixed" })
     private String selectivity;
 
     private Path path;
@@ -89,13 +96,16 @@ public class AlwaysMatchReadBenchmark {
                     + ". Run 'python performance-testing/generate_filter_pushdown_data.py' first.");
         }
         long numRows;
+        long rowGroupRows;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path))) {
             numRows = reader.getFileMetaData().numRows();
+            rowGroupRows = reader.getFileMetaData().rowGroups().getFirst().numRows();
         }
         long cutoff = switch (selectivity) {
             case "noFilter" -> -1;
             case "full" -> 0;
-            case "half" -> numRows / 2;
+            // Half a row group past the midpoint, landing strictly inside a group.
+            case "mixed" -> numRows / 2 + rowGroupRows / 2;
             default -> throw new IllegalStateException("Unknown selectivity: " + selectivity);
         };
         if (cutoff >= 0) {

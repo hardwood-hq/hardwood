@@ -83,8 +83,27 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
 
         List<RecordedEvent> pushDown = events(PUSH_DOWN_EVENT).toList();
         assertThat(pushDown).hasSize(1);
+        assertThat(pushDown.getFirst().getInt("rowGroupsKept")).isEqualTo(2);
         assertThat(pushDown.getFirst().getInt("rowGroupsFullyMatching"))
                 .as("only RG3 is proven fully matching; partial RG2 must not count")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void boundaryAlignedCutoffLeavesNoPartiallyMatchingGroup() throws Exception {
+        // gtEq(201) lands exactly on RG3's first id: RG1/RG2 drop outright, and
+        // RG3's min satisfies the bound, so every *surviving* group is fully
+        // matching and the read collapses onto the wholesale path. The complement
+        // of predicatePushDownReportsFullyMatchingRowGroups, where an interior
+        // cutoff leaves RG2 partial and forces the per-batch path.
+        readIdColumn(reader -> reader.buildColumnReaders(ColumnProjection.columns("id"))
+                .filter(FilterPredicate.gtEq("id", 201L))
+                .build());
+
+        RecordedEvent pushDown = events(PUSH_DOWN_EVENT).findFirst().orElseThrow();
+        assertThat(pushDown.getInt("rowGroupsKept")).isEqualTo(1);
+        assertThat(pushDown.getInt("rowGroupsFullyMatching"))
+                .as("a boundary-aligned cutoff leaves no partially matching group")
                 .isEqualTo(1);
     }
 
