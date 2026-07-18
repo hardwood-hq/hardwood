@@ -45,6 +45,18 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
+/// Isolates the two per-page costs downstream of I/O, over every page of every
+/// column chunk in the fixture (pages are pre-scanned once in setup, so neither
+/// benchmark measures header discovery):
+///
+/// - `a_decompressPages` — header parse + codec decompression only
+/// - `b_decodePages` — full [PageDecoder] page decode (decompression, levels,
+///   values)
+///
+/// The difference between the two is the pure decode cost.
+///
+/// Fixture: `yellow_tripdata_2025-05.parquet` — downloaded by
+/// `./mvnw verify -Pperformance-test` (test-data-setup module).
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
