@@ -37,4 +37,8 @@ public class RowGroupFilterEvent extends Event {
     @Label("Row Groups Skipped")
     @Description("Number of row groups skipped by the filter")
     public int rowGroupsSkipped;
+
+    @Label("Fully Matching Row Groups")
+    @Description("Kept row groups whose statistics prove every row matches the predicate")
+    public int rowGroupsFullyMatching;
 }

@@ -62,6 +62,11 @@ public class BatchExchange<B> {
         /// When non-null, sized to `(batchCapacity + 63) >>> 6` and overwritten on every
         /// drain-side test call.
         public long[] matches;
+
+        /// Whether statistics proved every record of this batch matches the filter
+        /// predicate, making [#matches] all-ones without per-record evaluation.
+        /// Only set on the drain-side filter path; `false` is always safe.
+        public boolean filterAlwaysMatches;
     }
 
     private final ArrayBlockingQueue<B> readyQueue;

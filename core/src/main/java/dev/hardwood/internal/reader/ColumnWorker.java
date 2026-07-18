@@ -85,6 +85,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // preserve this invariant.
     private final String[] fileNameBuffer;
 
+    // Per-slot filter-always-matches flag, written by the retriever alongside
+    // fileNameBuffer[slot] under the same happens-before chain: whether the page's
+    // row group was proven by statistics to match the filter in full.
+    private final boolean[] filterAlwaysMatchesBuffer;
+
     // === Drain position (only modified by drain thread, read by retriever for throttle) ===
     private volatile int consumePosition;
 
@@ -116,6 +121,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// Written only by the drain thread.
     String currentBatchFileName;
 
+    /// Whether every page of the current batch comes from a row group whose statistics
+    /// prove the filter matches all rows. Only maintained (with batch flushes on
+    /// transitions) when [#flushOnFilterAlwaysMatchesTransition] is `true`.
+    boolean currentBatchFilterAlwaysMatches;
+
     // === Instrumentation (drain thread only) ===
     long publishBlockNanos;
     int batchesPublished;
@@ -144,6 +154,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         this.maxRows = maxRows;
         this.reorderBuffer = new AtomicReferenceArray<>(MAX_INFLIGHT_PAGES);
         this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
+        this.filterAlwaysMatchesBuffer = new boolean[MAX_INFLIGHT_PAGES];
     }
 
     /// Initializes subclass-specific drain state (called at the start of `runDrain`).
@@ -157,6 +168,14 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
     /// Publishes the current batch to the [BatchExchange] and takes a new free batch.
     abstract void publishCurrentBatch();
+
+    /// Whether the drain should flush the current batch when crossing a row-group
+    /// boundary that changes the filter-always-matches flag. Only workers that
+    /// evaluate a per-batch filter benefit; for the rest the extra flushes would
+    /// shrink batches for nothing.
+    boolean flushOnFilterAlwaysMatchesTransition() {
+        return false;
+    }
 
     /// Starts both virtual threads. Must be called once.
     ///
@@ -265,6 +284,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 totalPagesSubmitted++;
                 int slot = seq % MAX_INFLIGHT_PAGES;
                 fileNameBuffer[slot] = pageSource.getCurrentFileName();
+                filterAlwaysMatchesBuffer[slot] = pageSource.isCurrentFilterAlwaysMatches();
                 PageInfo pi = pageInfo;
                 PageDecoder rdr = pageDecoder;
                 CompletableFuture<Void> f = CompletableFuture.runAsync(
@@ -383,6 +403,18 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     publishCurrentBatch();
                 }
                 currentBatchFileName = pageFileName;
+            }
+
+            // Detect a filter-always-matches boundary: flush so that each batch is
+            // homogeneous and the per-batch filter can be skipped for batches whose
+            // row groups are proven to match in full. Row groups only ever share a
+            // batch within one file, so this composes with the file flush above.
+            if (flushOnFilterAlwaysMatchesTransition()) {
+                boolean pageAlwaysMatches = filterAlwaysMatchesBuffer[slot];
+                if (pageAlwaysMatches != currentBatchFilterAlwaysMatches && rowsInCurrentBatch > 0) {
+                    publishCurrentBatch();
+                }
+                currentBatchFilterAlwaysMatches = pageAlwaysMatches;
             }
 
             assemblePage(decoded.page(), decoded.mask());

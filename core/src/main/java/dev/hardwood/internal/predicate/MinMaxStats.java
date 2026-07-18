@@ -7,6 +7,8 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.util.List;
+
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.Statistics;
 
@@ -19,6 +21,9 @@ interface MinMaxStats {
 
     /// @return the maximum value as raw bytes, or `null` if absent
     byte[] maxValue();
+
+    /// @return the number of null values in the unit, or `null` if unknown
+    Long nullCount();
 
     /// Wraps a [Statistics] record.
     ///
@@ -39,6 +44,11 @@ interface MinMaxStats {
             public byte[] maxValue() {
                 return deprecated ? null : stats.maxValue();
             }
+
+            @Override
+            public Long nullCount() {
+                return stats.nullCount();
+            }
         };
     }
 
@@ -53,6 +63,12 @@ interface MinMaxStats {
             @Override
             public byte[] maxValue() {
                 return columnIndex.maxValues().get(pageIndex);
+            }
+
+            @Override
+            public Long nullCount() {
+                List<Long> nullCounts = columnIndex.nullCounts();
+                return nullCounts != null ? nullCounts.get(pageIndex) : null;
             }
         };
     }

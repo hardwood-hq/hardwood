@@ -27,6 +27,13 @@ import org.openjdk.jmh.annotations.State;
 import org.openjdk.jmh.annotations.Warmup;
 import org.openjdk.jmh.infra.Blackhole;
 
+/// Measures the raw I/O floor: memory-mapping a whole Parquet file and copying it
+/// into a heap `byte[]`, with no header parsing, decompression, or decoding. Any
+/// full-file read strategy pays at least this; compare against the end-to-end read
+/// benchmarks to see how much time is I/O versus decode.
+///
+/// Fixture: `yellow_tripdata_2016-03.parquet` — downloaded by
+/// `./mvnw verify -Pperformance-test` (test-data-setup module).
 @BenchmarkMode(Mode.AverageTime)
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
