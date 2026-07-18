@@ -69,8 +69,8 @@ import dev.hardwood.reader.RowReader;
 @OutputTimeUnit(TimeUnit.MILLISECONDS)
 @State(Scope.Benchmark)
 @Fork(value = 1, jvmArgs = { "-Xms1g", "-Xmx1g", "--add-modules", "jdk.incubator.vector" })
-@Warmup(iterations = 5, time = 1)
-@Measurement(iterations = 9, time = 1)
+@Warmup(iterations = 3, time = 1)
+@Measurement(iterations = 5, time = 1)
 public class AlwaysMatchReadBenchmark {
 
     private static final int LABEL_WIDTH = 12;
