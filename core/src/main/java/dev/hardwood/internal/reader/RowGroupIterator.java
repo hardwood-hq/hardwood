@@ -90,6 +90,7 @@ public class RowGroupIterator {
     private ProjectedSchema projectedSchema;
     private ResolvedPredicate filterPredicate;
     private boolean filterSatisfiedByStatistics;
+    private boolean statisticsFilteringEnabled = true;
 
     /// AND-necessary leaves per column index, derived once from `filterPredicate`.
     /// Feeds [SequentialFetchPlan]'s inline-stats page-drop check.
@@ -250,6 +251,15 @@ public class RowGroupIterator {
         return referenceSchema;
     }
 
+    /// Disables or re-enables statistics-based filtering for this iterator. With it
+    /// disabled, a filter predicate takes no metadata-derived shortcut — no
+    /// row-group statistics/bloom pruning, no page-index or inline-page-statistics
+    /// skipping, no always-match decision — so the predicate is evaluated against
+    /// every decoded row. Enabled by default; must be set before `initialize`.
+    public void setStatisticsFiltering(boolean enabled) {
+        this.statisticsFilteringEnabled = enabled;
+    }
+
     /// Applies column projection and optional filter, builds the full work list.
     ///
     /// @param projection column projection
@@ -270,7 +280,8 @@ public class RowGroupIterator {
         }
         this.projectedSchema = projected;
         this.filterPredicate = filter;
-        this.dropLeavesByColumn = filter != null ? PageDropPredicates.byColumn(filter) : Map.of();
+        this.dropLeavesByColumn = filter != null && statisticsFilteringEnabled
+                ? PageDropPredicates.byColumn(filter) : Map.of();
 
         buildWorkList();
 
@@ -317,12 +328,13 @@ public class RowGroupIterator {
         return metadataCache.computeIfAbsent(workItem.workItemIndex(), idx -> {
             try (FetchReason.Scope ignored = FetchReason.set(
                     "rg=" + workItem.rowGroupIndex() + " indexes")) {
+                boolean pageFiltering = filterPredicate != null && statisticsFilteringEnabled;
                 RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(
                         workItem.inputFile(), workItem.rowGroup(),
-                        filterPredicate != null);
+                        pageFiltering);
 
                 RowRanges matchingRows = RowRanges.ALL;
-                if (filterPredicate != null) {
+                if (pageFiltering) {
                     matchingRows = PageFilterEvaluator.computeMatchingRows(
                             filterPredicate, workItem.rowGroup(), indexBuffers);
                 }
@@ -1049,7 +1061,7 @@ public class RowGroupIterator {
     private record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches) {}
 
     private List<FilteredRowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile) {
-        if (filterPredicate == null) {
+        if (filterPredicate == null || !statisticsFilteringEnabled) {
             return rowGroups.stream()
                     .map(rg -> new FilteredRowGroup(rg, false))
                     .toList();

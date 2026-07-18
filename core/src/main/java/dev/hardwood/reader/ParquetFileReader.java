@@ -76,18 +76,20 @@ public class ParquetFileReader implements AutoCloseable {
     private final FileSchema schema;
     private final HardwoodContextImpl context;
     private final boolean fixedListFastPathEnabled;
+    private final boolean statisticsFilteringEnabled;
     private final boolean ownsContext;
     private final boolean ownsInputFiles;
     private final List<RowGroupIterator> rowGroupIterators = new ArrayList<>();
 
     private ParquetFileReader(List<InputFile> inputFiles, FileMetaData firstFileMetaData,
                               FileSchema schema, HardwoodContextImpl context, boolean fixedListFastPathEnabled,
-                              boolean ownsContext, boolean ownsInputFiles) {
+                              boolean statisticsFilteringEnabled, boolean ownsContext, boolean ownsInputFiles) {
         this.inputFiles = inputFiles;
         this.firstFileMetaData = firstFileMetaData;
         this.schema = schema;
         this.context = context;
         this.fixedListFastPathEnabled = fixedListFastPathEnabled;
+        this.statisticsFilteringEnabled = statisticsFilteringEnabled;
         this.ownsContext = ownsContext;
         this.ownsInputFiles = ownsInputFiles;
     }
@@ -97,10 +99,20 @@ public class ParquetFileReader implements AutoCloseable {
     /// via [ReaderConfig] so it can be retired without breaking callers.
     private static final String FIXED_LIST_FAST_PATH_OPTION = "hardwood.fixed-list-fast-path";
 
+    /// Reader option key: set to `"false"` to disable statistics-based filtering
+    /// (enabled by default). With it disabled, no metadata-derived shortcut is
+    /// taken for a filtered read — no row-group statistics/bloom pruning, no
+    /// page-index or inline-page-statistics skipping, no always-match fast path —
+    /// and the predicate is evaluated against every decoded row, so results
+    /// depend only on the data pages. The escape hatch for files whose
+    /// statistics are wrong (#799).
+    private static final String STATISTICS_FILTERING_OPTION = "hardwood.statistics-filtering";
+
     /// The [ReaderConfig] option keys the reader recognises. Unknown keys are
     /// ignored (so a flag can be retired without breaking callers) but logged at
     /// `WARNING`, so a typo in a live key surfaces instead of taking the default.
-    private static final Set<String> KNOWN_READER_OPTIONS = Set.of(FIXED_LIST_FAST_PATH_OPTION);
+    private static final Set<String> KNOWN_READER_OPTIONS = Set.of(FIXED_LIST_FAST_PATH_OPTION,
+            STATISTICS_FILTERING_OPTION);
 
     private static final System.Logger LOG = System.getLogger(ParquetFileReader.class.getName());
 
@@ -111,6 +123,15 @@ public class ParquetFileReader implements AutoCloseable {
     private static boolean resolveFixedListFastPath(ReaderConfig readerConfig) {
         return "true".equalsIgnoreCase(
                 readerConfig.options().getOrDefault(FIXED_LIST_FAST_PATH_OPTION, "false"));
+    }
+
+    /// Resolves the statistics-filtering flag from a [ReaderConfig]. Filtering
+    /// from statistics is **opt-out**: it stays enabled unless the option is
+    /// explicitly `"false"`, so trusting statistics remains the default and a
+    /// caller must fall back to full-scan evaluation deliberately.
+    private static boolean resolveStatisticsFiltering(ReaderConfig readerConfig) {
+        return !"false".equalsIgnoreCase(
+                readerConfig.options().getOrDefault(STATISTICS_FILTERING_OPTION, "true"));
     }
 
     /// Logs a `WARNING` for each [ReaderConfig] option key the reader does not
@@ -181,6 +202,7 @@ public class ParquetFileReader implements AutoCloseable {
         }
         warnUnknownReaderOptions(readerConfig);
         boolean fixedListFastPathEnabled = resolveFixedListFastPath(readerConfig);
+        boolean statisticsFilteringEnabled = resolveStatisticsFiltering(readerConfig);
         List<InputFile> files = List.copyOf(inputFiles);
         InputFile first = files.get(0);
         first.open();
@@ -205,7 +227,8 @@ public class ParquetFileReader implements AutoCloseable {
             fileOpenedEvent.columnCount = schema.getColumnCount();
             fileOpenedEvent.commit();
 
-            return new ParquetFileReader(files, firstFileMetaData, schema, context, fixedListFastPathEnabled, ownsContext, true);
+            return new ParquetFileReader(files, firstFileMetaData, schema, context, fixedListFastPathEnabled,
+                    statisticsFilteringEnabled, ownsContext, true);
         }
         catch (Exception e) {
             try {
@@ -420,6 +443,7 @@ public class ParquetFileReader implements AutoCloseable {
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection, true);
 
         RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, maxRows, tailSkip, physicalSkip);
+        iterator.setStatisticsFiltering(statisticsFilteringEnabled);
         iterator.setFirstFile(schema, firstFileRowGroups);
         iterator.initialize(projectedSchema, resolved);
         rowGroupIterators.add(iterator);
@@ -532,6 +556,7 @@ public class ParquetFileReader implements AutoCloseable {
         // compact each exposed column to the matching records per batch.
         ColumnProjection augmented = augmentWithPredicateColumns(projection, resolved);
         RowGroupIterator iterator = new RowGroupIterator(inputFiles, context, 0);
+        iterator.setStatisticsFiltering(statisticsFilteringEnabled);
         iterator.setFirstFile(schema, rowGroups);
         ProjectedSchema augProjected = iterator.initialize(augmented, resolved);
         ProjectedSchema payloadProjected = ProjectedSchema.create(schema, projection);
