@@ -22,26 +22,36 @@ Live at **<https://hardwood.dev/experiments/dive-web>**. Tracking issue: #801.
 | `web/xterm.js`, `web/xterm.css` | Vendored [xterm.js](https://xtermjs.org/) terminal renderer. |
 | `web/demo-sample.parquet` | The *Load a sample file* file (full 19-column NYC taxi schema, 3 row groups, Snappy). |
 | `web/generate-demo-sample.py` | Regenerates `demo-sample.parquet`. |
+| `build.sh` | Builds the WebAssembly image and assembles the publishable bundle. |
 
 ## Building the WebAssembly image
 
-Requires **Oracle GraalVM 26-ea+** (ships the `svm-wasm` tool; 25.0.x GA does not),
-**Binaryen ≥ v119** on `PATH` (for `wasm-opt`), and **gcc**.
+`build.sh` does the whole build: it resolves the classpath from Maven (dropping the JNI/FFM
+jars — native BROTLI and the JLine backend — that Web Image cannot process), strips the Java
+22 FFM/Vector multi-release code from the core jar, compiles the entry points with the GraalVM
+`javac` (`--add-modules org.graalvm.webimage.api`), runs `native-image --tool:svm-wasm`, and
+assembles the bundle.
 
-1. Install `hardwood-core` and strip `META-INF/versions/*` from the jar (so closed-world
-   analysis never sees the Java 22 FFM/Vector code), producing a `hardwood-core-base.jar`.
-2. Compile the sources with the GraalVM `javac`:
-   ```
-   javac -parameters --add-modules org.graalvm.webimage.api \
-     -cp <core-base:aircompressor:brotli:jzlib:tamboui:hardwood-cli> \
-     -d out web/../src/main/java/dev/hardwood/wasm/*.java
-   ```
-3. Run `native-image` to emit the JS glue + `.wasm`:
-   ```
-   native-image --tool:svm-wasm --no-fallback \
-     -cp <out:...same deps...> dev.hardwood.wasm.DiveWasm -o dive-read
-   ```
-   → `dive-read.js` and `dive-read.js.wasm` (~10 MB).
+Prerequisites:
+
+- **Oracle GraalVM 26-ea+** at `$GRAALVM_HOME` — it ships the `svm-wasm` tool; the 25.0.x GA
+  release does not.
+- **Binaryen ≥ v119** (`wasm-opt`) on `PATH`, and **gcc**.
+- The hardwood artifacts installed locally:
+  ```
+  ./mvnw -q -pl cli -am install -DskipTests \
+    -Dspotless.check.skip -Dlicense.skip -Dformatter.skip -Dimpsort.skip -Denforcer.skip
+  ```
+
+Then:
+
+```
+export GRAALVM_HOME=/path/to/graalvm-26-ea
+wasm-spike/build.sh
+```
+
+→ `wasm-spike/target/web/` with the six flat bundle files, `dive-read.js` and
+`dive-read.js.wasm` (~10 MB), and `dive-web-demo.zip`.
 
 ### Codec support
 
@@ -73,7 +83,7 @@ URL from its own `src`, so the set works under any path with no absolute-URL ass
 Because building the image needs the GraalVM toolchain (not yet wired into CI), the bundle is
 published as a **prebuilt snapshot**:
 
-1. Zip the six files at the archive root as `dive-web-demo.zip`.
+1. Run `build.sh` — it emits `target/web/dive-web-demo.zip` (the six files at the archive root).
 2. Upload it to the **`1.0-early-access`** GitHub release (a rolling, unversioned asset).
 3. The site repo ([`hardwood-hq.github.io`](https://github.com/hardwood-hq/hardwood-hq.github.io))
    `publish.yml` downloads that asset on each deploy and unzips it onto `gh-pages` at the fixed

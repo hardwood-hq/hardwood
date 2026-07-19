@@ -32,6 +32,16 @@
             <version>${hardwood.version}</version>
         </dependency>
 
+        <!-- The dive TUI (DiveApp, ParquetModel) plus its transitive tamboui/s3/aws-auth
+             deps. DiveWasm/DiveSession are excluded from the Maven compile below, but this
+             dependency lets build.sh resolve the full native-image classpath from Maven
+             rather than from hand-maintained path lists. -->
+        <dependency>
+            <groupId>dev.hardwood</groupId>
+            <artifactId>hardwood-cli</artifactId>
+            <version>${hardwood.version}</version>
+        </dependency>
+
         <!-- Pure-Java decompressors. aircompressor 0.27 is plain Java bytecode
              (no JNI, no FFM, no Vector API), which is what Web Image requires. -->
         <dependency>
