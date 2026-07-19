@@ -32,10 +32,14 @@ mkdir -p "$MODULE/target"
 
 echo ">> resolving classpath from Maven"
 "$ROOT/mvnw" -q -f "$MODULE/pom.xml" dependency:build-classpath -Dmdep.outputFile="$MODULE/target/cp.txt"
-# Web Image's closed-world analysis cannot process JNI/FFM-backed jars, and the demo does not
-# use them: drop the native BROTLI codec (replaced by the pure-Java org.brotli.dec) and the
-# JLine terminal backend (the browser is the event loop, so DiveSession renders headlessly).
-CP=$(tr ':' '\n' < "$MODULE/target/cp.txt" | grep -vE 'aayushatharva/brotli4j|jline3-backend' | paste -sd:)
+# Web Image needs a minimal, JNI/FFM-free classpath. Keep only the hardwood modules, the
+# pure-Java codecs (aircompressor, org.brotli.dec, jzlib), and the tamboui render/widget jars.
+# Everything else Maven pulls in transitively — the native codecs (snappy-java, zstd-jni,
+# lz4-java), the AWS SDK, aesh, and JLine — is unused by the browser read path and would only
+# bloat (or break) the closed-world image, so it is filtered out.
+CP=$(tr ':' '\n' < "$MODULE/target/cp.txt" | grep -E \
+  'dev/hardwood/hardwood-(core|cli|s3|aws-auth)/|io/airlift/aircompressor/|org/brotli/dec/|com/jcraft/jzlib/|dev/tamboui/tamboui-(core|widgets|annotations|tui)/' \
+  | paste -sd:)
 
 echo ">> stripping multi-release (Java 22 FFM/Vector) code from the core jar"
 CORE=$(echo "$CP" | tr ':' '\n' | grep 'hardwood-core/' | head -1)
