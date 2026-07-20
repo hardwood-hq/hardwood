@@ -356,6 +356,24 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] Nullable-vector (null-row) support — follow-up
 - [ ] Bulk verification for the RLE-interior (k ≥ 9) high-row-count regime
 
+### 9.5 Modular Encryption (AES-GCM / AES-GCM-CTR)
+- [x] `ParquetModuleType` — module type constants (0x00–0x09)
+- [x] `ParquetCryptoHelper` — raw AES-GCM and AES-CTR crypto primitives
+- [x] `ColumnDecryptor` — per-column-chunk decryption context
+- [x] `DecryptionKeyProvider` — public interface for key resolution
+- [x] `AadPrefixProvider` — public interface for AAD prefix supply
+- [x] PARE footer decryption (`FileCryptoMetaData` reading + footer AES-GCM decrypt)
+- [x] PAR1 plaintext footer with encrypted columns
+- [x] Per-column key resolution (footer key vs column key)
+- [x] Dictionary page decryption (`SequentialFetchPlan`, `IndexedFetchPlan`)
+- [x] Data page header + data decryption (`PageDecoder`)
+- [x] Offset index decryption (`ColumnDecryptor.decryptOffsetIndex`)
+- [x] AAD prefix stored in file (`supplyAadPrefix=false`)
+- [x] AAD prefix supplied by caller (`supplyAadPrefix=true`)
+- [ ] Column index decryption
+- [ ] Footer signing verification (PAR1 plaintext footer with signature)
+- [ ] Write path encryption
+
 ---
 
 ## Phase 10: Public API Design
@@ -485,6 +503,15 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [ ] Input validation
 - [ ] Parallel writing support
 - [ ] **Validate**: Full compatibility with parquet-java and PyArrow
+
+### Milestone 8: Modular Encryption (under progress)
+- [x] PARE footer decryption
+- [x] PAR1 plaintext footer with encrypted columns
+- [x] Dictionary and data page decryption
+- [x] Offset index decryption
+- [ ] Column index decryption
+- [ ] Footer signing verification
+- [ ] **Validate**: Read all parquet-testing aes256 encrypted files
 
 ### Interactive CLI (`hardwood dive`)
 TUI for exploring Parquet file structure. See `_designs/INTERACTIVE_DIVE_TUI.md`.
