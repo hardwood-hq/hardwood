@@ -16,7 +16,7 @@ import org.aesh.command.option.Option;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Version;
 
-@CommandDefinition(name = "hardwood", description = "A command-line interface for hardwood", generateHelp = true, groupCommands = {
+@CommandDefinition(name = "hardwood", description = "A command-line interface for inspecting Parquet files", generateHelp = true, groupCommands = {
         InfoCommand.class,
         SchemaCommand.class,
         ConvertCommand.class,
