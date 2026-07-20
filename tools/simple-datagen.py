@@ -4537,3 +4537,39 @@ _leadfast = 'core/src/test/resources/fixed_size_list_k4_leadfast_v2.parquet'
 write_fixed_size_list_leadfast(_leadfast)
 print("Generated fixed_size_list_k4_leadfast_v2.parquet: 40 rows x 4 float32, "
       "3 null lists, present run then null across a row-group boundary")
+
+
+# CLI native-image compression codec fixtures (#804).
+# One small file per supported codec, read by cli's NativeCompressionCodecIT to
+# prove the native binary decodes each codec. JVM tests can't catch native-image
+# codec gaps: the codec libraries load native code and resolve their
+# implementations reflectively, so a codec can decode on the JVM yet crash in
+# the image without the right reachability / JNI config.
+_codec_dir = 'cli/src/test/resources/compression'
+Path(_codec_dir).mkdir(parents=True, exist_ok=True)
+_codec_table = pa.table({
+    'id': [1, 2, 3],
+    'name': ['Alice', 'Bob', 'Carol'],
+    'value': [100, 200, 300],
+})
+for _name, _codec in [
+    ('uncompressed', None),
+    ('snappy', 'snappy'),
+    ('gzip', 'gzip'),
+    ('zstd', 'zstd'),
+    ('brotli', 'brotli'),
+    ('lz4_raw', 'lz4_raw'),
+]:
+    pq.write_table(_codec_table, f'{_codec_dir}/{_name}.parquet', compression=_codec)
+print("\nGenerated cli compression codec fixtures:")
+print(f"  - {_codec_dir}/{{uncompressed,snappy,gzip,zstd,brotli,lz4_raw}}.parquet")
+
+# Hadoop-LZ4 (the deprecated block format) exercises a different decompressor
+# than LZ4_RAW. PyArrow only ever writes LZ4_RAW, so this variant is vendored
+# from the apache/parquet-testing data set that parquet-testing-runner checks
+# out; it can't be regenerated from PyArrow.
+_copy_if_exists(
+    Path('parquet-testing-runner/target/parquet-testing/data/hadoop_lz4_compressed.parquet'),
+    f'{_codec_dir}/lz4_hadoop.parquet',
+    'build parquet-testing-runner to fetch the apache/parquet-testing data set',
+)
