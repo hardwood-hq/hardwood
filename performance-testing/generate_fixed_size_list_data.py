@@ -41,7 +41,7 @@ import pyarrow.parquet as pq
 
 # k=3 covers the multi-byte-period bit-packed regime (period 3 bytes, the RGB /
 # 3D-vector case); 4 and 8 are single-byte-period; 16+ have an RLE interior.
-K_SWEEP = [3, 4, 8, 16, 128, 768, 1536]
+K_SWEEP = [1, 3, 4, 8, 16, 128, 768, 1536]
 TOTAL_VALUES = 8_000_000  # leaf floats per file; rows = TOTAL_VALUES // k
 
 # Almost-fixed corpus for FixedSizeListFallbackBenchmark (the detector's fallback
