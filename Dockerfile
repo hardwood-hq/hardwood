@@ -18,6 +18,9 @@ RUN microdnf install -y --nodocs \
       tar \
       diffutils \
       binutils \
+      gcc \
+      glibc-devel \
+      zlib-devel \
       file \
       vim-common \
       fontconfig \

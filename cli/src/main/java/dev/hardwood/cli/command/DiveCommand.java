@@ -101,10 +101,23 @@ public class DiveCommand implements Command<CommandInvocation> {
         }
     }
 
+    /// Reports whether stdin or stdout is not attached to a terminal.
+    /// `System.console()` is `null` when either is redirected, including in
+    /// the native image.
     private static boolean interactiveTerminalUnavailable() {
         return System.console() == null;
     }
 
+    /// Configures JUL logging for an interactive dive session.
+    ///
+    /// Always detaches the `dev.hardwood` logger from parent handlers so
+    /// nothing leaks to stdout/stderr while the TUI owns the terminal —
+    /// otherwise log records would garble the rendered frames.
+    ///
+    /// When `--log-file` is set, also attaches a [FileHandler] writing
+    /// one record per line to the given path, truncated per session.
+    /// Returns the handler so it can be closed at shutdown, or `null`
+    /// when no log file is requested.
     private FileHandler installLogFileHandler() {
         Logger logger = Logger.getLogger("dev.hardwood");
         logger.setUseParentHandlers(false);

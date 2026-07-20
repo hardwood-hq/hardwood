@@ -16,6 +16,55 @@
     "name": "net.jpountz.lz4.LZ4Factory"
   },
   {
+    "comment": "lz4-java has no GraalVM reachability metadata; LZ4Factory builds its compressor/decompressors reflectively — the (de)compressors via Class.getField(\"INSTANCE\"), the HC compressor via getDeclaredConstructor(int).newInstance(level). Register the pure-Java (safe + unsafe) variants with full reflection so LZ4/LZ4_RAW decompression works in the native image.",
+    "name": "net.jpountz.lz4.LZ4JavaSafeCompressor",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "net.jpountz.lz4.LZ4HCJavaSafeCompressor",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "net.jpountz.lz4.LZ4JavaSafeFastDecompressor",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "net.jpountz.lz4.LZ4JavaSafeSafeDecompressor",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "net.jpountz.lz4.LZ4JavaUnsafeCompressor",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "net.jpountz.lz4.LZ4HCJavaUnsafeCompressor",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "net.jpountz.lz4.LZ4JavaUnsafeFastDecompressor",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
+    "name": "net.jpountz.lz4.LZ4JavaUnsafeSafeDecompressor",
+    "allDeclaredConstructors": true,
+    "allDeclaredMethods": true,
+    "allDeclaredFields": true
+  },
+  {
     "name": "com.aayushatharva.brotli4j.Brotli4jLoader"
   },
 

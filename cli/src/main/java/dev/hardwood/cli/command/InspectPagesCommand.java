@@ -257,6 +257,10 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
         System.out.println(RowTable.renderTable(headers, rows, separatorsBefore, List.of(totalRowIdx)));
     }
 
+    /// Formats the column label suffix indicating where the Min / Max / Nulls
+    /// cells' values came from for this column. Reports `ColumnIndex` (side-car
+    /// Page Index), `inline` (`DataPageHeader.statistics`), `mixed` when row
+    /// groups disagree, or `no page-level stats` when neither is present.
     private static String statsSourceSuffix(boolean anyColumnIndex, boolean anyInline, boolean anyNoStats) {
         int kinds = (anyColumnIndex ? 1 : 0) + (anyInline ? 1 : 0) + (anyNoStats ? 1 : 0);
         if (kinds == 0) {

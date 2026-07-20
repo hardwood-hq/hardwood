@@ -11,10 +11,11 @@ import java.io.ByteArrayOutputStream;
 import java.io.PrintStream;
 import java.nio.charset.StandardCharsets;
 
-import org.aesh.AeshRuntimeRunner;
+import dev.hardwood.cli.Main;
 
-/// In-process launcher for CLI command tests. Executes the top-level `hardwood`
-/// command directly via aesh with stdout and stderr captured into strings.
+/// In-process launcher for CLI command tests. Drives the same [Main.run] entry
+/// point the binary uses — including its exit-code mapping — with stdout and
+/// stderr captured into strings.
 final class Cli {
 
     private Cli() {
@@ -30,16 +31,7 @@ final class Cli {
         try {
             System.setOut(new PrintStream(outBuf, true, StandardCharsets.UTF_8));
             System.setErr(new PrintStream(errBuf, true, StandardCharsets.UTF_8));
-
-            org.aesh.command.CommandResult result = AeshRuntimeRunner.builder()
-                    .command(HardwoodCommand.class)
-                    .args(args)
-                    .execute();
-            exitCode = result == org.aesh.command.CommandResult.SUCCESS ? 0 : 1;
-        }
-        catch (Exception e) {
-            exitCode = 1;
-            new PrintStream(errBuf, true, StandardCharsets.UTF_8).println(e.getMessage());
+            exitCode = Main.run(args);
         }
         finally {
             System.setOut(origOut);
