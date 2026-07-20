@@ -87,7 +87,7 @@ public class FixedSizeListDecodeBenchmark {
 
     // k=3 covers the multi-byte-period bit-packed regime (RGB / 3D vectors);
     // 4 and 8 are single-byte-period; 16 and up carry an RLE interior.
-    @Param({ "3", "4", "8", "16", "128", "768", "1536" })
+    @Param({ "1", "3", "4", "8", "16", "128", "768", "1536" })
     private int k;
 
     private Path listPath;
