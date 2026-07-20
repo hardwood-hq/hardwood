@@ -105,6 +105,16 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     volatile Thread retrieverThread;
     volatile Thread drainThread;
 
+    // === Synchronous (pull-based, thread-free) mode ===
+    /// True when running without threads: page production and draining are driven inline by
+    /// [#pump] on the consumer's thread instead of by the retriever/drain VThreads. Selected
+    /// when the decode executor is a [DirectExecutorService].
+    private final boolean synchronous;
+    private PageDecoder syncDecoder;
+    private int syncNextSeq;
+    private boolean syncSourceExhausted;
+    private boolean syncSentinelWritten;
+
     // === In-flight decode tasks (tracked so close() can await them) ===
     private final Set<CompletableFuture<Void>> inFlightDecodes = ConcurrentHashMap.newKeySet();
 
@@ -155,6 +165,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         this.reorderBuffer = new AtomicReferenceArray<>(MAX_INFLIGHT_PAGES);
         this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
         this.filterAlwaysMatchesBuffer = new boolean[MAX_INFLIGHT_PAGES];
+        this.synchronous = decodeExecutor instanceof DirectExecutorService;
     }
 
     /// Initializes subclass-specific drain state (called at the start of `runDrain`).
@@ -183,6 +194,20 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// `unparkRetriever()` from the drain cannot observe a null reference and
     /// silently drop the unpark.
     public void start() {
+        if (synchronous) {
+            // No threads: prepare drain state now and let the exchange pull batches on demand
+            // via pump(). initDrainState mirrors runDrain's prologue.
+            try {
+                currentBatch = exchange.takeBatch();
+            }
+            catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                throw new IllegalStateException("interrupted taking initial batch", e);
+            }
+            initDrainState();
+            exchange.setPump(this::pump);
+            return;
+        }
         this.drainThread = Thread.ofVirtual().unstarted(this::runDrain);
         this.retrieverThread = Thread.ofVirtual().unstarted(this::runRetriever);
         drainThread.start();
@@ -200,6 +225,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     public void close() {
         done = true;
         exchange.finish();  // signals BatchExchange's timeout loops to exit
+
+        if (synchronous) {
+            // No threads to join and no in-flight decode tasks (decode runs inline in pump()).
+            return;
+        }
+
         LockSupport.unpark(retrieverThread);
         LockSupport.unpark(drainThread);
 
@@ -335,6 +366,58 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         LockSupport.unpark(drainThread);
     }
 
+    // ==================== Synchronous pump (thread-free mode) ====================
+
+    /// Produces one page inline (synchronous mode): pulls the next [PageInfo], decodes it into
+    /// the reorder buffer on the calling thread. Returns false when the source is exhausted.
+    private boolean produceOnePage() {
+        PageInfo pageInfo = pageSource.next();
+        if (pageInfo == null) {
+            return false;
+        }
+        if (syncDecoder == null || !syncDecoder.isCompatibleWith(pageInfo.columnMetaData())) {
+            syncDecoder = new PageDecoder(
+                    pageInfo.columnMetaData(), pageInfo.columnSchema(), decompressorFactory);
+        }
+        int slot = syncNextSeq % MAX_INFLIGHT_PAGES;
+        fileNameBuffer[slot] = pageSource.getCurrentFileName();
+        decode(slot, pageInfo, syncDecoder);
+        syncNextSeq++;
+        return true;
+    }
+
+    /// Drives production and draining on the calling thread until one batch is published to the
+    /// [BatchExchange] or the worker finishes. Registered as the exchange's pull callback in
+    /// synchronous mode; the reorder-buffer window bounds how many pages are decoded at once.
+    void pump() {
+        try {
+            int publishedBefore = batchesPublished;
+            while (!done && batchesPublished == publishedBefore) {
+                // Fill the in-flight window (decode runs inline).
+                while (!done && !syncSourceExhausted
+                        && syncNextSeq - consumePosition < MAX_INFLIGHT_PAGES) {
+                    if (!produceOnePage()) {
+                        syncSourceExhausted = true;
+                    }
+                }
+                // Once drained, write the end-of-stream sentinel into a free slot.
+                if (syncSourceExhausted && !syncSentinelWritten
+                        && syncNextSeq - consumePosition < MAX_INFLIGHT_PAGES) {
+                    reorderBuffer.set(syncNextSeq % MAX_INFLIGHT_PAGES, EMPTY_SENTINEL);
+                    syncSentinelWritten = true;
+                }
+                boolean drained = drainReadyPages();
+                if (!drained) {
+                    // No progress possible (source exhausted and nothing left to assemble).
+                    break;
+                }
+            }
+        }
+        catch (Throwable t) {
+            signalError(enrichWithFileName(t, currentBatchFileName));
+        }
+    }
+
     // ==================== Drain VThread ====================
 
     private long assemblyNanos;
@@ -393,6 +476,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 return true;
             }
 
+            int publishedBefore = batchesPublished;
+
             // Detect file boundary: flush the current batch when the file changes
             // so that each batch is attributed to a single file.
             String pageFileName = fileNameBuffer[slot];
@@ -422,6 +507,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             totalPagesDrained++;
             unparkRetriever();
             drained = true;
+
+            // Synchronous mode: yield to the consumer as soon as a batch is published so at
+            // most one batch is queued at a time (the free-queue only holds a few holders).
+            if (synchronous && batchesPublished != publishedBefore) {
+                return true;
+            }
         }
         return drained;
     }

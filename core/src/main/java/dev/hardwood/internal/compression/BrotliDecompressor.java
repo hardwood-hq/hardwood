@@ -7,13 +7,12 @@
  */
 package dev.hardwood.internal.compression;
 
+import java.io.ByteArrayInputStream;
 import java.io.IOException;
 import java.nio.ByteBuffer;
 
 import com.aayushatharva.brotli4j.Brotli4jLoader;
-import com.aayushatharva.brotli4j.decoder.Decoder;
-import com.aayushatharva.brotli4j.decoder.DecoderJNI;
-import com.aayushatharva.brotli4j.decoder.DirectDecompress;
+import com.aayushatharva.brotli4j.decoder.BrotliInputStream;
 
 /// Decompressor for Brotli compressed data.
 public class BrotliDecompressor implements Decompressor {
@@ -36,33 +35,32 @@ public class BrotliDecompressor implements Decompressor {
     public byte[] decompress(ByteBuffer compressed, int uncompressedSize) throws IOException {
         ensureInitialized();
 
-        try {
-            // Brotli4j doesn't have a direct ByteBuffer API, so extract to byte array
-            byte[] compressedBytes = new byte[compressed.remaining()];
-            compressed.duplicate().get(compressedBytes);
+        // Brotli4j has no direct ByteBuffer API, so extract to a byte array.
+        byte[] compressedBytes = new byte[compressed.remaining()];
+        compressed.duplicate().get(compressedBytes);
 
-            DirectDecompress result = Decoder.decompress(compressedBytes);
-
-            if (result.getResultStatus() != DecoderJNI.Status.DONE) {
-                throw new IOException("Brotli decompression failed: " + result.getResultStatus());
-            }
-
-            byte[] decompressed = result.getDecompressedData();
-
+        // BrotliInputStream decodes through DecoderJNI directly. The one-shot
+        // Decoder.decompress()/DirectDecompress path returns its output wrapped in a
+        // Netty ByteBuf, which would otherwise force io.netty:netty-buffer onto the
+        // classpath just to unwrap the bytes.
+        byte[] decompressed;
+        try (BrotliInputStream in = new BrotliInputStream(new ByteArrayInputStream(compressedBytes))) {
+            decompressed = in.readNBytes(uncompressedSize);
             if (decompressed.length != uncompressedSize) {
                 throw new IOException(
                         "Brotli decompression size mismatch: expected " + uncompressedSize +
                                 ", got " + decompressed.length);
             }
-
-            return decompressed;
+            if (in.read() != -1) {
+                throw new IOException(
+                        "Brotli decompression produced more than the expected " + uncompressedSize + " bytes");
+            }
         }
-        catch (IOException e) {
-            throw e;
-        }
-        catch (Exception e) {
+        catch (RuntimeException e) {
             throw new IOException("Brotli decompression failed", e);
         }
+
+        return decompressed;
     }
 
     @Override

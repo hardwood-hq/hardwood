@@ -9,6 +9,9 @@ package dev.hardwood.internal.compression;
 
 import java.lang.System.Logger;
 import java.lang.System.Logger.Level;
+import java.util.EnumMap;
+import java.util.Map;
+import java.util.function.Supplier;
 
 import dev.hardwood.internal.compression.libdeflate.LibdeflateDecompressor;
 import dev.hardwood.internal.compression.libdeflate.LibdeflatePool;
@@ -17,6 +20,11 @@ import dev.hardwood.internal.compression.lz4.Lz4RawDecompressor;
 import dev.hardwood.metadata.CompressionCodec;
 
 /// Factory for creating decompressor instances based on compression codec.
+///
+/// Callers may supply per-codec overrides to route a codec to an alternative
+/// [Decompressor] implementation (for example a pure-Java codec on a runtime
+/// without JNI, such as a GraalVM Web Image WebAssembly build). Codecs without
+/// an override fall through to the built-in implementations.
 public class DecompressorFactory {
 
     private static final Logger LOG = System.getLogger(DecompressorFactory.class.getName());
@@ -25,11 +33,24 @@ public class DecompressorFactory {
 
     private final LibdeflatePool libdeflatePool;
 
+    private final Map<CompressionCodec, Supplier<Decompressor>> overrides;
+
     /// Create a new factory with the given libdeflate pool.
     ///
     /// @param libdeflatePool pool for libdeflate decompressor handles
     public DecompressorFactory(LibdeflatePool libdeflatePool) {
+        this(libdeflatePool, Map.of());
+    }
+
+    /// Create a new factory with the given libdeflate pool and per-codec overrides.
+    ///
+    /// @param libdeflatePool pool for libdeflate decompressor handles
+    /// @param overrides supplies an alternative decompressor per codec; a supplier
+    ///        is invoked once per [#getDecompressor] call, preserving the built-in
+    ///        per-call instantiation semantics
+    public DecompressorFactory(LibdeflatePool libdeflatePool, Map<CompressionCodec, Supplier<Decompressor>> overrides) {
         this.libdeflatePool = libdeflatePool;
+        this.overrides = overrides.isEmpty() ? Map.of() : new EnumMap<>(overrides);
     }
 
     /// Get a decompressor for the given compression codec.
@@ -38,6 +59,10 @@ public class DecompressorFactory {
     /// @return the appropriate decompressor
     /// @throws UnsupportedOperationException if the codec is not supported or the required library is missing
     public Decompressor getDecompressor(CompressionCodec codec) {
+        Supplier<Decompressor> override = overrides.get(codec);
+        if (override != null) {
+            return override.get();
+        }
         return switch (codec) {
             case UNCOMPRESSED -> new UncompressedDecompressor();
             case GZIP -> {
