@@ -440,15 +440,43 @@ public final class FixedSizeListDetector {
 
             if ((header & 1) == 1) {
                 // Bit-packed run: (header >> 1) groups of 8 values, one byte each.
+                // The width-1 rep stream packs one bit per value, so a `0` bit is a
+                // record boundary. Scan boundaries a 64-bit word (64 values) at a
+                // time: the boundary mask is the word's zero bits (`~word`), which
+                // `Long.numberOfTrailingZeros` walks in order — skipping the runs of
+                // `1`s between boundaries rather than visiting every bit. Only full
+                // words (`levelsLeft >= 64`) take this path, so no padding bit is ever
+                // read; `levelsLeft`, clamped to `numValues`, is the padding-safe
+                // count. The sub-word remainder (and any run shorter than a word)
+                // falls to the scalar bit loop below.
                 int groups = (int) (header >> 1);
                 if (groups > end - pos) {
                     return FixedSizeListShape.NOT_APPLICABLE;
                 }
-                for (int g = 0; g < groups && idx < numValues; g++) {
+                int levelsLeft = Math.min(groups * 8, numValues - idx);
+                while (levelsLeft >= 64) {
+                    long boundaries = ~readLongLE(data, pos);
+                    if (idx == 0 && (boundaries & 1L) == 0) {
+                        return FixedSizeListShape.NOT_APPLICABLE; // must start on a boundary
+                    }
+                    while (boundaries != 0) {
+                        int b = idx + Long.numberOfTrailingZeros(boundaries);
+                        k = closeAndCheck(b, lastStart, k);
+                        if (k == FAILED) {
+                            return FixedSizeListShape.NOT_APPLICABLE;
+                        }
+                        lastStart = b;
+                        boundaries &= boundaries - 1;
+                    }
+                    idx += 64;
+                    pos += 8;
+                    levelsLeft -= 64;
+                }
+                while (levelsLeft > 0) {
                     int packed = data[pos++] & 0xFF;
-                    for (int bit = 0; bit < 8 && idx < numValues; bit++) {
-                        int value = (packed >> bit) & 1;
-                        if (value == 0) {
+                    int bits = Math.min(8, levelsLeft);
+                    for (int bit = 0; bit < bits; bit++) {
+                        if (((packed >> bit) & 1) == 0) {
                             k = closeAndCheck(idx, lastStart, k);
                             if (k == FAILED) {
                                 return FixedSizeListShape.NOT_APPLICABLE;
@@ -460,6 +488,7 @@ public final class FixedSizeListDetector {
                         }
                         idx++;
                     }
+                    levelsLeft -= bits;
                 }
             }
             else {

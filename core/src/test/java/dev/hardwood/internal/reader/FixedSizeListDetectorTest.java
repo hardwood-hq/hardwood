@@ -132,6 +132,28 @@ class FixedSizeListDetectorTest {
         assertThat(detect(rep, 768, 1)).isEqualTo(new FixedWidth(768));
     }
 
+    @Test
+    void detectsAllBitPackedScalarWithWordScan() {
+        // k = 9 is the scalar regime (no byte-aligned per-record stride): an all
+        // bit-packed page whose single run exceeds a word, so the scalar walk's
+        // word-at-a-time boundary scan runs over two full 64-value words and a
+        // sub-byte remainder (135 = 2*64 + 7), with the last byte carrying a
+        // padding 0-bit that must not be mistaken for a boundary.
+        byte[] rep = bitPacked(repeatVector(9, 15));
+        assertThat(detect(rep, 135, 15)).isEqualTo(new FixedWidth(9));
+    }
+
+    @Test
+    void rejectsShortenedRecordInWordScannedRegion() {
+        // A k = 9 all-bit-packed page with one interior 1 turned into a boundary at
+        // level 100 — past the first word — so the shortened record is caught by the
+        // word-at-a-time scan's per-gap check, not the sub-word tail.
+        int[] levels = repeatVector(9, 21);
+        levels[100] = 0; // was an interior 1; now an extra, early row start
+        byte[] rep = bitPacked(levels);
+        assertThat(detect(rep, 189, 21)).isEqualTo(FixedSizeListShape.NOT_APPLICABLE);
+    }
+
     // --- Definition-level gate rejections -----------------------------------
 
     @Test
