@@ -23,6 +23,7 @@ Live at **<https://hardwood.dev/experiments/dive-web>**. Tracking issue: #801.
 | `web/demo-sample.parquet` | The *Load a sample file* file (full 19-column NYC taxi schema, 3 row groups, Snappy). |
 | `web/generate-demo-sample.py` | Regenerates `demo-sample.parquet`. |
 | `build.sh` | Builds the WebAssembly image and assembles the publishable bundle. |
+| `smoke-test.py` | Headless-Chromium check that the built bundle boots and renders (Overview + Data preview). |
 
 ## Building the WebAssembly image
 
@@ -52,6 +53,12 @@ wasm-spike/build.sh
 
 → `wasm-spike/target/web/` with the six flat bundle files, `dive-read.js` and
 `dive-read.js.wasm` (~10 MB), and `dive-web-demo.zip`.
+
+Verify the result in a headless browser (needs `chromium-browser`):
+
+```
+.docker-venv/bin/python wasm-spike/smoke-test.py
+```
 
 ### Codec support
 
