@@ -22,7 +22,7 @@
       <skipITs>true</skipITs>
       <!-- Defaults to ${skipTests} so -Dquick (skipTests=true) also skips
            Surefire here; the native-image CI job overrides via -DskipSurefire=true
-           to skip only the JVM @QuarkusMainTest suite while keeping Failsafe. -->
+           to skip only the JVM unit test suite while keeping Failsafe. -->
       <skipSurefire>${skipTests}</skipSurefire>
       <!-- Distributed as native binaries via the GitHub release, not as a Maven artifact. -->
       <maven.deploy.skip>true</maven.deploy.skip>
@@ -212,6 +212,16 @@
       <artifactId>readline-api</artifactId>
     </dependency>
 
+    <!-- The AWS SDK logs through SLF4J. Without a binding on the (native-image)
+         classpath, SLF4J prints a "Failed to load StaticLoggerBinder" warning on
+         first use (e.g. any s3:// operation). slf4j-nop provides a no-op binding
+         so the CLI stays quiet; version tracks the slf4j-api the AWS SDK pulls in. -->
+    <dependency>
+      <groupId>org.slf4j</groupId>
+      <artifactId>slf4j-nop</artifactId>
+      <version>1.7.36</version>
+    </dependency>
+
     <!-- Test dependencies -->
     <dependency>
       <groupId>org.junit.jupiter</groupId>
@@ -232,16 +242,6 @@
       <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-test-support</artifactId>
       <scope>test</scope>
-    </dependency>
-
-    <!-- netty-buffer is an optional dependency of brotli4j (declared optional in its POM).
-         It must be explicitly provided so GraalVM native-image can resolve the
-         ByteBufUtil reference in DirectDecompress at build time. -->
-    <dependency>
-      <groupId>io.netty</groupId>
-      <artifactId>netty-buffer</artifactId>
-      <version>4.1.118.Final</version>
-      <optional>true</optional>
     </dependency>
   </dependencies>
 
@@ -336,7 +336,6 @@
           <plugin>
             <groupId>org.graalvm.buildtools</groupId>
             <artifactId>native-maven-plugin</artifactId>
-            <version>0.10.6</version>
             <extensions>true</extensions>
             <executions>
               <execution>
@@ -472,7 +471,6 @@
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-antrun-plugin</artifactId>
             <executions>
-
               <execution>
                 <id>stage-native-libs</id>
                 <phase>prepare-package</phase>
@@ -688,8 +686,6 @@
           </execution>
         </executions>
       </plugin>
-
-
     </plugins>
   </build>
 </project>

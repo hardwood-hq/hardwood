@@ -27,7 +27,7 @@ import dev.hardwood.cli.internal.Version;
 })
 public class HardwoodCommand implements Command<CommandInvocation> {
 
-    @Option(name = "version", hasValue = false, description = "Print version information and exit.")
+    @Option(shortName = 'V', name = "version", hasValue = false, description = "Print version information and exit.")
     boolean version;
 
     @Override

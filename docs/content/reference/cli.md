@@ -37,7 +37,8 @@ run the CLI via Docker without installing it locally — see the [Docker section
 | `hardwood inspect columns` | Show compressed and uncompressed byte sizes per column, ranked |
 | `hardwood inspect rowgroups` | Display per-row-group column chunk metadata (sizes, codec) |
 | `hardwood dive` | Interactively explore a file's structure in a TUI |
-| `hardwood help` | Display help information about a command |
+
+Pass `--help` to any command (or `hardwood --help`) to print its usage.
 
 ## Examples
 
@@ -231,13 +232,21 @@ The CLI additionally reads these environment variables:
 
 ## Shell Completion
 
-The distribution includes a Bash completion script at `bin/hardwood_completion`. Source it in your shell to enable tab completion for commands, options, and arguments:
+The distribution includes completion scripts for Bash, Zsh, and Fish under `bin/`:
+
+| Shell | Script |
+|-------|--------|
+| Bash | `bin/hardwood_completion` |
+| Zsh | `bin/hardwood_completion.zsh` |
+| Fish | `bin/hardwood_completion.fish` |
+
+Source the one for your shell to enable tab completion for commands, options, and arguments:
 
 ```shell
 source hardwood_completion
 ```
 
-To make it permanent, add the line above to your `~/.bashrc` or `~/.bash_profile`.
+To make it permanent, add the line above to your shell's startup file (e.g. `~/.bashrc`, `~/.zshrc`).
 
 ## Docker
 

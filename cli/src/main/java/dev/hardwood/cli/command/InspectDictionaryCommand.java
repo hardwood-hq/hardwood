@@ -113,10 +113,12 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
             RowGroup rg = rowGroups.get(rgIdx);
             ColumnChunk chunk = rg.columns().get(columnSchema.columnIndex());
 
+            // Read just the dictionary prefix of the column chunk
             Long dictOffset = chunk.metaData().dictionaryPageOffset();
             long chunkStart = (dictOffset != null && dictOffset > 0)
                     ? dictOffset
                     : chunk.metaData().dataPageOffset();
+            // Read enough for the dictionary page (typically a few KB)
             int dictReadSize = Math.toIntExact(Math.min(
                     chunk.metaData().totalCompressedSize(), 4 * 1024 * 1024));
             ByteBuffer dictRegion = inputFile.readRange(chunkStart, dictReadSize);
@@ -198,6 +200,9 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
                 });
             }
             else {
+                // INT96 dictionaries also flow through ByteArrayDictionary but
+                // store a fixed 12-byte payload, so the Length column is
+                // suppressed (the header omits it for non-BYTE_ARRAY columns).
                 addRow(rows, rgIdx, i, formatted);
             }
         }

@@ -60,10 +60,9 @@ public class ConvertCommand implements Command<CommandInvocation> {
             return CommandResult.FAILURE;
         }
 
-        int rowLimit = RowLimits.parse(n);
-        ColumnProjection projection = parseColumnProjection();
-
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
+            int rowLimit = RowLimits.parse(n);
+            ColumnProjection projection = parseColumnProjection();
             FileSchema fileSchema = reader.getFileSchema();
             List<SchemaNode> fields = projectedFields(fileSchema, projection);
 
@@ -154,6 +153,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
     private static void flattenValues(Object value, SchemaNode schema, List<String> values) {
         if (schema instanceof SchemaNode.GroupNode group && !group.isList() && !group.isMap() && !group.isVariant()) {
             if (value == null) {
+                // null struct — emit null for each leaf
                 for (SchemaNode child : group.children()) {
                     flattenNulls(child, values);
                 }

@@ -26,4 +26,16 @@ class HardwoodCommandTest {
         assertThat(result.exitCode()).isZero();
         assertThat(result.output()).contains("hardwood");
     }
+
+    @Test
+    void unknownCommandExitsNonZero() {
+        Cli.Result result = Cli.launch("frobnicate");
+        assertThat(result.exitCode()).isNotZero();
+    }
+
+    @Test
+    void failingCommandExitsNonZero() {
+        Cli.Result result = Cli.launch("schema", "-f", "/no/such/file.parquet");
+        assertThat(result.exitCode()).isNotZero();
+    }
 }

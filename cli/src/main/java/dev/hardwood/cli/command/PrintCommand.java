@@ -74,10 +74,9 @@ public class PrintCommand implements Command<CommandInvocation> {
             return CommandResult.FAILURE;
         }
 
-        int rowLimit = RowLimits.parse(n);
-        ColumnProjection projection = parseColumnProjection();
-
         try (ParquetFileReader reader = ParquetFileReader.open(inputFile)) {
+            int rowLimit = RowLimits.parse(n);
+            ColumnProjection projection = parseColumnProjection();
             FileSchema fileSchema = reader.getFileSchema();
             try (RowReader rowReader = RowLimits.buildRowReader(reader, projection, rowLimit)) {
                 String[] headers = RowTable.topLevelFieldNames(fileSchema, projection);
@@ -90,6 +89,10 @@ public class PrintCommand implements Command<CommandInvocation> {
                     printTable(stream, headers, fields, rowIndex);
                 }
             }
+        }
+        catch (IllegalArgumentException e) {
+            System.err.println(e.getMessage());
+            return CommandResult.FAILURE;
         }
         catch (IOException e) {
             System.err.println("Error reading file: " + e.getMessage());
@@ -144,6 +147,9 @@ public class PrintCommand implements Command<CommandInvocation> {
         if (projection.projectsAll()) {
             return allChildren;
         }
+        // ColumnProjection.columns("a.b") projects "a" at top level — so we filter root children
+        // by checking which top-level fields have any projected column underneath them.
+        // For simplicity, we match top-level names against the projection prefixes.
         return allChildren.stream()
                 .filter(child -> projection.getProjectedColumnNames().stream()
                         .anyMatch(name -> name.equals(child.name()) || name.startsWith(child.name() + ".")))
