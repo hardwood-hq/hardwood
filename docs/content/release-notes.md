@@ -16,6 +16,10 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 ## 1.1.0-SNAPSHOT
 
 - Physical `skip(N)` on multi-file row readers is now a true global offset over the concatenated input files; skipped files have their footers read for row counts, but their data pages are not decoded.
+- The `hardwood` CLI is now built on the aesh command framework instead of picocli/Quarkus; removing the Quarkus/CDI bootstrap makes the CLI start faster
+- `hardwood help <command>` is removed — use `hardwood <command> --help` (or `-h`)
+- Shell completion scripts are now generated for zsh and fish in addition to bash
+- The native `hardwood` binary now reads LZ4 and LZ4_RAW compressed files
 
 ## 1.0.0.Final (2026-06-25)
 
