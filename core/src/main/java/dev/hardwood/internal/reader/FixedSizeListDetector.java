@@ -508,13 +508,27 @@ public final class FixedSizeListDetector {
                     idx += runLen; // interior skipped in O(1) — never scanned
                 }
                 else {
-                    for (int j = 0; j < runLen; j++) {
-                        k = closeAndCheck(idx, lastStart, k);
-                        if (k == FAILED) {
+                    // A run of runLen boundaries. The first closes the previous
+                    // record with its real gap; each of the remaining runLen - 1
+                    // boundaries is exactly one apart, so they all imply k == 1.
+                    // Collapse them to O(1) rather than a per-boundary loop — a list
+                    // of single elements (k == 1) is one long run of zeros, so this
+                    // is the whole cost of detecting it.
+                    k = closeAndCheck(idx, lastStart, k);
+                    if (k == FAILED) {
+                        return FixedSizeListShape.NOT_APPLICABLE;
+                    }
+                    lastStart = idx;
+                    idx++;
+                    if (runLen > 1) {
+                        if (k == -1) {
+                            k = 1;
+                        }
+                        else if (k != 1) {
                             return FixedSizeListShape.NOT_APPLICABLE;
                         }
-                        lastStart = idx;
-                        idx++;
+                        idx += runLen - 1;
+                        lastStart = idx - 1;
                     }
                 }
             }
