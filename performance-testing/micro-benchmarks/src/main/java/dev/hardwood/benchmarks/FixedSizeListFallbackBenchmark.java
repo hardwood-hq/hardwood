@@ -41,8 +41,10 @@ import dev.hardwood.reader.ReaderConfig;
 /// regular decode of the same file; only the former also runs the (failing)
 /// detector. `differPos` places the odd row `last` (the detector scans nearly the
 /// whole level stream before failing) or `second` (it fails almost immediately).
-/// `k = 4` exercises the bit-packed rep regime, `k = 768` the RLE-interior regime.
-/// `flatFloor` is the plain-column decode floor.
+/// `k = 4` exercises the bit-packed rep regime, `k = 768` the RLE-interior regime,
+/// and `k = 9` the scalar fallback (`9..15` has no byte-aligned per-record stride,
+/// so the rep scan walks bit-by-bit — where a `differPos = last` failure is the
+/// most expensive). `flatFloor` is the plain-column decode floor.
 ///
 /// The corpus generator writes each file as one page per row group with exactly one
 /// odd row in every page, so every page falls back — the whole file, page by page
@@ -63,7 +65,7 @@ public class FixedSizeListFallbackBenchmark {
     @Param({})
     private String dataDir;
 
-    @Param({ "4", "768" })
+    @Param({ "4", "9", "768" })
     private int k;
 
     @Param({ "last", "second" })

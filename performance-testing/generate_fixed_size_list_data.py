@@ -45,7 +45,8 @@ K_SWEEP = [3, 4, 8, 16, 128, 768, 1536]
 TOTAL_VALUES = 8_000_000  # leaf floats per file; rows = TOTAL_VALUES // k
 
 # Almost-fixed corpus for FixedSizeListFallbackBenchmark (the detector's fallback
-# price). k=4 is the bit-packed regime, k=768 the RLE interior. Every real Parquet
+# price). k=4 is the bit-packed regime, k=768 the RLE interior, and k=9 the scalar
+# fallback (9..15 is not a byte-aligned per-record stride). Every real Parquet
 # page must carry exactly one odd row so the detector fails and each page falls
 # back — the whole file, page by page. PyArrow paginates by both a byte budget and
 # a rows cap, so a fixed logical stride does not line up with real page boundaries
@@ -53,7 +54,7 @@ TOTAL_VALUES = 8_000_000  # leaf floats per file; rows = TOTAL_VALUES // k
 # which the fast path then legitimately accelerates). Make it deterministic instead:
 # one row group == one page (row_group_size rows, data_page_size large enough not to
 # split it), sized per k for a ~1 MiB page and kept under the rows cap.
-NONFIXED_K = [4, 768]
+NONFIXED_K = [4, 9, 768]
 NONFIXED_VALUES = 2_000_000
 NONFIXED_PAGE_BYTES = 1 << 20    # ~1 MiB target per page
 NONFIXED_ROW_CAP = 16_000        # stay under PyArrow's rows-per-page cap
