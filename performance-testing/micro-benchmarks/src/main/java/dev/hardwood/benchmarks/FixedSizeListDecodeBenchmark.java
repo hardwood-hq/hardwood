@@ -87,7 +87,7 @@ public class FixedSizeListDecodeBenchmark {
 
     // k=3 covers the multi-byte-period bit-packed regime (RGB / 3D vectors);
     // 4 and 8 are single-byte-period; 16 and up carry an RLE interior.
-    @Param({ "1", "3", "4", "8", "16", "128", "768", "1536" })
+    @Param({ "1", "3", "4", "8", "9", "16", "128", "768", "1536" })
     private int k;
 
     private Path listPath;
@@ -172,7 +172,7 @@ public class FixedSizeListDecodeBenchmark {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(path), context, config);
              ColumnReader col = reader.columnReader(column)) {
             while (col.nextBatch()) {
-                float[] values = (float[]) col.getFloats();
+                float[] values = col.getFloats();
                 int n = col.getValueCount();
                 for (int i = 0; i < n; i++) {
                     sum += values[i];
