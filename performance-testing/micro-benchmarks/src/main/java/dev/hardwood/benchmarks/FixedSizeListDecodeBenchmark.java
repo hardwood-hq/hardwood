@@ -86,8 +86,9 @@ public class FixedSizeListDecodeBenchmark {
     private String dataDir;
 
     // k=3 covers the multi-byte-period bit-packed regime (RGB / 3D vectors);
-    // 4 and 8 are single-byte-period; 16 and up carry an RLE interior.
-    @Param({ "1", "3", "4", "8", "9", "16", "128", "768", "1536" })
+    // 4 and 8 are single-byte-period; 15 is the scalar-fallback worst case (interior
+    // seven 1s too short to RLE, and byte-misaligned); 16 and up carry an RLE interior.
+    @Param({ "1", "3", "4", "8", "15", "16", "128", "768", "1536" })
     private int k;
 
     private Path listPath;
