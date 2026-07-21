@@ -31,6 +31,9 @@ public class RowGroupReader {
         List<ColumnChunk> columns = new ArrayList<>();
         long totalByteSize = 0;
         long numRows = 0;
+        Long fileOffset = null;
+        Long totalCompressedSize = null;
+        Short ordinal = null;
 
         while (true) {
             ThriftCompactReader.FieldHeader header = reader.readFieldHeader();
@@ -66,12 +69,36 @@ public class RowGroupReader {
                         reader.skipField(header.type());
                     }
                     break;
+                case 5: // file_offset
+                    if (header.type() == 0x06) {
+                        fileOffset = reader.readI64();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
+                case 6: // total_compressed_size
+                    if (header.type() == 0x06) {
+                        totalCompressedSize = reader.readI64();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
+                case 7: // ordinal
+                    if (header.type() == 0x04) {
+                        ordinal = (short) reader.readI32();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
+                    break;
                 default:
                     reader.skipField(header.type());
                     break;
             }
         }
 
-        return new RowGroup(columns, totalByteSize, numRows);
+        return new RowGroup(columns, totalByteSize, numRows, fileOffset, totalCompressedSize, ordinal);
     }
 }

@@ -19,5 +19,12 @@ import java.util.List;
 public record RowGroup(
         List<ColumnChunk> columns,
         long totalByteSize,
-        long numRows) {
+        long numRows,
+        Long fileOffset,
+        Long totalCompressedSize,
+        Short ordinal) {
+
+    public RowGroup(List<ColumnChunk> columns, long totalByteSize, long numRows) {
+        this(columns, totalByteSize, numRows, null, null, null);
+    }
 }

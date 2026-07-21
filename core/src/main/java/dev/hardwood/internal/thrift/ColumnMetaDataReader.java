@@ -44,6 +44,7 @@ public class ColumnMetaDataReader {
         long totalCompressedSize = 0;
         Map<String, String> keyValueMetadata = Collections.emptyMap();
         long dataPageOffset = 0;
+        Long indexPageOffset = null;
         Long dictionaryPageOffset = null;
         Statistics statistics = null;
         GeospatialStatistics geospatialStatistics = null;
@@ -135,8 +136,13 @@ public class ColumnMetaDataReader {
                         reader.skipField(header.type());
                     }
                     break;
-                case 10: // index_page_offset (optional) - skipped for now
-                    reader.skipField(header.type());
+                case 10: // index_page_offset
+                    if (header.type() == 0x06) {
+                        indexPageOffset = reader.readI64();
+                    }
+                    else {
+                        reader.skipField(header.type());
+                    }
                     break;
                 case 11: // dictionary_page_offset (optional)
                     if (header.type() == 0x06) {
@@ -186,6 +192,7 @@ public class ColumnMetaDataReader {
 
         return new ColumnMetaData(type, encodings, new FieldPath(List.copyOf(pathInSchema)), codec,
                 numValues, totalUncompressedSize, totalCompressedSize, keyValueMetadata, dataPageOffset,
-                dictionaryPageOffset, statistics, geospatialStatistics, bloomFilterOffset, bloomFilterLength);
+                indexPageOffset, dictionaryPageOffset, statistics, geospatialStatistics,
+                bloomFilterOffset, bloomFilterLength);
     }
 }

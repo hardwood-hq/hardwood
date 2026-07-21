@@ -32,6 +32,19 @@ public class RowGroupWriter {
             writer.writeFieldBegin(3, ThriftCompactConstants.FieldType.I64);
             writer.writeI64(rowGroup.numRows());
 
+            if (rowGroup.fileOffset() != null) {
+                writer.writeFieldBegin(5, ThriftCompactConstants.FieldType.I64);
+                writer.writeI64(rowGroup.fileOffset());
+            }
+            if (rowGroup.totalCompressedSize() != null) {
+                writer.writeFieldBegin(6, ThriftCompactConstants.FieldType.I64);
+                writer.writeI64(rowGroup.totalCompressedSize());
+            }
+            if (rowGroup.ordinal() != null) {
+                writer.writeFieldBegin(7, ThriftCompactConstants.FieldType.I16);
+                writer.writeI32(rowGroup.ordinal());
+            }
+
             writer.writeFieldStop();
         }
         finally {
