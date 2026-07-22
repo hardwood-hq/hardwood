@@ -49,7 +49,7 @@ class ParquetComparisonTest {
         String fileName = testFile.getFileName().toString();
 
         // Skip individual files
-        assumeFalse(Utils.SKIPPED_FILES.contains(fileName),
+        assumeFalse(Utils.isSkipped(fileName),
                 "Skipping " + fileName + " (in skip list)");
         String blockedBy = Utils.rowComparisonSkipReason(testFile);
         assumeFalse(blockedBy != null,
@@ -63,7 +63,7 @@ class ParquetComparisonTest {
     void compareColumnsWithReference(Path testFile) throws Exception {
         String fileName = testFile.getFileName().toString();
 
-        assumeFalse(Utils.SKIPPED_FILES.contains(fileName),
+        assumeFalse(Utils.isSkipped(fileName),
                 "Skipping " + fileName + " (in skip list)");
 
         runWithThreadDumpOnTimeout(() -> compareColumnsParquetFile(testFile), 120, fileName);

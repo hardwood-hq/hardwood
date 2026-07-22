@@ -14,7 +14,6 @@ import java.nio.file.Path;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
-import java.util.Set;
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.DynamicTest;
@@ -39,30 +38,6 @@ import static org.assertj.core.api.Assertions.assertThat;
 @TestInstance(TestInstance.Lifecycle.PER_CLASS)
 class VariantShredReassemblerTest {
 
-    /// Fixtures deliberately flagged as invalid per the spec — cases.json
-    /// notes "not valid according to the spec; implementations can choose to
-    /// error or read the shredded value." Reader behaviour is implementation
-    /// defined so we skip the byte-level oracle check.
-    private static final Set<String> INVALID_FIXTURES = Set.of(
-            "case-043-INVALID.parquet",
-            "case-125-INVALID.parquet",
-            "case-084-INVALID.parquet"
-    );
-
-    /// parquet-java cannot read these; cases.json pairs them with a
-    /// variant_file anyway. Since we can't open them to fetch rows, skip.
-    private static final Set<String> UNREADABLE = Set.of(
-            "case-040.parquet",
-            "case-041.parquet",
-            "case-042.parquet",
-            "case-087.parquet",
-            "case-127.parquet",
-            "case-128.parquet",
-            "case-131.parquet",
-            "case-137.parquet",
-            "case-138.parquet"
-    );
-
     private Path fixturesDir;
 
     @BeforeAll
@@ -80,7 +55,11 @@ class VariantShredReassemblerTest {
             Collections.sort(files);
             for (Path file : files) {
                 String name = file.getFileName().toString();
-                if (INVALID_FIXTURES.contains(name) || UNREADABLE.contains(name)) {
+                // Two classes of fixture carry no byte-level oracle: spec-invalid
+                // ones (`-INVALID`), whose reader behaviour is implementation
+                // defined, and error cases, which cases.json pairs with an
+                // `error_message` and no variant payload (see #812).
+                if (Utils.isInvalidFixture(name) || Utils.SHREDDED_VARIANT_ERROR_CASES.contains(name)) {
                     continue;
                 }
                 tests.add(DynamicTest.dynamicTest(name, () -> verifyFile(file)));

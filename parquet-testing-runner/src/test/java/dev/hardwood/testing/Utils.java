@@ -81,24 +81,10 @@ public class Utils {
             "repeated_primitive_no_list.parquet", // ClassCast: int32 Int32_list is not a group
             "unknown-logical-type.parquet", // Unknown logical type
 
-            // shredded_variant INVALID fixtures: the parquet-testing cases.json
-            // flags these as "not valid according to the spec; implementations
-            // can choose to error or read the shredded value." parquet-java
-            // and Hardwood diverge in which interpretation they pick, so row-
-            // level comparison is not meaningful.
-            "case-043-INVALID.parquet",
-            "case-125-INVALID.parquet",
+            // shredded_variant fixtures are skipped outside this list: spec-invalid
+            // ones by isInvalidFixture() (the `-INVALID` suffix), error cases by
+            // SHREDDED_VARIANT_ERROR_CASES. Both are folded in by isSkipped().
 
-            // shredded_variant files with parquet-java issues
-            "case-040.parquet", // ParquetDecodingException
-            "case-041.parquet", // NullPointer on Schema field
-            "case-042.parquet", // ParquetDecodingException
-            "case-087.parquet", // ParquetDecodingException
-            "case-127.parquet", // Unsupported shredded value type: INTEGER(32,false)
-            "case-128.parquet", // ParquetDecodingException
-            "case-131.parquet", // NullPointer on Schema field
-            "case-137.parquet", // Unsupported shredded value type
-            "case-138.parquet", // NullPointer on Schema field
             // Intentionally corrupted CRC checksums (rejected by Hardwood CRC validation)
             "datapage_v1-corrupt-checksum.parquet",
             "rle-dict-uncompressed-corrupt-checksum.parquet",
@@ -112,6 +98,41 @@ public class Utils {
             "ARROW-GH-45185.parquet",
             "ARROW-GH-47662.parquet"
     );
+
+    /// `shredded_variant` fixtures cases.json classifies as error cases: each
+    /// carries an `error_message` and no variant payload, so a conforming reader
+    /// is expected to reject it. parquet-java cannot decode them as a reference
+    /// and there is no `.variant.bin` oracle, so both comparison paths skip them.
+    /// Single source shared with [VariantShredReassemblerTest]. See #812.
+    static final Set<String> SHREDDED_VARIANT_ERROR_CASES = Set.of(
+            "case-040.parquet", // Invalid variant, conflicting value and typed_value
+            "case-042.parquet", // Invalid variant, conflicting value and typed_value
+            "case-087.parquet", // Invalid variant, non-object value with shredded fields
+            "case-127.parquet", // Unsupported shredded value type: INTEGER(32,false)
+            "case-128.parquet", // Invalid variant, non-object value with shredded fields
+            "case-137.parquet"  // Unsupported shredded value type: fixed_len_byte_array(4)
+    );
+
+    /// Combined skip predicate for the row/column comparison tests: a fixture is
+    /// skipped when explicitly listed in [#SKIPPED_FILES] or
+    /// [#SHREDDED_VARIANT_ERROR_CASES], or flagged invalid-per-spec by
+    /// [#isInvalidFixture].
+    static boolean isSkipped(String fileName) {
+        return SKIPPED_FILES.contains(fileName)
+                || SHREDDED_VARIANT_ERROR_CASES.contains(fileName)
+                || isInvalidFixture(fileName);
+    }
+
+    /// Returns true for `shredded_variant` fixtures the parquet-testing corpus
+    /// flags as invalid-per-spec via the `-INVALID` filename suffix (kept in
+    /// lockstep with `cases.json`). The spec leaves reader behaviour on these
+    /// implementation-defined — an implementation may error or read the shredded
+    /// value — so neither the parquet-java oracle comparison nor the byte-level
+    /// reassembly check is meaningful. Keying on the suffix rather than exact
+    /// filenames keeps the skip stable as upstream relabels fixtures.
+    static boolean isInvalidFixture(String fileName) {
+        return fileName.contains("-INVALID");
+    }
 
     /// Returns a GitHub issue reference blocking row-level nested comparison for
     /// `testFile`, or `null` if the file can be compared. No files are currently
