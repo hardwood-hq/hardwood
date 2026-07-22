@@ -134,14 +134,6 @@ public class Utils {
         return fileName.contains("-INVALID");
     }
 
-    /// Returns a GitHub issue reference blocking row-level nested comparison for
-    /// `testFile`, or `null` if the file can be compared. No files are currently
-    /// blocked — shredded Variant reassembly (#286) is now handled end-to-end,
-    /// so `shredded_variant/*.parquet` files round-trip through the comparison.
-    static String rowComparisonSkipReason(Path testFile) {
-        return null;
-    }
-
     /// Directories containing test parquet files.
     private static final List<String> TEST_DIRECTORIES = List.of(
             "data",
