@@ -51,9 +51,6 @@ class ParquetComparisonTest {
         // Skip individual files
         assumeFalse(Utils.isSkipped(fileName),
                 "Skipping " + fileName + " (in skip list)");
-        String blockedBy = Utils.rowComparisonSkipReason(testFile);
-        assumeFalse(blockedBy != null,
-                () -> "Skipping " + fileName + " (blocked by " + blockedBy + ")");
 
         compareParquetFile(testFile);
     }
