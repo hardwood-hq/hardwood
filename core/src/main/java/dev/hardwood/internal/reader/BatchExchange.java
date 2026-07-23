@@ -77,6 +77,11 @@ public class BatchExchange<B> {
     private volatile Throwable error;
     private volatile boolean finished;
 
+    /// Synchronous-mode pull callback: drives the owning worker to produce one batch inline.
+    /// Null in the default (threaded) mode, where the worker fills the ready queue in the
+    /// background instead.
+    private Runnable pump;
+
     private BatchExchange(String columnName, ArrayBlockingQueue<B> readyQueue,
                           ArrayBlockingQueue<B> freeQueue, Supplier<B> batchFactory) {
         this.columnName = columnName;
@@ -160,6 +165,12 @@ public class BatchExchange<B> {
         return true;
     }
 
+    /// Registers the synchronous pull callback (see [#pump]). Set by a [ColumnWorker] running
+    /// in synchronous mode during `start()`.
+    public void setPump(Runnable pump) {
+        this.pump = pump;
+    }
+
     public void finish() {
         finished = true;
     }
@@ -186,6 +197,17 @@ public class BatchExchange<B> {
     public B poll() throws InterruptedException {
         B batch = readyQueue.poll();
         if (batch != null) {
+            return batch;
+        }
+        if (pump != null) {
+            // Synchronous mode: drive the worker inline until it publishes a batch or finishes.
+            while (batch == null && !finished) {
+                pump.run();
+                batch = readyQueue.poll();
+            }
+            if (batch == null) {
+                checkError();
+            }
             return batch;
         }
         if (finished) {

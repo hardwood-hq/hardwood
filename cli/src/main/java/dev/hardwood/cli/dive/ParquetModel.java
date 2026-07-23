@@ -17,6 +17,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Set;
 
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.metadata.PageHeader;
 import dev.hardwood.internal.reader.ColumnIndexBuffers;
@@ -52,6 +53,9 @@ public final class ParquetModel implements AutoCloseable {
     private final long fileSizeBytes;
     private final InputFile inputFile;
     private final ParquetFileReader reader;
+    /// Context used for on-demand decode (dictionary pages). Null for the default open, which
+    /// then falls back to a fresh single-thread context per read.
+    private final HardwoodContextImpl decodeContext;
     private final FileMetaData metadata;
     private final FileSchema schema;
     private final Facts facts;
@@ -95,20 +99,40 @@ public final class ParquetModel implements AutoCloseable {
                 }
             };
 
-    private ParquetModel(String displayPath, long fileSizeBytes, InputFile inputFile, ParquetFileReader reader) {
+    private ParquetModel(String displayPath, long fileSizeBytes, InputFile inputFile, ParquetFileReader reader,
+            HardwoodContext decodeContext) {
         this.displayPath = displayPath;
         this.fileSizeBytes = fileSizeBytes;
         this.inputFile = inputFile;
         this.reader = reader;
+        // The only HardwoodContext implementation; DictionaryParser needs the concrete type.
+        this.decodeContext = (HardwoodContextImpl) decodeContext;
         this.metadata = reader.getFileMetaData();
         this.schema = reader.getFileSchema();
         this.facts = computeFacts();
     }
 
     public static ParquetModel open(InputFile inputFile, String displayPath) throws IOException {
-        ParquetFileReader reader = ParquetFileReader.open(inputFile);
+        return fromReader(inputFile, displayPath, ParquetFileReader.open(inputFile), null);
+    }
+
+    /// Open using a caller-supplied context. Lets an embedder pick the decode context — for
+    /// example a single-threaded, pure-Java-codec context for a GraalVM Web Image
+    /// (WebAssembly) build. The supplied context is owned by the caller and is not closed by
+    /// [#close].
+    ///
+    /// @param inputFile the file to read
+    /// @param displayPath label shown in the UI
+    /// @param context the context used to open the reader
+    public static ParquetModel open(InputFile inputFile, String displayPath, HardwoodContext context)
+            throws IOException {
+        return fromReader(inputFile, displayPath, ParquetFileReader.open(inputFile, context), context);
+    }
+
+    private static ParquetModel fromReader(InputFile inputFile, String displayPath, ParquetFileReader reader,
+            HardwoodContext decodeContext) throws IOException {
         try {
-            return new ParquetModel(displayPath, inputFile.length(), inputFile, reader);
+            return new ParquetModel(displayPath, inputFile.length(), inputFile, reader, decodeContext);
         }
         catch (RuntimeException e) {
             reader.close();
@@ -315,9 +339,18 @@ public final class ParquetModel implements AutoCloseable {
         Long dictOffset = cmd.dictionaryPageOffset();
         long chunkStart = dictOffset != null && dictOffset > 0 ? dictOffset : cmd.dataPageOffset();
         int readSize = Math.toIntExact(cmd.totalCompressedSize());
-        try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
+        try {
             ByteBuffer region = inputFile.readRange(chunkStart, readSize);
-            Dictionary dict = DictionaryParser.parse(region, schema.getColumn(columnIndex), cmd, context);
+            Dictionary dict;
+            if (decodeContext != null) {
+                // Use the caller-supplied context (e.g. pure-Java codecs for a WebAssembly build).
+                dict = DictionaryParser.parse(region, schema.getColumn(columnIndex), cmd, decodeContext);
+            }
+            else {
+                try (HardwoodContextImpl context = HardwoodContextImpl.create(1)) {
+                    dict = DictionaryParser.parse(region, schema.getColumn(columnIndex), cmd, context);
+                }
+            }
             if (dict != null) {
                 dictionaryCache.put(key, dict);
             }

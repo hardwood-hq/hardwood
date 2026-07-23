@@ -1,0 +1,246 @@
+<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>hardwood dive — WASM</title>
+  <link rel="stylesheet" href="xterm.css">
+  <style>
+    :root { --bg:#000000; --panel:#141414; --fg:#c7c7c7; --muted:#7a7a7a;
+            --accent:#268bd2; --orange:#b58900; }
+    html, body { background: var(--bg); color: var(--fg); }
+    body { font: 14px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; margin: 0; padding: 0 14px; }
+    /* Fixed content width, centered. The terminal is fitted (cols computed from the cell
+       width) to this same width in JS, so the header, tech blurb, drop zone, and TUI all
+       line up. */
+    .wrap { width: 1180px; max-width: 100%; margin: 0 auto; padding: 1.6rem 0 2.4rem; }
+    #term { width: 100%; }
+
+    header h1 { font-size: 1.15rem; margin: 0 0 .3rem; font-weight: 600; letter-spacing: .01em; }
+    header h1 .cmd { color: var(--orange); }
+    header p { margin: 0 0 .3rem; color: var(--muted); font-size: 15.5px; }
+    header p.tech { color: #6a6a6a; font-size: 12.8px; margin: 0 0 1.1rem; }
+    header p.tech a { color: var(--accent); text-decoration: underline; }
+
+    #drop {
+      border: 2px dashed #3a3a3a; border-radius: 8px; padding: .7rem 1rem;
+      text-align: center; color: var(--muted); background: var(--panel);
+      transition: border-color .15s, background .15s; margin-bottom: 1.1rem;
+    }
+    #drop.over { border-color: var(--accent); background: #0e1a10; color: var(--fg); }
+    #drop code { color: #cdd; }
+    #file { color: var(--fg); }
+
+    /* Subtle ring spinner shown while the file is read + parsed. */
+    #progress { display: none; align-items: center; gap: .55rem;
+                margin: .1rem 0 .9rem; color: var(--muted); font-size: .82rem; min-height: 1.1em; }
+    #progress.on { display: flex; }
+    #spinner { width: 13px; height: 13px; border: 2px solid #2a2a2a;
+               border-top-color: var(--accent); border-radius: 50%;
+               animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    #status { color: var(--muted); font-size: 12.8px; min-height: 1.1em; margin: .1rem 0 .9rem; }
+
+    #sample { font: inherit; font-size: 13px; color: var(--accent); background: transparent;
+              border: 1px solid #333; border-radius: 6px; padding: .25rem .7rem; margin-left: .6rem;
+              cursor: pointer; }
+    #sample:hover { border-color: var(--accent); }
+
+    /* Shown instead of the demo when the browser lacks the required WASM features. */
+    #unsupported { display: none; border: 1px solid #6a5a2a; background: #16130a; color: #d8c88a;
+                   border-radius: 8px; padding: .9rem 1.1rem; font-size: 13.5px; line-height: 1.55; }
+    #unsupported code { color: #f0e6c0; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1>hardwood <span class="cmd">dive</span> — inspect Parquet files in your browser</h1>
+      <p>Everything runs locally. The file never leaves your machine.</p>
+      <p class="tech">The <a href="https://hardwood.dev/latest/reference/cli/" target="_blank"
+        rel="noopener">Hardwood CLI</a> — a Java application normally distributed as a platform-specific
+        native binary — is compiled ahead-of-time to WebAssembly with
+        GraalVM Web Image, so it runs here as native code in your browser, with no JVM and nothing to install.
+        It reads and decodes Parquet entirely in pure Java: no native libraries, no server round-trips,
+        nothing leaves the page.<br>
+        Limitations: Only Snappy- and GZIP-compressed files are supported.</p>
+    </header>
+
+    <div id="unsupported">
+      This demo needs an up-to-date browser (<strong>recent Chrome, Edge, Firefox, or Arc</strong>). It relies on
+      WebAssembly <code>garbage collection</code> and <code>exception handling</code>, which Safari and older
+      browser versions don't support yet.
+    </div>
+
+    <div id="drop">
+      <input type="file" id="file" accept=".parquet">
+      <button id="sample" type="button">Load a sample file</button>
+      <br><br>
+      …or drop a <code>.parquet</code> file here
+    </div>
+    <div id="progress"><span id="spinner"></span><span id="ptext"></span></div>
+    <div id="status"></div>
+
+    <div id="term"></div>
+  </div>
+
+  <script src="xterm.js"></script>
+  <script src="dive-read.js"></script>
+  <script>
+    // iTerm2 "Dark Background" base, with blue + yellow overridden to the dive TUI's
+    // own accents (Solarized blue #268bd2 and amber #b58900) so headers/values match
+    // the native terminal rendering.
+    const theme = {
+      background: '#000000', foreground: '#c7c7c7',
+      cursor: '#c7c7c7', cursorAccent: '#000000', selectionBackground: '#33375c',
+      black:   '#000000', red:     '#c91b00', green:   '#00c200', yellow:  '#b58900',
+      blue:    '#268bd2', magenta: '#ca30c7', cyan:    '#00c5c7', white:   '#c7c7c7',
+      brightBlack:   '#676767', brightRed:     '#ff6d67', brightGreen:   '#5ff967',
+      brightYellow:  '#b58900', brightBlue:    '#268bd2', brightMagenta: '#ff76ff',
+      brightCyan:    '#5ffdff', brightWhite:   '#ffffff'
+    };
+
+    const term = new Terminal({
+      cols: 120, rows: 34, convertEol: false, cursorBlink: false,
+      cursorInactiveStyle: 'none', fontFamily: 'ui-monospace, Menlo, monospace',
+      theme: theme
+    });
+    term.open(document.getElementById('term'));
+    term.write('\x1b[?25l');                                  // hide the caret for good
+    term.write('\x1b[2J\x1b[H');
+
+    // Fit the terminal to the (fixed-width) container: compute how many columns fill the
+    // available width from xterm's measured cell width — the same math its FitAddon uses —
+    // so the TUI spans the full container instead of a fixed 120 cols.
+    function fitTerminal(attempt) {
+      const dims = term._core && term._core._renderService && term._core._renderService.dimensions;
+      const cell = dims && dims.css && dims.css.cell;
+      const availW = document.getElementById('term').clientWidth;
+      if (cell && cell.width && availW) {
+        const cols = Math.max(40, Math.floor(availW / cell.width));
+        if (cols !== term.cols) term.resize(cols, term.rows);
+      } else if ((attempt || 0) < 12) {
+        requestAnimationFrame(() => fitTerminal((attempt || 0) + 1));
+      }
+    }
+    requestAnimationFrame(() => fitTerminal(0));
+
+    const drop = document.getElementById('drop');
+    const progress = document.getElementById('progress');
+    const ptext = document.getElementById('ptext');
+    const status = document.getElementById('status');
+
+    // Repaint the whole frame atomically: DEC 2026 synchronized update brackets the write
+    // so xterm swaps the buffer in one shot (no blank-flash), home + clear-below overwrites
+    // in place instead of 2J-blanking, and the caret stays hidden.
+    function writeFrame(ansi) {
+      term.write('\x1b[?2026h\x1b[?25l\x1b[H' + ansi + '\x1b[0J\x1b[?2026l');
+    }
+
+    function nextFrame() { return new Promise(r => requestAnimationFrame(() => r())); }
+
+    // Bytes → Latin-1 string (one code unit per byte). No base64: no btoa, no 1.33× inflation.
+    function toBinaryString(bytes) {
+      let s = ''; const chunk = 0x8000;
+      for (let i = 0; i < bytes.length; i += chunk) {
+        s += String.fromCharCode.apply(null, bytes.subarray(i, i + chunk));
+      }
+      return s;
+    }
+
+    // Web Image emits a WASM module that uses garbage collection and exception handling. Detect
+    // WasmGC cheaply (validate a module with a struct type) before downloading/instantiating the
+    // ~10 MB module, and show a friendly message on unsupported browsers (Safari, older versions).
+    function wasmGcSupported() {
+      try {
+        return typeof WebAssembly === 'object' && typeof GraalVM !== 'undefined'
+            && WebAssembly.validate(new Uint8Array([0,97,115,109,1,0,0,0,1,5,1,95,1,120,0]));
+      } catch (e) { return false; }
+    }
+    function showUnsupported() {
+      for (const id of ['drop', 'progress', 'status', 'term']) {
+        const el = document.getElementById(id);
+        if (el) el.style.display = 'none';
+      }
+      document.getElementById('unsupported').style.display = 'block';
+    }
+
+    // Boot the WebAssembly module ONCE, up front. This is the one expensive step (the browser
+    // compiles + instantiates the ~10 MB module and runs the image's startup); DiveWasm.main
+    // installs globalThis.__loadFile and returns, leaving the VM alive. Every upload then just
+    // calls __loadFile() — no re-instantiation.
+    let vmReady;
+    if (!wasmGcSupported()) {
+      showUnsupported();
+      vmReady = Promise.reject(new Error('unsupported browser'));
+      vmReady.catch(() => {});                                // silence the unhandled-rejection warning
+    } else {
+      status.textContent = 'Initializing the WebAssembly runtime …';
+      vmReady = GraalVM.run([], new GraalVM.Config()).then(() => {
+        status.textContent = 'Ready — choose a Parquet file, or load the sample.';
+      }).catch(e => {                                         // instantiation failed → treat as unsupported
+        showUnsupported();
+        throw e;
+      });
+    }
+
+    async function load(file) {
+      if (!file) return;
+      const kb = (file.size / 1024).toFixed(1);
+      status.textContent = '';
+      ptext.textContent = 'Reading ' + file.name + ' (' + kb + ' KB) …';
+      progress.classList.add('on');
+      await nextFrame();                                      // let the spinner paint before we block
+      try {
+        // Hand the bytes to WASM as a Latin-1 string (no base64 round-trip).
+        globalThis.__inputStr = toBinaryString(new Uint8Array(await file.arrayBuffer()));
+        globalThis.__cols = term.cols;
+        globalThis.__rows = term.rows;
+        globalThis.__output = null;
+        await vmReady;                                        // ensure the one-time boot is done
+        ptext.textContent = 'Reading metadata …';
+        await nextFrame();
+        globalThis.__loadFile();                              // reuse the live VM: parse + render
+        writeFrame(globalThis.__output || '(no output)');
+        status.style.display = 'none';                        // collapse: the TUI is the content now
+        term.focus();
+      } catch (e) {
+        status.style.display = '';
+        status.textContent = 'Error: ' + (e && e.message || e);
+      } finally {
+        progress.classList.remove('on');
+      }
+    }
+
+    // Each keystroke runs the reader synchronously and repaints in place.
+    function dispatch(data) {
+      if (typeof globalThis.__diveKey !== 'function') return;
+      globalThis.__output = null;
+      globalThis.__diveKey(data);
+      if (globalThis.__output) writeFrame(globalThis.__output);
+    }
+    term.onData(dispatch);
+
+    document.getElementById('file').addEventListener('change', e => load(e.target.files[0]));
+
+    // Load a bundled sample (multi-row-group Snappy with dictionary columns) through the same
+    // path as a user file, so the first click always lands on a supported codec.
+    document.getElementById('sample').addEventListener('click', async () => {
+      try {
+        const resp = await fetch('demo-sample.parquet');
+        const blob = await resp.blob();
+        load(new File([blob], 'demo-sample.parquet'));
+      } catch (e) {
+        status.style.display = '';
+        status.textContent = 'Could not load sample: ' + (e && e.message || e);
+      }
+    });
+
+    drop.addEventListener('dragover', e => { e.preventDefault(); drop.classList.add('over'); });
+    drop.addEventListener('dragleave', () => drop.classList.remove('over'));
+    drop.addEventListener('drop', e => {
+      e.preventDefault(); drop.classList.remove('over');
+      load(e.dataTransfer.files[0]);
+    });
+  </script>
+</body>
+</html>
