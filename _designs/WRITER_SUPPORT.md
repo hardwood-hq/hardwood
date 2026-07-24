@@ -37,12 +37,12 @@ Logical-type annotations (STRING, DATE, TIMESTAMP, DECIMAL, UUID, …) are in sc
 column's physical bytes are written by the primitive-type increment, and the annotation
 is serialized onto the schema and converted at the API boundary.
 
-Sequenced as later work, each its own design: DataPage V2, the Avro write API, the
-optional index structures (OffsetIndex, ColumnIndex, Bloom filters) together with the
-per-page statistics that drive page-level pruning (the `DataPageHeader` inline statistics),
-the optional delta and byte-stream-split encoders, and a CLI write/convert command. The S3
-`OutputFile` backend is planned as increment 19 below. Sorting-column metadata and custom
-record materializers are non-goals.
+The optional index structures — OffsetIndex, ColumnIndex, and Bloom filters, with the
+per-page statistics that drive page-level pruning (including the `DataPageHeader` inline
+statistics) — are numbered increments 20–21 below, on the settled surface alongside the S3
+`OutputFile` backend (increment 19). Sequenced as separate later milestones, each its own
+design: DataPage V2, the Avro write API, and a CLI write/convert command. Sorting-column
+metadata and custom record materializers are non-goals.
 
 ## Write model
 
@@ -282,8 +282,8 @@ then only a bound and not the actual extreme.
 
 These are **column-chunk** statistics, feeding row-group pruning. Per-page statistics — the
 `DataPageHeader` inline statistics and the OffsetIndex / ColumnIndex structures that enable
-page-level skipping — are deferred to the page-index work (below), together with Bloom
-filters. A file is valid without any of them.
+page-level skipping — arrive with page index writing (increment 20), and Bloom filters with
+increment 21. A file is valid without any of them.
 
 ## Threading model
 
@@ -360,16 +360,19 @@ API), *Optimization*, *Spike* (design-only), or *Docs* (user-facing documentatio
 | 17 | Row-oriented `ParquetWriter` ergonomic layer on the columnar core, including nested record materialization and logical-type value conversion (inverse of `LogicalTypeConverter`). | Layer | Mainstream-friendly API | 6.1 (`ParquetWriter`), 6.4 (value conversion) | [ ] |
 | 18 | User-facing documentation under `docs/content/` for the writer public API (`OutputFile`, `ParquetFileWriter`, `FileSchema.Builder`): a `how-to` guide and a `reference` page, covering the settled surface including nesting and the row-oriented layer. | Docs | Documented, stable public API | — | [ ] |
 | 19 | S3 `OutputFile` backend: sequential multipart upload — buffer to the part size, upload parts, complete on `close()`. In-flight bytes bounded to the part size times a small concurrency multiple; lazy `CreateMultipartUpload` deferred to the first part flush, with a single `PutObject` fallback for a sub-part output. Reuses the read-side S3 / SigV4 stack. | Layer | Write directly to object storage | — | [ ] |
+| 20 | **Page index writing**: per-column-chunk OffsetIndex (page locations) and ColumnIndex (per-page `min`/`max`, null counts, boundary order), written after the row group's pages and referenced from the footer, so the reader can skip individual pages. Extends the column-chunk statistics of increment 11 to page granularity; the `DataPageHeader` inline `statistics` are the pre-index fallback covered here. Truncation and `is_*_value_exact` follow the increment 11 / 12 rules. Its own design. | Layer | Page-level pruning on produced files | 9.2 | [ ] |
+| 21 | **Bloom filter writing**: a split-block Bloom filter per eligible column chunk (XXHASH64), serialized with its header and referenced from the column metadata, for equality-predicate pruning where `min`/`max` do not help. Its own design. | Layer | Bloom-filter pruning on produced files | 9.3 | [ ] |
 
 Increments 1–4 settle the flat dimensions on `INT32`; 5–8 settle the nested shape —
 design, then struct / list / map shredding — on `INT32`; 9–11 finish the remaining
 dimensions (dictionary, compression, statistics) on the now flat-and-nested shape; 12–14
 are breadth on the settled shape, 15–16 are internal encoding optimizations, and 17 is the
 row-oriented layer; 18 documents the finished public surface. Together, increments 1–18
-constitute the write-support milestone (#9); increment 19 adds the S3 `OutputFile` backend
-on the settled surface. Sequenced as later work, each its own design and sequence: DataPage
-V2, the optional index structures and Bloom filters (with the per-page statistics that make
-page-level pruning possible), the Avro write adapter, and a CLI write/convert command.
+constitute the write-support milestone (#9); increments 19–21 add the S3 `OutputFile` backend
+and the optional index structures (page indexes and Bloom filters, with the per-page
+statistics that make page-level pruning possible) on the settled surface. Sequenced as
+separate later milestones, each its own design and sequence: DataPage V2, the Avro write
+adapter, and a CLI write/convert command.
 
 ## User documentation
 
