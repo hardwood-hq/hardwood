@@ -25,22 +25,11 @@ public class CompressorFactory {
         return switch (codec) {
             case UNCOMPRESSED -> new UncompressedCompressor();
             case ZSTD -> {
-                checkClassAvailable("com.github.luben.zstd.Zstd", "ZSTD", "com.github.luben:zstd-jni");
+                CodecLibraries.require("com.github.luben.zstd.Zstd", "ZSTD", "com.github.luben:zstd-jni", "write");
                 yield new ZstdCompressor();
             }
             default -> throw new UnsupportedOperationException(
                     "Writing " + codec + "-compressed pages is not yet supported");
         };
-    }
-
-    private static void checkClassAvailable(String className, String codecName, String dependency) {
-        try {
-            Class.forName(className);
-        }
-        catch (ClassNotFoundException e) {
-            throw new UnsupportedOperationException(
-                    "Cannot write " + codecName + "-compressed Parquet file: required library not found. " +
-                            "Add the following dependency to your project: " + dependency);
-        }
     }
 }

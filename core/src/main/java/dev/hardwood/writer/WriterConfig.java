@@ -7,6 +7,7 @@
  */
 package dev.hardwood.writer;
 
+import dev.hardwood.internal.compression.CodecLibraries;
 import dev.hardwood.metadata.CompressionCodec;
 
 /// Tuning knobs for [ParquetFileWriter].
@@ -99,13 +100,9 @@ public final class WriterConfig {
     /// `ZSTD` when its library is loadable, otherwise `UNCOMPRESSED`. The class is only probed
     /// for presence, not initialized, so picking the default never triggers the native load.
     private static CompressionCodec defaultCodec() {
-        try {
-            Class.forName("com.github.luben.zstd.Zstd", false, WriterConfig.class.getClassLoader());
-            return CompressionCodec.ZSTD;
-        }
-        catch (ClassNotFoundException e) {
-            return CompressionCodec.UNCOMPRESSED;
-        }
+        return CodecLibraries.isPresent("com.github.luben.zstd.Zstd")
+                ? CompressionCodec.ZSTD
+                : CompressionCodec.UNCOMPRESSED;
     }
 
     /// Builder for [WriterConfig].
