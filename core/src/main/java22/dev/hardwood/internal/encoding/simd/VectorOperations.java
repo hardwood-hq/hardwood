@@ -35,12 +35,10 @@ public final class VectorOperations implements SimdOperations {
     private static final int MIN_BATCH_SIZE = INT_VECTOR_LENGTH * 2;
 
     @Override
-    public int countNonNulls(int[] defLevels, int maxDef) {
-        int len = defLevels.length;
-
+    public int countNonNulls(int[] defLevels, int len, int maxDef) {
         // Use scalar for small arrays
         if (len < MIN_BATCH_SIZE) {
-            return countNonNullsScalar(defLevels, maxDef);
+            return countNonNullsScalar(defLevels, len, maxDef);
         }
 
         IntVector maxDefVec = IntVector.broadcast(INT_SPECIES, maxDef);
@@ -64,10 +62,10 @@ public final class VectorOperations implements SimdOperations {
         return count;
     }
 
-    private int countNonNullsScalar(int[] defLevels, int maxDef) {
+    private int countNonNullsScalar(int[] defLevels, int len, int maxDef) {
         int count = 0;
-        for (int level : defLevels) {
-            if (level == maxDef) {
+        for (int i = 0; i < len; i++) {
+            if (defLevels[i] == maxDef) {
                 count++;
             }
         }

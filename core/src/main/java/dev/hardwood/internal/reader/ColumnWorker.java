@@ -83,6 +83,14 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // so the previous occupant's fileName is always read before being overwritten.
     // Any future change to the throttle or to the read-then-increment ordering must
     // preserve this invariant.
+    /// Per-slot reusable repetition/definition level buffers, indexed by reorder
+    /// slot. One holder per in-flight page; reused across the pages that occupy a
+    /// slot, so level decoding stops allocating per page once the buffers reach the
+    /// largest page's size. Safe without synchronization because the retriever
+    /// throttle keeps a slot's previous page fully drained before the slot is
+    /// reused (see [PageDecoder.LevelScratch]).
+    private final PageDecoder.LevelScratch[] levelScratch;
+
     private final String[] fileNameBuffer;
 
     // Per-slot filter-always-matches flag, written by the retriever alongside
@@ -153,6 +161,10 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         this.decodeExecutor = decodeExecutor;
         this.maxRows = maxRows;
         this.reorderBuffer = new AtomicReferenceArray<>(MAX_INFLIGHT_PAGES);
+        this.levelScratch = new PageDecoder.LevelScratch[MAX_INFLIGHT_PAGES];
+        for (int i = 0; i < MAX_INFLIGHT_PAGES; i++) {
+            this.levelScratch[i] = new PageDecoder.LevelScratch();
+        }
         this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
         this.filterAlwaysMatchesBuffer = new boolean[MAX_INFLIGHT_PAGES];
     }
@@ -326,7 +338,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         try {
             Page page = pageInfo.isNullPlaceholder()
                     ? pageDecoder.nullPage(pageInfo.placeholderNumValues())
-                    : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary());
+                    : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(), levelScratch[slot]);
             reorderBuffer.set(slot, new DecodedPage(page, pageInfo.mask()));
         }
         catch (Throwable t) {

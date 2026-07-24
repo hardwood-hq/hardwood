@@ -17,10 +17,9 @@ import java.util.BitSet;
 public final class ScalarOperations implements SimdOperations {
 
     @Override
-    public int countNonNulls(int[] defLevels, int maxDef) {
+    public int countNonNulls(int[] defLevels, int len, int maxDef) {
         int count0 = 0, count1 = 0, count2 = 0, count3 = 0;
         int i = 0;
-        int len = defLevels.length;
 
         // Process 8 elements at a time with 4 accumulators to minimize dependencies
         for (; i + 8 <= len; i += 8) {

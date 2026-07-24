@@ -145,7 +145,7 @@ public class RleBitPackingHybridDecoder {
     }
 
     private int[] decodeIndices(int len, int[] defLevels, int maxDef) {
-        int count = defLevels == null ? len : countNonNulls(defLevels, maxDef);
+        int count = defLevels == null ? len : countNonNulls(defLevels, len, maxDef);
         int[] indices = borrowTemp(count);
         if (bitWidth == 0) {
             Arrays.fill(indices, 0, count, 0);
@@ -245,8 +245,8 @@ public class RleBitPackingHybridDecoder {
         }
     }
 
-    private static int countNonNulls(int[] defLevels, int maxDef) {
-        return SIMD_OPS.countNonNulls(defLevels, maxDef);
+    private static int countNonNulls(int[] defLevels, int len, int maxDef) {
+        return SIMD_OPS.countNonNulls(defLevels, len, maxDef);
     }
 
     private void readNextRun() {

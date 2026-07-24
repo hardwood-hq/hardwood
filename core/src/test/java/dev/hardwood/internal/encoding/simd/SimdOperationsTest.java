@@ -41,8 +41,8 @@ class SimdOperationsTest {
         int[] defLevels = generateDefLevels(size);
         int maxDef = 3;
 
-        int scalarResult = SCALAR.countNonNulls(defLevels, maxDef);
-        int simdResult = SIMD.countNonNulls(defLevels, maxDef);
+        int scalarResult = SCALAR.countNonNulls(defLevels, defLevels.length, maxDef);
+        int simdResult = SIMD.countNonNulls(defLevels, defLevels.length, maxDef);
 
         assertThat(simdResult).isEqualTo(scalarResult);
     }
@@ -51,13 +51,13 @@ class SimdOperationsTest {
     void countNonNullsAllNulls() {
         int[] defLevels = new int[100];
         // All zeros, maxDef = 1 means all are null
-        assertThat(SIMD.countNonNulls(defLevels, 1)).isEqualTo(0);
+        assertThat(SIMD.countNonNulls(defLevels, defLevels.length, 1)).isEqualTo(0);
     }
 
     @Test
     void countNonNullsNoNulls() {
         int[] defLevels = IntStream.range(0, 100).map(i -> 3).toArray();
-        assertThat(SIMD.countNonNulls(defLevels, 3)).isEqualTo(100);
+        assertThat(SIMD.countNonNulls(defLevels, defLevels.length, 3)).isEqualTo(100);
     }
 
     @Test
@@ -66,7 +66,24 @@ class SimdOperationsTest {
         for (int i = 0; i < 100; i++) {
             defLevels[i] = i % 2 == 0 ? 3 : 0;
         }
-        assertThat(SIMD.countNonNulls(defLevels, 3)).isEqualTo(50);
+        assertThat(SIMD.countNonNulls(defLevels, defLevels.length, 3)).isEqualTo(50);
+    }
+
+    @ParameterizedTest
+    @ValueSource(ints = {1, 7, 8, 9, 63, 64, 65, 200})
+    void countNonNullsIgnoresEntriesBeyondLen(int len) {
+        // A reused level buffer is longer than the page's value count: the tail
+        // holds stale present-looking values that must not be counted.
+        int[] defLevels = IntStream.range(0, len + 137).map(i -> 3).toArray();
+        int expected = 0;
+        for (int i = 0; i < len; i++) {
+            defLevels[i] = i % 3 == 0 ? 3 : 0;
+            if (defLevels[i] == 3) {
+                expected++;
+            }
+        }
+        assertThat(SCALAR.countNonNulls(defLevels, len, 3)).isEqualTo(expected);
+        assertThat(SIMD.countNonNulls(defLevels, len, 3)).isEqualTo(expected);
     }
 
     // ==================== markNulls Tests ====================

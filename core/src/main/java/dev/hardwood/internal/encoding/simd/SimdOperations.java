@@ -20,10 +20,12 @@ public interface SimdOperations {
 
     /// Count non-null values by counting entries where `defLevels[i] == maxDef`.
     ///
-    /// @param defLevels definition levels array
+    /// @param defLevels definition levels array; may be longer than `len` (a reused
+    ///   buffer), so only the first `len` entries are counted
+    /// @param len number of leading entries to scan
     /// @param maxDef maximum definition level (indicates non-null)
     /// @return count of non-null values
-    int countNonNulls(int[] defLevels, int maxDef);
+    int countNonNulls(int[] defLevels, int len, int maxDef);
 
     /// Mark null positions in a BitSet where `defLevels[srcPos + i] < maxDefLevel`.
     ///

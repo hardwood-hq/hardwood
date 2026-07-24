@@ -46,6 +46,20 @@ public class PageDecoder {
     /// enabled).
     private final boolean fixedListFastPathEnabled;
 
+    /// Reusable repetition/definition level buffers for one in-flight decode slot.
+    ///
+    /// One instance per reorder-buffer slot in [ColumnWorker]; reused across the
+    /// pages that occupy that slot. Slot exclusivity is guaranteed by the
+    /// retriever throttle (a slot is not reused until its previous page has been
+    /// drained), so no synchronization is needed. The buffers grow monotonically
+    /// to the largest page seen and are never handed to the consumer — assembly
+    /// copies the levels into the batch accumulators before the slot is reused,
+    /// and no consumer relies on the level arrays' length (always `page.size()`).
+    public static final class LevelScratch {
+        int[] rep;
+        int[] def;
+    }
+
     /// Constructor for page decoding, with the fixed-size-list fast path enabled.
     public PageDecoder(ColumnMetaData columnMetaData, ColumnSchema column, DecompressorFactory decompressorFactory) {
         this(columnMetaData, column, decompressorFactory, true);
@@ -118,6 +132,16 @@ public class PageDecoder {
     /// @param dictionary dictionary for this page, or null if not dictionary-encoded
     /// @return decoded page
     public Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary) throws IOException {
+        return decodePage(pageBuffer, dictionary, null);
+    }
+
+    /// Decode a single data page, reusing the given slot's level buffers.
+    ///
+    /// @param pageBuffer buffer containing just this page (header + data)
+    /// @param dictionary dictionary for this page, or null if not dictionary-encoded
+    /// @param scratch per-slot reusable level buffers, or null to allocate fresh
+    /// @return decoded page
+    public Page decodePage(ByteBuffer pageBuffer, Dictionary dictionary, LevelScratch scratch) throws IOException {
         PageDecodedEvent event = new PageDecodedEvent();
         event.begin();
 
@@ -138,10 +162,10 @@ public class PageDecoder {
             case DATA_PAGE -> {
                 Decompressor decompressor = decompressorFactory.getDecompressor(columnMetaData.codec());
                 byte[] uncompressedData = decompressor.decompress(pageData, pageHeader.uncompressedPageSize());
-                yield parseDataPage(pageHeader.dataPageHeader(), uncompressedData, dictionary);
+                yield parseDataPage(pageHeader.dataPageHeader(), uncompressedData, dictionary, scratch);
             }
             case DATA_PAGE_V2 -> {
-                yield parseDataPageV2(pageHeader.dataPageHeaderV2(), pageData, pageHeader.uncompressedPageSize(), dictionary);
+                yield parseDataPageV2(pageHeader.dataPageHeaderV2(), pageData, pageHeader.uncompressedPageSize(), dictionary, scratch);
             }
             default -> throw new IOException("Unexpected page type for single-page decode: " + pageHeader.type());
         };
@@ -154,9 +178,12 @@ public class PageDecoder {
         return result;
     }
 
-    /// Decode levels using RLE/Bit-Packing Hybrid encoding.
-    private int[] decodeRepetitionLevels(byte[] levelData, int offset, int length, int numValues, int maxLevel) {
-        int[] levels = new int[numValues];
+    /// Decode levels using RLE/Bit-Packing Hybrid encoding, reusing `reuse` when it
+    /// is large enough. Returns the array actually written (the grown one when
+    /// `reuse` was too small), so the caller can retain it for the next page.
+    private int[] decodeRepetitionLevels(byte[] levelData, int offset, int length, int numValues, int maxLevel,
+                                         int[] reuse) {
+        int[] levels = reuse != null && reuse.length >= numValues ? reuse : new int[numValues];
         RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, getBitWidth(maxLevel));
         decoder.readInts(levels, 0, numValues);
         return levels;
@@ -172,7 +199,7 @@ public class PageDecoder {
     /// definition-level array as all-present (every leaf at `maxDef`) and takes a
     /// whole-page bulk-copy path; the repetition levels are still materialised, so
     /// record boundaries are preserved.
-    private int[] decodeDefinitionLevels(byte[] levelData, int offset, int length, int numValues) {
+    private int[] decodeDefinitionLevels(byte[] levelData, int offset, int length, int numValues, int[] reuse) {
         int maxDef = column.maxDefinitionLevel();
         int bitWidth = getBitWidth(maxDef);
         RleBitPackingHybridDecoder decoder = new RleBitPackingHybridDecoder(levelData, offset, length, bitWidth);
@@ -181,7 +208,7 @@ public class PageDecoder {
         if (decoder.isSingleRleRunOf(maxDef, numValues)) {
             return null;
         }
-        int[] levels = new int[numValues];
+        int[] levels = reuse != null && reuse.length >= numValues ? reuse : new int[numValues];
         decoder.readInts(levels, 0, numValues);
         return levels;
     }
@@ -238,7 +265,8 @@ public class PageDecoder {
         };
     }
 
-    private Page parseDataPage(DataPageHeader header, byte[] data, Dictionary dictionary) throws IOException {
+    private Page parseDataPage(DataPageHeader header, byte[] data, Dictionary dictionary, LevelScratch scratch)
+            throws IOException {
         int numValues = header.numValues();
         int offset = 0;
 
@@ -282,12 +310,22 @@ public class PageDecoder {
             }
         }
 
-        int[] repetitionLevels = column.maxRepetitionLevel() > 0
-                ? decodeRepetitionLevels(data, repLevelOffset, repLevelLength, numValues, column.maxRepetitionLevel())
-                : null;
-        int[] definitionLevels = column.maxDefinitionLevel() > 0
-                ? decodeDefinitionLevels(data, defLevelOffset, defLevelLength, numValues)
-                : null;
+        int[] repetitionLevels = null;
+        if (column.maxRepetitionLevel() > 0) {
+            repetitionLevels = decodeRepetitionLevels(data, repLevelOffset, repLevelLength, numValues,
+                    column.maxRepetitionLevel(), scratch != null ? scratch.rep : null);
+            if (scratch != null) {
+                scratch.rep = repetitionLevels;
+            }
+        }
+        int[] definitionLevels = null;
+        if (column.maxDefinitionLevel() > 0) {
+            definitionLevels = decodeDefinitionLevels(data, defLevelOffset, defLevelLength, numValues,
+                    scratch != null ? scratch.def : null);
+            if (scratch != null && definitionLevels != null) {
+                scratch.def = definitionLevels;
+            }
+        }
 
         return decodeTypedValues(
                 header.encoding(), data, valuesOffset, numValues,
@@ -295,7 +333,7 @@ public class PageDecoder {
     }
 
     private Page parseDataPageV2(DataPageHeaderV2 header, ByteBuffer pageData, int uncompressedPageSize,
-            Dictionary dictionary) throws IOException {
+            Dictionary dictionary, LevelScratch scratch) throws IOException {
         int repLevelLen = header.repetitionLevelsByteLength();
         int defLevelLen = header.definitionLevelsByteLength();
         int valuesOffset = repLevelLen + defLevelLen;
@@ -335,12 +373,22 @@ public class PageDecoder {
             }
         }
 
-        int[] repetitionLevels = repLevelData != null
-                ? decodeRepetitionLevels(repLevelData, 0, repLevelLen, numValues, column.maxRepetitionLevel())
-                : null;
-        int[] definitionLevels = defLevelData != null
-                ? decodeDefinitionLevels(defLevelData, 0, defLevelLen, numValues)
-                : null;
+        int[] repetitionLevels = null;
+        if (repLevelData != null) {
+            repetitionLevels = decodeRepetitionLevels(repLevelData, 0, repLevelLen, numValues,
+                    column.maxRepetitionLevel(), scratch != null ? scratch.rep : null);
+            if (scratch != null) {
+                scratch.rep = repetitionLevels;
+            }
+        }
+        int[] definitionLevels = null;
+        if (defLevelData != null) {
+            definitionLevels = decodeDefinitionLevels(defLevelData, 0, defLevelLen, numValues,
+                    scratch != null ? scratch.def : null);
+            if (scratch != null && definitionLevels != null) {
+                scratch.def = definitionLevels;
+            }
+        }
 
         byte[] valuesData = readValueRegion(header, pageData, uncompressedPageSize,
                 repLevelLen, defLevelLen, valuesOffset, compressedValuesLen);
