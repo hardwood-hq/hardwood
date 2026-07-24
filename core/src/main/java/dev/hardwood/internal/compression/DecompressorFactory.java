@@ -49,48 +49,37 @@ public class DecompressorFactory {
                 yield new GzipDecompressor();
             }
             case SNAPPY -> {
-                checkClassAvailable("org.xerial.snappy.Snappy",
+                CodecLibraries.require("org.xerial.snappy.Snappy",
                         "SNAPPY",
-                        "org.xerial.snappy:snappy-java");
+                        "org.xerial.snappy:snappy-java", "read");
                 yield new SnappyDecompressor();
             }
             case ZSTD -> {
-                checkClassAvailable("com.github.luben.zstd.Zstd",
+                CodecLibraries.require("com.github.luben.zstd.Zstd",
                         "ZSTD",
-                        "com.github.luben:zstd-jni");
+                        "com.github.luben:zstd-jni", "read");
                 yield new ZstdDecompressor();
             }
             case LZ4 -> {
-                checkClassAvailable("net.jpountz.lz4.LZ4Factory",
+                CodecLibraries.require("net.jpountz.lz4.LZ4Factory",
                         "LZ4",
-                        "at.yawk.lz4:lz4-java");
+                        "at.yawk.lz4:lz4-java", "read");
                 yield new Lz4Decompressor();
             }
             case LZ4_RAW -> {
-                checkClassAvailable("net.jpountz.lz4.LZ4Factory",
+                CodecLibraries.require("net.jpountz.lz4.LZ4Factory",
                         "LZ4_RAW",
-                        "at.yawk.lz4:lz4-java");
+                        "at.yawk.lz4:lz4-java", "read");
                 yield new Lz4RawDecompressor();
             }
             case BROTLI -> {
-                checkClassAvailable("com.aayushatharva.brotli4j.Brotli4jLoader",
+                CodecLibraries.require("com.aayushatharva.brotli4j.Brotli4jLoader",
                         "BROTLI",
-                        "com.aayushatharva.brotli4j:brotli4j");
+                        "com.aayushatharva.brotli4j:brotli4j", "read");
                 yield new BrotliDecompressor();
             }
             case LZO -> throw new UnsupportedOperationException("LZO compression is not supported");
         };
-    }
-
-    private static void checkClassAvailable(String className, String codecName, String dependency) {
-        try {
-            Class.forName(className);
-        }
-        catch (ClassNotFoundException e) {
-            throw new UnsupportedOperationException(
-                    "Cannot read " + codecName + "-compressed Parquet file: required library not found. " +
-                            "Add the following dependency to your project: " + dependency);
-        }
     }
 
     private static void logGzipDecompressor(String name) {
