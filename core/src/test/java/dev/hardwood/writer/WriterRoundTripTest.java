@@ -25,6 +25,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.OutputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.internal.metadata.PageHeader;
+import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.internal.thrift.PageHeaderReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
@@ -34,6 +35,7 @@ import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
@@ -881,6 +883,126 @@ class WriterRoundTripTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
             assertThat(columnMeta(reader, 0).codec()).isEqualTo(CompressionCodec.ZSTD);
             assertThat(readNullable(reader, 0)).isEqualTo(expectedNullable(values, nulls));
+        }
+    }
+
+    @Test
+    void writesMinMaxAndNullCountForRequiredColumn() throws Exception {
+        // Signed bounds: the extremes must sort as MIN < ... < MAX, matching the INT32
+        // type-defined (signed) ColumnOrder.
+        int[] values = { 42, -100_000, 7, Integer.MAX_VALUE, Integer.MIN_VALUE, 0 };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            Statistics stats = columnMeta(reader, 0).statistics();
+            assertThat(stats).as("statistics written").isNotNull();
+            assertThat(StatisticsDecoder.decodeInt(stats.minValue())).isEqualTo(Integer.MIN_VALUE);
+            assertThat(StatisticsDecoder.decodeInt(stats.maxValue())).isEqualTo(Integer.MAX_VALUE);
+            assertThat(stats.nullCount()).isEqualTo(0L);
+            // Written through the preferred min_value/max_value fields, not the deprecated ones.
+            assertThat(stats.isMinMaxDeprecated()).isFalse();
+        }
+    }
+
+    @Test
+    void boundsSpanOnlyPresentValuesAndNullsAreCounted() throws Exception {
+        // The three null rows are counted but never widen the bounds, which cover 7..50.
+        int[] values = { 7, 0, -3, 0, 50, 0, 20 };
+        boolean[] nulls = { false, true, false, true, false, true, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            Statistics stats = columnMeta(reader, 0).statistics();
+            assertThat(StatisticsDecoder.decodeInt(stats.minValue())).isEqualTo(-3);
+            assertThat(StatisticsDecoder.decodeInt(stats.maxValue())).isEqualTo(50);
+            assertThat(stats.nullCount()).isEqualTo(3L);
+        }
+    }
+
+    @Test
+    void allNullColumnWritesNullCountButNoBounds() throws Exception {
+        // No present value, so the chunk carries a null count but omits min/max.
+        boolean[] nulls = { true, true, true, true };
+        int[] values = new int[nulls.length];
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneOptionalColumn())) {
+            writer.writeBatch(batch -> batch.ints(0, values, nulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            Statistics stats = columnMeta(reader, 0).statistics();
+            assertThat(stats).isNotNull();
+            assertThat(stats.minValue()).isNull();
+            assertThat(stats.maxValue()).isNull();
+            assertThat(stats.nullCount()).isEqualTo(4L);
+        }
+    }
+
+    @Test
+    void eachRowGroupCarriesItsOwnStatistics() throws Exception {
+        // Ascending values with a 4 KiB row-group target (1024 rows per group): each chunk's
+        // bounds cover only its own slice, so they advance group by group.
+        int n = 5_000;
+        int[] values = new int[n];
+        for (int i = 0; i < n; i++) {
+            values[i] = i;
+        }
+
+        WriterConfig config = WriterConfig.builder().rowGroupTargetBytes(4096).build();
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, oneColumn(), config)) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            List<RowGroup> groups = reader.getFileMetaData().rowGroups();
+            assertThat(groups.size()).isGreaterThan(1);
+            Statistics first = groups.get(0).columns().get(0).metaData().statistics();
+            assertThat(StatisticsDecoder.decodeInt(first.minValue())).isEqualTo(0);
+            assertThat(StatisticsDecoder.decodeInt(first.maxValue())).isEqualTo(1023);
+            Statistics second = groups.get(1).columns().get(0).metaData().statistics();
+            assertThat(StatisticsDecoder.decodeInt(second.minValue())).isEqualTo(1024);
+            assertThat(StatisticsDecoder.decodeInt(second.maxValue())).isEqualTo(2047);
+        }
+    }
+
+    @Test
+    void listColumnNullCountCountsNullAndEmptyLists() throws Exception {
+        // The leaf's null count spans every not-present slot — a null list, an empty list, and
+        // a null element — while the bounds cover only the present elements 1..5.
+        // record 0: [1,2]; 1: [] (empty); 2: null list; 3: [3, null, 5].
+        FileSchema schema = FileSchema.builder("schema")
+                .list("phones", RepetitionType.OPTIONAL, el -> el.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        int[] offsets = { 0, 2, 2, 2, 5 };
+        Validity listNulls = Validity.ofNulls(new boolean[] { false, false, true, false });
+        int[] elements = { 1, 2, 3, 0, 5 };
+        boolean[] elementNulls = { false, false, false, true, false };
+
+        ByteBufferOutputFile out = new ByteBufferOutputFile();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+            writer.writeBatch(batch -> batch
+                    .list("phones", offsets, listNulls)
+                    .ints("phones.list.element", elements, elementNulls));
+        }
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+            int leaf = reader.getFileSchema().getColumn("phones.list.element").columnIndex();
+            Statistics stats = columnMeta(reader, leaf).statistics();
+            assertThat(StatisticsDecoder.decodeInt(stats.minValue())).isEqualTo(1);
+            assertThat(StatisticsDecoder.decodeInt(stats.maxValue())).isEqualTo(5);
+            // 1 empty list + 1 null list + 1 null element.
+            assertThat(stats.nullCount()).isEqualTo(3L);
         }
     }
 
