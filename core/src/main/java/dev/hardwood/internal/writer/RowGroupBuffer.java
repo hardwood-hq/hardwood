@@ -39,8 +39,7 @@ public final class RowGroupBuffer {
         this.schema = schema;
         this.columns = new ColumnChunkBuffer[schema.getColumnCount()];
         for (int c = 0; c < columns.length; c++) {
-            columns[c] = new ColumnChunkBuffer(pageValues,
-                    schema.getColumn(c).maxDefinitionLevel(), schema.getColumn(c).maxRepetitionLevel(),
+            columns[c] = new ColumnChunkBuffer(schema.getColumn(c), pageValues,
                     enableDictionary, dictionaryLimitBytes, compressor, codec);
         }
     }
@@ -48,11 +47,12 @@ public final class RowGroupBuffer {
     /// Shreds the same record range into every column and advances the row count.
     ///
     /// @param shredder bound to the current batch
+    /// @param sources the current batch's value sources, one per column
     /// @param from index of the first record to append
     /// @param count number of records to append
-    public void appendRecords(RecordShredder shredder, int from, int count) {
+    public void appendRecords(RecordShredder shredder, ColumnSource[] sources, int from, int count) {
         for (int c = 0; c < columns.length; c++) {
-            columns[c].append(shredder, c, from, count);
+            columns[c].append(shredder, sources[c], c, from, count);
         }
         rowCount += count;
     }

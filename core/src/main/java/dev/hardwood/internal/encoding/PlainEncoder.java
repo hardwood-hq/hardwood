@@ -43,4 +43,66 @@ public final class PlainEncoder {
         buffer.asIntBuffer().put(values, offset, length);
         return buffer.array();
     }
+
+    /// Encode `length` INT64 values starting at `offset` as little-endian 8-byte words,
+    /// matching [PlainDecoder#readLongs].
+    ///
+    /// @param values the backing array
+    /// @param offset the index of the first value to encode
+    /// @param length the number of values to encode
+    /// @return the PLAIN-encoded bytes
+    /// @throws ArithmeticException if the encoded size overflows an `int`
+    public static byte[] encodeLongs(long[] values, int offset, int length) {
+        ByteBuffer buffer = ByteBuffer.allocate(Math.multiplyExact(length, Long.BYTES))
+                .order(ByteOrder.LITTLE_ENDIAN);
+        buffer.asLongBuffer().put(values, offset, length);
+        return buffer.array();
+    }
+
+    /// Encode `length` FLOAT values starting at `offset` as little-endian IEEE-754 single
+    /// words, matching [PlainDecoder#readFloats].
+    ///
+    /// @param values the backing array
+    /// @param offset the index of the first value to encode
+    /// @param length the number of values to encode
+    /// @return the PLAIN-encoded bytes
+    /// @throws ArithmeticException if the encoded size overflows an `int`
+    public static byte[] encodeFloats(float[] values, int offset, int length) {
+        ByteBuffer buffer = ByteBuffer.allocate(Math.multiplyExact(length, Float.BYTES))
+                .order(ByteOrder.LITTLE_ENDIAN);
+        buffer.asFloatBuffer().put(values, offset, length);
+        return buffer.array();
+    }
+
+    /// Encode `length` DOUBLE values starting at `offset` as little-endian IEEE-754 double
+    /// words, matching [PlainDecoder#readDoubles].
+    ///
+    /// @param values the backing array
+    /// @param offset the index of the first value to encode
+    /// @param length the number of values to encode
+    /// @return the PLAIN-encoded bytes
+    /// @throws ArithmeticException if the encoded size overflows an `int`
+    public static byte[] encodeDoubles(double[] values, int offset, int length) {
+        ByteBuffer buffer = ByteBuffer.allocate(Math.multiplyExact(length, Double.BYTES))
+                .order(ByteOrder.LITTLE_ENDIAN);
+        buffer.asDoubleBuffer().put(values, offset, length);
+        return buffer.array();
+    }
+
+    /// Encode `length` BOOLEAN values starting at `offset` bit-packed, 8 values per byte,
+    /// least-significant bit first, matching [PlainDecoder#readBooleans].
+    ///
+    /// @param values the backing array
+    /// @param offset the index of the first value to encode
+    /// @param length the number of values to encode
+    /// @return the PLAIN-encoded bytes
+    public static byte[] encodeBooleans(boolean[] values, int offset, int length) {
+        byte[] packed = new byte[(length + Byte.SIZE - 1) / Byte.SIZE];
+        for (int i = 0; i < length; i++) {
+            if (values[offset + i]) {
+                packed[i >> 3] |= (byte) (1 << (i & 7));
+            }
+        }
+        return packed;
+    }
 }

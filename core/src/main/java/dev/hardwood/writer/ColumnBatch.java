@@ -13,8 +13,12 @@ import java.util.Map;
 
 import dev.hardwood.Experimental;
 import dev.hardwood.Validity;
+import dev.hardwood.internal.writer.BooleanArrayColumnSource;
+import dev.hardwood.internal.writer.ColumnSource;
+import dev.hardwood.internal.writer.DoubleArrayColumnSource;
+import dev.hardwood.internal.writer.FloatArrayColumnSource;
 import dev.hardwood.internal.writer.IntArrayColumnSource;
-import dev.hardwood.internal.writer.IntColumnSource;
+import dev.hardwood.internal.writer.LongArrayColumnSource;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnSchema;
@@ -28,7 +32,7 @@ import dev.hardwood.schema.SchemaNode;
 /// to the schema, hands it to a filler that populates the columns, then submits it — so
 /// there is no separate build or submit step to forget. Columns are addressed by index or
 /// by name, and the schema binding lets every identifier be validated as it is added — an
-/// unknown name, an out-of-range index, a non-`INT32` column, or setting the same column
+/// unknown name, an out-of-range index, a column of the wrong physical type, or setting the same column
 /// twice (whether by index or name) all fail eagerly rather than at write time.
 ///
 /// ```java
@@ -59,7 +63,7 @@ import dev.hardwood.schema.SchemaNode;
 public final class ColumnBatch {
 
     private final FileSchema schema;
-    private final IntColumnSource[] sources;
+    private final ColumnSource[] sources;
     private final Validity[] validities;
     private final Map<String, Validity> structValidities = new HashMap<>();
     private final Map<String, int[]> listOffsets = new HashMap<>();
@@ -69,7 +73,7 @@ public final class ColumnBatch {
 
     ColumnBatch(FileSchema schema) {
         this.schema = schema;
-        this.sources = new IntColumnSource[schema.getColumnCount()];
+        this.sources = new ColumnSource[schema.getColumnCount()];
         this.validities = new Validity[schema.getColumnCount()];
     }
 
@@ -251,99 +255,306 @@ public final class ColumnBatch {
     /// Adds the values for a `REQUIRED INT32` column, addressed by index.
     ///
     /// The array is referenced, not copied, so it must not be mutated until the batch
-    /// has been written.
+    /// has been written. Every physical type has the same setter shapes (`longs`, `floats`,
+    /// `doubles`, `booleans`, …): by index or name, all-present or nullable ([Validity] or
+    /// `boolean[]` mask).
     ///
     /// @param columnIndex zero-based leaf-column index
     /// @param values the column's values for this batch
     /// @return this batch, for chaining
-    /// @throws IllegalArgumentException if the index is out of range, the column is
-    ///         already set, or the length does not match the other columns in this batch
+    /// @throws IllegalArgumentException if the index is out of range, the column is not
+    ///         `INT32`, the column is already set, or the length does not match the other
+    ///         columns in this batch
     public ColumnBatch ints(int columnIndex, int[] values) {
-        store(checkedIndex(columnIndex), values, null);
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        store(idx, PhysicalType.INT32, new IntArrayColumnSource(values), values.length, null);
         return this;
     }
 
     /// Adds the values for a `REQUIRED INT32` column, addressed by name.
     ///
-    /// The array is referenced, not copied, so it must not be mutated until the batch
-    /// has been written.
-    ///
-    /// @param columnName the column's name
-    /// @param values the column's values for this batch
-    /// @return this batch, for chaining
-    /// @throws IllegalArgumentException if no column has that name, the column is already
-    ///         set (by name or index), or the length does not match the other columns
+    /// @see #ints(int, int[])
     public ColumnBatch ints(String columnName, int[] values) {
         // getColumn(String) throws on an unknown name, so the identifier is validated here.
-        store(schema.getColumn(columnName).columnIndex(), values, null);
-        return this;
+        return ints(schema.getColumn(columnName).columnIndex(), values);
     }
 
-    /// Adds the values for an `OPTIONAL INT32` column, addressed by index.
-    ///
-    /// The values array is referenced, not copied, so it must not be mutated until the
-    /// batch has been written; it is full length — one slot per row — and the entry at a
-    /// null row is ignored.
+    /// Adds the values for an `OPTIONAL INT32` column, addressed by index. The values array is
+    /// full length — one slot per row — and the entry at a null row is ignored.
     ///
     /// @param columnIndex zero-based leaf-column index
     /// @param values the column's values for this batch
     /// @param nulls the column's nulls; `nulls.isNull(i)` marks row `i` null
     /// @return this batch, for chaining
     /// @throws IllegalArgumentException if the index is out of range, the column is not
-    ///         `OPTIONAL`, or the column is already set
+    ///         `OPTIONAL INT32`, or the column is already set
     @Experimental
     public ColumnBatch ints(int columnIndex, int[] values, Validity nulls) {
-        storeNullable(checkedIndex(columnIndex), values, nulls);
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.INT32, new IntArrayColumnSource(values), values.length, nulls);
         return this;
     }
 
     /// Adds the values for an `OPTIONAL INT32` column, addressed by name.
     ///
-    /// @param columnName the column's name
-    /// @param values the column's values for this batch
-    /// @param nulls the column's nulls; `nulls.isNull(i)` marks row `i` null
-    /// @return this batch, for chaining
-    /// @throws IllegalArgumentException if no column has that name, the column is not
-    ///         `OPTIONAL`, or the column is already set
+    /// @see #ints(int, int[], Validity)
     @Experimental
     public ColumnBatch ints(String columnName, int[] values, Validity nulls) {
-        storeNullable(schema.getColumn(columnName).columnIndex(), values, nulls);
-        return this;
+        return ints(schema.getColumn(columnName).columnIndex(), values, nulls);
     }
 
-    /// Adds the values for an `OPTIONAL INT32` column, addressed by index, with nulls given
-    /// as a plain mask. Convenience sugar over [#ints(int, int[], Validity)] and
-    /// [Validity#ofNulls]; unlike the [Validity] form, the mask length is checked against
-    /// the values.
+    /// Adds the values for an `OPTIONAL INT32` column, addressed by index, with nulls given as a
+    /// plain mask. Convenience sugar over [#ints(int, int[], Validity)] and [Validity#ofNulls];
+    /// unlike the [Validity] form, the mask length is checked against the values.
     ///
     /// @param columnIndex zero-based leaf-column index
     /// @param values the column's values for this batch
     /// @param nulls the per-row null mask; `nulls[i] == true` marks row `i` null
     /// @return this batch, for chaining
     /// @throws IllegalArgumentException if the index is out of range, the column is not
-    ///         `OPTIONAL`, the column is already set, or the lengths do not agree
+    ///         `OPTIONAL INT32`, the column is already set, or the lengths do not agree
     @Experimental
     public ColumnBatch ints(int columnIndex, int[] values, boolean[] nulls) {
         int idx = checkedIndex(columnIndex);
-        storeNullable(idx, values, maskToValidity(idx, values, nulls));
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.INT32, new IntArrayColumnSource(values), values.length,
+                maskToValidity(idx, values.length, nulls));
         return this;
     }
 
-    /// Adds the values for an `OPTIONAL INT32` column, addressed by name, with nulls given
-    /// as a plain mask. Convenience sugar over [#ints(String, int[], Validity)] and
-    /// [Validity#ofNulls].
+    /// Adds the values for an `OPTIONAL INT32` column, addressed by name, with nulls given as a
+    /// plain mask.
     ///
-    /// @param columnName the column's name
-    /// @param values the column's values for this batch
-    /// @param nulls the per-row null mask; `nulls[i] == true` marks row `i` null
-    /// @return this batch, for chaining
-    /// @throws IllegalArgumentException if no column has that name, the column is not
-    ///         `OPTIONAL`, the column is already set, or the lengths do not agree
+    /// @see #ints(int, int[], boolean[])
     @Experimental
     public ColumnBatch ints(String columnName, int[] values, boolean[] nulls) {
-        int idx = schema.getColumn(columnName).columnIndex();
-        storeNullable(idx, values, maskToValidity(idx, values, nulls));
+        return ints(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
+    /// Adds the values for a `REQUIRED INT64` column, addressed by index.
+    ///
+    /// @see #ints(int, int[])
+    public ColumnBatch longs(int columnIndex, long[] values) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        store(idx, PhysicalType.INT64, new LongArrayColumnSource(values), values.length, null);
         return this;
+    }
+
+    /// Adds the values for a `REQUIRED INT64` column, addressed by name.
+    ///
+    /// @see #ints(int, int[])
+    public ColumnBatch longs(String columnName, long[] values) {
+        return longs(schema.getColumn(columnName).columnIndex(), values);
+    }
+
+    /// Adds the values for an `OPTIONAL INT64` column, addressed by index.
+    ///
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch longs(int columnIndex, long[] values, Validity nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.INT64, new LongArrayColumnSource(values), values.length, nulls);
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL INT64` column, addressed by name.
+    ///
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch longs(String columnName, long[] values, Validity nulls) {
+        return longs(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
+    /// Adds the values for an `OPTIONAL INT64` column, addressed by index, with a plain mask.
+    ///
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch longs(int columnIndex, long[] values, boolean[] nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.INT64, new LongArrayColumnSource(values), values.length,
+                maskToValidity(idx, values.length, nulls));
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL INT64` column, addressed by name, with a plain mask.
+    ///
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch longs(String columnName, long[] values, boolean[] nulls) {
+        return longs(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
+    /// Adds the values for a `REQUIRED FLOAT` column, addressed by index.
+    ///
+    /// @see #ints(int, int[])
+    public ColumnBatch floats(int columnIndex, float[] values) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        store(idx, PhysicalType.FLOAT, new FloatArrayColumnSource(values), values.length, null);
+        return this;
+    }
+
+    /// Adds the values for a `REQUIRED FLOAT` column, addressed by name.
+    ///
+    /// @see #ints(int, int[])
+    public ColumnBatch floats(String columnName, float[] values) {
+        return floats(schema.getColumn(columnName).columnIndex(), values);
+    }
+
+    /// Adds the values for an `OPTIONAL FLOAT` column, addressed by index.
+    ///
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch floats(int columnIndex, float[] values, Validity nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.FLOAT, new FloatArrayColumnSource(values), values.length, nulls);
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL FLOAT` column, addressed by name.
+    ///
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch floats(String columnName, float[] values, Validity nulls) {
+        return floats(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
+    /// Adds the values for an `OPTIONAL FLOAT` column, addressed by index, with a plain mask.
+    ///
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch floats(int columnIndex, float[] values, boolean[] nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.FLOAT, new FloatArrayColumnSource(values), values.length,
+                maskToValidity(idx, values.length, nulls));
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL FLOAT` column, addressed by name, with a plain mask.
+    ///
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch floats(String columnName, float[] values, boolean[] nulls) {
+        return floats(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
+    /// Adds the values for a `REQUIRED DOUBLE` column, addressed by index.
+    ///
+    /// @see #ints(int, int[])
+    public ColumnBatch doubles(int columnIndex, double[] values) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        store(idx, PhysicalType.DOUBLE, new DoubleArrayColumnSource(values), values.length, null);
+        return this;
+    }
+
+    /// Adds the values for a `REQUIRED DOUBLE` column, addressed by name.
+    ///
+    /// @see #ints(int, int[])
+    public ColumnBatch doubles(String columnName, double[] values) {
+        return doubles(schema.getColumn(columnName).columnIndex(), values);
+    }
+
+    /// Adds the values for an `OPTIONAL DOUBLE` column, addressed by index.
+    ///
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch doubles(int columnIndex, double[] values, Validity nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.DOUBLE, new DoubleArrayColumnSource(values), values.length, nulls);
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL DOUBLE` column, addressed by name.
+    ///
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch doubles(String columnName, double[] values, Validity nulls) {
+        return doubles(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
+    /// Adds the values for an `OPTIONAL DOUBLE` column, addressed by index, with a plain mask.
+    ///
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch doubles(int columnIndex, double[] values, boolean[] nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.DOUBLE, new DoubleArrayColumnSource(values), values.length,
+                maskToValidity(idx, values.length, nulls));
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL DOUBLE` column, addressed by name, with a plain mask.
+    ///
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch doubles(String columnName, double[] values, boolean[] nulls) {
+        return doubles(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
+    /// Adds the values for a `REQUIRED BOOLEAN` column, addressed by index.
+    ///
+    /// @see #ints(int, int[])
+    public ColumnBatch booleans(int columnIndex, boolean[] values) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        store(idx, PhysicalType.BOOLEAN, new BooleanArrayColumnSource(values), values.length, null);
+        return this;
+    }
+
+    /// Adds the values for a `REQUIRED BOOLEAN` column, addressed by name.
+    ///
+    /// @see #ints(int, int[])
+    public ColumnBatch booleans(String columnName, boolean[] values) {
+        return booleans(schema.getColumn(columnName).columnIndex(), values);
+    }
+
+    /// Adds the values for an `OPTIONAL BOOLEAN` column, addressed by index.
+    ///
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch booleans(int columnIndex, boolean[] values, Validity nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.BOOLEAN, new BooleanArrayColumnSource(values), values.length, nulls);
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL BOOLEAN` column, addressed by name.
+    ///
+    /// @see #ints(int, int[], Validity)
+    @Experimental
+    public ColumnBatch booleans(String columnName, boolean[] values, Validity nulls) {
+        return booleans(schema.getColumn(columnName).columnIndex(), values, nulls);
+    }
+
+    /// Adds the values for an `OPTIONAL BOOLEAN` column, addressed by index, with a plain mask.
+    ///
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch booleans(int columnIndex, boolean[] values, boolean[] nulls) {
+        int idx = checkedIndex(columnIndex);
+        requireValues(idx, values == null);
+        storeNullable(idx, PhysicalType.BOOLEAN, new BooleanArrayColumnSource(values), values.length,
+                maskToValidity(idx, values.length, nulls));
+        return this;
+    }
+
+    /// Adds the values for an `OPTIONAL BOOLEAN` column, addressed by name, with a plain mask.
+    ///
+    /// @see #ints(int, int[], boolean[])
+    @Experimental
+    public ColumnBatch booleans(String columnName, boolean[] values, boolean[] nulls) {
+        return booleans(schema.getColumn(columnName).columnIndex(), values, nulls);
     }
 
     private int checkedIndex(int columnIndex) {
@@ -354,19 +565,26 @@ public final class ColumnBatch {
         return columnIndex;
     }
 
-    private Validity maskToValidity(int columnIndex, int[] values, boolean[] nulls) {
+    private void requireValues(int columnIndex, boolean isNull) {
+        if (isNull) {
+            throw new IllegalArgumentException("values must not be null for column " + describe(columnIndex));
+        }
+    }
+
+    private Validity maskToValidity(int columnIndex, int valueCount, boolean[] nulls) {
         if (nulls == null) {
             throw new IllegalArgumentException("nulls must not be null for column " + describe(columnIndex)
-                    + "; use the mask-less ints(...) for an all-present column");
+                    + "; use the mask-less setter for an all-present column");
         }
-        if (values != null && values.length != nulls.length) {
-            throw new IllegalArgumentException("Column " + describe(columnIndex) + " has " + values.length
+        if (valueCount != nulls.length) {
+            throw new IllegalArgumentException("Column " + describe(columnIndex) + " has " + valueCount
                     + " values but " + nulls.length + " null flags");
         }
         return Validity.ofNulls(nulls);
     }
 
-    private void storeNullable(int columnIndex, int[] values, Validity nulls) {
+    private void storeNullable(int columnIndex, PhysicalType expected, ColumnSource source, int valueCount,
+                              Validity nulls) {
         ColumnSchema column = schema.getColumn(columnIndex);
         if (column.repetitionType() != RepetitionType.OPTIONAL) {
             throw new IllegalArgumentException("Column " + describe(columnIndex) + " is "
@@ -374,22 +592,20 @@ public final class ColumnBatch {
         }
         if (nulls == null) {
             throw new IllegalArgumentException("nulls must not be null for column " + describe(columnIndex)
-                    + "; use the mask-less ints(...) for an all-present column");
+                    + "; use the mask-less setter for an all-present column");
         }
-        store(columnIndex, values, nulls);
+        store(columnIndex, expected, source, valueCount, nulls);
     }
 
-    private void store(int columnIndex, int[] values, Validity validity) {
+    private void store(int columnIndex, PhysicalType expected, ColumnSource source, int valueCount,
+                       Validity validity) {
         if (consumed) {
             throw new IllegalStateException("Batch has already been written and cannot be modified");
         }
-        if (values == null) {
-            throw new IllegalArgumentException("values must not be null for column " + describe(columnIndex));
-        }
         ColumnSchema column = schema.getColumn(columnIndex);
-        if (column.type() != PhysicalType.INT32) {
+        if (column.type() != expected) {
             throw new IllegalArgumentException("Column " + describe(columnIndex) + " is " + column.type()
-                    + ", not INT32");
+                    + ", not " + expected);
         }
         if (sources[columnIndex] != null) {
             throw new IllegalArgumentException("Column " + describe(columnIndex) + " is already set in this batch");
@@ -398,14 +614,14 @@ public final class ColumnBatch {
         // so it stays out of the record-count agreement the flat columns must satisfy.
         if (column.maxRepetitionLevel() == 0) {
             if (rowCount < 0) {
-                rowCount = values.length;
+                rowCount = valueCount;
             }
-            else if (rowCount != values.length) {
+            else if (rowCount != valueCount) {
                 throw new IllegalArgumentException("Ragged batch: column " + describe(columnIndex) + " has "
-                        + values.length + " values but the batch row count is " + rowCount);
+                        + valueCount + " values but the batch row count is " + rowCount);
             }
         }
-        sources[columnIndex] = new IntArrayColumnSource(values);
+        sources[columnIndex] = source;
         validities[columnIndex] = validity;
     }
 
@@ -425,7 +641,7 @@ public final class ColumnBatch {
     }
 
     /// The value sources in column order, after checking every column was set.
-    IntColumnSource[] completedSources() {
+    ColumnSource[] completedSources() {
         for (int c = 0; c < sources.length; c++) {
             if (sources[c] == null) {
                 throw new IllegalArgumentException("Batch is missing column " + describe(c));
