@@ -518,4 +518,77 @@ class WriterDifferentialTest {
             assertThat(rs.getInt("mx")).isEqualTo(n - 1);
         }
     }
+
+    @Test
+    void duckDbMetadataReportsWrittenStatistics(@TempDir Path dir) throws Exception {
+        // DuckDB's parquet_metadata() decodes the statistics we wrote — the true inverse of the
+        // differential for the metadata: an independent implementation reads our bytes back to
+        // the expected values. The preferred min_value/max_value carry the signed bounds; the
+        // deprecated min/max are absent (we never write them); the null count is exact.
+        int[] v = { 42, -100_000, 7, Integer.MAX_VALUE, Integer.MIN_VALUE, 0 };
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+        Path file = dir.resolve("meta.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch.ints(0, v));
+        }
+
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT stats_min, stats_max, stats_min_value, stats_max_value,"
+                                + " stats_null_count, min_is_exact, max_is_exact"
+                                + " FROM parquet_metadata('" + file.toAbsolutePath() + "') WHERE path_in_schema = 'v'")) {
+            assertThat(rs.next()).isTrue();
+            assertThat(rs.getString("stats_min_value")).isEqualTo(Integer.toString(Integer.MIN_VALUE));
+            assertThat(rs.getString("stats_max_value")).isEqualTo(Integer.toString(Integer.MAX_VALUE));
+            assertThat(rs.getString("stats_null_count")).isEqualTo("0");
+            // The bounds are flagged exact, so a reader may treat them as actual values.
+            assertThat(rs.getBoolean("min_is_exact")).isTrue();
+            assertThat(rs.getBoolean("max_is_exact")).isTrue();
+            // Deprecated min/max fields are never written; DuckDB reports them absent.
+            assertThat(rs.getString("stats_min")).isNull();
+            assertThat(rs.getString("stats_max")).isNull();
+        }
+    }
+
+    @Test
+    void duckDbFiltersOnWrittenStatisticsWithoutDroppingMatches(@TempDir Path dir) throws Exception {
+        // Ascending values banded into small row groups, so the written per-chunk min/max let
+        // DuckDB skip groups outside a range predicate. Correct statistics must not drop any
+        // matching row: a range straddling several groups returns exactly the matching values.
+        int n = 5_000;
+        int[] v = new int[n];
+        for (int i = 0; i < n; i++) {
+            v[i] = i;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("v", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+        WriterConfig config = WriterConfig.builder().rowGroupTargetBytes(4096).build();
+        Path file = dir.resolve("stats.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema, config)) {
+            writer.writeBatch(batch -> batch.ints(0, v));
+        }
+
+        List<Integer> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT v FROM read_parquet('" + file.toAbsolutePath()
+                                + "') WHERE v BETWEEN 2000 AND 3000 ORDER BY v")) {
+            while (rs.next()) {
+                actual.add(rs.getInt("v"));
+            }
+        }
+
+        List<Integer> expected = new ArrayList<>();
+        for (int i = 2000; i <= 3000; i++) {
+            expected.add(i);
+        }
+        assertThat(actual).containsExactlyElementsOf(expected);
+    }
 }

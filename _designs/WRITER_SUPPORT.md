@@ -38,10 +38,11 @@ column's physical bytes are written by the primitive-type increment, and the ann
 is serialized onto the schema and converted at the API boundary.
 
 Sequenced as later work, each its own design: DataPage V2, the Avro write API, the
-optional index structures (OffsetIndex, ColumnIndex, Bloom filters), the optional delta
-and byte-stream-split encoders, and a CLI write/convert command. The S3 `OutputFile`
-backend is planned as increment 19 below. Sorting-column metadata and custom record
-materializers are non-goals.
+optional index structures (OffsetIndex, ColumnIndex, Bloom filters) together with the
+per-page statistics that drive page-level pruning (the `DataPageHeader` inline statistics),
+the optional delta and byte-stream-split encoders, and a CLI write/convert command. The S3
+`OutputFile` backend is planned as increment 19 below. Sorting-column metadata and custom
+record materializers are non-goals.
 
 ## Write model
 
@@ -271,10 +272,18 @@ and the written `created_by` string.
 during encoding and writes them into `ColumnMetaData`, so produced files support
 reader-side predicate pushdown. `min`/`max` ordering follows the column's
 `ColumnOrder` (the same ordering the reader honors on read), so written statistics
-are pruning-correct. Long `BYTE_ARRAY` `min`/`max` are truncated per the format's
+are pruning-correct. The bounds are the preferred `min_value` / `max_value` — never the
+deprecated `min` / `max` — and each is flagged exact via `is_min_value_exact` /
+`is_max_value_exact`, so a reader may treat `min_value == max_value` as proof that a whole
+chunk holds a single value. Long `BYTE_ARRAY` `min`/`max` are truncated per the format's
 binary min/max truncation rule, keeping statistics bounded while remaining valid for
-pruning. OffsetIndex, ColumnIndex, and Bloom filters are deferred; a file is valid
-without them.
+pruning; a truncated bound is flagged **inexact** (`is_*_value_exact = false`), since it is
+then only a bound and not the actual extreme.
+
+These are **column-chunk** statistics, feeding row-group pruning. Per-page statistics — the
+`DataPageHeader` inline statistics and the OffsetIndex / ColumnIndex structures that enable
+page-level skipping — are deferred to the page-index work (below), together with Bloom
+filters. A file is valid without any of them.
 
 ## Threading model
 
@@ -342,8 +351,8 @@ API), *Optimization*, *Spike* (design-only), or *Docs* (user-facing documentatio
 | 8 | **Map shredding** (`INT32` leaves): key/value repeated group, reusing the list machinery. | Dimension | The full nested shape (structs, lists, maps) is settled | 6.3 | [x] |
 | 9 | Dictionary encoding (`INT32`): dictionary page + `RLE_DICTIONARY` indices + plain fallback, exercised on nullable and nested columns so the level + dictionary-index page layout is proven together. Settled in `_designs/WRITER_DICTIONARY.md`. | Dimension | Dictionary column-chunk layout proven, incl. nulls and nesting | 2.2 | [x] |
 | 10 | Compression on the write path (`INT32`, one codec). | Dimension | Compress step + compressed/uncompressed size accounting proven | 6.2 (page compression) | [x] |
-| 11 | Column statistics (`INT32`: `min`/`max`/`null_count`, `ColumnOrder`-correct) accumulated during encode. | Dimension | Produced files support pushdown | 9.1 (stats) | [ ] |
-| 12 | All primitive physical types (incl. `FIXED_LEN_BYTE_ARRAY` type length and `BYTE_ARRAY` min/max truncation), each inheriting paging, nulls, nesting, dictionary, compression and stats. Variable-width values end the constant-bytes-per-row assumption, so the row-group flush moves from the fixed rows-per-group proxy (`rowGroupTargetBytes / (columnCount × 4)`) to tracking the actual buffered uncompressed bytes. | Breadth | Write any column type, flat or nested | 2.1, 9.1 (truncation) | [ ] |
+| 11 | Column statistics (`INT32`: `min`/`max`/`null_count`, `ColumnOrder`-correct) accumulated during encode. | Dimension | Produced files support pushdown | 9.1 (stats) | [x] |
+| 12 | All primitive physical types (incl. `FIXED_LEN_BYTE_ARRAY` type length and `BYTE_ARRAY` min/max truncation), each inheriting paging, nulls, nesting, dictionary, compression and stats. Truncated `BYTE_ARRAY` bounds are flagged inexact (`is_min_value_exact` / `is_max_value_exact` = false), extending the exactness the fixed-width types write unconditionally as true. Variable-width values end the constant-bytes-per-row assumption, so the row-group flush moves from the fixed rows-per-group proxy (`rowGroupTargetBytes / (columnCount × 4)`) to tracking the actual buffered uncompressed bytes. | Breadth | Write any column type, flat or nested | 2.1, 9.1 (truncation) | [ ] |
 | 13 | Logical-type annotations: `LogicalTypeWriter` serializes the `LogicalType` union and legacy `converted_type`/`scale`/`precision`; `FileSchema.Builder` logical-type overload. Both annotations are emitted together for every type with a legacy equivalent (STRING, DATE, DECIMAL, the INT/UINT widths, TIME/TIMESTAMP millis+micros, ENUM, JSON, BSON, `LIST`, `MAP`), the union taking read precedence and the `converted_type` kept for pre-union readers; only types without a legacy equivalent (UUID, FLOAT16, NANOS units, VARIANT, GEOMETRY/GEOGRAPHY) are union-only. This makes stage 13 additive to the `converted_type`-only annotations stages 6–8 already write. | Breadth | Columns read back with their logical type (STRING, DATE, TIMESTAMP, DECIMAL, …) | 6.4 (annotation) | [ ] |
 | 14 | Remaining codecs + optional delta and byte-stream-split encoders. | Breadth | Full codec / encoding choice | 2.4, 2.5 | [ ] |
 | 15 | Parallel column encoding + row-group pipelining. | Optimization | Write throughput | — | [ ] |
@@ -359,8 +368,8 @@ are breadth on the settled shape, 15–16 are internal encoding optimizations, a
 row-oriented layer; 18 documents the finished public surface. Together, increments 1–18
 constitute the write-support milestone (#9); increment 19 adds the S3 `OutputFile` backend
 on the settled surface. Sequenced as later work, each its own design and sequence: DataPage
-V2, the optional index structures and Bloom filters, the Avro write adapter, and a CLI
-write/convert command.
+V2, the optional index structures and Bloom filters (with the per-page statistics that make
+page-level pruning possible), the Avro write adapter, and a CLI write/convert command.
 
 ## User documentation
 

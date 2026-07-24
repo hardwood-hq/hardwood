@@ -54,6 +54,10 @@ import dev.hardwood.schema.ColumnSchema;
 /// subsequent page is `PLAIN`. Encoding is per-page (each page's header declares its own), so a
 /// chunk may hold any mix of the two; a page sealed while the dictionary is still empty (a
 /// leading run of nulls filling a page) is `PLAIN` even ahead of later `RLE_DICTIONARY` pages.
+///
+/// A [StatisticsCollector] accumulates the chunk's `min` / `max` / `null_count` over the same
+/// entry stream, written into the chunk metadata at flush so produced files support
+/// reader-side predicate pushdown.
 final class ColumnChunkBuffer implements RecordShredder.LevelSink {
 
     private final int maxDefLevel;
@@ -74,6 +78,8 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
     private final DictionaryEncoder dictionary; // null when dictionary encoding is disabled
     private final int dictionaryLimitBytes;
     private boolean dictionaryActive;    // true while pages are still dictionary-encoded
+
+    private final StatisticsCollector statistics = new StatisticsCollector();
 
     /// @param pageValues maximum number of level entries per data page
     /// @param maxDefLevel the column's maximum definition level (0 selects no def stream)
@@ -127,6 +133,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                     ? (index < 0 ? dictionary.add(value) : index)
                     : value;
         }
+        statistics.accept(present, value);
         pendingCount++;
         if (pendingCount == pendingValues.length) {
             sealPage();
@@ -168,7 +175,7 @@ final class ColumnChunkBuffer implements RecordShredder.LevelSink {
                 Map.of(),
                 dataPageOffset,
                 dictionaryPageOffset,
-                null,
+                statistics.toStatistics(),
                 null,
                 null,
                 null);
