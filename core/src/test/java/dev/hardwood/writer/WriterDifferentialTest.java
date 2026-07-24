@@ -628,4 +628,152 @@ class WriterDifferentialTest {
         }
         assertThat(actual).containsExactlyElementsOf(expected);
     }
+
+    @Test
+    void duckDbReadsWrittenLongs(@TempDir Path dir) throws Exception {
+        long[] v = { 0L, 1L, -1L, 1_000_000_000_000L, -5L, Long.MAX_VALUE, Long.MIN_VALUE };
+        int[] r = new int[v.length];
+        for (int i = 0; i < r.length; i++) {
+            r[i] = i;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .build();
+        Path file = dir.resolve("longs.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch.ints(0, r).longs(1, v));
+        }
+
+        List<Long> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                actual.add(rs.getLong("v"));
+            }
+        }
+
+        List<Long> expected = new ArrayList<>(v.length);
+        for (long value : v) {
+            expected.add(value);
+        }
+        assertThat(actual).containsExactlyElementsOf(expected);
+    }
+
+    @Test
+    void duckDbReadsWrittenDoublesIncludingNaNAndSignedZeros(@TempDir Path dir) throws Exception {
+        double[] v = { 0.0, -0.0, 1.5, -2.5, Double.NaN, Double.MAX_VALUE, -Double.MAX_VALUE };
+        int[] r = new int[v.length];
+        for (int i = 0; i < r.length; i++) {
+            r[i] = i;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.DOUBLE, RepetitionType.REQUIRED)
+                .build();
+        Path file = dir.resolve("doubles.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch.ints(0, r).doubles(1, v));
+        }
+
+        List<Double> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                actual.add(rs.getDouble("v"));
+            }
+        }
+
+        assertThat(actual).hasSize(v.length);
+        for (int i = 0; i < v.length; i++) {
+            if (Double.isNaN(v[i])) {
+                assertThat(actual.get(i)).isNaN();
+            }
+            else {
+                // Compare raw bits so a sign flip on zero would be caught.
+                assertThat(Double.doubleToRawLongBits(actual.get(i)))
+                        .isEqualTo(Double.doubleToRawLongBits(v[i]));
+            }
+        }
+    }
+
+    @Test
+    void duckDbReadsWrittenFloats(@TempDir Path dir) throws Exception {
+        float[] v = { 0.0f, -0.0f, 1.5f, -2.5f, Float.NaN, Float.MAX_VALUE, -Float.MAX_VALUE };
+        int[] r = new int[v.length];
+        for (int i = 0; i < r.length; i++) {
+            r[i] = i;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.FLOAT, RepetitionType.REQUIRED)
+                .build();
+        Path file = dir.resolve("floats.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch.ints(0, r).floats(1, v));
+        }
+
+        List<Float> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                actual.add(rs.getFloat("v"));
+            }
+        }
+
+        assertThat(actual).hasSize(v.length);
+        for (int i = 0; i < v.length; i++) {
+            if (Float.isNaN(v[i])) {
+                assertThat(actual.get(i)).isNaN();
+            }
+            else {
+                // Compare raw bits so a sign flip on zero would be caught.
+                assertThat(Float.floatToRawIntBits(actual.get(i)))
+                        .isEqualTo(Float.floatToRawIntBits(v[i]));
+            }
+        }
+    }
+
+    @Test
+    void duckDbReadsWrittenBooleans(@TempDir Path dir) throws Exception {
+        boolean[] v = { true, false, false, true, true, false, true, true, false };
+        int[] r = new int[v.length];
+        for (int i = 0; i < r.length; i++) {
+            r[i] = i;
+        }
+
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("r", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("v", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .build();
+        Path file = dir.resolve("booleans.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.writeBatch(batch -> batch.ints(0, r).booleans(1, v));
+        }
+
+        List<Boolean> actual = new ArrayList<>();
+        try (Connection conn = DriverManager.getConnection("jdbc:duckdb:");
+                Statement stmt = conn.createStatement();
+                ResultSet rs = stmt.executeQuery(
+                        "SELECT v FROM read_parquet('" + file.toAbsolutePath() + "') ORDER BY r")) {
+            while (rs.next()) {
+                actual.add(rs.getBoolean("v"));
+            }
+        }
+
+        List<Boolean> expected = new ArrayList<>(v.length);
+        for (boolean value : v) {
+            expected.add(value);
+        }
+        assertThat(actual).containsExactlyElementsOf(expected);
+    }
 }

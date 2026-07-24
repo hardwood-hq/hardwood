@@ -7,19 +7,11 @@
  */
 package dev.hardwood.internal.writer;
 
-/// A read-only, bulk view over a column's `INT32` values that the writer pulls from
-/// while packing pages. The writer never reads a value at a time: it asks for
-/// page-sized ranges via [#copyInto], so a source implemented over a foreign columnar
-/// container (an Arrow vector, an off-heap buffer) is copied in bounded, primitive
-/// chunks rather than one boxed element at a time.
-///
-/// This is the internal seam behind the public `ColumnBatch` primitive-array setters. A
-/// public `ColumnVector` SPI over the same shape — letting callers write from their own
-/// containers without an intervening copy — is a later additive layer.
-public interface IntColumnSource {
-
-    /// The number of values in this source.
-    int size();
+/// A [ColumnSource] over a column's `INT32` values. The writer never reads a value at a
+/// time: it asks for page-sized ranges via [#copyInto], so a source implemented over a
+/// foreign columnar container (an Arrow vector, an off-heap buffer) is copied in bounded,
+/// primitive chunks rather than one boxed element at a time.
+public interface IntColumnSource extends ColumnSource {
 
     /// Copies `length` values starting at `srcPos` into `dest` starting at `destPos`.
     ///

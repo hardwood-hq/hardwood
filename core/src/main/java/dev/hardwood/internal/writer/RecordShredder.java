@@ -38,11 +38,17 @@ import dev.hardwood.schema.SchemaNode;
 /// shreds continuously.
 public final class RecordShredder {
 
-    /// Receives one level entry at a time. `present` is true when the leaf value at this
-    /// position exists, in which case `value` is that value; otherwise `value` is ignored.
+    /// Receives one level entry at a time. `valueIndex` is the position of the present leaf
+    /// value in the column's source; a negative `valueIndex` marks an absent slot (a null
+    /// leaf, a null or empty list, or a null struct ancestor), which carries no value. The
+    /// shredder is value-type-agnostic: it emits source positions, and the sink reads the typed
+    /// value itself.
     public interface LevelSink {
-        void accept(int repetitionLevel, int definitionLevel, boolean present, int value);
+        void accept(int repetitionLevel, int definitionLevel, int valueIndex);
     }
+
+    /// Emitted as the `valueIndex` for an absent slot.
+    private static final int ABSENT = -1;
 
     /// A `STRUCT` or `REPEATED` step on a leaf's path, carrying the definition/repetition
     /// contributions and the batch-input key (the group's dotted path).
@@ -56,33 +62,29 @@ public final class RecordShredder {
     private final int[] maxDef;
     private final int[] maxRep;
     private final String[] columnNames;
-    private final ValueWindow[] windows;
 
     // Per-batch binding.
     private Validity[] leafValidities;
     private Map<String, Validity> structValidities;
     private Map<String, Validity> listValidities;
     private Map<String, int[]> listOffsets;
-    private IntColumnSource[] sources;
+    private ColumnSource[] sources;
     private int recordCount;
 
     /// @param schema the file schema
-    /// @param valueWindowCapacity the size of each column's leaf-value read window, in values
-    public RecordShredder(FileSchema schema, int valueWindowCapacity) {
+    public RecordShredder(FileSchema schema) {
         int columnCount = schema.getColumnCount();
         this.layers = new Layer[columnCount][];
         this.leafOptional = new boolean[columnCount];
         this.maxDef = new int[columnCount];
         this.maxRep = new int[columnCount];
         this.columnNames = new String[columnCount];
-        this.windows = new ValueWindow[columnCount];
         walk(schema.getRootNode(), new ArrayList<>(), new ArrayList<>(), false);
         for (int c = 0; c < columnCount; c++) {
             ColumnSchema column = schema.getColumn(c);
             maxDef[c] = column.maxDefinitionLevel();
             maxRep[c] = column.maxRepetitionLevel();
             columnNames[c] = column.fieldPath().toString();
-            windows[c] = new ValueWindow(valueWindowCapacity);
         }
     }
 
@@ -137,7 +139,7 @@ public final class RecordShredder {
 
     /// Binds the shredder to one batch's inputs, validates them, and derives the record
     /// count. Each column's value window is reset to the batch's source.
-    public void bind(IntColumnSource[] sources, Validity[] leafValidities,
+    public void bind(ColumnSource[] sources, Validity[] leafValidities,
                      Map<String, Validity> structValidities, Map<String, Validity> listValidities,
                      Map<String, int[]> listOffsets) {
         this.sources = sources;
@@ -146,9 +148,6 @@ public final class RecordShredder {
         this.listValidities = listValidities;
         this.listOffsets = listOffsets;
         this.recordCount = validateAndDeriveRecordCount();
-        for (int c = 0; c < windows.length; c++) {
-            windows[c].reset(sources[c]);
-        }
     }
 
     public int recordCount() {
@@ -159,7 +158,7 @@ public final class RecordShredder {
     /// entry into `sink`. Records must be shredded in order, since the column's value window
     /// advances monotonically across calls.
     public void shred(int columnIndex, int from, int count, LevelSink sink) {
-        Ctx ctx = new Ctx(columnIndex, layers[columnIndex], maxDef[columnIndex], sink, windows[columnIndex]);
+        Ctx ctx = new Ctx(columnIndex, layers[columnIndex], maxDef[columnIndex], sink);
         int end = from + count;
         for (int r = from; r < end; r++) {
             emit(ctx, 0, r, 0, 0);
@@ -172,17 +171,17 @@ public final class RecordShredder {
     private void emit(Ctx ctx, int layerIndex, int itemIndex, int parentDef, int repToEmit) {
         if (layerIndex == ctx.path.length) {
             if (leafOptional[ctx.columnIndex] && isNull(leafValidities[ctx.columnIndex], itemIndex)) {
-                ctx.sink.accept(repToEmit, parentDef, false, 0);
+                ctx.sink.accept(repToEmit, parentDef, ABSENT);
             }
             else {
-                ctx.sink.accept(repToEmit, ctx.maxDef, true, ctx.window.at(itemIndex));
+                ctx.sink.accept(repToEmit, ctx.maxDef, itemIndex);
             }
             return;
         }
         Layer layer = ctx.path[layerIndex];
         if (layer.kind() == Layer.Kind.STRUCT) {
             if (layer.nullable() && isNull(structValidities.get(layer.key()), itemIndex)) {
-                ctx.sink.accept(repToEmit, parentDef, false, 0);
+                ctx.sink.accept(repToEmit, parentDef, ABSENT);
             }
             else {
                 emit(ctx, layerIndex + 1, itemIndex, parentDef + layer.presentDefInc(), repToEmit);
@@ -191,7 +190,7 @@ public final class RecordShredder {
         }
         // REPEATED (list).
         if (layer.nullable() && isNull(listValidities.get(layer.key()), itemIndex)) {
-            ctx.sink.accept(repToEmit, parentDef, false, 0); // null list — outer group absent
+            ctx.sink.accept(repToEmit, parentDef, ABSENT); // null list — outer group absent
             return;
         }
         int[] offsets = offsetsFor(layer);
@@ -199,7 +198,7 @@ public final class RecordShredder {
         int end = offsets[itemIndex + 1];
         int listDef = parentDef + layer.presentDefInc();
         if (start == end) {
-            ctx.sink.accept(repToEmit, listDef, false, 0); // empty list — present but no elements
+            ctx.sink.accept(repToEmit, listDef, ABSENT); // empty list — present but no elements
             return;
         }
         int childDef = listDef + layer.contentDefInc();
@@ -306,46 +305,12 @@ public final class RecordShredder {
         final Layer[] path;
         final int maxDef;
         final LevelSink sink;
-        final ValueWindow window;
 
-        Ctx(int columnIndex, Layer[] path, int maxDef, LevelSink sink, ValueWindow window) {
+        Ctx(int columnIndex, Layer[] path, int maxDef, LevelSink sink) {
             this.columnIndex = columnIndex;
             this.path = path;
             this.maxDef = maxDef;
             this.sink = sink;
-            this.window = window;
-        }
-    }
-
-    /// A bounded, forward-only view over a column's leaf source. `at` is called with
-    /// monotonically non-decreasing indices; the window slides forward and refills through a
-    /// single bulk `copyInto`, so a foreign columnar source is read in page-sized chunks
-    /// rather than one value at a time or copied whole.
-    private static final class ValueWindow {
-        private final int[] buffer;
-        private IntColumnSource source;
-        private int size;
-        private int base;
-        private int length;
-
-        ValueWindow(int capacity) {
-            this.buffer = new int[Math.max(1, capacity)];
-        }
-
-        void reset(IntColumnSource source) {
-            this.source = source;
-            this.size = source.size();
-            this.base = 0;
-            this.length = 0;
-        }
-
-        int at(int index) {
-            if (index >= base + length) {
-                base = index;
-                length = Math.min(buffer.length, size - base);
-                source.copyInto(base, buffer, 0, length);
-            }
-            return buffer[index - base];
         }
     }
 }

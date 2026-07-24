@@ -23,7 +23,7 @@ import dev.hardwood.internal.compression.CompressorFactory;
 import dev.hardwood.internal.encoding.LevelEncoder;
 import dev.hardwood.internal.thrift.FileMetaDataWriter;
 import dev.hardwood.internal.thrift.ThriftCompactWriter;
-import dev.hardwood.internal.writer.IntColumnSource;
+import dev.hardwood.internal.writer.ColumnSource;
 import dev.hardwood.internal.writer.RecordShredder;
 import dev.hardwood.internal.writer.RowGroupBuffer;
 import dev.hardwood.metadata.FileMetaData;
@@ -34,9 +34,10 @@ import dev.hardwood.schema.FileSchema;
 
 /// Writes a Parquet file through a columnar batch API.
 ///
-/// This increment writes `INT32` columns — flat `REQUIRED` / `OPTIONAL`, nested inside
-/// `REQUIRED` / `OPTIONAL` `struct` groups, and inside `LIST`s and `MAP`s (including lists
-/// of lists, lists of structs, and maps of any in-scope value). Data is supplied as
+/// This increment writes the fixed-width primitive types — `BOOLEAN`, `INT32`, `INT64`,
+/// `FLOAT`, `DOUBLE` — flat `REQUIRED` / `OPTIONAL`, nested inside `REQUIRED` / `OPTIONAL`
+/// `struct` groups, and inside `LIST`s and `MAP`s (including lists of lists, lists of structs,
+/// and maps of any in-scope value). Data is supplied as
 /// [ColumnBatch] slices; the writer packs each column into size-bounded data pages — a
 /// levelled column's pages carrying an RLE definition-level stream ahead of the values — and
 /// flushes a row group once its buffered data reaches the configured target, so peak memory is
@@ -71,7 +72,7 @@ public final class ParquetFileWriter implements Closeable {
         this.config = config;
         this.pageValues = pageRowCapacity(config.pageTargetBytes(), schema);
         this.maxRowsPerGroup = maxRowsPerGroup(config.rowGroupTargetBytes(), schema);
-        this.shredder = new RecordShredder(schema, pageValues);
+        this.shredder = new RecordShredder(schema);
         this.compressor = compressor;
         this.current = newRowGroupBuffer();
     }
@@ -87,7 +88,8 @@ public final class ParquetFileWriter implements Closeable {
     /// @param schema the schema to write
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws UnsupportedOperationException if the schema has a non-`INT32` column
+    /// @throws UnsupportedOperationException if the schema has a column of an unsupported
+    ///         physical type
     public static ParquetFileWriter create(OutputFile out, FileSchema schema) throws IOException {
         return create(out, schema, WriterConfig.defaults());
     }
@@ -99,15 +101,16 @@ public final class ParquetFileWriter implements Closeable {
     /// @param config the writer configuration
     /// @return an open writer
     /// @throws IOException if the destination cannot be opened
-    /// @throws UnsupportedOperationException if the schema has a non-`INT32` column, or the
-    ///         configured codec cannot be written
+    /// @throws UnsupportedOperationException if the schema has a column of an unsupported
+    ///         physical type, or the configured codec cannot be written
     public static ParquetFileWriter create(OutputFile out, FileSchema schema, WriterConfig config)
             throws IOException {
         for (int c = 0; c < schema.getColumnCount(); c++) {
             ColumnSchema column = schema.getColumn(c);
-            if (column.type() != PhysicalType.INT32) {
+            if (!isSupportedType(column.type())) {
                 throw new UnsupportedOperationException(
-                        "Only INT32 columns are supported; column " + column.name() + " is " + column.type());
+                        "Writer does not support " + column.type() + " columns yet; column "
+                                + column.name() + " is " + column.type());
             }
         }
         // Resolve the codec before touching the output, so an unsupported codec or a missing
@@ -133,7 +136,7 @@ public final class ParquetFileWriter implements Closeable {
         ensureOpen();
         ColumnBatch batch = new ColumnBatch(schema);
         filler.accept(batch);
-        IntColumnSource[] sources = batch.completedSources();
+        ColumnSource[] sources = batch.completedSources();
         shredder.bind(sources, batch.validities(), batch.structValidities(),
                 batch.listValidities(), batch.listOffsets());
         batch.markConsumed();
@@ -142,7 +145,7 @@ public final class ParquetFileWriter implements Closeable {
         while (pos < rows) {
             int space = maxRowsPerGroup - current.rowCount();
             int n = Math.min(space, rows - pos);
-            current.appendRecords(shredder, pos, n);
+            current.appendRecords(shredder, sources, pos, n);
             pos += n;
             if (current.rowCount() >= maxRowsPerGroup) {
                 flushRowGroup();
@@ -203,36 +206,56 @@ public final class ParquetFileWriter implements Closeable {
         out.write(ByteBuffer.wrap(MAGIC));
     }
 
-    /// Rows per data page whose encoded body fits the page target. A page costs
-    /// `Integer.SIZE` bits per row for its `PLAIN` values plus, for an `OPTIONAL` column,
-    /// its RLE definition-level stream; sizing to the widest column's per-row bit cost
-    /// keeps every column's page within the target. At least one row so a tiny target
-    /// still makes progress.
+    /// Rows per data page whose encoded body fits the page target. A page costs each column's
+    /// `PLAIN` value bit width per row plus, for a levelled column, its RLE definition-level
+    /// stream; sizing to the widest column's per-row bit cost keeps every column's page within
+    /// the target. At least one row so a tiny target still makes progress.
     private static int pageRowCapacity(long pageTargetBytes, FileSchema schema) {
-        int maxColumnBitsPerRow = Integer.SIZE;
+        int maxColumnBitsPerRow = 1;
         for (int c = 0; c < schema.getColumnCount(); c++) {
-            int defBits = LevelEncoder.bitWidth(schema.getColumn(c).maxDefinitionLevel());
-            maxColumnBitsPerRow = Math.max(maxColumnBitsPerRow, Integer.SIZE + defBits);
+            ColumnSchema column = schema.getColumn(c);
+            int defBits = LevelEncoder.bitWidth(column.maxDefinitionLevel());
+            maxColumnBitsPerRow = Math.max(maxColumnBitsPerRow, valueBits(column.type()) + defBits);
         }
         long rows = pageTargetBytes * Byte.SIZE / maxColumnBitsPerRow;
         return (int) Math.max(1, Math.min(rows, Integer.MAX_VALUE));
     }
 
-    /// Number of rows whose buffered row-group data fits the row-group target, counting
-    /// every column's `PLAIN` values plus the RLE definition-level stream of each
-    /// `OPTIONAL` column. At least one so the writer always makes progress even with a
-    /// tiny target or a wide schema.
+    /// Number of rows whose buffered row-group data fits the row-group target, counting every
+    /// column's `PLAIN` value bit width plus the RLE definition-level stream of each levelled
+    /// column. At least one so the writer always makes progress even with a tiny target or a
+    /// wide schema.
     private static int maxRowsPerGroup(long rowGroupTargetBytes, FileSchema schema) {
         int columnCount = schema.getColumnCount();
         if (columnCount == 0) {
             return Integer.MAX_VALUE;
         }
-        long bitsPerRow = (long) columnCount * Integer.SIZE;
+        long bitsPerRow = 0;
         for (int c = 0; c < columnCount; c++) {
-            bitsPerRow += LevelEncoder.bitWidth(schema.getColumn(c).maxDefinitionLevel());
+            ColumnSchema column = schema.getColumn(c);
+            bitsPerRow += valueBits(column.type()) + LevelEncoder.bitWidth(column.maxDefinitionLevel());
         }
         long rows = rowGroupTargetBytes * Byte.SIZE / bitsPerRow;
         return (int) Math.max(1, Math.min(rows, Integer.MAX_VALUE));
+    }
+
+    /// The `PLAIN` bit width of one value of a fixed-width physical type, used to size pages and
+    /// row groups. Only the fixed-width primitive types this increment supports occur here.
+    private static int valueBits(PhysicalType type) {
+        return switch (type) {
+            case BOOLEAN -> 1;
+            case INT32, FLOAT -> Integer.SIZE;
+            case INT64, DOUBLE -> Long.SIZE;
+            default -> throw new IllegalArgumentException("No fixed value width for " + type);
+        };
+    }
+
+    /// Whether the writer supports producing a column of this physical type.
+    private static boolean isSupportedType(PhysicalType type) {
+        return switch (type) {
+            case BOOLEAN, INT32, INT64, FLOAT, DOUBLE -> true;
+            case INT96, BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> false;
+        };
     }
 
     private void ensureOpen() {
