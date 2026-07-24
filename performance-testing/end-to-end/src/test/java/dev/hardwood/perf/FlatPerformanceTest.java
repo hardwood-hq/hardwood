@@ -36,10 +36,13 @@ import org.apache.parquet.io.api.GroupConverter;
 import org.apache.parquet.io.api.PrimitiveConverter;
 import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.PrimitiveType;
+import org.junit.jupiter.api.AfterAll;
+import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.TestInstance;
 
 import dev.hardwood.Hardwood;
+import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.metadata.PhysicalType;
@@ -68,6 +71,34 @@ class FlatPerformanceTest {
     private static final String START_PROPERTY = "perf.start";
     private static final String END_PROPERTY = "perf.end";
     private static final String RUNS_PROPERTY = "perf.runs";
+
+    // DIAGNOSTIC (uncommitted): probe the column-reader wobble. Two axes:
+    //   -Dperf.threads=N   size the decode pool (default = availableProcessors()).
+    //                      On the m7i.2xlarge (4 physical / 8 vCPU) pass 4 to keep
+    //                      decode off the SMT siblings.
+    //   -Dperf.reuse=true|false  reuse ONE sized context across all iterations (true,
+    //                      default) vs. a fresh default Hardwood.create() per iteration
+    //                      (false = the original behaviour, availableProcessors threads).
+    // Matrix to separate the effects:
+    //   reuse=false                 -> baseline (per-iteration pool, full size)
+    //   reuse=true  threads=<full>  -> isolates the reuse effect
+    //   reuse=true  threads=<phys>  -> adds pool-sizing to physical cores
+    // Remove before merging.
+    private static final int DECODE_THREADS =
+            Integer.getInteger("perf.threads", Runtime.getRuntime().availableProcessors());
+    private static final boolean REUSE_CONTEXT =
+            Boolean.parseBoolean(System.getProperty("perf.reuse", "true"));
+    private HardwoodContext sharedContext;
+
+    @BeforeAll
+    void openSharedContext() {
+        sharedContext = HardwoodContext.create(DECODE_THREADS);
+    }
+
+    @AfterAll
+    void closeSharedContext() {
+        sharedContext.close();
+    }
 
     enum Contender {
         HARDWOOD_ROW_READER_NAMED("Hardwood (row reader named)"),
@@ -516,7 +547,7 @@ class FlatPerformanceTest {
         double fareAmount = 0.0;
         long rowCount = 0;
 
-        try (Hardwood hardwood = Hardwood.create()) {
+        try (Hardwood hardwood = REUSE_CONTEXT ? Hardwood.create(sharedContext) : Hardwood.create()) {
             for (SchemaGroup group : groupFilesBySchema(files)) {
                 try (ParquetFileReader parquet = hardwood.openAll(InputFile.ofPaths(group.files()));
                      ColumnReaders columns = parquet.columnReaders(ColumnProjection.columns("passenger_count", "trip_distance", "fare_amount"))) {
