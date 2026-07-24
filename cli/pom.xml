@@ -16,7 +16,8 @@
       <screenshots.parquetFile>${maven.multiModuleProjectDirectory}/cli/src/test/resources/dive_screenshots_fixture.parquet</screenshots.parquetFile>
       <screenshots.tapeFile>${maven.multiModuleProjectDirectory}/docs/screenshots/dive-screenshots.tape</screenshots.tapeFile>
       <screenshots.castFile>${project.build.directory}/dive-screenshots.cast</screenshots.castFile>
-      <aesh.version>3.16.3</aesh.version>
+      <aesh.version>3.16.6</aesh.version>
+      <aesh-readline.version>3.16.2</aesh-readline.version>
       <!-- Integration tests require a native binary; skip by default.
            The native profile overrides this to false. -->
       <skipITs>true</skipITs>
@@ -70,7 +71,7 @@
       <dependency>
         <groupId>org.aesh</groupId>
         <artifactId>readline-api</artifactId>
-        <version>${aesh.version}</version>
+        <version>${aesh-readline.version}</version>
       </dependency>
 
       <!-- ASCII table rendering for command output -->
