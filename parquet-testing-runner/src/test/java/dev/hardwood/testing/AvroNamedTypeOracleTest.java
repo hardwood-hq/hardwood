@@ -89,8 +89,12 @@ class AvroNamedTypeOracleTest {
                 """);
         FileSchema hardwood = nestedAddressSchema();
 
-        assertThat(renderNamedTypeAttributes(new AvroSchemaConverter().convert(reference)))
-                .containsExactlyElementsOf(renderNamedTypeAttributes(
+        SourceDescriptor descriptor = bind(reference, layout("root", Role.RECORD,
+                layout("home", Role.RECORD, layout("address", Role.RECORD, layout("city", Role.LEAF))),
+                layout("work", Role.RECORD, layout("address", Role.RECORD, layout("zip", Role.LEAF)))));
+        assertThat(renderNamedTypeOccurrences(descriptor,
+                new AvroSchemaConverter().convert(reference)))
+                .containsExactlyElementsOf(renderNamedTypeOccurrences(descriptor,
                         dev.hardwood.avro.internal.AvroSchemaConverter.planForParquetAvroCompatibility(
                                 hardwood, ColumnProjection.all()).avro()));
 
@@ -99,8 +103,10 @@ class AvroNamedTypeOracleTest {
                   optional group home { optional group address { optional binary city (STRING); } }
                 }
                 """);
-        assertThat(renderNamedTypeAttributes(new AvroSchemaConverter().convert(projectedReference)))
-                .containsExactlyElementsOf(renderNamedTypeAttributes(
+        SourceDescriptor projectedDescriptor = bind(projectedReference, layout("root", Role.RECORD,
+                layout("home", Role.RECORD, layout("address", Role.RECORD, layout("city", Role.LEAF)))));
+        assertThat(renderNamedTypeOccurrences(projectedDescriptor, new AvroSchemaConverter().convert(projectedReference)))
+                .containsExactlyElementsOf(renderNamedTypeOccurrences(projectedDescriptor,
                         dev.hardwood.avro.internal.AvroSchemaConverter.planForParquetAvroCompatibility(
                                 hardwood, ColumnProjection.columns("home.address.city")).avro()));
     }
@@ -116,10 +122,15 @@ class AvroNamedTypeOracleTest {
                 continue;
             }
             FileSchema hardwood = hardwoodSchema(fixture.schema());
-            assertThat(renderNamedTypeAttributes(dev.hardwood.avro.internal.AvroSchemaConverter
+            validateDescriptor(fixture.descriptor());
+            assertThat(renderNamedTypeOccurrences(fixture.descriptor(), dev.hardwood.avro.internal.AvroSchemaConverter
                     .planForParquetAvroCompatibility(hardwood, ColumnProjection.all()).avro()))
                     .as(fixture.id())
-                    .containsExactlyElementsOf(renderNamedTypeAttributes(reference));
+                    .containsExactlyElementsOf(renderNamedTypeOccurrences(fixture.descriptor(), reference));
+            assertThat(renderFixedLogicalTypes(dev.hardwood.avro.internal.AvroSchemaConverter
+                    .planForParquetAvroCompatibility(hardwood, ColumnProjection.all()).avro()))
+                    .as(fixture.id() + " fixed logical types")
+                    .containsExactlyElementsOf(renderFixedLogicalTypes(reference));
         }
     }
 
@@ -131,13 +142,12 @@ class AvroNamedTypeOracleTest {
                   optional group items (LIST) {
                     repeated group list {
                       optional group address { optional int32 city; }
-                      optional int64 skip;
                     }
                   }
                   optional group people (MAP) {
                     repeated group key_value {
                       required binary key (STRING);
-                      optional group value { optional int32 city; optional int64 skip; }
+                      optional group value { optional int32 city; }
                     }
                   }
                 }
@@ -162,10 +172,24 @@ class AvroNamedTypeOracleTest {
                 """));
         ColumnProjection projection = ColumnProjection.columns(
                 "retained.address.city", "items.list.address.city", "people.key_value.value.city");
-        assertThat(renderNamedTypeAttributes(new AvroSchemaConverter().convert(projectedNested)))
-                .containsExactlyElementsOf(renderNamedTypeAttributes(
+        SourceDescriptor projectedDescriptor = bind(projectedNested, layout("root", Role.RECORD,
+                layout("retained", Role.RECORD, layout("address", Role.RECORD, layout("city", Role.LEAF))),
+                layout("items", Role.ARRAY, layout("list", Role.RECORD,
+                        layout("address", Role.RECORD, layout("city", Role.LEAF)))),
+                layout("people", Role.MAP, layout("key_value", Role.RECORD, layout("key", Role.LEAF),
+                        layout("value", Role.RECORD, layout("city", Role.LEAF))))));
+        assertThat(renderNamedTypeOccurrences(projectedDescriptor, new AvroSchemaConverter().convert(projectedNested)))
+                .containsExactlyElementsOf(renderNamedTypeOccurrences(projectedDescriptor,
                         dev.hardwood.avro.internal.AvroSchemaConverter
                                 .planForParquetAvroCompatibility(full, projection).avro()));
+        Schema projectedItems = new AvroSchemaConverter().convert(projectedNested)
+                .getField("items").schema().getTypes().get(1).getElementType();
+        Schema projectedPeople = new AvroSchemaConverter().convert(projectedNested)
+                .getField("people").schema().getTypes().get(1).getValueType().getTypes().get(1);
+        assertThat(projectedItems.getFields()).extracting(Schema.Field::name).containsExactly("address");
+        assertThat(projectedItems.getField("address").schema().getTypes().get(1).getFields())
+                .extracting(Schema.Field::name).containsExactly("city");
+        assertThat(projectedPeople.getFields()).extracting(Schema.Field::name).containsExactly("city");
 
         MessageType fullMap = parse("""
                 message root {
@@ -178,8 +202,11 @@ class AvroNamedTypeOracleTest {
                 }
                 """);
         FileSchema mapSchema = hardwoodSchema(fullMap);
-        assertThat(renderNamedTypeAttributes(new AvroSchemaConverter().convert(fullMap)))
-                .containsExactlyElementsOf(renderNamedTypeAttributes(
+        SourceDescriptor mapDescriptor = bind(fullMap, layout("root", Role.RECORD,
+                layout("people", Role.MAP, layout("key_value", Role.RECORD, layout("key", Role.LEAF),
+                        layout("value", Role.FIXED)))));
+        assertThat(renderNamedTypeOccurrences(mapDescriptor, new AvroSchemaConverter().convert(fullMap)))
+                .containsExactlyElementsOf(renderNamedTypeOccurrences(mapDescriptor,
                         dev.hardwood.avro.internal.AvroSchemaConverter.planForParquetAvroCompatibility(
                                 mapSchema, ColumnProjection.columns("people.key_value.key")).avro()));
     }
@@ -188,7 +215,7 @@ class AvroNamedTypeOracleTest {
     void variantDescriptorRejectsPhysicalMutations() {
         Fixture fixture = fixtures().stream().filter(candidate -> candidate.id().equals("variant-shredded"))
                 .findFirst().orElseThrow();
-        SourceDescriptor root = describeRoot(fixture.schema());
+        SourceDescriptor root = fixture.descriptor();
         SourceDescriptor payload = root.children().getFirst();
 
         SourceDescriptor missingChild = new SourceDescriptor(payload.source(), payload.name(),
@@ -206,8 +233,22 @@ class AvroNamedTypeOracleTest {
                 List.of(reorderedPayload, root.children().get(1)), Role.RECORD)))
                 .isInstanceOf(AssertionError.class);
 
-        SourceDescriptor renamedPayload = new SourceDescriptor(payload.source(), "renamed", payload.children(),
-                Role.VARIANT);
+        SourceDescriptor typedValue = payload.children().get(2);
+        SourceDescriptor missingSuppressedAddress = new SourceDescriptor(typedValue.source(), typedValue.name(),
+                List.of(), Role.SUPPRESSED);
+        SourceDescriptor missingSuppressedPayload = new SourceDescriptor(payload.source(), payload.name(), List.of(
+                payload.children().get(0), payload.children().get(1), missingSuppressedAddress), Role.VARIANT);
+        assertThatThrownBy(() -> validateDescriptor(new SourceDescriptor(root.source(), root.name(),
+                List.of(missingSuppressedPayload, root.children().get(1)), Role.RECORD)))
+                .isInstanceOf(AssertionError.class);
+
+        SourceDescriptor suppressedAddress = typedValue.children().getFirst();
+        SourceDescriptor renamedSuppressedAddress = new SourceDescriptor(suppressedAddress.source(), "renamed",
+                suppressedAddress.children(), Role.SUPPRESSED);
+        SourceDescriptor renamedTypedValue = new SourceDescriptor(typedValue.source(), typedValue.name(),
+                List.of(renamedSuppressedAddress), Role.SUPPRESSED);
+        SourceDescriptor renamedPayload = new SourceDescriptor(payload.source(), payload.name(), List.of(
+                payload.children().get(0), payload.children().get(1), renamedTypedValue), Role.VARIANT);
         assertThatThrownBy(() -> validateDescriptor(new SourceDescriptor(root.source(), root.name(),
                 List.of(renamedPayload, root.children().get(1)), Role.RECORD)))
                 .isInstanceOf(AssertionError.class);
@@ -223,6 +264,34 @@ class AvroNamedTypeOracleTest {
         List<String> namedTypes = new ArrayList<>();
         collectNamedTypeAttributes(schema, namedTypes, new HashSet<>());
         return namedTypes;
+    }
+
+    private static List<String> renderNamedTypeOccurrences(SourceDescriptor source, Schema schema) {
+        List<String> occurrences = new ArrayList<>();
+        renderRoot("comparison", source, schema, occurrences);
+        return occurrences;
+    }
+
+    private static List<String> renderFixedLogicalTypes(Schema schema) {
+        List<String> fixedTypes = new ArrayList<>();
+        collectFixedLogicalTypes(schema, fixedTypes, new HashSet<>());
+        return fixedTypes;
+    }
+
+    private static void collectFixedLogicalTypes(Schema schema, List<String> fixedTypes, Set<Schema> visited) {
+        schema = unwrap(schema);
+        if (!visited.add(schema)) {
+            return;
+        }
+        switch (schema.getType()) {
+            case RECORD -> schema.getFields().forEach(field -> collectFixedLogicalTypes(field.schema(), fixedTypes, visited));
+            case FIXED -> fixedTypes.add(schema.getFullName() + " | " + schema.getFixedSize() + " | "
+                    + nullText(schema.getLogicalType() == null ? null : schema.getLogicalType().getName()));
+            case ARRAY -> collectFixedLogicalTypes(schema.getElementType(), fixedTypes, visited);
+            case MAP -> collectFixedLogicalTypes(schema.getValueType(), fixedTypes, visited);
+            default -> {
+            }
+        }
     }
 
     private static void collectNamedTypeAttributes(Schema schema, List<String> namedTypes, Set<Schema> visited) {
@@ -376,7 +445,7 @@ class AvroNamedTypeOracleTest {
         for (Fixture fixture : fixtures) {
             output.append("## ").append(fixture.id()).append('\n');
             try {
-                SourceDescriptor descriptor = describeRoot(fixture.schema());
+                SourceDescriptor descriptor = fixture.descriptor();
                 validateDescriptor(descriptor);
                 Schema avro = fixture.converter().convert(fixture.schema());
                 output.append("supported\n");
@@ -470,38 +539,31 @@ class AvroNamedTypeOracleTest {
         renderFields(fixtureId, sourceSite, descriptor.children(), avro.getFields(), occurrences);
     }
 
-    private static SourceDescriptor describeRoot(MessageType source) {
-        return new SourceDescriptor(source, source.getName(), source.getFields().stream()
-                .map(field -> describe(field, false)).toList(), Role.RECORD);
+    private static SourceDescriptor bind(MessageType source, SourceLayout layout) {
+        return bind(source, layout, false);
     }
 
-    private static SourceDescriptor describe(Type source, boolean suppressed) {
-        boolean physicallySuppressed = suppressed;
-        Role role;
-        if (physicallySuppressed) {
-            role = Role.SUPPRESSED;
+    private static SourceDescriptor bind(Type source, SourceLayout layout, boolean suppressed) {
+        assertThat(layout.name()).isEqualTo(source.getName());
+        Role role = suppressed ? Role.SUPPRESSED : layout.role();
+        if (source.isPrimitive()) {
+            assertThat(layout.children()).isEmpty();
+            return new SourceDescriptor(source, layout.name(), List.of(), role);
         }
-        else if (source.isPrimitive()) {
-            PrimitiveType primitive = source.asPrimitiveType();
-            role = primitive.getPrimitiveTypeName() == PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY
-                    || primitive.getPrimitiveTypeName() == PrimitiveType.PrimitiveTypeName.INT96
-                    ? Role.FIXED : Role.LEAF;
+        GroupType group = source.asGroupType();
+        assertThat(layout.children()).hasSize(group.getFieldCount());
+        boolean variant = group.getLogicalTypeAnnotation() instanceof LogicalTypeAnnotation.VariantLogicalTypeAnnotation;
+        List<SourceDescriptor> children = new ArrayList<>();
+        for (int index = 0; index < group.getFieldCount(); index++) {
+            SourceLayout child = layout.children().get(index);
+            children.add(bind(group.getType(index), child,
+                    suppressed || (variant && "typed_value".equals(child.name()))));
         }
-        else {
-            GroupType group = source.asGroupType();
-            LogicalTypeAnnotation annotation = group.getLogicalTypeAnnotation();
-            role = annotation instanceof LogicalTypeAnnotation.VariantLogicalTypeAnnotation ? Role.VARIANT
-                    : annotation instanceof LogicalTypeAnnotation.ListLogicalTypeAnnotation ? Role.ARRAY
-                    : annotation instanceof LogicalTypeAnnotation.MapLogicalTypeAnnotation ? Role.MAP
-                    : Role.RECORD;
-        }
-        boolean variant = !source.isPrimitive()
-                && source.asGroupType().getLogicalTypeAnnotation()
-                instanceof LogicalTypeAnnotation.VariantLogicalTypeAnnotation;
-        List<SourceDescriptor> children = source.isPrimitive() ? List.of()
-                : source.asGroupType().getFields().stream().map(child -> describe(child,
-                        physicallySuppressed || (variant && "typed_value".equals(child.getName())))).toList();
-        return new SourceDescriptor(source, source.getName(), children, role);
+        return new SourceDescriptor(source, layout.name(), List.copyOf(children), role);
+    }
+
+    private static SourceLayout layout(String name, Role role, SourceLayout... children) {
+        return new SourceLayout(name, role, List.of(children));
     }
 
     private static void validateDescriptor(SourceDescriptor descriptor) {
@@ -513,9 +575,16 @@ class AvroNamedTypeOracleTest {
         assertThat(descriptor.name()).isEqualTo(source.getName());
         if (source.isPrimitive()) {
             assertThat(descriptor.children()).isEmpty();
-            assertThat(descriptor.role()).isIn(Role.LEAF, Role.FIXED, Role.SUPPRESSED);
             if (suppressed) {
                 assertThat(descriptor.role()).isEqualTo(Role.SUPPRESSED);
+            }
+            else if (source.asPrimitiveType().getPrimitiveTypeName()
+                    == PrimitiveType.PrimitiveTypeName.FIXED_LEN_BYTE_ARRAY
+                    || source.asPrimitiveType().getPrimitiveTypeName() == PrimitiveType.PrimitiveTypeName.INT96) {
+                assertThat(descriptor.role()).isEqualTo(Role.FIXED);
+            }
+            else {
+                assertThat(descriptor.role()).isEqualTo(Role.LEAF);
             }
             return;
         }
@@ -604,13 +673,17 @@ class AvroNamedTypeOracleTest {
                   optional group home { optional group address { optional binary city (STRING); } }
                   optional group work { optional group address { optional int32 zip; } }
                 }
-                """));
+                """, layout("root", Role.RECORD,
+                layout("home", Role.RECORD, layout("address", Role.RECORD, layout("city", Role.LEAF))),
+                layout("work", Role.RECORD, layout("address", Role.RECORD, layout("zip", Role.LEAF))))));
         fixtures.add(fixture("nested-identical", """
                 message root {
                   optional group home { optional group address { optional binary city (STRING); } }
                   optional group work { optional group address { optional binary city (STRING); } }
                 }
-                """));
+                """, layout("root", Role.RECORD,
+                layout("home", Role.RECORD, layout("address", Role.RECORD, layout("city", Role.LEAF))),
+                layout("work", Role.RECORD, layout("address", Role.RECORD, layout("city", Role.LEAF))))));
         fixtures.add(fixture("list-and-map", """
                 message root {
                   optional group homes (LIST) {
@@ -623,7 +696,11 @@ class AvroNamedTypeOracleTest {
                     }
                   }
                 }
-                """));
+                """, layout("root", Role.RECORD,
+                layout("homes", Role.ARRAY, layout("array", Role.RECORD, layout("city", Role.LEAF),
+                        layout("zip", Role.LEAF))),
+                layout("offices", Role.MAP, layout("key_value", Role.RECORD, layout("key", Role.LEAF),
+                        layout("value", Role.RECORD, layout("city", Role.LEAF)))))));
         fixtures.add(fixture("variant-canonical", """
                 message root {
                   optional group payload (VARIANT(1)) {
@@ -631,7 +708,8 @@ class AvroNamedTypeOracleTest {
                     required binary value;
                   }
                 }
-                """));
+                """, layout("root", Role.RECORD, layout("payload", Role.VARIANT,
+                layout("metadata", Role.LEAF), layout("value", Role.LEAF)))));
         fixtures.add(fixture("variant-shredded", """
                 message root {
                   optional group payload (VARIANT(1)) {
@@ -641,14 +719,18 @@ class AvroNamedTypeOracleTest {
                   }
                   optional fixed_len_byte_array(4) address;
                 }
-                """));
+                """, layout("root", Role.RECORD, layout("payload", Role.VARIANT,
+                layout("metadata", Role.LEAF), layout("value", Role.LEAF),
+                layout("typed_value", Role.SUPPRESSED, layout("address", Role.SUPPRESSED))),
+                layout("address", Role.FIXED))));
         fixtures.add(fixture("fixed", """
                 message root {
                   optional fixed_len_byte_array(4) token;
                   optional group nested { optional fixed_len_byte_array(8) token; }
                   optional fixed_len_byte_array(5) amount (DECIMAL(9,2));
                 }
-                """));
+                """, layout("root", Role.RECORD, layout("token", Role.FIXED),
+                layout("nested", Role.RECORD, layout("token", Role.FIXED)), layout("amount", Role.FIXED))));
         fixtures.add(fixture("logical-fixed", """
                 message root {
                   optional group interval_holder {
@@ -670,40 +752,55 @@ class AvroNamedTypeOracleTest {
                     optional fixed_len_byte_array(16) special;
                   }
                 }
-                """));
+                """, layout("root", Role.RECORD,
+                layout("interval_holder", Role.RECORD, layout("special", Role.FIXED)),
+                layout("interval_plain_holder", Role.RECORD, layout("special", Role.FIXED)),
+                layout("float_holder", Role.RECORD, layout("special", Role.FIXED)),
+                layout("float_plain_holder", Role.RECORD, layout("special", Role.FIXED)),
+                layout("uuid_holder", Role.RECORD, layout("special", Role.FIXED)),
+                layout("uuid_plain_holder", Role.RECORD, layout("special", Role.FIXED)))));
         fixtures.add(fixture("qualified-root", """
                 message acme.row {
                   optional group acme { optional group row { optional int32 value; } }
                 }
-                """));
+                """, layout("acme.row", Role.RECORD,
+                layout("acme", Role.RECORD, layout("row", Role.RECORD, layout("value", Role.LEAF))))));
         fixtures.add(fixture("address", """
                 message schema {
                   optional group home { optional group address { optional binary city (STRING); } }
                   optional group work { optional group address { optional int32 zip; } }
                 }
-                """));
+                """, layout("schema", Role.RECORD,
+                layout("home", Role.RECORD, layout("address", Role.RECORD, layout("city", Role.LEAF))),
+                layout("work", Role.RECORD, layout("address", Role.RECORD, layout("zip", Role.LEAF))))));
         fixtures.add(fixture("address-preceded", """
                 message schema {
                   optional group before { optional group address { optional boolean flag; } }
                   optional group home { optional group address { optional binary city (STRING); } }
                   optional group work { optional group address { optional int32 zip; } }
                 }
-                """));
-        fixtures.add(new Fixture("int96-fixed", parse("""
+                """, layout("schema", Role.RECORD,
+                layout("before", Role.RECORD, layout("address", Role.RECORD, layout("flag", Role.LEAF))),
+                layout("home", Role.RECORD, layout("address", Role.RECORD, layout("city", Role.LEAF))),
+                layout("work", Role.RECORD, layout("address", Role.RECORD, layout("zip", Role.LEAF))))));
+        MessageType int96 = parse("""
                 message root {
                   optional int96 instant;
                 }
-                """), int96Converter()));
+                """);
+        fixtures.add(new Fixture("int96-fixed", int96, int96Converter(),
+                bind(int96, layout("root", Role.RECORD, layout("instant", Role.FIXED)))));
         fixtures.add(fixture("int96-rejected", """
                 message root {
                   optional int96 instant;
                 }
-                """));
+                """, layout("root", Role.RECORD, layout("instant", Role.FIXED))));
         return fixtures;
     }
 
-    private static Fixture fixture(String id, String schema) {
-        return new Fixture(id, parse(schema), new AvroSchemaConverter());
+    private static Fixture fixture(String id, String schema, SourceLayout layout) {
+        MessageType message = parse(schema);
+        return new Fixture(id, message, new AvroSchemaConverter(), bind(message, layout));
     }
 
     private static MessageType parse(String schema) {
@@ -716,7 +813,7 @@ class AvroNamedTypeOracleTest {
         return new AvroSchemaConverter(configuration);
     }
 
-    private record Fixture(String id, MessageType schema, AvroSchemaConverter converter) {
+    private record Fixture(String id, MessageType schema, AvroSchemaConverter converter, SourceDescriptor descriptor) {
     }
 
     private enum Role {
@@ -730,5 +827,8 @@ class AvroNamedTypeOracleTest {
     }
 
     private record SourceDescriptor(Type source, String name, List<SourceDescriptor> children, Role role) {
+    }
+
+    private record SourceLayout(String name, Role role, List<SourceLayout> children) {
     }
 }

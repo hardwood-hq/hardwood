@@ -22,6 +22,7 @@ import org.apache.avro.generic.GenericDatumWriter;
 import org.apache.avro.generic.GenericRecord;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.ConvertedType;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -29,6 +30,7 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
@@ -555,9 +557,15 @@ class AvroSchemaConverterTest {
     @Test
     void keyOnlyMapProjectionRetainsNamedValuePlan() {
         FileSchema schema = namedMapValueSchema();
-        AvroPlanNode nativePlan = AvroSchemaConverter.plan(schema, ColumnProjection.columns("people.key_value.key"));
+        ColumnProjection projection = ColumnProjection.columns("people.key_value.key");
+        AvroPlanNode nativePlan = AvroSchemaConverter.plan(schema, projection);
         AvroPlanNode compatibilityPlan = AvroSchemaConverter.planForParquetAvroCompatibility(
-                schema, ColumnProjection.columns("people.key_value.key"));
+                schema, projection);
+        SchemaNode map = schema.getRootNode().children().getFirst();
+        if (!(map instanceof SchemaNode.GroupNode mapGroup)) {
+            throw new AssertionError("Expected MAP group");
+        }
+        SchemaNode value = mapGroup.getMapValue();
 
         Schema nativeValue = pickMapBranch(nativePlan.avro().getField("people").schema()).getValueType();
         Schema compatibilityValue = pickMapBranch(compatibilityPlan.avro().getField("people").schema())
@@ -565,8 +573,13 @@ class AvroSchemaConverterTest {
         assertThat(nativeValue.getType()).isEqualTo(Schema.Type.UNION);
         assertThat(pickRecordBranch(nativeValue).getName()).isEqualTo("value");
         assertThat(pickRecordBranch(compatibilityValue).getFullName()).isEqualTo("value");
-        assertThat(compatibilityPlan.child(0).mapValue().source().name()).isEqualTo("value");
+        assertThat(ProjectedSchema.create(schema, projection, true).getProjectedColumns())
+                .extracting(column -> column.fieldPath().toString())
+                .containsExactly("people.key_value.key");
+        assertThat(nativePlan.child(0).mapValue().source()).isSameAs(value);
+        assertThat(compatibilityPlan.child(0).mapValue().source()).isSameAs(value);
         assertThat(compatibilityPlan.child(0).mapValue().kind()).isEqualTo(AvroPlanNode.Kind.STRUCT);
+        assertPlansEquivalent(nativePlan.child(0).mapValue(), compatibilityPlan.child(0).mapValue());
     }
 
     @Test
