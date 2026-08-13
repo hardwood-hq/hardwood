@@ -1235,6 +1235,52 @@ class AvroRowReaderTest {
     }
 
     @Test
+    void compatibilityPlanMaterializesNestedProjectionLikeNativePlan() throws Exception {
+        ColumnProjection projection = ColumnProjection.columns("people.key_value.value.age");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("map_struct_value_test.parquet")));
+             AvroRowReader nativeReader = AvroReaders.buildRowReader(fileReader).projection(projection).build();
+             RowReader compatibilityRowReader = fileReader.buildRowReader().projection(projection).build();
+             AvroRowReader compatibilityReader = new AvroRowReader(compatibilityRowReader,
+                     AvroSchemaConverter.planForParquetAvroCompatibility(fileReader.getFileSchema(), projection))) {
+
+            List<GenericRecord> nativeRows = readAll(nativeReader);
+            List<GenericRecord> compatibilityRows = readAll(compatibilityReader);
+            assertEquivalentRecords(nativeRows, compatibilityRows);
+        }
+    }
+
+    @Test
+    void compatibilityPlanMaterializesKeyOnlyMapWithNullValues() throws Exception {
+        ColumnProjection projection = ColumnProjection.columns("people.key_value.key");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("map_struct_value_test.parquet")));
+             AvroRowReader nativeReader = AvroReaders.buildRowReader(fileReader).projection(projection).build();
+             RowReader compatibilityRowReader = fileReader.buildRowReader().projection(projection).build();
+             AvroRowReader compatibilityReader = new AvroRowReader(compatibilityRowReader,
+                     AvroSchemaConverter.planForParquetAvroCompatibility(fileReader.getFileSchema(), projection))) {
+
+            Schema nativeValue = resolveNullable(resolveNullable(nativeReader.getSchema().getField("people").schema())
+                    .getValueType());
+            Schema compatibilityValue = resolveNullable(resolveNullable(
+                    compatibilityReader.getSchema().getField("people").schema()).getValueType());
+            assertThat(nativeValue.getType()).isEqualTo(Schema.Type.RECORD);
+            assertThat(compatibilityValue.getType()).isEqualTo(Schema.Type.RECORD);
+            assertThat(nativeValue.getName()).isEqualTo("value");
+            assertThat(compatibilityValue.getName()).isEqualTo("value");
+
+            List<GenericRecord> nativeRows = readAll(nativeReader);
+            List<GenericRecord> compatibilityRows = readAll(compatibilityReader);
+            assertEquivalentRecords(nativeRows, compatibilityRows);
+            for (GenericRecord row : compatibilityRows) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> people = (Map<String, Object>) row.get("people");
+                assertThat(people.values()).allMatch(value -> value == null);
+            }
+        }
+    }
+
+    @Test
     void readVariantSubFieldProjection() throws Exception {
         // variant_shredded_test.parquet: var is a shredded Variant
         // {metadata, value, typed_value:int64}; row 0 holds INT64(42) whose
@@ -1533,6 +1579,66 @@ class AvroRowReaderTest {
                     }
                     throw new AssertionError("Unexpected accessor: " + method.getName());
                 });
+    }
+
+    private static void assertEquivalentRecords(List<GenericRecord> expected, List<GenericRecord> actual) {
+        assertThat(actual).hasSize(expected.size());
+        for (int index = 0; index < expected.size(); index++) {
+            assertEquivalentValue(expected.get(index), actual.get(index));
+        }
+    }
+
+    private static void assertEquivalentValue(Object expected, Object actual) {
+        assertThat(actual).as("runtime value class").isInstanceOf(expected.getClass());
+        if (expected instanceof GenericRecord expectedRecord) {
+            GenericRecord actualRecord = (GenericRecord) actual;
+            assertThat(actualRecord.getSchema().getFields()).extracting(Schema.Field::name)
+                    .containsExactlyElementsOf(expectedRecord.getSchema().getFields().stream()
+                            .map(Schema.Field::name).toList());
+            for (Schema.Field field : expectedRecord.getSchema().getFields()) {
+                Object expectedValue = expectedRecord.get(field.name());
+                Object actualValue = actualRecord.get(field.name());
+                if (expectedValue == null) {
+                    assertThat(actualValue).isNull();
+                }
+                else {
+                    assertEquivalentValue(expectedValue, actualValue);
+                }
+            }
+            return;
+        }
+        if (expected instanceof List<?> expectedList) {
+            List<?> actualList = (List<?>) actual;
+            assertThat(actualList).hasSize(expectedList.size());
+            for (int index = 0; index < expectedList.size(); index++) {
+                Object expectedValue = expectedList.get(index);
+                Object actualValue = actualList.get(index);
+                if (expectedValue == null) {
+                    assertThat(actualValue).isNull();
+                }
+                else {
+                    assertEquivalentValue(expectedValue, actualValue);
+                }
+            }
+            return;
+        }
+        if (expected instanceof Map<?, ?> expectedMap) {
+            Map<?, ?> actualMap = (Map<?, ?>) actual;
+            assertThat(actualMap.keySet().containsAll(expectedMap.keySet())).isTrue();
+            assertThat(expectedMap.keySet().containsAll(actualMap.keySet())).isTrue();
+            for (Map.Entry<?, ?> entry : expectedMap.entrySet()) {
+                Object expectedValue = entry.getValue();
+                Object actualValue = actualMap.get(entry.getKey());
+                if (expectedValue == null) {
+                    assertThat(actualValue).isNull();
+                }
+                else {
+                    assertEquivalentValue(expectedValue, actualValue);
+                }
+            }
+            return;
+        }
+        assertThat(actual).isEqualTo(expected);
     }
 
     private static Schema resolveNullable(Schema schema) {

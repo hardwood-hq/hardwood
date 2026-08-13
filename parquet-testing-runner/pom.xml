@@ -51,6 +51,11 @@
       <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-core</artifactId>
     </dependency>
+    <dependency>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-avro</artifactId>
+      <scope>test</scope>
+    </dependency>
 
     <!-- Compression libraries needed for test files -->
     <dependency>

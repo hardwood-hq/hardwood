@@ -7,10 +7,19 @@
  */
 package dev.hardwood.avro.internal;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.Callable;
+import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
 
 import org.apache.avro.Schema;
+import org.apache.avro.file.DataFileWriter;
+import org.apache.avro.generic.GenericDatumWriter;
+import org.apache.avro.generic.GenericRecord;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.ConvertedType;
@@ -22,6 +31,7 @@ import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Unit coverage for [AvroSchemaConverter] pieces that are awkward to exercise
@@ -398,6 +408,145 @@ class AvroSchemaConverterTest {
         assertThat(valueSchema.isUnion()).isFalse();
     }
 
+    @Test
+    void parquetAvroCompatibilityCountsRecordsBeforeTheirChildren() {
+        AvroPlanNode plan = AvroSchemaConverter.planForParquetAvroCompatibility(
+                repeatedAddressSchema(), ColumnProjection.all());
+
+        Schema home = pickRecordBranch(plan.avro().getField("home").schema());
+        Schema work = pickRecordBranch(plan.avro().getField("work").schema());
+        assertThat(pickRecordBranch(home.getField("address").schema()).getFullName()).isEqualTo("address");
+        assertThat(pickRecordBranch(work.getField("address").schema()).getFullName())
+                .isEqualTo("address2.address");
+        assertThat(AvroSchemaConverter.plan(repeatedAddressSchema(), ColumnProjection.all()).avro()
+                .getField("work").schema().getTypes().get(1).getField("address").schema().getTypes().get(1)
+                .getFullName()).isEqualTo("address");
+    }
+
+    @Test
+    void parquetAvroCompatibilityUsesSourceNameForLogicalFixedTypes() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement interval = new SchemaElement("duration", PhysicalType.FIXED_LEN_BYTE_ARRAY, 12,
+                RepetitionType.OPTIONAL, null, null, null, null, null, new LogicalType.IntervalType());
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, interval));
+
+        Schema fixed = pickRecordBranch(AvroSchemaConverter.planForParquetAvroCompatibility(
+                schema, ColumnProjection.all()).avro()).getField("duration").schema().getTypes().get(1);
+        assertThat(fixed.getName()).isEqualTo("duration");
+        assertThat(fixed.getNamespace()).isNull();
+        assertThat(fixed.getFixedSize()).isEqualTo(12);
+    }
+
+    @Test
+    void parquetAvroCompatibilityDoesNotShareCounterState() {
+        FileSchema schema = repeatedAddressSchema();
+
+        Schema first = AvroSchemaConverter.planForParquetAvroCompatibility(schema, ColumnProjection.all()).avro();
+        Schema second = AvroSchemaConverter.planForParquetAvroCompatibility(schema, ColumnProjection.all()).avro();
+
+        assertThat(first.toString()).isEqualTo(second.toString());
+        assertThat(pickRecordBranch(second.getField("work").schema()).getField("address").schema()
+                .getTypes().get(1).getFullName()).isEqualTo("address2.address");
+    }
+
+    @Test
+    void parquetAvroCompatibilityRenumbersAfterPrecedingOccurrence() {
+        Schema plan = AvroSchemaConverter.planForParquetAvroCompatibility(
+                repeatedAddressSchemaWithPrecedingAddress(), ColumnProjection.all()).avro();
+
+        Schema home = pickRecordBranch(plan.getField("home").schema());
+        Schema work = pickRecordBranch(plan.getField("work").schema());
+        assertThat(pickRecordBranch(home.getField("address").schema()).getFullName()).isEqualTo("address2.address");
+        assertThat(pickRecordBranch(work.getField("address").schema()).getFullName()).isEqualTo("address3.address");
+    }
+
+    @Test
+    void parquetAvroCompatibilitySuppressesShreddedVariantTypedValue() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 2, null, null, null, null, null);
+        SchemaElement variant = new SchemaElement("payload", null, null, RepetitionType.OPTIONAL,
+                3, null, null, null, null, new LogicalType.VariantType(1));
+        SchemaElement metadata = new SchemaElement("metadata", PhysicalType.BYTE_ARRAY, null,
+                RepetitionType.REQUIRED, null, null, null, null, null, null);
+        SchemaElement value = new SchemaElement("value", PhysicalType.BYTE_ARRAY, null,
+                RepetitionType.REQUIRED, null, null, null, null, null, null);
+        SchemaElement typedValue = new SchemaElement("typed_value", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement suppressed = new SchemaElement("address", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        SchemaElement external = new SchemaElement("address", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root, variant, metadata, value, typedValue, suppressed, external));
+
+        Schema avro = AvroSchemaConverter.planForParquetAvroCompatibility(schema, ColumnProjection.all()).avro();
+        Schema payload = pickRecordBranch(avro.getField("payload").schema());
+        Schema address = avro.getField("address").schema().getTypes().get(1);
+        assertThat(payload.getFields()).extracting(Schema.Field::name).containsExactly("metadata", "value");
+        assertThat(address.getFullName()).isEqualTo("address");
+    }
+
+    @Test
+    void parquetAvroCompatibilitySerializesDistinctSameNamedDefinitions() throws Exception {
+        Schema schema = AvroSchemaConverter.planForParquetAvroCompatibility(
+                repeatedAddressSchema(), ColumnProjection.all()).avro();
+
+        assertThatCode(() -> {
+            try (DataFileWriter<GenericRecord> writer = new DataFileWriter<>(new GenericDatumWriter<>(schema))) {
+                writer.create(schema, new ByteArrayOutputStream());
+            }
+        }).doesNotThrowAnyException();
+    }
+
+    @Test
+    void parquetAvroCompatibilityStateIsolatedAcrossConcurrentConversions() throws Exception {
+        ExecutorService executor = Executors.newFixedThreadPool(4);
+        CountDownLatch start = new CountDownLatch(1);
+        try {
+            List<Future<String>> results = List.of(
+                    executor.submit(task(start)), executor.submit(task(start)),
+                    executor.submit(task(start)), executor.submit(task(start)));
+            start.countDown();
+            for (Future<String> result : results) {
+                assertThat(result.get()).isEqualTo("address2.address");
+            }
+        }
+        finally {
+            executor.shutdownNow();
+        }
+    }
+
+    @Test
+    void parquetAvroCompatibilityCountsOnlyProjectedOrdinaryRecords() {
+        AvroPlanNode plan = AvroSchemaConverter.planForParquetAvroCompatibility(
+                repeatedAddressSchema(), ColumnProjection.columns("home.address.city"));
+
+        Schema root = plan.avro();
+        Schema home = pickRecordBranch(root.getField("home").schema());
+        Schema address = pickRecordBranch(home.getField("address").schema());
+        assertThat(root.getField("work")).isNull();
+        assertThat(address.getFullName()).isEqualTo("address");
+        assertThat(address.getField("city")).isNotNull();
+        assertThat(plan.child(0).source().name()).isEqualTo("home");
+        assertThat(plan.child(0).child(0).source().name()).isEqualTo("address");
+    }
+
+    @Test
+    void keyOnlyMapProjectionRetainsNamedValuePlan() {
+        FileSchema schema = namedMapValueSchema();
+        AvroPlanNode nativePlan = AvroSchemaConverter.plan(schema, ColumnProjection.columns("people.key_value.key"));
+        AvroPlanNode compatibilityPlan = AvroSchemaConverter.planForParquetAvroCompatibility(
+                schema, ColumnProjection.columns("people.key_value.key"));
+
+        Schema nativeValue = pickMapBranch(nativePlan.avro().getField("people").schema()).getValueType();
+        Schema compatibilityValue = pickMapBranch(compatibilityPlan.avro().getField("people").schema())
+                .getValueType();
+        assertThat(nativeValue.getType()).isEqualTo(Schema.Type.UNION);
+        assertThat(pickRecordBranch(nativeValue).getName()).isEqualTo("value");
+        assertThat(pickRecordBranch(compatibilityValue).getFullName()).isEqualTo("value");
+        assertThat(compatibilityPlan.child(0).mapValue().source().name()).isEqualTo("value");
+        assertThat(compatibilityPlan.child(0).mapValue().kind()).isEqualTo(AvroPlanNode.Kind.STRUCT);
+    }
+
     private static Schema pickArrayBranch(Schema fieldSchema) {
         if (fieldSchema.getType() == Schema.Type.ARRAY) {
             return fieldSchema;
@@ -454,5 +603,69 @@ class AvroSchemaConverterTest {
         SchemaElement typedValue = new SchemaElement("typed_value", PhysicalType.INT64, null,
                 RepetitionType.OPTIONAL, null, null, null, null, null, null);
         return FileSchema.fromSchemaElements(List.of(root, var, metadata, value, typedValue));
+    }
+
+    private static FileSchema repeatedAddressSchema() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 2, null, null, null, null, null);
+        SchemaElement home = new SchemaElement("home", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement homeAddress = new SchemaElement("address", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement city = new SchemaElement("city", PhysicalType.BYTE_ARRAY, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, new LogicalType.StringType());
+        SchemaElement work = new SchemaElement("work", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement workAddress = new SchemaElement("address", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement zip = new SchemaElement("zip", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        return FileSchema.fromSchemaElements(List.of(root, home, homeAddress, city, work, workAddress, zip));
+    }
+
+    private static FileSchema repeatedAddressSchemaWithPrecedingAddress() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 3, null, null, null, null, null);
+        SchemaElement before = new SchemaElement("before", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement beforeAddress = new SchemaElement("address", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement flag = new SchemaElement("flag", PhysicalType.BOOLEAN, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        List<SchemaElement> baseElements = List.of(
+                new SchemaElement("home", null, null, RepetitionType.OPTIONAL, 1, null, null, null, null, null),
+                new SchemaElement("address", null, null, RepetitionType.OPTIONAL, 1, null, null, null, null, null),
+                new SchemaElement("city", PhysicalType.BYTE_ARRAY, null, RepetitionType.OPTIONAL, null,
+                        null, null, null, null, new LogicalType.StringType()),
+                new SchemaElement("work", null, null, RepetitionType.OPTIONAL, 1, null, null, null, null, null),
+                new SchemaElement("address", null, null, RepetitionType.OPTIONAL, 1, null, null, null, null, null),
+                new SchemaElement("zip", PhysicalType.INT32, null, RepetitionType.OPTIONAL, null,
+                        null, null, null, null, null));
+        return FileSchema.fromSchemaElements(List.of(root, before, beforeAddress, flag,
+                baseElements.get(0), baseElements.get(1), baseElements.get(2),
+                baseElements.get(3), baseElements.get(4), baseElements.get(5)));
+    }
+
+    private static FileSchema namedMapValueSchema() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement map = new SchemaElement("people", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, new LogicalType.MapType());
+        SchemaElement keyValue = new SchemaElement("key_value", null, null, RepetitionType.REPEATED,
+                2, null, null, null, null, null);
+        SchemaElement key = new SchemaElement("key", PhysicalType.BYTE_ARRAY, null,
+                RepetitionType.REQUIRED, null, null, null, null, null, new LogicalType.StringType());
+        SchemaElement value = new SchemaElement("value", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement address = new SchemaElement("address", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        return FileSchema.fromSchemaElements(List.of(root, map, keyValue, key, value, address));
+    }
+
+    private static Callable<String> task(CountDownLatch start) {
+        return () -> {
+            start.await();
+            Schema schema = AvroSchemaConverter.planForParquetAvroCompatibility(
+                    repeatedAddressSchema(), ColumnProjection.all()).avro();
+            return pickRecordBranch(schema.getField("work").schema()).getField("address").schema()
+                    .getTypes().get(1).getFullName();
+        };
     }
 }

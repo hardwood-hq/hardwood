@@ -1,6 +1,6 @@
 # Avro-Compatible Named Types
 
-**Status: Proposed.** Tracking issue: #925.
+**Status: Implemented.** Tracking issue: #925.
 
 ## Scope
 

@@ -3,8 +3,7 @@
  *
  *  Copyright The original authors
  *
- *  Licensed under the Apache License, Version 2.0 (the "License");
- *  you may not use this file except in compliance with the License.
+ *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
 package dev.hardwood.testing;
 
@@ -13,6 +12,7 @@ import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
@@ -27,6 +27,13 @@ import org.apache.parquet.schema.MessageType;
 import org.apache.parquet.schema.MessageTypeParser;
 import org.apache.parquet.schema.Type;
 import org.junit.jupiter.api.Test;
+
+import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.SchemaElement;
+import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -62,12 +69,81 @@ class AvroNamedTypeOracleTest {
         assertThat(GOLDEN).exists();
         String expected = Files.readString(GOLDEN, StandardCharsets.UTF_8);
         assertGoldenSections(expected, fixtures);
-        assertThat(expected).isEqualTo(actual);
+        assertThat(stripLicenseHeader(expected).stripTrailing()).isEqualTo(actual.stripTrailing());
 
         assertThat(actual).contains("address2.address");
         assertThat(actual).contains("address3.address");
         assertThat(actual).contains("unsupported | java.lang.IllegalArgumentException | "
                 + "INT96 is deprecated. As interim enable READ_INT96_AS_FIXED flag to read as byte array.");
+    }
+
+    @Test
+    void hardwoodCompatibilityMatchesReferenceForNestedAndProjectedSchemas() {
+        MessageType reference = parse("""
+                message root {
+                  optional group home { optional group address { optional binary city (STRING); } }
+                  optional group work { optional group address { optional int32 zip; } }
+                }
+                """);
+        FileSchema hardwood = nestedAddressSchema();
+
+        assertThat(renderNamedTypes(new AvroSchemaConverter().convert(reference)))
+                .containsExactlyElementsOf(renderNamedTypes(
+                        dev.hardwood.avro.internal.AvroSchemaConverter.planForParquetAvroCompatibility(
+                                hardwood, ColumnProjection.all()).avro()));
+
+        MessageType projectedReference = parse("""
+                message root {
+                  optional group home { optional group address { optional binary city (STRING); } }
+                }
+                """);
+        assertThat(renderNamedTypes(new AvroSchemaConverter().convert(projectedReference)))
+                .containsExactlyElementsOf(renderNamedTypes(
+                        dev.hardwood.avro.internal.AvroSchemaConverter.planForParquetAvroCompatibility(
+                                hardwood, ColumnProjection.columns("home.address.city")).avro()));
+    }
+
+    private static List<String> renderNamedTypes(Schema schema) {
+        List<String> namedTypes = new ArrayList<>();
+        collectNamedTypes(schema, namedTypes, new HashSet<>());
+        return namedTypes;
+    }
+
+    private static void collectNamedTypes(Schema schema, List<String> namedTypes, Set<Schema> visited) {
+        if (!visited.add(schema)) {
+            return;
+        }
+        switch (schema.getType()) {
+            case RECORD -> {
+                namedTypes.add(schema.getFullName());
+                for (Schema.Field field : schema.getFields()) {
+                    collectNamedTypes(field.schema(), namedTypes, visited);
+                }
+            }
+            case FIXED -> namedTypes.add(schema.getFullName());
+            case ARRAY -> collectNamedTypes(schema.getElementType(), namedTypes, visited);
+            case MAP -> collectNamedTypes(schema.getValueType(), namedTypes, visited);
+            case UNION -> schema.getTypes().forEach(type -> collectNamedTypes(type, namedTypes, visited));
+            default -> {
+            }
+        }
+    }
+
+    private static FileSchema nestedAddressSchema() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 2, null, null, null, null, null);
+        SchemaElement home = new SchemaElement("home", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement homeAddress = new SchemaElement("address", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement city = new SchemaElement("city", PhysicalType.BYTE_ARRAY, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, new LogicalType.StringType());
+        SchemaElement work = new SchemaElement("work", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement workAddress = new SchemaElement("address", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement zip = new SchemaElement("zip", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        return FileSchema.fromSchemaElements(List.of(root, home, homeAddress, city, work, workAddress, zip));
     }
 
     private static String renderFixtures(List<Fixture> fixtures) {
@@ -101,6 +177,14 @@ class AvroNamedTypeOracleTest {
         }
         assertThat(sections).doesNotHaveDuplicates();
         assertThat(sections).containsExactlyElementsOf(fixtures.stream().map(Fixture::id).toList());
+    }
+
+    private static String stripLicenseHeader(String text) {
+        int firstFixture = text.indexOf("## ");
+        if (firstFixture < 0) {
+            throw new IllegalArgumentException("Golden has no fixture sections: " + GOLDEN);
+        }
+        return text.substring(firstFixture);
     }
 
     private static void renderRoot(String fixtureId, MessageType source, Schema avro, List<String> occurrences) {
