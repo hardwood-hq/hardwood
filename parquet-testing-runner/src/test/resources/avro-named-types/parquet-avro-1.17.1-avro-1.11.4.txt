@@ -1,0 +1,87 @@
+## nested-different
+supported
+1 | / | root | root | null | root | RECORD | -
+2 | /0:home/ | home | home | null | home | RECORD | -
+3 | /0:home/0:address/ | address | address | null | address | RECORD | -
+4 | /1:work/ | work | work | null | work | RECORD | -
+5 | /1:work/0:address/ | address | address | address2 | address2.address | RECORD | -
+
+## nested-identical
+supported
+1 | / | root | root | null | root | RECORD | -
+2 | /0:home/ | home | home | null | home | RECORD | -
+3 | /0:home/0:address/ | address | address | null | address | RECORD | -
+4 | /1:work/ | work | work | null | work | RECORD | -
+5 | /1:work/0:address/ | address | address | address2 | address2.address | RECORD | -
+
+## list-and-map
+supported
+1 | / | root | root | null | root | RECORD | -
+2 | /0:homes/0:array/ | array | array | null | array | RECORD | -
+3 | /1:offices/0:key_value/1:value/ | value | value | null | value | RECORD | -
+
+## variant-canonical
+supported
+1 | / | root | root | null | root | RECORD | -
+2 | /0:payload/ | payload | payload | null | payload | RECORD | -
+
+## variant-shredded
+supported
+1 | / | root | root | null | root | RECORD | -
+2 | /0:payload/ | payload | payload | null | payload | RECORD | -
+3 | /1:address/ | address | address | null | address | FIXED | 4
+
+## fixed
+supported
+1 | / | root | root | null | root | RECORD | -
+2 | /0:token/ | token | token | null | token | FIXED | 4
+3 | /1:nested/ | nested | nested | null | nested | RECORD | -
+4 | /1:nested/0:token/ | token | token | token2 | token2.token | FIXED | 8
+5 | /2:amount/ | amount | amount | null | amount | FIXED | 5
+
+## logical-fixed
+supported
+1 | / | root | root | null | root | RECORD | -
+2 | /0:interval_holder/ | interval_holder | interval_holder | null | interval_holder | RECORD | -
+3 | /0:interval_holder/0:special/ | special | special | null | special | FIXED | 12
+4 | /1:interval_plain_holder/ | interval_plain_holder | interval_plain_holder | null | interval_plain_holder | RECORD | -
+5 | /1:interval_plain_holder/0:special/ | special | special | special2 | special2.special | FIXED | 12
+6 | /2:float_holder/ | float_holder | float_holder | null | float_holder | RECORD | -
+7 | /2:float_holder/0:special/ | special | special | special3 | special3.special | FIXED | 2
+8 | /3:float_plain_holder/ | float_plain_holder | float_plain_holder | null | float_plain_holder | RECORD | -
+9 | /3:float_plain_holder/0:special/ | special | special | special4 | special4.special | FIXED | 2
+10 | /4:uuid_holder/ | uuid_holder | uuid_holder | null | uuid_holder | RECORD | -
+11 | /5:uuid_plain_holder/ | uuid_plain_holder | uuid_plain_holder | null | uuid_plain_holder | RECORD | -
+12 | /5:uuid_plain_holder/0:special/ | special | special | special5 | special5.special | FIXED | 16
+
+## qualified-root
+supported
+1 | / | acme.row | row | acme | acme.row | RECORD | -
+2 | /0:acme/ | acme | acme | null | acme | RECORD | -
+3 | /0:acme/0:row/ | row | row | null | row | RECORD | -
+
+## address
+supported
+1 | / | schema | schema | null | schema | RECORD | -
+2 | /0:home/ | home | home | null | home | RECORD | -
+3 | /0:home/0:address/ | address | address | null | address | RECORD | -
+4 | /1:work/ | work | work | null | work | RECORD | -
+5 | /1:work/0:address/ | address | address | address2 | address2.address | RECORD | -
+
+## address-preceded
+supported
+1 | / | schema | schema | null | schema | RECORD | -
+2 | /0:before/ | before | before | null | before | RECORD | -
+3 | /0:before/0:address/ | address | address | null | address | RECORD | -
+4 | /1:home/ | home | home | null | home | RECORD | -
+5 | /1:home/0:address/ | address | address | address2 | address2.address | RECORD | -
+6 | /2:work/ | work | work | null | work | RECORD | -
+7 | /2:work/0:address/ | address | address | address3 | address3.address | RECORD | -
+
+## int96-fixed
+supported
+1 | / | root | root | null | root | RECORD | -
+2 | /0:instant/ | instant | instant | null | instant | FIXED | 12
+
+## int96-rejected
+unsupported | java.lang.IllegalArgumentException | INT96 is deprecated. As interim enable READ_INT96_AS_FIXED flag to read as byte array.
