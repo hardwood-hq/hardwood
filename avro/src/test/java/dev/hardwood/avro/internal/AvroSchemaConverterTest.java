@@ -498,6 +498,28 @@ class AvroSchemaConverterTest {
     }
 
     @Test
+    void parquetAvroCompatibilitySerializesDistinctSameNamedFixedDefinitions() throws Exception {
+        Schema schema = AvroSchemaConverter.planForParquetAvroCompatibility(
+                repeatedAddressAndFixedSchema(), ColumnProjection.all()).avro();
+        Schema first = pickFixedBranch(schema.getField("token").schema());
+        Schema second = pickFixedBranch(pickRecordBranch(schema.getField("nested").schema())
+                .getField("token").schema());
+
+        assertThat(first.getType()).isEqualTo(Schema.Type.FIXED);
+        assertThat(second.getType()).isEqualTo(Schema.Type.FIXED);
+        assertThat(first.getFullName()).isEqualTo("token");
+        assertThat(second.getFullName()).isEqualTo("token2.token");
+        assertThat(first.getFixedSize()).isEqualTo(4);
+        assertThat(second.getFixedSize()).isEqualTo(8);
+        assertThatCode(schema::toString).doesNotThrowAnyException();
+        assertThatCode(() -> {
+            try (DataFileWriter<GenericRecord> writer = new DataFileWriter<>(new GenericDatumWriter<>(schema))) {
+                writer.create(schema, new ByteArrayOutputStream());
+            }
+        }).doesNotThrowAnyException();
+    }
+
+    @Test
     void parquetAvroCompatibilityStateIsolatedAcrossConcurrentConversions() throws Exception {
         ExecutorService executor = Executors.newFixedThreadPool(4);
         CountDownLatch start = new CountDownLatch(1);
@@ -547,6 +569,33 @@ class AvroSchemaConverterTest {
         assertThat(compatibilityPlan.child(0).mapValue().kind()).isEqualTo(AvroPlanNode.Kind.STRUCT);
     }
 
+    @Test
+    void parquetAvroCompatibilityPreservesProjectedPlanAcrossNestedContainers() {
+        FileSchema schema = projectedNestedSchema();
+        ColumnProjection projection = ColumnProjection.columns(
+                "retained.address.city", "items.list.address.city", "people.key_value.address.city");
+        AvroPlanNode nativePlan = AvroSchemaConverter.plan(schema, projection);
+        AvroPlanNode compatibilityPlan = AvroSchemaConverter.planForParquetAvroCompatibility(schema, projection);
+
+        assertPlansEquivalent(nativePlan, compatibilityPlan);
+        assertThat(nativePlan.avro().getFields()).extracting(Schema.Field::name)
+                .containsExactly("retained", "items", "people");
+        assertThat(pickRecordBranch(pickArrayBranch(compatibilityPlan.avro().getField("items").schema())
+                .getElementType()).getFields()).extracting(Schema.Field::name).containsExactly("city");
+        assertThat(pickRecordBranch(pickMapBranch(compatibilityPlan.avro().getField("people").schema())
+                .getValueType()).getFields()).extracting(Schema.Field::name).containsExactly("city");
+
+        Schema retainedAddress = pickRecordBranch(pickRecordBranch(
+                compatibilityPlan.avro().getField("retained").schema()).getField("address").schema());
+        Schema listAddress = pickRecordBranch(pickArrayBranch(
+                compatibilityPlan.avro().getField("items").schema()).getElementType());
+        Schema mapAddress = pickRecordBranch(pickMapBranch(
+                compatibilityPlan.avro().getField("people").schema()).getValueType());
+        assertThat(retainedAddress.getFullName()).isEqualTo("address");
+        assertThat(listAddress.getFullName()).isEqualTo("address2.address");
+        assertThat(mapAddress.getFullName()).isEqualTo("address3.address");
+    }
+
     private static Schema pickArrayBranch(Schema fieldSchema) {
         if (fieldSchema.getType() == Schema.Type.ARRAY) {
             return fieldSchema;
@@ -569,6 +618,18 @@ class AvroSchemaConverterTest {
             }
         }
         throw new AssertionError("No map branch in union: " + fieldSchema);
+    }
+
+    private static Schema pickFixedBranch(Schema fieldSchema) {
+        if (fieldSchema.getType() == Schema.Type.FIXED) {
+            return fieldSchema;
+        }
+        for (Schema sub : fieldSchema.getTypes()) {
+            if (sub.getType() == Schema.Type.FIXED) {
+                return sub;
+            }
+        }
+        throw new AssertionError("No fixed branch in union: " + fieldSchema);
     }
 
     /// The converted schema alone, for assertions that do not care about the plan.
@@ -657,6 +718,106 @@ class AvroSchemaConverterTest {
         SchemaElement address = new SchemaElement("address", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
                 RepetitionType.OPTIONAL, null, null, null, null, null, null);
         return FileSchema.fromSchemaElements(List.of(root, map, keyValue, key, value, address));
+    }
+
+    private static FileSchema repeatedAddressAndFixedSchema() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 3, null, null, null, null, null);
+        SchemaElement token = new SchemaElement("token", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        SchemaElement nested = new SchemaElement("nested", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement nestedToken = new SchemaElement("token", PhysicalType.FIXED_LEN_BYTE_ARRAY, 8,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        SchemaElement value = new SchemaElement("value", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        return FileSchema.fromSchemaElements(List.of(root, token, nested, nestedToken, value));
+    }
+
+    private static FileSchema projectedNestedSchema() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 4, null, null, null, null, null);
+        SchemaElement before = new SchemaElement("before", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement beforeAddress = new SchemaElement("address", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement beforeCity = new SchemaElement("city", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        SchemaElement retained = new SchemaElement("retained", null, null, RepetitionType.OPTIONAL,
+                1, null, null, null, null, null);
+        SchemaElement retainedAddress = new SchemaElement("address", null, null, RepetitionType.OPTIONAL,
+                2, null, null, null, null, null);
+        SchemaElement retainedCity = new SchemaElement("city", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        SchemaElement retainedSkip = new SchemaElement("skip", PhysicalType.INT64, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        SchemaElement items = new SchemaElement("items", null, null, RepetitionType.OPTIONAL,
+                1, ConvertedType.LIST, null, null, null, new LogicalType.ListType());
+        SchemaElement list = new SchemaElement("list", null, null, RepetitionType.REPEATED,
+                1, null, null, null, null, null);
+        SchemaElement itemAddress = new SchemaElement("address", null, null, RepetitionType.OPTIONAL,
+                2, null, null, null, null, null);
+        SchemaElement itemCity = new SchemaElement("city", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        SchemaElement itemSkip = new SchemaElement("skip", PhysicalType.INT64, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        SchemaElement people = new SchemaElement("people", null, null, RepetitionType.OPTIONAL,
+                1, ConvertedType.MAP, null, null, null, new LogicalType.MapType());
+        SchemaElement keyValue = new SchemaElement("key_value", null, null, RepetitionType.REPEATED,
+                2, null, null, null, null, null);
+        SchemaElement key = new SchemaElement("key", PhysicalType.BYTE_ARRAY, null,
+                RepetitionType.REQUIRED, null, null, null, null, null, new LogicalType.StringType());
+        SchemaElement valueAddress = new SchemaElement("address", null, null, RepetitionType.OPTIONAL,
+                2, null, null, null, null, null);
+        SchemaElement valueCity = new SchemaElement("city", PhysicalType.INT32, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        SchemaElement valueSkip = new SchemaElement("skip", PhysicalType.INT64, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        return FileSchema.fromSchemaElements(List.of(root, before, beforeAddress, beforeCity, retained,
+                retainedAddress, retainedCity, retainedSkip, items, list, itemAddress, itemCity, itemSkip,
+                people, keyValue, key, valueAddress, valueCity, valueSkip));
+    }
+
+    private static void assertPlansEquivalent(AvroPlanNode expected, AvroPlanNode actual) {
+        assertThat(actual.kind()).isEqualTo(expected.kind());
+        assertThat(actual.source()).isSameAs(expected.source());
+        assertSchemasEquivalent(expected.avro(), actual.avro());
+        switch (expected.kind()) {
+            case STRUCT -> {
+                for (int index = 0; index < expected.avro().getFields().size(); index++) {
+                    assertPlansEquivalent(expected.child(index), actual.child(index));
+                }
+            }
+            case LIST -> assertPlansEquivalent(expected.listElement(), actual.listElement());
+            case MAP -> assertPlansEquivalent(expected.mapValue(), actual.mapValue());
+            default -> {
+            }
+        }
+    }
+
+    private static void assertSchemasEquivalent(Schema expected, Schema actual) {
+        assertThat(actual.getType()).isEqualTo(expected.getType());
+        switch (expected.getType()) {
+            case RECORD -> {
+                assertThat(actual.getFields()).extracting(Schema.Field::name)
+                        .containsExactlyElementsOf(expected.getFields().stream().map(Schema.Field::name).toList());
+                for (int index = 0; index < expected.getFields().size(); index++) {
+                    assertSchemasEquivalent(expected.getFields().get(index).schema(), actual.getFields().get(index).schema());
+                }
+            }
+            case ARRAY -> assertSchemasEquivalent(expected.getElementType(), actual.getElementType());
+            case MAP -> assertSchemasEquivalent(expected.getValueType(), actual.getValueType());
+            case UNION -> {
+                assertThat(actual.getTypes()).hasSameSizeAs(expected.getTypes());
+                for (int index = 0; index < expected.getTypes().size(); index++) {
+                    assertSchemasEquivalent(expected.getTypes().get(index), actual.getTypes().get(index));
+                }
+            }
+            case FIXED -> {
+                assertThat(actual.getFixedSize()).isEqualTo(expected.getFixedSize());
+                assertThat(actual.getLogicalType()).isEqualTo(expected.getLogicalType());
+            }
+            default -> {
+            }
+        }
     }
 
     private static Callable<String> task(CountDownLatch start) {

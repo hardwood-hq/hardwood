@@ -1251,6 +1251,19 @@ class AvroRowReaderTest {
     }
 
     @Test
+    void compatibilityPlanMaterializesProjectedListRecordLikeNativePlan() throws Exception {
+        ColumnProjection projection = ColumnProjection.columns("items.list.element.quantity");
+        try (ParquetFileReader fileReader = ParquetFileReader.open(
+                InputFile.of(TEST_RESOURCES.resolve("list_struct_test.parquet")));
+             AvroRowReader nativeReader = AvroReaders.buildRowReader(fileReader).projection(projection).build();
+             RowReader compatibilityRowReader = fileReader.buildRowReader().projection(projection).build();
+             AvroRowReader compatibilityReader = new AvroRowReader(compatibilityRowReader,
+                     AvroSchemaConverter.planForParquetAvroCompatibility(fileReader.getFileSchema(), projection))) {
+            assertEquivalentRecords(readAll(nativeReader), readAll(compatibilityReader));
+        }
+    }
+
+    @Test
     void compatibilityPlanMaterializesKeyOnlyMapWithNullValues() throws Exception {
         ColumnProjection projection = ColumnProjection.columns("people.key_value.key");
         try (ParquetFileReader fileReader = ParquetFileReader.open(
