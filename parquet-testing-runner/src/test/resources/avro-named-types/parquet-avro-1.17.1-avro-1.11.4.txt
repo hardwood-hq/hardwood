@@ -90,6 +90,8 @@ supported
 supported
 1 | / | root | root | null | root | RECORD | -
 2 | /0:instant/ | instant | instant | null | instant | FIXED | 12
+3 | /1:nested/ | nested | nested | null | nested | RECORD | -
+4 | /1:nested/0:instant/ | instant | instant | instant2 | instant2.instant | FIXED | 12
 
 ## int96-rejected
 unsupported | java.lang.IllegalArgumentException | INT96 is deprecated. As interim enable READ_INT96_AS_FIXED flag to read as byte array.

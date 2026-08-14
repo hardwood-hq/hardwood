@@ -16,6 +16,7 @@ import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
 
+import org.apache.avro.LogicalTypes;
 import org.apache.avro.Schema;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.parquet.Version;
@@ -48,6 +49,17 @@ class AvroNamedTypeOracleTest {
     private static final Path GOLDEN = Path.of("src", "test", "resources", "avro-named-types",
             "parquet-avro-1.17.1-avro-1.11.4.txt");
 
+    private static final String LICENSE_HEADER = """
+            #
+            #  SPDX-License-Identifier: Apache-2.0
+            #
+            #  Copyright The original authors
+            #
+            #  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
+            #
+
+            """;
+
     private static final Set<String> REQUIRED_IDS = Set.of(
             "nested-different", "nested-identical", "list-and-map", "variant-canonical",
             "variant-shredded", "fixed", "logical-fixed", "qualified-root", "address",
@@ -65,7 +77,7 @@ class AvroNamedTypeOracleTest {
         String actual = renderFixtures(fixtures);
         if (Boolean.getBoolean("hardwood.updateAvroNamedTypesGolden")) {
             Files.createDirectories(GOLDEN.getParent());
-            Files.writeString(GOLDEN, actual, StandardCharsets.UTF_8);
+            Files.writeString(GOLDEN, LICENSE_HEADER + actual.stripTrailing() + "\n", StandardCharsets.UTF_8);
             throw new AssertionError("Updated " + GOLDEN + "; review it and re-run without the property");
         }
         assertThat(GOLDEN).exists();
@@ -77,6 +89,15 @@ class AvroNamedTypeOracleTest {
         assertThat(actual).contains("address3.address");
         assertThat(actual).contains("unsupported | java.lang.IllegalArgumentException | "
                 + "INT96 is deprecated. As interim enable READ_INT96_AS_FIXED flag to read as byte array.");
+    }
+
+    @Test
+    void fixedModeInt96GoldenRecordsRepeatedName() {
+        Fixture fixture = fixtures().stream().filter(candidate -> candidate.id().equals("int96-fixed"))
+                .findFirst().orElseThrow();
+
+        assertThat(renderNamedTypeOccurrences(fixture.descriptor(), fixture.converter().convert(fixture.schema())))
+                .contains("/1:nested/0:instant/ | instant | instant | instant2 | instant2.instant | FIXED | 12");
     }
 
     @Test
@@ -212,6 +233,17 @@ class AvroNamedTypeOracleTest {
     }
 
     @Test
+    void fixedLogicalTypeRendererPreservesDecimalPrecisionAndScale() {
+        List<String> decimalNineTwo = renderFixedLogicalTypes(decimalFixed(9, 2));
+        List<String> decimalEightTwo = renderFixedLogicalTypes(decimalFixed(8, 2));
+        List<String> decimalNineThree = renderFixedLogicalTypes(decimalFixed(9, 3));
+
+        assertThat(decimalNineTwo).containsExactly("amount | 5 | decimal(9,2)");
+        assertThat(decimalEightTwo).isNotEqualTo(decimalNineTwo);
+        assertThat(decimalNineThree).isNotEqualTo(decimalNineTwo);
+    }
+
+    @Test
     void variantDescriptorRejectsPhysicalMutations() {
         Fixture fixture = fixtures().stream().filter(candidate -> candidate.id().equals("variant-shredded"))
                 .findFirst().orElseThrow();
@@ -252,18 +284,39 @@ class AvroNamedTypeOracleTest {
         assertThatThrownBy(() -> validateDescriptor(new SourceDescriptor(root.source(), root.name(),
                 List.of(renamedPayload, root.children().get(1)), Role.RECORD)))
                 .isInstanceOf(AssertionError.class);
-    }
 
-    private static List<String> renderNamedTypes(Schema schema) {
-        List<String> namedTypes = new ArrayList<>();
-        collectNamedTypes(schema, namedTypes, new HashSet<>());
-        return namedTypes;
-    }
+        MessageType optionalMetadata = parse("""
+                message root {
+                  optional group payload (VARIANT(1)) {
+                    optional binary metadata;
+                    required binary value;
+                  }
+                }
+                """);
+        assertThatThrownBy(() -> validateDescriptor(bind(optionalMetadata, layout("root", Role.RECORD,
+                layout("payload", Role.VARIANT, layout("metadata", Role.LEAF), layout("value", Role.LEAF))))))
+                .isInstanceOf(AssertionError.class);
 
-    private static List<String> renderNamedTypeAttributes(Schema schema) {
-        List<String> namedTypes = new ArrayList<>();
-        collectNamedTypeAttributes(schema, namedTypes, new HashSet<>());
-        return namedTypes;
+        MessageType optionalValue = parse("""
+                message root {
+                  optional group payload (VARIANT(1)) {
+                    required binary metadata;
+                    optional binary value;
+                  }
+                }
+                """);
+        assertThatThrownBy(() -> validateDescriptor(bind(optionalValue, layout("root", Role.RECORD,
+                layout("payload", Role.VARIANT, layout("metadata", Role.LEAF), layout("value", Role.LEAF))))))
+                .isInstanceOf(AssertionError.class);
+
+        Schema nullableMetadata = variantSchema(Schema.createUnion(Schema.create(Schema.Type.NULL),
+                Schema.create(Schema.Type.BYTES)), Schema.create(Schema.Type.BYTES));
+        assertThatThrownBy(() -> renderType("variant", "/0:payload/", payload, nullableMetadata, new ArrayList<>()))
+                .isInstanceOf(AssertionError.class);
+
+        Schema stringValue = variantSchema(Schema.create(Schema.Type.BYTES), Schema.create(Schema.Type.STRING));
+        assertThatThrownBy(() -> renderType("variant", "/0:payload/", payload, stringValue, new ArrayList<>()))
+                .isInstanceOf(AssertionError.class);
     }
 
     private static List<String> renderNamedTypeOccurrences(SourceDescriptor source, Schema schema) {
@@ -286,7 +339,7 @@ class AvroNamedTypeOracleTest {
         switch (schema.getType()) {
             case RECORD -> schema.getFields().forEach(field -> collectFixedLogicalTypes(field.schema(), fixedTypes, visited));
             case FIXED -> fixedTypes.add(schema.getFullName() + " | " + schema.getFixedSize() + " | "
-                    + nullText(schema.getLogicalType() == null ? null : schema.getLogicalType().getName()));
+                    + fixedLogicalTypeAttributes(schema));
             case ARRAY -> collectFixedLogicalTypes(schema.getElementType(), fixedTypes, visited);
             case MAP -> collectFixedLogicalTypes(schema.getValueType(), fixedTypes, visited);
             default -> {
@@ -294,44 +347,22 @@ class AvroNamedTypeOracleTest {
         }
     }
 
-    private static void collectNamedTypeAttributes(Schema schema, List<String> namedTypes, Set<Schema> visited) {
-        if (!visited.add(schema)) {
-            return;
+    private static String fixedLogicalTypeAttributes(Schema schema) {
+        org.apache.avro.LogicalType logicalType = schema.getLogicalType();
+        if (logicalType instanceof LogicalTypes.Decimal decimal) {
+            return "decimal(" + decimal.getPrecision() + "," + decimal.getScale() + ")";
         }
-        switch (schema.getType()) {
-            case RECORD -> {
-                namedTypes.add(schema.getFullName() + " | RECORD | -");
-                for (Schema.Field field : schema.getFields()) {
-                    collectNamedTypeAttributes(field.schema(), namedTypes, visited);
-                }
-            }
-            case FIXED -> namedTypes.add(schema.getFullName() + " | FIXED | " + schema.getFixedSize());
-            case ARRAY -> collectNamedTypeAttributes(schema.getElementType(), namedTypes, visited);
-            case MAP -> collectNamedTypeAttributes(schema.getValueType(), namedTypes, visited);
-            case UNION -> schema.getTypes().forEach(type -> collectNamedTypeAttributes(type, namedTypes, visited));
-            default -> {
-            }
-        }
+        return nullText(logicalType == null ? null : logicalType.getName());
     }
 
-    private static void collectNamedTypes(Schema schema, List<String> namedTypes, Set<Schema> visited) {
-        if (!visited.add(schema)) {
-            return;
-        }
-        switch (schema.getType()) {
-            case RECORD -> {
-                namedTypes.add(schema.getFullName());
-                for (Schema.Field field : schema.getFields()) {
-                    collectNamedTypes(field.schema(), namedTypes, visited);
-                }
-            }
-            case FIXED -> namedTypes.add(schema.getFullName());
-            case ARRAY -> collectNamedTypes(schema.getElementType(), namedTypes, visited);
-            case MAP -> collectNamedTypes(schema.getValueType(), namedTypes, visited);
-            case UNION -> schema.getTypes().forEach(type -> collectNamedTypes(type, namedTypes, visited));
-            default -> {
-            }
-        }
+    private static Schema decimalFixed(int precision, int scale) {
+        return LogicalTypes.decimal(precision, scale).addToSchema(Schema.createFixed("amount", null, null, 5));
+    }
+
+    private static Schema variantSchema(Schema metadata, Schema value) {
+        return Schema.createRecord("payload", null, null, false, List.of(
+                new Schema.Field("metadata", metadata, null, null),
+                new Schema.Field("value", value, null, null)));
     }
 
     private static FileSchema nestedAddressSchema() {
@@ -515,6 +546,8 @@ class AvroNamedTypeOracleTest {
         if (annotation instanceof LogicalTypeAnnotation.VariantLogicalTypeAnnotation) {
             assertThat(avro.getType()).isEqualTo(Schema.Type.RECORD);
             assertThat(avro.getFields()).extracting(Schema.Field::name).containsExactly("metadata", "value");
+            assertThat(avro.getFields().getFirst().schema().getType()).isEqualTo(Schema.Type.BYTES);
+            assertThat(avro.getFields().get(1).schema().getType()).isEqualTo(Schema.Type.BYTES);
             record(fixtureId, sourceSite, source, avro, occurrences);
             return;
         }
@@ -609,8 +642,10 @@ class AvroNamedTypeOracleTest {
             assertThat(group.getType(1).isPrimitive()).isTrue();
             assertThat(group.getType(0).asPrimitiveType().getPrimitiveTypeName())
                     .isEqualTo(PrimitiveType.PrimitiveTypeName.BINARY);
+            assertThat(group.getType(0).getRepetition()).isEqualTo(Type.Repetition.REQUIRED);
             assertThat(group.getType(1).asPrimitiveType().getPrimitiveTypeName())
                     .isEqualTo(PrimitiveType.PrimitiveTypeName.BINARY);
+            assertThat(group.getType(1).getRepetition()).isEqualTo(Type.Repetition.REQUIRED);
             if (group.getFieldCount() == 3) {
                 assertThat(descriptor.children().get(2).role()).isEqualTo(Role.SUPPRESSED);
                 validateDescriptor(descriptor.children().get(2), true);
@@ -786,10 +821,12 @@ class AvroNamedTypeOracleTest {
         MessageType int96 = parse("""
                 message root {
                   optional int96 instant;
+                  optional group nested { optional int96 instant; }
                 }
                 """);
         fixtures.add(new Fixture("int96-fixed", int96, int96Converter(),
-                bind(int96, layout("root", Role.RECORD, layout("instant", Role.FIXED)))));
+                bind(int96, layout("root", Role.RECORD, layout("instant", Role.FIXED),
+                        layout("nested", Role.RECORD, layout("instant", Role.FIXED))))));
         fixtures.add(fixture("int96-rejected", """
                 message root {
                   optional int96 instant;

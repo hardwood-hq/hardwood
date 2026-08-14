@@ -23,12 +23,12 @@ The executable oracle golden at `parquet-testing-runner/src/test/resources/avro-
 | Different-shape and identical nested records | Supported; each record occurrence uses the shared source-name counter. |
 | Records in LIST elements and MAP values | Supported; logical element/value traversal contributes named records. |
 | Canonical and shredded Variant | Supported; each Variant group contributes one record and shredded `typed_value` descendants contribute none. |
-| Plain fixed values and DECIMAL fixed values | Supported; fixed values use the shared source-name counter and retain their widths. |
+| Plain fixed values and DECIMAL fixed values | Supported; fixed values use the shared source-name counter and retain their widths and decimal precision/scale. |
 | INTERVAL and FLOAT16 fixed values | Supported; each uses its source column name and consumes an occurrence. |
 | UUID fixed value | Supported as Avro `string`; it consumes no occurrence. |
 | Qualified root name | Supported; `acme.row` has Avro name `row`, namespace `acme`, and full name `acme.row`. |
 | Reordered and preceding `address` records | Supported; occurrences are order-sensitive: `address`, `address2.address`, then `address3.address` after an inserted preceding occurrence. |
-| INT96 with `READ_INT96_AS_FIXED` | Supported as a fixed value and consumes an occurrence. |
+| INT96 with `READ_INT96_AS_FIXED` | Supported as a fixed value; repeated source names consume the shared counter and use the later namespace. |
 | INT96 without `READ_INT96_AS_FIXED` | Unsupported with `java.lang.IllegalArgumentException`: `INT96 is deprecated. As interim enable READ_INT96_AS_FIXED flag to read as byte array.` |
 
 ## Projection
