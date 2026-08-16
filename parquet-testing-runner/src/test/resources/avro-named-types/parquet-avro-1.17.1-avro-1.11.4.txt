@@ -95,3 +95,11 @@ supported
 
 ## int96-rejected
 unsupported | java.lang.IllegalArgumentException | INT96 is deprecated. As interim enable READ_INT96_AS_FIXED flag to read as byte array.
+
+## record-fixed-collision
+supported
+1 | / | root | root | null | root | RECORD | -
+2 | /0:a/ | a | a | null | a | RECORD | -
+3 | /0:a/0:token/ | token | token | null | token | RECORD | -
+4 | /1:b/ | b | b | null | b | RECORD | -
+5 | /1:b/0:token/ | token | token | token2 | token2.token | FIXED | 4

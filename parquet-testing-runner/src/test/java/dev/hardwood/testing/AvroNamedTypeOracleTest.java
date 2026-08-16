@@ -63,7 +63,7 @@ class AvroNamedTypeOracleTest {
     private static final Set<String> REQUIRED_IDS = Set.of(
             "nested-different", "nested-identical", "list-and-map", "variant-canonical",
             "variant-shredded", "fixed", "logical-fixed", "qualified-root", "address",
-            "address-preceded", "int96-fixed", "int96-rejected");
+            "address-preceded", "int96-fixed", "int96-rejected", "record-fixed-collision");
 
     @Test
     void matchesParquetAvroNamedTypeGolden() throws IOException {
@@ -144,15 +144,50 @@ class AvroNamedTypeOracleTest {
             }
             FileSchema hardwood = hardwoodSchema(fixture.schema());
             validateDescriptor(fixture.descriptor());
-            assertThat(renderNamedTypeOccurrences(fixture.descriptor(), dev.hardwood.avro.internal.AvroSchemaConverter
-                    .planForParquetAvroCompatibility(hardwood, ColumnProjection.all()).avro()))
+            Schema compatibility = dev.hardwood.avro.internal.AvroSchemaConverter
+                    .planForParquetAvroCompatibility(hardwood, ColumnProjection.all(), fixture.readInt96AsFixed())
+                    .avro();
+            assertThat(renderNamedTypeOccurrences(fixture.descriptor(), compatibility))
                     .as(fixture.id())
                     .containsExactlyElementsOf(renderNamedTypeOccurrences(fixture.descriptor(), reference));
-            assertThat(renderFixedLogicalTypes(dev.hardwood.avro.internal.AvroSchemaConverter
-                    .planForParquetAvroCompatibility(hardwood, ColumnProjection.all()).avro()))
+            assertThat(renderFixedLogicalTypes(compatibility))
                     .as(fixture.id() + " fixed logical types")
                     .containsExactlyElementsOf(renderFixedLogicalTypes(reference));
         }
+    }
+
+    @Test
+    void hardwoodCompatibilityRejectsBareInt96LikeParquetAvro() {
+        MessageType int96 = parse("""
+                message root {
+                  optional int96 instant;
+                }
+                """);
+        FileSchema hardwood = hardwoodSchema(int96);
+
+        // Capture parquet-avro's own rejection message so the assertion pins true parity,
+        // not merely "throws something".
+        String referenceMessage = null;
+        try {
+            new AvroSchemaConverter().convert(int96);
+        }
+        catch (IllegalArgumentException rejected) {
+            referenceMessage = rejected.getMessage();
+        }
+        assertThat(referenceMessage).isNotNull();
+
+        assertThatThrownBy(() -> dev.hardwood.avro.internal.AvroSchemaConverter
+                .planForParquetAvroCompatibility(hardwood, ColumnProjection.all()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage(referenceMessage);
+
+        // The flag-on overload reads INT96 as a 12-byte fixed, like parquet-avro with
+        // READ_INT96_AS_FIXED enabled.
+        Schema instant = dev.hardwood.avro.internal.AvroSchemaConverter
+                .planForParquetAvroCompatibility(hardwood, ColumnProjection.all(), true).avro()
+                .getField("instant").schema().getTypes().get(1);
+        assertThat(instant.getType()).isEqualTo(Schema.Type.FIXED);
+        assertThat(instant.getFixedSize()).isEqualTo(12);
     }
 
     @Test
@@ -826,18 +861,26 @@ class AvroNamedTypeOracleTest {
                 """);
         fixtures.add(new Fixture("int96-fixed", int96, int96Converter(),
                 bind(int96, layout("root", Role.RECORD, layout("instant", Role.FIXED),
-                        layout("nested", Role.RECORD, layout("instant", Role.FIXED))))));
+                        layout("nested", Role.RECORD, layout("instant", Role.FIXED)))), true));
         fixtures.add(fixture("int96-rejected", """
                 message root {
                   optional int96 instant;
                 }
                 """, layout("root", Role.RECORD, layout("instant", Role.FIXED))));
+        fixtures.add(fixture("record-fixed-collision", """
+                message root {
+                  optional group a { optional group token { optional int32 x; } }
+                  optional group b { optional fixed_len_byte_array(4) token; }
+                }
+                """, layout("root", Role.RECORD,
+                layout("a", Role.RECORD, layout("token", Role.RECORD, layout("x", Role.LEAF))),
+                layout("b", Role.RECORD, layout("token", Role.FIXED)))));
         return fixtures;
     }
 
     private static Fixture fixture(String id, String schema, SourceLayout layout) {
         MessageType message = parse(schema);
-        return new Fixture(id, message, new AvroSchemaConverter(), bind(message, layout));
+        return new Fixture(id, message, new AvroSchemaConverter(), bind(message, layout), false);
     }
 
     private static MessageType parse(String schema) {
@@ -850,7 +893,8 @@ class AvroNamedTypeOracleTest {
         return new AvroSchemaConverter(configuration);
     }
 
-    private record Fixture(String id, MessageType schema, AvroSchemaConverter converter, SourceDescriptor descriptor) {
+    private record Fixture(String id, MessageType schema, AvroSchemaConverter converter,
+            SourceDescriptor descriptor, boolean readInt96AsFixed) {
     }
 
     private enum Role {

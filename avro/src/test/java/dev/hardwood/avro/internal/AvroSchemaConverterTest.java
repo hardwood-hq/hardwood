@@ -440,6 +440,25 @@ class AvroSchemaConverterTest {
     }
 
     @Test
+    void parquetAvroCompatibilityRejectsBareInt96() {
+        SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
+        SchemaElement instant = new SchemaElement("instant", PhysicalType.INT96, null,
+                RepetitionType.OPTIONAL, null, null, null, null, null, null);
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(root, instant));
+
+        // parquet-avro rejects INT96 unless READ_INT96_AS_FIXED is set; the compatibility
+        // default reproduces its message verbatim.
+        assertThatThrownBy(() -> AvroSchemaConverter.planForParquetAvroCompatibility(schema, ColumnProjection.all()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("INT96 is deprecated. As interim enable READ_INT96_AS_FIXED flag to read as byte array.");
+
+        Schema fixed = pickRecordBranch(AvroSchemaConverter.planForParquetAvroCompatibility(
+                schema, ColumnProjection.all(), true).avro()).getField("instant").schema().getTypes().get(1);
+        assertThat(fixed.getType()).isEqualTo(Schema.Type.FIXED);
+        assertThat(fixed.getFixedSize()).isEqualTo(12);
+    }
+
+    @Test
     void parquetAvroCompatibilityDoesNotShareCounterState() {
         FileSchema schema = repeatedAddressSchema();
 

@@ -56,10 +56,18 @@ public final class AvroSchemaConverter {
 
     private final Naming naming;
 
-    private AvroSchemaConverter(FileSchema fileSchema, ProjectedSchema projected, Naming naming) {
+    /// Whether an `INT96` column converts to a 12-byte Avro `fixed`. Native
+    /// conversion always does. The parquet-avro compatibility path reads it from the
+    /// caller: parquet-avro `1.17.1` only converts `INT96` when `READ_INT96_AS_FIXED`
+    /// is set and otherwise rejects it, and the compatibility path mirrors that.
+    private final boolean int96AsFixed;
+
+    private AvroSchemaConverter(FileSchema fileSchema, ProjectedSchema projected, Naming naming,
+            boolean int96AsFixed) {
         this.fileSchema = fileSchema;
         this.projected = projected;
         this.naming = naming;
+        this.int96AsFixed = int96AsFixed;
     }
 
     /// Convert a Hardwood FileSchema to a decode plan, narrowed to the given column
@@ -76,24 +84,46 @@ public final class AvroSchemaConverter {
     /// @param projection the columns to retain
     /// @return the root of the decode plan, restricted to projected fields
     public static AvroPlanNode plan(FileSchema fileSchema, ColumnProjection projection) {
-        ProjectedSchema projected = projection.projectsAll()
-                ? null
-                : ProjectedSchema.create(fileSchema, projection);
-        return new AvroSchemaConverter(fileSchema, projected, Naming.nativeNaming()).convertRoot();
+        return converter(fileSchema, projection, Naming.nativeNaming(), true).convertRoot();
     }
 
     /// Convert a Hardwood [FileSchema] using parquet-avro `1.17.1` generated
     /// named-type resolution. Each invocation has fresh counter state.
+    ///
+    /// Rejects `INT96` the way parquet-avro does by default — with an
+    /// `IllegalArgumentException` — since parquet-avro converts `INT96` only when
+    /// `READ_INT96_AS_FIXED` is enabled. Use
+    /// [#planForParquetAvroCompatibility(FileSchema, ColumnProjection, boolean)] to
+    /// read `INT96` as a `fixed` instead.
     ///
     /// @param fileSchema the Parquet file schema
     /// @param projection the columns to retain
     /// @return the compatibility decode plan
     public static AvroPlanNode planForParquetAvroCompatibility(FileSchema fileSchema,
             ColumnProjection projection) {
+        return planForParquetAvroCompatibility(fileSchema, projection, false);
+    }
+
+    /// Convert a Hardwood [FileSchema] using parquet-avro `1.17.1` generated
+    /// named-type resolution, choosing how `INT96` is handled. Each invocation has
+    /// fresh counter state.
+    ///
+    /// @param fileSchema the Parquet file schema
+    /// @param projection the columns to retain
+    /// @param readInt96AsFixed convert `INT96` to a 12-byte `fixed` when `true`,
+    ///        mirroring parquet-avro's `READ_INT96_AS_FIXED`; reject it when `false`
+    /// @return the compatibility decode plan
+    public static AvroPlanNode planForParquetAvroCompatibility(FileSchema fileSchema,
+            ColumnProjection projection, boolean readInt96AsFixed) {
+        return converter(fileSchema, projection, Naming.parquetAvroNaming(), readInt96AsFixed).convertRoot();
+    }
+
+    private static AvroSchemaConverter converter(FileSchema fileSchema, ColumnProjection projection,
+            Naming naming, boolean int96AsFixed) {
         ProjectedSchema projected = projection.projectsAll()
                 ? null
                 : ProjectedSchema.create(fileSchema, projection);
-        return new AvroSchemaConverter(fileSchema, projected, Naming.parquetAvroNaming()).convertRoot();
+        return new AvroSchemaConverter(fileSchema, projected, naming, int96AsFixed);
     }
 
     private AvroPlanNode convertRoot() {
@@ -399,10 +429,21 @@ public final class AvroSchemaConverter {
             case BYTE_ARRAY -> binary(prim);
             case FIXED_LEN_BYTE_ARRAY -> AvroPlanNode.leaf(
                     fixed(prim.name(), prim.name(), fixedByteLength(prim)), Kind.FIXED, prim);
-            // INT96 has a fixed 12-byte width that the schema does not carry a length for.
-            case INT96 -> AvroPlanNode.leaf(
-                    fixed(prim.name(), prim.name(), 12), Kind.FIXED, prim);
+            case INT96 -> convertInt96(prim);
         };
+    }
+
+    /// Convert an `INT96` column. Native conversion and the parquet-avro
+    /// compatibility path with `READ_INT96_AS_FIXED` enabled read it as a 12-byte
+    /// `fixed` — the width the schema does not carry a length for. The compatibility
+    /// path with the flag disabled rejects it with parquet-avro `1.17.1`'s own
+    /// message, since parquet-avro converts `INT96` only when the flag is set.
+    private AvroPlanNode convertInt96(SchemaNode.PrimitiveNode prim) {
+        if (!int96AsFixed) {
+            throw new IllegalArgumentException(
+                    "INT96 is deprecated. As interim enable READ_INT96_AS_FIXED flag to read as byte array.");
+        }
+        return AvroPlanNode.leaf(fixed(prim.name(), prim.name(), 12), Kind.FIXED, prim);
     }
 
     private Schema fixed(String sourceName, String nativeName, int size) {

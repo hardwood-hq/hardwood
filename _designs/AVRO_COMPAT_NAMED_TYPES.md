@@ -6,6 +6,8 @@
 
 `AvroSchemaConverter.planForParquetAvroCompatibility(FileSchema, ColumnProjection)` produces a decode plan whose generated Avro record and fixed names match parquet-avro 1.17.1. The existing two-argument `plan` method remains native Hardwood conversion.
 
+parquet-avro converts `INT96` only when `READ_INT96_AS_FIXED` is enabled and otherwise rejects it as deprecated. The two-argument compatibility method mirrors the default and rejects `INT96` with parquet-avro's own `IllegalArgumentException`; the `planForParquetAvroCompatibility(FileSchema, ColumnProjection, boolean readInt96AsFixed)` overload reads it as a 12-byte `fixed` when the flag is set. Native `plan` always reads `INT96` as a `fixed`.
+
 ## Naming
 
 One conversion owns one `Map<String, Integer>` counter. Every named type increments the counter for its unchanged Parquet source name before converting children. The first occurrence has no namespace. Occurrence `N > 1` has namespace `<sourceName><N>`. Avro receives the unchanged source name and applies its normal qualified-name parsing.
