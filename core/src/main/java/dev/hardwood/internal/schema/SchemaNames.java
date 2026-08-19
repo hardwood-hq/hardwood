@@ -46,6 +46,7 @@ public final class SchemaNames {
         return sb.toString();
     }
 
+    /// Returns whether `name` matches `[A-Za-z_][A-Za-z0-9_]*`.
     public static boolean isLegal(String name) {
         if (name.isEmpty() || isDigit(name.charAt(0))) {
             return false;

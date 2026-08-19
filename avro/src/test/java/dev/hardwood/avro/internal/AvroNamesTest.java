@@ -7,6 +7,7 @@
  */
 package dev.hardwood.avro.internal;
 
+import java.util.ArrayList;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
@@ -17,6 +18,7 @@ import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
 
+import static dev.hardwood.metadata.SchemaElement.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -41,11 +43,15 @@ class AvroNamesTest {
 
     @Test
     void preservesQualifiedRootAndBuildsDescendantNamespace() {
-        FileSchema schema = nestedSchema("acme.row", "acme", "row");
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("acme.row", 1),
+                SchemaElement.group("acme", RepetitionType.OPTIONAL, 1),
+                SchemaElement.group("row", RepetitionType.OPTIONAL, 1),
+                SchemaElement.primitive("value", PhysicalType.INT32, RepetitionType.REQUIRED)));
         AvroNames names = AvroNames.forSchema(schema);
         SchemaNode.GroupNode root = schema.getRootNode();
-        SchemaNode.GroupNode child = (SchemaNode.GroupNode) root.children().get(0);
-        SchemaNode.GroupNode grandchild = (SchemaNode.GroupNode) child.children().get(0);
+        SchemaNode.GroupNode child = (SchemaNode.GroupNode) root.children().getFirst();
+        SchemaNode.GroupNode grandchild = (SchemaNode.GroupNode) child.children().getFirst();
 
         assertThat(names.typeName(root).fullName()).isEqualTo("acme.row");
         assertThat(names.typeName(child).fullName()).isEqualTo("acme.row.acme");
@@ -67,30 +73,12 @@ class AvroNamesTest {
     }
 
     private static FileSchema schemaWithChildren(String rootName, String... names) {
-        SchemaElement root = group(rootName, null, names.length);
-        List<SchemaElement> elements = new java.util.ArrayList<>();
-        elements.add(root);
+        SchemaElement rootElement = root(rootName, names.length);
+        List<SchemaElement> elements = new ArrayList<>();
+        elements.add(rootElement);
         for (String name : names) {
-            elements.add(primitive(name));
+            elements.add(primitive(name, PhysicalType.INT32, RepetitionType.REQUIRED));
         }
         return FileSchema.fromSchemaElements(elements);
-    }
-
-    private static FileSchema nestedSchema(String rootName, String childName, String grandchildName) {
-        return FileSchema.fromSchemaElements(List.of(
-                group(rootName, null, 1),
-                group(childName, RepetitionType.OPTIONAL, 1),
-                group(grandchildName, RepetitionType.OPTIONAL, 1),
-                primitive("value")));
-    }
-
-    private static SchemaElement group(String name, RepetitionType repetition, int children) {
-        return new SchemaElement(name, null, null, repetition, children,
-                null, null, null, null, null);
-    }
-
-    private static SchemaElement primitive(String name) {
-        return new SchemaElement(name, PhysicalType.INT32, null, RepetitionType.REQUIRED,
-                null, null, null, null, null, null);
     }
 }

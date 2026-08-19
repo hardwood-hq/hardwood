@@ -50,13 +50,66 @@ class AvroSchemaConverterTest {
     }
 
     @Test
-    void illegalNestedNameIsSanitized() throws Exception {
+    void illegalNestedNameIsSanitized() {
         Schema converted = convert(illegalNestedGroupSchema());
         Schema parsed = new Schema.Parser().parse(converted.toString());
         Schema record = pickRecordBranch(parsed.getField("acme_address").schema());
 
         assertThat(record.getFullName()).isEqualTo("schema.acme_address");
         assertThat(record.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("acme.address");
+    }
+
+    @Test
+    void qualifiedRootDescendantsUseRootFullName() {
+        Schema schema = convert(qualifiedRootNestedSchema());
+        Schema parsed = new Schema.Parser().parse(schema.toString());
+
+        assertThat(parsed.getFullName()).isEqualTo("acme.row");
+        assertThat(parsed.toString()).contains("\"namespace\":\"acme.row\"",
+                "\"namespace\":\"acme.row.acme\"");
+    }
+
+    @Test
+    void invalidQualifiedRootIsRecoverable() {
+        Schema schema = convert(schemaWithRootName("1acme.row"));
+        Schema parsed = new Schema.Parser().parse(schema.toString());
+
+        assertThat(parsed.getFullName()).isEqualTo("_1acme.row");
+        assertThat(parsed.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("1acme.row");
+    }
+
+    @Test
+    void canonicalFixedTypesRemainStable() {
+        Schema parsed = new Schema.Parser().parse(convert(canonicalFixedSchema()).toString());
+
+        assertThat(parsed.toString()).contains("\"name\":\"interval\"", "\"name\":\"float16\"");
+        assertThat(parsed.getField("interval_one").schema().toString()).contains("\"size\":12");
+        assertThat(parsed.getField("float16_one").schema().toString()).contains("\"size\":2");
+    }
+
+    @Test
+    void canonicalRootConflictsAreRejected() {
+        assertThatThrownBy(() -> convert(canonicalRootSchema("interval", new LogicalType.IntervalType(),
+                PhysicalType.FIXED_LEN_BYTE_ARRAY, 12)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("interval");
+        assertThatThrownBy(() -> convert(canonicalRootSchema("float16", new LogicalType.Float16Type(),
+                PhysicalType.FIXED_LEN_BYTE_ARRAY, 2)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("float16");
+    }
+
+    @Test
+    void projectionDoesNotRenameRetainedNamedTypes() {
+        FileSchema schema = duplicateNestedAddressSchema();
+        Schema all = convert(schema);
+        Schema projected = AvroSchemaConverter.plan(schema,
+                ColumnProjection.columns("home.address.city")).avro();
+
+        Schema allHome = pickRecordBranch(all.getField("home").schema());
+        Schema projectedHome = pickRecordBranch(projected.getField("home").schema());
+        assertThat(pickRecordBranch(allHome.getField("address").schema()).getFullName())
+                .isEqualTo(pickRecordBranch(projectedHome.getField("address").schema()).getFullName());
     }
 
     @Test
@@ -432,23 +485,59 @@ class AvroSchemaConverterTest {
         }
         throw new AssertionError("No record branch in union: " + fieldSchema);
     }
+    private static FileSchema qualifiedRootNestedSchema() {
+        return FileSchema.fromSchemaElements(List.of(
+                root("acme.row", 1),
+                group("acme", RepetitionType.OPTIONAL, 1),
+                group("row", RepetitionType.OPTIONAL, 1),
+                primitive("value", PhysicalType.INT32, RepetitionType.REQUIRED)));
+    }
+
+    private static FileSchema schemaWithRootName(String rootName) {
+        return FileSchema.fromSchemaElements(List.of(
+                root(rootName, 1),
+                primitive("value", PhysicalType.INT32, RepetitionType.REQUIRED)));
+    }
+
+    private static FileSchema canonicalFixedSchema() {
+        SchemaElement rootElement = root("root", 4);
+        SchemaElement intervalOne = fixed("interval_one", 12, new LogicalType.IntervalType());
+        SchemaElement intervalTwo = fixed("interval_two", 12, new LogicalType.IntervalType());
+        SchemaElement floatOne = fixed("float16_one", 2, new LogicalType.Float16Type());
+        SchemaElement floatTwo = fixed("float16_two", 2, new LogicalType.Float16Type());
+        return FileSchema.fromSchemaElements(List.of(rootElement, intervalOne, intervalTwo, floatOne, floatTwo));
+    }
+
+    private static FileSchema canonicalRootSchema(String rootName, LogicalType logicalType,
+            PhysicalType physicalType, int typeLength) {
+        SchemaElement rootElement = root(rootName, 1);
+        SchemaElement value = new SchemaElement("value", physicalType, typeLength,
+                RepetitionType.REQUIRED, null, null, null, null, null, logicalType);
+        return FileSchema.fromSchemaElements(List.of(rootElement, value));
+    }
+
+    private static SchemaElement fixed(String name, int typeLength, LogicalType logicalType) {
+        return new SchemaElement(name, PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength,
+                RepetitionType.REQUIRED, null, null, null, null, null, logicalType);
+    }
+
     private static FileSchema duplicateNestedAddressSchema() {
-        SchemaElement root = group("schema", null, 2);
+        SchemaElement rootElement = root("schema", 2);
         SchemaElement home = group("home", RepetitionType.OPTIONAL, 1);
         SchemaElement homeAddress = group("address", RepetitionType.OPTIONAL, 1);
-        SchemaElement city = primitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType());
+        SchemaElement city = convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType());
         SchemaElement work = group("work", RepetitionType.OPTIONAL, 1);
         SchemaElement workAddress = group("address", RepetitionType.OPTIONAL, 1);
-        SchemaElement zip = primitive("zip", PhysicalType.INT32, null, null);
+        SchemaElement zip = primitive("zip", PhysicalType.INT32, RepetitionType.REQUIRED);
         return FileSchema.fromSchemaElements(List.of(
-                root, home, homeAddress, city, work, workAddress, zip));
+                rootElement, home, homeAddress, city, work, workAddress, zip));
     }
 
     private static FileSchema illegalNestedGroupSchema() {
-        SchemaElement root = group("schema", null, 1);
+        SchemaElement rootElement = root("schema", 1);
         SchemaElement address = group("acme.address", RepetitionType.OPTIONAL, 1);
-        SchemaElement city = primitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType());
-        return FileSchema.fromSchemaElements(List.of(root, address, city));
+        SchemaElement city = convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType());
+        return FileSchema.fromSchemaElements(List.of(rootElement, address, city));
     }
 
     private static FileSchema buildVariantSchema(boolean includeTypedValue) {
