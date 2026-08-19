@@ -7,12 +7,13 @@
  */
 package dev.hardwood.avro.internal;
 
+import java.io.ByteArrayOutputStream;
 import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.avro.Schema;
-import org.apache.avro.SchemaParseException;
-import org.junit.jupiter.api.Disabled;
+import org.apache.avro.file.DataFileWriter;
+import org.apache.avro.generic.GenericDatumWriter;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.ConvertedType;
@@ -37,23 +38,25 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 class AvroSchemaConverterTest {
 
     @Test
-    @Disabled("#895 — enabled in Stage 3")
-    void duplicateNestedNamesReproduceSchemaParseFailure() {
+    void duplicateNestedNamesSerializeWithPathNames() throws Exception {
         Schema converted = convert(duplicateNestedAddressSchema());
+        Schema parsed = new Schema.Parser().parse(converted.toString());
 
-        assertThatThrownBy(() -> new Schema.Parser().parse(converted.toString()))
-                .isInstanceOf(SchemaParseException.class)
-                .hasMessageContaining("Can't redefine: address");
+        assertThat(parsed.toString()).contains("\"name\":\"address\",\"namespace\":\"schema.home\"",
+                "\"name\":\"address\",\"namespace\":\"schema.work\"");
+        new DataFileWriter<>(new GenericDatumWriter<>())
+                .create(parsed, new ByteArrayOutputStream())
+                .close();
     }
 
     @Test
-    @Disabled("#895 — enabled in Stage 3")
-    void illegalNestedNameReproducesSchemaParseFailure() {
+    void illegalNestedNameIsSanitized() throws Exception {
         Schema converted = convert(illegalNestedGroupSchema());
+        Schema parsed = new Schema.Parser().parse(converted.toString());
+        Schema record = pickRecordBranch(parsed.getField("acme_address").schema());
 
-        assertThatThrownBy(converted::toString)
-                .isInstanceOf(SchemaParseException.class)
-                .hasMessageContaining("Illegal character in: acme.address");
+        assertThat(record.getFullName()).isEqualTo("schema.acme_address");
+        assertThat(record.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("acme.address");
     }
 
     @Test

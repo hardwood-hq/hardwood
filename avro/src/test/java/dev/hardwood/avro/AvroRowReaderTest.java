@@ -119,6 +119,38 @@ class AvroRowReaderTest {
     }
 
     @Test
+    void rewrittenFieldUsesParquetAccessor() {
+        FileSchema schema = primitiveSchema("a-b", PhysicalType.INT32, RepetitionType.REQUIRED);
+        AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());
+        RowReader rows = (RowReader) Proxy.newProxyInstance(
+                RowReader.class.getClassLoader(),
+                new Class<?>[] { RowReader.class },
+                (proxy, method, arguments) -> {
+                    if (method.getName().equals("isNull") || method.getName().equals("getRawValue")) {
+                        if (arguments == null || arguments.length != 1 || !"a-b".equals(arguments[0])) {
+                            throw new AssertionError("unexpected accessor key: "
+                                    + (arguments == null ? null : arguments[0]));
+                        }
+                        return method.getName().equals("isNull") ? false : 42;
+                    }
+                    if (method.getName().equals("next")) {
+                        return null;
+                    }
+                    if (method.getName().equals("close")) {
+                        return null;
+                    }
+                    throw new AssertionError("Unexpected accessor: " + method.getName());
+                });
+
+        try (AvroRowReader reader = new AvroRowReader(rows, plan)) {
+            GenericRecord record = reader.next();
+            assertThat(record.getSchema().getField("a_b").getProp(AvroSchemaConverter.PARQUET_NAME_PROP))
+                    .isEqualTo("a-b");
+            assertThat(record.get("a_b")).isEqualTo(42);
+        }
+    }
+
+    @Test
     void wrongRawTypeNamesNestedStructField() {
         FileSchema schema = nestedPrimitiveSchema();
         AvroPlanNode plan = AvroSchemaConverter.plan(schema, ColumnProjection.all());

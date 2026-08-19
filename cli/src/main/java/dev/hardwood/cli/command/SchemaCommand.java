@@ -22,7 +22,7 @@ import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.JsonStrings;
-import dev.hardwood.cli.internal.SchemaNames;
+import dev.hardwood.internal.schema.SchemaNames;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;

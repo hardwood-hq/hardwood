@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.cli.internal;
+package dev.hardwood.internal.schema;
 
 /// Mapping of arbitrary Parquet names onto the name grammar of the schema formats the
 /// `schema` command emits.
@@ -44,6 +44,18 @@ public final class SchemaNames {
             sb.append(isNamePart(c) ? c : '_');
         }
         return sb.toString();
+    }
+
+    public static boolean isLegal(String name) {
+        if (name.isEmpty() || isDigit(name.charAt(0))) {
+            return false;
+        }
+        for (int i = 0; i < name.length(); i++) {
+            if (!isNamePart(name.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isNamePart(char c) {
