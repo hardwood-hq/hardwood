@@ -35,6 +35,7 @@ allocation profiling, `-rf json -rff out.json` for machine-readable results,
 | `SimdBenchmark` | Scalar vs. Vector API kernels (null counting, dictionary lookup, …) | none (in-memory) |
 | `ValidityIterationBenchmark` | Null-bitmap iteration strategies over a `long[]` column | none (in-memory) |
 | `AlwaysMatchReadBenchmark` | Filtered end-to-end reads when statistics prove row groups match in full (#795) | `generate_filter_pushdown_data.py` |
+| `DictionarySpacePredicateBenchmark` | Binary equality by dictionary ID versus the matcher's packed-value fallback (#859) | none (in-memory) |
 | `DictionaryStringReadBenchmark` | Allocation per full-column scan of a dictionary-encoded string column (run with `-prof gc`) | `generate_dict_string_data.py` |
 | `DictionaryPageParseBenchmark` | One dictionary page set up through each of the parser's two entry points, against the decode floor (#1096) | self-generating |
 | `DictionaryPageSetupBenchmark` | Per-column-chunk dictionary setup — page-header parse and checksum — over many row groups (#1096) | self-generating |
