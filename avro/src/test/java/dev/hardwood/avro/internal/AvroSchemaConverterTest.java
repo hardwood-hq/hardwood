@@ -11,6 +11,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import org.apache.avro.Schema;
+import org.apache.avro.SchemaParseException;
+import org.junit.jupiter.api.Disabled;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.metadata.ConvertedType;
@@ -33,6 +35,26 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// parquet-java's AvroParquetReader output and hide the physical
 /// `typed_value` shredding from consumers.
 class AvroSchemaConverterTest {
+
+    @Test
+    @Disabled("#895 — enabled in Stage 3")
+    void duplicateNestedNamesReproduceSchemaParseFailure() {
+        Schema converted = convert(duplicateNestedAddressSchema());
+
+        assertThatThrownBy(() -> new Schema.Parser().parse(converted.toString()))
+                .isInstanceOf(SchemaParseException.class)
+                .hasMessageContaining("Can't redefine: address");
+    }
+
+    @Test
+    @Disabled("#895 — enabled in Stage 3")
+    void illegalNestedNameReproducesSchemaParseFailure() {
+        Schema converted = convert(illegalNestedGroupSchema());
+
+        assertThatThrownBy(converted::toString)
+                .isInstanceOf(SchemaParseException.class)
+                .hasMessageContaining("Illegal character in: acme.address");
+    }
 
     @Test
     void variantGroupBecomesCanonicalMetadataValueRecord() {
@@ -406,6 +428,24 @@ class AvroSchemaConverterTest {
             }
         }
         throw new AssertionError("No record branch in union: " + fieldSchema);
+    }
+    private static FileSchema duplicateNestedAddressSchema() {
+        SchemaElement root = group("schema", null, 2);
+        SchemaElement home = group("home", RepetitionType.OPTIONAL, 1);
+        SchemaElement homeAddress = group("address", RepetitionType.OPTIONAL, 1);
+        SchemaElement city = primitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType());
+        SchemaElement work = group("work", RepetitionType.OPTIONAL, 1);
+        SchemaElement workAddress = group("address", RepetitionType.OPTIONAL, 1);
+        SchemaElement zip = primitive("zip", PhysicalType.INT32, null, null);
+        return FileSchema.fromSchemaElements(List.of(
+                root, home, homeAddress, city, work, workAddress, zip));
+    }
+
+    private static FileSchema illegalNestedGroupSchema() {
+        SchemaElement root = group("schema", null, 1);
+        SchemaElement address = group("acme.address", RepetitionType.OPTIONAL, 1);
+        SchemaElement city = primitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType());
+        return FileSchema.fromSchemaElements(List.of(root, address, city));
     }
 
     private static FileSchema buildVariantSchema(boolean includeTypedValue) {
