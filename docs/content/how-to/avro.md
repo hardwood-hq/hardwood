@@ -84,7 +84,14 @@ Avro names that already match `[A-Za-z_][A-Za-z0-9_]*` remain unchanged. Other P
 
 Nested records use their Parquet value path to form their Avro namespace, so records with the same name in different branches do not clash. Converted names do not change when you project away an unrelated branch or add, remove, or reorder unrelated columns.
 
-Use the rewritten Avro field name with `GenericRecord.get(name)`. Use `Schema.getProp("hardwood.parquetName")` to recover the original Parquet name when the property is present.
+A rewrite gives a field two names, and each side of the API takes one of them:
+
+| Use | Name to pass |
+|---|---|
+| `GenericRecord.get(name)` | the Avro field name |
+| `ColumnProjection.columns(...)` | the Parquet name |
+
+`Schema.getProp("hardwood.parquetName")` recovers the Parquet name of a rewritten record or fixed type, and `Schema.Field.getProp("hardwood.parquetName")` that of a rewritten field. Both return `null` when the name was already legal and Hardwood kept it.
 
 A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()` columns) maps to a bare Avro `null` field — not the usual `union [null, T]` nullable wrap, which is illegal when `T` is itself `null`. The same collapse applies inside lists and maps: a `list<null>` element or `map<string, null>` value position becomes a bare `null` in the corresponding Avro `array` / `map` schema.
 

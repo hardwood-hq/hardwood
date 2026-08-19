@@ -99,6 +99,64 @@ class AvroSchemaConverterTest {
                 .hasMessageContaining("float16");
     }
 
+    /// The conflict is decided from the complete unprojected schema, so a file either
+    /// converts or does not whatever projection is applied. Projecting the interval
+    /// column away must not turn the rejection into a success.
+    @Test
+    void canonicalRootConflictSurvivesProjectingTheColumnAway() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root("interval", 2),
+                fixed("span", 12, new LogicalType.IntervalType()),
+                primitive("other", PhysicalType.INT32, RepetitionType.REQUIRED)));
+
+        assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.columns("other")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("interval");
+    }
+
+    /// The converter emits five kinds of named type: ordinary records, Variant records,
+    /// fixed-backed decimals, plain `FIXED_LEN_BYTE_ARRAY` and `INT96`. Records and
+    /// plain fixed are covered by `duplicateNestedNamesSerializeWithPathNames` and
+    /// `fixedListElementReceivesAResolvedName`; these three cover the rest. Each puts a
+    /// same-named instance in two branches, so only the resolved namespace keeps Avro
+    /// from rejecting the second as a redefinition of the first.
+    @Test
+    void twinVariantRecordsAreDistinguishedByNamespace() throws Exception {
+        assertTwinsAreDistinct(twinBranches(variantBranch("v")), "v");
+    }
+
+    @Test
+    void twinInt96FixedTypesAreDistinguishedByNamespace() throws Exception {
+        assertTwinsAreDistinct(
+                twinBranches(List.of(convertedPrimitive("ts", PhysicalType.INT96, null, null))), "ts");
+    }
+
+    @Test
+    void twinFixedBackedDecimalsAreDistinguishedByNamespace() throws Exception {
+        assertTwinsAreDistinct(
+                twinBranches(List.of(fixed("amount", 8, new LogicalType.DecimalType(2, 4)))), "amount");
+    }
+
+    /// A rewrite leaves a field with two names, so which one a projection path takes has
+    /// to be pinned down: projection is resolved against the Parquet schema, and the
+    /// rewritten Avro name is not a path a projection accepts.
+    @Test
+    void projectionPathsUseParquetNamesNotRewrittenAvroNames() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root("schema", 2),
+                group("acme-address", RepetitionType.OPTIONAL, 1),
+                convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType()),
+                primitive("other", PhysicalType.INT32, RepetitionType.REQUIRED)));
+
+        Schema projected = AvroSchemaConverter.plan(schema,
+                ColumnProjection.columns("acme-address.city")).avro();
+
+        assertThat(projected.getFields()).extracting(Schema.Field::name).containsExactly("acme_address");
+        assertThatThrownBy(() -> AvroSchemaConverter.plan(schema, ColumnProjection.columns("acme_address.city")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column not found");
+    }
+
     @Test
     void projectionDoesNotRenameRetainedNamedTypes() {
         FileSchema schema = duplicateNestedAddressSchema();
@@ -268,6 +326,27 @@ class AvroSchemaConverterTest {
                 primitive("value", PhysicalType.INT64, RepetitionType.OPTIONAL));
 
         assertRejectsMap(FileSchema.fromSchemaElements(elements), "m", "group 'key'");
+    }
+
+    /// A key in a fixed-backed position is classified by converting it, and converting a
+    /// fixed needs the resolved name of a node the resolver has to have visited. The map
+    /// key is the one value position that carries a name without being emitted, so it is
+    /// the position a resolver walking only emitted types would skip — leaving the key
+    /// rejected by an internal "unknown schema node" failure instead of the map
+    /// diagnostic these assert.
+    @Test
+    void rejectsFixedLengthByteArrayMapKey() {
+        assertRejectsMap(mapKeyedBy(fixed("key", 8, null)), "m", "FIXED_LEN_BYTE_ARRAY");
+    }
+
+    @Test
+    void rejectsInt96MapKey() {
+        assertRejectsMap(mapKeyedBy(convertedPrimitive("key", PhysicalType.INT96, null, null)), "m", "INT96");
+    }
+
+    @Test
+    void rejectsFixedBackedDecimalMapKey() {
+        assertRejectsMap(mapKeyedBy(fixed("key", 8, new LogicalType.DecimalType(2, 4))), "m", "DECIMAL");
     }
 
     private static void assertMapConverts(FileSchema schema) {
@@ -485,6 +564,129 @@ class AvroSchemaConverterTest {
         }
         throw new AssertionError("No record branch in union: " + fieldSchema);
     }
+    /// Contract row C5b: sibling fields whose raw names collide only after sanitizing
+    /// stay legal and unique inside the record, and the rewritten one keeps its Parquet
+    /// name across a parser round-trip.
+    @Test
+    void siblingFieldsCollidingAfterSanitizingStayUnique() {
+        Schema parsed = new Schema.Parser().parse(convert(FileSchema.fromSchemaElements(List.of(
+                root("schema", 2),
+                primitive("a.b", PhysicalType.INT32, RepetitionType.REQUIRED),
+                primitive("a_b", PhysicalType.INT32, RepetitionType.REQUIRED)))).toString());
+
+        assertThat(parsed.getFields()).extracting(Schema.Field::name).containsExactly("a_b_2", "a_b");
+        assertThat(parsed.getField("a_b_2").getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("a.b");
+        assertThat(parsed.getField("a_b").getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isNull();
+    }
+
+    /// Contract row C3: an unqualified root outside the Avro grammar is sanitized and
+    /// stays recoverable; a legal field below it carries no marker property.
+    @Test
+    void sanitizedUnqualifiedRootIsRecoverable() {
+        Schema parsed = new Schema.Parser().parse(convert(FileSchema.fromSchemaElements(List.of(
+                root("1schema", 1),
+                primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED)))).toString());
+
+        assertThat(parsed.getFullName()).isEqualTo("_1schema");
+        assertThat(parsed.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("1schema");
+        assertThat(parsed.getField("v").getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isNull();
+    }
+
+    /// Contract row C4b: a LIST container field contributes its own local name to the
+    /// namespace of the element below it, so an `element` record inside `items` and an
+    /// `element` record directly under the root stay distinct.
+    @Test
+    void listContainerContributesItsNameToTheElementNamespace() throws Exception {
+        Schema parsed = new Schema.Parser().parse(convert(listAndRootElementSchema()).toString());
+
+        assertThat(parsed.toString()).contains("\"name\":\"element\",\"namespace\":\"schema.items\"",
+                "\"name\":\"element\",\"namespace\":\"schema\"");
+        new DataFileWriter<>(new GenericDatumWriter<>())
+                .create(parsed, new ByteArrayOutputStream())
+                .close();
+    }
+
+    /// Contract row C10: a fixed used directly as a list element is named by the
+    /// resolver too, so it cannot redefine a same-named fixed elsewhere in the schema.
+    @Test
+    void fixedListElementReceivesAResolvedName() throws Exception {
+        Schema parsed = new Schema.Parser().parse(convert(fixedListAndRootFixedSchema()).toString());
+
+        assertThat(parsed.toString()).contains("\"name\":\"element\",\"namespace\":\"schema.items\"",
+                "\"name\":\"element\",\"namespace\":\"schema\"");
+        new DataFileWriter<>(new GenericDatumWriter<>())
+                .create(parsed, new ByteArrayOutputStream())
+                .close();
+    }
+
+    /// Contract row C9: adding, removing and reordering unrelated fields renames no
+    /// retained named type. Projection is covered by
+    /// `projectionDoesNotRenameRetainedNamedTypes`.
+    @Test
+    void unrelatedFieldChangesRenameNoRetainedNamedType() {
+        assertThat(convert(duplicateNestedAddressSchema()).toString())
+                .contains("\"namespace\":\"schema.home\"", "\"namespace\":\"schema.work\"");
+        assertThat(convert(duplicateNestedAddressSchemaWithExtraLeaf()).toString())
+                .contains("\"namespace\":\"schema.home\"", "\"namespace\":\"schema.work\"");
+        assertThat(convert(duplicateNestedAddressSchemaReordered()).toString())
+                .contains("\"namespace\":\"schema.home\"", "\"namespace\":\"schema.work\"");
+    }
+
+    /// Contract row C6: a name the resolver did not rewrite carries no marker property.
+    @Test
+    void unchangedNamesCarryNoParquetNameProperty() {
+        Schema parsed = new Schema.Parser().parse(convert(duplicateNestedAddressSchema()).toString());
+
+        assertThat(parsed.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isNull();
+        assertThat(parsed.getField("home").getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isNull();
+        assertThat(pickRecordBranch(parsed.getField("home").schema())
+                .getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isNull();
+    }
+
+    private static FileSchema listAndRootElementSchema() {
+        return FileSchema.fromSchemaElements(List.of(
+                root("schema", 2),
+                group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                group("list", RepetitionType.REPEATED, 1),
+                group("element", RepetitionType.OPTIONAL, 1),
+                primitive("v", PhysicalType.INT32, RepetitionType.REQUIRED),
+                group("element", RepetitionType.OPTIONAL, 1),
+                primitive("w", PhysicalType.INT32, RepetitionType.REQUIRED)));
+    }
+
+    private static FileSchema fixedListAndRootFixedSchema() {
+        return FileSchema.fromSchemaElements(List.of(
+                root("schema", 2),
+                group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
+                group("list", RepetitionType.REPEATED, 1),
+                fixed("element", 4, null),
+                fixed("element", 4, null)));
+    }
+
+    private static FileSchema duplicateNestedAddressSchemaWithExtraLeaf() {
+        return FileSchema.fromSchemaElements(List.of(
+                root("schema", 3),
+                group("home", RepetitionType.OPTIONAL, 1),
+                group("address", RepetitionType.OPTIONAL, 1),
+                convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8, new LogicalType.StringType()),
+                group("work", RepetitionType.OPTIONAL, 1),
+                group("address", RepetitionType.OPTIONAL, 1),
+                primitive("zip", PhysicalType.INT32, RepetitionType.REQUIRED),
+                primitive("unrelated", PhysicalType.INT32, RepetitionType.REQUIRED)));
+    }
+
+    private static FileSchema duplicateNestedAddressSchemaReordered() {
+        return FileSchema.fromSchemaElements(List.of(
+                root("schema", 2),
+                group("work", RepetitionType.OPTIONAL, 1),
+                group("address", RepetitionType.OPTIONAL, 1),
+                primitive("zip", PhysicalType.INT32, RepetitionType.REQUIRED),
+                group("home", RepetitionType.OPTIONAL, 1),
+                group("address", RepetitionType.OPTIONAL, 1),
+                convertedPrimitive("city", PhysicalType.BYTE_ARRAY, ConvertedType.UTF8,
+                        new LogicalType.StringType())));
+    }
+
     private static FileSchema qualifiedRootNestedSchema() {
         return FileSchema.fromSchemaElements(List.of(
                 root("acme.row", 1),
@@ -514,6 +716,39 @@ class AvroSchemaConverterTest {
         SchemaElement value = new SchemaElement("value", physicalType, typeLength,
                 RepetitionType.REQUIRED, null, null, null, null, null, logicalType);
         return FileSchema.fromSchemaElements(List.of(rootElement, value));
+    }
+
+    /// Asserts that the twin named types `home` and `work` hold are told apart by their
+    /// namespace, and that the result is a schema Avro will write a file header for —
+    /// the operation that rejects a redefinition, and the one a user hits first.
+    private static void assertTwinsAreDistinct(FileSchema schema, String localName) throws Exception {
+        Schema parsed = new Schema.Parser().parse(convert(schema).toString());
+
+        assertThat(parsed.toString()).contains(
+                "\"name\":\"" + localName + "\",\"namespace\":\"schema.home\"",
+                "\"name\":\"" + localName + "\",\"namespace\":\"schema.work\"");
+        new DataFileWriter<>(new GenericDatumWriter<>())
+                .create(parsed, new ByteArrayOutputStream())
+                .close();
+    }
+
+    /// A schema carrying `branch` verbatim under both `home` and `work`. `branch` is one
+    /// subtree in pre-order, so its first element is the single child of each holder.
+    private static FileSchema twinBranches(List<SchemaElement> branch) {
+        List<SchemaElement> elements = new ArrayList<>();
+        elements.add(root("schema", 2));
+        elements.add(group("home", RepetitionType.OPTIONAL, 1));
+        elements.addAll(branch);
+        elements.add(group("work", RepetitionType.OPTIONAL, 1));
+        elements.addAll(branch);
+        return FileSchema.fromSchemaElements(elements);
+    }
+
+    private static List<SchemaElement> variantBranch(String name) {
+        return List.of(
+                group(name, RepetitionType.OPTIONAL, 2, new LogicalType.VariantType(1)),
+                primitive("metadata", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED),
+                primitive("value", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED));
     }
 
     private static SchemaElement fixed(String name, int typeLength, LogicalType logicalType) {

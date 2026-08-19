@@ -8,6 +8,7 @@
 package dev.hardwood.avro.internal;
 
 import java.util.ArrayList;
+import java.util.Comparator;
 import java.util.HashSet;
 import java.util.IdentityHashMap;
 import java.util.List;
@@ -30,10 +31,8 @@ final class AvroNames {
     private final IdentityHashMap<SchemaNode, String> localNames;
     private final IdentityHashMap<SchemaNode, String> namespaces;
     private final IdentityHashMap<SchemaNode, String> rewrittenFrom;
-    private final SchemaNode.GroupNode rootNode;
 
-    private AvroNames(SchemaNode.GroupNode rootNode) {
-        this.rootNode = rootNode;
+    private AvroNames() {
         this.localNames = new IdentityHashMap<>();
         this.namespaces = new IdentityHashMap<>();
         this.rewrittenFrom = new IdentityHashMap<>();
@@ -41,12 +40,12 @@ final class AvroNames {
 
     static AvroNames forSchema(FileSchema fileSchema) {
         SchemaNode.GroupNode rootNode = fileSchema.getRootNode();
-        AvroNames names = new AvroNames(rootNode);
+        AvroNames names = new AvroNames();
         TypeName rootType = names.rootTypeName(fileSchema.getName());
         names.localNames.put(rootNode, rootType.name());
         names.namespaces.put(rootNode, rootType.namespace());
         names.recordRewrite(rootNode, fileSchema.getName(), rootType);
-        names.visitGroup(rootNode, rootType.fullName());
+        names.visitGroup(rootNode, rootType.fullName(), rootNode.name());
         return names;
     }
 
@@ -70,10 +69,10 @@ final class AvroNames {
 
     TypeName typeName(SchemaNode node) {
         String local = localNames.get(node);
-        String namespace = namespaces.get(node);
-        if (local == null || namespace == null && node != rootNode && !namespaces.containsKey(node)) {
+        if (local == null) {
             throw new IllegalArgumentException("Unknown schema node: " + node.name());
         }
+        String namespace = namespaces.get(node);
         return new TypeName(local, namespace);
     }
 
@@ -85,52 +84,58 @@ final class AvroNames {
         return rewrittenFrom.get(node);
     }
 
-    private void visitGroup(SchemaNode.GroupNode group, String fullName) {
+    private void visitGroup(SchemaNode.GroupNode group, String fullName, String valuePath) {
         if (group.isVariant()) {
             return;
         }
         if (group.isList()) {
-            SchemaNode element = group.getListElement();
-            if (element != null) {
-                assignSingleton(element);
-                visitNode(element, fullName + "." + localNames.get(element));
-            }
+            visitSingleton(group.getListElement(), fullName, valuePath);
             return;
         }
         if (group.isMap()) {
-            SchemaNode value = group.getMapValue();
-            if (value != null) {
-                assignSingleton(value);
-                visitNode(value, fullName + "." + localNames.get(value));
-            }
+            visitSingleton(group.getMapKey(), fullName, valuePath);
+            visitSingleton(group.getMapValue(), fullName, valuePath);
             return;
         }
         if (!group.isStruct()) {
             return;
         }
-        Map<SchemaNode, String> resolved = resolveScope(group.children());
-        localNames.putAll(resolved);
+        localNames.putAll(resolveScope(group.children(), valuePath));
         for (SchemaNode child : group.children()) {
-            visitNode(child, fullName + "." + localNames.get(child));
+            visitNode(child, fullName + "." + localNames.get(child), valuePath + "." + child.name());
         }
     }
 
-    private void visitNode(SchemaNode node, String fullName) {
+    /// Resolves one value position of a LIST or MAP: the list element, or the map key
+    /// or value. The synthetic `list` and `key_value` wrappers are not value-path
+    /// segments, so the container's own name is the last segment the descendant
+    /// namespace carries.
+    ///
+    /// A map key and value are resolved in a scope each rather than together. A
+    /// non-string key never reaches the emitted schema, so letting it share the value's
+    /// scope would let a name nothing emits push the value's record onto a suffix. The
+    /// key is resolved at all because [dev.hardwood.avro.internal.AvroSchemaConverter]
+    /// classifies it by converting it, and a fixed-backed key cannot be converted
+    /// without a name.
+    private void visitSingleton(SchemaNode node, String fullName, String valuePath) {
+        if (node == null) {
+            return;
+        }
+        localNames.putAll(resolveScope(List.of(node), valuePath));
+        visitNode(node, fullName + "." + localNames.get(node), valuePath + "." + node.name());
+    }
+
+    private void visitNode(SchemaNode node, String fullName, String valuePath) {
         TypeName type = new TypeName(localNames.get(node), namespaceOf(fullName));
         namespaces.put(node, type.namespace());
         recordRewrite(node, node.name(), type);
         if (node instanceof SchemaNode.GroupNode group) {
-            visitGroup(group, type.fullName());
+            visitGroup(group, type.fullName(), valuePath);
         }
     }
 
     private String namespaceOf(String fullName) {
         return fullName.substring(0, fullName.lastIndexOf('.'));
-    }
-
-    private void assignSingleton(SchemaNode node) {
-        Map<SchemaNode, String> resolved = resolveScope(List.of(node));
-        localNames.putAll(resolved);
     }
 
     private void recordRewrite(SchemaNode node, String raw, TypeName type) {
@@ -139,59 +144,100 @@ final class AvroNames {
         }
     }
 
-    private static Map<SchemaNode, String> resolveScope(List<SchemaNode> siblings) {
-        IdentityHashMap<SchemaNode, String> result = new IdentityHashMap<>();
+    /// Resolves the Avro local name of every member of one sibling scope.
+    ///
+    /// A member whose raw Parquet name is already legal keeps it. Other names are
+    /// sanitized, which is not injective, so distinct raw names can land on the same
+    /// candidate. Every candidate is reserved before any suffix is handed out, so a
+    /// suffix can never take a name another collision group already owns.
+    private static Map<SchemaNode, String> resolveScope(List<SchemaNode> siblings, String valuePath) {
         Map<String, List<SchemaNode>> groups = new TreeMap<>();
-        Set<String> used = new HashSet<>();
         for (SchemaNode sibling : siblings) {
-            String candidate = SchemaNames.isLegal(sibling.name())
-                    ? sibling.name() : SchemaNames.sanitize(sibling.name());
-            groups.computeIfAbsent(candidate, ignored -> new ArrayList<>()).add(sibling);
+            groups.computeIfAbsent(candidate(sibling), ignored -> new ArrayList<>()).add(sibling);
         }
-        for (List<SchemaNode> group : groups.values()) {
-            Set<String> rawNames = new HashSet<>();
-            for (SchemaNode member : group) {
-                if (!rawNames.add(member.name())) {
-                    throw new IllegalArgumentException(
-                            "Duplicate schema name '" + member.name() + "' in value path");
-                }
-            }
-            if (group.size() == 1) {
-                String local = SchemaNames.isLegal(group.get(0).name())
-                        ? group.get(0).name() : SchemaNames.sanitize(group.get(0).name());
-                result.put(group.get(0), local);
-                used.add(local);
-            }
+        IdentityHashMap<SchemaNode, String> result = new IdentityHashMap<>();
+        Set<String> used = new HashSet<>();
+        IdentityHashMap<SchemaNode, Boolean> winners = new IdentityHashMap<>();
+        for (Map.Entry<String, List<SchemaNode>> entry : groups.entrySet()) {
+            List<SchemaNode> members = entry.getValue();
+            rejectDuplicateRawNames(members, valuePath);
+            SchemaNode winner = winnerOf(members);
+            winners.put(winner, Boolean.TRUE);
+            result.put(winner, entry.getKey());
+            used.add(entry.getKey());
         }
-        for (List<SchemaNode> group : groups.values()) {
-            if (group.size() == 1) {
+        for (Map.Entry<String, List<SchemaNode>> entry : groups.entrySet()) {
+            List<SchemaNode> members = entry.getValue();
+            if (members.size() == 1) {
                 continue;
             }
-            group.sort((left, right) -> left.name().compareTo(right.name()));
-            String candidate = SchemaNames.isLegal(group.get(0).name())
-                    ? group.get(0).name() : SchemaNames.sanitize(group.get(0).name());
-            SchemaNode winner = group.get(0);
-            for (SchemaNode member : group) {
-                if (SchemaNames.isLegal(member.name())) {
-                    winner = member;
-                    break;
-                }
-            }
-            result.put(winner, candidate);
-            used.add(candidate);
-            for (SchemaNode member : group) {
-                if (member == winner) {
+            members.sort(Comparator.comparing(SchemaNode::name));
+            for (SchemaNode member : members) {
+                if (winners.containsKey(member)) {
                     continue;
                 }
-                int suffix = 2;
-                String local;
-                do {
-                    local = candidate + "_" + suffix++;
-                } while (used.contains(local));
-                result.put(member, local);
-                used.add(local);
+                result.put(member, nextFreeSuffix(entry.getKey(), used));
             }
         }
+        verifyScope(result, valuePath);
         return result;
+    }
+
+    private static String candidate(SchemaNode node) {
+        return SchemaNames.isLegal(node.name()) ? node.name() : SchemaNames.sanitize(node.name());
+    }
+
+    /// The member that keeps the bare candidate: the sole member whose raw name is
+    /// already legal, or, when no member has a legal raw name, the smallest raw name in
+    /// natural order. Ordering by raw name rather than by declaration order means
+    /// reordering the columns of a file cannot swap two Avro names.
+    private static SchemaNode winnerOf(List<SchemaNode> members) {
+        SchemaNode smallest = members.getFirst();
+        for (SchemaNode member : members) {
+            if (SchemaNames.isLegal(member.name())) {
+                return member;
+            }
+            if (member.name().compareTo(smallest.name()) < 0) {
+                smallest = member;
+            }
+        }
+        return smallest;
+    }
+
+    private static String nextFreeSuffix(String candidate, Set<String> used) {
+        for (int suffix = 2; ; suffix++) {
+            String local = candidate + "_" + suffix;
+            if (used.add(local)) {
+                return local;
+            }
+        }
+    }
+
+    private static void rejectDuplicateRawNames(List<SchemaNode> members, String valuePath) {
+        Set<String> rawNames = new HashSet<>();
+        for (SchemaNode member : members) {
+            if (!rawNames.add(member.name())) {
+                throw new IllegalArgumentException("Duplicate schema name '" + member.name()
+                        + "' in value path '" + valuePath + "'");
+            }
+        }
+    }
+
+    /// Fails on any scope the resolution rules did not fully settle. Reaching this is a
+    /// defect in the rules above, not malformed input, so it must never be silent: a
+    /// duplicate local here becomes an Avro record Avro itself refuses to serialize.
+    private static void verifyScope(Map<SchemaNode, String> resolved, String valuePath) {
+        Set<String> seen = new HashSet<>();
+        for (Map.Entry<SchemaNode, String> entry : resolved.entrySet()) {
+            String local = entry.getValue();
+            if (!SchemaNames.isLegal(local)) {
+                throw new IllegalStateException("Resolved Avro name '" + local + "' for '"
+                        + entry.getKey().name() + "' in value path '" + valuePath + "' is not a legal Avro name");
+            }
+            if (!seen.add(local)) {
+                throw new IllegalStateException("Resolved Avro name '" + local + "' for '"
+                        + entry.getKey().name() + "' is not unique in value path '" + valuePath + "'");
+            }
+        }
     }
 }

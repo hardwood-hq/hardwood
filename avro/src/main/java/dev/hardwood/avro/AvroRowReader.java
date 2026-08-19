@@ -131,7 +131,8 @@ public class AvroRowReader implements AutoCloseable {
             RecordPosition position) {
         Schema recordSchema = node.avro();
         GenericRecord record = new GenericData.Record(recordSchema);
-        for (int i = 0; i < recordSchema.getFields().size(); i++) {
+        int fieldCount = recordSchema.getFields().size();
+        for (int i = 0; i < fieldCount; i++) {
             String parquetName = node.child(i).source().name();
             if (accessor.isNull(parquetName)) {
                 record.put(i, null);

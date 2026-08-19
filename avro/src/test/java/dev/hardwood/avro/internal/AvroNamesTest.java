@@ -32,6 +32,7 @@ class AvroNamesTest {
         assertThat(locals(names, schema.getRootNode().children()))
                 .containsExactly("a_b", "a_b_3", "a_b_4", "a_b_2");
     }
+
     @Test
     void rejectsDuplicateRawNames() {
         FileSchema schema = schemaWithChildren("root", "dup", "dup");
@@ -66,6 +67,35 @@ class AvroNamesTest {
         assertThat(root.name()).isEqualTo("row");
         assertThat(root.namespace()).isEqualTo("_1acme");
         assertThat(root.fullName()).isEqualTo("_1acme.row");
+    }
+
+    /// Contract row C2 of the implementation plan: the collision table must include
+    /// `a.b`, `a_b`, `a.b.2` and `a_b_2`. Every collision group's bare candidate is
+    /// reserved before any suffix is handed out, so a suffix cannot land on another
+    /// group's winner.
+    @Test
+    void reservesEveryCollisionWinnerBeforeSuffixing() {
+        FileSchema schema = schemaWithChildren("root", "a.b", "a_b", "a.b.2", "a_b_2");
+        AvroNames names = AvroNames.forSchema(schema);
+
+        assertThat(locals(names, schema.getRootNode().children()))
+                .containsExactly("a_b_3", "a_b", "a_b_2_2", "a_b_2");
+    }
+
+    /// Contract row C2b: the rejection must name the value path, not only the raw name,
+    /// so the offending group can be found in a wide schema.
+    @Test
+    void duplicateRawNameNamesTheValuePath() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                root("schema", 1),
+                group("holder", RepetitionType.OPTIONAL, 2),
+                SchemaElement.primitive("dup", PhysicalType.INT32, RepetitionType.REQUIRED),
+                SchemaElement.primitive("dup", PhysicalType.INT32, RepetitionType.REQUIRED)));
+
+        assertThatThrownBy(() -> AvroNames.forSchema(schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("holder")
+                .hasMessageContaining("dup");
     }
 
     private static List<String> locals(AvroNames names, List<SchemaNode> nodes) {

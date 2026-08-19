@@ -1,5 +1,7 @@
 # Avro Name Resolution
 
+**Status: Implemented.**
+
 Avro named types emitted from a Parquet schema use grammar-legal, deterministic names.
 
 ## Sanitization
@@ -15,6 +17,17 @@ Two siblings with the same raw name are rejected. Resolution uses schema-node id
 ## Root names
 
 The root name is split at the last dot. The final segment is the local name. Earlier segments form the namespace. Each segment is sanitized independently. A rewritten root stores its original Parquet name in the `hardwood.parquetName` schema property.
+
+## Canonical fixed types
+
+The `interval` and `float16` fixed types are emitted with those exact names and no
+namespace. A root named `interval` or `float16` therefore has the same full name as the
+canonical type it would sit beside. Conversion rejects that schema, naming the root and the
+canonical type.
+
+The rejection is decided from the complete unprojected schema, so a file either converts or
+does not, whatever projection is applied. A projection that excludes the conflicting column
+is rejected too.
 
 ## Descendant namespaces
 
