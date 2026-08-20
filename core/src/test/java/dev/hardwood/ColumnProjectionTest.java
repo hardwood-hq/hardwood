@@ -123,12 +123,9 @@ public class ColumnProjectionTest {
     /// path uses `.` as its nesting separator. A column below a group whose name
     /// contains a dot is therefore unreachable: `resolveNestedColumn` splits
     /// `acme.address.city` into three segments and looks for a `city` below an
-    /// `address` below an `acme`, none of which exist. Naming the group alone fails the
-    /// same way, so no projection path reaches the column or its parent.
+    /// `address` below an `acme`, none of which exist.
     ///
-    /// This asserts today's behaviour to keep the limitation visible and greppable. It
-    /// records a defect, not a contract — when projection learns to address these
-    /// columns, rewrite this test rather than delete it.
+    /// This is added as documentation of surprising behaviour.
     @Test
     void testDottedGroupNameIsUnreachableByAnyProjectionPath() {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(

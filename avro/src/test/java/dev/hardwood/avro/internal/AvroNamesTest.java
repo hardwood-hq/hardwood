@@ -71,7 +71,7 @@ class AvroNamesTest {
 
     /// Different Parquet names can produce the same Avro name after sanitization.
     /// Existing names such as `a_b` and `a_b_2` keep their names.
-    /// The other names receive suffixes that do not reuse those names.
+    /// The other names receive suffixes to create unique names.
     @Test
     void reservesEveryCollisionWinnerBeforeSuffixing() {
         FileSchema schema = schemaWithChildren("root", "a.b", "a_b", "a.b.2", "a_b_2");
