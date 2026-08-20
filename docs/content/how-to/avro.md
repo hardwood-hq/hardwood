@@ -91,7 +91,9 @@ A rewrite gives a field two names, and each side of the API takes one of them:
 | `GenericRecord.get(name)` | the Avro field name |
 | `ColumnProjection.columns(...)` | the Parquet name |
 
-`Schema.getProp("hardwood.parquetName")` recovers the Parquet name of a rewritten record or fixed type, and `Schema.Field.getProp("hardwood.parquetName")` that of a rewritten field. Both return `null` when the name was already legal and Hardwood kept it.
+Projection paths use `.` as the nesting separator. A Parquet group or field name containing `.` cannot currently be addressed by `ColumnProjection.columns(...)`; read the file without projection or use a schema with addressable names.
+
+`Schema.getProp("hardwood.parquetName")` recovers the Parquet name of a rewritten record or fixed type, and `Schema.Field.getProp("hardwood.parquetName")` that of a rewritten field. Both return `null` when the emitted local name equals the Parquet name and Hardwood kept it unchanged.
 
 A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()` columns) maps to a bare Avro `null` field — not the usual `union [null, T]` nullable wrap, which is illegal when `T` is itself `null`. The same collapse applies inside lists and maps: a `list<null>` element or `map<string, null>` value position becomes a bare `null` in the corresponding Avro `array` / `map` schema.
 

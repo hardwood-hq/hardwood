@@ -24,9 +24,7 @@ import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 
-import static dev.hardwood.metadata.SchemaElement.group;
-import static dev.hardwood.metadata.SchemaElement.primitive;
-import static dev.hardwood.metadata.SchemaElement.root;
+import static dev.hardwood.metadata.SchemaElement.*;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
@@ -50,6 +48,31 @@ class AvroSchemaConverterTest {
     }
 
     @Test
+    void rootAndTopLevelChildWithSameNameRemainDistinct() throws Exception {
+        Schema parsed = new Schema.Parser().parse(convert(FileSchema.fromSchemaElements(List.of(
+                root("root", 1),
+                group("root", RepetitionType.OPTIONAL, 1),
+                primitive("value", PhysicalType.INT32, RepetitionType.REQUIRED)))).toString());
+
+        assertThat(parsed.getFullName()).isEqualTo("root");
+        assertThat(pickRecordBranch(parsed.getField("root").schema()).getFullName()).isEqualTo("root.root");
+        new DataFileWriter<>(new GenericDatumWriter<>())
+                .create(parsed, new ByteArrayOutputStream())
+                .close();
+    }
+
+    @Test
+    void rewrittenFixedTypeRetainsParquetNameProperty() {
+        Schema parsed = new Schema.Parser().parse(convert(FileSchema.fromSchemaElements(List.of(
+                root("schema", 1),
+                fixedLengthPrimitive("fixed.value", 4, RepetitionType.REQUIRED)))).toString());
+
+        Schema fixedSchema = parsed.getField("fixed_value").schema();
+        assertThat(fixedSchema.getFullName()).isEqualTo("schema.fixed_value");
+        assertThat(fixedSchema.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("fixed.value");
+    }
+
+    @Test
     void illegalNestedNameIsSanitized() {
         Schema converted = convert(illegalNestedGroupSchema());
         Schema parsed = new Schema.Parser().parse(converted.toString());
@@ -65,6 +88,7 @@ class AvroSchemaConverterTest {
         Schema parsed = new Schema.Parser().parse(schema.toString());
 
         assertThat(parsed.getFullName()).isEqualTo("acme.row");
+        assertThat(parsed.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("acme.row");
         assertThat(parsed.toString()).contains("\"namespace\":\"acme.row\"",
                 "\"namespace\":\"acme.row.acme\"");
     }
@@ -135,6 +159,24 @@ class AvroSchemaConverterTest {
     void twinFixedBackedDecimalsAreDistinguishedByNamespace() throws Exception {
         assertTwinsAreDistinct(
                 twinBranches(List.of(fixed("amount", 8, new LogicalType.DecimalType(2, 4)))), "amount");
+    }
+
+    @Test
+    void rewrittenVariantAndFixedTypesRetainParquetNameProperty() {
+        Schema variant = new Schema.Parser().parse(convert(twinBranches(variantBranch("v.x"))).toString());
+        Schema homeVariant = pickRecordBranch(
+                pickRecordBranch(variant.getField("home").schema()).getField("v_x").schema());
+        assertThat(homeVariant.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("v.x");
+
+        Schema int96 = new Schema.Parser().parse(convert(
+                twinBranches(List.of(convertedPrimitive("ts.x", PhysicalType.INT96, null, null)))).toString());
+        Schema homeInt96 = pickRecordBranch(int96.getField("home").schema()).getField("ts_x").schema();
+        assertThat(homeInt96.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("ts.x");
+
+        Schema decimal = new Schema.Parser().parse(convert(
+                twinBranches(List.of(fixed("amount.x", 8, new LogicalType.DecimalType(2, 4))))).toString());
+        Schema homeDecimal = pickRecordBranch(decimal.getField("home").schema()).getField("amount_x").schema();
+        assertThat(homeDecimal.getProp(AvroSchemaConverter.PARQUET_NAME_PROP)).isEqualTo("amount.x");
     }
 
     /// A rewrite leaves a field with two names, so which one a projection path takes has
@@ -336,7 +378,7 @@ class AvroSchemaConverterTest {
     /// diagnostic these assert.
     @Test
     void rejectsFixedLengthByteArrayMapKey() {
-        assertRejectsMap(mapKeyedBy(fixed("key", 8, null)), "m", "FIXED_LEN_BYTE_ARRAY");
+        assertRejectsMap(mapKeyedBy(fixedLengthPrimitive("key", 8, RepetitionType.REQUIRED)), "m", "FIXED_LEN_BYTE_ARRAY");
     }
 
     @Test
@@ -659,8 +701,8 @@ class AvroSchemaConverterTest {
                 root("schema", 2),
                 group("items", RepetitionType.OPTIONAL, 1, new LogicalType.ListType()),
                 group("list", RepetitionType.REPEATED, 1),
-                fixed("element", 4, null),
-                fixed("element", 4, null)));
+                fixedLengthPrimitive("element", 4, RepetitionType.REQUIRED),
+                fixedLengthPrimitive("element", 4, RepetitionType.REQUIRED)));
     }
 
     private static FileSchema duplicateNestedAddressSchemaWithExtraLeaf() {
@@ -710,8 +752,8 @@ class AvroSchemaConverterTest {
         return FileSchema.fromSchemaElements(List.of(rootElement, intervalOne, intervalTwo, floatOne, floatTwo));
     }
 
-    private static FileSchema canonicalRootSchema(String rootName, LogicalType logicalType,
-            PhysicalType physicalType, int typeLength) {
+    private static FileSchema canonicalRootSchema(String rootName, LogicalType logicalType, PhysicalType physicalType,
+                                                  int typeLength) {
         SchemaElement rootElement = root(rootName, 1);
         SchemaElement value = new SchemaElement("value", physicalType, typeLength,
                 RepetitionType.REQUIRED, null, null, null, null, null, logicalType);
@@ -727,6 +769,7 @@ class AvroSchemaConverterTest {
         assertThat(parsed.toString()).contains(
                 "\"name\":\"" + localName + "\",\"namespace\":\"schema.home\"",
                 "\"name\":\"" + localName + "\",\"namespace\":\"schema.work\"");
+        //noinspection resource
         new DataFileWriter<>(new GenericDatumWriter<>())
                 .create(parsed, new ByteArrayOutputStream())
                 .close();
@@ -752,8 +795,7 @@ class AvroSchemaConverterTest {
     }
 
     private static SchemaElement fixed(String name, int typeLength, LogicalType logicalType) {
-        return new SchemaElement(name, PhysicalType.FIXED_LEN_BYTE_ARRAY, typeLength,
-                RepetitionType.REQUIRED, null, null, null, null, null, logicalType);
+        return fixedLengthPrimitive(name, typeLength, RepetitionType.REQUIRED, logicalType);
     }
 
     private static FileSchema duplicateNestedAddressSchema() {

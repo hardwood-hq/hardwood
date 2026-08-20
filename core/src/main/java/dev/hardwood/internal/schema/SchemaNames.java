@@ -7,8 +7,8 @@
  */
 package dev.hardwood.internal.schema;
 
-/// Mapping of arbitrary Parquet names onto the name grammar of the schema formats the
-/// `schema` command emits.
+/// Mapping of arbitrary Parquet names onto the name grammars used by Hardwood's
+/// schema converters and emitters.
 ///
 /// Avro names and proto identifiers are both `[A-Za-z_][A-Za-z0-9_]*`, while Parquet
 /// permits any UTF-8 string. A schema carrying a name outside that grammar is rejected

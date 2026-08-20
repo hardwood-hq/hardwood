@@ -69,10 +69,9 @@ class AvroNamesTest {
         assertThat(root.fullName()).isEqualTo("_1acme.row");
     }
 
-    /// Contract row C2 of the implementation plan: the collision table must include
-    /// `a.b`, `a_b`, `a.b.2` and `a_b_2`. Every collision group's bare candidate is
-    /// reserved before any suffix is handed out, so a suffix cannot land on another
-    /// group's winner.
+    /// Different Parquet names can produce the same Avro name after sanitization.
+    /// Existing names such as `a_b` and `a_b_2` keep their names.
+    /// The other names receive suffixes that do not reuse those names.
     @Test
     void reservesEveryCollisionWinnerBeforeSuffixing() {
         FileSchema schema = schemaWithChildren("root", "a.b", "a_b", "a.b.2", "a_b_2");

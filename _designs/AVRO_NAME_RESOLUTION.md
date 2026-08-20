@@ -16,7 +16,7 @@ Two siblings with the same raw name are rejected. Resolution uses schema-node id
 
 ## Root names
 
-The root name is split at the last dot. The final segment is the local name. Earlier segments form the namespace. Each segment is sanitized independently. A rewritten root stores its original Parquet name in the `hardwood.parquetName` schema property.
+The root name is split at the last dot. The final segment is the local name. Earlier segments form the namespace. Each segment is sanitized independently. A root stores its original Parquet name in the `hardwood.parquetName` schema property when its emitted local name differs from that original name.
 
 ## Canonical fixed types
 
@@ -37,7 +37,7 @@ The root is not appended to its own namespace. Therefore descendants of `schema`
 
 ## Recovering Parquet names
 
-When a record, fixed type, or field is rewritten, Hardwood attaches the exact raw Parquet segment under `hardwood.parquetName`. The property is omitted when the emitted local name equals the raw name. The property survives Avro schema serialization and parser round-trips.
+When a record, fixed type, or field is rewritten, Hardwood attaches the exact raw Parquet segment under `hardwood.parquetName`. For a rewritten root, the property contains the original full Parquet root name. The property is omitted when the emitted local name equals the raw name. The property survives Avro schema serialization and parser round-trips.
 
 ## Invariants
 

@@ -106,17 +106,13 @@ final class AvroNames {
         }
     }
 
-    /// Resolves one value position of a LIST or MAP: the list element, or the map key
-    /// or value. The synthetic `list` and `key_value` wrappers are not value-path
-    /// segments, so the container's own name is the last segment the descendant
-    /// namespace carries.
+    /// Resolve and visit one value node inside a LIST or MAP.
+    /// This node is the list element, map key, or map value.
+    /// The synthetic `list` and `key_value` nodes do not add path segments.
     ///
-    /// A map key and value are resolved in a scope each rather than together. A
-    /// non-string key never reaches the emitted schema, so letting it share the value's
-    /// scope would let a name nothing emits push the value's record onto a suffix. The
-    /// key is resolved at all because [dev.hardwood.avro.internal.AvroSchemaConverter]
-    /// classifies it by converting it, and a fixed-backed key cannot be converted
-    /// without a name.
+    /// Resolve a map key and value in separate scopes. A map key is not emitted
+    /// in the Avro schema, so it must not affect the value's name. Resolve the
+    /// key anyway because conversion inspects it and may need its name.
     private void visitSingleton(SchemaNode node, String fullName, String valuePath) {
         if (node == null) {
             return;
@@ -139,17 +135,16 @@ final class AvroNames {
     }
 
     private void recordRewrite(SchemaNode node, String raw, TypeName type) {
-        if (!type.fullName().equals(raw) && !type.name().equals(raw)) {
+        if (!type.name().equals(raw)) {
             rewrittenFrom.put(node, raw);
         }
     }
 
-    /// Resolves the Avro local name of every member of one sibling scope.
+    /// Resolve the names of all members in one sibling scope.
     ///
-    /// A member whose raw Parquet name is already legal keeps it. Other names are
-    /// sanitized, which is not injective, so distinct raw names can land on the same
-    /// candidate. Every candidate is reserved before any suffix is handed out, so a
-    /// suffix can never take a name another collision group already owns.
+    /// Keep legal raw names. Sanitize other names. If candidates collide, a legal
+    /// raw name keeps the bare candidate. If none is legal, the smallest raw name
+    /// keeps it. Reserve all bare candidates before adding suffixes.
     private static Map<SchemaNode, String> resolveScope(List<SchemaNode> siblings, String valuePath) {
         Map<String, List<SchemaNode>> groups = new TreeMap<>();
         for (SchemaNode sibling : siblings) {
@@ -157,12 +152,10 @@ final class AvroNames {
         }
         IdentityHashMap<SchemaNode, String> result = new IdentityHashMap<>();
         Set<String> used = new HashSet<>();
-        IdentityHashMap<SchemaNode, Boolean> winners = new IdentityHashMap<>();
         for (Map.Entry<String, List<SchemaNode>> entry : groups.entrySet()) {
             List<SchemaNode> members = entry.getValue();
             rejectDuplicateRawNames(members, valuePath);
             SchemaNode winner = winnerOf(members);
-            winners.put(winner, Boolean.TRUE);
             result.put(winner, entry.getKey());
             used.add(entry.getKey());
         }
@@ -173,7 +166,7 @@ final class AvroNames {
             }
             members.sort(Comparator.comparing(SchemaNode::name));
             for (SchemaNode member : members) {
-                if (winners.containsKey(member)) {
+                if (result.containsKey(member)) {
                     continue;
                 }
                 result.put(member, nextFreeSuffix(entry.getKey(), used));
@@ -223,9 +216,9 @@ final class AvroNames {
         }
     }
 
-    /// Fails on any scope the resolution rules did not fully settle. Reaching this is a
-    /// defect in the rules above, not malformed input, so it must never be silent: a
-    /// duplicate local here becomes an Avro record Avro itself refuses to serialize.
+    /// Check that every resolved local name is legal and unique.
+    /// A failure means the resolver has a bug, not that the input is malformed.
+    /// Throw instead of emitting a schema that Avro will reject.
     private static void verifyScope(Map<SchemaNode, String> resolved, String valuePath) {
         Set<String> seen = new HashSet<>();
         for (Map.Entry<SchemaNode, String> entry : resolved.entrySet()) {

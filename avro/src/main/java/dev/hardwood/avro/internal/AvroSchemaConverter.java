@@ -392,6 +392,7 @@ public final class AvroSchemaConverter {
             case BYTE_ARRAY -> binary(prim);
             case FIXED_LEN_BYTE_ARRAY -> AvroPlanNode.leaf(
                     fixedSchema(prim, fixedByteLength(prim)), Kind.FIXED, prim);
+            // INT96 has a fixed 12-byte width that the schema does not carry a length for.
             case INT96 -> AvroPlanNode.leaf(fixedSchema(prim, 12), Kind.FIXED, prim);
         };
     }
