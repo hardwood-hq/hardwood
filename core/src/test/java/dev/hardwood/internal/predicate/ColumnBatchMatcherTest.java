@@ -7,16 +7,21 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.predicate.matcher.binary.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.doubles.DoubleInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleNotEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.floats.FloatWideningDoubleInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtEqBatchMatcher;
@@ -24,6 +29,9 @@ import dev.hardwood.internal.predicate.matcher.longs.LongLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.metadata.PhysicalType;
 
 import static java.util.Arrays.copyOf;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -204,5 +212,292 @@ class ColumnBatchMatcherTest {
         double[] vals = {Double.NaN, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, null);
         assertArrayEquals(new long[]{bits(1)}, runMatcher(new DoubleLtBatchMatcher(5.0), batch));
+    }
+
+    @Test
+    void doubleIn_matchesOnlyExactValuesAndExcludesNulls() {
+        double[] vals = {1.5, 2.5, -0.0, +0.0, Double.NaN, 3.5};
+        BatchExchange.Batch batch = doubleBatch(vals, nullsAt(1));
+        double[] inValues = {2.5, -0.0, Double.NaN};
+        assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new DoubleInBatchMatcher(inValues), batch));
+    }
+
+    @Test
+    void doubleIn_acrossWordBoundary_setsBitsInBothWords() {
+        double[] vals = new double[70];
+        for (int i = 0; i < vals.length; i++) {
+            vals[i] = (double) i;
+        }
+        BatchExchange.Batch batch = doubleBatch(vals, null);
+        long[] out = runMatcher(new DoubleInBatchMatcher(new double[]{5.0, 65.0}), batch);
+        assertArrayEquals(new long[]{1L << 5, 1L << (65 - 64)}, out);
+    }
+
+    private static BatchExchange.Batch floatBatch(float[] values, BitSet nulls) {
+        BatchExchange.Batch batch = new BatchExchange.Batch();
+        batch.values = values;
+        batch.validity = toValidity(nulls, values.length);
+        batch.recordCount = values.length;
+        return batch;
+    }
+
+    @Test
+    void floatWideningDoubleIn_matchesOnlyExactValuesAndExcludesNulls() {
+        float[] vals = {0.5f, 1.5f, -0.0f, +0.0f, Float.NaN, 0.1f};
+        BatchExchange.Batch batch = floatBatch(vals, nullsAt(1));
+        double[] inValues = {1.5, -0.0, Double.NaN, 0.1};
+        assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new FloatWideningDoubleInBatchMatcher(inValues), batch));
+    }
+
+    @Test
+    void floatWideningDoubleIn_acrossWordBoundary_setsBitsInBothWords() {
+        float[] vals = new float[70];
+        for (int i = 0; i < vals.length; i++) {
+            vals[i] = (float) i;
+        }
+        BatchExchange.Batch batch = floatBatch(vals, null);
+        long[] out = runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{5.0, 65.0}), batch);
+        assertArrayEquals(new long[]{1L << 5, 1L << (65 - 64)}, out);
+    }
+
+    @Test
+    void doubleIn_allMatchAndNoneMatchAndAllNulls() {
+        double[] vals = {5.0, 5.0, 5.0, 5.0};
+        assertArrayEquals(new long[]{bits(0, 1, 2, 3)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{5.0}), doubleBatch(vals, null)));
+        assertArrayEquals(new long[]{0L},
+                runMatcher(new DoubleInBatchMatcher(new double[]{10.0}), doubleBatch(vals, null)));
+        assertArrayEquals(new long[]{0L},
+                runMatcher(new DoubleInBatchMatcher(new double[]{5.0}), doubleBatch(vals, nullsAt(0, 1, 2, 3))));
+    }
+
+    @Test
+    void doubleIn_signedZeroAndNaNPrecision() {
+        double[] vals = {+0.0, -0.0, Double.NaN};
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{+0.0}), doubleBatch(vals, null)));
+        assertArrayEquals(new long[]{bits(1)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{-0.0}), doubleBatch(vals, null)));
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.NaN}), doubleBatch(vals, null)));
+    }
+
+    @Test
+    void doubleIn_nanPayloadsAndInfinities() {
+        double customNan1 = Double.longBitsToDouble(0x7ff8000000000001L);
+        double customNan2 = Double.longBitsToDouble(0x7ff8000000000042L);
+        double[] vals = {customNan1, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 1.0};
+        BatchExchange.Batch batch = doubleBatch(vals, null);
+
+        // Probe with canonical NaN matches customNan1
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.NaN}), batch));
+
+        // Probe with customNan2 matches customNan1
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{customNan2}), batch));
+
+        // Probe with +Inf matches +Inf
+        assertArrayEquals(new long[]{bits(1)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY}), batch));
+
+        // Probe with -Inf matches -Inf
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.NEGATIVE_INFINITY}), batch));
+
+        // Both infinities in probe list
+        assertArrayEquals(new long[]{bits(1, 2)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}), batch));
+    }
+
+    @Test
+    void floatWideningDoubleIn_signedZeroAndExactWideningPrecision() {
+        float[] vals = {+0.0f, -0.0f, Float.NaN, 0.1f};
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{+0.0}), floatBatch(vals, null)));
+        assertArrayEquals(new long[]{bits(1)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{-0.0}), floatBatch(vals, null)));
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.NaN}), floatBatch(vals, null)));
+        // 0.1d does not equal (double) 0.1f -> 0L
+        assertArrayEquals(new long[]{0L},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{0.1}), floatBatch(vals, null)));
+        // Widened probe (double) 0.1f DOES match
+        assertArrayEquals(new long[]{bits(3)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{(double) 0.1f}), floatBatch(vals, null)));
+    }
+
+    @Test
+    void floatWideningDoubleIn_nanPayloadsAndInfinities() {
+        float customFloatNan1 = Float.intBitsToFloat(0x7fc00001);
+        double customDoubleNan2 = Double.longBitsToDouble(0x7ff8000000000042L);
+        float[] vals = {customFloatNan1, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, 1.0f};
+        BatchExchange.Batch batch = floatBatch(vals, null);
+
+        // Probe with canonical Double.NaN matches customFloatNan1 (widened)
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.NaN}), batch));
+
+        // Probe with customDoubleNan2 matches customFloatNan1 (widened)
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{customDoubleNan2}), batch));
+
+        // Probe with Double.+Inf matches Float.+Inf (widened)
+        assertArrayEquals(new long[]{bits(1)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY}), batch));
+
+        // Probe with Double.-Inf matches Float.-Inf (widened)
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.NEGATIVE_INFINITY}), batch));
+
+        // Both infinities in probe list
+        assertArrayEquals(new long[]{bits(1, 2)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}), batch));
+    }
+
+    @Test
+    void doubleIn_matchesAtTheLastBitOfAWordAndInTheMiddleWord() {
+        double[] vals64 = new double[64];
+        vals64[63] = 42.0;
+        assertArrayEquals(new long[]{1L << 63},
+                runMatcher(new DoubleInBatchMatcher(new double[]{42.0}), doubleBatch(vals64, null)));
+
+        double[] vals130 = new double[130];
+        vals130[65] = 99.0;
+        long[] out = runMatcher(new DoubleInBatchMatcher(new double[]{99.0}), doubleBatch(vals130, null));
+        assertArrayEquals(new long[]{0L, 1L << 1, 0L}, out);
+    }
+
+    @Test
+    void floatWideningDoubleIn_matchesAtTheLastBitOfAWordAndInTheMiddleWord() {
+        float[] vals64 = new float[64];
+        vals64[63] = 42.0f;
+        assertArrayEquals(new long[]{1L << 63},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{42.0}), floatBatch(vals64, null)));
+
+        float[] vals130 = new float[130];
+        vals130[65] = 99.0f;
+        long[] out = runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{99.0}), floatBatch(vals130, null));
+        assertArrayEquals(new long[]{0L, 1L << 1, 0L}, out);
+    }
+
+    @Test
+    void binaryEq_usesDictionaryIdsAndFallsBackForPlainRows() throws Exception {
+        byte[] de = {'D', 'E'};
+        byte[] fr = {'F', 'R'};
+        Dictionary.ByteArrayDictionary dictionary = dictionary(de, fr);
+        BatchExchange.Batch batch = binaryBatch(
+                new byte[][]{de, fr, de, de, fr},
+                dictionary,
+                new int[]{0, 1, -1, 0, -1},
+                nullsAt(3));
+
+        assertArrayEquals(
+                new long[]{bits(0, 2)},
+                runMatcher(new BinaryEqBatchMatcher(de), batch));
+    }
+
+    @Test
+    void binaryEq_absentDictionaryValueStillMatchesPlainRows() throws Exception {
+        byte[] de = {'D', 'E'};
+        byte[] fr = {'F', 'R'};
+        byte[] us = {'U', 'S'};
+        Dictionary.ByteArrayDictionary dictionary = dictionary(de, fr);
+        BatchExchange.Batch batch = binaryBatch(
+                new byte[][]{de, fr, us},
+                dictionary,
+                new int[]{0, 1, -1},
+                null);
+
+        assertArrayEquals(
+                new long[]{bits(2)},
+                runMatcher(new BinaryEqBatchMatcher(us), batch));
+    }
+
+    @Test
+    void binaryEq_matchesEveryDuplicateDictionaryEntry() throws Exception {
+        byte[] de = {'D', 'E'};
+        byte[] fr = {'F', 'R'};
+        Dictionary.ByteArrayDictionary dictionary = dictionary(de, fr, de);
+        BatchExchange.Batch batch = binaryBatch(
+                new byte[][]{de, fr, de},
+                dictionary,
+                new int[]{0, 1, 2},
+                null);
+
+        assertArrayEquals(
+                new long[]{bits(0, 2)},
+                runMatcher(new BinaryEqBatchMatcher(de), batch));
+    }
+
+    @Test
+    void binaryEq_acrossWordBoundarySetsBitsInBothWords() throws Exception {
+        byte[] de = {'D', 'E'};
+        byte[] fr = {'F', 'R'};
+        Dictionary.ByteArrayDictionary dictionary = dictionary(de, fr);
+        byte[][] values = new byte[70][];
+        int[] dictionaryIndices = new int[70];
+        long expectedFirst = 0L;
+        long expectedSecond = 0L;
+        for (int i = 0; i < values.length; i++) {
+            boolean match = (i & 1) == 0;
+            values[i] = match ? de : fr;
+            dictionaryIndices[i] = match ? 0 : 1;
+            if (match) {
+                if (i < 64) {
+                    expectedFirst |= 1L << i;
+                }
+                else {
+                    expectedSecond |= 1L << (i - 64);
+                }
+            }
+        }
+
+        BatchExchange.Batch batch = binaryBatch(values, dictionary, dictionaryIndices, null);
+
+        assertArrayEquals(
+                new long[]{expectedFirst, expectedSecond},
+                runMatcher(new BinaryEqBatchMatcher(de), batch));
+    }
+
+    private static BatchExchange.Batch binaryBatch(byte[][] values,
+            Dictionary.ByteArrayDictionary dictionary, int[] dictionaryIndices, BitSet nulls) {
+        int byteCount = 0;
+        for (byte[] value : values) {
+            byteCount += value.length;
+        }
+        byte[] bytes = new byte[byteCount];
+        int[] offsets = new int[values.length + 1];
+        int position = 0;
+        for (int i = 0; i < values.length; i++) {
+            byte[] value = values[i];
+            System.arraycopy(value, 0, bytes, position, value.length);
+            position += value.length;
+            offsets[i + 1] = position;
+        }
+
+        BinaryBatchValues binaryValues = new BinaryBatchValues(bytes, offsets);
+        binaryValues.dictionary = dictionary;
+        binaryValues.dictIndices = dictionaryIndices;
+
+        BatchExchange.Batch batch = new BatchExchange.Batch();
+        batch.values = binaryValues;
+        batch.validity = toValidity(nulls, values.length);
+        batch.recordCount = values.length;
+        return batch;
+    }
+
+    private static Dictionary.ByteArrayDictionary dictionary(byte[]... values) throws Exception {
+        int encodedSize = 0;
+        for (byte[] value : values) {
+            encodedSize += Integer.BYTES + value.length;
+        }
+        ByteBuffer data = ByteBuffer.allocate(encodedSize).order(ByteOrder.LITTLE_ENDIAN);
+        for (byte[] value : values) {
+            data.putInt(value.length);
+            data.put(value);
+        }
+        return (Dictionary.ByteArrayDictionary) Dictionary.parse(
+                data.array(), values.length, PhysicalType.BYTE_ARRAY, null);
     }
 }

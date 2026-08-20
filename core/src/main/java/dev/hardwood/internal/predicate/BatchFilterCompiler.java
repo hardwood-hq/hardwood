@@ -133,7 +133,7 @@ public final class BatchFilterCompiler {
     }
 
     private static Result compileLeaf(ResolvedPredicate leaf, FileSchema schema, IntUnaryOperator projection) {
-        int fileIdx = leafColumnIndex(leaf);
+        int fileIdx = ResolvedPredicate.leafColumnIndex(leaf);
         if (fileIdx == -1 || !isTopLevel(schema, fileIdx) || !isSupported(leaf)) {
             return null;
         }
@@ -241,13 +241,6 @@ public final class BatchFilterCompiler {
                 : new MergePlan.And(planChildren);
         out.columns = touchedColumns;
         return out;
-    }
-
-    /// The column one leaf reads, or `-1` for a compound that is not a leaf at all. Eligibility
-    /// is [#isSupported]'s question, not this one — a leaf this compiler has no matcher for
-    /// still names its column.
-    private static int leafColumnIndex(ResolvedPredicate leaf) {
-        return ResolvedPredicate.leafColumnIndex(leaf);
     }
 
     private static boolean isTopLevel(FileSchema schema, int columnIndex) {

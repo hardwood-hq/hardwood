@@ -367,8 +367,7 @@ public class BatchExchange<B> {
     /// the batch's matcher can set it. A drain that fills its own accumulator
     /// instead of the batch this returns — as [NestedColumnWorker] does —
     /// cannot honour it at all.
-    public static Object allocateArray(ColumnSchema column, int capacity,
-            boolean retainDictionaryIndices) {
+    public static Object allocateArray(ColumnSchema column, int capacity, boolean retainDictionaryIndices) {
         Object values = allocateArray(column, capacity);
         if (retainDictionaryIndices && values instanceof BinaryBatchValues binaryValues) {
             binaryValues.retainDictionaryIndices = true;
