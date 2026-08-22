@@ -1,0 +1,235 @@
+# Plan: FFM Zero-Copy Native Decode Pipeline (#504)
+
+**Status: Draft**
+
+---
+
+## Context
+
+Hardwood currently decodes Parquet numeric column pages via a two-copy heap path:
+
+1. `MappedInputFile.readRange()` returns a `MappedByteBuffer` slice of the mmap'd file — this is already off-heap and zero-copy.
+2. `PageDecoder.decodePage()` passes this buffer to `LibdeflateDecompressor.decompress()`, which writes decompressed output into a **heap `byte[]`** — copy 1, GC sees this.
+3. `PlainDecoder` or `ByteStreamSplitDecoder` reads from that `byte[]` to produce typed primitive arrays (`float[]`, `int[]` etc.) — copy 2.
+
+For wide numeric columns with large pages, this means:
+- Two large short-lived `byte[]` allocations per page
+- GC pressure from large heap allocations
+
+**Scope**:
+
+This plan covers the Java 22+ fast path only. Java 21 and earlier users continue on the existing heap path unchanged. The two paths coexist via a multi-release JAR (`src/main/java22`).
+
+Encodings in scope: `PLAIN` and `BYTE_STREAM_SPLIT` for numeric physical types (`INT32`, `INT64`, `FLOAT`, `DOUBLE`).
+
+Encodings out of scope: `DELTA_BINARY_PACKED`, `RLE_DICTIONARY`, `RLE`, `DELTA_LENGTH_BYTE_ARRAY`, `DELTA_BYTE_ARRAY` — these are either non-numeric, dictionary-based, or have insufficient value density to justify native decode complexity.
+
+**What this plan does NOT include**:
+
+- The large-file per-region mapping fix from #354 (2 GB limit, `Math.toIntExact` hardening)
+- The `ColumnWorker` concurrency changes from #354
+- Any S3 / `RangeBackedInputFile` changes
+
+---
+
+## Goal
+
+Replace the heap `byte[]` decompression and decode path for numeric Parquet pages with a zero-copy pipeline that keeps data in native memory throughout, using the Java 22 Foreign Function & Memory (FFM) API.
+
+**Expected outcome**: measurable reduction in GC pause time and improved decode throughput for wide numeric columns. Benchmarks required before merge (see Tests section).
+
+### Design Decisions
+
+**1. Two `MemorySegment`s per page decode**
+
+The proposed pipeline uses two native segments:
+
+- **Segment 1** — a zero-copy slice of the mmap'd file via `MappedInputFile.readRangeAsSegment()`. This is a view into the OS page cache. No allocation, no copy. Its lifetime ends once libdeflate finishes reading from it.
+- **Segment 2** — a native buffer allocated via `Arena.ofShared()`, written into by `LibdeflateDecompressor.decompressToSegment()`. This holds the decompressed page data. Its lifetime spans the entire decode step — it must remain valid until `NativePlainDecoder` or `NativeBssDecoder` finishes reading from it.
+
+**2. Arena placement and lifecycle**
+
+The `Arena` is created per decode task in `ColumnWorker.decode()` and closed after decoding is complete. The existing `inFlightDecodes` barrier in `ColumnWorker.close()` already ensures all executor threads finish before resources are released:
+
+```
+close() sets done = true
+→ retrieverThread.join()           — no new tasks submitted
+→ drainThread.join()               — drain has stopped consuming
+→ CompletableFuture.allOf().join() — all executor threads done
+→ safe to release all resources
+```
+
+Since Arena is per decode task and closed within that task after decode completes, there is no cross-task sharing concern. Each executor thread owns its Arena for the duration of one page decode.
+
+**3. `Arena.ofShared()` not `Arena.ofConfined()`**
+
+`Arena.ofConfined()` can only be accessed and closed by the thread that created it. Since executor threads are pooled and virtual-thread scheduled, we cannot guarantee the same OS thread closes the Arena. `Arena.ofShared()` allows any thread to close it safely.
+
+**4. Thread-local native output buffer in `LibdeflateDecompressor`**
+
+`decompressToSegment()` (already implemented in #354) uses a thread-local native output buffer — one pre-allocated native segment per thread, reused across calls. This avoids per-page native allocation overhead.
+
+Callers must consume or copy the returned segment **before the next call on the same thread**. In our pipeline this is always true — decode is synchronous within one executor thread per page.
+
+**5. Levels stay on heap**
+
+Rep and def levels are decoded via `RleBitPackingHybridDecoder` which takes `byte[]`. Levels are small relative to value data (typically < 1% of page size). We copy levels to `byte[]` and leave level decoding unchanged. Only the values section goes through the native path.
+
+**6. Multi-release JAR**
+
+`src/main/java22` overrides `PageDecoder` for the Java 22+ path. Only the `PLAIN` and `BYTE_STREAM_SPLIT` cases in `decodeTypedValues` are changed — all other encoding cases and all other methods remain identical to the Java 21 baseline.
+
+Java 21 path: `PlainDecoder(byte[])`, `ByteStreamSplitDecoder(byte[])`
+Java 22 path: `NativePlainDecoder(MemorySegment)`, `NativeBssDecoder(MemorySegment)`
+
+**7. Nullable columns are supported but dense columns get the biggest win**
+
+Both `NativePlainDecoder` and `NativeBssDecoder` handle nullable columns (sparse path). However the performance gain is largest for required columns (`maxDefinitionLevel == 0`) where `NativePlainDecoder` can do bulk vectorized transfer:
+
+```java
+data.asSlice(pos, numBytes).asByteBuffer()
+    .order(ByteOrder.LITTLE_ENDIAN).asFloatBuffer().get(output);
+```
+
+The JIT typically emits a vectorized load for this pattern. Nullable columns fall back to per-value reads, which is still faster than heap `byte[]` but the gap is smaller.
+
+---
+
+## Relationship to #354
+
+The following are taken from #354 as-is:
+- NativePlainDecoder
+- NativeBssDecoder
+- LibdeflateDecompressor.decompressToSegment()
+
+The following are explicitly excluded from this PR:
+- Large file per-region mapping fix
+- Math.toIntExact cast hardening
+- ColumnWorker concurrency changes
+
+## API Details
+
+### `MappedInputFile`
+
+New method added alongside existing `readRange`:
+
+```java
+/// Returns a read-only MemorySegment slice of the mmap'd file region.
+/// Zero-copy for whole-file mode (≤ 2 GB); maps the region on demand
+/// for per-region mode (> 2 GB).
+///
+/// The returned segment is valid for the lifetime of the provided Arena.
+/// Callers must not close the Arena while any thread is reading from the segment.
+///
+/// @param arena  the Arena that owns the returned segment's lifetime
+/// @param offset byte offset within the file
+/// @param length number of bytes to map
+/// @return a read-only MemorySegment of exactly `length` bytes
+public MemorySegment readRangeAsSegment(Arena arena, long offset, int length) throws IOException
+```
+
+### `LibdeflateDecompressor`
+
+Already added in #354:
+
+```java
+/// Decompresses GZIP data from a MemorySegment into a thread-local native
+/// output buffer. No heap copy. Caller must consume the result before the
+/// next call on the same thread.
+public MemorySegment decompressToSegment(MemorySegment input, long compressedSize,
+                                          int uncompressedSize) throws IOException
+```
+
+### `NativePlainDecoder` and `NativeBssDecoder`
+
+Already added in #354. Both implement `ValueDecoder` and accept a `MemorySegment` instead of `byte[]`.
+
+---
+
+## Technical Details
+
+### Current decode flow (Java 21)
+
+```
+MappedInputFile.readRange()
+    → ByteBuffer (off-heap, mmap slice)
+    → PageDecoder.decodePage(ByteBuffer)
+        → ThriftCompactReader parses header
+        → LibdeflateDecompressor.decompress(ByteBuffer)
+            → heap byte[] (copy 1, GC pressure)
+        → parseDataPage(byte[])
+            → decodeLevels → int[] (rep/def levels)
+            → decodeTypedValues(byte[], encoding)
+                → PlainDecoder(byte[]) or ByteStreamSplitDecoder(byte[])
+                    → float[], int[], long[], double[] (copy 2)
+```
+
+### Proposed decode flow (Java 22+)
+
+```
+MappedInputFile.readRangeAsSegment(arena, offset, length)
+    → Segment 1: MemorySegment (zero-copy mmap slice, off-heap)
+    → PageDecoder.decodePage(MemorySegment)   [java22 override]
+        → ThriftCompactReader parses header
+        → LibdeflateDecompressor.decompressToSegment(Segment 1)
+            → Segment 2: MemorySegment (thread-local native buffer, off-heap)
+        → parseDataPage(MemorySegment)
+            → copy small levels portion to byte[] → decodeLevels → int[]
+            → decodeTypedValues(MemorySegment, encoding)
+                → NativePlainDecoder(Segment 2) or NativeBssDecoder(Segment 2)
+                    → float[], int[], long[], double[] (single copy, vectorizable)
+```
+
+### Arena lifecycle per page
+
+```java
+// inside ColumnWorker.decode()
+try (Arena arena = Arena.ofShared()) {
+    MemorySegment compressed = inputFile.readRangeAsSegment(arena, offset, length);
+    Page page = pageDecoder.decodePage(compressed);  // java22 path
+    reorderBuffer.set(slot, new DecodedPage(page, pageInfo.mask()));
+}
+// arena closed here — both segments invalidated
+// decoded Page holds only primitive arrays (float[], int[]) — heap, GC managed
+LockSupport.unpark(drainThread);
+```
+
+The Arena closes after `decodePage` returns — at that point decoded values are in primitive arrays on the heap, segments are no longer needed.
+
+### DATA_PAGE vs DATA_PAGE_V2
+
+- **V1**: rep/def levels and values are compressed together. Decompress entire page → copy levels to `byte[]` → pass values `MemorySegment` slice to native decoder.
+- **V2**: rep/def levels are always uncompressed and separated. Copy levels directly to `byte[]` from input `MemorySegment` → decompress only values section → pass to native decoder. Slightly cleaner FFM integration since values are already isolated.
+
+### `BYTE_STREAM_SPLIT` considerations
+
+BSS encoding interleaves bytes across streams — byte `k` of value `i` lives at `baseOffset + k * numValues + i`. `NativeBssDecoder.gatherBytes()` uses `MemorySegment.get(JAVA_BYTE, offset)` with stride arithmetic to reconstruct each value. No bulk transfer is possible due to the strided layout. The win here is purely from avoiding the heap `byte[]` allocation, not from vectorization.
+
+---
+
+## Tests
+
+### Correctness tests
+
+- Existing page decode tests must pass unchanged on both Java 21 and Java 22 paths
+- Add `NativePlainDecoderTest` and `NativeBssDecoderTest` covering:
+  - Required columns (dense, `definitionLevels == null`)
+  - Nullable columns (sparse, mixed null/non-null)
+  - All numeric types: `INT32`, `INT64`, `FLOAT`, `DOUBLE`
+  - Boundary conditions: single value, empty page, full page
+- Add `MappedInputFileSegmentTest` for `readRangeAsSegment`:
+  - Whole-file mode (≤ 2 GB)
+  - Per-region mode (> 2 GB) — can use `MappedInputFileLargeFileTest` infrastructure
+  - Out-of-bounds access throws `IndexOutOfBoundsException`
+
+### Benchmarks (required before merge)
+
+A new performance test `NativeDecodePerformanceTest` in `dev.hardwood.perf`:
+
+- Two contenders: heap path (PlainDecoder / ByteStreamSplitDecoder on byte[])
+  vs native path (NativePlainDecoder / NativeBssDecoder on MemorySegment)
+- GZIP-compressed numeric columns (DOUBLE, FLOAT, PLAIN and BYTE_STREAM_SPLIT encodings)
+- Same warmup + timed run structure, configurable via system properties
+- Correctness verified by comparing column sums between contenders
+- Pass criteria: native path must show measurable improvement in rows/sec
+  and MB/sec to jutify Java-version-split.
