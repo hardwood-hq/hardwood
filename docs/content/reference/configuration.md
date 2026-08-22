@@ -129,6 +129,8 @@ try (HardwoodContext context = HardwoodContext.create();
 
 Obtain the defaults with `ReaderConfig.defaults()`. The `open(inputFile)` and `open(inputFile, context)` overloads use the defaults.
 
+Write-time behaviour is configured separately, with a `WriterConfig` passed to `ParquetFileWriter.create(...)` — see the [Writer Reference](writer.md#writer-options).
+
 Options are string-keyed and keys are matched case-sensitively; boolean option values are compared case-insensitively. An unrecognised key is ignored (so a transitional flag can be retired without breaking callers) but logged at `WARNING`, so a typo in a live key surfaces rather than silently taking the default.
 
 | Option | Default | Description |

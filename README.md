@@ -12,7 +12,7 @@ Goals of the project are:
 * Be light-weight: Implement the Parquet file format avoiding any 3rd party dependencies other than for compression algorithms (e.g. Snappy)
 * Be correct: Support all Parquet files which are supported by the canonical [parquet-java](https://github.com/apache/parquet-java) library
 * Be fast: Be as fast as or faster than parquet-java
-* Be complete: Add a Parquet file writer (after 1.0)
+* Be complete: Read and write Parquet files; the writer covers flat and nested schemas through a columnar and a row-oriented API
 
 Latest version: 1.0.0.Final, 2026-06-25
 

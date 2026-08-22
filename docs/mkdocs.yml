@@ -7,7 +7,7 @@
 #
 
 site_name: Hardwood
-site_description: A lightweight Java Parquet reader — zero transitive dependencies, GraalVM-friendly, S3 without Hadoop
+site_description: A lightweight Java Parquet reader and writer — zero transitive dependencies, GraalVM-friendly, S3 without Hadoop
 site_url: https://hardwood.dev/
 repo_url: https://github.com/hardwood-hq/hardwood
 repo_name: hardwood-hq/hardwood
@@ -31,9 +31,12 @@ nav:
     - Read with the parquet-java API: how-to/compat.md
     - Read Variant Columns: how-to/variant.md
     - Read Geospatial Columns: how-to/geospatial.md
+    - Write Row by Row: how-to/write-row-by-row.md
+    - Write Column by Column: how-to/write-column-by-column.md
     - Inspect File Metadata: how-to/metadata.md
   - Concepts:
     - How a Parquet File Is Laid Out: concepts/parquet-layout.md
+    - The Write Model: concepts/write-model.md
     - The Concurrency Model: concepts/concurrency-model.md
     - RowReader vs. ColumnReader: concepts/reader-models.md
     - The Layer Model: concepts/nested-columns.md
@@ -42,6 +45,7 @@ nav:
     - Compatibility Philosophy: concepts/compatibility-philosophy.md
   - Reference:
     - Configuration: reference/configuration.md
+    - Writer: reference/writer.md
     - Typed Accessors: reference/accessors.md
     - Query Controls: reference/query-controls.md
     - S3: reference/s3.md

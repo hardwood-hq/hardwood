@@ -17,7 +17,7 @@
 
 !!! note
 
-    Use [`FileSchema.builder(String)`](../how-to/metadata.md) to build a schema for writing. The builder checks the complete schema and calculates child counts. Use `SchemaElement` when you work with footer metadata.
+    Use [`FileSchema.builder(String)`](../how-to/write-row-by-row.md#writing-a-file) to build a schema for writing. The builder checks the complete schema and calculates child counts. Use `SchemaElement` when you work with footer metadata.
 
 ## Factories
 

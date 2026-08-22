@@ -11,7 +11,7 @@
 -->
 # How-to Guides
 
-Read Parquet files with Hardwood — pick the guide that matches what you need:
+Read and write Parquet files with Hardwood — pick the guide that matches what you need:
 
 - [**Read Row by Row**](row-reader.md) — `RowReader`, typed accessors, nested structs / lists / maps.
 - [**Read Column by Column**](column-reader.md) — `ColumnReader` and `ColumnReaders`, the layer model, hot-loop patterns.
@@ -22,6 +22,8 @@ Read Parquet files with Hardwood — pick the guide that matches what you need:
 - [**Read with the parquet-java API**](compat.md) — drop-in `org.apache.parquet.*` replacement (experimental).
 - [**Read Variant Columns**](variant.md) — `getVariant` and the `PqVariant` API.
 - [**Read Geospatial Columns**](geospatial.md) — GEOMETRY / GEOGRAPHY columns, bounding-box filter pushdown.
+- [**Write Row by Row**](write-row-by-row.md) — `RowWriter`, typed setters, nested structs / lists / maps.
+- [**Write Column by Column**](write-column-by-column.md) — `ColumnBatch`, typed arrays, nulls, per-layer offsets.
 - [**Inspect File Metadata**](metadata.md) — file metadata, row groups, column chunks, schema introspection.
 
 !!! example "Runnable examples"
@@ -51,4 +53,13 @@ Both support column projection and predicate pushdown. Each reader has a no-arg 
 
 To read multiple files as a single dataset with cross-file prefetching, open the `ParquetFileReader` with a list of `InputFile`s via the `Hardwood` class — see [Reading Multiple Files](multi-file.md).
 
-For the exceptions the readers can throw and when, see [Error Handling](../reference/error-handling.md).
+## Choosing a Write API
+
+Writing mirrors the same split. Both APIs come from one `ParquetFileWriter` and produce the same layout, but a file is written through one of them, not both:
+
+- **`RowWriter`** — record-oriented, obtained from `writer.rowWriter()`. Fields are addressed by name, and logical-type values are written as the Java types the reader returns for them. Best when you hold records.
+- **`ColumnBatch`** — batch-oriented, filled inside `writer.writeBatch(...)`. One typed array per leaf column, plus per-layer validity and offsets for nested columns. Best when you already hold columns.
+
+For the model behind the file the writer produces — why the footer comes last, what bounds memory, and how the encoding is chosen — see [The Write Model](../concepts/write-model.md).
+
+For the exceptions the readers and the writer can throw and when, see [Error Handling](../reference/error-handling.md).

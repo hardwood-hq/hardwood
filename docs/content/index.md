@@ -11,7 +11,7 @@
 -->
 # Hardwood
 
-_A lightweight Java reader for the [Apache Parquet](https://parquet.apache.org/) file format.
+_A lightweight Java reader and writer for the [Apache Parquet](https://parquet.apache.org/) file format.
 Available as a Java library and a [command-line tool](reference/cli.md)._
 
 !!! success "Hardwood 1.0 is out!"
@@ -20,10 +20,11 @@ Available as a Java library and a [command-line tool](reference/cli.md)._
 
 ## Why Hardwood
 
-Hardwood gives applications Parquet read support without pulling in Hadoop, Avro, or the wider [parquet-java](https://github.com/apache/parquet-java) dependency tree:
+Hardwood gives applications Parquet read and write support without pulling in Hadoop, Avro, or the wider [parquet-java](https://github.com/apache/parquet-java) dependency tree:
 
 * **Light-weight** — zero transitive dependencies beyond optional compression libraries (Snappy, ZSTD, LZ4, Brotli).
 * **Fast** — matches or exceeds `parquet-java`'s read throughput; competitive in native-image builds and short-lived JVMs.
+* **Complete** — reads and writes: flat and nested schemas, every primitive type, dictionary and delta encodings, and the codecs the format defines.
 * **Concurrent** — multi-threaded at the core: pages decode in parallel on a shared thread pool, with cross-file prefetching for multi-file reads.
 * **Compatible** — reads every file that `parquet-java` reads, with documented divergences where Hardwood applies stricter semantics (e.g. SQL three-valued `notEq`).
 * **Embeddable** — usable from native CLIs, S3-only pipelines (without `hadoop-aws`), and Avro / Spark consumers via thin shim modules, including a [drop-in `parquet-java` replacement](how-to/compat.md).
@@ -49,6 +50,25 @@ try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
 }
 ```
 
+Writing mirrors it, record by record or column by column:
+
+```java
+import dev.hardwood.OutputFile;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.RowWriter;
+
+try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(path), schema)) {
+    RowWriter rows = writer.rowWriter();
+
+    for (Person person : people) {
+        rows.writeRow(row -> row
+                .setLong("id", person.id())
+                .setString("name", person.name())
+                .setDate("birth_date", person.birthDate()));
+    }
+}
+```
+
 Ready? [Install Hardwood](getting-started.md), then read [your first file end-to-end](tutorial/first-read.md).
 
 Prefer to learn by running code? The [hardwood-examples](https://github.com/hardwood-hq/hardwood-examples) repository collects small, self-contained examples — one per concept — that you can clone and run with a single command.
@@ -65,7 +85,7 @@ The interactive `dive` TUI currently caps S3 files at 2 GB.
 Forward-looking items tracked for post-1.0. None are committed to a specific release.
 
 - **Finalize `ColumnReader` API** — stabilize the API for columnar access and move it out of "Experimental" state. ([#522](https://github.com/hardwood-hq/hardwood/issues/522))
-- **Writer support** — write Parquet files in addition to reading; today Hardwood is reader-only. ([#9](https://github.com/hardwood-hq/hardwood/issues/9))
+- **Writer extensions** — object-store output, page-index and Bloom-filter writing, and parallel column encoding, on top of the write path described in [The Write Model](concepts/write-model.md). ([#9](https://github.com/hardwood-hq/hardwood/issues/9))
 - **Bloom filter predicate pushdown** — use per-chunk bloom filters for equality-predicate skipping on high-cardinality columns, where min/max statistics can't help. ([#105](https://github.com/hardwood-hq/hardwood/issues/105))
 - **Parquet Modular Encryption** — read files encrypted under the Parquet [Modular Encryption spec](https://github.com/apache/parquet-format/blob/master/Encryption.md): encrypted footer, per-column keys, AES-GCM and AES-GCM-CTR. ([#128](https://github.com/hardwood-hq/hardwood/issues/128))
 - **Apache Arrow interop** — `ColumnReader` output as Arrow `FieldVector` / `VectorSchemaRoot` for zero-copy handoff to DuckDB, DataFusion, Pandas-via-JNI, and other Arrow-native consumers. ([#153](https://github.com/hardwood-hq/hardwood/issues/153))
