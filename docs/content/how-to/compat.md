@@ -48,6 +48,36 @@ try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(),
 }
 ```
 
+## Building the Input File Yourself
+
+Instead of passing a `Path` to the builder, create the input file with `HadoopInputFile.fromPath()` and pass that. This works for local and S3 paths alike.
+
+```java
+import org.apache.hadoop.conf.Configuration;
+import org.apache.hadoop.fs.Path;
+import org.apache.parquet.hadoop.util.HadoopInputFile;
+
+Configuration conf = new Configuration();
+HadoopInputFile file = HadoopInputFile.fromPath(new Path("data.parquet"), conf);
+
+try (ParquetReader<Group> reader = ParquetReader.builder(new GroupReadSupport(), file).build()) {
+    // read as usual
+}
+```
+
+`fromPath()` returns `HadoopInputFile` and throws `IOException`. The file length is read during the call, so a path that does not exist fails there rather than on the first read. For an S3 path this is where the client first connects. `fromPathUnchecked()` is the same call with the exception wrapped in an `UncheckedIOException`.
+
+The instance exposes `getPath()`, `getConfiguration()` and `getLength()`. `getLength()` declares no checked exception — the length is read when the file is created:
+
+```java
+HadoopInputFile file = HadoopInputFile.fromPathUnchecked(new Path("data.parquet"), conf);
+
+long bytes = file.getLength();
+Path resolved = file.getPath();
+```
+
+`fromStatus()` and `newStream()` are not provided; they take Hadoop `FileStatus` and parquet-java `SeekableInputStream`, neither of which this module shims.
+
 ## Reading from S3
 
 ```java
