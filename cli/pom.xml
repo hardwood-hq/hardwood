@@ -18,6 +18,9 @@
       <screenshots.castFile>${project.build.directory}/dive-screenshots.cast</screenshots.castFile>
       <aesh.version>3.16.6</aesh.version>
       <aesh-readline.version>3.16.2</aesh-readline.version>
+      <!-- Tracks the brotli4j version managed by the hardwood-bom; the per-platform
+           native jar (native-<platform>) shares this version. -->
+      <brotli4j.version>1.23.0</brotli4j.version>
       <!-- Integration tests require a native binary; skip by default.
            The native profile overrides this to false. -->
       <skipITs>true</skipITs>
@@ -400,11 +403,10 @@
           <plugin>
             <groupId>org.apache.maven.plugins</groupId>
             <artifactId>maven-dependency-plugin</artifactId>
-            <version>3.8.1</version>
             <executions>
               <execution>
                 <id>unpack-zstd-native</id>
-                <phase>prepare-package</phase>
+                <phase>process-resources</phase>
                 <goals>
                   <goal>unpack</goal>
                 </goals>
@@ -422,7 +424,7 @@
               </execution>
               <execution>
                 <id>unpack-snappy-native</id>
-                <phase>prepare-package</phase>
+                <phase>process-resources</phase>
                 <goals>
                   <goal>unpack</goal>
                 </goals>
@@ -440,7 +442,7 @@
               </execution>
               <execution>
                 <id>unpack-lz4-native</id>
-                <phase>prepare-package</phase>
+                <phase>process-resources</phase>
                 <goals>
                   <goal>unpack</goal>
                 </goals>
@@ -452,6 +454,25 @@
                       <type>jar</type>
                       <overWrite>true</overWrite>
                       <outputDirectory>${project.build.directory}/lz4-native</outputDirectory>
+                    </artifactItem>
+                  </artifactItems>
+                </configuration>
+              </execution>
+              <execution>
+                <id>unpack-brotli-native</id>
+                <phase>process-resources</phase>
+                <goals>
+                  <goal>unpack</goal>
+                </goals>
+                <configuration>
+                  <artifactItems>
+                    <artifactItem>
+                      <groupId>com.aayushatharva.brotli4j</groupId>
+                      <artifactId>native-${brotli.platform}</artifactId>
+                      <version>${brotli4j.version}</version>
+                      <type>jar</type>
+                      <overWrite>true</overWrite>
+                      <outputDirectory>${project.build.directory}/brotli-native</outputDirectory>
                     </artifactItem>
                   </artifactItems>
                 </configuration>
@@ -499,6 +520,25 @@
                       <fileset dir="${project.build.directory}/zstd-native/${zstd.os.dir}/${zstd.arch.dir}" includes="${dist.lib.extension}" erroronmissingdir="false" />
                       <fileset dir="${project.build.directory}/snappy-native/org/xerial/snappy/native/${snappy.os.dir}/${snappy.arch.dir}" includes="${dist.lib.extension}" erroronmissingdir="false" />
                       <fileset dir="${project.build.directory}/lz4-native/net/jpountz/util/${lz4.os.dir}/${lz4.arch.dir}" includes="${dist.lib.extension}" erroronmissingdir="false" />
+                      <fileset dir="${project.build.directory}/brotli-native/lib/${brotli.platform}" includes="${dist.lib.extension}" erroronmissingdir="false" />
+                    </copy>
+                  </target>
+                </configuration>
+              </execution>
+              <execution>
+                <id>stage-native-libs-as-resources</id>
+                <phase>process-resources</phase>
+                <goals>
+                  <goal>run</goal>
+                </goals>
+                <configuration>
+                  <target>
+                    <mkdir dir="${project.build.outputDirectory}/native/${dist.os}-${dist.arch}" />
+                    <copy todir="${project.build.outputDirectory}/native/${dist.os}-${dist.arch}" flatten="true">
+                      <fileset dir="${project.build.directory}/zstd-native/${zstd.os.dir}/${zstd.arch.dir}" includes="${dist.lib.extension}" erroronmissingdir="false" />
+                      <fileset dir="${project.build.directory}/snappy-native/org/xerial/snappy/native/${snappy.os.dir}/${snappy.arch.dir}" includes="${dist.lib.extension}" erroronmissingdir="false" />
+                      <fileset dir="${project.build.directory}/lz4-native/net/jpountz/util/${lz4.os.dir}/${lz4.arch.dir}" includes="${dist.lib.extension}" erroronmissingdir="false" />
+                      <fileset dir="${project.build.directory}/brotli-native/lib/${brotli.platform}" includes="${dist.lib.extension}" erroronmissingdir="false" />
                     </copy>
                   </target>
                 </configuration>
@@ -543,6 +583,7 @@
         <zstd.os.dir>linux</zstd.os.dir>
         <snappy.os.dir>Linux</snappy.os.dir>
         <lz4.os.dir>linux</lz4.os.dir>
+        <brotli.platform>linux-${dist.arch}</brotli.platform>
       </properties>
     </profile>
     <profile>
@@ -557,6 +598,7 @@
         <zstd.os.dir>darwin</zstd.os.dir>
         <snappy.os.dir>Mac</snappy.os.dir>
         <lz4.os.dir>darwin</lz4.os.dir>
+        <brotli.platform>osx-${dist.arch}</brotli.platform>
       </properties>
     </profile>
     <profile>
@@ -572,6 +614,7 @@
         <zstd.os.dir>win</zstd.os.dir>
         <snappy.os.dir>Windows</snappy.os.dir>
         <lz4.os.dir>win32</lz4.os.dir>
+        <brotli.platform>windows-${dist.arch}</brotli.platform>
       </properties>
     </profile>
     <profile>

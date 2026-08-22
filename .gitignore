@@ -7,6 +7,7 @@ pom.xml.versionsBackup
 release.properties
 **/dependency-reduced-pom.xml
 .flattened-pom.xml
+cli/src/test/resources/native/
 
 # Eclipse
 .project

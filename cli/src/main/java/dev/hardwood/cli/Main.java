@@ -34,6 +34,7 @@ public class Main {
         NativeLibraryLoader.loadZstd();
         NativeLibraryLoader.loadLz4();
         NativeLibraryLoader.loadSnappy();
+        NativeLibraryLoader.loadBrotli();
 
         CommandResult result = AeshRuntimeRunner.builder()
                 .command(HardwoodCommand.class)

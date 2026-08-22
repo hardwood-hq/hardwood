@@ -67,9 +67,54 @@ All compression codecs (Snappy, ZSTD, LZ4, Brotli) ship their native code as JNI
 
 The solution differs by codec:
 
-- **ZSTD, Snappy, LZ4** — Native libraries are unpacked from their JARs during the Maven `prepare-package` phase (`maven-dependency-plugin`) and bundled in a `lib/` directory alongside the binary. At startup, `NativeImageStartup` fires a Quarkus `StartupEvent` which calls `NativeLibraryLoader` to load each library via `System.load(absolutePath)` before any decompression occurs. For ZSTD, `zstd-jni`'s `Native.assumeLoaded()` is also called to prevent the library's own loader from attempting a duplicate load. Snappy is handled the same way — its loader may have already run at image build time (and failed), so directly calling `System.load()` at runtime bypasses its cached failure state entirely.
+- **ZSTD, Snappy, LZ4** — Native libraries are unpacked from their JARs during the Maven `prepare-package` phase (`maven-dependency-plugin`) and embedded as GraalVM image resources in `target/classes/native/{os}-{arch}/`. At startup, `NativeImageStartup` fires a Quarkus `StartupEvent` which calls `NativeLibraryLoader` to load each library via `System.load(absolutePath)` before any decompression occurs. For ZSTD, `zstd-jni`'s `Native.assumeLoaded()` is also called to prevent the library's own loader from attempting a duplicate load. Snappy is handled the same way — its loader may have already run at image build time (and failed), so directly calling `System.load()` at runtime bypasses its cached failure state entirely.
 
-- **Brotli** — `brotli4j`'s loader (`Brotli4jLoader.ensureAvailability()`) is invoked explicitly at decompression time rather than in a static initializer, so it never runs at build time. Its loading strategy — extracting a classpath resource to a temp file and loading that — works in native images provided the resource is embedded in the binary. The `resource-config.json` under `cli/src/main/resources/META-INF/native-image/` instructs GraalVM to embed the brotli native libraries as image resources.
+  #### Embedded libraries (native binary only)
+
+  In the native binary, zstd, snappy, and lz4 native libraries are embedded as
+  GraalVM image resources and extracted to a flat cache directly in
+  `java.io.tmpdir` on first run. The external `lib/` directory (via
+  `HARDWOOD_LIB_PATH` or next to the executable) is the primary loading path. If
+  unavailable, embedded resources are extracted from the binary as a fallback.
+
+  **Cache location:** files are placed directly in `java.io.tmpdir`, falling back
+  to `~/.hardwood/`. Each cache file is named
+  `hardwood-<version>-<shortHash>-<library><ext>` (e.g.
+  `hardwood-1.1.0-SNAPSHOT-<shortHash>-libzstd-jni-1.5.7-9.so`), where `<shortHash>`
+  is the first 8 bytes of the SHA-256 digest encoded as Base64 URL without padding
+  (for brevity). The full SHA-256 of the embedded bytes is still verified on every
+  cache hit.
+
+  **Loading priority:**
+  1. External `lib/` directory (via `HARDWOOD_LIB_PATH` or next to executable)
+  2. An existing copy in `~/.hardwood/` — its presence signals a previous run could
+     not use `java.io.tmpdir` (e.g. mounted `noexec`), so it is used without
+     re-attempting tmp
+  3. Embedded resources extracted directly to `java.io.tmpdir`
+  4. Embedded resources extracted to `~/.hardwood/` (fallback when the tmp attempt
+     fails)
+
+  **Load-failure fallback:** if a library extracted to `java.io.tmpdir` cannot be
+  loaded (for example `/tmp` is mounted `noexec`), the extracted file and its lock
+  file are deleted and extraction + load is retried in `~/.hardwood/`.
+
+  **Concurrency:** a per-library `.lck` file (named like the cache file with a
+  `.lck` extension) serializes concurrent extraction across multiple processes.
+  The lock file is deleted as soon as extraction completes — it exists only to
+  prevent two processes from extracting the same library at once. Extracted
+  libraries are verified by SHA-256 hash on every cache hit; corrupted files are
+  automatically replaced.
+
+  This means the native binary works as a standalone executable — no `lib/`
+  directory or environment variable required.
+
+- **Brotli** — managed by `NativeLibraryLoader` like ZSTD/Snappy/LZ4: the `brotli4j`
+  native library (`libbrotli.so`) is embedded as a GraalVM image resource, extracted to
+  the same flat cache, and loaded at startup alongside the other codecs. The loader sets
+  the `brotli4j.library.path` system property to the extracted file, so brotli4j's
+  `Brotli4jLoader.ensureAvailability()` (invoked lazily from core's `BrotliDecompressor`
+  at decompression time) calls `System.load` on the already-loaded file and skips its own
+  temp-file extraction.
 
 - **libdeflate (GZIP acceleration)** — libdeflate uses the Java 22+ Foreign Function & Memory (FFM) API, which relies on runtime downcall handles that cannot be created inside a native image. `LibdeflateLoader` detects the native image context via the `org.graalvm.nativeimage.imagecode` system property and returns `isAvailable() = false`, dead-code-eliminating the entire FFM path. The `--initialize-at-build-time` directive in `core`'s `native-image.properties` ensures GraalVM constant-folds this check at image build time.
 
