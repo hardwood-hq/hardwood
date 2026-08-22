@@ -78,6 +78,23 @@ Values are stored in Avro's standard representations: timestamps as `Long` (mill
 
 Avro maps always have string keys, so a Parquet map key must be a `BYTE_ARRAY` annotated as `STRING`, `ENUM`, or `JSON`. Building an `AvroRowReader` whose projection contains a map with any other key type — including an unannotated `BYTE_ARRAY` key, whose bytes are not necessarily text — fails with an error naming the map's path and its key type. The file's other columns are unaffected: narrow the projection to exclude the map, or read it through Hardwood's `RowReader`, which serves the key in its original type.
 
+## Avro names
+
+Avro names that already match `[A-Za-z_][A-Za-z0-9_]*` remain unchanged. Other Parquet names are rewritten to match the Avro grammar. The original name is available from the `hardwood.parquetName` property on the converted schema or field.
+
+Nested records use their Parquet value path to form their Avro namespace, so records with the same name in different branches do not clash. Converted names do not change when you project away an unrelated branch or add, remove, or reorder unrelated columns.
+
+A rewrite gives a field two names, and each side of the API takes one of them:
+
+| Use | Name to pass |
+|---|---|
+| `GenericRecord.get(name)` | the Avro field name |
+| `ColumnProjection.columns(...)` | the Parquet name |
+
+Projection paths use `.` as the nesting separator. A Parquet group or field name containing `.` cannot currently be addressed by `ColumnProjection.columns(...)`; read the file without projection or use a schema with addressable names.
+
+`Schema.getProp("hardwood.parquetName")` recovers the Parquet name of a rewritten record or fixed type, and `Schema.Field.getProp("hardwood.parquetName")` that of a rewritten field. Both return `null` when the emitted local name equals the Parquet name and Hardwood kept it unchanged.
+
 A Parquet column annotated with the `NULL` logical type (e.g. PyArrow's `pa.null()` columns) maps to a bare Avro `null` field — not the usual `union [null, T]` nullable wrap, which is illegal when `T` is itself `null`. The same collapse applies inside lists and maps: a `list<null>` element or `map<string, null>` value position becomes a bare `null` in the corresponding Avro `array` / `map` schema.
 
 A key-only Parquet MAP, whose repeated `key_value` group has no value column, also maps to an Avro `map` with bare `null` values. Each decoded key is present in the Java map with a `null` value.

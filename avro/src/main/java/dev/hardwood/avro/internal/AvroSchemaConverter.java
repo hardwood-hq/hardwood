@@ -47,14 +47,20 @@ public final class AvroSchemaConverter {
     /// the converted schema for consumers that hold the schema alone.
     public static final String UNSIGNED_INT32_PROP = "hardwood.unsignedInt32";
 
+    /// Marker property recording the original Parquet name when Avro rewrites it.
+    public static final String PARQUET_NAME_PROP = "hardwood.parquetName";
+
     private final FileSchema fileSchema;
 
     /// The projection to narrow to, or `null` to retain every field.
     private final ProjectedSchema projected;
 
+    private final AvroNames names;
+
     private AvroSchemaConverter(FileSchema fileSchema, ProjectedSchema projected) {
         this.fileSchema = fileSchema;
         this.projected = projected;
+        this.names = AvroNames.forSchema(fileSchema);
     }
 
     /// Convert a Hardwood FileSchema to a decode plan, narrowed to the given column
@@ -78,12 +84,13 @@ public final class AvroSchemaConverter {
     }
 
     private AvroPlanNode convertRoot() {
-        return convertGroup(fileSchema.getRootNode(), fileSchema.getName(), "");
+        rejectCanonicalRootConflict();
+        return convertGroup(fileSchema.getRootNode(), "");
     }
 
     /// Convert a struct group (or the schema root) to an Avro record, retaining
     /// only children that contain a projected leaf when a projection is active.
-    private AvroPlanNode convertGroup(SchemaNode.GroupNode group, String recordName, String path) {
+    private AvroPlanNode convertGroup(SchemaNode.GroupNode group, String path) {
         List<Schema.Field> fields = new ArrayList<>();
         List<AvroPlanNode> children = new ArrayList<>();
         for (SchemaNode child : group.children()) {
@@ -91,11 +98,15 @@ public final class AvroSchemaConverter {
                 continue;
             }
             AvroPlanNode childNode = convertNode(child, childPath(path, child.name()));
-            fields.add(new Schema.Field(child.name(), fieldSchema(childNode, child), null, null));
+            Schema.Field field = new Schema.Field(names.fieldName(child), fieldSchema(childNode, child), null, null);
+            applyParquetName(field, child);
+            fields.add(field);
             children.add(childNode);
         }
-        return AvroPlanNode.record(
-                Schema.createRecord(recordName, null, null, false, fields), group, children);
+        AvroNames.TypeName typeName = names.typeName(group);
+        Schema record = Schema.createRecord(typeName.name(), null, typeName.namespace(), false, fields);
+        applyParquetName(record, group);
+        return AvroPlanNode.record(record, group, children);
     }
 
     /// The dotted path a converted node is reported under when conversion rejects
@@ -161,7 +172,7 @@ public final class AvroSchemaConverter {
                     + groupAnnotation(group));
         }
         // Plain struct — prune unprojected children recursively.
-        return convertGroup(group, group.name(), path);
+        return convertGroup(group, path);
     }
 
     private static String groupAnnotation(SchemaNode.GroupNode group) {
@@ -181,11 +192,14 @@ public final class AvroSchemaConverter {
     /// The record is a plan leaf: its two fields are read through the Variant
     /// accessor, not as fields of a struct. An ordinary group of the same shape
     /// converts to the same Avro record, so only the plan tells them apart.
-    private static AvroPlanNode convertVariant(SchemaNode.GroupNode group) {
+    private AvroPlanNode convertVariant(SchemaNode.GroupNode group) {
         List<Schema.Field> fields = List.of(
                 new Schema.Field("metadata", Schema.create(Schema.Type.BYTES), null, null),
                 new Schema.Field("value", Schema.create(Schema.Type.BYTES), null, null));
-        Schema schema = Schema.createRecord(group.name(), null, null, false, new ArrayList<>(fields));
+        AvroNames.TypeName typeName = names.typeName(group);
+        Schema schema = Schema.createRecord(typeName.name(), null, typeName.namespace(),
+                false, new ArrayList<>(fields));
+        applyParquetName(schema, group);
         return AvroPlanNode.leaf(schema, Kind.VARIANT, group);
     }
 
@@ -350,8 +364,8 @@ public final class AvroSchemaConverter {
             SchemaNode.PrimitiveNode prim) {
         org.apache.avro.LogicalType decimal = LogicalTypes.decimal(d.precision(), d.scale());
         if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            return AvroPlanNode.leaf(decimal.addToSchema(Schema.createFixed(
-                    prim.name(), null, null, fixedByteLength(prim))), Kind.FIXED, prim);
+            return AvroPlanNode.leaf(decimal.addToSchema(fixedSchema(prim, fixedByteLength(prim))),
+                    Kind.FIXED, prim);
         }
         return AvroPlanNode.leaf(decimal.addToSchema(Schema.create(Schema.Type.BYTES)), Kind.DECIMAL, prim);
     }
@@ -377,11 +391,57 @@ public final class AvroSchemaConverter {
             case DOUBLE -> AvroPlanNode.leaf(Schema.create(Schema.Type.DOUBLE), Kind.DOUBLE, prim);
             case BYTE_ARRAY -> binary(prim);
             case FIXED_LEN_BYTE_ARRAY -> AvroPlanNode.leaf(
-                    Schema.createFixed(prim.name(), null, null, fixedByteLength(prim)), Kind.FIXED, prim);
+                    fixedSchema(prim, fixedByteLength(prim)), Kind.FIXED, prim);
             // INT96 has a fixed 12-byte width that the schema does not carry a length for.
-            case INT96 -> AvroPlanNode.leaf(
-                    Schema.createFixed(prim.name(), null, null, 12), Kind.FIXED, prim);
+            case INT96 -> AvroPlanNode.leaf(fixedSchema(prim, 12), Kind.FIXED, prim);
         };
+    }
+
+    private Schema fixedSchema(SchemaNode.PrimitiveNode prim, int size) {
+        AvroNames.TypeName typeName = names.typeName(prim);
+        Schema schema = Schema.createFixed(typeName.name(), null, typeName.namespace(), size);
+        applyParquetName(schema, prim);
+        return schema;
+    }
+
+    private void applyParquetName(Schema schema, SchemaNode node) {
+        String raw = names.rewrittenFrom(node);
+        if (raw != null) {
+            schema.addProp(PARQUET_NAME_PROP, raw);
+        }
+    }
+
+    private void applyParquetName(Schema.Field field, SchemaNode node) {
+        String raw = names.rewrittenFrom(node);
+        if (raw != null) {
+            field.addProp(PARQUET_NAME_PROP, raw);
+        }
+    }
+
+    private void rejectCanonicalRootConflict() {
+        String fullName = names.typeName(fileSchema.getRootNode()).fullName();
+        if (("interval".equals(fullName) && containsLogicalType(fileSchema.getRootNode(), LogicalType.IntervalType.class))
+                || ("float16".equals(fullName)
+                && containsLogicalType(fileSchema.getRootNode(), LogicalType.Float16Type.class))) {
+            throw new IllegalArgumentException(
+                    "Root named '" + fullName + "' conflicts with canonical fixed type '" + fullName + "'");
+        }
+    }
+
+    private static boolean containsLogicalType(SchemaNode node,
+            Class<? extends LogicalType> logicalTypeClass) {
+        if (node instanceof SchemaNode.PrimitiveNode primitive
+                && logicalTypeClass.isInstance(primitive.logicalType())) {
+            return true;
+        }
+        if (node instanceof SchemaNode.GroupNode group) {
+            for (SchemaNode child : group.children()) {
+                if (containsLogicalType(child, logicalTypeClass)) {
+                    return true;
+                }
+            }
+        }
+        return false;
     }
 
     /// Resolve the declared byte length of a [PhysicalType#FIXED_LEN_BYTE_ARRAY]

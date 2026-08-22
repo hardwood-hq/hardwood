@@ -5,10 +5,10 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.cli.internal;
+package dev.hardwood.internal.schema;
 
-/// Mapping of arbitrary Parquet names onto the name grammar of the schema formats the
-/// `schema` command emits.
+/// Mapping of arbitrary Parquet names onto the name grammars used by Hardwood's
+/// schema converters and emitters.
 ///
 /// Avro names and proto identifiers are both `[A-Za-z_][A-Za-z0-9_]*`, while Parquet
 /// permits any UTF-8 string. A schema carrying a name outside that grammar is rejected
@@ -44,6 +44,19 @@ public final class SchemaNames {
             sb.append(isNamePart(c) ? c : '_');
         }
         return sb.toString();
+    }
+
+    /// Returns whether `name` matches `[A-Za-z_][A-Za-z0-9_]*`.
+    public static boolean isLegal(String name) {
+        if (name.isEmpty() || isDigit(name.charAt(0))) {
+            return false;
+        }
+        for (int i = 0; i < name.length(); i++) {
+            if (!isNamePart(name.charAt(i))) {
+                return false;
+            }
+        }
+        return true;
     }
 
     private static boolean isNamePart(char c) {

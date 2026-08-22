@@ -5,7 +5,7 @@
  *
  *  Licensed under the Apache Software License version 2.0, available at http://www.apache.org/licenses/LICENSE-2.0
  */
-package dev.hardwood.cli.internal;
+package dev.hardwood.internal.schema;
 
 import java.util.regex.Pattern;
 
@@ -43,6 +43,18 @@ class SchemaNamesTest {
     @Test
     void mapsEmptyNameToUnderscore() {
         assertThat(SchemaNames.sanitize("")).isEqualTo("_");
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "name", "_Name_42", "a0" })
+    void recognizesLegalNames(String name) {
+        assertThat(SchemaNames.isLegal(name)).isTrue();
+    }
+
+    @ParameterizedTest
+    @ValueSource(strings = { "", " ", "1", "-", "a.b", "café" })
+    void rejectsIllegalNames(String name) {
+        assertThat(SchemaNames.isLegal(name)).isFalse();
     }
 
     @ParameterizedTest

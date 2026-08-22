@@ -15,6 +15,9 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
+import dev.hardwood.metadata.SchemaElement;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqMap;
@@ -114,6 +117,32 @@ public class ColumnProjectionTest {
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessageContaining("Column not found");
         }
+    }
+
+    /// Parquet permits any UTF-8 character in a name, `.` included, but a projection
+    /// path uses `.` as its nesting separator. A column below a group whose name
+    /// contains a dot is therefore unreachable: `resolveNestedColumn` splits
+    /// `acme.address.city` into three segments and looks for a `city` below an
+    /// `address` below an `acme`, none of which exist.
+    ///
+    /// This is added as documentation of surprising behaviour.
+    @Test
+    void testDottedGroupNameIsUnreachableByAnyProjectionPath() {
+        FileSchema schema = FileSchema.fromSchemaElements(List.of(
+                SchemaElement.root("schema", 1),
+                SchemaElement.group("acme.address", RepetitionType.OPTIONAL, 1),
+                SchemaElement.primitive("city", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED)));
+
+        assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("acme.address.city")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column not found: acme.address.city");
+        assertThatThrownBy(() -> ProjectedSchema.create(schema, ColumnProjection.columns("acme.address")))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column not found: acme.address");
+
+        // The column is present and readable; only addressing it by path fails.
+        assertThat(ProjectedSchema.create(schema, ColumnProjection.all()).getProjectedColumnCount())
+                .isEqualTo(1);
     }
 
     // ==================== Flat Schema Projection Tests ====================

@@ -421,6 +421,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Nested structs → nested Avro RECORD
   - [x] LIST → Avro ARRAY (3-level encoding unwrap)
   - [x] MAP → Avro MAP
+- [x] Deterministic, grammar-legal named types with projection-stable Parquet-name recovery (#895)
 - [x] `AvroRowReader` — wraps `RowReader`, materializes `GenericRecord` per row
   - [x] Recursive nested record materialization
   - [x] List and map materialization into standard Java collections
