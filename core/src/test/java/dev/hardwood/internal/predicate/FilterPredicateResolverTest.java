@@ -221,6 +221,51 @@ class FilterPredicateResolverTest {
                 .hasMessageContaining("DecimalType");
     }
 
+    /// A `FIXED_LEN_BYTE_ARRAY` column stores every value at exactly its
+    /// declared width, so a narrower operand describes no stored value. Signed
+    /// comparison rejects unequal lengths outright while byte equality would
+    /// just never match, so the mismatch has to be caught here or the same
+    /// predicate silently means different things on different evaluation paths.
+    @Test
+    void resolveSignedBinaryWithWrongOperandWidthThrows() {
+        FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 8,
+                new LogicalType.DecimalType(2, 18));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                new FilterPredicate.SignedBinaryColumnPredicate("amount", FilterPredicate.Operator.EQ,
+                        new byte[]{1}), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("FIXED_LEN_BYTE_ARRAY(8)")
+                .hasMessageContaining("1 bytes");
+    }
+
+    @Test
+    void resolveBinaryWithWrongOperandWidthOnFixedLenColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("code", "aa0"), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("FIXED_LEN_BYTE_ARRAY(4)");
+    }
+
+    @Test
+    void resolveBinaryInWithWrongOperandWidthOnFixedLenColumnThrows() {
+        FileSchema schema = schemaWithLogicalType("code", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.inStrings("code", "aa00", "toolong"), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("FIXED_LEN_BYTE_ARRAY(4)");
+    }
+
+    /// A `BYTE_ARRAY` column has no declared width, so operands of any length
+    /// stay legal.
+    @Test
+    void resolveBinaryOfAnyWidthOnVariableLengthColumn() {
+        FileSchema schema = schemaWithLogicalType("name", PhysicalType.BYTE_ARRAY, null);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.eq("name", "abc"), schema);
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.BinaryPredicate.class);
+    }
+
     @Test
     void resolveNegativeDecimalFixedLenByteArray() {
         FileSchema schema = schemaWithLogicalType("amount", PhysicalType.FIXED_LEN_BYTE_ARRAY, 8,

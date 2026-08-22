@@ -32,9 +32,9 @@ A leaf is **column-local** iff:
 
 - Its `FieldPath` is top-level (length 1), and
 - Its column maps to a non-negative projected index, and
-- Its `(type, op)` is one of: `long` / `double` / `int` / `float` × `{EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ}`, `boolean` × `{EQ, NOT_EQ}`, `IntIn` / `LongIn`, `IsNull` / `IsNotNull`.
+- Its `(type, op)` is one of: `long` / `double` / `int` / `float` × `{EQ, NOT_EQ, LT, LT_EQ, GT, GT_EQ}`, `boolean` × `{EQ, NOT_EQ}`, binary × `{EQ}`, `IntIn` / `LongIn`, `IsNull` / `IsNotNull`.
 
-`Not` is lowered to leaf-level operator inversion at resolution time (`ResolvedPredicate.negate`, De Morgan for compounds), so the batch compiler only sees `And` / `Or`. Intermediate-struct paths, geospatial predicates, `Binary*` leaves, and any leaf on a fragment-less column make the entire query non-eligible.
+`Not` is lowered to leaf-level operator inversion at resolution time (`ResolvedPredicate.negate`, De Morgan for compounds), so the batch compiler only sees `And` / `Or`. Intermediate-struct paths, geospatial predicates, binary operators other than `EQ`, `BinaryInPredicate`, and any leaf on a fragment-less column make the entire query non-eligible.
 
 The compiler walks the predicate tree bottom-up:
 

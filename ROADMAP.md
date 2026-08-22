@@ -359,6 +359,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Exact column-reader filtering — `buildColumnReader(...).filter(...)` / `buildColumnReaders(...).filter(...)` return only matching rows with no client-side residual (`SelectionEngine` + `FilterCoordinator`; see `_designs/EXACT_COLUMN_READER_FILTERING.md`)
 - [x] Bloom filter-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the integer and binary types (`RowGroupBloomFilterSource`; see `_designs/BLOOM_FILTER_PUSHDOWN.md`)
 - [x] Dictionary-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE and binary columns, and `in` on the integer and binary types, for chunks whose `encoding_stats` prove every data page is dictionary-encoded (`RowGroupDictionaryFilterSource`; see `_designs/DICTIONARY_PUSHDOWN.md`)
+- [x] Dictionary-space binary equality for row and exact column reads: resolve `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` predicates once per dictionary and match encoded rows by entry ID, with exact fallback for plain and cross-chunk rows (first #859 slice; see `_designs/DICTIONARY_SPACE_EVALUATION.md`)
+- [ ] Extend dictionary-space evaluation to binary ranges / membership and fixed-width physical types (#859)
 - [x] Always-match statistics decision: tri-state `FilterDecision` proves from statistics when every row in a row group matches, skipping per-row filter evaluation for that group and dropping the filter wholesale when all surviving groups fully match (see `_designs/ALWAYS_MATCH_STATISTICS.md`)
 - [x] Reader opt-out of metadata-based filtering: `hardwood.metadata-filtering` `ReaderConfig` option falls back to full-scan per-row predicate evaluation for files with unreliable footer/page-index metadata
 

@@ -35,6 +35,7 @@ allocation profiling, `-rf json -rff out.json` for machine-readable results,
 | `SimdBenchmark` | Scalar vs. Vector API kernels (null counting, dictionary lookup, …) | none (in-memory) |
 | `ValidityIterationBenchmark` | Null-bitmap iteration strategies over a `long[]` column | none (in-memory) |
 | `AlwaysMatchReadBenchmark` | Filtered end-to-end reads when statistics prove row groups match in full (#795) | `generate_filter_pushdown_data.py` |
+| `DictionarySpacePredicateBenchmark` | Binary equality by dictionary ID versus the matcher's packed-value fallback (#859) | none (in-memory) |
 | `DictionaryStringReadBenchmark` | Allocation per full-column scan of a dictionary-encoded string column (run with `-prof gc`) | `generate_dict_string_data.py` |
 | `PageScanBenchmark` | Sequential header-based page scan vs. offset-index lookup | `generate_benchmark_data.py` |
 | `PageHandlingBenchmark` | Per-page decompression vs. full page decode | taxi data, downloaded by `./mvnw verify -Pperformance-test` |

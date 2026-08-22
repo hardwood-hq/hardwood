@@ -162,12 +162,12 @@ class ColumnReaderExactFilterTest {
         }
     }
 
-    // ==================== Flat, drain-side-ineligible predicate (RowMatcher fallback) ====================
+    // ==================== Flat, dictionary-aware binary equality ====================
 
     @Test
-    void flatStringEqualityUsesFallbackAndIsExact() throws Exception {
-        // A string equality predicate is ineligible for the drain-side compiler;
-        // it must still filter exactly via the RowMatcher fallback.
+    void flatStringEqualityIsExact() throws Exception {
+        // A string equality predicate uses the dictionary-aware batch matcher
+        // when dictionary IDs are available and packed bytes otherwise.
         // label "rg2_150" identifies the single row id == 150.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(INT_FILE));
              ColumnReader idReader = reader.buildColumnReader("id")
@@ -333,8 +333,8 @@ class ColumnReaderExactFilterTest {
     // ==================== Equivalence: distinct == grouped == row reader ====================
 
     /// Predicate shapes spanning the implementation's branches: single-column
-    /// drain-side, multi-column AND/OR merge, the `RowMatcher` fallback (string
-    /// equality), and a `NOT` lowering. Each must agree across distinct single
+    /// drain-side, multi-column AND/OR merge, dictionary-aware string equality,
+    /// and a `NOT` lowering. Each must agree across distinct single
     /// readers, the grouped reader, and the row reader.
     static Stream<Arguments> equivalenceFilters() {
         return Stream.of(
@@ -343,7 +343,7 @@ class ColumnReaderExactFilterTest {
                         FilterPredicate.and(FilterPredicate.gt("id", 150L), FilterPredicate.lt("value", 250L))),
                 Arguments.of("multi-column OR",
                         FilterPredicate.or(FilterPredicate.lt("id", 50L), FilterPredicate.gt("value", 250L))),
-                Arguments.of("fallback (string eq)", FilterPredicate.eq("label", "rg2_150")),
+                Arguments.of("dictionary-aware string eq", FilterPredicate.eq("label", "rg2_150")),
                 Arguments.of("NOT lowering", FilterPredicate.not(FilterPredicate.in("id", 50L, 150L, 250L))));
     }
 

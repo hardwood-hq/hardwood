@@ -162,6 +162,7 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                validateFixedLenWidth(p.column(), p.value(), cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), false);
             }
             case FilterPredicate.SignedBinaryColumnPredicate p -> {
@@ -169,6 +170,7 @@ public class FilterPredicateResolver {
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
                 validateLogicalType(p.column(), LogicalType.DecimalType.class, cs);
+                validateFixedLenWidth(p.column(), p.value(), cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), true);
             }
             case FilterPredicate.UUIDColumnPredicate p -> {
@@ -176,6 +178,7 @@ public class FilterPredicateResolver {
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
                 validateLogicalType(p.column(), LogicalType.UuidType.class, cs);
+                validateFixedLenWidth(p.column(), p.value(), cs);
                 yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), false);
             }
             case IntInPredicate p -> {
@@ -194,6 +197,9 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                for (byte[] value : p.values()) {
+                    validateFixedLenWidth(p.column(), value, cs);
+                }
                 yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values());
             }
             case FilterPredicate.IsNullPredicate p -> {
@@ -288,6 +294,25 @@ public class FilterPredicateResolver {
             throw new IllegalArgumentException(
                     "Column '" + columnName + "' has physical type " + actualType
                             + "; given filter predicate type " + expectedType + " is incompatible");
+        }
+    }
+
+    /// A `FIXED_LEN_BYTE_ARRAY` column stores every value at exactly
+    /// `typeLength` bytes, so an operand of any other width cannot describe a
+    /// stored value: equality never holds, and signed comparison is undefined —
+    /// [BinaryComparator#compareSigned] requires equal lengths. Reject the
+    /// operand here rather than letting one evaluation path throw while another
+    /// silently matches nothing.
+    private static void validateFixedLenWidth(String columnName, byte[] value,
+            ColumnSchema columnSchema) {
+        if (columnSchema.type() != PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+            return;
+        }
+        int width = columnSchema.typeLength();
+        if (value.length != width) {
+            throw new IllegalArgumentException(
+                    "Column '" + columnName + "' is FIXED_LEN_BYTE_ARRAY(" + width
+                    + "); the given filter predicate value is " + value.length + " bytes");
         }
     }
 

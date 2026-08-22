@@ -56,8 +56,8 @@ import dev.hardwood.schema.FileSchema;
 ///   fragments run directly on the flat batches and are merged via the
 ///   [MergePlan]. This reuses the row reader's drain-side machinery without
 ///   the worker threads.
-/// - **Record matcher** — otherwise (nested paths, binary/string, unsupported
-///   operators) the compiled [RowMatcher] is evaluated per record over a
+/// - **Record matcher** — otherwise (nested paths and unsupported operators)
+///   the compiled [RowMatcher] is evaluated per record over a
 ///   batch-backed [StructAccessor] view of the predicate columns, giving full
 ///   parity with the row reader's filtered result.
 final class SelectionEngine {
@@ -128,14 +128,14 @@ final class SelectionEngine {
 
     /// Builds an engine for `resolved` over the augmented projection, reading
     /// predicate values from `readersByProjectedIndex` (indexed by the
-    /// augmented projected column index).
+    /// augmented projected column index). `compiled` is resolved before the
+    /// readers are allocated so dictionary-aware matchers can request retained
+    /// entry IDs from their predicate-column batches.
     static SelectionEngine create(FileSchema schema, ProjectedSchema augProjected,
-                                  ResolvedPredicate resolved,
+                                  ResolvedPredicate resolved, CompiledBatchFilter compiled,
                                   ColumnReader[] readersByProjectedIndex, int batchSize) {
         int wordsLen = (batchSize + 63) >>> 6;
         int[] selection = new int[batchSize];
-        CompiledBatchFilter compiled = BatchFilterCompiler.tryCompile(
-                resolved, schema, augProjected::toProjectedIndex);
 
         if (compiled != null) {
             ColumnBatchMatcher[] matchers = compiled.columnMatchers();

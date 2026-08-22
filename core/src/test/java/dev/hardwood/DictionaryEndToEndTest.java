@@ -9,6 +9,7 @@ package dev.hardwood;
 
 import java.nio.file.Path;
 import java.nio.file.Paths;
+import java.util.List;
 import java.util.stream.IntStream;
 
 import org.junit.jupiter.api.Test;
@@ -46,6 +47,10 @@ class DictionaryEndToEndTest {
 
     /// `category` cycles over ten values across 10 000 rows, so exactly a tenth match `"cat_5"`.
     private static final int PRESENT_ROWS = 1000;
+    /// Repeating the 10 000-row fixture this many times exceeds three maximum
+    /// two-column batch capacities, forcing the recycling exchange to reuse a
+    /// batch holder after several dictionary changes.
+    private static final int REPEATED_FILES = 80;
 
     @Test
     void fixtureIsDictionaryEncodedOnTheFilteredColumn() throws Exception {
@@ -113,6 +118,17 @@ class DictionaryEndToEndTest {
             try (RowReader rows = reader.buildRowReader().filter(onePresent).build()) {
                 assertThat(countRows(rows)).isEqualTo(PRESENT_ROWS);
             }
+        }
+    }
+
+    @Test
+    void rowReaderKeepsDictionaryEqualityCorrectAcrossFilesAndRecycledBatches() throws Exception {
+        List<InputFile> files = IntStream.range(0, REPEATED_FILES)
+                .mapToObj(ignored -> InputFile.of(FIXTURE))
+                .toList();
+        try (ParquetFileReader reader = ParquetFileReader.openAll(files);
+             RowReader rows = reader.buildRowReader().filter(PRESENT).build()) {
+            assertThat(countRows(rows)).isEqualTo(PRESENT_ROWS * REPEATED_FILES);
         }
     }
 

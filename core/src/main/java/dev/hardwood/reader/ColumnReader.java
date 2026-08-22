@@ -847,6 +847,9 @@ public class ColumnReader implements AutoCloseable {
     /// `STRUCT` or `REPEATED` layer is driven by [NestedColumnWorker] (def
     /// levels are needed to compute per-layer validity); only the
     /// no-layers-at-all case takes the [FlatColumnWorker] fast path.
+    ///
+    /// `retainDictionaryIndices` is honoured on the flat path only; the nested
+    /// path rejects it rather than dropping it silently.
     static ColumnReader createFromIterator(ColumnSchema columnSchema, FileSchema schema,
                                            RowGroupIterator rowGroupIterator,
                                            HardwoodContextImpl context,
@@ -854,7 +857,8 @@ public class ColumnReader implements AutoCloseable {
                                            int projectedColumnIndex,
                                            RowGroupIterator ownedIterator,
                                            int batchSize,
-                                           NestedColumnWorker.IndexMode indexMode) {
+                                           NestedColumnWorker.IndexMode indexMode,
+                                           boolean retainDictionaryIndices) {
         NestedLevelComputer.Layers layers = NestedLevelComputer.computeLayers(
                 schema.getRootNode(), columnSchema.columnIndex());
         boolean nested = layers.count() > 0 || columnSchema.maxRepetitionLevel() > 0;
@@ -862,6 +866,16 @@ public class ColumnReader implements AutoCloseable {
         PageSource pageSource = new PageSource(rowGroupIterator, projectedColumnIndex);
 
         if (nested) {
+            if (retainDictionaryIndices) {
+                // NestedColumnWorker fills its own accumulator and publishes a
+                // trimmed copy, so a retention flag set on the exchange's batch
+                // would never reach the values the matcher reads. Dictionary-aware
+                // matchers are only compiled for top-level non-repeated leaves,
+                // which always take the flat branch below.
+                throw new IllegalStateException(
+                        "Dictionary-index retention was requested for nested column '"
+                        + columnSchema.name() + "', which the nested read path cannot honour");
+            }
             BatchExchange<NestedBatch> nestedBuf = BatchExchange.detaching(
                     columnSchema.name(), () -> {
                         NestedBatch b = new NestedBatch();
@@ -879,7 +893,8 @@ public class ColumnReader implements AutoCloseable {
             BatchExchange<BatchExchange.Batch> flatBuf = BatchExchange.detaching(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
+                        b.values = BatchExchange.allocateArray(
+                                columnSchema, batchSize, retainDictionaryIndices);
                         return b;
                     });
             FlatColumnWorker flatWorker = new FlatColumnWorker(

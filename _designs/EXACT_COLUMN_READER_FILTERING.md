@@ -16,8 +16,9 @@ output is correct.
 
 This holds for every predicate shape the `RowReader` supports — self-column,
 cross-column, a predicate column absent from the projection, eligible
-(drain-side) and ineligible (nested paths, unsupported `(type, op)`, binary,
-geospatial) alike — and for flat **and** nested payload and predicate columns.
+(drain-side) and ineligible (nested paths, unsupported `(type, op)`, binary
+operators other than equality, geospatial) alike — and for flat **and** nested
+payload and predicate columns.
 
 The guarantee is **exact post-decode filtering**: payload columns are fully
 decoded and then compacted to matching rows. Skipping the decode of payload
@@ -99,7 +100,8 @@ as for the row reader. The engine merges the per-column bitmaps with the
 `FlatRowReader.intersectMatches` logic, extracted so both readers share it.
 
 **Fallback backend (parity).** When `tryCompile` returns `null` — nested
-predicate paths, binary, geospatial, unsupported `(type, op)` — the engine
+predicate paths, unsupported binary operators, geospatial, unsupported
+`(type, op)` — the engine
 evaluates the compiled `RowMatcher` (`RecordFilterCompiler`) per record over a
 **batch-backed `StructAccessor`** view of the aligned predicate-column batches,
 setting one selection bit per matching record. Flat predicate columns are served
@@ -170,8 +172,8 @@ result over the same file and predicate.
 **Predicate eligibility**
 
 - Eligible / drain-side (flat top-level `(type, op)`), including `AND`/`OR`.
-- Ineligible / fallback: nested-path predicate, binary, an unsupported
-  `(type, op)`, and a `NOT` lowering.
+- Ineligible / fallback: nested-path predicate, unsupported binary operators,
+  an unsupported `(type, op)`, and a `NOT` lowering.
 
 **Column shape**
 

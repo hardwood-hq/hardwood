@@ -267,16 +267,17 @@ public final class FlatRowReader implements FileAwareRowReader {
             // Other columns leave Batch.matches null (sentinel = all-ones in intersect).
             final boolean allocateMatches =
                     drainSide && i < columnBatchMatchers.length && columnBatchMatchers[i] != null;
+            ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
             BatchExchange<BatchExchange.Batch> buffer = BatchExchange.recycling(
                     columnSchema.name(), () -> {
                         BatchExchange.Batch b = new BatchExchange.Batch();
-                        b.values = BatchExchange.allocateArray(columnSchema, batchSize);
+                        b.values = BatchExchange.allocateArray(columnSchema, batchSize,
+                                columnFilter != null && columnFilter.requiresDictionaryIndices());
                         if (allocateMatches) {
                             b.matches = new long[wordsLen];
                         }
                         return b;
                     });
-            ColumnBatchMatcher columnFilter = allocateMatches ? columnBatchMatchers[i] : null;
             FlatColumnWorker worker = new FlatColumnWorker(
                     pageSource, buffer, columnSchema, batchSize,
                     context.decompressorFactory(), context.executor(), workerMaxRows,

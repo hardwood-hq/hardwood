@@ -281,6 +281,24 @@ public class BatchExchange<B> {
         };
     }
 
+    /// Allocates a per-batch values buffer and enables dictionary-index
+    /// retention when a dictionary-aware filter consumes the binary values.
+    /// Fixed-width primitive arrays ignore the retention flag.
+    ///
+    /// Unlike [BinaryBatchValues#internStrings], which the two-argument form
+    /// derives from the column alone, retention is a property of the compiled
+    /// predicate rather than of the column, so only allocation sites that know
+    /// the batch's matcher can set it. A drain that fills its own accumulator
+    /// instead of the batch this returns — as [NestedColumnWorker] does —
+    /// cannot honour it at all.
+    public static Object allocateArray(ColumnSchema column, int capacity, boolean retainDictionaryIndices) {
+        Object values = allocateArray(column, capacity);
+        if (retainDictionaryIndices && values instanceof BinaryBatchValues binaryValues) {
+            binaryValues.retainDictionaryIndices = true;
+        }
+        return values;
+    }
+
     /// Whether `column` is a `UTF8` / `JSON` `BYTE_ARRAY` column — the leaves
     /// whose row-reader values are materialised as `String` and so benefit from
     /// dictionary-entry interning ([BinaryBatchValues#internStrings]). Resolves

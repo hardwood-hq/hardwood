@@ -7,10 +7,13 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.nio.ByteBuffer;
+import java.nio.ByteOrder;
 import java.util.BitSet;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.predicate.matcher.binary.BinaryEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtEqBatchMatcher;
@@ -24,6 +27,9 @@ import dev.hardwood.internal.predicate.matcher.longs.LongLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongNotEqBatchMatcher;
 import dev.hardwood.internal.reader.BatchExchange;
+import dev.hardwood.internal.reader.BinaryBatchValues;
+import dev.hardwood.internal.reader.Dictionary;
+import dev.hardwood.metadata.PhysicalType;
 
 import static java.util.Arrays.copyOf;
 import static org.junit.jupiter.api.Assertions.assertArrayEquals;
@@ -204,5 +210,125 @@ class ColumnBatchMatcherTest {
         double[] vals = {Double.NaN, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, null);
         assertArrayEquals(new long[]{bits(1)}, runMatcher(new DoubleLtBatchMatcher(5.0), batch));
+    }
+
+    @Test
+    void binaryEq_usesDictionaryIdsAndFallsBackForPlainRows() throws Exception {
+        byte[] de = {'D', 'E'};
+        byte[] fr = {'F', 'R'};
+        Dictionary.ByteArrayDictionary dictionary = dictionary(de, fr);
+        BatchExchange.Batch batch = binaryBatch(
+                new byte[][]{de, fr, de, de, fr},
+                dictionary,
+                new int[]{0, 1, -1, 0, -1},
+                nullsAt(3));
+
+        assertArrayEquals(
+                new long[]{bits(0, 2)},
+                runMatcher(new BinaryEqBatchMatcher(de), batch));
+    }
+
+    @Test
+    void binaryEq_absentDictionaryValueStillMatchesPlainRows() throws Exception {
+        byte[] de = {'D', 'E'};
+        byte[] fr = {'F', 'R'};
+        byte[] us = {'U', 'S'};
+        Dictionary.ByteArrayDictionary dictionary = dictionary(de, fr);
+        BatchExchange.Batch batch = binaryBatch(
+                new byte[][]{de, fr, us},
+                dictionary,
+                new int[]{0, 1, -1},
+                null);
+
+        assertArrayEquals(
+                new long[]{bits(2)},
+                runMatcher(new BinaryEqBatchMatcher(us), batch));
+    }
+
+    @Test
+    void binaryEq_matchesEveryDuplicateDictionaryEntry() throws Exception {
+        byte[] de = {'D', 'E'};
+        byte[] fr = {'F', 'R'};
+        Dictionary.ByteArrayDictionary dictionary = dictionary(de, fr, de);
+        BatchExchange.Batch batch = binaryBatch(
+                new byte[][]{de, fr, de},
+                dictionary,
+                new int[]{0, 1, 2},
+                null);
+
+        assertArrayEquals(
+                new long[]{bits(0, 2)},
+                runMatcher(new BinaryEqBatchMatcher(de), batch));
+    }
+
+    @Test
+    void binaryEq_acrossWordBoundarySetsBitsInBothWords() throws Exception {
+        byte[] de = {'D', 'E'};
+        byte[] fr = {'F', 'R'};
+        Dictionary.ByteArrayDictionary dictionary = dictionary(de, fr);
+        byte[][] values = new byte[70][];
+        int[] dictionaryIndices = new int[70];
+        long expectedFirst = 0L;
+        long expectedSecond = 0L;
+        for (int i = 0; i < values.length; i++) {
+            boolean match = (i & 1) == 0;
+            values[i] = match ? de : fr;
+            dictionaryIndices[i] = match ? 0 : 1;
+            if (match) {
+                if (i < 64) {
+                    expectedFirst |= 1L << i;
+                }
+                else {
+                    expectedSecond |= 1L << (i - 64);
+                }
+            }
+        }
+
+        BatchExchange.Batch batch = binaryBatch(values, dictionary, dictionaryIndices, null);
+
+        assertArrayEquals(
+                new long[]{expectedFirst, expectedSecond},
+                runMatcher(new BinaryEqBatchMatcher(de), batch));
+    }
+
+    private static BatchExchange.Batch binaryBatch(byte[][] values,
+            Dictionary.ByteArrayDictionary dictionary, int[] dictionaryIndices, BitSet nulls) {
+        int byteCount = 0;
+        for (byte[] value : values) {
+            byteCount += value.length;
+        }
+        byte[] bytes = new byte[byteCount];
+        int[] offsets = new int[values.length + 1];
+        int position = 0;
+        for (int i = 0; i < values.length; i++) {
+            byte[] value = values[i];
+            System.arraycopy(value, 0, bytes, position, value.length);
+            position += value.length;
+            offsets[i + 1] = position;
+        }
+
+        BinaryBatchValues binaryValues = new BinaryBatchValues(bytes, offsets);
+        binaryValues.dictionary = dictionary;
+        binaryValues.dictIndices = dictionaryIndices;
+
+        BatchExchange.Batch batch = new BatchExchange.Batch();
+        batch.values = binaryValues;
+        batch.validity = toValidity(nulls, values.length);
+        batch.recordCount = values.length;
+        return batch;
+    }
+
+    private static Dictionary.ByteArrayDictionary dictionary(byte[]... values) throws Exception {
+        int encodedSize = 0;
+        for (byte[] value : values) {
+            encodedSize += Integer.BYTES + value.length;
+        }
+        ByteBuffer data = ByteBuffer.allocate(encodedSize).order(ByteOrder.LITTLE_ENDIAN);
+        for (byte[] value : values) {
+            data.putInt(value.length);
+            data.put(value);
+        }
+        return (Dictionary.ByteArrayDictionary) Dictionary.parse(
+                data.array(), values.length, PhysicalType.BYTE_ARRAY, null);
     }
 }
