@@ -21,6 +21,7 @@ import org.aesh.command.option.Mixin;
 import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.JsonStrings;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.reader.ParquetFileReader;
@@ -166,7 +167,9 @@ public class ConvertCommand implements Command<CommandInvocation> {
                 }
             }
         } else {
-            values.add(RowTable.renderValue(value, schema));
+            // CSV and JSON carry the value rather than describe it, so an
+            // opaque binary payload is exported as hex, never as a byte count.
+            values.add(RowTable.renderValue(value, schema, BinaryValues.Form.FULL));
         }
     }
 
@@ -209,9 +212,9 @@ public class ConvertCommand implements Command<CommandInvocation> {
                 out.print("\"" + JsonStrings.escape(headers[i]) + "\":");
                 if (fieldSchema instanceof SchemaNode.GroupNode group && group.isVariant()) {
                     PqVariant variant = rowReader.getVariant(fieldSchema.name());
-                    out.print(RowTable.renderVariant(variant));
+                    out.print(RowTable.renderVariant(variant, BinaryValues.Form.FULL));
                 } else {
-                    String val = RowTable.renderField(rowReader, i, fieldSchema);
+                    String val = RowTable.renderField(rowReader, i, fieldSchema, BinaryValues.Form.FULL);
                     out.print("\"" + JsonStrings.escape(val) + "\"");
                 }
             }

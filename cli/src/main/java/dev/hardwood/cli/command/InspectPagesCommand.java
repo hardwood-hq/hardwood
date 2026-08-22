@@ -20,6 +20,7 @@ import org.aesh.command.option.Mixin;
 import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.table.RowTable;
@@ -313,8 +314,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             max = "(null page)";
         }
         else {
-            min = IndexValueFormatter.format(ci.minValues().get(dataPageCounter), col);
-            max = IndexValueFormatter.format(ci.maxValues().get(dataPageCounter), col);
+            min = formatBound(ci.minValues().get(dataPageCounter), col);
+            max = formatBound(ci.maxValues().get(dataPageCounter), col);
         }
         long nullCount = -1;
         String nulls = "-";
@@ -338,8 +339,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             max = "(deprecated)";
         }
         else {
-            min = stats.minValue() != null ? IndexValueFormatter.format(stats.minValue(), col) : "-";
-            max = stats.maxValue() != null ? IndexValueFormatter.format(stats.maxValue(), col) : "-";
+            min = stats.minValue() != null ? formatBound(stats.minValue(), col) : "-";
+            max = stats.maxValue() != null ? formatBound(stats.maxValue(), col) : "-";
         }
         long nullCount = stats.nullCount() != null ? stats.nullCount() : -1;
         String nulls = nullCount >= 0 ? String.valueOf(nullCount) : "-";
@@ -495,4 +496,12 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             case INDEX_PAGE, UNKNOWN -> 0;
         };
     }
+
+    /// This table is the only view of a bound the reader gets — there is no
+    /// modal to fall back to — so an opaque binary payload renders as hex,
+    /// capped to the cell budget like any other long value.
+    private static String formatBound(byte[] bytes, ColumnSchema col) {
+        return IndexValueFormatter.format(bytes, col, true, true, BinaryValues.Form.FULL);
+    }
+
 }

@@ -10,6 +10,7 @@ package dev.hardwood.cli.internal;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 
 import org.junit.jupiter.api.Test;
 
@@ -125,7 +126,48 @@ class IndexValueFormatterTest {
         bb.putInt(15);
         bb.putInt(3_600_000);
         assertThat(IndexValueFormatter.format(bytes, col, false, false))
-                .isEqualTo(java.util.HexFormat.of().formatHex(bytes));
+                .isEqualTo("0x" + HexFormat.of().formatHex(bytes));
+    }
+
+    /// GeoParquet 1.x predates the `GEOMETRY` logical type and stores WKB in a
+    /// bare `BYTE_ARRAY`, so the writer's min/max are opaque bytes. Rendering
+    /// them as lenient UTF-8 turned every bound into mojibake.
+    @Test
+    void unannotatedBinaryBoundsDoNotRenderAsText() {
+        ColumnSchema col = bareByteArrayColumn();
+
+        assertThat(IndexValueFormatter.format(WKB_POINT, col)).isEqualTo("<21 bytes>");
+        assertThat(IndexValueFormatter.format(WKB_POINT, col, true, false))
+                .isEqualTo("0x010100000000000000005366c0f71622f0fa1955c0");
+    }
+
+    /// The headless `inspect` tables cap their cells but have no modal behind
+    /// them, so they take the hex and let it be capped like any long value
+    /// rather than collapsing it to a byte count the reader cannot expand.
+    @Test
+    void unannotatedBinaryBoundsCanKeepTheirHexUnderACap() {
+        assertThat(IndexValueFormatter.format(WKB_POINT, bareByteArrayColumn(), true, true,
+                BinaryValues.Form.FULL))
+                .isEqualTo("0x010100000000000...");
+    }
+
+    /// A column annotated as text stays text: the placeholder keeps a stray
+    /// control character from breaking the table it is rendered into.
+    @Test
+    void annotatedStringBoundsKeepRenderingAsText() {
+        byte[] bytes = {'a', 0x00, 'b'};
+
+        assertThat(IndexValueFormatter.format(bytes, stringColumn())).isEqualTo("a\u00B7b");
+    }
+
+    /// A WKB `Point` — the payload GeoParquet 1.x stores in an unannotated
+    /// `BYTE_ARRAY` geometry column.
+    private static final byte[] WKB_POINT =
+            HexFormat.of().parseHex("010100000000000000005366c0f71622f0fa1955c0");
+
+    private static ColumnSchema bareByteArrayColumn() {
+        return new ColumnSchema(FieldPath.of("geometry"), PhysicalType.BYTE_ARRAY,
+                RepetitionType.OPTIONAL, null, 0, 1, 0, null);
     }
 
     private static ColumnSchema stringColumn() {

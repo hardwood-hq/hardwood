@@ -20,6 +20,7 @@ import org.aesh.command.option.Mixin;
 import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.table.RowTable;
@@ -191,7 +192,11 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
                                          ColumnSchema columnSchema, int displayed, boolean includeLength) {
         for (int i = 0; i < displayed; i++) {
             byte[] value = values[i];
-            String formatted = IndexValueFormatter.formatDecoded(value, columnSchema);
+            // This table is the only view of an entry the reader gets, so an
+            // opaque binary payload renders as hex, capped to the cell budget
+            // like any other long value, rather than as a byte count the
+            // adjacent Length column already reports.
+            String formatted = IndexValueFormatter.formatDecoded(value, columnSchema, BinaryValues.Form.FULL);
             if (includeLength) {
                 rows.add(new String[]{
                         rgCell(i, rgIdx),

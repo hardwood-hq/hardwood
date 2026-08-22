@@ -146,6 +146,38 @@ hardwood info -f data.parquet --kv-key ARROW:schema | base64 -d | xxd | head
 `--kv-key` exits non-zero if the file has no entry under that name, or if the
 entry has no value.
 
+## Binary values
+
+A `BYTE_ARRAY` or `FIXED_LEN_BYTE_ARRAY` column with no logical-type annotation
+carries bytes the schema gives no interpretation for — text from a writer that
+omitted the `STRING` annotation, or an opaque payload such as WKB geometry, a
+Protobuf message or a hash. Every command decides from the bytes themselves:
+well-formed UTF-8 with no control characters prints as text, anything else
+prints as binary. The same rule applies to values, dictionary entries and
+min/max statistics alike, and to a byte-backed logical type whose payload
+length rules out its own decoder.
+
+Binary prints as `0x`-prefixed lowercase hex where the full value fits, and as
+`<N bytes>` where it does not:
+
+| Where | Binary prints as |
+| --- | --- |
+| `print` | `<N bytes>`, or hex for payloads up to 8 bytes |
+| `print --no-truncate` | full hex |
+| `convert` (CSV and JSON) | full hex |
+| `inspect pages`, `inspect dictionary` | hex, capped to the column width |
+| `dive` table cells | `<N bytes>`, or hex for payloads up to 8 bytes |
+| `dive` modals and facts panes | full hex |
+
+```shell
+# A GeoParquet 1.x geometry column: unannotated BYTE_ARRAY holding WKB
+hardwood print -n 1 -c geometry -f places.parquet
+# | <21 bytes> |
+
+hardwood print -n 1 -c geometry --no-truncate -f places.parquet
+# | 0x010100000000000000005366c0f71622f0fa1955c0 |
+```
+
 ## Interactive exploration (`dive`)
 
 `hardwood dive` launches a terminal UI for interactively navigating a Parquet file's structure:

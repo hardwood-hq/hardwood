@@ -8,10 +8,12 @@
 package dev.hardwood.cli.internal.table;
 
 import java.nio.charset.StandardCharsets;
+import java.util.HexFormat;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -59,12 +61,27 @@ class RowTableTest {
     }
 
     @Test
-    void renderBareByteArrayAsByteSummaryWhenInvalidUtf8() {
+    void renderShortBareByteArrayAsHexWhenInvalidUtf8() {
         SchemaNode.PrimitiveNode schema = bareByteArray();
         // Lone continuation byte — not a valid UTF-8 sequence.
         byte[] bytes = {(byte) 0xC3, (byte) 0x28, (byte) 0xA0, (byte) 0xA1};
 
-        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("<4 bytes>");
+        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("0xc328a0a1");
+    }
+
+    @Test
+    void renderLongBareByteArrayAsByteSummaryInACell() {
+        SchemaNode.PrimitiveNode schema = bareByteArray();
+
+        assertThat(RowTable.renderValue(wkbPoint(), schema)).isEqualTo("<21 bytes>");
+    }
+
+    @Test
+    void renderLongBareByteArrayAsHexWhereTheFullValueFits() {
+        SchemaNode.PrimitiveNode schema = bareByteArray();
+
+        assertThat(RowTable.renderValue(wkbPoint(), schema, BinaryValues.Form.FULL))
+                .isEqualTo("0x010100000000000000005366c0f71622f0fa1955c0");
     }
 
     @Test
@@ -75,6 +92,13 @@ class RowTableTest {
         byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
 
         assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("hello");
+    }
+
+    /// A WKB `Point`, as GeoParquet 1.x stores geometry: an unannotated
+    /// `BYTE_ARRAY` holding a byte-order flag, a geometry type and two
+    /// little-endian doubles.
+    private static byte[] wkbPoint() {
+        return HexFormat.of().parseHex("010100000000000000005366c0f71622f0fa1955c0");
     }
 
     private static SchemaNode.PrimitiveNode bareByteArray() {

@@ -27,6 +27,7 @@ import org.aesh.command.option.Mixin;
 import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.cli.internal.table.StreamedTable;
 import dev.hardwood.reader.ParquetFileReader;
@@ -112,9 +113,10 @@ public class PrintCommand implements Command<CommandInvocation> {
     }
 
     private void printTransposed(Stream<Object[]> stream, String[] headers, List<SchemaNode> fields, AtomicLong rowIndex) {
+        BinaryValues.Form form = binaryForm();
         stream.forEach(r -> {
             Stream<String[]> data = IntStream.range(0, headers.length)
-                    .mapToObj(i -> new String[]{headers[i], RowTable.renderValue(r[i], fields.get(i))});
+                    .mapToObj(i -> new String[]{headers[i], RowTable.renderValue(r[i], fields.get(i), form)});
             List<String[]> tableRows = (rowIndex != null ?
                     Stream.concat(
                             Stream.<String[]>of(new String[]{"rowIndex", Long.toString(rowIndex.getAndIncrement())}), data) : data)
@@ -124,14 +126,22 @@ public class PrintCommand implements Command<CommandInvocation> {
         });
     }
 
+    /// Rows that wrap rather than truncate have room for an opaque binary
+    /// payload in full; a truncated cell would show a prefix of its hex saying
+    /// less than the byte count does.
+    private BinaryValues.Form binaryForm() {
+        return truncate ? BinaryValues.Form.COMPACT : BinaryValues.Form.FULL;
+    }
+
     private void printTable(Stream<Object[]> stream, String[] headers, List<SchemaNode> fields, AtomicLong rowIndex) {
+        BinaryValues.Form form = binaryForm();
         new StreamedTable().print(
                 new PrintWriter(System.out, true),
                 addRowIndex ? Stream.concat(Stream.of("rowIndex"), Stream.of(headers)).toArray(String[]::new) : headers,
                 stream
                         .map(r -> rowIndex == null ?
-                                (IntFunction<String>) i -> RowTable.renderValue(r[i], fields.get(i)) :
-                                ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : RowTable.renderValue(r[i - 1], fields.get(i - 1))))
+                                (IntFunction<String>) i -> RowTable.renderValue(r[i], fields.get(i), form) :
+                                ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : RowTable.renderValue(r[i - 1], fields.get(i - 1), form)))
                         .iterator(),
                 sampleSize,
                 maxWidth,

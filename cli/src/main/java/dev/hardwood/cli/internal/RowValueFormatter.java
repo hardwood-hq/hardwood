@@ -15,7 +15,6 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
-import java.util.HexFormat;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
@@ -73,6 +72,15 @@ public final class RowValueFormatter {
     /// fails to compile here until an explicit case is added, preventing
     /// silent fall-through to the raw-bytes path.
     public static String format(RowReader reader, int fieldIndex, SchemaNode field, boolean useLogicalType) {
+        return format(reader, fieldIndex, field, useLogicalType, BinaryValues.Form.COMPACT);
+    }
+
+    /// Shared core of [#format(RowReader, int, SchemaNode, boolean)] and
+    /// [#formatExpanded]. `form` states how much room the caller has for a
+    /// binary payload the schema does not describe: a preview table cell is
+    /// [BinaryValues.Form#COMPACT], the record modal [BinaryValues.Form#FULL].
+    private static String format(RowReader reader, int fieldIndex, SchemaNode field,
+                                 boolean useLogicalType, BinaryValues.Form form) {
         if (reader.isNull(fieldIndex)) {
             return "null";
         }
@@ -86,11 +94,11 @@ public final class RowValueFormatter {
         }
         SchemaNode.PrimitiveNode prim = (SchemaNode.PrimitiveNode) field;
         if (!useLogicalType) {
-            return formatPhysical(reader, fieldIndex);
+            return formatPhysical(reader, fieldIndex, form);
         }
         LogicalType lt = prim.logicalType();
         return switch (lt) {
-            case null -> formatPhysical(reader, fieldIndex);
+            case null -> formatPhysical(reader, fieldIndex, form);
             case LogicalType.TimestampType ts -> ts.isAdjustedToUTC()
                     ? reader.getTimestamp(fieldIndex).toString()
                     : reader.getLocalTimestamp(fieldIndex).toString();
@@ -105,7 +113,7 @@ public final class RowValueFormatter {
             case LogicalType.IntType it when !it.isSigned() -> formatUnsignedInt(reader, fieldIndex, prim);
             // Signed IntType still goes through getRawValue / String.valueOf —
             // matches the pre-refactor behavior.
-            case LogicalType.IntType it -> formatPhysical(reader, fieldIndex);
+            case LogicalType.IntType it -> formatPhysical(reader, fieldIndex, form);
             case LogicalType.IntervalType i -> formatInterval(reader.getInterval(fieldIndex));
             // FLOAT16 was previously hex-rendered because nothing matched the
             // logical type and getRawValue returns the FLBA(2) bytes; getFloat
@@ -115,8 +123,8 @@ public final class RowValueFormatter {
             // Geometry / Geography carry opaque WKB / WKT binary payloads with
             // no decoder yet — hex-render explicitly rather than relying on a
             // raw-bytes fall-through.
-            case LogicalType.GeometryType g -> formatPhysical(reader, fieldIndex);
-            case LogicalType.GeographyType g -> formatPhysical(reader, fieldIndex);
+            case LogicalType.GeometryType g -> formatPhysical(reader, fieldIndex, form);
+            case LogicalType.GeographyType g -> formatPhysical(reader, fieldIndex, form);
             // NullType columns are all-null; the `isNull` short-circuit above
             // means a non-null value here would be a malformed-file signal.
             case LogicalType.NullType n -> throw structuralReached(field, lt);
@@ -157,8 +165,9 @@ public final class RowValueFormatter {
             return formatNestedPretty(reader.getValue(fieldIndex), 0, useLogicalType);
         }
         // For primitive leaves the expanded form is identical to the
-        // single-line logical / physical rendering.
-        return format(reader, fieldIndex, field, useLogicalType);
+        // single-line logical / physical rendering, except that the modal has
+        // room to show an opaque binary payload in full.
+        return format(reader, fieldIndex, field, useLogicalType, BinaryValues.Form.FULL);
     }
 
     private static String formatNestedPretty(Object value, int indent, boolean useLogicalType) {
@@ -178,7 +187,7 @@ public final class RowValueFormatter {
             return prettyVariant(variant, indent, useLogicalType);
         }
         if (value instanceof byte[] bytes) {
-            return formatRawBytes(bytes);
+            return formatRawBytes(bytes, BinaryValues.Form.FULL);
         }
         if (value instanceof PqInterval interval) {
             return formatInterval(interval);
@@ -269,7 +278,7 @@ public final class RowValueFormatter {
             case OBJECT -> prettyVariantObject(variant.asObject(), indent, useLogicalType);
             case ARRAY -> prettyVariantArray(variant.asArray(), indent, useLogicalType);
             // Primitives use the single-line form.
-            default -> formatVariant(variant, indent, useLogicalType);
+            default -> formatVariant(variant, indent, useLogicalType, BinaryValues.Form.FULL);
         };
     }
 
@@ -319,10 +328,10 @@ public final class RowValueFormatter {
     /// logical-type dispatch — used when the user toggles logical rendering
     /// off to inspect storage form. byte[]s still hex-render so cells aren't
     /// "[B@" — that's not "physical" rendering, just sane fallback.
-    private static String formatPhysical(RowReader reader, int fieldIndex) {
+    private static String formatPhysical(RowReader reader, int fieldIndex, BinaryValues.Form form) {
         Object raw = reader.getRawValue(fieldIndex);
         if (raw instanceof byte[] bytes) {
-            return formatRawBytes(bytes);
+            return formatRawBytes(bytes, form);
         }
         return String.valueOf(raw);
     }
@@ -342,13 +351,23 @@ public final class RowValueFormatter {
     /// screen.
     public static String formatDictionaryValue(Object rawValue, ColumnSchema col,
                                                 boolean useLogicalType) {
+        return formatDictionaryValue(rawValue, col, useLogicalType, BinaryValues.Form.COMPACT);
+    }
+
+    /// Dictionary variant that states how much room the caller has for a binary
+    /// payload the column's logical type does not describe. The entry table
+    /// passes [BinaryValues.Form#COMPACT]; the entry modal, which exists to
+    /// show what the table row had to truncate, passes
+    /// [BinaryValues.Form#FULL].
+    public static String formatDictionaryValue(Object rawValue, ColumnSchema col,
+                                                boolean useLogicalType, BinaryValues.Form form) {
         LogicalType lt = useLogicalType ? col.logicalType() : null;
         return switch (rawValue) {
             case Integer i -> formatInt(i, lt);
             case Long l -> formatLong(l, lt);
             case Float f -> Float.toString(f);
             case Double d -> Double.toString(d);
-            case byte[] bytes -> formatBytes(bytes, lt);
+            case byte[] bytes -> formatBytes(bytes, lt, form);
             case null -> "null";
             default -> String.valueOf(rawValue);
         };
@@ -392,9 +411,9 @@ public final class RowValueFormatter {
     /// byte-backed logical types — strings, BSON, UUID(16), INTERVAL(12),
     /// FLOAT16(2), DECIMAL, plus Geometry / Geography WKB. See [#formatInt]
     /// for the `default` rationale.
-    private static String formatBytes(byte[] raw, LogicalType lt) {
+    private static String formatBytes(byte[] raw, LogicalType lt, BinaryValues.Form form) {
         return switch (lt) {
-            case null -> formatRawBytes(raw);
+            case null -> formatRawBytes(raw, form);
             case LogicalType.StringType s -> new String(raw, StandardCharsets.UTF_8);
             case LogicalType.EnumType e -> new String(raw, StandardCharsets.UTF_8);
             case LogicalType.JsonType j -> new String(raw, StandardCharsets.UTF_8);
@@ -404,14 +423,14 @@ public final class RowValueFormatter {
                 ByteBuffer bb = ByteBuffer.wrap(raw);
                 yield new UUID(bb.getLong(), bb.getLong()).toString();
             }
-            case LogicalType.UuidType u -> formatRawBytes(raw);
+            case LogicalType.UuidType u -> formatRawBytes(raw, form);
             case LogicalType.IntervalType i when raw.length == 12 -> formatIntervalBytes(raw);
-            case LogicalType.IntervalType i -> formatRawBytes(raw);
+            case LogicalType.IntervalType i -> formatRawBytes(raw, form);
             case LogicalType.Float16Type f when raw.length == 2 ->
                     Float.toString(LogicalTypeConverter.convertToFloat16(raw, PhysicalType.FIXED_LEN_BYTE_ARRAY));
-            case LogicalType.Float16Type f -> formatRawBytes(raw);
-            case LogicalType.GeometryType g -> formatRawBytes(raw);
-            case LogicalType.GeographyType g -> formatRawBytes(raw);
+            case LogicalType.Float16Type f -> formatRawBytes(raw, form);
+            case LogicalType.GeometryType g -> formatRawBytes(raw, form);
+            case LogicalType.GeographyType g -> formatRawBytes(raw, form);
             default -> throw notBackedBy(lt, "BYTE_ARRAY");
         };
     }
@@ -454,28 +473,12 @@ public final class RowValueFormatter {
         return sb.toString();
     }
 
-    /// Renders a raw byte array as either UTF-8 text (when the bytes are
-    /// well-formed UTF-8 with no control characters) or `0x`-prefixed
-    /// lowercase hex. Truncation is left to the caller (the dive screens
-    /// already truncate each rendered cell to a fixed width).
-    private static String formatRawBytes(byte[] raw) {
-        if (raw.length == 0) {
-            return "";
-        }
-        try {
-            String utf8 = StandardCharsets.UTF_8.newDecoder()
-                    .decode(ByteBuffer.wrap(raw))
-                    .toString();
-            for (int i = 0; i < utf8.length(); i++) {
-                if (Character.isISOControl(utf8.charAt(i))) {
-                    return "0x" + HexFormat.of().formatHex(raw);
-                }
-            }
-            return utf8;
-        }
-        catch (java.nio.charset.CharacterCodingException e) {
-            return "0x" + HexFormat.of().formatHex(raw);
-        }
+    /// Renders a raw byte array through [BinaryValues], which decides text vs.
+    /// binary from the bytes. `form` reflects where the result is going: a
+    /// preview or dictionary table cell takes [BinaryValues.Form#COMPACT], the
+    /// expanded record and entry modals take [BinaryValues.Form#FULL].
+    private static String formatRawBytes(byte[] raw, BinaryValues.Form form) {
+        return BinaryValues.render(raw, form);
     }
 
     private static final int MAX_NESTED_ELEMENTS = 3;
@@ -503,10 +506,10 @@ public final class RowValueFormatter {
             return formatMap(map, depth, useLogicalType);
         }
         if (value instanceof PqVariant variant) {
-            return formatVariant(variant, depth, useLogicalType);
+            return formatVariant(variant, depth, useLogicalType, BinaryValues.Form.COMPACT);
         }
         if (value instanceof byte[] bytes) {
-            return formatRawBytes(bytes);
+            return formatRawBytes(bytes, BinaryValues.Form.COMPACT);
         }
         if (value instanceof PqInterval interval) {
             return formatInterval(interval);
@@ -598,7 +601,8 @@ public final class RowValueFormatter {
         return sb.toString();
     }
 
-    private static String formatVariant(PqVariant variant, int depth, boolean useLogicalType) {
+    private static String formatVariant(PqVariant variant, int depth, boolean useLogicalType,
+                                        BinaryValues.Form form) {
         VariantType type = variant.type();
         return switch (type) {
             case NULL -> "null";
@@ -617,7 +621,7 @@ public final class RowValueFormatter {
                 yield s.endsWith("Z") ? s.substring(0, s.length() - 1) : s;
             }
             case STRING -> variant.asString();
-            case BINARY -> formatRawBytes(variant.asBinary());
+            case BINARY -> formatRawBytes(variant.asBinary(), form);
             case UUID -> variant.asUuid().toString();
             case OBJECT -> formatVariantObject(variant.asObject(), depth, useLogicalType);
             case ARRAY -> formatVariantArray(variant.asArray(), depth, useLogicalType);
