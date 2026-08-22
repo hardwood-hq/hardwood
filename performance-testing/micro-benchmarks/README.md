@@ -38,6 +38,7 @@ allocation profiling, `-rf json -rff out.json` for machine-readable results,
 | `DictionaryStringReadBenchmark` | Allocation per full-column scan of a dictionary-encoded string column (run with `-prof gc`) | `generate_dict_string_data.py` |
 | `PageScanBenchmark` | Sequential header-based page scan vs. offset-index lookup | `generate_benchmark_data.py` |
 | `PageHandlingBenchmark` | Per-page decompression vs. full page decode | taxi data, downloaded by `./mvnw verify -Pperformance-test` |
+| `SmallPageDecodeBenchmark` | Full-column decode across small/large page and ZSTD/uncompressed combinations (#810) | `generate_small_page_decode_data.py` |
 | `MemoryMapBenchmark` | Raw I/O floor: mmap + copy of a whole file, no decode | taxi data, downloaded by `./mvnw verify -Pperformance-test` |
 | `FixedSizeListDecodeBenchmark` | Fixed-size-list fast path vs. general list decode across vector widths | `generate_fixed_size_list_data.py` |
 | `FixedSizeListFallbackBenchmark` | Detector cost on almost-fixed-width pages that fall back | `generate_fixed_size_list_data.py` |

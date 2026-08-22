@@ -15,13 +15,19 @@ import java.util.concurrent.atomic.AtomicInteger;
 
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
+import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.OutputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
+import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
+import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
+import dev.hardwood.writer.ParquetFileWriter;
+import dev.hardwood.writer.WriterConfig;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -67,6 +73,83 @@ class ColumnWorkerTest {
             assertThat(totalRows)
                     .as("All rows should be delivered through the pipeline")
                     .isEqualTo(expectedRows);
+        }
+    }
+
+    @Test
+    void smallCompressedPagesUseExpandedInflightWindow() {
+        assertThat(ColumnWorker.inflightLimit(CompressionCodec.ZSTD, 64 << 10, true))
+                .isEqualTo(ColumnWorker.REORDER_BUFFER_CAPACITY);
+        assertThat(ColumnWorker.inflightLimit(
+                CompressionCodec.ZSTD, ColumnWorker.SMALL_COMPRESSED_PAGE_BYTES, true))
+                .isEqualTo(ColumnWorker.MAX_INFLIGHT_PAGES);
+        assertThat(ColumnWorker.inflightLimit(CompressionCodec.UNCOMPRESSED, 64 << 10, true))
+                .isEqualTo(ColumnWorker.MAX_INFLIGHT_PAGES);
+        assertThat(ColumnWorker.inflightLimit(CompressionCodec.ZSTD, 64 << 10, false))
+                .isEqualTo(ColumnWorker.MAX_INFLIGHT_PAGES);
+    }
+
+    @Test
+    @Timeout(value = 30, unit = TimeUnit.SECONDS)
+    void smallCompressedPagesFillExpandedInflightWindow(@TempDir Path dir) throws Exception {
+        Path file = dir.resolve("small-pages.parquet");
+        FileSchema writeSchema = FileSchema.builder("schema")
+                .addColumn("value", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .build();
+        WriterConfig config = WriterConfig.builder()
+                .pageTargetBytes(64)
+                .enableDictionary(false)
+                .codec(CompressionCodec.ZSTD)
+                .build();
+        int[] values = new int[4096];
+        for (int i = 0; i < values.length; i++) {
+            values[i] = i;
+        }
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), writeSchema, config)) {
+            writer.writeBatch(batch -> batch.ints(0, values));
+        }
+
+        try (HardwoodContextImpl context = HardwoodContextImpl.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
+            FileSchema schema = reader.getFileSchema();
+            ColumnSchema column = schema.getColumn(0);
+            CountDownLatch expandedWindowEntered =
+                    new CountDownLatch(ColumnWorker.REORDER_BUFFER_CAPACITY);
+            CountDownLatch release = new CountDownLatch(1);
+            Executor stalledExecutor = command -> Thread.ofVirtual().start(() -> {
+                expandedWindowEntered.countDown();
+                try {
+                    release.await();
+                }
+                catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return;
+                }
+                command.run();
+            });
+
+            BatchExchange<BatchExchange.Batch> exchange = BatchExchange.recycling(
+                    column.name(), () -> {
+                        BatchExchange.Batch batch = new BatchExchange.Batch();
+                        batch.values = BatchExchange.allocateArray(column, 1024);
+                        return batch;
+                    });
+            FlatColumnWorker worker = new FlatColumnWorker(
+                    new PageSource(createIterator(file, schema, context), 0), exchange, column, 1024,
+                    context.decompressorFactory(), stalledExecutor, 0, null);
+            worker.start();
+
+            try {
+                assertThat(expandedWindowEntered.await(5, TimeUnit.SECONDS))
+                        .as("all expanded-window decode slots should be admitted before any decode completes")
+                        .isTrue();
+                release.countDown();
+                assertThat(consumeAllBatches(exchange)).isEqualTo(values.length);
+            }
+            finally {
+                release.countDown();
+                worker.close();
+            }
         }
     }
 

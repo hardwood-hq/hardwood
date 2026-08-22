@@ -19,6 +19,7 @@ import java.util.concurrent.locks.LockSupport;
 
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.compression.DecompressorFactory;
+import dev.hardwood.metadata.CompressionCodec;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.schema.ColumnSchema;
 
@@ -28,14 +29,14 @@ import dev.hardwood.schema.ColumnSchema;
 ///
 /// - **Retriever VThread:** Pulls [PageInfo] objects from a [PageSource],
 ///   submits decode tasks to the provided executor. Throttles itself
-///   when the gap between submitted and drained pages reaches `MAX_INFLIGHT_PAGES`.
+///   when the gap between submitted and drained pages reaches its current in-flight limit.
 ///
 /// - **Drain VThread:** Reads decoded pages from a circular reorder buffer in
 ///   sequence order, assembles them into batches via subclass-specific logic,
 ///   and publishes to the [BatchExchange].
 ///
 /// The reorder buffer is an [AtomicReferenceArray] indexed by
-/// `seqNum % MAX_INFLIGHT_PAGES`. This avoids the GC pressure of
+/// `seqNum % REORDER_BUFFER_CAPACITY`. This avoids the GC pressure of
 /// `ConcurrentHashMap` (no integer boxing, no Node allocations).
 /// Decode tasks store their result via `set()` and unpark the drain thread.
 ///
@@ -56,6 +57,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     private final PageSource pageSource;
     private final DecompressorFactory decompressorFactory;
     private final Executor decodeExecutor;
+    private final boolean expandedSmallPageWindow;
 
     /// Whether the fixed-size-list read fast path may engage. Defaults to `true`;
     /// nested workers override it from the reader's context option. It is a no-op
@@ -82,7 +84,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // reorderBuffer[slot] sees the fileName via the happens-before chain.
     //
     // Slot reuse safety: the retriever may only reuse a slot once consumePosition
-    // has advanced past it (throttle: nextSeq - consumePosition < MAX_INFLIGHT_PAGES).
+    // has advanced past it (throttle: nextSeq - consumePosition < the current limit).
     // drainReadyPages reads fileNameBuffer[slot] before incrementing consumePosition,
     // so the previous occupant's fileName is always read before being overwritten.
     // Any future change to the throttle or to the read-then-increment ordering must
@@ -155,14 +157,16 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         this.maxDefinitionLevel = column.maxDefinitionLevel();
         this.decompressorFactory = decompressorFactory;
         this.decodeExecutor = decodeExecutor;
+        this.expandedSmallPageWindow = Boolean.parseBoolean(
+                System.getProperty("hardwood.internal.smallPageWindow", "true"));
         this.maxRows = maxRows;
-        this.reorderBuffer = new AtomicReferenceArray<>(MAX_INFLIGHT_PAGES);
-        this.levelScratchBuffer = new PageDecoder.LevelScratch[MAX_INFLIGHT_PAGES];
+        this.reorderBuffer = new AtomicReferenceArray<>(REORDER_BUFFER_CAPACITY);
+        this.levelScratchBuffer = new PageDecoder.LevelScratch[REORDER_BUFFER_CAPACITY];
         for (int i = 0; i < levelScratchBuffer.length; i++) {
             levelScratchBuffer[i] = new PageDecoder.LevelScratch();
         }
-        this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
-        this.filterAlwaysMatchesBuffer = new boolean[MAX_INFLIGHT_PAGES];
+        this.fileNameBuffer = new String[REORDER_BUFFER_CAPACITY];
+        this.filterAlwaysMatchesBuffer = new boolean[REORDER_BUFFER_CAPACITY];
     }
 
     /// Initializes subclass-specific drain state (called at the start of `runDrain`).
@@ -220,6 +224,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         }
 
         // The retriever has exited, so no new decode tasks will be submitted.
+        // The retriever has exited, so no new decode tasks will be submitted.
         // Drain any that are still running. Tasks that hadn't yet started early-return
         // via the `done` check in decode(), so this typically waits only on the small
         // number that were mid-execution when `done` was set.
@@ -276,9 +281,16 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                             fixedListFastPathEnabled);
                 }
 
-                // Throttle: park while too many pages are in flight
+                int inflightLimit = pageInfo.isNullPlaceholder()
+                        ? MAX_INFLIGHT_PAGES
+                        : inflightLimit(pageInfo.columnMetaData().codec(), pageInfo.pageData().remaining(),
+                                expandedSmallPageWindow);
+
+                // Stored-small compressed pages use a second window's worth of
+                // slots so the retriever can keep the decode pool fed. Large and
+                // uncompressed pages retain the original decoded-memory bound.
                 t0 = System.nanoTime();
-                while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
+                while (!done && nextSeq - consumePosition >= inflightLimit) {
                     throttleParks++;
                     LockSupport.park();
                 }
@@ -290,7 +302,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 // Submit decode task to executor (reuses pooled threads, no VThread per page)
                 int seq = nextSeq++;
                 totalPagesSubmitted++;
-                int slot = seq % MAX_INFLIGHT_PAGES;
+                int slot = seq % REORDER_BUFFER_CAPACITY;
                 fileNameBuffer[slot] = pageSource.getCurrentFileName();
                 filterAlwaysMatchesBuffer[slot] = pageSource.isCurrentFilterAlwaysMatches();
                 PageInfo pi = pageInfo;
@@ -302,14 +314,14 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             }
 
             if (!done) {
-                // The sentinel needs a free slot. If all MAX_INFLIGHT_PAGES slots
+                // The sentinel needs a free slot. If all reorder-buffer slots
                 // are occupied (pages submitted but not yet drained), wait for
                 // the drain to advance before writing.
-                while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
+                while (!done && nextSeq - consumePosition >= REORDER_BUFFER_CAPACITY) {
                     LockSupport.park();
                 }
                 if (!done) {
-                    int sentinelSlot = nextSeq % MAX_INFLIGHT_PAGES;
+                    int sentinelSlot = nextSeq % REORDER_BUFFER_CAPACITY;
                     reorderBuffer.set(sentinelSlot, EMPTY_SENTINEL);
                     LockSupport.unpark(drainThread);
                 }
@@ -326,6 +338,13 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         }
     }
 
+    static int inflightLimit(CompressionCodec codec, int storedPageBytes, boolean expandedWindow) {
+        return expandedWindow
+                && codec != CompressionCodec.UNCOMPRESSED
+                && storedPageBytes < SMALL_COMPRESSED_PAGE_BYTES
+                ? REORDER_BUFFER_CAPACITY
+                : MAX_INFLIGHT_PAGES;
+    }
     /// Decode task: decodes one page, stores result in reorder buffer, unparks drain.
     private void decode(int slot, PageInfo pageInfo, PageDecoder pageDecoder) {
         if (done || error.get() != null) {
@@ -391,7 +410,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     private boolean drainReadyPages() {
         boolean drained = false;
         while (!done) {
-            int slot = consumePosition % MAX_INFLIGHT_PAGES;
+            int slot = consumePosition % REORDER_BUFFER_CAPACITY;
             DecodedPage decoded = reorderBuffer.getAndSet(slot, null);
             if (decoded == null) {
                 break;
@@ -493,4 +512,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// evacuation pauses. Overridable via the `hardwood.internal.maxOutstanding` system property.
     public static final int MAX_INFLIGHT_PAGES =
             Integer.getInteger("hardwood.internal.maxOutstanding", 8);
+    /// Pages below 128 KiB are the stored-small regime where a second window
+    /// keeps the executor fed without increasing individual decode work units.
+    static final int SMALL_COMPRESSED_PAGE_BYTES = 128 << 10;
+
+    static final int REORDER_BUFFER_CAPACITY = MAX_INFLIGHT_PAGES * 2;
 }
