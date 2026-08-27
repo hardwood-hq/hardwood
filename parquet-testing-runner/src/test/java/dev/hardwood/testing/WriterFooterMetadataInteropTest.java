@@ -8,15 +8,23 @@
 package dev.hardwood.testing;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.util.LinkedHashMap;
+import java.util.List;
 import java.util.Map;
 
+import org.apache.parquet.column.ColumnDescriptor;
+import org.apache.parquet.column.statistics.Statistics;
+import org.apache.parquet.format.ColumnOrder;
 import org.apache.parquet.hadoop.metadata.ParquetMetadata;
+import org.apache.parquet.io.api.Binary;
+import org.apache.parquet.schema.ColumnOrder.ColumnOrderName;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
 import dev.hardwood.OutputFile;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.FileSchema;
@@ -34,6 +42,59 @@ import static org.assertj.core.api.Assertions.assertThat;
 class WriterFooterMetadataInteropTest {
 
     private static final String COLUMN = "v";
+
+    /// `column_orders` gives `min_value` / `max_value` their comparison semantics. parquet-java
+    /// defaults a missing list to type-defined order when it builds the high-level schema, so this
+    /// asserts both views: the raw footer field is present with one entry per leaf, and the schema
+    /// parquet-java exposes marks every leaf as `TYPE_DEFINED_ORDER`.
+    @Test
+    void parquetJavaReadsColumnOrdersForEveryLeafColumn(@TempDir Path dir) throws IOException {
+        Path file = dir.resolve("column-orders.parquet");
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), columnOrderSchema())) {
+            writer.columnWriter().writeBatch(batch -> batch
+                    .longs("id", new long[]{ 1L, 2L, 3L })
+                    .bytes("person.name", new byte[][] { utf8("ada"), utf8("alan"), utf8("grace") })
+                    .doubles("person.score", new double[]{ 1.5, 2.5, 3.5 })
+                    .booleans("active", new boolean[]{ true, false, true }));
+        }
+
+        ParquetMetadata footer = ParquetJavaReader.readFooter(file);
+        List<ColumnDescriptor> columns = footer.getFileMetaData().getSchema().getColumns();
+        assertThat(columns).extracting(column -> String.join(".", column.getPath()))
+                .containsExactly("id", "person.name", "person.score", "active");
+
+        List<ColumnOrder> columnOrders = ParquetJavaReader.readFormatFooter(file).getColumn_orders();
+        assertThat(columnOrders).as("raw footer column_orders")
+                .isNotNull()
+                .hasSameSizeAs(columns)
+                .allSatisfy(order -> assertThat(order.isSetTYPE_ORDER()).isTrue());
+        assertThat(columns).allSatisfy(column -> assertThat(column.getPrimitiveType()
+                .columnOrder()
+                .getColumnOrderName()).isEqualTo(ColumnOrderName.TYPE_DEFINED_ORDER));
+    }
+
+    /// A STRING column orders by unsigned bytes. These two valid UTF-8 values straddle the signed
+    /// byte boundary, so a deprecated signed `BYTE_ARRAY` comparison would reverse the bounds.
+    @Test
+    void parquetJavaReadsStringBoundsUsingUnsignedByteOrder(@TempDir Path dir) throws IOException {
+        byte[] ascii = utf8("a");
+        byte[] highBit = utf8("\u0080");
+        Path file = dir.resolve("string-order.parquet");
+        FileSchema schema = FileSchema.builder("string-order")
+                .addColumn(COLUMN, PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                        new LogicalType.StringType())
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.columnWriter().writeBatch(batch -> batch.bytes(COLUMN, new byte[][] { highBit, ascii }));
+        }
+
+        Statistics<?> statistics = ParquetJavaReader.readFooter(file).getBlocks().get(0)
+                .getColumns().get(0).getStatistics();
+        assertThat(statistics.genericGetMin()).as("min")
+                .isEqualTo(Binary.fromConstantByteArray(ascii));
+        assertThat(statistics.genericGetMax()).as("max")
+                .isEqualTo(Binary.fromConstantByteArray(highBit));
+    }
 
     @Test
     void parquetJavaReadsTheMetadataHardwoodWrote(@TempDir Path dir) throws IOException {
@@ -103,5 +164,20 @@ class WriterFooterMetadataInteropTest {
         return FileSchema.builder("footer-metadata")
                 .addColumn(COLUMN, PhysicalType.INT32, RepetitionType.REQUIRED)
                 .build();
+    }
+
+    private static FileSchema columnOrderSchema() {
+        return FileSchema.builder("column-orders")
+                .addColumn("id", PhysicalType.INT64, RepetitionType.REQUIRED)
+                .struct("person", RepetitionType.REQUIRED, person -> person
+                        .addColumn("name", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
+                                new LogicalType.StringType())
+                        .addColumn("score", PhysicalType.DOUBLE, RepetitionType.REQUIRED))
+                .addColumn("active", PhysicalType.BOOLEAN, RepetitionType.REQUIRED)
+                .build();
+    }
+
+    private static byte[] utf8(String value) {
+        return value.getBytes(StandardCharsets.UTF_8);
     }
 }
