@@ -187,7 +187,7 @@ public final class IndexValueFormatter {
             return new UUID(bb.getLong(), bb.getLong()).toString();
         }
         if (lt instanceof LogicalType.IntervalType && bytes.length == 12) {
-            return RowValueFormatter.formatIntervalBytes(bytes);
+            return ValueFormatter.formatIntervalBytes(bytes);
         }
         if (lt instanceof LogicalType.Float16Type && bytes.length == 2) {
             return Float.toString(

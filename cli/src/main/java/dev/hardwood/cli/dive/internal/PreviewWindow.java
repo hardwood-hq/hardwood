@@ -13,7 +13,8 @@ import java.util.ArrayList;
 import java.util.List;
 
 import dev.hardwood.cli.dive.ParquetModel;
-import dev.hardwood.cli.internal.RowValueFormatter;
+import dev.hardwood.cli.internal.BinaryValues;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.schema.SchemaNode;
 
 /// A buffered window of pre-formatted Data preview rows around the
@@ -148,10 +149,14 @@ final class PreviewWindow {
                 List<String> expPhysical = new ArrayList<>(fieldCount);
                 for (int c = 0; c < fieldCount; c++) {
                     SchemaNode field = topLevelFields.get(c);
-                    rowLogical.add(RowValueFormatter.format(reader, c, field, true));
-                    rowPhysical.add(RowValueFormatter.format(reader, c, field, false));
-                    expLogical.add(RowValueFormatter.formatExpanded(reader, c, field, true));
-                    expPhysical.add(RowValueFormatter.formatExpanded(reader, c, field, false));
+                    rowLogical.add(ValueFormatter.formatReader(reader, c, field, true,
+                            ValueFormatter.NestedStyle.COMPACT, ValueFormatter.PREVIEW_CELL_BUDGET));
+                    rowPhysical.add(ValueFormatter.formatReader(reader, c, field, false,
+                            ValueFormatter.NestedStyle.COMPACT, ValueFormatter.PREVIEW_CELL_BUDGET));
+                    expLogical.add(ValueFormatter.formatReader(reader, c, field, true,
+                            ValueFormatter.NestedStyle.EXPANDED, BinaryValues.NO_LIMIT));
+                    expPhysical.add(ValueFormatter.formatReader(reader, c, field, false,
+                            ValueFormatter.NestedStyle.EXPANDED, BinaryValues.NO_LIMIT));
                 }
                 rowsLogical.add(rowLogical);
                 rowsPhysical.add(rowPhysical);

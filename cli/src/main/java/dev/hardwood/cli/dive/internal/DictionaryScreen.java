@@ -18,8 +18,8 @@ import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.Fmt;
-import dev.hardwood.cli.internal.RowValueFormatter;
 import dev.hardwood.cli.internal.Strings;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
@@ -424,7 +424,7 @@ public final class DictionaryScreen {
             case Dictionary.DoubleDictionary d -> d.values()[index];
             case Dictionary.ByteArrayDictionary d -> d.values()[index];
         };
-        return RowValueFormatter.formatDictionaryValue(raw, col, useLogicalType, maxChars);
+        return ValueFormatter.formatDictionary(raw, col, useLogicalType, maxChars);
     }
 
     private static void renderConfirmPrompt(Buffer buffer, Rect area, ParquetModel model,

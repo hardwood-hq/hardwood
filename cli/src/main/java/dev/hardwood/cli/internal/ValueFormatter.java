@@ -15,6 +15,7 @@ import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
 import java.time.LocalTime;
+import java.util.Objects;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
@@ -32,55 +33,71 @@ import dev.hardwood.row.VariantType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.SchemaNode;
 
-/// Canonical rendering of Parquet values for display in the `dive` TUI.
-///
-/// Dispatches on the field's [LogicalType] and produces machine-reparseable text:
+/// Canonical rendering of Parquet values for every CLI surface — `print`,
+/// `convert`, the `inspect` commands and the `dive` TUI. One dispatch per
+/// source keeps the same logical type spelling the same text everywhere:
 /// ISO-8601 timestamps, `LocalDate.toString` for dates, `BigDecimal.toPlainString`
-/// for decimals, etc. Two entry points share the same dispatch core:
+/// for decimals, and control characters sanitised through
+/// [Strings#sanitizeControls] so no cell ever emits one raw.
 ///
-/// - [#format(RowReader, int, SchemaNode)]: Data preview — uses the reader's
-///   typed accessors (`getTimestamp`, `getDate`, `getDecimal`, `getUuid`,
-///   `getString`). For top-level group fields (structs / lists / maps /
-///   variants) falls back to `getValue().toString()`.
-/// - [#formatDictionaryValue]: Dictionary — takes a raw primitive (`long` micros,
-///   `byte[]`, etc.) because dictionary entries come out of the parsed
-///   `Dictionary` records as primitive arrays, with no `RowReader` available.
+/// The static entry points differ only in where the value comes from:
 ///
-/// Sibling of [IndexValueFormatter], which handles the `byte[]` case for
-/// per-page / per-chunk min/max statistics.
-public final class RowValueFormatter {
+/// - [#formatReader(RowReader, int, SchemaNode, boolean, NestedStyle, int)] — typed
+///   accessors on a [RowReader]: dive preview cells (COMPACT) and the record
+///   modal (EXPANDED).
+/// - [#formatValue(Object, SchemaNode, int)] — a materialised value: print
+///   cells and `convert` CSV cells.
+/// - [#formatDictionary(Object, ColumnSchema, boolean, int)] — a raw primitive
+///   out of parsed `Dictionary` records, which surface as primitive arrays with
+///   no `RowReader` available.
+///
+/// Budgets are measured in terminal display cells; [BinaryValues#NO_LIMIT]
+/// renders the whole value. Text budgets never cut — a caller that truncates
+/// applies [Strings#truncateRight] and marks the cut — but they do bound hex
+/// building for binary payloads. Every switch over [LogicalType] is exhaustive
+/// over the sealed hierarchy: a new subtype fails to compile until an explicit
+/// case is added, preventing silent fall-through to the raw-bytes path.
+public final class ValueFormatter {
 
-    private RowValueFormatter() {
-    }
-
-    /// Data preview entry point. Uses the reader's typed accessors when the
-    /// field carries a known logical type; otherwise falls back to the raw
-    /// `getValue` + `toString`. Equivalent to `format(reader, i, field, true)`.
-    public static String format(RowReader reader, int fieldIndex, SchemaNode field) {
-        return format(reader, fieldIndex, field, true);
-    }
-
-    /// Data preview entry point with explicit logical-type dispatch toggle.
-    /// `useLogicalType=true` is the default UX — render timestamps, decimals,
-    /// UUIDs, etc. as their canonical logical form. `useLogicalType=false`
-    /// skips the logical-type dispatch and renders the underlying physical
-    /// value (e.g. `1735689600000000` instead of `2025-01-01T00:00:00Z`),
-    /// useful for confirming the raw storage form. Nested groups always
-    /// render structurally — the toggle only affects primitive leaves.
-    ///
-    /// Exhaustive over the sealed [LogicalType] hierarchy: a new subtype
-    /// fails to compile here until an explicit case is added, preventing
-    /// silent fall-through to the raw-bytes path.
-    public static String format(RowReader reader, int fieldIndex, SchemaNode field, boolean useLogicalType) {
-        return format(reader, fieldIndex, field, useLogicalType, PREVIEW_CELL_BUDGET);
-    }
-
-    /// The widest a preview cell can be. The rendered rows are cached ahead of
+    /// The widest a dive preview cell can be. The rendered rows are cached ahead of
     /// layout, so the terminal's actual width is not available here and cannot
     /// become part of the cache key; this is simply wider than any terminal, so
     /// it never clips a cell that would have been shown and still holds a
     /// multi-megabyte payload to a few kilobytes of hex.
-    private static final int PREVIEW_CELL_BUDGET = 4096;
+    public static final int PREVIEW_CELL_BUDGET = 4096;
+
+    private ValueFormatter() {
+    }
+
+    /// How multi-line-capable nested values render: `COMPACT` is the single-line
+    /// form used by table cells, `EXPANDED` the indented multi-line form used by
+    /// the dive record modal.
+    public enum NestedStyle {
+        COMPACT,
+        EXPANDED
+    }
+
+    /// Renders the field at `fieldIndex` through the reader's typed accessors.
+    /// `useLogicalType=true` renders timestamps, decimals, UUIDs, etc. as their
+    /// canonical logical form; `useLogicalType=false` renders the underlying
+    /// physical value (e.g. `1735689600000000` instead of `2025-01-01T00:00:00Z`).
+    /// Nested groups always render structurally — the toggle only affects
+    /// primitive leaves.
+    ///
+    /// `COMPACT` caps the nested walk at a few elements and depth levels (the
+    /// cell budget bounds it further); `EXPANDED` renders every element on its
+    /// own indented line.
+    public static String formatReader(RowReader reader, int fieldIndex, SchemaNode field,
+                                      boolean useLogicalType, NestedStyle style, int budget) {
+        Objects.requireNonNull(reader, "reader");
+        Objects.requireNonNull(field, "field");
+        Objects.requireNonNull(style, "style");
+        requireBudget(budget);
+        if (style == NestedStyle.EXPANDED) {
+            return formatExpanded(reader, fieldIndex, field, useLogicalType, budget);
+        }
+        return format(reader, fieldIndex, field, useLogicalType, budget);
+    }
 
     private static String format(RowReader reader, int fieldIndex, SchemaNode field,
                                  boolean useLogicalType, int maxChars) {
@@ -109,10 +126,10 @@ public final class RowValueFormatter {
             case LogicalType.TimeType t -> reader.getTime(fieldIndex).toString();
             case LogicalType.DecimalType dec -> reader.getDecimal(fieldIndex).toPlainString();
             case LogicalType.UuidType u -> reader.getUuid(fieldIndex).toString();
-            case LogicalType.StringType s -> reader.getString(fieldIndex);
-            case LogicalType.EnumType e -> reader.getString(fieldIndex);
-            case LogicalType.JsonType j -> reader.getString(fieldIndex);
-            case LogicalType.BsonType b -> reader.getString(fieldIndex);
+            case LogicalType.StringType s -> Strings.sanitizeControls(reader.getString(fieldIndex));
+            case LogicalType.EnumType e -> Strings.sanitizeControls(reader.getString(fieldIndex));
+            case LogicalType.JsonType j -> Strings.sanitizeControls(reader.getString(fieldIndex));
+            case LogicalType.BsonType b -> Strings.sanitizeControls(reader.getString(fieldIndex));
             case LogicalType.IntType it when !it.isSigned() -> formatUnsignedInt(reader, fieldIndex, prim);
             // Signed IntType still goes through getRawValue / String.valueOf —
             // matches the pre-refactor behavior.
@@ -159,19 +176,18 @@ public final class RowValueFormatter {
     /// depth caps; nested types render with one entry per line and indented
     /// children. Used by the dive record modal's inline-expansion path so
     /// users can read the full value, no `…+N` ellipses.
-    public static String formatExpanded(RowReader reader, int fieldIndex, SchemaNode field,
-                                        boolean useLogicalType) {
+    private static String formatExpanded(RowReader reader, int fieldIndex, SchemaNode field,
+                                         boolean useLogicalType, int budget) {
         if (reader.isNull(fieldIndex)) {
             return "null";
         }
         if (field instanceof SchemaNode.GroupNode) {
-            return formatNestedPretty(reader.getValue(fieldIndex), 0, useLogicalType,
-                    BinaryValues.NO_LIMIT);
+            return formatNestedPretty(reader.getValue(fieldIndex), 0, useLogicalType, budget);
         }
         // For primitive leaves the expanded form is identical to the
         // single-line logical / physical rendering, except that the modal shows
         // the value whole however long it is.
-        return format(reader, fieldIndex, field, useLogicalType, BinaryValues.NO_LIMIT);
+        return format(reader, fieldIndex, field, useLogicalType, budget);
     }
 
     private static String formatNestedPretty(Object value, int indent, boolean useLogicalType, int maxChars) {
@@ -204,6 +220,9 @@ public final class RowValueFormatter {
         }
         if (value instanceof LocalDateTime ldt) {
             return ldt.toString();
+        }
+        if (value instanceof String s) {
+            return Strings.sanitizeControls(s);
         }
         return String.valueOf(value);
     }
@@ -328,52 +347,131 @@ public final class RowValueFormatter {
         return "  ".repeat(indent);
     }
 
-    /// Renders a value as its underlying physical-type text. Bypasses
-    /// logical-type dispatch — used when the user toggles logical rendering
-    /// off to inspect storage form. byte[]s still hex-render so cells aren't
-    /// "[B@" — that's not "physical" rendering, just sane fallback.
-    private static String formatPhysical(RowReader reader, int fieldIndex, int maxChars) {
-        Object raw = reader.getRawValue(fieldIndex);
-        if (raw instanceof byte[] bytes) {
-            return formatRawBytes(bytes, maxChars);
+    /// Renders a materialised value — whatever the reader's `getValue` hands
+    /// back for one field — as its canonical display text. Scalars and byte-backed
+    /// leaves only: nested values (structs, lists, maps, variants) are rendered
+    /// by the caller's nested walker, and handing one here is a schema/value
+    /// mismatch rather than something to stringify.
+    ///
+    /// `field` must be the value's own schema node; it decides how byte-backed
+    /// leaves decode (annotated strings, UUID, decimal, INTERVAL, INT96) and
+    /// whether integers render unsigned.
+    public static String formatValue(Object value, SchemaNode field, int budget) {
+        requireBudget(budget);
+        Objects.requireNonNull(field, "field");
+        if (value == null) {
+            return "null";
         }
-        return String.valueOf(raw);
+        if (value instanceof PqVariant || value instanceof PqStruct || value instanceof PqList
+                || value instanceof PqMap) {
+            throw new IllegalStateException("Field '" + field.name() + "' is not a group in the schema, but the"
+                    + " value is a " + value.getClass().getName());
+        }
+        if (field instanceof SchemaNode.GroupNode) {
+            throw new IllegalStateException("Field '" + field.name() + "' is a group in the schema, but the"
+                    + " value is a " + value.getClass().getName());
+        }
+        if (value instanceof byte[] bytes) {
+            return formatMaterialisedBytes(bytes, field, budget);
+        }
+        if (value instanceof String s) {
+            return Strings.sanitizeControls(s);
+        }
+        if (value instanceof BigDecimal decimal) {
+            return decimal.toPlainString();
+        }
+        if (value instanceof Instant instant) {
+            return instant.toString();
+        }
+        if (value instanceof LocalDateTime ldt) {
+            return ldt.toString();
+        }
+        if (value instanceof PqInterval interval) {
+            return formatInterval(interval);
+        }
+        if (field instanceof SchemaNode.PrimitiveNode pn && pn.logicalType() instanceof LogicalType.IntType it
+                && !it.isSigned()) {
+            if (value instanceof Integer i) {
+                return Long.toString(Integer.toUnsignedLong(i));
+            }
+            if (value instanceof Long l) {
+                return Long.toUnsignedString(l);
+            }
+        }
+        return String.valueOf(value);
+    }
+
+    /// Renders a byte-backed materialised leaf. Annotated strings decode as
+    /// UTF-8 (sanitised); UUID, decimal, INTERVAL and INT96 decode through their
+    /// converters and fail on a malformed payload length rather than render a
+    /// misleading value; anything else goes through [BinaryValues].
+    private static String formatMaterialisedBytes(byte[] bytes, SchemaNode schema, int budget) {
+        if (isAnnotatedStringField(schema)) {
+            return Strings.sanitizeControls(new String(bytes, StandardCharsets.UTF_8));
+        }
+        SchemaNode.PrimitiveNode pn = (SchemaNode.PrimitiveNode) schema;
+        LogicalType lt = pn.logicalType();
+        if (lt instanceof LogicalType.UuidType) {
+            if (bytes.length != 16) {
+                throw new IllegalArgumentException("UUID requires exactly 16 bytes, got " + bytes.length);
+            }
+            ByteBuffer bb = ByteBuffer.wrap(bytes);
+            return new UUID(bb.getLong(), bb.getLong()).toString();
+        }
+        if (lt instanceof LogicalType.DecimalType dt) {
+            return new BigDecimal(new BigInteger(bytes), dt.scale()).toPlainString();
+        }
+        if (lt instanceof LogicalType.IntervalType) {
+            if (bytes.length != 12) {
+                throw new IllegalArgumentException("INTERVAL requires exactly 12 bytes, got " + bytes.length);
+            }
+            return formatIntervalBytes(bytes);
+        }
+        if (pn.type() == PhysicalType.INT96) {
+            return LogicalTypeConverter.int96ToInstant(bytes).toString();
+        }
+        return BinaryValues.render(bytes, budget);
+    }
+
+    private static boolean isAnnotatedStringField(SchemaNode node) {
+        if (!(node instanceof SchemaNode.PrimitiveNode pn)) {
+            return false;
+        }
+        LogicalType lt = pn.logicalType();
+        return lt instanceof LogicalType.BsonType
+                || lt instanceof LogicalType.StringType
+                || lt instanceof LogicalType.EnumType
+                || lt instanceof LogicalType.JsonType;
     }
 
     /// Dictionary entry point. Converts a raw primitive drawn from a
     /// `Dictionary.*` record into the canonical display form for the column's
     /// logical type. `rawValue` must be one of: `Integer`, `Long`, `Float`,
     /// `Double`, `byte[]` — matching the five `Dictionary` subtypes.
-    public static String formatDictionaryValue(Object rawValue, ColumnSchema col) {
-        return formatDictionaryValue(rawValue, col, true);
-    }
-
-    /// Logical-type-aware variant of [#formatDictionaryValue]. When
-    /// `useLogicalType=false` the column's logical type is bypassed —
-    /// timestamps render as raw long micros, decimals as raw byte hex,
-    /// etc. Useful for inspecting the storage form on the dictionary
-    /// screen.
-    public static String formatDictionaryValue(Object rawValue, ColumnSchema col,
-                                                boolean useLogicalType) {
-        return formatDictionaryValue(rawValue, col, useLogicalType, BinaryValues.NO_LIMIT);
-    }
-
-    /// Dictionary variant holding a binary entry to what a caller displaying
-    /// `maxChars` characters can use. The entry table passes its row cap; the
-    /// entry modal, which exists to show what the row had to truncate, passes
-    /// [BinaryValues#NO_LIMIT].
-    public static String formatDictionaryValue(Object rawValue, ColumnSchema col,
-                                                boolean useLogicalType, int maxChars) {
+    ///
+    /// When `useLogicalType=false` the column's logical type is bypassed —
+    /// timestamps render as raw long micros, decimals as raw byte hex, etc.
+    /// `budget` bounds binary hex building in display cells; text renders whole.
+    public static String formatDictionary(Object rawValue, ColumnSchema col,
+                                          boolean useLogicalType, int budget) {
+        Objects.requireNonNull(col, "col");
+        requireBudget(budget);
         LogicalType lt = useLogicalType ? col.logicalType() : null;
         return switch (rawValue) {
             case Integer i -> formatInt(i, lt);
             case Long l -> formatLong(l, lt);
             case Float f -> Float.toString(f);
             case Double d -> Double.toString(d);
-            case byte[] bytes -> formatBytes(bytes, lt, maxChars);
+            case byte[] bytes -> formatDictionaryBytes(bytes, lt, budget);
             case null -> "null";
-            default -> String.valueOf(rawValue);
+            default -> throw unknownDictionaryPrimitive(rawValue);
         };
+    }
+
+    private static IllegalStateException unknownDictionaryPrimitive(Object rawValue) {
+        return new IllegalStateException(
+                "Dictionary records carry Integer, Long, Float, Double or byte[] values, got "
+                        + rawValue.getClass().getName());
     }
 
     /// INT32 dictionary entries can only carry logical types backed by `INT32`:
@@ -414,13 +512,13 @@ public final class RowValueFormatter {
     /// byte-backed logical types — strings, BSON, UUID(16), INTERVAL(12),
     /// FLOAT16(2), DECIMAL, plus Geometry / Geography WKB. See [#formatInt]
     /// for the `default` rationale.
-    private static String formatBytes(byte[] raw, LogicalType lt, int maxChars) {
+    private static String formatDictionaryBytes(byte[] raw, LogicalType lt, int maxChars) {
         return switch (lt) {
             case null -> formatRawBytes(raw, maxChars);
-            case LogicalType.StringType s -> new String(raw, StandardCharsets.UTF_8);
-            case LogicalType.EnumType e -> new String(raw, StandardCharsets.UTF_8);
-            case LogicalType.JsonType j -> new String(raw, StandardCharsets.UTF_8);
-            case LogicalType.BsonType b -> new String(raw, StandardCharsets.UTF_8);
+            case LogicalType.StringType s -> Strings.sanitizeControls(new String(raw, StandardCharsets.UTF_8));
+            case LogicalType.EnumType e -> Strings.sanitizeControls(new String(raw, StandardCharsets.UTF_8));
+            case LogicalType.JsonType j -> Strings.sanitizeControls(new String(raw, StandardCharsets.UTF_8));
+            case LogicalType.BsonType b -> Strings.sanitizeControls(new String(raw, StandardCharsets.UTF_8));
             case LogicalType.DecimalType d -> new BigDecimal(new BigInteger(raw), d.scale()).toPlainString();
             case LogicalType.UuidType u when raw.length == 16 -> {
                 ByteBuffer bb = ByteBuffer.wrap(raw);
@@ -526,6 +624,9 @@ public final class RowValueFormatter {
         if (value instanceof LocalDateTime ldt) {
             return ldt.toString();
         }
+        if (value instanceof String s) {
+            return Strings.sanitizeControls(s);
+        }
         return String.valueOf(value);
     }
 
@@ -622,7 +723,7 @@ public final class RowValueFormatter {
                 String s = variant.asTimestamp().toString();
                 yield s.endsWith("Z") ? s.substring(0, s.length() - 1) : s;
             }
-            case STRING -> variant.asString();
+            case STRING -> Strings.sanitizeControls(variant.asString());
             case BINARY -> formatRawBytes(variant.asBinary(), maxChars);
             case UUID -> variant.asUuid().toString();
             case OBJECT -> formatVariantObject(variant.asObject(), depth, useLogicalType, maxChars);
@@ -682,5 +783,31 @@ public final class RowValueFormatter {
             case NANOS -> raw;
         };
         return LocalTime.ofNanoOfDay(nanosOfDay).toString();
+    }
+
+    /// The budget every entry point accepts: [BinaryValues#NO_LIMIT] for the
+    /// whole value, or a positive number of terminal display cells. `0` and
+    /// negative values below the sentinel have no faithful rendering.
+    private static void requireBudget(int budget) {
+        if (budget == BinaryValues.NO_LIMIT) {
+            return;
+        }
+        if (budget < 1) {
+            throw new IllegalArgumentException(
+                    "budget must be BinaryValues.NO_LIMIT (-1, unlimited) or a positive number of"
+                            + " terminal cells, got " + budget);
+        }
+    }
+
+    /// Renders a value as its underlying physical-type text. Bypasses
+    /// logical-type dispatch — used when the user toggles logical rendering
+    /// off to inspect storage form. byte[]s still hex-render so cells aren't
+    /// "[B@" — that's not "physical" rendering, just sane fallback.
+    private static String formatPhysical(RowReader reader, int fieldIndex, int maxChars) {
+        Object raw = reader.getRawValue(fieldIndex);
+        if (raw instanceof byte[] bytes) {
+            return formatRawBytes(bytes, maxChars);
+        }
+        return String.valueOf(raw);
     }
 }

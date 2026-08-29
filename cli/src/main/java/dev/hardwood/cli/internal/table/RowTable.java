@@ -7,22 +7,16 @@
  */
 package dev.hardwood.cli.internal.table;
 
-import java.math.BigDecimal;
-import java.math.BigInteger;
-import java.nio.ByteBuffer;
-import java.nio.charset.StandardCharsets;
 import java.util.Collections;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.UUID;
 import java.util.stream.IntStream;
 
 import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.Fmt;
-import dev.hardwood.cli.internal.RowValueFormatter;
-import dev.hardwood.internal.conversion.LogicalTypeConverter;
-import dev.hardwood.metadata.LogicalType;
+import dev.hardwood.cli.internal.Strings;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
@@ -70,22 +64,7 @@ public final class RowTable {
     /// passes [BinaryValues#NO_LIMIT].
     public static String renderField(RowReader rowReader, int fieldIndex, SchemaNode fieldSchema,
                                      int maxChars) {
-        if (isAnnotatedStringField(fieldSchema)) {
-            String s = rowReader.getString(fieldIndex);
-            return s != null ? s : "null";
-        }
         return renderValue(rowReader.getValue(fieldIndex), fieldSchema, maxChars);
-    }
-
-    private static boolean isAnnotatedStringField(SchemaNode node) {
-        if (!(node instanceof SchemaNode.PrimitiveNode pn)) {
-            return false;
-        }
-        LogicalType lt = pn.logicalType();
-        return lt instanceof LogicalType.BsonType
-                || lt instanceof LogicalType.StringType
-                || lt instanceof LogicalType.EnumType
-                || lt instanceof LogicalType.JsonType;
     }
 
     public static String renderValue(Object value, SchemaNode schema) {
@@ -93,16 +72,17 @@ public final class RowTable {
     }
 
     /// See [#renderField(RowReader, int, SchemaNode, int)] for what `maxChars`
-    /// bounds.
+    /// bounds. Nested values (structs, lists, maps, variants) render here;
+    /// every scalar and byte-backed leaf delegates to
+    /// [ValueFormatter#formatValue], which owns the canonical spelling. A leaf
+    /// whose schema could not be resolved (list elements, map keys and values
+    /// of legacy layouts) renders schema-less, as it always has.
     public static String renderValue(Object value, SchemaNode schema, int maxChars) {
         if (value == null) {
             return "null";
         }
         if (value instanceof PqVariant variant) {
             return renderVariant(variant, maxChars);
-        }
-        if (value instanceof byte[] bytes) {
-            return renderBytes(bytes, schema, maxChars);
         }
         if (value instanceof PqStruct struct) {
             return renderStruct(struct, schema instanceof SchemaNode.GroupNode g ? g : null, maxChars);
@@ -113,46 +93,16 @@ public final class RowTable {
         if (value instanceof PqMap map) {
             return renderMap(map, schema instanceof SchemaNode.GroupNode g ? g : null, maxChars);
         }
-
-        if (schema instanceof SchemaNode.PrimitiveNode pn && pn.logicalType() instanceof LogicalType.IntType it
-                && !it.isSigned()) {
-            if (value instanceof Integer i) {
-                return Long.toString(Integer.toUnsignedLong(i));
+        if (schema == null) {
+            if (value instanceof byte[] bytes) {
+                return BinaryValues.render(bytes, maxChars);
             }
-            if (value instanceof Long l) {
-                return Long.toUnsignedString(l);
+            if (value instanceof String s) {
+                return Strings.sanitizeControls(s);
             }
+            return String.valueOf(value);
         }
-
-        return String.valueOf(value);
-    }
-
-    private static String renderBytes(byte[] bytes, SchemaNode schema, int maxChars) {
-        if (isAnnotatedStringField(schema)) {
-            return new String(bytes, StandardCharsets.UTF_8);
-        }
-        if (!(schema instanceof SchemaNode.PrimitiveNode pn)) {
-            return BinaryValues.render(bytes, maxChars);
-        }
-        LogicalType lt = pn.logicalType();
-        if (lt instanceof LogicalType.UuidType) {
-            ByteBuffer bb = ByteBuffer.wrap(bytes);
-            return new UUID(bb.getLong(), bb.getLong()).toString();
-        }
-        if (lt instanceof LogicalType.DecimalType dt) {
-            return new BigDecimal(new BigInteger(bytes), dt.scale()).toPlainString();
-        }
-        if (lt instanceof LogicalType.IntervalType && bytes.length == 12) {
-            return RowValueFormatter.formatIntervalBytes(bytes);
-        }
-        return switch (pn.type()) {
-            case INT96 -> decodeInt96Timestamp(bytes);
-            default -> BinaryValues.render(bytes, maxChars);
-        };
-    }
-
-    private static String decodeInt96Timestamp(byte[] bytes) {
-        return LogicalTypeConverter.int96ToInstant(bytes).toString();
+        return ValueFormatter.formatValue(value, schema, maxChars);
     }
 
     private static String renderStruct(PqStruct struct, SchemaNode.GroupNode schemaNode, int maxChars) {
