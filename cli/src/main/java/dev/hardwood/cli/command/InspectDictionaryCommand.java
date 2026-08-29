@@ -21,7 +21,7 @@ import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.BinaryValues;
-import dev.hardwood.cli.internal.IndexValueFormatter;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.table.RowTable;
@@ -189,25 +189,25 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
             case Dictionary.IntDictionary d -> {
                 int[] vs = d.values();
                 for (int i = 0; i < displayed; i++) {
-                    addRow(rows, rgIdx, i, cell(IndexValueFormatter.formatDecoded(vs[i], columnSchema), budget));
+                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDecoded(vs[i], columnSchema), budget));
                 }
             }
             case Dictionary.LongDictionary d -> {
                 long[] vs = d.values();
                 for (int i = 0; i < displayed; i++) {
-                    addRow(rows, rgIdx, i, cell(IndexValueFormatter.formatDecoded(vs[i], columnSchema), budget));
+                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDecoded(vs[i], columnSchema), budget));
                 }
             }
             case Dictionary.FloatDictionary d -> {
                 float[] vs = d.values();
                 for (int i = 0; i < displayed; i++) {
-                    addRow(rows, rgIdx, i, cell(IndexValueFormatter.formatDecoded(vs[i]), budget));
+                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDecoded(vs[i]), budget));
                 }
             }
             case Dictionary.DoubleDictionary d -> {
                 double[] vs = d.values();
                 for (int i = 0; i < displayed; i++) {
-                    addRow(rows, rgIdx, i, cell(IndexValueFormatter.formatDecoded(vs[i]), budget));
+                    addRow(rows, rgIdx, i, cell(ValueFormatter.formatDecoded(vs[i]), budget));
                 }
             }
             case Dictionary.ByteArrayDictionary d -> addByteArrayRows(
@@ -222,7 +222,7 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
             byte[] value = values[i];
             // The budget bounds the hex build too, so a large payload costs a
             // cell rather than twice its own size to render into one.
-            String formatted = cell(IndexValueFormatter.format(value, columnSchema, true, budget), budget);
+            String formatted = cell(ValueFormatter.formatBytes(value, columnSchema, true, budget), budget);
             if (includeLength) {
                 rows.add(new String[]{
                         rgCell(i, rgIdx),

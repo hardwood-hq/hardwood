@@ -39,7 +39,7 @@ public class InfoCommand implements Command<CommandInvocation> {
     /// Stands in for control characters in a rendered value. Key/value metadata
     /// is arbitrary writer-supplied content: a raw newline would break the
     /// column alignment and a raw escape sequence would reprogram the terminal.
-    /// Same glyph as [dev.hardwood.cli.internal.IndexValueFormatter] uses for
+    /// Same glyph as [dev.hardwood.cli.internal.ValueFormatter] uses for
     /// non-printable column values.
     private static final char NON_PRINTABLE_PLACEHOLDER = '·';
 

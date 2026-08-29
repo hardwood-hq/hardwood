@@ -19,6 +19,7 @@ import java.util.Objects;
 import java.util.UUID;
 
 import dev.hardwood.internal.conversion.LogicalTypeConverter;
+import dev.hardwood.internal.predicate.StatisticsDecoder;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.RowReader;
@@ -546,6 +547,176 @@ public final class ValueFormatter {
     /// page/dictionary stats) and render it via [#formatInterval(PqInterval)].
     public static String formatIntervalBytes(byte[] bytes) {
         return formatInterval(LogicalTypeConverter.convertToInterval(bytes, PhysicalType.FIXED_LEN_BYTE_ARRAY));
+    }
+
+    // ==================== raw statistics bytes ====================
+
+    /// Raw statistics bytes entry point. The whole-value default, equivalent
+    /// to `formatBytes(bytes, col, true, NO_LIMIT)`.
+    public static String formatBytes(byte[] bytes, ColumnSchema col) {
+        return formatBytes(bytes, col, true, BinaryValues.NO_LIMIT);
+    }
+
+    /// Logical-type-aware variant of [#formatBytes]. When `useLogicalType=false`,
+    /// dispatch is on physical type only — TIMESTAMP / DATE / TIME / DECIMAL /
+    /// UUID columns then render as raw int / long / hex form, useful for
+    /// confirming the underlying storage in the dive UI.
+    public static String formatBytes(byte[] bytes, ColumnSchema col, boolean useLogicalType) {
+        return formatBytes(bytes, col, useLogicalType, BinaryValues.NO_LIMIT);
+    }
+
+    /// Variant bounding the binary rendering in display cells, for a caller
+    /// that fills a cell. The hex of a large payload is built only as far as
+    /// that budget, so rendering into a cell costs a cell rather than the
+    /// whole payload. The result is still the value, not a cut of it: it runs
+    /// just past the budget when the payload is longer, so the caller sees
+    /// that there is more and marks what it cut. Absent statistics (`null`
+    /// bytes) render as `-`.
+    public static String formatBytes(byte[] bytes, ColumnSchema col,
+                                     boolean useLogicalType, int budget) {
+        requireBudget(budget);
+        if (bytes == null) {
+            return "-";
+        }
+        Objects.requireNonNull(col, "col");
+        if (bytes.length == 0) {
+            return isByteBacked(col.type()) ? "\"\"" : "";
+        }
+        LogicalType lt = useLogicalType ? col.logicalType() : null;
+
+        if (lt instanceof LogicalType.DecimalType dt) {
+            BigInteger unscaled = switch (col.type()) {
+                case INT32 -> BigInteger.valueOf(StatisticsDecoder.decodeInt(bytes));
+                case INT64 -> BigInteger.valueOf(StatisticsDecoder.decodeLong(bytes));
+                default -> new BigInteger(bytes);
+            };
+            return new BigDecimal(unscaled, dt.scale()).toPlainString();
+        }
+        if (lt instanceof LogicalType.TimestampType ts) {
+            long raw = col.type() == PhysicalType.INT32
+                    ? StatisticsDecoder.decodeInt(bytes)
+                    : StatisticsDecoder.decodeLong(bytes);
+            return (ts.isAdjustedToUTC()
+                    ? LogicalTypeConverter.convertToTimestamp(raw, PhysicalType.INT64, ts)
+                    : LogicalTypeConverter.convertToLocalTimestamp(raw, PhysicalType.INT64, ts)).toString();
+        }
+        if (lt instanceof LogicalType.DateType) {
+            return LocalDate.ofEpochDay(StatisticsDecoder.decodeInt(bytes)).toString();
+        }
+        if (lt instanceof LogicalType.TimeType t) {
+            long raw = col.type() == PhysicalType.INT32
+                    ? StatisticsDecoder.decodeInt(bytes)
+                    : StatisticsDecoder.decodeLong(bytes);
+            long nanosOfDay = switch (t.unit()) {
+                case MILLIS -> raw * 1_000_000L;
+                case MICROS -> raw * 1_000L;
+                case NANOS -> raw;
+            };
+            return LocalTime.ofNanoOfDay(nanosOfDay).toString();
+        }
+
+        return switch (col.type()) {
+            case BOOLEAN -> Boolean.toString(StatisticsDecoder.decodeBoolean(bytes));
+            case INT32 -> formatIndexInt32(bytes, lt);
+            case INT64 -> formatIndexInt64(bytes, lt);
+            case FLOAT -> Float.toString(StatisticsDecoder.decodeFloat(bytes));
+            case DOUBLE -> Double.toString(StatisticsDecoder.decodeDouble(bytes));
+            // INT96 carries no logical annotation: logical mode renders the
+            // instant, physical mode the raw `0x` hex every other byte-backed
+            // type uses.
+            case INT96 -> useLogicalType
+                    ? LogicalTypeConverter.int96ToInstant(bytes).toString()
+                    : BinaryValues.toHex(bytes, budget);
+            case BYTE_ARRAY, FIXED_LEN_BYTE_ARRAY -> formatDictionaryBytes(bytes, lt, budget);
+        };
+    }
+
+    // ==================== decoded dictionary entries ====================
+
+    /// Formats an already-decoded `INT32` dictionary entry. Logical types
+    /// `DECIMAL` / `DATE` / `TIME` go through [LogicalTypeConverter]; otherwise
+    /// the raw int is rendered honouring the unsigned [LogicalType.IntType].
+    public static String formatDecoded(int value, ColumnSchema col) {
+        Objects.requireNonNull(col, "col");
+        LogicalType lt = col.logicalType();
+        if (lt instanceof LogicalType.DecimalType) {
+            return decimalText(LogicalTypeConverter.convert(value, col.type(), lt));
+        }
+        if (lt instanceof LogicalType.DateType || lt instanceof LogicalType.TimeType) {
+            return String.valueOf(LogicalTypeConverter.convert(value, col.type(), lt));
+        }
+        return formatInt32Value(value, lt);
+    }
+
+    /// Formats an already-decoded `INT64` dictionary entry. Logical types
+    /// `DECIMAL` / `TIME` / `TIMESTAMP` go through [LogicalTypeConverter];
+    /// otherwise the raw long is rendered honouring the unsigned
+    /// [LogicalType.IntType].
+    public static String formatDecoded(long value, ColumnSchema col) {
+        Objects.requireNonNull(col, "col");
+        LogicalType lt = col.logicalType();
+        if (lt instanceof LogicalType.DecimalType) {
+            return decimalText(LogicalTypeConverter.convert(value, col.type(), lt));
+        }
+        if (lt instanceof LogicalType.TimeType || lt instanceof LogicalType.TimestampType) {
+            return String.valueOf(LogicalTypeConverter.convert(value, col.type(), lt));
+        }
+        return formatInt64Value(value, lt);
+    }
+
+    public static String formatDecoded(float value) {
+        return Float.toString(value);
+    }
+
+    public static String formatDecoded(double value) {
+        return Double.toString(value);
+    }
+
+    public static String formatDecoded(boolean value) {
+        return Boolean.toString(value);
+    }
+
+    /// Formats an already-decoded `byte[]` dictionary entry. `null` renders
+    /// as `-`; otherwise delegates to the [#formatBytes] pipeline (UUID,
+    /// decimal, hex, UTF-8 string, etc.).
+    public static String formatDecoded(byte[] value, ColumnSchema col) {
+        return formatBytes(value, col);
+    }
+
+    /// `LogicalTypeConverter.convert` yields a `BigDecimal` for DECIMAL
+    /// columns; the canonical text is its plain string, never scientific
+    /// notation.
+    private static String decimalText(Object converted) {
+        return ((BigDecimal) converted).toPlainString();
+    }
+
+    private static String formatIndexInt32(byte[] bytes, LogicalType lt) {
+        return formatInt32Value(StatisticsDecoder.decodeInt(bytes), lt);
+    }
+
+    private static String formatInt32Value(int v, LogicalType lt) {
+        if (lt instanceof LogicalType.IntType it && !it.isSigned()) {
+            return Long.toString(Integer.toUnsignedLong(v));
+        }
+        return Integer.toString(v);
+    }
+
+    private static String formatIndexInt64(byte[] bytes, LogicalType lt) {
+        return formatInt64Value(StatisticsDecoder.decodeLong(bytes), lt);
+    }
+
+    /// A zero-length value is only meaningful for the variable-length physical
+    /// types; rendering it as `""` distinguishes "present but empty" from the
+    /// blank cell an absent statistic leaves behind.
+    private static boolean isByteBacked(PhysicalType pt) {
+        return pt == PhysicalType.BYTE_ARRAY || pt == PhysicalType.FIXED_LEN_BYTE_ARRAY;
+    }
+
+    private static String formatInt64Value(long v, LogicalType lt) {
+        if (lt instanceof LogicalType.IntType it && !it.isSigned()) {
+            return Long.toUnsignedString(v);
+        }
+        return Long.toString(v);
     }
 
     public static String formatInterval(PqInterval interval) {

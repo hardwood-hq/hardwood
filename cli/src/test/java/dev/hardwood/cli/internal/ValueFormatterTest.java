@@ -14,6 +14,7 @@ import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
+import java.util.HexFormat;
 
 import org.junit.jupiter.api.AfterAll;
 import org.junit.jupiter.api.BeforeAll;
@@ -466,6 +467,231 @@ class ValueFormatterTest {
                 .hasMessage("col");
     }
 
+    // ==================== raw statistics bytes ====================
+
+    @Test
+    void statsRendersPrintableString() {
+        assertThat(ValueFormatter.formatBytes("hello".getBytes(StandardCharsets.UTF_8), stringColumn()))
+                .isEqualTo("hello");
+    }
+
+    @Test
+    void statsRendersNonAsciiPrintableString() {
+        assertThat(ValueFormatter.formatBytes("Última".getBytes(StandardCharsets.UTF_8), stringColumn()))
+                .isEqualTo("Última");
+    }
+
+    @Test
+    void statsRendersLongStringInFull() {
+        String longValue = "abcdefghijklmnopqrstuvwxyz";
+        assertThat(ValueFormatter.formatBytes(longValue.getBytes(StandardCharsets.UTF_8), stringColumn()))
+                .isEqualTo(longValue);
+    }
+
+    @Test
+    void statsReplacesControlCharsWithPlaceholder() {
+        byte[] mixed = { 'A', 0x01, 'B', 0x00, 'C' };
+        assertThat(ValueFormatter.formatBytes(mixed, stringColumn()))
+                .isEqualTo("A·B·C");
+    }
+
+    @Test
+    void statsRendersAllControlBytesAsHex() {
+        assertThat(ValueFormatter.formatBytes(new byte[19], stringColumn()))
+                .isEqualTo("0x" + "00".repeat(19));
+    }
+
+    @Test
+    void statsDistinctLongStringsRenderDistinctly() {
+        String first = "the-quick-brown-fox-jumps-over-the-lazy-dog-0";
+        String second = "the-quick-brown-fox-jumps-over-the-lazy-dog-1";
+
+        assertThat(ValueFormatter.formatBytes(first.getBytes(StandardCharsets.UTF_8), stringColumn()))
+                .isEqualTo(first);
+        assertThat(ValueFormatter.formatBytes(second.getBytes(StandardCharsets.UTF_8), stringColumn()))
+                .isEqualTo(second);
+    }
+
+    @Test
+    void statsEmptyByteBackedValueRendersExplicitEmptyString() {
+        // The `isByteBacked` rule is physical: empty statistics bytes on any
+        // BYTE_ARRAY / FIXED_LEN_BYTE_ARRAY column render as an explicit ""
+        // (distinguishing "present but empty" from an absent statistic).
+        assertThat(ValueFormatter.formatBytes(new byte[0], stringColumn())).isEqualTo("\"\"");
+        assertThat(ValueFormatter.formatBytes(new byte[0], bareByteArrayColumn())).isEqualTo("\"\"");
+    }
+
+    @Test
+    void statsAbsentBytesRenderDash() {
+        assertThat(ValueFormatter.formatBytes(null, stringColumn())).isEqualTo("-");
+        assertThat(ValueFormatter.formatBytes(null, stringColumn(), false)).isEqualTo("-");
+    }
+
+    @Test
+    void statsDecodesInt32() {
+        byte[] bytes = { 0x2A, 0x00, 0x00, 0x00 };
+        assertThat(ValueFormatter.formatBytes(bytes, intColumn())).isEqualTo("42");
+    }
+
+    @Test
+    void statsRendersTimestampMicrosLogically() {
+        ColumnSchema col = timestampColumn(true, LogicalType.TimeUnit.MICROS);
+        // 2025-01-01T00:00:00Z = 1735689600_000_000 micros, little-endian INT64
+        byte[] bytes = littleEndian(1735689600_000_000L);
+        assertThat(ValueFormatter.formatBytes(bytes, col)).isEqualTo("2025-01-01T00:00:00Z");
+    }
+
+    @Test
+    void statsPhysicalModeRendersTimestampAsRawLong() {
+        ColumnSchema col = timestampColumn(true, LogicalType.TimeUnit.MICROS);
+        long micros = 1735689600_000_000L;
+        assertThat(ValueFormatter.formatBytes(littleEndian(micros), col, false))
+                .isEqualTo(Long.toString(micros));
+    }
+
+    @Test
+    void statsRendersDateLogically() {
+        // epoch day 20202 = 2025-04-24, little-endian INT32
+        ColumnSchema col = column(PhysicalType.INT32, new LogicalType.DateType());
+        byte[] bytes = littleEndian(20202);
+        assertThat(ValueFormatter.formatBytes(bytes, col)).isEqualTo("2025-04-24");
+    }
+
+    @Test
+    void statsRendersIntervalLogically() {
+        // 1 month, 15 days, 3_600_000 ms — little-endian unsigned 32-bit
+        assertThat(ValueFormatter.formatBytes(intervalBytes(), intervalColumn()))
+                .isEqualTo("1mo 15d 3600000ms");
+    }
+
+    @Test
+    void statsIntervalPhysicalModeRendersAsHex() {
+        assertThat(ValueFormatter.formatBytes(intervalBytes(), intervalColumn(), false))
+                .isEqualTo("0x" + HexFormat.of().formatHex(intervalBytes()));
+    }
+
+    /// INT96 statistics bounds render as the timestamp in logical mode — the
+    /// same text `print` and the dictionary surfaces show — instead of bare
+    /// hex (#1021 canonicalisation).
+    @Test
+    void statsInt96RendersAsInstantInLogicalMode() {
+        byte[] epochBytes = int96EpochBytes();
+        assertThat(ValueFormatter.formatBytes(epochBytes, int96Column()))
+                .isEqualTo("1970-01-01T00:00:00Z");
+    }
+
+    @Test
+    void statsInt96PhysicalModeRendersAs0xPrefixedHex() {
+        byte[] epochBytes = int96EpochBytes();
+        assertThat(ValueFormatter.formatBytes(epochBytes, int96Column(), false))
+                .isEqualTo("0x" + HexFormat.of().formatHex(epochBytes));
+    }
+
+    @Test
+    void int96RendersIdenticallyAcrossMaterialisedAndStatisticsSources() {
+        byte[] epochBytes = int96EpochBytes();
+        assertThat(ValueFormatter.formatBytes(epochBytes, int96Column()))
+                .isEqualTo(ValueFormatter.formatValue(epochBytes, primitive(PhysicalType.INT96, null), NO_LIMIT))
+                .isEqualTo("1970-01-01T00:00:00Z");
+    }
+
+    @Test
+    void statsInt96WrongLengthFails() {
+        assertThatThrownBy(() -> ValueFormatter.formatBytes(new byte[16], int96Column()))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("12 bytes");
+    }
+
+    /// GeoParquet 1.x predates the `GEOMETRY` logical type and stores WKB in a
+    /// bare `BYTE_ARRAY`, so the writer's min/max are opaque bytes. Rendering
+    /// them as lenient UTF-8 turned every bound into mojibake.
+    @Test
+    void statsUnannotatedBinaryBoundsDoNotRenderAsText() {
+        assertThat(ValueFormatter.formatBytes(WKB_POINT, bareByteArrayColumn(), true))
+                .isEqualTo("0x010100000000000000005366c0f71622f0fa1955c0");
+    }
+
+    /// A capped cell shows a marked prefix of the hex, the same treatment a
+    /// long string gets — enough to tell two bounds apart.
+    @Test
+    void statsUnannotatedBinaryBoundsHonourAnExplicitBudget() {
+        assertThat(ValueFormatter.formatBytes(WKB_POINT, bareByteArrayColumn(), true, 20))
+                .isEqualTo("0x01010000000000000000");
+    }
+
+    @Test
+    void statsAnnotatedStringBoundsKeepRenderingAsText() {
+        byte[] bytes = { 'a', 0x00, 'b' };
+
+        assertThat(ValueFormatter.formatBytes(bytes, stringColumn())).isEqualTo("a·b");
+    }
+
+    @Test
+    void statsBudgetRejectionsAndNullColumn() {
+        assertThatThrownBy(() -> ValueFormatter.formatBytes(new byte[] { 1 }, stringColumn(), true, 0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ValueFormatter.formatBytes(new byte[] { 1 }, stringColumn(), true, -2))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ValueFormatter.formatBytes(new byte[] { 1 }, null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("col");
+    }
+
+    // ==================== decoded dictionary entries ====================
+
+    @Test
+    void decodedDecimalRendersPlainString() {
+        // String.valueOf(BigDecimal) would give "1E-7"; the canonical form is
+        // plain — the same text every other source shows for the value.
+        ColumnSchema col = column(PhysicalType.INT32, new LogicalType.DecimalType(7, 9));
+        assertThat(ValueFormatter.formatDecoded(1, col)).isEqualTo("0.0000001");
+    }
+
+    @Test
+    void decodedDecimalRendersIdenticallyAcrossDecodedAndMaterialisedSources() {
+        ColumnSchema col = column(PhysicalType.INT32, new LogicalType.DecimalType(7, 9));
+        SchemaNode node = primitive(PhysicalType.INT32, new LogicalType.DecimalType(7, 9));
+
+        assertThat(ValueFormatter.formatDecoded(1, col))
+                .isEqualTo(ValueFormatter.formatValue(new BigDecimal("0.0000001"), node, NO_LIMIT))
+                .isEqualTo("0.0000001");
+    }
+
+    @Test
+    void decodedIntAndLongRenderUnsignedAndSigned() {
+        ColumnSchema unsigned32 = column(PhysicalType.INT32, new LogicalType.IntType(32, false));
+        ColumnSchema signed64 = column(PhysicalType.INT64, null);
+
+        assertThat(ValueFormatter.formatDecoded(-1, unsigned32)).isEqualTo("4294967295");
+        assertThat(ValueFormatter.formatDecoded(-1L, signed64)).isEqualTo("-1");
+    }
+
+    @Test
+    void decodedFloatDoubleBooleanRenderAsJavaText() {
+        assertThat(ValueFormatter.formatDecoded(1.5f)).isEqualTo("1.5");
+        assertThat(ValueFormatter.formatDecoded(-2.25d)).isEqualTo("-2.25");
+        assertThat(ValueFormatter.formatDecoded(true)).isEqualTo("true");
+    }
+
+    @Test
+    void decodedByteArrayDelegatesToTheBytesPipeline() {
+        assertThat(ValueFormatter.formatDecoded(null, stringColumn())).isEqualTo("-");
+        assertThat(ValueFormatter.formatDecoded("hello".getBytes(StandardCharsets.UTF_8), stringColumn()))
+                .isEqualTo("hello");
+    }
+
+    @Test
+    void decodedSchemaBearingOverloadsRejectNullColumn() {
+        assertThatThrownBy(() -> ValueFormatter.formatDecoded(1, (ColumnSchema) null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("col");
+        assertThatThrownBy(() -> ValueFormatter.formatDecoded(1L, (ColumnSchema) null))
+                .isInstanceOf(NullPointerException.class)
+                .hasMessage("col");
+        assertThatThrownBy(() -> ValueFormatter.formatDecoded(new byte[1], (ColumnSchema) null))
+                .isInstanceOf(NullPointerException.class);
+    }
+
     // ==================== interval helpers ====================
 
     @Test
@@ -511,4 +737,69 @@ class ValueFormatterTest {
                 0,
                 logical);
     }
+
+    // ==================== statistics/decoded helpers ====================
+
+    private static ColumnSchema stringColumn() {
+        return new ColumnSchema(FieldPath.of("s"), PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                null, 0, 1, 0, new LogicalType.StringType());
+    }
+
+    private static ColumnSchema intColumn() {
+        return new ColumnSchema(FieldPath.of("i"), PhysicalType.INT32, RepetitionType.OPTIONAL,
+                null, 0, 1, 0, null);
+    }
+
+    private static ColumnSchema bareByteArrayColumn() {
+        return new ColumnSchema(FieldPath.of("geometry"), PhysicalType.BYTE_ARRAY,
+                RepetitionType.OPTIONAL, null, 0, 1, 0, null);
+    }
+
+    private static ColumnSchema timestampColumn(boolean isUtc, LogicalType.TimeUnit unit) {
+        return new ColumnSchema(FieldPath.of("ts"), PhysicalType.INT64, RepetitionType.OPTIONAL,
+                null, 0, 1, 0, new LogicalType.TimestampType(isUtc, unit));
+    }
+
+    private static ColumnSchema intervalColumn() {
+        return new ColumnSchema(FieldPath.of("iv"), PhysicalType.FIXED_LEN_BYTE_ARRAY,
+                RepetitionType.OPTIONAL, null, 0, 1, 0, new LogicalType.IntervalType());
+    }
+
+    private static ColumnSchema int96Column() {
+        return new ColumnSchema(FieldPath.of("ts96"), PhysicalType.INT96, RepetitionType.OPTIONAL,
+                null, 0, 1, 0, null);
+    }
+
+    private static byte[] littleEndian(long value) {
+        byte[] bytes = new byte[8];
+        for (int i = 0; i < 8; i++) {
+            bytes[i] = (byte) (value >> (i * 8));
+        }
+        return bytes;
+    }
+
+    private static byte[] intervalBytes() {
+        // 1 month, 15 days, 3_600_000 ms — little-endian unsigned 32-bit fields
+        byte[] bytes = new byte[12];
+        ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        bb.putInt(1);
+        bb.putInt(15);
+        bb.putInt(3_600_000);
+        return bytes;
+    }
+
+    private static byte[] int96EpochBytes() {
+        // INT96 is little-endian: 8 bytes nanos-of-day, 4 bytes Julian day.
+        // The Unix epoch is Julian day 2440588 with zero nanos-of-day.
+        byte[] bytes = new byte[12];
+        ByteBuffer bb = ByteBuffer.wrap(bytes).order(ByteOrder.LITTLE_ENDIAN);
+        bb.putLong(0, 0L);
+        bb.putInt(8, 2440588);
+        return bytes;
+    }
+
+    /// A WKB `Point` — the payload GeoParquet 1.x stores in an unannotated
+    /// `BYTE_ARRAY` geometry column.
+    private static final byte[] WKB_POINT =
+            HexFormat.of().parseHex("010100000000000000005366c0f71622f0fa1955c0");
 }

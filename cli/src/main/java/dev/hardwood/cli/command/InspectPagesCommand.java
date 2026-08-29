@@ -21,9 +21,9 @@ import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.BinaryValues;
-import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
@@ -312,7 +312,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
     /// Bounds a rendered bound to the column cap and marks the cut, so a value
     /// the table had to shorten does not read as complete.
     private static String statCell(byte[] bytes, ColumnSchema col, int budget) {
-        String rendered = IndexValueFormatter.format(bytes, col, true, budget);
+        String rendered = ValueFormatter.formatBytes(bytes, col, true, budget);
         return budget == BinaryValues.NO_LIMIT ? rendered : Strings.truncateRight(rendered, budget);
     }
 
