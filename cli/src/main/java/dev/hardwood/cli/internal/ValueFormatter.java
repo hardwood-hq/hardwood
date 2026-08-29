@@ -362,10 +362,10 @@ public final class ValueFormatter {
     /// rather than rendering a misleading string.
     public static String formatValue(Object value, SchemaNode field, int budget) {
         requireBudget(budget);
+        Objects.requireNonNull(field, "field");
         if (value == null) {
             return "null";
         }
-        Objects.requireNonNull(field, "field");
         if (value instanceof PqVariant variant) {
             return formatVariantDisplay(variant, budget);
         }
@@ -738,6 +738,7 @@ public final class ValueFormatter {
     /// FLOAT16(2), DECIMAL, plus Geometry / Geography WKB. See [#formatInt]
     /// for the `default` rationale.
     private static String formatDictionaryBytes(byte[] raw, LogicalType lt, int maxChars) {
+        requireFixedByteLength(raw, lt);
         return switch (lt) {
             case null -> formatRawBytes(raw, maxChars);
             case LogicalType.StringType s -> Strings.sanitizeControls(new String(raw, StandardCharsets.UTF_8));
@@ -749,9 +750,9 @@ public final class ValueFormatter {
                 ByteBuffer bb = ByteBuffer.wrap(raw);
                 yield new UUID(bb.getLong(), bb.getLong()).toString();
             }
-            case LogicalType.UuidType u -> formatRawBytes(raw, maxChars);
+            case LogicalType.UuidType u -> throw malformedFixedLength("UUID", 16, raw.length);
             case LogicalType.IntervalType i when raw.length == 12 -> formatIntervalBytes(raw);
-            case LogicalType.IntervalType i -> formatRawBytes(raw, maxChars);
+            case LogicalType.IntervalType i -> throw malformedFixedLength("INTERVAL", 12, raw.length);
             case LogicalType.Float16Type f when raw.length == 2 ->
                     Float.toString(LogicalTypeConverter.convertToFloat16(raw, PhysicalType.FIXED_LEN_BYTE_ARRAY));
             case LogicalType.Float16Type f -> formatRawBytes(raw, maxChars);
@@ -759,6 +760,19 @@ public final class ValueFormatter {
             case LogicalType.GeographyType g -> formatRawBytes(raw, maxChars);
             default -> throw notBackedBy(lt, "BYTE_ARRAY");
         };
+    }
+
+    private static void requireFixedByteLength(byte[] bytes, LogicalType lt) {
+        if (lt instanceof LogicalType.UuidType && bytes.length != 16) {
+            throw malformedFixedLength("UUID", 16, bytes.length);
+        }
+        if (lt instanceof LogicalType.IntervalType && bytes.length != 12) {
+            throw malformedFixedLength("INTERVAL", 12, bytes.length);
+        }
+    }
+
+    private static IllegalArgumentException malformedFixedLength(String type, int expected, int actual) {
+        return new IllegalArgumentException(type + " requires exactly " + expected + " bytes, got " + actual);
     }
 
     private static IllegalStateException notBackedBy(LogicalType lt, String physical) {
@@ -799,14 +813,15 @@ public final class ValueFormatter {
     public static String formatBytes(byte[] bytes, ColumnSchema col,
                                      boolean useLogicalType, int budget) {
         requireBudget(budget);
+        Objects.requireNonNull(col, "col");
         if (bytes == null) {
             return "-";
         }
-        Objects.requireNonNull(col, "col");
+        LogicalType lt = useLogicalType ? col.logicalType() : null;
+        requireFixedByteLength(bytes, lt);
         if (bytes.length == 0) {
             return isByteBacked(col.type()) ? "\"\"" : "";
         }
-        LogicalType lt = useLogicalType ? col.logicalType() : null;
 
         if (lt instanceof LogicalType.DecimalType dt) {
             BigInteger unscaled = switch (col.type()) {

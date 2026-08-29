@@ -801,4 +801,35 @@ class ValueFormatterTest {
     /// `BYTE_ARRAY` geometry column.
     private static final byte[] WKB_POINT =
             HexFormat.of().parseHex("010100000000000000005366c0f71622f0fa1955c0");
+    @Test
+    void nullSchemaIsRejectedBeforeNullValueAndAbsentByteShortcuts() {
+        assertThatThrownBy(() -> ValueFormatter.formatValue(null, null, NO_LIMIT))
+                .isInstanceOf(NullPointerException.class).hasMessage("field");
+        assertThatThrownBy(() -> ValueFormatter.formatBytes(null, null, true, NO_LIMIT))
+                .isInstanceOf(NullPointerException.class).hasMessage("col");
+        assertThatThrownBy(() -> ValueFormatter.formatDecoded((byte[]) null, null))
+                .isInstanceOf(NullPointerException.class).hasMessage("col");
+    }
+
+    @Test
+    void malformedFixedLengthDictionaryAndStatisticsValuesFail() {
+        ColumnSchema uuid = byteBackedColumn(new LogicalType.UuidType());
+        ColumnSchema interval = intervalColumn();
+
+        assertThatThrownBy(() -> ValueFormatter.formatDictionary(new byte[15], uuid, true, NO_LIMIT))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ValueFormatter.formatBytes(new byte[15], uuid, true, NO_LIMIT))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ValueFormatter.formatDictionary(new byte[11], interval, true, NO_LIMIT))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ValueFormatter.formatBytes(new byte[11], interval, true, NO_LIMIT))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> ValueFormatter.formatDictionary(new byte[0], interval, true, NO_LIMIT))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    private static ColumnSchema byteBackedColumn(LogicalType logical) {
+        return new ColumnSchema(FieldPath.of("value"), PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL,
+                null, 0, 1, 0, logical);
+    }
 }
