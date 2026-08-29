@@ -376,7 +376,7 @@ public final class DictionaryScreen {
     /// value the row has to cut is longer than the row either way.
     private static boolean isExpandable(Dictionary dict, int index, ColumnSchema col,
                                         boolean useLogicalType) {
-        return entryValue(dict, index, col, useLogicalType, VALUE_PREVIEW_MAX).length()
+        return Strings.width(entryValue(dict, index, col, useLogicalType, VALUE_PREVIEW_MAX))
                 > VALUE_PREVIEW_MAX;
     }
 

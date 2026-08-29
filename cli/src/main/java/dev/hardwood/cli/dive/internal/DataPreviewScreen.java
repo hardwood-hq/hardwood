@@ -284,7 +284,7 @@ public final class DataPreviewScreen {
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
             String marker = CursorPane.marker(isExpandableField(state, i, geometry), false, mixed);
-            String pad = " ".repeat(maxKeyWidth - name.length());
+            String pad = " ".repeat(maxKeyWidth - Strings.width(name));
             boolean isExpanded = state.expandedColumns().contains(i);
             String value = i < values.size() ? values.get(i) : "";
             ownership[i] = all.size();
@@ -312,7 +312,7 @@ public final class DataPreviewScreen {
         if (cursorLine < all.size()) {
             int fieldFirstLine = ownership[fieldIdx];
             String name = names.get(fieldIdx);
-            String pad = " ".repeat(maxKeyWidth - name.length());
+            String pad = " ".repeat(maxKeyWidth - Strings.width(name));
             boolean isExpanded = state.expandedColumns().contains(fieldIdx);
             String value = fieldIdx < values.size() ? values.get(fieldIdx) : "";
             Style selectionStyle = Theme.selection();
@@ -414,7 +414,7 @@ public final class DataPreviewScreen {
         int height = Math.max(8, screenHeight - 2);
         int maxKeyWidth = 0;
         for (String name : names) {
-            maxKeyWidth = Math.max(maxKeyWidth, name.length());
+            maxKeyWidth = Math.max(maxKeyWidth, Strings.width(name));
         }
         // Two borders, the two-cell actionability marker, the key, " : ",
         // and a trailing cell.

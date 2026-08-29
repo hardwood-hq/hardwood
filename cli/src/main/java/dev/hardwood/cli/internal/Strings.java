@@ -98,7 +98,7 @@ public final class Strings {
         if (width(s) <= maxWidth) {
             return s;
         }
-        return CharWidth.substringByWidth(s, maxWidth - 1) + ELLIPSIS;
+        return prefixByWidth(s, 0, maxWidth - 1) + ELLIPSIS;
     }
 
     /// Word-wraps `value` so each returned line fits within `width` cells.

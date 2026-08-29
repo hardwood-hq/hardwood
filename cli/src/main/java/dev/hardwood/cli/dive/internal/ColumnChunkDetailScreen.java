@@ -614,7 +614,7 @@ public final class ColumnChunkDetailScreen {
     private static List<Line> pathLines(String path) {
         // 22 is the key-padding width used by `fact`, plus 1 leading space.
         int inlineBudget = 50 - 23;
-        if (path.length() <= inlineBudget) {
+        if (Strings.width(path) <= inlineBudget) {
             return List.of(fact("Path", path));
         }
         return List.of(

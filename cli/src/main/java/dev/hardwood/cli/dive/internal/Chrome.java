@@ -61,9 +61,9 @@ public final class Chrome {
             return 1;
         }
         // " " + screenKeys + KEYBAR_SEP + globalKeys
-        int total = 1 + (screenKeys != null ? screenKeys.length() : 0)
-                + KEYBAR_SEP.length()
-                + (globalKeys != null ? globalKeys.length() : 0);
+        int total = 1 + (screenKeys != null ? Strings.width(screenKeys) : 0)
+                + Strings.width(KEYBAR_SEP)
+                + (globalKeys != null ? Strings.width(globalKeys) : 0);
         return Math.max(1, (total + width - 1) / width);
     }
 
@@ -221,10 +221,7 @@ public final class Chrome {
         String path = model.schema().getColumn(columnIndex).fieldPath().toString();
         int dot = path.lastIndexOf('.');
         String leaf = dot >= 0 ? path.substring(dot + 1) : path;
-        if (leaf.length() > 24) {
-            return Strings.truncateLeft(leaf, 24);
-        }
-        return leaf;
+        return Strings.truncateLeft(leaf, 24);
     }
 
     /// Last path segment — for the top bar we want just the file name,

@@ -102,6 +102,10 @@ class StringsTest {
 
         assertThat(Strings.firstGlyph(family)).isEqualTo(2);
         assertThat(Strings.widestGlyph(flag)).isEqualTo(2);
+        assertThat(Strings.truncateRight(flag + "xy", 3))
+                .isEqualTo(flag + Strings.ELLIPSIS);
+        assertThat(Strings.truncateRight(combining + "xy", 2))
+                .isEqualTo(combining + Strings.ELLIPSIS);
         assertThat(Strings.hardWrap(family, 1)).containsExactly(family);
         assertThat(Strings.truncateRight(family + "xy", 3))
                 .isEqualTo(family + Strings.ELLIPSIS);
