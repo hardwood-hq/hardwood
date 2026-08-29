@@ -15,9 +15,9 @@ import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Fmt;
-import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.DictionaryPageHeader;
@@ -348,7 +348,7 @@ public final class PagesScreen {
         return bytes == null ?
                 Strings.ABSENT_VALUE :
                 Strings.truncateRight(
-                        IndexValueFormatter.format(bytes, col, logical, budget),
+                        ValueFormatter.formatBytes(bytes, col, logical, budget),
                         budget);
     }
 
@@ -356,7 +356,7 @@ public final class PagesScreen {
         // Modal has space — no budget constraint, so the whole value is rendered.
         return bytes == null ?
                 Strings.ABSENT_VALUE :
-                IndexValueFormatter.format(bytes, col, logical);
+                ValueFormatter.formatBytes(bytes, col, logical);
     }
 
     private static void renderHeaderModal(Buffer buffer, Rect screenArea, PageHeader header,

@@ -16,10 +16,10 @@ import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Encodings;
 import dev.hardwood.cli.internal.Fmt;
-import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.LevelSummary;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -641,7 +641,7 @@ public final class ColumnChunkDetailScreen {
         }
         // Facts pane has plenty of horizontal room — render the full value
         // rather than passing a budget.
-        return IndexValueFormatter.format(bytes, col, useLogicalType);
+        return ValueFormatter.formatBytes(bytes, col, useLogicalType);
     }
 
     private static String padRight(String s, int width) {

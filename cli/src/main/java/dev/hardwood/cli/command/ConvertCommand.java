@@ -21,8 +21,9 @@ import org.aesh.command.option.Mixin;
 import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.JsonStrings;
-import dev.hardwood.cli.internal.table.RowTable;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
@@ -193,7 +194,7 @@ public class ConvertCommand implements Command<CommandInvocation> {
             values.add(nullString);
         }
         else {
-            values.add(RowTable.renderValue(value, schema));
+            values.add(ValueFormatter.formatValue(value, schema, BinaryValues.NO_LIMIT));
         }
     }
 
@@ -254,9 +255,10 @@ public class ConvertCommand implements Command<CommandInvocation> {
                     out.print("null");
                 } else if (fieldSchema instanceof SchemaNode.GroupNode group && group.isVariant()) {
                     PqVariant variant = rowReader.getVariant(fieldSchema.name());
-                    out.print(RowTable.renderVariant(variant));
+                    out.print(ValueFormatter.variantJson(variant));
                 } else if (!writeIfJsonScalar(out, rowReader, i, fieldSchema)) {
-                    String val = RowTable.renderField(rowReader, i, fieldSchema);
+                    String val = ValueFormatter.formatReader(rowReader, i, fieldSchema, true,
+                            ValueFormatter.NestedStyle.COMPACT, BinaryValues.NO_LIMIT);
                     out.print("\"" + JsonStrings.escape(val) + "\"");
                 }
             }

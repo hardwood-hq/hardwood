@@ -16,8 +16,8 @@ import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Fmt;
-import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Strings;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
@@ -300,7 +300,7 @@ public final class ColumnIndexScreen {
     private static void appendBound(List<Line> lines, String label, byte[] bytes, ColumnSchema col,
                                     boolean logical, int width) {
         // Modal has space — render whole value
-        String value = bytes == null ? Strings.ABSENT_VALUE : IndexValueFormatter.format(bytes, col, logical);
+        String value = bytes == null ? Strings.ABSENT_VALUE : ValueFormatter.formatBytes(bytes, col, logical);
         // The label occupies the first five cells; continuation lines are
         // indented to match so a wrapped value reads as one field.
         List<String> wrapped = Strings.hardWrap(value, Math.max(1, width - 5));
@@ -450,19 +450,19 @@ public final class ColumnIndexScreen {
             return false;
         }
         return !formatStat(bytes, col, logical, budget)
-                .equals(IndexValueFormatter.format(bytes, col, logical, budget));
+                .equals(ValueFormatter.formatBytes(bytes, col, logical, budget));
     }
 
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical, int budget) {
         if (bytes == null) {
             return Strings.ABSENT_VALUE;
         }
-        String full = IndexValueFormatter.format(bytes, col, logical, budget);
+        String full = ValueFormatter.formatBytes(bytes, col, logical, budget);
         return Strings.truncateRight(full, budget);
     }
 
     private static String formatStatFull(byte[] bytes, ColumnSchema col, boolean logical) {
-        return bytes == null ? Strings.ABSENT_VALUE : IndexValueFormatter.format(bytes, col, logical);
+        return bytes == null ? Strings.ABSENT_VALUE : ValueFormatter.formatBytes(bytes, col, logical);
     }
 
     private static void renderEmpty(Buffer buffer, Rect area, String message) {

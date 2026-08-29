@@ -29,6 +29,7 @@ import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.BinaryValues;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.cli.internal.table.StreamedTable;
 import dev.hardwood.reader.ParquetFileReader;
@@ -124,7 +125,7 @@ public class PrintCommand implements Command<CommandInvocation> {
     private void printTransposed(Stream<Object[]> stream, String[] headers, List<SchemaNode> fields, AtomicLong rowIndex) {
         stream.forEach(r -> {
             Stream<String[]> data = IntStream.range(0, headers.length)
-                    .mapToObj(i -> new String[]{headers[i], RowTable.renderValue(r[i], fields.get(i), cellBudget())});
+                    .mapToObj(i -> new String[]{headers[i], ValueFormatter.formatValue(r[i], fields.get(i), cellBudget())});
             List<String[]> tableRows = (rowIndex != null ?
                     Stream.concat(
                             Stream.<String[]>of(new String[]{"rowIndex", Long.toString(rowIndex.getAndIncrement())}), data) : data)
@@ -147,8 +148,8 @@ public class PrintCommand implements Command<CommandInvocation> {
                 addRowIndex ? Stream.concat(Stream.of("rowIndex"), Stream.of(headers)).toArray(String[]::new) : headers,
                 stream
                         .map(r -> rowIndex == null ?
-                                (IntFunction<String>) i -> RowTable.renderValue(r[i], fields.get(i), budget) :
-                                ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : RowTable.renderValue(r[i - 1], fields.get(i - 1), budget)))
+                                (IntFunction<String>) i -> ValueFormatter.formatValue(r[i], fields.get(i), budget) :
+                                ((IntFunction<String>) i -> i == 0 ? Long.toString(rowIndex.getAndIncrement()) : ValueFormatter.formatValue(r[i - 1], fields.get(i - 1), budget)))
                         .iterator(),
                 sampleSize,
                 maxWidth,

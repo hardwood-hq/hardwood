@@ -117,6 +117,19 @@
         <artifactId>jline-terminal-jni</artifactId>
         <version>3.25.1</version>
       </dependency>
+      <!-- JSON parsing of convert JSON export output in tests. Pinned here
+           rather than in the test BOM: avro's tests share the BOM and need
+           their own (older) Jackson line. -->
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-databind</artifactId>
+        <version>2.17.2</version>
+      </dependency>
+      <dependency>
+        <groupId>com.fasterxml.jackson.core</groupId>
+        <artifactId>jackson-annotations</artifactId>
+        <version>2.17.2</version>
+      </dependency>
     </dependencies>
   </dependencyManagement>
 
@@ -244,6 +257,11 @@
     <dependency>
       <groupId>org.assertj</groupId>
       <artifactId>assertj-core</artifactId>
+      <scope>test</scope>
+    </dependency>
+    <dependency>
+      <groupId>com.fasterxml.jackson.core</groupId>
+      <artifactId>jackson-databind</artifactId>
       <scope>test</scope>
     </dependency>
     <dependency>
