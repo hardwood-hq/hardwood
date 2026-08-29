@@ -15,6 +15,7 @@ import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.Sizes;
+import dev.hardwood.cli.internal.Strings;
 import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Layout;
@@ -221,7 +222,7 @@ public final class Chrome {
         int dot = path.lastIndexOf('.');
         String leaf = dot >= 0 ? path.substring(dot + 1) : path;
         if (leaf.length() > 24) {
-            return "…" + leaf.substring(leaf.length() - 23);
+            return Strings.truncateLeft(leaf, 24);
         }
         return leaf;
     }

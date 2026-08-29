@@ -1015,7 +1015,7 @@ public final class ValueFormatter {
             return "null";
         }
         if (capped(maxChars) && depth >= MAX_NESTED_DEPTH) {
-            return "…";
+            return String.valueOf(Strings.ELLIPSIS);
         }
         if (value instanceof PqList list) {
             return formatList(list, depth, useLogicalType, maxChars);
@@ -1059,7 +1059,7 @@ public final class ValueFormatter {
         int size = list.size();
         for (int i = 0; i < size; i++) {
             if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
-                sb.append(", …+").append(size - MAX_NESTED_ELEMENTS);
+                sb.append(", ").append(Strings.ELLIPSIS).append("+").append(size - MAX_NESTED_ELEMENTS);
                 break;
             }
             if (shown > 0) {
@@ -1082,7 +1082,7 @@ public final class ValueFormatter {
         int shown = 0;
         for (int i = 0; i < count; i++) {
             if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
-                sb.append(", …+").append(count - MAX_NESTED_ELEMENTS);
+                sb.append(", ").append(Strings.ELLIPSIS).append("+").append(count - MAX_NESTED_ELEMENTS);
                 break;
             }
             if (shown > 0) {
@@ -1107,7 +1107,7 @@ public final class ValueFormatter {
         java.util.List<PqMap.Entry> entries = map.getEntries();
         for (PqMap.Entry entry : entries) {
             if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
-                sb.append(", …+").append(entries.size() - MAX_NESTED_ELEMENTS);
+                sb.append(", ").append(Strings.ELLIPSIS).append("+").append(entries.size() - MAX_NESTED_ELEMENTS);
                 break;
             }
             if (shown > 0) {
@@ -1169,7 +1169,7 @@ public final class ValueFormatter {
         int shown = 0;
         for (int i = 0; i < count; i++) {
             if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
-                sb.append(", …+").append(count - MAX_NESTED_ELEMENTS);
+                sb.append(", ").append(Strings.ELLIPSIS).append("+").append(count - MAX_NESTED_ELEMENTS);
                 break;
             }
             if (shown > 0) {
@@ -1192,7 +1192,7 @@ public final class ValueFormatter {
         int shown = 0;
         for (int i = 0; i < size; i++) {
             if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
-                sb.append(", …+").append(size - MAX_NESTED_ELEMENTS);
+                sb.append(", ").append(Strings.ELLIPSIS).append("+").append(size - MAX_NESTED_ELEMENTS);
                 break;
             }
             if (shown > 0) {

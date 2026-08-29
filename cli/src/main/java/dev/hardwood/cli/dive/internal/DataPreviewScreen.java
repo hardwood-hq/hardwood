@@ -218,7 +218,7 @@ public final class DataPreviewScreen {
         String typeMode = state.logicalTypes() ? "" : " · physical";
         // A clipped trailing column is only partly on screen — mark the range
         // with the same ellipsis the cells use rather than claiming it whole.
-        String clipMark = window.clipped() ? "…" : "";
+        String clipMark = window.clipped() ? String.valueOf(Strings.ELLIPSIS) : "";
         String title = Fmt.fmt(" Data preview (rows %,d–%,d of %,d · cols %d–%d%s of %d%s) ",
                 state.firstRow() + 1, lastRow, total,
                 state.columnScroll() + 1, window.end(), clipMark, columnCount, typeMode);
@@ -864,7 +864,7 @@ public final class DataPreviewScreen {
         if (max < 1) {
             throw new IllegalArgumentException("Maximum width must be positive");
         }
-        return CharWidth.truncateWithEllipsis(s, max, "…", CharWidth.TruncatePosition.END);
+        return Strings.truncateRight(s, max);
     }
 
     /// The columns the current viewport can show, starting at `columnScroll`.

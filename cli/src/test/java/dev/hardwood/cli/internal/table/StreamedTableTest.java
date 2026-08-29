@@ -14,6 +14,8 @@ import java.util.function.IntFunction;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.cli.internal.Strings;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 class StreamedTableTest {
@@ -81,14 +83,14 @@ class StreamedTableTest {
     }
 
     @Test
-    void doesNotTruncateSurrogatePairsThatFitTheDisplayWidth() {
+    void truncatesSurrogatePairsAtDisplayCellBoundaries() {
         String output = render(List.<String[]>of(new String[]{"😀abcd"}), 5, true);
 
         assertThat(output).isEqualTo("""
                 +-------+
                 | name  |
                 +-------+
-                | 😀abcd |
+                | 😀ab… |
                 +-------+""");
         assertEqualDisplayWidths(output);
     }
@@ -101,11 +103,11 @@ class StreamedTableTest {
         String output = render(List.<String[]>of(new String[]{"😀😀😀"}), "x", 2, true);
 
         assertThat(output).isEqualTo("""
-                +----+
-                | x  |
-                +----+
+                +-----+
+                | x   |
+                +-----+
                 | 😀… |
-                +----+""");
+                +-----+""");
         assertEqualDisplayWidths(output);
     }
 
@@ -312,8 +314,8 @@ class StreamedTableTest {
     }
 
     private static void assertEqualDisplayWidths(String output) {
-        int expectedWidth = RowTable.displayWidth(output.lines().findFirst().orElseThrow());
+        int expectedWidth = Strings.width(output.lines().findFirst().orElseThrow());
         assertThat(output.lines()).allSatisfy(line ->
-                assertThat(RowTable.displayWidth(line)).isEqualTo(expectedWidth));
+                assertThat(Strings.width(line)).isEqualTo(expectedWidth));
     }
 }

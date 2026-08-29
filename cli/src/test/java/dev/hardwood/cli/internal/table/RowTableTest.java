@@ -11,6 +11,8 @@ import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.cli.internal.Strings;
+
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Grid and layout tests for [RowTable]: how a table of pre-rendered strings
@@ -20,31 +22,31 @@ class RowTableTest {
 
     @Test
     void displayWidthCountsAsciiAsOne() {
-        assertThat(RowTable.displayWidth("hello")).isEqualTo(5);
-        assertThat(RowTable.displayWidth("")).isZero();
+        assertThat(Strings.width("hello")).isEqualTo(5);
+        assertThat(Strings.width("")).isZero();
     }
 
     @Test
     void displayWidthTreatsLatinAccentsAsNarrow() {
-        assertThat(RowTable.displayWidth("Última")).isEqualTo(6);
-        assertThat(RowTable.displayWidth("Ñuble")).isEqualTo(5);
+        assertThat(Strings.width("Última")).isEqualTo(6);
+        assertThat(Strings.width("Ñuble")).isEqualTo(5);
     }
 
     @Test
     void displayWidthCountsHangulAsWide() {
         // 5 Hangul syllables → 10 terminal cells
-        assertThat(RowTable.displayWidth("말도나도주")).isEqualTo(10);
+        assertThat(Strings.width("말도나도주")).isEqualTo(10);
     }
 
     @Test
     void displayWidthCountsCjkIdeographsAsWide() {
         // 3 CJK ideographs → 6 terminal cells
-        assertThat(RowTable.displayWidth("漢字水")).isEqualTo(6);
+        assertThat(Strings.width("漢字水")).isEqualTo(6);
     }
 
     @Test
     void displayWidthCountsKanaAsWide() {
-        assertThat(RowTable.displayWidth("コキンボ")).isEqualTo(8);
+        assertThat(Strings.width("コキンボ")).isEqualTo(8);
     }
 
     @Test
@@ -57,9 +59,9 @@ class RowTableTest {
         String out = RowTable.renderTable(headers, rows);
         String[] lines = out.split("\n");
         // Every line must have the same display width so the borders align visually.
-        int expected = RowTable.displayWidth(lines[0]);
+        int expected = Strings.width(lines[0]);
         for (String line : lines) {
-            assertThat(RowTable.displayWidth(line))
+            assertThat(Strings.width(line))
                     .as("line width: %s", line)
                     .isEqualTo(expected);
         }
@@ -81,8 +83,8 @@ class RowTableTest {
                 +------+--------+
                 | note |      x |
                 +------+--------+""");
-        int expectedWidth = RowTable.displayWidth(out.lines().findFirst().orElseThrow());
+        int expectedWidth = Strings.width(out.lines().findFirst().orElseThrow());
         assertThat(out.lines()).allSatisfy(line ->
-                assertThat(RowTable.displayWidth(line)).isEqualTo(expectedWidth));
+                assertThat(Strings.width(line)).isEqualTo(expectedWidth));
     }
 }

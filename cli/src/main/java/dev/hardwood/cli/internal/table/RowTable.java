@@ -16,6 +16,7 @@ import java.util.stream.IntStream;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
+import dev.hardwood.cli.internal.Strings;
 
 public final class RowTable {
 
@@ -74,11 +75,11 @@ public final class RowTable {
         int cols = headers.length;
         int[] widths = new int[cols];
         for (int i = 0; i < cols; i++) {
-            widths[i] = displayWidth(headers[i]);
+            widths[i] = Strings.width(headers[i]);
         }
         for (String[] row : rows) {
             for (int i = 0; i < cols; i++) {
-                widths[i] = Math.max(widths[i], displayWidth(row[i]));
+                widths[i] = Math.max(widths[i], Strings.width(row[i]));
             }
         }
 
@@ -121,7 +122,7 @@ public final class RowTable {
         sb.append('|');
         for (int i = 0; i < cells.length; i++) {
             String cell = cells[i];
-            int padding = widths[i] - displayWidth(cell);
+            int padding = widths[i] - Strings.width(cell);
             sb.append(' ');
             if (rightAlign) {
                 appendSpaces(sb, padding);
@@ -141,64 +142,5 @@ public final class RowTable {
         for (int i = 0; i < count; i++) {
             sb.append(' ');
         }
-    }
-
-    /// Returns the number of terminal cells the string occupies. East Asian wide
-    /// characters (CJK ideographs, Hangul, Kana, Fullwidth forms) count as 2; other
-    /// characters count as 1. Surrogate pairs are counted once per code point.
-    static int displayWidth(String s) {
-        int width = 0;
-        int i = 0;
-        int len = s.length();
-        while (i < len) {
-            int cp = s.codePointAt(i);
-            width += charWidth(cp);
-            i += Character.charCount(cp);
-        }
-        return width;
-    }
-
-    /// Returns the min-content width of the string: the number of terminal cells taken
-    /// by its widest single code point, i.e. the narrowest column the string can be
-    /// wrapped into without a glyph overflowing. Empty strings have a width of 1.
-    static int widestGlyph(String s) {
-        int widest = 1;
-        int i = 0;
-        int len = s.length();
-        while (i < len) {
-            int cp = s.codePointAt(i);
-            widest = Math.max(widest, charWidth(cp));
-            i += Character.charCount(cp);
-        }
-        return widest;
-    }
-
-    /// Returns the number of terminal cells taken by the string's first code point,
-    /// i.e. the narrowest column that can render any of the string at all. Empty
-    /// strings have a width of 1.
-    static int firstGlyph(String s) {
-        return s.isEmpty() ? 1 : charWidth(s.codePointAt(0));
-    }
-
-    /// Returns the number of terminal cells a single code point occupies: 2 for East
-    /// Asian wide characters (CJK ideographs, Hangul, Kana, Fullwidth forms), 1 otherwise.
-    static int charWidth(int cp) {
-        return isWideCodePoint(cp) ? 2 : 1;
-    }
-
-    private static boolean isWideCodePoint(int cp) {
-        return (cp >= 0x1100 && cp <= 0x115F)     // Hangul Jamo
-                || (cp >= 0x2E80 && cp <= 0x303E) // CJK Radicals, Kangxi, CJK Symbols & Punctuation
-                || (cp >= 0x3041 && cp <= 0x33FF) // Hiragana, Katakana, Bopomofo, Hangul Compat, CJK Strokes
-                || (cp >= 0x3400 && cp <= 0x4DBF) // CJK Unified Ideographs Extension A
-                || (cp >= 0x4E00 && cp <= 0x9FFF) // CJK Unified Ideographs
-                || (cp >= 0xA000 && cp <= 0xA4CF) // Yi Syllables & Radicals
-                || (cp >= 0xAC00 && cp <= 0xD7A3) // Hangul Syllables
-                || (cp >= 0xF900 && cp <= 0xFAFF) // CJK Compatibility Ideographs
-                || (cp >= 0xFE30 && cp <= 0xFE4F) // CJK Compatibility Forms
-                || (cp >= 0xFF00 && cp <= 0xFF60) // Fullwidth Forms
-                || (cp >= 0xFFE0 && cp <= 0xFFE6) // Fullwidth Signs
-                || (cp >= 0x20000 && cp <= 0x2FFFD) // CJK Extensions B–F
-                || (cp >= 0x30000 && cp <= 0x3FFFD); // CJK Extension G
     }
 }

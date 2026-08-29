@@ -94,4 +94,35 @@ class StringsTest {
                 .as("strings at or above the width are returned unchanged")
                 .isEqualTo("abcd");
     }
+    @Test
+    void graphemeBoundariesStayIntactAcrossWidthOperations() {
+        String family = "👨‍👩‍👧‍👦";
+        String flag = "🇺🇸";
+        String combining = "e\u0301";
+
+        assertThat(Strings.firstGlyph(family)).isEqualTo(2);
+        assertThat(Strings.widestGlyph(flag)).isEqualTo(2);
+        assertThat(Strings.hardWrap(family, 1)).containsExactly(family);
+        assertThat(Strings.truncateRight(family + "xy", 3))
+                .isEqualTo(family + Strings.ELLIPSIS);
+        assertThat(Strings.truncateLeft("xy" + family, 3))
+                .isEqualTo(Strings.ELLIPSIS + family);
+        assertThat(Strings.hardWrap(combining, 1)).containsExactly(combining);
+    }
+
+    @Test
+    void combiningOnlyClustersMakeProgress() {
+        String combiningOnly = "\u0301\u0308";
+
+        assertThat(Strings.firstGlyph(combiningOnly)).isEqualTo(1);
+        assertThat(Strings.widestGlyph(combiningOnly)).isEqualTo(1);
+        assertThat(Strings.hardWrap(combiningOnly, 1)).containsExactly(combiningOnly);
+    }
+    @Test
+    void leftTruncationAndWordWrapUseDisplayCells() {
+        assertThat(Strings.truncateLeft("ab😀", 3))
+                .isEqualTo(Strings.ELLIPSIS + "😀");
+        assertThat(Strings.wordWrap("日本語", 3))
+                .containsExactly("日", "本", "語");
+    }
 }
