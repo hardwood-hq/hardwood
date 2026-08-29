@@ -7,19 +7,15 @@
  */
 package dev.hardwood.cli.internal.table;
 
-import java.nio.charset.StandardCharsets;
-import java.util.HexFormat;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.schema.SchemaNode;
-
 import static org.assertj.core.api.Assertions.assertThat;
 
+/// Grid and layout tests for [RowTable]: how a table of pre-rendered strings
+/// pads, aligns and draws its borders. Value-to-text rendering lives in
+/// [dev.hardwood.cli.internal.ValueFormatter] and its tests.
 class RowTableTest {
 
     @Test
@@ -49,64 +45,6 @@ class RowTableTest {
     @Test
     void displayWidthCountsKanaAsWide() {
         assertThat(RowTable.displayWidth("コキンボ")).isEqualTo(8);
-    }
-
-    @Test
-    void renderBareByteArrayAsStringWhenValidUtf8() {
-        SchemaNode.PrimitiveNode schema = bareByteArray();
-        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
-
-        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("hello");
-    }
-
-    @Test
-    void renderBareByteArrayAsHexWhenInvalidUtf8() {
-        SchemaNode.PrimitiveNode schema = bareByteArray();
-        // Lone continuation byte — not a valid UTF-8 sequence.
-        byte[] bytes = {(byte) 0xC3, (byte) 0x28, (byte) 0xA0, (byte) 0xA1};
-
-        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("0xc328a0a1");
-    }
-
-    /// The hex is rendered whole; the table caps the cell and marks it, the
-    /// same way it caps a long string.
-    @Test
-    void renderLongBareByteArrayAsCompleteHex() {
-        assertThat(RowTable.renderValue(wkbPoint(), bareByteArray()))
-                .isEqualTo("0x010100000000000000005366c0f71622f0fa1955c0");
-    }
-
-    /// A fixed-width column carries the same payload and renders it the same
-    /// way — the physical type makes no difference to the rendering.
-    @Test
-    void renderBareFixedLenByteArrayTheSameWay() {
-        SchemaNode.PrimitiveNode schema = new SchemaNode.PrimitiveNode(
-                "f", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, null, 0, 0, 0);
-
-        assertThat(RowTable.renderValue(wkbPoint(), schema))
-                .isEqualTo("0x010100000000000000005366c0f71622f0fa1955c0");
-    }
-
-    @Test
-    void renderAnnotatedStringAlwaysDecodes() {
-        SchemaNode.PrimitiveNode schema = new SchemaNode.PrimitiveNode(
-                "f", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                new LogicalType.StringType(), 0, 0, 0);
-        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
-
-        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("hello");
-    }
-
-    /// A WKB `Point`, as GeoParquet 1.x stores geometry: an unannotated
-    /// `BYTE_ARRAY` holding a byte-order flag, a geometry type and two
-    /// little-endian doubles.
-    private static byte[] wkbPoint() {
-        return HexFormat.of().parseHex("010100000000000000005366c0f71622f0fa1955c0");
-    }
-
-    private static SchemaNode.PrimitiveNode bareByteArray() {
-        return new SchemaNode.PrimitiveNode(
-                "f", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, null, 0, 0, 0);
     }
 
     @Test

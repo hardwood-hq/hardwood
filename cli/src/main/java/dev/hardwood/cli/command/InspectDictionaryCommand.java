@@ -21,9 +21,9 @@ import org.aesh.command.option.Option;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.cli.internal.BinaryValues;
-import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.DictionaryParser;

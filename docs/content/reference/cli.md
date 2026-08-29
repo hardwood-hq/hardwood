@@ -29,8 +29,8 @@ run the CLI via Docker without installing it locally — see the [Docker section
 |---------|-------------|
 | `hardwood info` | Display high-level file information, including key-value metadata |
 | `hardwood schema` | Print the file schema, including logical-type annotations such as `VARIANT(1)` on Variant groups |
-| `hardwood print` | Print rows as an ASCII table (head, tail, or all); Variant columns are decoded to JSON-like text |
-| `hardwood convert` | Convert a Parquet file to CSV or JSON (head, tail, or all); JSON output writes numbers and booleans as JSON scalars and a null as `null`; Variant columns are emitted as a JSON string in CSV and as a native JSON subtree in JSON |
+| `hardwood print` | Print rows as an ASCII table (head, tail, or all); nested and Variant columns decode into a one-line display grammar |
+| `hardwood convert` | Convert a Parquet file to CSV or JSON (head, tail, or all); JSON output writes numbers and booleans as JSON scalars and a null as `null`; Variant columns are emitted as a single cell in CSV and as a native JSON subtree in JSON |
 | `hardwood footer` | Print decoded footer length, offset, and file structure |
 | `hardwood inspect pages` | List data and dictionary pages per column chunk; includes per-page min/max when the file has a page index |
 | `hardwood inspect dictionary` | Print dictionary entries for a column |
@@ -98,7 +98,7 @@ hardwood convert --format csv --null-string '\N' -f data.parquet
 non-repeated `BOOLEAN`, `INT32`, `INT64`, `FLOAT`, and `DOUBLE` fields that
 carry no logical annotation or an `INT` annotation. Date, time, timestamp,
 decimal, UUID, interval, `FLOAT16`, `INT96`, byte-array, and nested values are
-JSON strings.
+JSON strings. Decimals are always plain strings — `0.0000001`, never `1E-7`.
 
 Finite floating-point values are JSON numbers. `NaN`, `Infinity`, and
 `-Infinity` are JSON strings, because JSON has no non-finite number values.
@@ -118,6 +118,20 @@ is an error.
 inside a rendered list, map, or struct cell is the text `null` in that cell. A
 Variant holding the Variant null is the text `null` too: that is a value the
 column carries, not an absent one.
+
+## Value rendering
+
+Every command spells a value of a given logical type the same way: timestamps
+as ISO-8601 text (including `INT96` min/max statistics, which are not hex),
+dates as `LocalDate`, decimals as plain strings, UUIDs as their canonical
+`toString`. Table surfaces — `print`, CSV cells, and `dive` — render nested
+and Variant values in one unquoted display grammar: structs and maps as
+`{ a : 1 }`, lists as `[1, 2]`, Variant objects and arrays in the same shape.
+Only `convert --format json` emits real JSON for Variant values, since that
+output must parse as JSON. A control character in any string value renders as
+`·` (or as `0x`-prefixed hex when every character is a control) on every
+surface, including JSON exports — a parsed export contains `·`, never the
+original control byte.
 
 ## Schema output formats
 
@@ -153,7 +167,9 @@ line per entry: the key, its value's byte length, and the value itself. Values
 wider than 60 columns are truncated with a trailing `…`, since these routinely
 carry kilobytes of embedded JSON (e.g.
 `org.apache.spark.sql.parquet.row.metadata`) or a base64-encoded Arrow IPC
-schema (`ARROW:schema`). Control characters in a value print as `·`:
+schema (`ARROW:schema`). Control characters in a value print as `·`, and a
+value made entirely of control characters prints as `0x`-prefixed hex of its
+UTF-8 bytes:
 
 ```
 Key/Value Metadata (3):

@@ -85,9 +85,11 @@ public final class ValueFormatter {
     /// Nested groups always render structurally — the toggle only affects
     /// primitive leaves.
     ///
-    /// `COMPACT` caps the nested walk at a few elements and depth levels (the
-    /// cell budget bounds it further); `EXPANDED` renders every element on its
-    /// own indented line.
+    /// `COMPACT` is the single-line table-cell form; with a finite budget the
+    /// nested walk is capped at a few elements and depth levels (a preview
+    /// cell shows a capped view), while `NO_LIMIT` renders every element —
+    /// the export leaf path. `EXPANDED` renders every element on its own
+    /// indented line.
     public static String formatReader(RowReader reader, int fieldIndex, SchemaNode field,
                                       boolean useLogicalType, NestedStyle style, int budget) {
         Objects.requireNonNull(reader, "reader");
@@ -302,7 +304,7 @@ public final class ValueFormatter {
             case OBJECT -> prettyVariantObject(variant.asObject(), indent, useLogicalType, maxChars);
             case ARRAY -> prettyVariantArray(variant.asArray(), indent, useLogicalType, maxChars);
             // Primitives use the single-line form.
-            default -> formatVariant(variant, indent, useLogicalType, maxChars);
+            default -> formatVariant(variant, indent, maxChars);
         };
     }
 
@@ -349,24 +351,32 @@ public final class ValueFormatter {
     }
 
     /// Renders a materialised value — whatever the reader's `getValue` hands
-    /// back for one field — as its canonical display text. Scalars and byte-backed
-    /// leaves only: nested values (structs, lists, maps, variants) are rendered
-    /// by the caller's nested walker, and handing one here is a schema/value
-    /// mismatch rather than something to stringify.
-    ///
-    /// `field` must be the value's own schema node; it decides how byte-backed
-    /// leaves decode (annotated strings, UUID, decimal, INTERVAL, INT96) and
-    /// whether integers render unsigned.
+    /// back for one field — as its canonical display text. Nested values
+    /// (structs, lists, maps, variants) render whole in the display grammar:
+    /// `{ a : 1 }`, `[1, 2]`, unquoted Variant keys. `field` is the value's own
+    /// schema node; it decides how byte-backed leaves decode (annotated
+    /// strings, UUID, decimal, INTERVAL, INT96) and whether integers render
+    /// unsigned. A null or non-group schema walks the value schema-less, the
+    /// way legacy list and map layouts without resolvable child schemas always
+    /// have; a group schema with a scalar value is a mismatch and throws
+    /// rather than rendering a misleading string.
     public static String formatValue(Object value, SchemaNode field, int budget) {
         requireBudget(budget);
-        Objects.requireNonNull(field, "field");
         if (value == null) {
             return "null";
         }
-        if (value instanceof PqVariant || value instanceof PqStruct || value instanceof PqList
-                || value instanceof PqMap) {
-            throw new IllegalStateException("Field '" + field.name() + "' is not a group in the schema, but the"
-                    + " value is a " + value.getClass().getName());
+        Objects.requireNonNull(field, "field");
+        if (value instanceof PqVariant variant) {
+            return formatVariantDisplay(variant, budget);
+        }
+        if (value instanceof PqStruct struct) {
+            return formatStructDisplay(struct, asGroup(field), budget);
+        }
+        if (value instanceof PqList list) {
+            return formatListDisplay(list, asGroup(field), budget);
+        }
+        if (value instanceof PqMap map) {
+            return formatMapDisplay(map, asGroup(field), budget);
         }
         if (field instanceof SchemaNode.GroupNode) {
             throw new IllegalStateException("Field '" + field.name() + "' is a group in the schema, but the"
@@ -400,6 +410,220 @@ public final class ValueFormatter {
             }
         }
         return String.valueOf(value);
+    }
+
+    private static SchemaNode.GroupNode asGroup(SchemaNode field) {
+        return field instanceof SchemaNode.GroupNode group ? group : null;
+    }
+
+    // ==================== display-grammar nested walkers (whole values) ====================
+
+    /// Walks a materialised nested value whole: no element or depth caps — the
+    /// caps are a dive-preview-cell device, and a `print` or `convert` cell
+    /// renders the value in full. The budget only bounds binary hex at leaves.
+    private static String formatStructDisplay(PqStruct struct, SchemaNode.GroupNode schemaNode, int maxChars) {
+        StringBuilder sb = new StringBuilder("{ ");
+        int fieldCount = struct.getFieldCount();
+        for (int i = 0; i < fieldCount; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            String name = struct.getFieldName(i);
+            sb.append(name).append(" : ")
+                    .append(formatValue(struct.getValue(name), findChildSchema(schemaNode, name), maxChars));
+        }
+        return sb.append(" }").toString();
+    }
+
+    private static String formatListDisplay(PqList list, SchemaNode.GroupNode schemaNode, int maxChars) {
+        SchemaNode elementSchema = schemaNode != null ? schemaNode.getListElement() : null;
+        StringBuilder sb = new StringBuilder("[");
+        int size = list.size();
+        for (int i = 0; i < size; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(formatValue(list.get(i), elementSchema, maxChars));
+        }
+        return sb.append("]").toString();
+    }
+
+    private static String formatMapDisplay(PqMap map, SchemaNode.GroupNode schemaNode, int maxChars) {
+        SchemaNode keySchema = null;
+        SchemaNode valueSchema = null;
+        if (schemaNode != null && !schemaNode.children().isEmpty()) {
+            SchemaNode.GroupNode keyValueGroup = (SchemaNode.GroupNode) schemaNode.children().get(0);
+            if (keyValueGroup.children().size() >= 2) {
+                keySchema = keyValueGroup.children().get(0);
+                valueSchema = keyValueGroup.children().get(1);
+            }
+        }
+        StringBuilder sb = new StringBuilder("{ ");
+        boolean first = true;
+        for (PqMap.Entry entry : map.getEntries()) {
+            if (!first) {
+                sb.append(", ");
+            }
+            first = false;
+            sb.append(formatValue(entry.getKey(), keySchema, maxChars))
+                    .append(" : ")
+                    .append(formatValue(entry.getValue(), valueSchema, maxChars));
+        }
+        return sb.append(" }").toString();
+    }
+
+    private static SchemaNode findChildSchema(SchemaNode.GroupNode groupNode, String name) {
+        if (groupNode == null) {
+            return null;
+        }
+        for (SchemaNode child : groupNode.children()) {
+            if (child.name().equals(name)) {
+                return child;
+            }
+        }
+        return null;
+    }
+
+    /// Whole-value display grammar for a Variant: objects `{ k : v }`, arrays
+    /// `[v, ...]`, unquoted scalars. The export grammar is [#variantJson].
+    private static String formatVariantDisplay(PqVariant variant, int maxChars) {
+        return switch (variant.type()) {
+            case OBJECT -> variantDisplayObject(variant.asObject(), maxChars);
+            case ARRAY -> variantDisplayArray(variant.asArray(), maxChars);
+            default -> variantScalarText(variant, maxChars);
+        };
+    }
+
+    private static String variantDisplayObject(PqVariantObject object, int maxChars) {
+        int fieldCount = object.getFieldCount();
+        if (fieldCount == 0) {
+            return "{}";
+        }
+        StringBuilder sb = new StringBuilder("{ ");
+        for (int i = 0; i < fieldCount; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            String name = object.getFieldName(i);
+            sb.append(name).append(" : ").append(formatVariantDisplay(object.getVariant(name), maxChars));
+        }
+        return sb.append(" }").toString();
+    }
+
+    private static String variantDisplayArray(PqVariantArray array, int maxChars) {
+        int size = array.size();
+        if (size == 0) {
+            return "[]";
+        }
+        StringBuilder sb = new StringBuilder("[");
+        for (int i = 0; i < size; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            sb.append(formatVariantDisplay(array.get(i), maxChars));
+        }
+        return sb.append("]").toString();
+    }
+
+    // ==================== export-only JSON grammar ====================
+
+    /// Export-only JSON grammar for Variant values — quoted keys and strings
+    /// with JSON escapes — used by `convert --format json`, where the output
+    /// must parse as JSON. STRING leaves are sanitised before escaping, so
+    /// parsed JSON contains `·`, never the original control character.
+    public static String variantJson(PqVariant variant) {
+        if (variant == null) {
+            return "null";
+        }
+        StringBuilder sb = new StringBuilder();
+        appendVariantJson(sb, variant);
+        return sb.toString();
+    }
+
+    private static void appendVariantJson(StringBuilder sb, PqVariant variant) {
+        switch (variant.type()) {
+            case NULL -> sb.append("null");
+            case BOOLEAN_TRUE -> sb.append("true");
+            case BOOLEAN_FALSE -> sb.append("false");
+            case INT8, INT16, INT32 -> sb.append(variant.asInt());
+            case INT64 -> sb.append(variant.asLong());
+            case FLOAT -> sb.append(variant.asFloat());
+            case DOUBLE -> sb.append(variant.asDouble());
+            case DECIMAL4, DECIMAL8, DECIMAL16 -> sb.append(variant.asDecimal().toPlainString());
+            case STRING -> appendJsonString(sb, Strings.sanitizeControls(variant.asString()));
+            case BINARY -> appendJsonString(sb, BinaryValues.render(variant.asBinary()));
+            case DATE -> appendJsonString(sb, variant.asDate().toString());
+            case TIME_NTZ -> appendJsonString(sb, variant.asTime().toString());
+            case TIMESTAMP, TIMESTAMP_NTZ, TIMESTAMP_NANOS, TIMESTAMP_NTZ_NANOS ->
+                appendJsonString(sb, variant.asTimestamp().toString());
+            case UUID -> appendJsonString(sb, variant.asUuid().toString());
+            case OBJECT -> appendVariantJsonObject(sb, variant.asObject());
+            case ARRAY -> appendVariantJsonArray(sb, variant.asArray());
+        }
+    }
+
+    private static void appendVariantJsonObject(StringBuilder sb, PqVariantObject object) {
+        sb.append('{');
+        int fieldCount = object.getFieldCount();
+        for (int i = 0; i < fieldCount; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            String name = object.getFieldName(i);
+            appendJsonString(sb, name);
+            sb.append(": ");
+            PqVariant fieldValue = object.getVariant(name);
+            if (fieldValue == null) {
+                sb.append("null");
+            }
+            else {
+                appendVariantJson(sb, fieldValue);
+            }
+        }
+        sb.append('}');
+    }
+
+    private static void appendVariantJsonArray(StringBuilder sb, PqVariantArray array) {
+        sb.append('[');
+        int size = array.size();
+        for (int i = 0; i < size; i++) {
+            if (i > 0) {
+                sb.append(", ");
+            }
+            PqVariant element = array.get(i);
+            if (element == null) {
+                sb.append("null");
+            }
+            else {
+                appendVariantJson(sb, element);
+            }
+        }
+        sb.append(']');
+    }
+
+    private static void appendJsonString(StringBuilder sb, String s) {
+        sb.append('"');
+        for (int i = 0; i < s.length(); i++) {
+            char c = s.charAt(i);
+            switch (c) {
+                case '"' -> sb.append("\\\"");
+                case '\\' -> sb.append("\\\\");
+                case '\n' -> sb.append("\\n");
+                case '\r' -> sb.append("\\r");
+                case '\t' -> sb.append("\\t");
+                case '\b' -> sb.append("\\b");
+                case '\f' -> sb.append("\\f");
+                default -> {
+                    if (c < 0x20) {
+                        sb.append(Fmt.fmt("\\u%04x", (int) c));
+                    }
+                    else {
+                        sb.append(c);
+                    }
+                }
+            }
+        }
+        sb.append('"');
     }
 
     /// Renders a byte-backed materialised leaf. Annotated strings decode as
@@ -756,16 +980,26 @@ public final class ValueFormatter {
     private static final int MAX_NESTED_ELEMENTS = 3;
     private static final int MAX_NESTED_DEPTH = 3;
 
+    /// Whether the COMPACT walk caps its element and depth counts. A preview
+    /// cell with a finite budget shows a capped view — the screen clips it
+    /// anyway; a `NO_LIMIT` rendering (`convert --format json` leaves) shows
+    /// every element. The caps are never applied to the materialised walker,
+    /// which renders `print` / CSV cells whole.
+    private static boolean capped(int maxChars) {
+        return maxChars != BinaryValues.NO_LIMIT;
+    }
+
     /// Renders a nested value (`PqList`, `PqStruct`, `PqMap`, `PqVariant`,
-    /// `byte[]`, or any other [Object]) as compact JSON-like text. Capped at
-    /// [#MAX_NESTED_ELEMENTS] visible entries per collection and
-    /// [#MAX_NESTED_DEPTH] levels of recursion — the screen further truncates
-    /// the result to the cell width budget.
+    /// `byte[]`, or any other [Object]) as compact display-grammar text —
+    /// `{ a : 1 }`, `[1, 2]` — the same spelling the materialised walker uses.
+    /// When the budget is finite the walk is capped at [#MAX_NESTED_ELEMENTS]
+    /// visible entries per collection and [#MAX_NESTED_DEPTH] levels of
+    /// recursion; the screen further truncates the result to the cell budget.
     private static String formatNested(Object value, int depth, boolean useLogicalType, int maxChars) {
         if (value == null) {
             return "null";
         }
-        if (depth >= MAX_NESTED_DEPTH) {
+        if (capped(maxChars) && depth >= MAX_NESTED_DEPTH) {
             return "…";
         }
         if (value instanceof PqList list) {
@@ -778,7 +1012,7 @@ public final class ValueFormatter {
             return formatMap(map, depth, useLogicalType, maxChars);
         }
         if (value instanceof PqVariant variant) {
-            return formatVariant(variant, depth, useLogicalType, maxChars);
+            return formatVariant(variant, depth, maxChars);
         }
         if (value instanceof byte[] bytes) {
             return formatRawBytes(bytes, maxChars);
@@ -809,7 +1043,7 @@ public final class ValueFormatter {
         int shown = 0;
         int size = list.size();
         for (int i = 0; i < size; i++) {
-            if (shown == MAX_NESTED_ELEMENTS) {
+            if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
                 sb.append(", …+").append(size - MAX_NESTED_ELEMENTS);
                 break;
             }
@@ -829,10 +1063,10 @@ public final class ValueFormatter {
         if (count == 0) {
             return "{}";
         }
-        StringBuilder sb = new StringBuilder("{");
+        StringBuilder sb = new StringBuilder("{ ");
         int shown = 0;
         for (int i = 0; i < count; i++) {
-            if (shown == MAX_NESTED_ELEMENTS) {
+            if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
                 sb.append(", …+").append(count - MAX_NESTED_ELEMENTS);
                 break;
             }
@@ -842,10 +1076,10 @@ public final class ValueFormatter {
             String fieldName = struct.getFieldName(i);
             Object fieldValue = struct.isNull(fieldName) ? null
                     : (useLogicalType ? struct.getValue(fieldName) : struct.getRawValue(fieldName));
-            sb.append(fieldName).append(": ").append(formatNested(fieldValue, depth + 1, useLogicalType, maxChars));
+            sb.append(fieldName).append(" : ").append(formatNested(fieldValue, depth + 1, useLogicalType, maxChars));
             shown++;
         }
-        sb.append("}");
+        sb.append(" }");
         return sb.toString();
     }
 
@@ -853,11 +1087,11 @@ public final class ValueFormatter {
         if (map.isEmpty()) {
             return "{}";
         }
-        StringBuilder sb = new StringBuilder("{");
+        StringBuilder sb = new StringBuilder("{ ");
         int shown = 0;
         java.util.List<PqMap.Entry> entries = map.getEntries();
         for (PqMap.Entry entry : entries) {
-            if (shown == MAX_NESTED_ELEMENTS) {
+            if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
                 sb.append(", …+").append(entries.size() - MAX_NESTED_ELEMENTS);
                 break;
             }
@@ -868,17 +1102,26 @@ public final class ValueFormatter {
             Object value = entry.isValueNull() ? null
                     : (useLogicalType ? entry.getValue() : entry.getRawValue());
             sb.append(formatNested(key, depth + 1, useLogicalType, maxChars))
-                    .append(": ")
+                    .append(" : ")
                     .append(formatNested(value, depth + 1, useLogicalType, maxChars));
             shown++;
         }
-        sb.append("}");
+        sb.append(" }");
         return sb.toString();
     }
 
-    private static String formatVariant(PqVariant variant, int depth, boolean useLogicalType, int maxChars) {
-        VariantType type = variant.type();
-        return switch (type) {
+    private static String formatVariant(PqVariant variant, int depth, int maxChars) {
+        return switch (variant.type()) {
+            case OBJECT -> formatVariantObject(variant.asObject(), depth, maxChars);
+            case ARRAY -> formatVariantArray(variant.asArray(), depth, maxChars);
+            default -> variantScalarText(variant, maxChars);
+        };
+    }
+
+    /// One-line display text for a Variant scalar — unquoted strings, the same
+    /// spelling the display grammar uses everywhere.
+    private static String variantScalarText(PqVariant variant, int maxChars) {
+        return switch (variant.type()) {
             case NULL -> "null";
             case BOOLEAN_TRUE -> "true";
             case BOOLEAN_FALSE -> "false";
@@ -897,20 +1140,20 @@ public final class ValueFormatter {
             case STRING -> Strings.sanitizeControls(variant.asString());
             case BINARY -> formatRawBytes(variant.asBinary(), maxChars);
             case UUID -> variant.asUuid().toString();
-            case OBJECT -> formatVariantObject(variant.asObject(), depth, useLogicalType, maxChars);
-            case ARRAY -> formatVariantArray(variant.asArray(), depth, useLogicalType, maxChars);
+            default -> throw new IllegalStateException(
+                    "Variant " + variant.type() + " is not a scalar: walk it as a collection");
         };
     }
 
-    private static String formatVariantObject(PqVariantObject obj, int depth, boolean useLogicalType, int maxChars) {
+    private static String formatVariantObject(PqVariantObject obj, int depth, int maxChars) {
         int count = obj.getFieldCount();
         if (count == 0) {
             return "{}";
         }
-        StringBuilder sb = new StringBuilder("{");
+        StringBuilder sb = new StringBuilder("{ ");
         int shown = 0;
         for (int i = 0; i < count; i++) {
-            if (shown == MAX_NESTED_ELEMENTS) {
+            if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
                 sb.append(", …+").append(count - MAX_NESTED_ELEMENTS);
                 break;
             }
@@ -918,14 +1161,14 @@ public final class ValueFormatter {
                 sb.append(", ");
             }
             String name = obj.getFieldName(i);
-            sb.append(name).append(": ").append(formatNested(obj.getVariant(name), depth + 1, useLogicalType, maxChars));
+            sb.append(name).append(" : ").append(formatNested(obj.getVariant(name), depth + 1, true, maxChars));
             shown++;
         }
-        sb.append("}");
+        sb.append(" }");
         return sb.toString();
     }
 
-    private static String formatVariantArray(PqVariantArray array, int depth, boolean useLogicalType, int maxChars) {
+    private static String formatVariantArray(PqVariantArray array, int depth, int maxChars) {
         int size = array.size();
         if (size == 0) {
             return "[]";
@@ -933,14 +1176,14 @@ public final class ValueFormatter {
         StringBuilder sb = new StringBuilder("[");
         int shown = 0;
         for (int i = 0; i < size; i++) {
-            if (shown == MAX_NESTED_ELEMENTS) {
+            if (capped(maxChars) && shown == MAX_NESTED_ELEMENTS) {
                 sb.append(", …+").append(size - MAX_NESTED_ELEMENTS);
                 break;
             }
             if (shown > 0) {
                 sb.append(", ");
             }
-            sb.append(formatNested(array.get(i), depth + 1, useLogicalType, maxChars));
+            sb.append(formatNested(array.get(i), depth + 1, true, maxChars));
             shown++;
         }
         sb.append("]");

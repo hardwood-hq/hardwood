@@ -8,6 +8,7 @@
 package dev.hardwood.cli.command;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.util.ArrayList;
@@ -16,15 +17,24 @@ import java.util.List;
 import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.io.TempDir;
 
+import com.fasterxml.jackson.databind.JsonNode;
+import com.fasterxml.jackson.databind.ObjectMapper;
+
+import dev.hardwood.OutputFile;
+import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.schema.ColumnProjection;
+import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
+import dev.hardwood.writer.ParquetFileWriter;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class ConvertCommandTest implements ConvertCommandContract {
+
+    private static final ObjectMapper MAPPER = new ObjectMapper();
 
     private final String VARIANT_FILE = getClass().getResource("/variant_test.parquet").getPath();
 
@@ -237,7 +247,7 @@ class ConvertCommandTest implements ConvertCommandContract {
                 1,true
                 2,false
                 3,42
-                4,\"\"\"hi\"\"\"""");
+                4,hi""");
     }
 
     @Test
@@ -254,15 +264,18 @@ class ConvertCommandTest implements ConvertCommandContract {
     }
 
     @Test
-    void csvEmitsVariantObjectAsJsonStringInOneCell() {
+    void csvEmitsVariantObjectInDisplayGrammar() {
         Cli.Result result = Cli.launch("convert", "-f", VARIANT_ATTRIBUTES_FILE, "--format", "csv");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.output()).isEqualTo("""
-                id,name,value
-                1,age,42
-                1,email,\"\"\"ada@example.com\"\"\"
-                1,preferences,\"{\"\"opt_in\"\": true, \"\"theme\"\": \"\"dark\"\"}\"""");
+        // The CSV cell uses the same unquoted display grammar as `print` and
+        // `dive` — `{ opt_in : true, theme : dark }` — which the CSV quoting
+        // wraps because it contains commas.
+        assertThat(result.output()).isEqualTo(String.join("\n",
+                "id,name,value",
+                "1,age,42",
+                "1,email,ada@example.com",
+                "1,preferences,\"{ opt_in : true, theme : dark }\""));
     }
 
     @Test
@@ -304,5 +317,50 @@ class ConvertCommandTest implements ConvertCommandContract {
                   {"id":1,"name":"email","value":"ada@example.com"},
                   {"id":1,"name":"preferences","value":{"opt_in": true, "theme": "dark"}}
                 ]""");
+    }
+
+    /// The export contract, parsed rather than string-compared: real
+    /// `convert --format json` output must be valid JSON, with nested Variant
+    /// objects and arrays arriving as native JSON structures.
+    @Test
+    void jsonVariantOutputParsesAsValidJson() throws Exception {
+        Cli.Result result = Cli.launch("convert", "-f", VARIANT_ATTRIBUTES_FILE, "--format", "json");
+
+        assertThat(result.exitCode()).isZero();
+        JsonNode rows = MAPPER.readTree(result.output());
+        assertThat(rows.isArray()).isTrue();
+        assertThat(rows).hasSize(3);
+        JsonNode preferences = rows.get(2).get("value");
+        assertThat(preferences.isObject()).isTrue();
+        assertThat(preferences.get("opt_in").asBoolean()).isTrue();
+        assertThat(preferences.get("theme").asText()).isEqualTo("dark");
+
+        JsonNode scalarRows = MAPPER.readTree(
+                Cli.launch("convert", "-f", VARIANT_FILE, "--format", "json").output());
+        assertThat(scalarRows.get(3).get("var").asText()).isEqualTo("hi");
+    }
+
+    /// A control character in a string value parses as `·` in the JSON export,
+    /// never as the original control — exports follow the shared sanitiser
+    /// even though they escape into JSON grammar.
+    @Test
+    void jsonExportSanitisesControlCharacters(@TempDir Path tempDir) throws Exception {
+        Path file = tempDir.resolve("controls_json.parquet");
+        FileSchema schema = FileSchema.builder("schema")
+                .addColumn("id", PhysicalType.INT32, RepetitionType.REQUIRED)
+                .addColumn("s", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, new LogicalType.StringType())
+                .build();
+        try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(file), schema)) {
+            writer.columnWriter().writeBatch(batch -> batch
+                    .ints("id", new int[] { 1 })
+                    .bytes("s", new byte[][] { "A\u0001B".getBytes(StandardCharsets.UTF_8) }));
+        }
+
+        Cli.Result result = Cli.launch("convert", "-f", file.toString(), "--format", "json");
+
+        assertThat(result.exitCode()).isZero();
+        JsonNode rows = MAPPER.readTree(result.output());
+        assertThat(rows.get(0).get("s").asText()).isEqualTo("A·B");
+        assertThat(result.output()).doesNotContain("\u0001");
     }
 }

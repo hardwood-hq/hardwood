@@ -244,7 +244,7 @@ public final class DictionaryScreen {
         if (state.modalOpen() && !filtered.isEmpty()) {
             int dictIdx = filtered.at(Math.min(state.selection(), filtered.size() - 1));
             buffer.setStyle(area, Theme.dim());
-            renderValueModal(buffer, area, dict, col, dictIdx, state.logicalTypes(),
+            renderEntryModal(buffer, area, dict, col, dictIdx, state.logicalTypes(),
                     state.modalScroll());
         }
     }
@@ -468,7 +468,7 @@ public final class DictionaryScreen {
                 .render(area, buffer);
     }
 
-    private static void renderValueModal(Buffer buffer, Rect screenArea, Dictionary dict, ColumnSchema col,
+    private static void renderEntryModal(Buffer buffer, Rect screenArea, Dictionary dict, ColumnSchema col,
                                          int index, boolean useLogicalType, int scroll) {
         Rect area = ScrollPane.modalArea(screenArea, 80, 16);
         boolean hasLogical = col.logicalType() != null;

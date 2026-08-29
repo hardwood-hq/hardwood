@@ -86,7 +86,7 @@ class PrintCommandTest implements PrintCommandContract {
                 | 1  | true  |
                 | 2  | false |
                 | 3  | 42    |
-                | 4  | "hi"  |
+                | 4  | hi    |
                 +----+-------+""");
     }
 
@@ -107,18 +107,26 @@ class PrintCommandTest implements PrintCommandContract {
     }
 
     @Test
-    void rendersVariantObjectAsJsonLikeText() {
+    void rendersVariantObjectInDisplayGrammar() {
         Cli.Result result = Cli.launch("print", "-f", VARIANT_ATTRIBUTES_FILE, "-w", "120");
 
         assertThat(result.exitCode()).isZero();
-        assertThat(result.output()).isEqualTo("""
-                +----+-------------+-----------------------------------+
-                | id | name        | value                             |
-                +----+-------------+-----------------------------------+
-                | 1  | age         | 42                                |
-                | 1  | email       | "ada@example.com"                 |
-                | 1  | preferences | {"opt_in": true, "theme": "dark"} |
-                +----+-------------+-----------------------------------+""");
+        // The table display grammar is unquoted — the same text `convert` CSV
+        // and `dive` show; the JSON grammar exists only in the export writer.
+        String separator = "+----+-------------+" + "-".repeat(33) + "+";
+        assertThat(result.output()).isEqualTo(String.join("\n",
+                separator,
+                row("id", "name", "value"),
+                separator,
+                row("1", "age", "42"),
+                row("1", "email", "ada@example.com"),
+                row("1", "preferences", "{ opt_in : true, theme : dark }"),
+                separator));
+    }
+
+    private static String row(String id, String name, String value) {
+        return "| " + Strings.padRight(id, 2) + " | " + Strings.padRight(name, 11) + " | "
+                + Strings.padRight(value, 31) + " |";
     }
 
     @Test
