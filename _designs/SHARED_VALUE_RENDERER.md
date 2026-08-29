@@ -1,6 +1,6 @@
 # Design: shared value renderer and width/truncation primitives
 
-**Status: Planned.** Tracking issue: #1021 (width half also closes #866; control-character half also closes #865).
+**Status: Implemented.** Tracking issue: #1021 (width half also closes #866; control-character half also closes #865).
 
 ## Goal
 
