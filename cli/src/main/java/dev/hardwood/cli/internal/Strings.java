@@ -7,6 +7,7 @@
  */
 package dev.hardwood.cli.internal;
 
+import java.nio.charset.StandardCharsets;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -45,6 +46,33 @@ public final class Strings {
             return s;
         }
         return s + " ".repeat(width - actual);
+    }
+
+    /// Replaces every ISO control character in `s` with one middle-dot cell, so
+    /// a value containing raw control bytes can never break the borders of the
+    /// table it renders into. Text whose characters are all controls has no
+    /// readable content left to show; it renders as `0x`-prefixed hex of the
+    /// UTF-8 bytes instead — the same rule byte-backed values follow.
+    public static String sanitizeControls(String s) {
+        int controls = 0;
+        int length = s.length();
+        for (int i = 0; i < length; i++) {
+            if (Character.isISOControl(s.charAt(i))) {
+                controls++;
+            }
+        }
+        if (controls == 0) {
+            return s;
+        }
+        if (controls == length) {
+            return BinaryValues.toHex(s.getBytes(StandardCharsets.UTF_8));
+        }
+        StringBuilder sb = new StringBuilder(length);
+        for (int i = 0; i < length; i++) {
+            char c = s.charAt(i);
+            sb.append(Character.isISOControl(c) ? '·' : c);
+        }
+        return sb.toString();
     }
 
     /// Truncates `s` from the left so the suffix stays visible (e.g. for

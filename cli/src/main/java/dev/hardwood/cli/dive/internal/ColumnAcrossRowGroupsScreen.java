@@ -15,10 +15,10 @@ import dev.hardwood.cli.dive.NavigationStack;
 import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.Fmt;
-import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.LevelSummary;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.OffsetIndex;
@@ -218,7 +218,7 @@ public final class ColumnAcrossRowGroupsScreen {
         if (bytes == null) {
             return Strings.ABSENT_VALUE;
         }
-        String full = IndexValueFormatter.format(bytes, col, logical, budget);
+        String full = ValueFormatter.formatBytes(bytes, col, logical, budget);
         return Strings.truncateRight(full, budget);
     }
 

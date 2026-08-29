@@ -146,4 +146,15 @@ interface InfoCommandContract {
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).contains("does.not.exist");
     }
+
+    /// `--kv-key` is the raw-value counterpart to the summary's sanitised value
+    /// column: control characters print verbatim, so the output stays
+    /// byte-faithful for the pipe it was built for.
+    @Test
+    default void printsControlCharactersVerbatimForKvKey() {
+        Cli.Result result = Cli.launch("info", "-f", kvMetadataFile(), "--kv-key", "control.key");
+
+        assertThat(result.exitCode()).isZero();
+        assertThat(result.output()).isEqualTo("line1\nline2\u001B[31m");
+    }
 }
