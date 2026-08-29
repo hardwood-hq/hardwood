@@ -35,6 +35,10 @@ class PredicatePushDownTest {
     private static final Path INT_FILE = Paths.get("src/test/resources/filter_pushdown_int.parquet");
     private static final Path MIXED_FILE = Paths.get("src/test/resources/filter_pushdown_mixed.parquet");
     private static final Path LIST_FILE = Paths.get("src/test/resources/filter_pushdown_list.parquet");
+
+    /// `tags = [[a,b,c], [], null, [single]]` — a list that is present but empty next to one that
+    /// is absent, which is the distinction a null predicate on a `LIST` has to make.
+    private static final Path NULLABLE_LIST_FILE = Paths.get("src/test/resources/list_basic_test.parquet");
     private static final Path NESTED_FILE = Paths.get("src/test/resources/filter_pushdown_nested.parquet");
     /// No ColumnIndex/OffsetIndex; inline DataPageHeader.statistics only. One row group,
     /// id (required) = [0, 9999], value (nullable) = [1000, 10999], sorted. Many pages
@@ -45,6 +49,13 @@ class PredicatePushDownTest {
     /// (per-page pruning + `truncateToMaxRows`) as opposed to the sequential
     /// inline-stats path of [#INLINE_STATS_FILE].
     private static final Path COLUMN_INDEX_FILE = Paths.get("src/test/resources/column_index_pushdown.parquet");
+    private static final Path GROUP_NULL_FILE = Paths.get("src/test/resources/group_null_predicate.parquet");
+
+    /// Three row groups of four rows: `address` present throughout the first, absent throughout
+    /// the second, mixed in the third, so the definition level histogram decides two of them
+    /// outright and the record filter has to settle the last.
+    private static final Path GROUP_NULL_PRUNING_FILE =
+            Paths.get("src/test/resources/group_null_pruning.parquet");
 
     // ==================== ColumnReader with Filter ====================
 
@@ -433,6 +444,69 @@ class PredicatePushDownTest {
         }
     }
 
+    @Test
+    void testGroupIsNullPredicate() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(GROUP_NULL_FILE))) {
+            FilterPredicate filter = FilterPredicate.isNull("address");
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
+                List<Integer> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getInt("id"));
+                }
+
+                assertThat(ids).containsExactly(4);
+            }
+        }
+    }
+
+    @Test
+    void testGroupIsNotNullPredicate() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(GROUP_NULL_FILE))) {
+            FilterPredicate filter = FilterPredicate.isNotNull("address");
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
+                List<Integer> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getInt("id"));
+                }
+
+                assertThat(ids).containsExactly(1, 2, 3);
+            }
+        }
+    }
+
+    @Test
+    void testGroupIsNullAcrossRowGroups() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(GROUP_NULL_PRUNING_FILE))) {
+            try (RowReader rows = reader.buildRowReader().filter(FilterPredicate.isNull("address")).build()) {
+                List<Integer> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getInt("id"));
+                }
+
+                assertThat(ids).containsExactly(5, 6, 7, 8, 10, 12);
+            }
+        }
+    }
+
+    @Test
+    void testGroupIsNotNullAcrossRowGroups() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(GROUP_NULL_PRUNING_FILE))) {
+            try (RowReader rows = reader.buildRowReader().filter(FilterPredicate.isNotNull("address")).build()) {
+                List<Integer> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getInt("id"));
+                }
+
+                // id=11 has address present with every field null, which is still present.
+                assertThat(ids).containsExactly(1, 2, 3, 4, 9, 11);
+            }
+        }
+    }
+
     // ==================== Mixed Type Filters ====================
 
     @Test
@@ -558,16 +632,47 @@ class PredicatePushDownTest {
     // ==================== Repeated (list) columns ====================
 
     @Test
-    void testFilterOnRepeatedColumnIsRejected() throws Exception {
-        // Filter predicates on repeated columns are not supported — they should
-        // fail at resolution time, matching parquet-java's behavior.
+    void testComparisonPredicateOnListColumnIsRejected() throws Exception {
+        // A comparison predicate has no meaning against a LIST, and fails at resolution time.
+        // Only null predicates accept a group.
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(LIST_FILE))) {
             FilterPredicate filter = FilterPredicate.gt("scores", 200);
 
             assertThatThrownBy(() -> reader.buildRowReader().filter(filter).build())
                     .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Filter predicates do not support repeated columns. Column 'scores' is "
-                             + "repeated.");
+                    .hasMessage("Filter predicates require a leaf column. Column 'scores' is a group.");
+        }
+    }
+
+    @Test
+    void testListIsNullSeparatesANullListFromAnEmptyOne() throws Exception {
+        // Only row 3 has no list at all.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NULLABLE_LIST_FILE))) {
+            try (RowReader rows = reader.buildRowReader().filter(FilterPredicate.isNull("tags")).build()) {
+                List<Integer> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getInt("id"));
+                }
+
+                assertThat(ids).containsExactly(3);
+            }
+        }
+    }
+
+    @Test
+    void testListIsNotNullKeepsTheEmptyList() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NULLABLE_LIST_FILE))) {
+            try (RowReader rows = reader.buildRowReader().filter(FilterPredicate.isNotNull("tags")).build()) {
+                List<Integer> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getInt("id"));
+                }
+
+                // Row 2 holds an empty list, which is a list that is present.
+                assertThat(ids).containsExactly(1, 2, 4);
+            }
         }
     }
 
@@ -591,17 +696,26 @@ class PredicatePushDownTest {
     }
 
     @Test
-    void testFilterOnMapColumnIsRejected() throws Exception {
-        // A MAP contains a repeated key_value group, so predicates on the MAP
-        // itself are unsupported and must be rejected as repeated.
+    void testMapIsNullSeparatesANullMapFromAnEmptyOne() throws Exception {
+        // people = [two entries, one entry, empty] — no row has a null map, and the empty one on
+        // row 3 is a map that is present.
         Path mapFile = Paths.get("src/test/resources/map_struct_value_test.parquet");
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(mapFile))) {
-            FilterPredicate filter = FilterPredicate.isNull("people");
+            try (RowReader rows = reader.buildRowReader().filter(FilterPredicate.isNull("people")).build()) {
+                assertThat(rows.hasNext()).isFalse();
+            }
+        }
 
-            assertThatThrownBy(() -> reader.buildRowReader().filter(filter).build())
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Filter predicates do not support repeated columns. Column 'people' is "
-                             + "repeated.");
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(mapFile))) {
+            try (RowReader rows = reader.buildRowReader().filter(FilterPredicate.isNotNull("people")).build()) {
+                List<Integer> ids = new ArrayList<>();
+                while (rows.hasNext()) {
+                    rows.next();
+                    ids.add(rows.getInt("id"));
+                }
+
+                assertThat(ids).containsExactly(1, 2, 3);
+            }
         }
     }
 
@@ -691,11 +805,9 @@ class PredicatePushDownTest {
     }
 
     @Test
-    void testFilterOnGroupColumnIsRejected() throws Exception {
-        // Filtering on a group column should fail instead of resolving to a nested leaf.
+    void testComparisonPredicateOnGroupColumnIsRejected() throws Exception {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FILE))) {
-            FilterPredicate filter = FilterPredicate.isNull("address");
-
+            FilterPredicate filter = FilterPredicate.eq("address", "value");
             assertThatThrownBy(() -> reader.buildRowReader().filter(filter).build())
                     .isInstanceOf(IllegalArgumentException.class)
                     .hasMessage("Filter predicates require a leaf column. Column 'address' is a group.");

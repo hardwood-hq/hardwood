@@ -236,14 +236,14 @@ public class FilterPredicateResolver {
                                 + "; given filter predicate type DOUBLE/FLOAT is incompatible");
             }
             case FilterPredicate.IsNullPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
-                yield new ResolvedPredicate.IsNullPredicate(cs.columnIndex());
+                NullTarget target = resolveNullTarget(p.column(), schema);
+                yield new ResolvedPredicate.IsNullPredicate(target.columnIndex(), target.definitionLevel(),
+                        target.leafDefinitionLevel());
             }
             case FilterPredicate.IsNotNullPredicate p -> {
-                ColumnSchema cs = resolveColumn(p.column(), schema);
-                rejectRepeated(p.column(), cs);
-                yield new ResolvedPredicate.IsNotNullPredicate(cs.columnIndex());
+                NullTarget target = resolveNullTarget(p.column(), schema);
+                yield new ResolvedPredicate.IsNotNullPredicate(target.columnIndex(), target.definitionLevel(),
+                        target.leafDefinitionLevel());
             }
             case And a -> new ResolvedPredicate.And(a.filters().stream()
                     .map(f -> resolve(f, schema, columnOrders))
@@ -278,6 +278,94 @@ public class FilterPredicateResolver {
 
     // ==================== Column resolution ====================
 
+    /// The leaf column a null predicate is answered from, the definition level at or above which
+    /// the node the user named is present, and that leaf's own maximum definition level. The last
+    /// two are equal when the user named the leaf itself.
+    private record NullTarget(int columnIndex, int definitionLevel, int leafDefinitionLevel) {
+    }
+
+    private static NullTarget resolveNullTarget(String columnName, FileSchema schema) {
+        SchemaNode node = resolveNode(columnName, schema);
+
+        if (node instanceof SchemaNode.GroupNode group) {
+            rejectRepeatedGroup(columnName, group);
+
+            SchemaNode.PrimitiveNode leaf = leafToAnswerFrom(group);
+
+            if (leaf == null) {
+                throw new IllegalArgumentException(
+                        "Null predicates on a group are answered from a leaf column below it. "
+                                + "Column '" + columnName + "' is a group with no leaf columns.");
+            }
+
+            return new NullTarget(leaf.columnIndex(), group.maxDefinitionLevel(),
+                    leaf.maxDefinitionLevel());
+        }
+
+        ColumnSchema cs = schema.getColumn(columnName);
+        rejectRepeated(columnName, cs);
+
+        return new NullTarget(cs.columnIndex(), cs.maxDefinitionLevel(), cs.maxDefinitionLevel());
+    }
+
+    /// The schema node `columnName` denotes, whether leaf or group.
+    ///
+    /// The walk answers what the name denotes directly, so a caller branches on the node it gets
+    /// back rather than on whether a leaf lookup threw.
+    ///
+    /// @throws IllegalArgumentException if the name reaches no node in the schema
+    private static SchemaNode resolveNode(String columnName, FileSchema schema) {
+        SchemaNode node = SchemaPathResolver.resolve(schema, columnName).node();
+
+        if (node == null) {
+            throw new IllegalArgumentException("Column '" + columnName + "' not found in schema");
+        }
+
+        return node;
+    }
+
+    /// Rejects a group that occurs more than once per row, which is a group below a repeated path.
+    /// It holds many values per row, so a single answer per row is not defined.
+    ///
+    /// A `LIST` or a `MAP` is not itself repeated — the group below it is — so a null predicate on
+    /// one asks a question with a single answer per row: whether the list or map is present at all.
+    private static void rejectRepeatedGroup(String columnName, SchemaNode.GroupNode group) {
+        if (group.maxRepetitionLevel() > 0) {
+            throw repeatedColumnRejected(columnName);
+        }
+    }
+
+    /// The leaf column below `group` whose definition levels a null predicate on the group reads.
+    ///
+    /// Any leaf below the group answers whether the group is present: a row where it is absent
+    /// writes one entry below the group's definition level into every leaf under it. A
+    /// non-repeated leaf is preferred because it writes exactly one entry per row either way,
+    /// which is what lets a row group be proven to match throughout rather than only to be
+    /// undecided. Below a `LIST` or a `MAP` there is no such leaf, and the first one serves.
+    ///
+    /// @return the leaf to answer from, or `null` if the group holds no leaf columns at all
+    private static SchemaNode.PrimitiveNode leafToAnswerFrom(SchemaNode.GroupNode group) {
+        SchemaNode.PrimitiveNode firstLeaf = null;
+
+        for (SchemaNode child : group.children()) {
+            SchemaNode.PrimitiveNode candidate = child instanceof SchemaNode.GroupNode childGroup
+                    ? leafToAnswerFrom(childGroup)
+                    : (SchemaNode.PrimitiveNode) child;
+
+            if (candidate == null) {
+                continue;
+            }
+            if (candidate.maxRepetitionLevel() == 0) {
+                return candidate;
+            }
+            if (firstLeaf == null) {
+                firstLeaf = candidate;
+            }
+        }
+
+        return firstLeaf;
+    }
+
     /// Resolves a column name to its [ColumnSchema].
     ///
     /// Only leaf columns can carry a predicate. A name denoting a group — a struct, a `LIST`, or a
@@ -288,22 +376,16 @@ public class FilterPredicateResolver {
     /// @throws IllegalArgumentException if the column is not found, or names a group rather than a
     ///         leaf column
     private static ColumnSchema resolveColumn(String columnName, FileSchema schema) {
-        try {
-            return schema.getColumn(columnName);
-        }
-        catch (IllegalArgumentException e) {
-            SchemaNode node = SchemaPathResolver.resolve(schema, columnName).node();
-            if (node instanceof SchemaNode.GroupNode group) {
-                if (group.isList() || group.isMap() || group.maxRepetitionLevel() > 0) {
-                    throw repeatedColumnRejected(columnName);
-                }
-                throw new IllegalArgumentException(
-                        "Filter predicates require a leaf column. "
-                                + "Column '" + columnName + "' is a group.");
-            }
+        SchemaNode node = resolveNode(columnName, schema);
+
+        if (node instanceof SchemaNode.GroupNode group) {
+            rejectRepeatedGroup(columnName, group);
             throw new IllegalArgumentException(
-                    "Column '" + columnName + "' not found in schema", e);
+                    "Filter predicates require a leaf column. "
+                            + "Column '" + columnName + "' is a group.");
         }
+
+        return schema.getColumn(columnName);
     }
 
     // ==================== Type validation ====================

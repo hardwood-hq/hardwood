@@ -153,8 +153,68 @@ public sealed interface ResolvedPredicate {
     record DoubleInPredicate(int columnIndex, double[] values, boolean floatColumn,
             boolean ieee754TotalOrder) implements ResolvedPredicate {}
 
-    record IsNullPredicate(int columnIndex) implements ResolvedPredicate {}
-    record IsNotNullPredicate(int columnIndex) implements ResolvedPredicate {}
+    /// A test for the absence of the node named by the predicate, which is either the leaf column
+    /// `columnIndex` itself or a non-repeated group enclosing it.
+    ///
+    /// `definitionLevel` is the level at or above which that node is present, and
+    /// `leafDefinitionLevel` is the leaf column's maximum definition level. A leaf predicate has
+    /// the two equal; a group predicate has `definitionLevel` below `leafDefinitionLevel`, and the
+    /// gap between them is where a present group with a null child sits. Carrying both means an
+    /// evaluator can tell the two apart, and can size a definition level histogram, without the
+    /// schema the resolver read them from.
+    record IsNullPredicate(int columnIndex, int definitionLevel, int leafDefinitionLevel)
+            implements ResolvedPredicate {
+
+        public IsNullPredicate {
+            checkDefinitionLevels(definitionLevel, leafDefinitionLevel);
+        }
+
+        /// A predicate on the leaf column itself, whose two definition levels are the same.
+        public IsNullPredicate(int columnIndex, int definitionLevel) {
+            this(columnIndex, definitionLevel, definitionLevel);
+        }
+
+        /// Whether the tested node is a group enclosing the leaf rather than the leaf itself.
+        public boolean group() {
+            return definitionLevel < leafDefinitionLevel;
+        }
+    }
+
+    /// The negation of [IsNullPredicate], with the same two definition levels.
+    record IsNotNullPredicate(int columnIndex, int definitionLevel, int leafDefinitionLevel)
+            implements ResolvedPredicate {
+
+        public IsNotNullPredicate {
+            checkDefinitionLevels(definitionLevel, leafDefinitionLevel);
+        }
+
+        /// A predicate on the leaf column itself, whose two definition levels are the same.
+        public IsNotNullPredicate(int columnIndex, int definitionLevel) {
+            this(columnIndex, definitionLevel, definitionLevel);
+        }
+
+        /// A predicate on the leaf column itself, for a caller holding no schema to read the
+        /// leaf's definition level from — a negation rewritten into a null check, say.
+        ///
+        /// A leaf predicate's readers consult the two levels only to establish that it is not a
+        /// group predicate, which equal levels settle on their own.
+        public static IsNotNullPredicate ofLeaf(int columnIndex) {
+            return new IsNotNullPredicate(columnIndex, 0, 0);
+        }
+
+        /// Whether the tested node is a group enclosing the leaf rather than the leaf itself.
+        public boolean group() {
+            return definitionLevel < leafDefinitionLevel;
+        }
+    }
+
+    private static void checkDefinitionLevels(int definitionLevel, int leafDefinitionLevel) {
+        if (definitionLevel < 0 || definitionLevel > leafDefinitionLevel) {
+            throw new IllegalArgumentException(
+                    "Definition level of a null predicate must be between 0 and the leaf column's "
+                            + "maximum definition level " + leafDefinitionLevel + ", but was " + definitionLevel);
+        }
+    }
 
     /// Conjunction of child predicates. Nested `And` children are flattened at
     /// construction time so consumers can rely on a single flat level.
@@ -271,8 +331,10 @@ public sealed interface ResolvedPredicate {
             case BinaryInPredicate p -> new BinaryInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
             case DoubleInPredicate p -> new DoubleInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
                     p.floatColumn(), p.ieee754TotalOrder());
-            case IsNullPredicate p -> new IsNullPredicate(mapped(p.columnIndex(), columnMapping));
-            case IsNotNullPredicate p -> new IsNotNullPredicate(mapped(p.columnIndex(), columnMapping));
+            case IsNullPredicate p -> new IsNullPredicate(
+                    mapped(p.columnIndex(), columnMapping), p.definitionLevel(), p.leafDefinitionLevel());
+            case IsNotNullPredicate p -> new IsNotNullPredicate(
+                    mapped(p.columnIndex(), columnMapping), p.definitionLevel(), p.leafDefinitionLevel());
             case GeospatialPredicate p -> new GeospatialPredicate(mapped(p.columnIndex(), columnMapping),
                     p.xmin(), p.ymin(), p.xmax(), p.ymax());
             case And a -> new And(remapChildren(a.children(), columnMapping));
@@ -314,8 +376,10 @@ public sealed interface ResolvedPredicate {
             case BooleanPredicate p -> new BooleanPredicate(p.columnIndex(), p.op().invert(), p.value());
             case BinaryPredicate p -> new BinaryPredicate(p.columnIndex(), p.op().invert(), p.value(),
                     p.comparison());
-            case IsNullPredicate p -> new IsNotNullPredicate(p.columnIndex());
-            case IsNotNullPredicate p -> new IsNullPredicate(p.columnIndex());
+            case IsNullPredicate p -> new IsNotNullPredicate(p.columnIndex(), p.definitionLevel(),
+                    p.leafDefinitionLevel());
+            case IsNotNullPredicate p -> new IsNullPredicate(p.columnIndex(), p.definitionLevel(),
+                    p.leafDefinitionLevel());
             case And a -> new Or(a.children().stream()
                     .map(ResolvedPredicate::negate).toList());
             case Or o -> new And(o.children().stream()
@@ -351,7 +415,7 @@ public sealed interface ResolvedPredicate {
                         }
                     }
                     if (notEqs.isEmpty()) {
-                        yield new IsNotNullPredicate(p.columnIndex());
+                        yield IsNotNullPredicate.ofLeaf(p.columnIndex());
                     }
                     yield new And(notEqs);
                 }

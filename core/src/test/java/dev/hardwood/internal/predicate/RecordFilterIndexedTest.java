@@ -115,8 +115,8 @@ class RecordFilterIndexedTest {
         for (Operator op : Operator.values()) {
             assertEquivalent(new ResolvedPredicate.LongPredicate(0, op, 0L), row, schema, projection, false);
         }
-        assertEquivalent(new ResolvedPredicate.IsNullPredicate(0), row, schema, projection, true);
-        assertEquivalent(new ResolvedPredicate.IsNotNullPredicate(0), row, schema, projection, false);
+        assertEquivalent(new ResolvedPredicate.IsNullPredicate(0, 1), row, schema, projection, true);
+        assertEquivalent(new ResolvedPredicate.IsNotNullPredicate(0, 1), row, schema, projection, false);
     }
 
     // ==================== Compounds with indexed leaves ====================

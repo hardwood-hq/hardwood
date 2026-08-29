@@ -397,6 +397,73 @@ pq.write_table(
 print("\nGenerated list_basic_test.parquet:")
 print("  - Data: id=[1,2,3,4], tags=[[a,b,c],[],null,[single]], scores=[[10,20,30],[100],[1,2],null]")
 
+# hardwood-hq/hardwood#977: group IS NULL / IS NOT NULL predicates.
+# Separates a present struct whose children are null from a null struct.
+group_null_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('address', pa.struct([
+        ('street', pa.string(), True),
+        ('city', pa.string(), True),
+    ]), True),
+])
+
+group_null_table = pa.table({
+    'id': [1, 2, 3, 4],
+    'address': [
+        {'street': '123 Main St', 'city': 'New York'},
+        {'street': None, 'city': 'Los Angeles'},
+        {'street': None, 'city': None},
+        None,
+    ],
+}, schema=group_null_schema)
+
+pq.write_table(
+    group_null_table,
+    'core/src/test/resources/group_null_predicate.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='2.0',
+    write_page_index=True,
+)
+
+print("\nGenerated group_null_predicate.parquet:")
+print("  - id=1: address populated")
+print("  - id=2: address present, street null")
+print("  - id=3: address present, all children null")
+print("  - id=4: address itself null")
+
+# hardwood-hq/hardwood#977: row-group and page pruning for group null predicates.
+# Three row groups of four rows, each uniform in whether `address` is present, so a
+# definition level histogram decides every one of them without reading rows:
+#   rows 0-3   address always present  -> IS NULL drops it, IS NOT NULL always matches
+#   rows 4-7   address always absent   -> IS NOT NULL drops it, IS NULL always matches
+#   rows 8-11  address mixed           -> neither can decide
+group_null_pruning_table = pa.table({
+    'id': list(range(1, 13)),
+    'address': [
+        {'street': f'{i} Main St', 'city': 'New York'} for i in range(4)
+    ] + [None] * 4 + [
+        {'street': '9 Main St', 'city': 'Boston'},
+        None,
+        {'street': None, 'city': None},
+        None,
+    ],
+}, schema=group_null_schema)
+
+pq.write_table(
+    group_null_pruning_table,
+    'core/src/test/resources/group_null_pruning.parquet',
+    use_dictionary=False,
+    compression=None,
+    data_page_version='2.0',
+    write_page_index=True,
+    write_statistics=True,
+    row_group_size=4,
+)
+
+print("\nGenerated group_null_pruning.parquet:")
+print("  - 3 row groups of 4 rows: address all present, all absent, then mixed")
+
 # ---------------------------------------------------------------------------
 # Unannotated repeated field read as a list (hardwood-hq/hardwood#656).
 #

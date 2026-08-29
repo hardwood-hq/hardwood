@@ -15,6 +15,8 @@ See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for down
 
 ## 1.1.0-SNAPSHOT
 
+- `isNull` and `isNotNull` accept the name of a group — a struct, a `LIST` or a `MAP` — testing whether the group itself is present rather than one of its fields ([#977](https://github.com/hardwood-hq/hardwood/issues/977)).
+
 - `FilterPredicate.in(String, double...)` filters `FLOAT` and `DOUBLE` columns by set membership ([#868](https://github.com/hardwood-hq/hardwood/issues/868)).
 
 - Statistics whose `min` sorts above its `max` no longer prune ([#1172](https://github.com/hardwood-hq/hardwood/issues/1172)).

@@ -45,6 +45,17 @@ FilterPredicate filter = FilterPredicate.inStrings("city", "NYC", "LA", "Chicago
 FilterPredicate filter = FilterPredicate.isNull("middle_name");
 FilterPredicate filter = FilterPredicate.isNotNull("email");
 
+// NULL checks on a group, testing whether the group itself is present
+FilterPredicate filter = FilterPredicate.isNull("address");     // a struct
+FilterPredicate filter = FilterPredicate.isNotNull("tags");     // a LIST
+FilterPredicate filter = FilterPredicate.isNull("attributes");  // a MAP
+
+`isNull` and `isNotNull` accept the name of a group — a struct, a `LIST` or a `MAP` — as well as the name of a leaf column. `isNull("address")` matches rows where the `address` group is absent, and `isNotNull("address")` matches rows where it is present.
+
+Present means present, however empty. A struct whose every field is null is present, so `isNotNull("address")` matches it — a different question from `isNotNull("address.city")`, which asks about the field. An empty list and an empty map are likewise present, so only a list or map that is itself absent matches `isNull`.
+
+Comparison predicates (`eq`, `gt`, `lt`, …) apply to leaf columns alone: there is no ordering or equality defined on a group, so a group name is rejected with `IllegalArgumentException` at reader creation.
+
 try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(path));
      RowReader rowReader = fileReader.buildRowReader().filter(filter).build()) {
 
@@ -134,16 +145,9 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
 
 ### Limitations
 
-- **Predicates apply to leaf columns only
-  ([#977](https://github.com/hardwood-hq/hardwood/issues/977)).** A name that denotes a group — a
-  struct, a `LIST`, or a `MAP` — is rejected with `IllegalArgumentException` at reader creation, as
-  is any leaf below a repeated group. Filter on a leaf instead: `isNull("address.city")` rather
-  than `isNull("address")`. Column projection accepts a group name; predicates do not.
-- **Record-level filtering only applies to flat schemas
-  ([#222](https://github.com/hardwood-hq/hardwood/issues/222)).** When the schema contains
-  nested columns (structs, lists, or maps), record-level filtering is not active. Row-group
-  and page-level statistics pushdown still apply, but non-matching rows within surviving pages
-  will not be filtered out. A warning is logged when this occurs.
+- **Predicates do not apply below a repeated path.** A column or group nested inside a `LIST` or a
+  `MAP` occurs many times per row, so no predicate on it has a single answer per row. Such a name
+  is rejected with `IllegalArgumentException` at reader creation.
 - **Bloom filter pushdown applies to `eq` and `in` predicates** on `INT32`, `INT64`, `FLOAT`,
   `DOUBLE`, and binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) columns that carry a Bloom
   filter. It runs automatically during row-group pruning, alongside statistics, and skips a

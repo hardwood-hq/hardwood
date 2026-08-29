@@ -313,23 +313,26 @@ class FilterPredicateResolverTest {
     }
 
     @Test
-    void resolveNestedGroupColumnThrows() {
+    void resolveNestedGroupNullPredicate() {
         FileSchema schema = FileSchema.builder("root")
                 .struct("company", RepetitionType.OPTIONAL, company -> company
                         .struct("address", RepetitionType.OPTIONAL, address -> address
                                 .addColumn("street", PhysicalType.BYTE_ARRAY, RepetitionType.OPTIONAL)))
                 .build();
 
-        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.isNull("company.address"), schema))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Filter predicates require a leaf column. Column 'company.address' is a group.");
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.isNull("company.address"), schema);
+
+        assertThat(resolved)
+                .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, 2, 3));
     }
 
     @Test
     void resolveGroupWithRepeatedChildIsReportedAsGroup() {
-        // `address` is OPTIONAL and only its child is REPEATED, so the rejection must name the
-        // group rather than claim the column itself is repeated.
+        // `address` is OPTIONAL and only its child is REPEATED, so a rejection may not claim the
+        // column itself is repeated. A comparison predicate is turned away for being a group; a
+        // null predicate is answered from the repeated leaf below it, whose definition levels
+        // still record whether `address` is there.
         SchemaElement root = new SchemaElement("root", null, null, null, 1, null, null, null, null, null);
         SchemaElement address = new SchemaElement("address", null, null, RepetitionType.OPTIONAL, 1,
                 null, null, null, null, null);
@@ -338,10 +341,43 @@ class FilterPredicateResolverTest {
         FileSchema schema = FileSchema.fromSchemaElements(List.of(root, address, tags));
 
         assertThatThrownBy(() -> FilterPredicateResolver.resolve(
-                FilterPredicate.isNull("address"), schema))
+                FilterPredicate.eq("address", 1), schema))
                 .isInstanceOf(IllegalArgumentException.class)
-                .hasMessage("Filter predicates require a leaf column. Column 'address' is a group.")
-                .hasMessageNotContaining("repeated");
+                .hasMessage("Filter predicates require a leaf column. Column 'address' is a group.");
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNull("address"), schema))
+                .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, 1, 2));
+    }
+
+    @Test
+    void resolveNullPredicateOnAListIsAnsweredFromItsElement() {
+        // `optional group tags (LIST) { repeated group list { optional int32 element } }`:
+        // the LIST group is at definition level 1, its element at 3.
+        FileSchema schema = FileSchema.builder("root")
+                .list("tags", RepetitionType.OPTIONAL,
+                        element -> element.primitive(PhysicalType.INT32, RepetitionType.OPTIONAL))
+                .build();
+
+        assertThat(FilterPredicateResolver.resolve(FilterPredicate.isNull("tags"), schema))
+                .isEqualTo(new ResolvedPredicate.IsNullPredicate(0, 1, 3));
+    }
+
+    @Test
+    void resolveNestedGroupNotNullPredicate() {
+        FileSchema schema = FileSchema.builder("root")
+                .struct("company", RepetitionType.OPTIONAL, company -> company
+                        .struct("address", RepetitionType.OPTIONAL, address -> address
+                                .addColumn(
+                                        "street",
+                                        PhysicalType.BYTE_ARRAY,
+                                        RepetitionType.OPTIONAL)))
+                .build();
+
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.isNotNull("company.address"), schema);
+
+        assertThat(resolved)
+                .isEqualTo(new ResolvedPredicate.IsNotNullPredicate(0, 2, 3));
     }
 
     @Test

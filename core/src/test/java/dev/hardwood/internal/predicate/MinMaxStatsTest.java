@@ -101,7 +101,7 @@ class MinMaxStatsTest {
         // not theirs to read, and not discarded either — nothing should warn about them.
         MinMaxStats stats = MinMaxStats.of(
                 new Statistics(intBytes(10), intBytes(20), 0L, null, false),
-                new ResolvedPredicate.IsNullPredicate(0));
+                new ResolvedPredicate.IsNullPredicate(0, 1));
 
         assertThat(stats).isInstanceOf(MinMaxStats.NullCountOnlyStats.class);
         assertThat(stats.discardReason()).isNull();

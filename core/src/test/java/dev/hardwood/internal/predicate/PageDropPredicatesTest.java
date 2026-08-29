@@ -98,9 +98,9 @@ class PageDropPredicatesTest {
 
     @Test
     void nullPredicatesNeverDropAPage() {
-        assertThat(canDropPage(new ResolvedPredicate.IsNullPredicate(COLUMN),
+        assertThat(canDropPage(new ResolvedPredicate.IsNullPredicate(COLUMN, 1),
                 stats(intBytes(10), intBytes(20)))).isFalse();
-        assertThat(canDropPage(new ResolvedPredicate.IsNotNullPredicate(COLUMN),
+        assertThat(canDropPage(new ResolvedPredicate.IsNotNullPredicate(COLUMN, 1),
                 stats(intBytes(10), intBytes(20)))).isFalse();
     }
 

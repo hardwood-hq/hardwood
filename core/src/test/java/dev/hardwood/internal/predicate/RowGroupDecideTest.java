@@ -24,6 +24,7 @@ import dev.hardwood.metadata.Encoding;
 import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.SizeStatistics;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate;
 
@@ -147,6 +148,162 @@ class RowGroupDecideTest {
                         + "could have skipped are read and filtered instead.");
     }
 
+    @Test
+    void groupIsNullUsesDefinitionLevelHistogram() throws IOException {
+        SizeStatistics sizeStatistics = new SizeStatistics(
+                null,
+                null,
+                new long[]{ 0, 0, 100, 0 });
+
+        RowGroup rg = rowGroup(
+                PhysicalType.INT32,
+                new Statistics(null, null, 100L, null, false),
+                sizeStatistics,
+                100);
+
+        ResolvedPredicate predicate =
+                new ResolvedPredicate.IsNullPredicate(COL, 2, 3);
+
+        assertThat(decide(predicate, rg))
+                .isEqualTo(CANNOT_MATCH);
+    }
+
+    @Test
+    void groupIsNotNullDoesNotUseLeafNullCountToDrop() throws IOException {
+        SizeStatistics sizeStatistics = new SizeStatistics(
+                null,
+                null,
+                new long[]{ 0, 0, 100, 0 });
+
+        RowGroup rg = rowGroup(
+                PhysicalType.INT32,
+                new Statistics(null, null, 100L, null, false),
+                sizeStatistics,
+                100);
+
+        ResolvedPredicate predicate =
+                new ResolvedPredicate.IsNotNullPredicate(COL, 2, 3);
+
+        assertThat(decide(predicate, rg))
+                .isNotEqualTo(CANNOT_MATCH);
+    }
+
+    @Test
+    void groupIsNotNullDropsWhenHistogramShowsGroupAlwaysAbsent() throws IOException {
+        SizeStatistics sizeStatistics = new SizeStatistics(
+                null,
+                null,
+                new long[]{ 0, 100, 0, 0 });
+
+        RowGroup rg = rowGroup(
+                PhysicalType.INT32,
+                new Statistics(null, null, 100L, null, false),
+                sizeStatistics,
+                100);
+
+        ResolvedPredicate predicate =
+                new ResolvedPredicate.IsNotNullPredicate(COL, 2, 3);
+
+        assertThat(decide(predicate, rg))
+                .isEqualTo(CANNOT_MATCH);
+    }
+    @Test
+    void groupNullPredicateWithoutHistogramFallsBackToMightMatch() throws IOException {
+        RowGroup rg = rowGroup(
+                PhysicalType.INT32,
+                new Statistics(null, null, 100L, null, false),
+                null,
+                100);
+
+        ResolvedPredicate isNull =
+                new ResolvedPredicate.IsNullPredicate(COL, 2, 3);
+
+        ResolvedPredicate isNotNull =
+                new ResolvedPredicate.IsNotNullPredicate(COL, 2, 3);
+
+
+        assertThat(decide(isNull, rg))
+                .isEqualTo(MIGHT_MATCH);
+
+        assertThat(decide(isNotNull, rg))
+                .isEqualTo(MIGHT_MATCH);
+    }
+
+    @Test
+    void groupIsNotNullAlwaysMatchesWhenHistogramShowsGroupAlwaysPresent() throws IOException {
+        // Every entry at level 2 or 3: the group is present throughout, so every row matches and
+        // the read can skip per-row evaluation for the whole row group.
+        SizeStatistics sizeStatistics = new SizeStatistics(
+                null,
+                null,
+                new long[]{ 0, 0, 40, 60 });
+
+        RowGroup rg = rowGroup(
+                PhysicalType.INT32,
+                new Statistics(null, null, 40L, null, false),
+                sizeStatistics,
+                100);
+
+        assertThat(decide(new ResolvedPredicate.IsNotNullPredicate(COL, 2, 3), rg))
+                .isEqualTo(ALWAYS_MATCHES);
+    }
+
+    @Test
+    void groupIsNullAlwaysMatchesWhenHistogramShowsGroupAlwaysAbsent() throws IOException {
+        // The dual: nothing reaches level 2, so the group is absent on every row.
+        SizeStatistics sizeStatistics = new SizeStatistics(
+                null,
+                null,
+                new long[]{ 30, 70, 0, 0 });
+
+        RowGroup rg = rowGroup(
+                PhysicalType.INT32,
+                new Statistics(null, null, 100L, null, false),
+                sizeStatistics,
+                100);
+
+        assertThat(decide(new ResolvedPredicate.IsNullPredicate(COL, 2, 3), rg))
+                .isEqualTo(ALWAYS_MATCHES);
+    }
+
+    @Test
+    void groupNullPredicateWillNotProveEveryRowFromAHistogramThatMissesRows() throws IOException {
+        // Every entry has the group present, but the histogram accounts for 90 of the 100 rows,
+        // so "every entry" is not "every row" and the remainder is not assumed to match.
+        SizeStatistics sizeStatistics = new SizeStatistics(
+                null,
+                null,
+                new long[]{ 0, 0, 40, 50 });
+
+        RowGroup rg = rowGroup(
+                PhysicalType.INT32,
+                new Statistics(null, null, 40L, null, false),
+                sizeStatistics,
+                100);
+
+        assertThat(decide(new ResolvedPredicate.IsNotNullPredicate(COL, 2, 3), rg))
+                .isEqualTo(MIGHT_MATCH);
+    }
+
+    @Test
+    void groupNullPredicateIgnoresWrongHistogramLength() throws IOException {
+        SizeStatistics sizeStatistics = new SizeStatistics(
+                null,
+                null,
+                new long[]{ 0, 100, 0 });
+
+        RowGroup rg = rowGroup(
+                PhysicalType.INT32,
+                new Statistics(null, null, 100L, null, false),
+                sizeStatistics,
+                100);
+
+        ResolvedPredicate predicate =
+                new ResolvedPredicate.IsNotNullPredicate(COL, 2, 3);
+
+        assertThat(decide(predicate, rg))
+                .isEqualTo(MIGHT_MATCH);
+    }
     // ==================== Fixtures ====================
 
     private static FilterDecision decide(ResolvedPredicate predicate, RowGroup rowGroup)
@@ -163,11 +320,11 @@ class RowGroupDecideTest {
     }
 
     private static ResolvedPredicate isNull() {
-        return new ResolvedPredicate.IsNullPredicate(COL);
+        return new ResolvedPredicate.IsNullPredicate(COL, 1, 1);
     }
 
     private static ResolvedPredicate isNotNull() {
-        return new ResolvedPredicate.IsNotNullPredicate(COL);
+        return new ResolvedPredicate.IsNotNullPredicate(COL, 1, 1);
     }
 
     private static ResolvedPredicate and(ResolvedPredicate... children) {
@@ -183,11 +340,18 @@ class RowGroupDecideTest {
                 new Statistics(intBytes(min), intBytes(max), nullCount, null, false), 100);
     }
 
+
+
     private static RowGroup rowGroup(PhysicalType type, Statistics stats, long numRows) {
+        return rowGroup(type, stats, null, numRows);
+    }
+
+    private static RowGroup rowGroup(PhysicalType type, Statistics stats,
+            SizeStatistics sizeStatistics, long numRows) {
         ColumnMetaData cmd = new ColumnMetaData(
                 type, List.of(Encoding.PLAIN), FieldPath.of("order", "price"),
                 CompressionCodec.UNCOMPRESSED, 100, 1000, 1000, Map.of(), 0, null, stats,
-                null, null, null, List.of(), null);
+                null, null, null, List.of(), sizeStatistics);
         ColumnChunk chunk = new ColumnChunk(cmd, null, null, null, null, "");
         return new RowGroup(List.of(chunk), 1000, numRows);
     }

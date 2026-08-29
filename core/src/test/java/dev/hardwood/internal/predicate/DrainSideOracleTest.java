@@ -160,7 +160,7 @@ class DrainSideOracleTest {
     void isNull_eachColumn_bothWaysAgree() {
         Workload w = workload(0x15A11);
         for (int col = 0; col < 5; col++) {
-            ResolvedPredicate p = new ResolvedPredicate.IsNullPredicate(col);
+            ResolvedPredicate p = new ResolvedPredicate.IsNullPredicate(col, 1);
             assertSurvivorsAgree(p, w);
         }
     }
@@ -169,7 +169,7 @@ class DrainSideOracleTest {
     void isNotNull_eachColumn_bothWaysAgree() {
         Workload w = workload(0x15A011);
         for (int col = 0; col < 5; col++) {
-            ResolvedPredicate p = new ResolvedPredicate.IsNotNullPredicate(col);
+            ResolvedPredicate p = new ResolvedPredicate.IsNotNullPredicate(col, 1);
             assertSurvivorsAgree(p, w);
         }
     }
@@ -202,7 +202,7 @@ class DrainSideOracleTest {
         Workload w = workload(0xF10F);
         ResolvedPredicate p = new ResolvedPredicate.And(List.of(
                 new ResolvedPredicate.FloatPredicate(COL_SCORE, Operator.LT, 0.5f),
-                new ResolvedPredicate.IsNotNullPredicate(COL_ID)
+                new ResolvedPredicate.IsNotNullPredicate(COL_ID, 1)
         ));
         assertSurvivorsAgree(p, w);
     }
@@ -299,7 +299,7 @@ class DrainSideOracleTest {
         Workload w = workload(0x05077);
         ResolvedPredicate p = new ResolvedPredicate.Or(List.of(
                 new ResolvedPredicate.LongPredicate(COL_ID, Operator.EQ, 100L),
-                new ResolvedPredicate.IsNullPredicate(COL_VALUE)
+                new ResolvedPredicate.IsNullPredicate(COL_VALUE, 1)
         ));
         assertSurvivorsAgree(p, w);
     }

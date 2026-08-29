@@ -18,6 +18,7 @@ import dev.hardwood.metadata.BoundingBox;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.GeospatialStatistics;
 import dev.hardwood.metadata.RowGroup;
+import dev.hardwood.metadata.SizeStatistics;
 import dev.hardwood.metadata.Statistics;
 import dev.hardwood.reader.FilterPredicate;
 
@@ -187,29 +188,12 @@ public class RowGroupFilterEvaluator {
                 }
                 yield decision;
             }
-            case ResolvedPredicate.IsNullPredicate p -> {
-                Statistics stats = getStatistics(rowGroup, p.columnIndex());
-                // Can drop IS NULL if nullCount is known to be 0 (no nulls exist).
-                // The always-matching dual (every row null) is deliberately not derived:
-                // for nested columns the null count tallies leaf values, not rows, so
-                // nullCount == numRows does not prove every row's leaf is null.
-                yield stats != null && stats.nullCount() != null && stats.nullCount() == 0
-                        ? FilterDecision.CANNOT_MATCH
-                        : FilterDecision.MIGHT_MATCH;
-            }
-            case ResolvedPredicate.IsNotNullPredicate p -> {
-                Statistics stats = getStatistics(rowGroup, p.columnIndex());
-                if (stats == null || stats.nullCount() == null) {
-                    yield FilterDecision.MIGHT_MATCH;
-                }
-                // Can drop IS NOT NULL if all values are null (nullCount == numRows)
-                if (stats.nullCount() == rowGroup.numRows()) {
-                    yield FilterDecision.CANNOT_MATCH;
-                }
-                yield stats.nullCount() == 0
-                        ? FilterDecision.ALWAYS_MATCHES
-                        : FilterDecision.MIGHT_MATCH;
-            }
+            case ResolvedPredicate.IsNullPredicate p -> p.group()
+                    ? groupNullDecision(p.columnIndex(), p.definitionLevel(), p.leafDefinitionLevel(), true, rowGroup)
+                    : leafIsNullDecision(rowGroup, p.columnIndex());
+            case ResolvedPredicate.IsNotNullPredicate p -> p.group()
+                    ? groupNullDecision(p.columnIndex(), p.definitionLevel(), p.leafDefinitionLevel(), false, rowGroup)
+                    : leafIsNotNullDecision(rowGroup, p.columnIndex());
             case ResolvedPredicate.And a -> {
                 if (a.children().isEmpty()) {
                     yield FilterDecision.MIGHT_MATCH;
@@ -265,6 +249,116 @@ public class RowGroupFilterEvaluator {
         minMax.reportIfDiscarded(logContext.withColumn(
                 rowGroup.columns().get(columnIndex).metaData().pathInSchema()));
         return minMax.decideLeaf(leaf);
+    }
+
+    /// Decides IS NULL on a leaf column from its null count.
+    ///
+    /// Can drop IS NULL if the null count is known to be 0 (no nulls exist). The always-matching
+    /// dual (every row null) is deliberately not derived: for nested columns the null count tallies
+    /// leaf values, not rows, so nullCount == numRows does not prove every row's leaf is null.
+    private static FilterDecision leafIsNullDecision(RowGroup rowGroup, int columnIndex) {
+        Statistics stats = getStatistics(rowGroup, columnIndex);
+        return stats != null && stats.nullCount() != null && stats.nullCount() == 0
+                ? FilterDecision.CANNOT_MATCH
+                : FilterDecision.MIGHT_MATCH;
+    }
+
+    /// Decides IS NOT NULL on a leaf column from its null count.
+    private static FilterDecision leafIsNotNullDecision(RowGroup rowGroup, int columnIndex) {
+        Statistics stats = getStatistics(rowGroup, columnIndex);
+        if (stats == null || stats.nullCount() == null) {
+            return FilterDecision.MIGHT_MATCH;
+        }
+        // Can drop IS NOT NULL if all values are null (nullCount == numRows)
+        if (stats.nullCount() == rowGroup.numRows()) {
+            return FilterDecision.CANNOT_MATCH;
+        }
+        return stats.nullCount() == 0
+                ? FilterDecision.ALWAYS_MATCHES
+                : FilterDecision.MIGHT_MATCH;
+    }
+
+    /// Decides a null predicate on a group enclosing the leaf column from the chunk's definition
+    /// level histogram, the only column chunk statistic that separates an absent group from a
+    /// present one whose children are null.
+    ///
+    /// A chunk with no entry on the predicate's side of the split cannot match: a row whose group
+    /// is absent writes one entry below the split into every leaf under it, so no such entry means
+    /// no such row.
+    ///
+    /// One whose every entry is on the matching side matches throughout, which lets the read skip
+    /// per-row evaluation for the whole row group — but only where the histogram accounts for
+    /// exactly one entry per row, since otherwise "every entry" is not "every row". A non-repeated
+    /// leaf writes one entry per row; a leaf below a `LIST` or a `MAP` writes one per element, so
+    /// the row count is what separates the two rather than the schema. A histogram totalling
+    /// anything else is not read as proof.
+    ///
+    /// A file that omits the histogram, or wrote one at a length that does not match the column,
+    /// leaves the row group undecided.
+    private static FilterDecision groupNullDecision(int columnIndex, int definitionLevel,
+            int leafDefinitionLevel, boolean seekingNulls, RowGroup rowGroup) {
+
+        long[] histogram = definitionLevelHistogram(rowGroup, columnIndex);
+
+        if (histogram == null || histogram.length != leafDefinitionLevel + 1) {
+            return FilterDecision.MIGHT_MATCH;
+        }
+
+        if (!hasEntryOnSideOf(histogram, definitionLevel, seekingNulls)) {
+            return FilterDecision.CANNOT_MATCH;
+        }
+
+        return !hasEntryOnSideOf(histogram, definitionLevel, !seekingNulls)
+                && totalEntries(histogram) == rowGroup.numRows()
+                        ? FilterDecision.ALWAYS_MATCHES
+                        : FilterDecision.MIGHT_MATCH;
+    }
+
+    /// Whether `histogram` counts an entry on the side of `definitionLevel` a null predicate
+    /// matches: below it for IS NULL, at or above it for IS NOT NULL.
+    ///
+    /// A definition level histogram holds one bucket per level up to the leaf's maximum, counting
+    /// the entries written at that level. A null predicate on a node in the leaf's path splits
+    /// those buckets at the node's own level: everything below was written with the node absent,
+    /// everything at or above with it present.
+    private static boolean hasEntryOnSideOf(long[] histogram, int definitionLevel, boolean seekingNulls) {
+        int from = seekingNulls ? 0 : definitionLevel;
+        int to = seekingNulls ? definitionLevel : histogram.length;
+
+        for (int level = from; level < to; level++) {
+            if (histogram[level] > 0) {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
+    /// The number of leaf entries `histogram` accounts for.
+    private static long totalEntries(long[] histogram) {
+        long total = 0;
+
+        for (long count : histogram) {
+            total += count;
+        }
+
+        return total;
+    }
+
+    /// Gets a column's definition level histogram by its pre-resolved index.
+    /// Returns null if the column index is out of bounds or the file omits size statistics.
+    private static long[] definitionLevelHistogram(RowGroup rowGroup, int columnIndex) {
+        if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
+            return null;
+        }
+
+        ColumnMetaData metadata = rowGroup.columns().get(columnIndex).metaData();
+        if (metadata == null) {
+            return null;
+        }
+
+        SizeStatistics sizeStatistics = metadata.sizeStatistics();
+        return sizeStatistics == null ? null : sizeStatistics.definitionLevelHistogram();
     }
 
     /// Gets statistics for a column by its pre-resolved index.

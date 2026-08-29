@@ -110,7 +110,7 @@ class BatchFilterCompilerTest {
     @Test
     void singleIsNullLeaf_returnsOneFragment() {
         FileSchema schema = schema(leaf("id", PhysicalType.INT64));
-        ResolvedPredicate predicate = new ResolvedPredicate.IsNullPredicate(0);
+        ResolvedPredicate predicate = new ResolvedPredicate.IsNullPredicate(0, 1);
 
         ColumnBatchMatcher[] result = compileMatchers(
                 predicate, schema, IntUnaryOperator.identity());

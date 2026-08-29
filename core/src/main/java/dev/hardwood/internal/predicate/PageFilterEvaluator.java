@@ -72,8 +72,10 @@ public class PageFilterEvaluator {
                 }
                 yield (result != null) ? result : RowRanges.all(rowCount);
             }
-            case ResolvedPredicate.IsNullPredicate p -> evaluateNullPages(p.columnIndex(), true, rowGroup, indexBuffers, rowCount);
-            case ResolvedPredicate.IsNotNullPredicate p -> evaluateNullPages(p.columnIndex(), false, rowGroup, indexBuffers, rowCount);
+            case ResolvedPredicate.IsNullPredicate p -> evaluateNullPages(p.columnIndex(), p.definitionLevel(),
+                    p.leafDefinitionLevel(), true, rowGroup, indexBuffers, rowCount);
+            case ResolvedPredicate.IsNotNullPredicate p -> evaluateNullPages(p.columnIndex(), p.definitionLevel(),
+                    p.leafDefinitionLevel(), false, rowGroup, indexBuffers, rowCount);
             // Parquet has no per-page geospatial statistics (GeospatialStatistics lives only on
             // ColumnMetaData, applied during row-group filtering), so no page-level pruning is possible.
             case ResolvedPredicate.GeospatialPredicate ignored -> RowRanges.all(rowCount);
@@ -122,15 +124,22 @@ public class PageFilterEvaluator {
     /// Evaluates IS NULL / IS NOT NULL predicates against per-page null information
     /// from the Column Index to produce [RowRanges] representing rows that might match.
     ///
-    /// @param columnIndex  the column to check
-    /// @param seekingNulls `true` for IS NULL (keep pages that might contain nulls),
-    ///                     `false` for IS NOT NULL (keep pages that might contain non-nulls)
-    /// @param rowGroup     the row group being evaluated
-    /// @param indexBuffers pre-fetched index buffers
-    /// @param rowCount     total rows in the row group
+    /// A predicate on an enclosing group is answered from the per-page definition level histogram
+    /// instead, which is the only per-page statistic that separates an absent group from a present
+    /// one. A page whose histogram the file omits, or wrote at a length that does not match the
+    /// column, is kept.
+    ///
+    /// @param columnIndex         the leaf column to check
+    /// @param definitionLevel     the level at or above which the tested node is present
+    /// @param leafDefinitionLevel the leaf column's maximum definition level
+    /// @param seekingNulls        `true` for IS NULL (keep pages that might contain nulls),
+    ///                            `false` for IS NOT NULL (keep pages that might contain non-nulls)
+    /// @param rowGroup            the row group being evaluated
+    /// @param indexBuffers        pre-fetched index buffers
+    /// @param rowCount            total rows in the row group
     /// @return row ranges that might contain matching rows
-    private static RowRanges evaluateNullPages(int columnIndex, boolean seekingNulls,
-            RowGroup rowGroup, RowGroupIndexBuffers indexBuffers, long rowCount) {
+    private static RowRanges evaluateNullPages(int columnIndex, int definitionLevel, int leafDefinitionLevel,
+            boolean seekingNulls, RowGroup rowGroup, RowGroupIndexBuffers indexBuffers, long rowCount) {
 
         if (columnIndex < 0 || columnIndex >= rowGroup.columns().size()) {
             return RowRanges.all(rowCount);
@@ -148,6 +157,18 @@ public class PageFilterEvaluator {
         List<PageLocation> pages = offsetIdx.pageLocations();
         int pageCount = pages.size();
         boolean[] keep = new boolean[pageCount];
+
+        if (definitionLevel < leafDefinitionLevel) {
+            for (int i = 0; i < pageCount; i++) {
+                long[] histogram = columnIdx.definitionLevelHistogram(i);
+                keep[i] = histogram == null
+                        || histogram.length != leafDefinitionLevel + 1
+                        || hasEntryOnSideOf(histogram, definitionLevel, seekingNulls);
+            }
+
+            return RowRanges.fromPages(pages, keep, rowCount);
+        }
+
         long[] nullCounts = columnIdx.nullCounts();
 
         for (int i = 0; i < pageCount; i++) {
@@ -169,6 +190,27 @@ public class PageFilterEvaluator {
         }
 
         return RowRanges.fromPages(pages, keep, rowCount);
+    }
+
+    /// Whether `histogram` counts an entry on the side of `definitionLevel` a null predicate
+    /// matches: below it for IS NULL, at or above it for IS NOT NULL.
+    ///
+    /// A definition level histogram holds one bucket per level up to the leaf's maximum, counting
+    /// the entries written at that level. A null predicate on a node in the leaf's path splits
+    /// those buckets at the node's own level: everything below was written with the node absent,
+    /// everything at or above with it present. No entry on the matching side proves no row
+    /// matches, which is what lets a page be dropped.
+    private static boolean hasEntryOnSideOf(long[] histogram, int definitionLevel, boolean seekingNulls) {
+        int from = seekingNulls ? 0 : definitionLevel;
+        int to = seekingNulls ? definitionLevel : histogram.length;
+
+        for (int level = from; level < to; level++) {
+            if (histogram[level] > 0) {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     /// Evaluates a keep bitmap for pages using pre-parsed Column Index and Offset Index.
