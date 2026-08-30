@@ -13,8 +13,11 @@ import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
+import java.lang.reflect.Proxy;
 import java.nio.file.Path;
+
 import java.util.HexFormat;
+
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -28,9 +31,13 @@ import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqInterval;
+import dev.hardwood.row.PqMap;
+import dev.hardwood.row.PqVariant;
+import dev.hardwood.row.PqVariantObject;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
+import dev.hardwood.row.VariantType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
@@ -401,6 +408,61 @@ class ValueFormatterTest {
                 NO_LIMIT))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("12 bytes");
+    }
+
+    @Test
+    void emptyMaterialisedMapUsesCanonicalEmptyGrammar() {
+        PqMap emptyMap = (PqMap) Proxy.newProxyInstance(
+                PqMap.class.getClassLoader(),
+                new Class<?>[] { PqMap.class },
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "isEmpty" -> true;
+                    case "size" -> 0;
+                    case "getEntries" -> java.util.List.of();
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+
+        assertThat(ValueFormatter.formatValue(emptyMap, null, NO_LIMIT)).isEqualTo("{}");
+    }
+
+    @Test
+    void materialisedVariantObjectSanitisesFieldNames() {
+        PqVariant value = (PqVariant) Proxy.newProxyInstance(
+                PqVariant.class.getClassLoader(),
+                new Class<?>[] { PqVariant.class },
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "type" -> VariantType.OBJECT;
+                    case "asObject" -> variantObjectWithField();
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+
+        String rendered = ValueFormatter.formatValue(value, null, NO_LIMIT);
+
+        assertThat(rendered).isEqualTo("{ bad·name·key : x }");
+        assertThat(rendered).doesNotContain("\n", "\u001b");
+    }
+
+    private static PqVariantObject variantObjectWithField() {
+        return (PqVariantObject) Proxy.newProxyInstance(
+                PqVariantObject.class.getClassLoader(),
+                new Class<?>[] { PqVariantObject.class },
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "getFieldCount" -> 1;
+                    case "getFieldName" -> "bad\nname\u001bkey";
+                    case "getVariant" -> stringVariant("x");
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
+    }
+
+    private static PqVariant stringVariant(String value) {
+        return (PqVariant) Proxy.newProxyInstance(
+                PqVariant.class.getClassLoader(),
+                new Class<?>[] { PqVariant.class },
+                (proxy, method, args) -> switch (method.getName()) {
+                    case "type" -> VariantType.STRING;
+                    case "asString" -> value;
+                    default -> throw new UnsupportedOperationException(method.getName());
+                });
     }
 
     @Test

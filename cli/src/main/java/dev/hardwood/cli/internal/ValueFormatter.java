@@ -319,9 +319,10 @@ public final class ValueFormatter {
         StringBuilder sb = new StringBuilder("{\n");
         String childPad = pad(indent + 1);
         for (int i = 0; i < count; i++) {
-            String name = obj.getFieldName(i);
-            sb.append(childPad).append(name).append(": ")
-                    .append(formatNestedPretty(obj.getVariant(name), indent + 1, useLogicalType, maxChars));
+        String rawName = obj.getFieldName(i);
+        String displayName = Strings.sanitizeControls(rawName);
+        sb.append(childPad).append(displayName).append(": ")
+                .append(formatNestedPretty(obj.getVariant(rawName), indent + 1, useLogicalType, maxChars));
             if (i < count - 1) {
                 sb.append(",");
             }
@@ -451,6 +452,9 @@ public final class ValueFormatter {
     }
 
     private static String formatMapDisplay(PqMap map, SchemaNode.GroupNode schemaNode, int maxChars) {
+        if (map.isEmpty()) {
+            return "{}";
+        }
         SchemaNode keySchema = null;
         SchemaNode valueSchema = null;
         if (schemaNode != null && !schemaNode.children().isEmpty()) {
@@ -506,8 +510,9 @@ public final class ValueFormatter {
             if (i > 0) {
                 sb.append(", ");
             }
-            String name = object.getFieldName(i);
-            sb.append(name).append(" : ").append(formatVariantDisplay(object.getVariant(name), maxChars));
+            String rawName = object.getFieldName(i);
+            String displayName = Strings.sanitizeControls(rawName);
+            sb.append(displayName).append(" : ").append(formatVariantDisplay(object.getVariant(rawName), maxChars));
         }
         return sb.append(" }").toString();
     }
@@ -1192,8 +1197,9 @@ public final class ValueFormatter {
             if (shown > 0) {
                 sb.append(", ");
             }
-            String name = obj.getFieldName(i);
-            sb.append(name).append(" : ").append(formatNested(obj.getVariant(name), depth + 1, true, maxChars));
+            String rawName = obj.getFieldName(i);
+            String displayName = Strings.sanitizeControls(rawName);
+            sb.append(displayName).append(" : ").append(formatNested(obj.getVariant(rawName), depth + 1, true, maxChars));
             shown++;
         }
         sb.append(" }");
