@@ -133,7 +133,9 @@ class ConvertCommandTest implements ConvertCommandContract {
                 getClass().getResource("/float16_logical_type_test.parquet").getPath(), "--format", "json");
 
         assertThat(int96.exitCode()).isZero();
-        assertThat(int96.output()).contains("\"ts\":\"");
+        assertThat(int96.output())
+                .contains("\"ts\":\"2026-03-05T09:30:00.123456Z\"")
+                .doesNotContain("\"ts\":\"0x");
         assertThat(interval.exitCode()).isZero();
         assertThat(interval.output()).contains("\"duration\":\"").contains("\"duration\":null");
         assertThat(float16.exitCode()).isZero();

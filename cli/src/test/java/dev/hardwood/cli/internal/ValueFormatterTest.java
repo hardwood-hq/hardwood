@@ -690,6 +690,63 @@ class ValueFormatterTest {
     }
 
     @Test
+    void int96RendersCanonicalTimestampAcrossEverySource() throws IOException {
+        Path file = Path.of(getClass().getResource("/int96_timestamp_test.parquet").getPath());
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+             RowReader rowReader = fileReader.rowReader()) {
+            FileSchema schema = fileReader.getFileSchema();
+            SchemaNode field = schema.getField("ts");
+            int index = schema.getColumn("ts").columnIndex();
+            rowReader.next();
+            byte[] raw = (byte[]) rowReader.getRawValue(index);
+            String expected = "2026-03-05T09:30:00.123456Z";
+
+            assertThat(ValueFormatter.formatReader(rowReader, index, field, true,
+                    ValueFormatter.NestedStyle.COMPACT, 1)).isEqualTo(expected);
+            assertThat(ValueFormatter.formatDictionary(raw, int96Column(), true, 1)).isEqualTo(expected);
+            assertThat(ValueFormatter.formatValue(raw, field, NO_LIMIT)).isEqualTo(expected);
+            assertThat(ValueFormatter.formatBytes(raw, int96Column(), true, 1)).isEqualTo(expected);
+        }
+    }
+
+    @Test
+    void int96PhysicalModeRendersHexAcrossEverySource() throws IOException {
+        Path file = Path.of(getClass().getResource("/int96_timestamp_test.parquet").getPath());
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+             RowReader rowReader = fileReader.rowReader()) {
+            FileSchema schema = fileReader.getFileSchema();
+            SchemaNode field = schema.getField("ts");
+            int index = schema.getColumn("ts").columnIndex();
+            rowReader.next();
+            byte[] raw = (byte[]) rowReader.getRawValue(index);
+            String expected = "0x" + HexFormat.of().formatHex(raw);
+
+            assertThat(ValueFormatter.formatReader(rowReader, index, field, false,
+                    ValueFormatter.NestedStyle.COMPACT, NO_LIMIT)).isEqualTo(expected);
+            assertThat(ValueFormatter.formatDictionary(raw, int96Column(), false, NO_LIMIT)).isEqualTo(expected);
+            assertThat(ValueFormatter.formatBytes(raw, int96Column(), false, NO_LIMIT)).isEqualTo(expected);
+        }
+    }
+
+    @Test
+    void int96DictionaryRejectsMalformedWidthsInBothModes() {
+        for (int length : new int[] { 0, 11, 13 }) {
+            for (boolean logical : new boolean[] { true, false }) {
+                assertThatThrownBy(() -> ValueFormatter.formatDictionary(
+                        new byte[length], int96Column(), logical, NO_LIMIT))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage("INT96 requires exactly 12 bytes, got " + length);
+            }
+        }
+    }
+
+    @Test
+    void int96DictionaryNullRemainsNullInBothModes() {
+        assertThat(ValueFormatter.formatDictionary(null, int96Column(), true, NO_LIMIT)).isEqualTo("null");
+        assertThat(ValueFormatter.formatDictionary(null, int96Column(), false, NO_LIMIT)).isEqualTo("null");
+    }
+
+    @Test
     void statsInt96WrongLengthFails() {
         assertThatThrownBy(() -> ValueFormatter.formatBytes(new byte[16], int96Column()))
                 .isInstanceOf(IllegalArgumentException.class)

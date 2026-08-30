@@ -119,6 +119,9 @@ public final class ValueFormatter {
         if (!useLogicalType) {
             return formatPhysical(reader, fieldIndex, maxChars);
         }
+        if (prim.type() == PhysicalType.INT96) {
+            return reader.getTimestamp(fieldIndex).toString();
+        }
         LogicalType lt = prim.logicalType();
         return switch (lt) {
             case null -> formatPhysical(reader, fieldIndex, maxChars);
@@ -682,6 +685,14 @@ public final class ValueFormatter {
         Objects.requireNonNull(col, "col");
         requireBudget(budget);
         LogicalType lt = useLogicalType ? col.logicalType() : null;
+        if (col.type() == PhysicalType.INT96 && rawValue instanceof byte[] bytes) {
+            if (bytes.length != 12) {
+                throw malformedFixedLength("INT96", 12, bytes.length);
+            }
+            if (useLogicalType) {
+                return LogicalTypeConverter.int96ToInstant(bytes).toString();
+            }
+        }
         return switch (rawValue) {
             case Integer i -> formatInt(i, lt);
             case Long l -> formatLong(l, lt);
