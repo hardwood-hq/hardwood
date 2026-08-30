@@ -22,7 +22,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
-import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -853,9 +852,9 @@ public final class DataPreviewScreen {
     }
 
     private static int columnContentWidth(ScreenState.DataPreview state, int column) {
-        int width = CharWidth.of(state.columnNames().get(column));
+        int width = Strings.width(state.columnNames().get(column));
         for (List<String> row : state.rows()) {
-            width = Math.max(width, CharWidth.of(row.get(column)));
+            width = Math.max(width, Strings.width(row.get(column)));
         }
         return Math.max(1, Math.min(VALUE_TRUNCATE, width));
     }
