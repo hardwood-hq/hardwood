@@ -75,7 +75,10 @@ public final class Strings {
     /// Truncates `s` from the left so the suffix stays visible (e.g. for
     /// long column paths, where the trailing leaf name is the distinctive
     /// part). Strings within `maxWidth` are returned unchanged.
+    ///
+    /// @throws IllegalArgumentException if `maxWidth` is below `1`
     public static String truncateLeft(String s, int maxWidth) {
+        requirePositiveWidth(maxWidth);
         if (width(s) <= maxWidth) {
             return s;
         }
@@ -94,11 +97,22 @@ public final class Strings {
     /// Cutting measures display cells rather than `char`s, so the result never
     /// ends in half a surrogate pair and a wide glyph never straddles the
     /// boundary.
+    ///
+    /// @throws IllegalArgumentException if `maxWidth` is below `1`
     public static String truncateRight(String s, int maxWidth) {
+        requirePositiveWidth(maxWidth);
         if (width(s) <= maxWidth) {
             return s;
         }
-        return prefixByWidth(s, 0, maxWidth - 1) + ELLIPSIS;
+        String ellipsis = String.valueOf(ELLIPSIS);
+        if (maxWidth <= width(ellipsis)) {
+            return ellipsis;
+        }
+        String prefix = prefixByWidth(s, 0, maxWidth - 1);
+        // The first cluster always makes progress and so can be wider than
+        // the prefix budget (a wide glyph next to a one-cell ellipsis budget);
+        // fall back to the bare ellipsis rather than exceed `maxWidth`.
+        return width(prefix) + width(ellipsis) <= maxWidth ? prefix + ellipsis : ellipsis;
     }
 
     /// Word-wraps `value` so each returned line fits within `width` cells.
@@ -232,5 +246,12 @@ public final class Strings {
             first = i;
         }
         return first == starts.size() ? "" : s.substring(starts.get(first), ends.get(ends.size() - 1));
+    }
+
+    private static void requirePositiveWidth(int maxWidth) {
+        if (maxWidth < 1) {
+            throw new IllegalArgumentException(
+                    "Maximum width must be a positive number of terminal cells, got " + maxWidth);
+        }
     }
 }

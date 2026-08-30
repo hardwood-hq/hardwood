@@ -14,6 +14,7 @@ import org.junit.jupiter.api.Test;
 import dev.tamboui.text.CharWidth;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 class StringsTest {
 
@@ -128,5 +129,45 @@ class StringsTest {
                 .isEqualTo(Strings.ELLIPSIS + "😀");
         assertThat(Strings.wordWrap("日本語", 3))
                 .containsExactly("日", "本", "語");
+    }
+
+    /// A `maxWidth` below `1` has no faithful rendering — there is no room
+    /// for even the ellipsis — so both truncation primitives reject it rather
+    /// than emit a result wider than the caller's budget.
+    @Test
+    void truncationRejectsNonPositiveWidth() {
+        assertThatThrownBy(() -> Strings.truncateRight("abc", 0))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("positive");
+        assertThatThrownBy(() -> Strings.truncateRight("abc", -1))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> Strings.truncateLeft("abc", 0))
+                .isInstanceOf(IllegalArgumentException.class);
+        assertThatThrownBy(() -> Strings.truncateLeft("abc", -1))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    /// A one-cell budget holds the ellipsis alone; the pre-fix right-truncate
+    /// returned `a…` (2 cells) because the first cluster always makes progress.
+    @Test
+    void oneCellBudgetRendersTheBareEllipsis() {
+        assertThat(Strings.truncateRight("abc", 1)).isEqualTo(String.valueOf(Strings.ELLIPSIS));
+        assertThat(Strings.truncateLeft("abc", 1)).isEqualTo(String.valueOf(Strings.ELLIPSIS));
+    }
+
+    /// The ellipsis counts towards the budget for every width and every glyph
+    /// shape: the result never occupies more cells than asked for.
+    @Test
+    void truncationNeverExceedsTheRequestedWidth() {
+        for (String s : new String[] { "abcdef", "ab😀cd", "日本語テキスト", "a\u0301b\u0301c" }) {
+            for (int maxWidth = 1; maxWidth <= 8; maxWidth++) {
+                assertThat(Strings.width(Strings.truncateRight(s, maxWidth)))
+                        .as("truncateRight(%s, %d)", s, maxWidth)
+                        .isLessThanOrEqualTo(maxWidth);
+                assertThat(Strings.width(Strings.truncateLeft(s, maxWidth)))
+                        .as("truncateLeft(%s, %d)", s, maxWidth)
+                        .isLessThanOrEqualTo(maxWidth);
+            }
+        }
     }
 }

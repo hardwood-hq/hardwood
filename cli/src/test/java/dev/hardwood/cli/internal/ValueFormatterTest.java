@@ -52,6 +52,16 @@ class ValueFormatterTest {
     private String row1Compact;
     private String row2Compact;
 
+    // Row 0 of dive_screenshots_fixture.parquet: a four-field `bbox` struct and
+    // a two-element list-of-structs `addresses` — the smallest shapes that
+    // exercise the nested walkers.
+    private String bboxCapped;
+    private String bboxWhole;
+    private String addressesCapped;
+    private String addressesWhole;
+    private String addressesExpanded;
+    private String bboxMaterialised;
+
     @BeforeAll
     void readIntervalFixture() throws IOException {
         Path file = Path.of(getClass().getResource("/interval_logical_type_test.parquet").getPath());
@@ -75,6 +85,28 @@ class ValueFormatterTest {
         }
     }
 
+    @BeforeAll
+    void readDiveFixtureRow0() throws IOException {
+        withDiveFixtureReader((rowReader, schema) -> {
+            int bbox = rootFieldIndex(schema, "bbox");
+            int addresses = rootFieldIndex(schema, "addresses");
+            SchemaNode bboxField = schema.getField("bbox");
+            SchemaNode addressesField = schema.getField("addresses");
+            rowReader.next();
+            bboxCapped = ValueFormatter.formatReader(rowReader, bbox, bboxField, true,
+                    ValueFormatter.NestedStyle.COMPACT, 100);
+            bboxWhole = ValueFormatter.formatReader(rowReader, bbox, bboxField, true,
+                    ValueFormatter.NestedStyle.COMPACT, NO_LIMIT);
+            addressesCapped = ValueFormatter.formatReader(rowReader, addresses, addressesField, true,
+                    ValueFormatter.NestedStyle.COMPACT, 100);
+            addressesWhole = ValueFormatter.formatReader(rowReader, addresses, addressesField, true,
+                    ValueFormatter.NestedStyle.COMPACT, NO_LIMIT);
+            addressesExpanded = ValueFormatter.formatReader(rowReader, addresses, addressesField, true,
+                    ValueFormatter.NestedStyle.EXPANDED, NO_LIMIT);
+            bboxMaterialised = ValueFormatter.formatValue(rowReader.getValue(bbox), bboxField, NO_LIMIT);
+        });
+    }
+
     /// Opens the interval fixture for a test that formats live rows — e.g. to
     /// assert a contract thrown before any row is touched.
     private interface IntervalReaderCase {
@@ -88,6 +120,23 @@ class ValueFormatterTest {
             testCase.run(rowReader);
         }
     }
+
+    private interface DiveReaderCase {
+        void run(RowReader rowReader, FileSchema schema) throws IOException;
+    }
+
+    private void withDiveFixtureReader(DiveReaderCase testCase) throws IOException {
+        Path file = Path.of(getClass().getResource("/dive_screenshots_fixture.parquet").getPath());
+        try (ParquetFileReader fileReader = ParquetFileReader.open(InputFile.of(file));
+             RowReader rowReader = fileReader.rowReader()) {
+            testCase.run(rowReader, fileReader.getFileSchema());
+        }
+    }
+
+    private static int rootFieldIndex(FileSchema schema, String name) {
+        return schema.getRootNode().children().indexOf(schema.getField(name));
+    }
+
 
     // ==================== dictionary source ====================
 
@@ -383,6 +432,52 @@ class ValueFormatterTest {
     @Test
     void expandedMatchesCompactForPrimitiveLeaf() {
         assertThat(row0Expanded).isEqualTo(row0Compact);
+    }
+
+    /// A finite COMPACT budget caps each nested collection at three visible
+    /// entries, at every depth: the struct's fourth member and the list
+    /// element's fourth field each collapse into `…+N` — this is the text the
+    /// dive preview cell clips.
+    @Test
+    void compactCapsNestedCollectionsAtThreeEntriesAndMarksTheRemainder() {
+        assertThat(bboxCapped)
+                .isEqualTo("{ xmin : -123.0, xmax : -122.5, ymin : 37.0, …+1 }");
+        assertThat(addressesCapped)
+                .isEqualTo("[{ freeform : 100 Main St, locality : New York, region : NA, …+1 }]");
+    }
+
+    /// `NO_LIMIT` renders every nested entry — the caps are a preview-cell
+    /// device, not part of the display grammar.
+    @Test
+    void unlimitedBudgetRendersEveryNestedEntry() {
+        assertThat(bboxWhole)
+                .isEqualTo("{ xmin : -123.0, xmax : -122.5, ymin : 37.0, ymax : 37.4 }");
+        assertThat(addressesWhole)
+                .isEqualTo("[{ freeform : 100 Main St, locality : New York, region : NA,"
+                        + " country : United States }]");
+    }
+
+    /// The EXPANDED style renders one nested entry per line at two-space
+    /// indentation per level — the dive record modal's whole-value form.
+    @Test
+    void expandedRendersNestedEntriesIndentedOnePerLine() {
+        assertThat(addressesExpanded).isEqualTo("""
+                [
+                  {
+                    freeform: 100 Main St,
+                    locality: New York,
+                    region: NA,
+                    country: United States
+                  }
+                ]""");
+    }
+
+    /// The materialised walker renders nested values whole from the same
+    /// display grammar, so a `print` cell and a COMPACT `NO_LIMIT` cell spell
+    /// a struct identically.
+    @Test
+    void materialisedWalkerRendersNestedValuesWhole() {
+        assertThat(bboxMaterialised).isEqualTo(bboxWhole);
     }
 
     // ==================== budget contract ====================

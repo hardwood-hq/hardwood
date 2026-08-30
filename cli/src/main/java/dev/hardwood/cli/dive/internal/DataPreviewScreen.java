@@ -206,7 +206,7 @@ public final class DataPreviewScreen {
         for (List<String> row : state.rows()) {
             String[] truncated = new String[window.widths().size()];
             for (int i = 0; i < truncated.length; i++) {
-                truncated[i] = truncate(row.get(state.columnScroll() + i), window.widths().get(i));
+                truncated[i] = Strings.truncateRight(row.get(state.columnScroll() + i), window.widths().get(i));
             }
             rows.add(Row.from(truncated));
         }
@@ -299,7 +299,7 @@ public final class DataPreviewScreen {
             else {
                 all.add(Line.from(
                         new Span(marker + name + pad + " : ", Theme.primary()),
-                        Span.raw(truncate(value, valueBudget))));
+                        Span.raw(Strings.truncateRight(value, valueBudget))));
             }
         }
 
@@ -322,7 +322,7 @@ public final class DataPreviewScreen {
                     shown = wrapped.isEmpty() ? "" : wrapped.get(0);
                 }
                 else {
-                    shown = truncate(value, valueBudget);
+                    shown = Strings.truncateRight(value, valueBudget);
                 }
                 all.set(cursorLine, Line.from(
                         new Span(CursorPane.marker(focusExpandable, true, mixed)
@@ -639,7 +639,7 @@ public final class DataPreviewScreen {
         }
         List<String> wrapped = expandedValueLines(state, modalRow, field, geometry);
         List<String> values = state.rows().get(modalRow);
-        String collapsed = truncate(field < values.size() ? values.get(field) : "",
+        String collapsed = Strings.truncateRight(field < values.size() ? values.get(field) : "",
                 geometry.valueBudget());
         return wrapped.size() > 1 || !wrapped.get(0).equals(collapsed);
     }
@@ -824,7 +824,7 @@ public final class DataPreviewScreen {
             }
 
             int width = Math.min(naturalWidth, remaining);
-            headers.add(truncate(state.columnNames().get(column), width));
+            headers.add(Strings.truncateRight(state.columnNames().get(column), width));
             widths.add(width);
             used += spacing + width;
             column++;
@@ -859,12 +859,6 @@ public final class DataPreviewScreen {
         return Math.max(1, Math.min(VALUE_TRUNCATE, width));
     }
 
-    private static String truncate(String s, int max) {
-        if (max < 1) {
-            throw new IllegalArgumentException("Maximum width must be positive");
-        }
-        return Strings.truncateRight(s, max);
-    }
 
     /// The columns the current viewport can show, starting at `columnScroll`.
     /// `end` is exclusive and counts a clipped trailing column; `clipped` says
