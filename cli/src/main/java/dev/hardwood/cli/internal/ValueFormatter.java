@@ -365,7 +365,6 @@ public final class ValueFormatter {
     /// rather than rendering a misleading string.
     public static String formatValue(Object value, SchemaNode field, int budget) {
         requireBudget(budget);
-        Objects.requireNonNull(field, "field");
         if (value == null) {
             return "null";
         }
@@ -637,7 +636,11 @@ public final class ValueFormatter {
         if (isAnnotatedStringField(schema)) {
             return Strings.sanitizeControls(new String(bytes, StandardCharsets.UTF_8));
         }
-        SchemaNode.PrimitiveNode pn = (SchemaNode.PrimitiveNode) schema;
+        if (!(schema instanceof SchemaNode.PrimitiveNode pn)) {
+            // Schema-less walk: no annotation to decode with, so the bytes are
+            // the only evidence — the same rule an unannotated column follows.
+            return BinaryValues.render(bytes, budget);
+        }
         LogicalType lt = pn.logicalType();
         if (lt instanceof LogicalType.UuidType) {
             if (bytes.length != 16) {
@@ -829,6 +832,9 @@ public final class ValueFormatter {
             return "-";
         }
         LogicalType lt = useLogicalType ? col.logicalType() : null;
+        if (col.type() == PhysicalType.INT96 && bytes.length != 12) {
+            throw malformedFixedLength("INT96", 12, bytes.length);
+        }
         requireFixedByteLength(bytes, lt);
         if (bytes.length == 0) {
             return isByteBacked(col.type()) ? "\"\"" : "";

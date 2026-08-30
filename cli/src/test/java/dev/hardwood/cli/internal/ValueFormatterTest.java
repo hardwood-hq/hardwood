@@ -549,9 +549,6 @@ class ValueFormatterTest {
                 ValueFormatter.NestedStyle.COMPACT, NO_LIMIT))
                 .isInstanceOf(NullPointerException.class)
                 .hasMessage("field"));
-        assertThatThrownBy(() -> ValueFormatter.formatValue("x", null, NO_LIMIT))
-                .isInstanceOf(NullPointerException.class)
-                .hasMessage("field");
     }
 
     @Test
@@ -748,9 +745,14 @@ class ValueFormatterTest {
 
     @Test
     void statsInt96WrongLengthFails() {
-        assertThatThrownBy(() -> ValueFormatter.formatBytes(new byte[16], int96Column()))
-                .isInstanceOf(IllegalArgumentException.class)
-                .hasMessageContaining("12 bytes");
+        for (int length : new int[] { 0, 11, 13, 16 }) {
+            for (boolean logical : new boolean[] { true, false }) {
+                assertThatThrownBy(() -> ValueFormatter.formatBytes(
+                        new byte[length], int96Column(), logical, NO_LIMIT))
+                        .isInstanceOf(IllegalArgumentException.class)
+                        .hasMessage("INT96 requires exactly 12 bytes, got " + length);
+            }
+        }
     }
 
     /// GeoParquet 1.x predates the `GEOMETRY` logical type and stores WKB in a
@@ -954,13 +956,24 @@ class ValueFormatterTest {
     private static final byte[] WKB_POINT =
             HexFormat.of().parseHex("010100000000000000005366c0f71622f0fa1955c0");
     @Test
-    void nullSchemaIsRejectedBeforeNullValueAndAbsentByteShortcuts() {
-        assertThatThrownBy(() -> ValueFormatter.formatValue(null, null, NO_LIMIT))
-                .isInstanceOf(NullPointerException.class).hasMessage("field");
+    void nullColumnIsRejectedBeforeAbsentByteShortcut() {
         assertThatThrownBy(() -> ValueFormatter.formatBytes(null, null, true, NO_LIMIT))
                 .isInstanceOf(NullPointerException.class).hasMessage("col");
         assertThatThrownBy(() -> ValueFormatter.formatDecoded((byte[]) null, null))
                 .isInstanceOf(NullPointerException.class).hasMessage("col");
+    }
+
+    /// A schema-less nested value walks whole, the way legacy list and map
+    /// layouts without resolvable child schemas always have — the walkers pass
+    /// `null` child schemas when the group or element node does not resolve.
+    @Test
+    void materialisedNestedValueWalksSchemaLessWithoutAResolvableSchema() throws IOException {
+        withDiveFixtureReader((rowReader, schema) -> {
+            int bbox = rootFieldIndex(schema, "bbox");
+            rowReader.next();
+            assertThat(ValueFormatter.formatValue(rowReader.getValue(bbox), null, NO_LIMIT))
+                    .isEqualTo(bboxMaterialised);
+        });
     }
 
     @Test
