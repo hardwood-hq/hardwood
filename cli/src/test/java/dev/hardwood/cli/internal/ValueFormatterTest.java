@@ -426,30 +426,60 @@ class ValueFormatterTest {
     }
 
     @Test
-    void materialisedVariantObjectSanitisesFieldNames() {
+    void variantObjectDisplayWalkersSanitiseNamesAndUseRawLookupKeys() {
+        String[] rawNames = { "bad\nname\u001bkey", "tab\tname", "nul\u0000name", "plain" };
+        PqVariantObject object = variantObjectWithFields(rawNames);
         PqVariant value = (PqVariant) Proxy.newProxyInstance(
                 PqVariant.class.getClassLoader(),
                 new Class<?>[] { PqVariant.class },
                 (proxy, method, args) -> switch (method.getName()) {
                     case "type" -> VariantType.OBJECT;
-                    case "asObject" -> variantObjectWithField();
+                    case "asObject" -> object;
                     default -> throw new UnsupportedOperationException(method.getName());
                 });
 
-        String rendered = ValueFormatter.formatValue(value, null, NO_LIMIT);
-
-        assertThat(rendered).isEqualTo("{ bad·name·key : x }");
-        assertThat(rendered).doesNotContain("\n", "\u001b");
+        assertThat(ValueFormatter.formatValue(value, null, NO_LIMIT))
+                .isEqualTo("{ bad·name·key : x, tab·name : x, nul·name : x, plain : x }");
+        assertThat(invokePrivateVariantWalker("formatVariantObject",
+                new Class<?>[] { PqVariantObject.class, int.class, int.class },
+                object, 0, 100))
+                .isEqualTo("{ bad·name·key : x, tab·name : x, nul·name : x, …+1 }");
+        assertThat(invokePrivateVariantWalker("prettyVariantObject",
+                new Class<?>[] { PqVariantObject.class, int.class, boolean.class, int.class },
+                object, 0, true, NO_LIMIT))
+                .isEqualTo("""
+                        {
+                          bad·name·key: x,
+                          tab·name: x,
+                          nul·name: x,
+                          plain: x
+                        }""");
     }
 
-    private static PqVariantObject variantObjectWithField() {
+    private static String invokePrivateVariantWalker(String name, Class<?>[] parameterTypes, Object... args) {
+        try {
+            java.lang.reflect.Method method = ValueFormatter.class.getDeclaredMethod(name, parameterTypes);
+            method.setAccessible(true);
+            return (String) method.invoke(null, args);
+        } catch (ReflectiveOperationException exception) {
+            throw new AssertionError("Could not invoke " + name, exception);
+        }
+    }
+
+    private static PqVariantObject variantObjectWithFields(String[] rawNames) {
         return (PqVariantObject) Proxy.newProxyInstance(
                 PqVariantObject.class.getClassLoader(),
                 new Class<?>[] { PqVariantObject.class },
                 (proxy, method, args) -> switch (method.getName()) {
-                    case "getFieldCount" -> 1;
-                    case "getFieldName" -> "bad\nname\u001bkey";
-                    case "getVariant" -> stringVariant("x");
+                    case "getFieldCount" -> rawNames.length;
+                    case "getFieldName" -> rawNames[(int) args[0]];
+                    case "getVariant" -> {
+                        String requestedName = (String) args[0];
+                        if (!java.util.Arrays.asList(rawNames).contains(requestedName)) {
+                            throw new AssertionError("Lookup used sanitized field name: " + requestedName);
+                        }
+                        yield stringVariant("x");
+                    }
                     default -> throw new UnsupportedOperationException(method.getName());
                 });
     }
