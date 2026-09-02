@@ -23,6 +23,22 @@ public interface BloomFilterPrefetch {
     /// parses through its known-length path without re-deriving the length.
     PrefetchedBloom lookup(long offset);
 
+    /// A legacy header probe retained for a filter that is too large to prefetch as one region.
+    /// The source uses the derived length to perform the exact lazy read without probing again.
+    default PrefetchedProbe lookupProbe(long offset) {
+        return null;
+    }
+
+    /// The exact filter length derived from a retained legacy probe header.
+    record PrefetchedProbe(int filterLength) {
+        public PrefetchedProbe {
+            if (filterLength <= 0) {
+                throw new IllegalArgumentException(
+                        "legacy probe filter length must be positive but was " + filterLength);
+            }
+        }
+    }
+
     /// One prefetched filter: bytes positioned at the filter's start and its exact total
     /// length in bytes.
     record PrefetchedBloom(ByteBuffer data, int filterLength) {

@@ -17,8 +17,8 @@ import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
-import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 
 import org.apache.parquet.column.values.bloomfilter.BlockSplitBloomFilter;
 import org.apache.parquet.format.BloomFilterAlgorithm;
@@ -29,6 +29,7 @@ import org.apache.parquet.format.SplitBlockAlgorithm;
 import org.apache.parquet.format.Uncompressed;
 import org.apache.parquet.format.Util;
 import org.apache.parquet.format.XxHash;
+import org.junit.jupiter.api.Test;
 
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
@@ -45,11 +46,9 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.schema.FileSchema;
 
-import org.junit.jupiter.api.Test;
-
 import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.catchThrowable;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.catchThrowable;
 
 /// The I/O cost model of bloom filter reads during row-group pruning, pinned as request counts
 /// rather than wall-clock (see `_designs/BLOOM_FILTER_IO_COALESCING.md`, issue #735).
@@ -92,7 +91,7 @@ class BloomFilterIoCoalescingTest {
                 System.setProperty("hardwood.internal.bloomPrefetch", Boolean.toString(prefetchEnabled));
                 ParquetFileReader.ColumnReaderBuilder builder = reader.buildColumnReader("code");
                 if (filter != null) {
-                    builder = builder.filter(filter);
+                    builder.filter(filter);
                 }
                 int rows = 0;
                 try (ColumnReader values = builder.build()) {
@@ -102,12 +101,10 @@ class BloomFilterIoCoalescingTest {
                 }
                 return new Reads(file.readCount("bloom"), file.readCount("bloom region"),
                         file.readCount("bloom filter"), rows);
-            }
-            finally {
+            } finally {
                 if (previous == null) {
                     System.clearProperty("hardwood.internal.bloomPrefetch");
-                }
-                else {
+                } else {
                     System.setProperty("hardwood.internal.bloomPrefetch", previous);
                 }
             }
@@ -161,9 +158,224 @@ class BloomFilterIoCoalescingTest {
         assertThat(prefetch).isNotNull();
         assertThat(file.readCount("bloom region")).isEqualTo(2);
         assertThat(file.readCount("bloom filter")).isZero();
+        assertThat(file.readReasons())
+                .as("each region read names its exact span")
+                .contains("bloom region 1000..1132", "bloom region 70000..70032");
         assertThat(prefetch.lookup(1000)).isNotNull();
         assertThat(prefetch.lookup(1100)).isNotNull();
         assertThat(prefetch.lookup(70000)).isNotNull();
+    }
+
+    @Test
+    void nestedRegionsRetainTheOuterSpan() throws Exception {
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        List<BloomFilterReadPlanner.BloomCandidate> candidates = List.of(
+                new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, 1000, 32),
+                new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, 1010, 10));
+        for (List<BloomFilterReadPlanner.BloomCandidate> order : List.of(
+                candidates, List.of(candidates.get(1), candidates.get(0)))) {
+            CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE));
+            file.open();
+            BloomFilterPrefetch prefetch = BloomFilterPrefetcher.fetch(
+                    new BloomFilterReadPlanner.BloomFilterReadPlan(order), file);
+            assertThat(prefetch).isNotNull();
+            assertThat(file.readCount("bloom region")).isEqualTo(1);
+            assertThat(prefetch.lookup(1000)).isNotNull();
+            assertThat(prefetch.lookup(1010)).isNotNull();
+        }
+    }
+
+    @Test
+    void conflictingDuplicateOffsetsStayOnTheLazyPath() throws Exception {
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        List<BloomFilterReadPlanner.BloomCandidate> candidates = List.of(
+                new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, 1000, 32),
+                new BloomFilterReadPlanner.BloomCandidate(1, rowGroup, CODE_COLUMN, 1000, 64));
+        for (List<BloomFilterReadPlanner.BloomCandidate> order : List.of(
+                candidates, List.of(candidates.get(1), candidates.get(0)))) {
+            CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE));
+            file.open();
+            BloomFilterPrefetch prefetch = BloomFilterPrefetcher.fetch(
+                    new BloomFilterReadPlanner.BloomFilterReadPlan(order), file);
+            assertThat(prefetch).isNull();
+            assertThat(file.readCount("bloom")).isZero();
+        }
+    }
+
+    @Test
+    void singletonLargerThanRegionCapStaysLazy() throws Exception {
+        int overCap = 16 * 1024 * 1024 + 1;
+        int pairOffset = overCap + 10_000;
+        byte[] fileBytes = new byte[pairOffset + 128];
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        CountingInputFile file = new CountingInputFile(InputFile.of(ByteBuffer.wrap(fileBytes)));
+        List<BloomFilterReadPlanner.BloomCandidate> candidates = List.of(
+                new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN,
+                        100, overCap - 1),
+                new BloomFilterReadPlanner.BloomCandidate(1, rowGroup, CODE_COLUMN, 64, overCap),
+                new BloomFilterReadPlanner.BloomCandidate(2, rowGroup, CODE_COLUMN, pairOffset, 32),
+                new BloomFilterReadPlanner.BloomCandidate(3, rowGroup, CODE_COLUMN,
+                        pairOffset + 64, 32));
+        file.open();
+        BloomFilterPrefetch prefetch = BloomFilterPrefetcher.fetch(
+                new BloomFilterReadPlanner.BloomFilterReadPlan(candidates), file);
+        assertThat(prefetch).isNotNull();
+        assertThat(prefetch.lookup(64)).isNull();
+        assertThat(prefetch.lookup(100)).isNotNull();
+        assertThat(file.readCount("bloom region")).isEqualTo(2);
+        assertThat(file.readReasons()).doesNotContain("bloom region 64..16777281");
+    }
+
+
+    @Test
+    void largeLegacyExtentCanReachKnownNeighbour() throws Exception {
+        long presentHash = XxHash64.hash(11);
+        byte[] legacyFilter = serializeMinimalFilter(presentHash, 131072);
+        int legacyOffset = 1000;
+        int knownOffset = legacyOffset + legacyFilter.length;
+        byte[] fileBytes = new byte[knownOffset + legacyFilter.length + 32];
+        System.arraycopy(legacyFilter, 0, fileBytes, legacyOffset, legacyFilter.length);
+        System.arraycopy(legacyFilter, 0, fileBytes, knownOffset, legacyFilter.length);
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        List<BloomFilterReadPlanner.BloomCandidate> candidates = List.of(
+                new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN,
+                        legacyOffset, null),
+                new BloomFilterReadPlanner.BloomCandidate(1, rowGroup, CODE_COLUMN,
+                        knownOffset, legacyFilter.length));
+        CountingInputFile file = new CountingInputFile(InputFile.of(ByteBuffer.wrap(fileBytes)));
+        file.open();
+        BloomFilterPrefetch prefetch = BloomFilterPrefetcher.fetch(
+                new BloomFilterReadPlanner.BloomFilterReadPlan(candidates), file);
+        assertThat(prefetch).isNotNull();
+        assertThat(file.readCount("bloom probe")).isEqualTo(1);
+        assertThat(file.readCount("bloom region")).isEqualTo(1);
+        assertThat(prefetch.lookup(legacyOffset)).isNotNull();
+        assertThat(prefetch.lookup(knownOffset)).isNotNull();
+    }
+
+    @Test
+    void retainedLegacyProbeRequiresPositiveFilterLength() {
+        BloomFilterPrefetch.PrefetchedProbe probe =
+                new BloomFilterPrefetch.PrefetchedProbe(5);
+        assertThat(probe.filterLength()).isEqualTo(5);
+
+        assertThatThrownBy(() -> new BloomFilterPrefetch.PrefetchedProbe(0))
+                .isInstanceOf(IllegalArgumentException.class);
+    }
+
+    @Test
+    void retainedLegacyProbeAvoidsRepeatingTheHeaderRead() throws Exception {
+        long presentHash = XxHash64.hash(17);
+        byte[] filter = serializeMinimalFilter(presentHash, 1024);
+        int offset = 64;
+        byte[] fileBytes = new byte[offset + filter.length + 32];
+        System.arraycopy(filter, 0, fileBytes, offset, filter.length);
+        RowGroup rowGroup = syntheticSingleColumnRowGroups(offset, offset + filter.length + 1)
+                .getFirst();
+        CountingInputFile file = new CountingInputFile(InputFile.of(ByteBuffer.wrap(fileBytes)));
+        file.open();
+        BloomFilterPrefetch retainedProbe = new BloomFilterPrefetch() {
+            @Override
+            public PrefetchedBloom lookup(long ignored) {
+                return null;
+            }
+
+            @Override
+            public PrefetchedProbe lookupProbe(long candidateOffset) {
+                return candidateOffset == offset
+                        ? new PrefetchedProbe(filter.length)
+                        : null;
+            }
+        };
+
+        BloomFilter served = new RowGroupBloomFilterSource(file, rowGroup, retainedProbe)
+                .forColumn(0);
+
+        assertThat(served).isNotNull();
+        assertThat(served.mightContain(presentHash)).isTrue();
+        assertThat(file.readCount("bloom probe")).isZero();
+        assertThat(file.readCount("bloom filter")).isEqualTo(1);
+    }
+
+    @Test
+    void overflowingCandidateSpanStaysOnTheLazyPath() throws Exception {
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        List<BloomFilterReadPlanner.BloomCandidate> candidates = List.of(
+                new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN,
+                        Long.MAX_VALUE, 32),
+                new BloomFilterReadPlanner.BloomCandidate(1, rowGroup, CODE_COLUMN, 1000, 32));
+        CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE));
+        file.open();
+        BloomFilterPrefetch prefetch = BloomFilterPrefetcher.fetch(
+                new BloomFilterReadPlanner.BloomFilterReadPlan(candidates), file);
+        assertThat(prefetch).isNull();
+        assertThat(file.readCount("bloom")).isZero();
+    }
+
+    @Test
+    void candidatesExactlyAtTheCoalescingGapStillMerge() throws Exception {
+        // The gap tolerance is inclusive: candidates separated by exactly 64 KB still merge —
+        // any real gap is padding, and the boundary is precisely where a fencepost would
+        // silently split regions that should be one GET.
+        CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE));
+        file.open();
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        long near = 1000;
+        long far = near + 32 + 64 * 1024; // exactly one gap beyond the near candidate's end
+        BloomFilterPrefetch prefetch = BloomFilterPrefetcher.fetch(
+                new BloomFilterReadPlanner.BloomFilterReadPlan(List.of(
+                        new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, near, 32),
+                        new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, far, 32))),
+                file);
+        assertThat(prefetch).isNotNull();
+        assertThat(file.readCount("bloom region"))
+                .as("a gap of exactly BLOOM_COALESCE_GAP_BYTES is bridged")
+                .isEqualTo(1);
+        assertThat(prefetch.lookup(near)).isNotNull();
+        assertThat(prefetch.lookup(far)).isNotNull();
+    }
+
+    @Test
+    void regionsSpanningExactlyTheSizeCapStillMerge() throws Exception {
+        // The 16 MB cap is inclusive too: a span of exactly BLOOM_MAX_REGION_BYTES stays one
+        // region. Only the in-memory file's geometry matters, so it stands in for a much
+        // larger on-disk one.
+        int cap = 16 * 1024 * 1024;
+        long near = 1000;
+        int nearLength = cap - 32;
+        long far = near + nearLength; // adjacent: zero gap, combined span exactly the cap
+        byte[] fileBytes = new byte[Math.toIntExact(far + 32)];
+        InputFile input = InputFile.of(ByteBuffer.wrap(fileBytes));
+        input.open();
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        CountingInputFile file = new CountingInputFile(input);
+        BloomFilterPrefetch prefetch = BloomFilterPrefetcher.fetch(
+                new BloomFilterReadPlanner.BloomFilterReadPlan(List.of(
+                        new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, near, nearLength),
+                        new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, far, 32))),
+                file);
+        assertThat(prefetch).isNotNull();
+        assertThat(file.readCount("bloom region"))
+                .as("a span of exactly BLOOM_MAX_REGION_BYTES is not split")
+                .isEqualTo(1);
+        assertThat(prefetch.lookup(near)).isNotNull();
+        assertThat(prefetch.lookup(far)).isNotNull();
+    }
+
+    @Test
+    void unmergeableKnownCandidatesAreNotPrefetched() throws Exception {
+        // The skip rule for footer-declared candidates: when no merged region can hold two
+        // candidates there is nothing to gain, so no prefetch runs at all and every filter is
+        // read lazily — exactly today's path.
+        CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE));
+        file.open();
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        BloomFilterReadPlanner.BloomFilterReadPlan plan = new BloomFilterReadPlanner.BloomFilterReadPlan(
+                List.of(new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, 1000, 32),
+                        new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, 70000, 32)));
+        assertThat(BloomFilterPrefetcher.fetch(plan, file)).isNull();
+        assertThat(file.readCount("bloom region")).isZero();
+        assertThat(file.readCount("bloom probe")).isZero();
     }
 
     @Test
@@ -294,12 +506,10 @@ class BloomFilterIoCoalescingTest {
                 }
                 assertThat(rows).isZero(); // per-row evaluation: no row holds code = 1
                 assertThat(file.readCount("bloom")).isZero();
-            }
-            finally {
+            } finally {
                 if (previous == null) {
                     System.clearProperty("hardwood.internal.bloomPrefetch");
-                }
-                else {
+                } else {
                     System.setProperty("hardwood.internal.bloomPrefetch", previous);
                 }
             }
@@ -386,6 +596,35 @@ class BloomFilterIoCoalescingTest {
     }
 
     @Test
+    void chunkNamingAnotherFileFailsIdenticallyWithAndWithoutPrefetch() throws Exception {
+        // The split-file check lives in the lazy source and must fire whether or not a
+        // prefetch was supplied: the chunk's offset addresses another file, so pruning on
+        // whatever sits there would drop row groups that match.
+        List<RowGroup> rowGroups = fixtureRowGroups();
+        RowGroup rowGroup = rowGroups.getFirst();
+        ColumnChunk code = rowGroup.columns().get(CODE_COLUMN);
+        ColumnChunk patched = new ColumnChunk(
+                withBloom(code.metaData(), 1000L, 32),
+                code.offsetIndexOffset(), code.offsetIndexLength(),
+                code.columnIndexOffset(), code.columnIndexLength(), "other.parquet");
+        List<ColumnChunk> columns = new ArrayList<>(rowGroup.columns());
+        columns.set(CODE_COLUMN, patched);
+        RowGroup split = new RowGroup(columns, rowGroup.totalByteSize(), rowGroup.numRows());
+
+        CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE));
+        file.open();
+        assertThatThrownBy(() -> new RowGroupBloomFilterSource(file, split).forColumn(CODE_COLUMN))
+                .isInstanceOf(UncheckedIOException.class)
+                .hasMessageContaining("Cannot read column " + CODE_COLUMN);
+        BloomFilterPrefetch prefetch = offset ->
+                new BloomFilterPrefetch.PrefetchedBloom(ByteBuffer.allocate(32), 32);
+        assertThatThrownBy(() -> new RowGroupBloomFilterSource(file, split, prefetch)
+                .forColumn(CODE_COLUMN))
+                .isInstanceOf(UncheckedIOException.class)
+                .hasMessageContaining("Cannot read column " + CODE_COLUMN);
+    }
+
+    @Test
     void consultedPastEofCandidateSurfacesTheLazyPathException() throws Exception {
         // The consult-reachable counterpart: row group 0's code chunk declares a region past
         // EOF while its siblings are honest, so the merged region read fails. The candidate
@@ -445,6 +684,22 @@ class BloomFilterIoCoalescingTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("bloom region")
                 .hasMessageContaining("does not cover the filter at offset");
+    }
+
+    @Test
+    void shortRegionMessageNamesTheExactSpan() throws Exception {
+        // The diagnostic carries the region's actual span — the short read's byte count, not
+        // the requested one — so the numbers in the message are pinned too.
+        CountingInputFile file = new CountingInputFile(new ShortBloomRegions(InputFile.of(FIXTURE)));
+        file.open();
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        assertThatThrownBy(() -> BloomFilterPrefetcher.fetch(
+                new BloomFilterReadPlanner.BloomFilterReadPlan(List.of(
+                        new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, 1000, 32),
+                        new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, 1100, 32))),
+                file))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("[1000, 1131)"); // region [1000, 1132), served one byte short
     }
 
     /// Delegates every read to `delegate` except bloom-attributed ones of at least `minBytes`,
@@ -572,12 +827,10 @@ class BloomFilterIoCoalescingTest {
             if (regionRead) {
                 if (regionReadsInFlight.incrementAndGet() > 1) {
                     secondInFlight.countDown();
-                }
-                else {
+                } else {
                     try {
                         overlapped.set(secondInFlight.await(5, TimeUnit.SECONDS));
-                    }
-                    catch (InterruptedException e) {
+                    } catch (InterruptedException e) {
                         Thread.currentThread().interrupt();
                         throw new IOException("Interrupted awaiting a concurrent region read", e);
                     }
@@ -585,8 +838,7 @@ class BloomFilterIoCoalescingTest {
             }
             try {
                 return delegate.readRange(offset, length);
-            }
-            finally {
+            } finally {
                 if (regionRead) {
                     regionReadsInFlight.decrementAndGet();
                 }
@@ -782,17 +1034,15 @@ class BloomFilterIoCoalescingTest {
     }
 
     @Test
-    void isolatedLegacyCandidatesAreNotProbed() throws Exception {
-        // Two oversized legacy filters farther apart than the coalescing gap cannot merge even
-        // once their lengths are derived, so probing them would only add a read ahead of the
-        // lazy path's identical probe-plus-refetch — three reads per filter where today costs
-        // two. The prefetcher leaves them alone: exactly 2N lazy reads, no probes, no regions.
+    void isolatedLegacyCandidatesUseTwoPhasesWithoutExtraReads() throws Exception {
+        // Unknown-length filters are probed so their true extents can be coalesced. When they
+        // remain isolated, the probe and exact reads still total the lazy path's two reads per
+        // filter, but both phases run concurrently.
         long presentHash = XxHash64.hash(7);
         byte[] filter = serializeMinimalFilter(presentHash, 1024);
         assertThat(filter.length).isGreaterThan(BloomFilterProbe.HEADER_PROBE_BYTES);
 
         int offsetA = 64;
-        // Far enough apart that even the derived extents stay outside the 64 KB gap.
         int offsetB = offsetA + 64 * 1024 + 8 * 1024;
         byte[] fileBytes = new byte[offsetB + filter.length + 32];
         System.arraycopy(filter, 0, fileBytes, offsetA, filter.length);
@@ -801,18 +1051,19 @@ class BloomFilterIoCoalescingTest {
         List<RowGroup> rowGroups = syntheticSingleColumnRowGroups(offsetA, offsetB);
         CountingInputFile file = new CountingInputFile(InputFile.of(ByteBuffer.wrap(fileBytes)));
         file.open();
-        assertThat(prefetch(file, resolvedIdPredicate(), rowGroups)).isNull();
-        assertThat(file.readCount("bloom probe")).isZero();
-        assertThat(file.readCount("bloom region")).isZero();
+        BloomFilterPrefetch prefetch = prefetch(file, resolvedIdPredicate(), rowGroups);
+
+        assertThat(prefetch).isNotNull();
+        assertThat(file.readCount("bloom probe")).isEqualTo(2);
+        assertThat(file.readCount("bloom region")).isEqualTo(2);
 
         for (RowGroup rowGroup : rowGroups) {
-            BloomFilter lazyFilter = new RowGroupBloomFilterSource(file, rowGroup).forColumn(0);
+            BloomFilter lazyFilter = new RowGroupBloomFilterSource(file, rowGroup, prefetch)
+                    .forColumn(0);
             assertThat(lazyFilter).isNotNull();
             assertThat(lazyFilter.mightContain(presentHash)).isTrue();
         }
-        assertThat(file.readCount("bloom filter"))
-                .as("two lazy reads per filter, exactly as without prefetching")
-                .isEqualTo(4);
+        assertThat(file.readCount("bloom filter")).isZero();
     }
 
     @Test
@@ -828,6 +1079,22 @@ class BloomFilterIoCoalescingTest {
                 .forColumn(CODE_COLUMN))
                 .isInstanceOf(UncheckedIOException.class)
                 .hasMessageContaining("Failed to read bloom filter");
+    }
+
+    @Test
+    void uncheckedLengthFailureLeavesLegacyCandidatesUnprefetched() throws Exception {
+        // `length()` failing with anything — not just an IOException — must leave every legacy
+        // candidate on the lazy path rather than escaping the prefetch, and resurface from the
+        // lazy read with the same type and message.
+        List<RowGroup> rowGroups = legacyLengthRowGroups();
+        InputFile failingLength = new UncheckedFailingLengthFile(InputFile.of(FIXTURE));
+        assertThat(prefetch(new CountingInputFile(failingLength), resolvedCodePredicate(),
+                rowGroups)).isNull();
+
+        assertThatThrownBy(() -> new RowGroupBloomFilterSource(failingLength, rowGroups.getFirst())
+                .forColumn(CODE_COLUMN))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Forced unchecked length failure");
     }
 
     @Test
@@ -853,6 +1120,160 @@ class BloomFilterIoCoalescingTest {
         CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE));
         file.open();
         assertThat(prefetch(file, predicate, rowGroups)).isNull();
+    }
+
+    @Test
+    void candidateExactlyAtEofIsGuardedBeforeAnyRead() throws Exception {
+        // A legacy candidate at exactly the file length is unprefetched by the EOF guard
+        // before any read is issued; an off-by-one there would fetch a zero-byte window.
+        long fileLength;
+        try (InputFile input = InputFile.of(FIXTURE)) {
+            input.open();
+            fileLength = input.length();
+        }
+        List<RowGroup> rowGroups = legacyLengthRowGroups();
+        RowGroup first = rowGroups.getFirst();
+        ColumnChunk original = first.columns().get(CODE_COLUMN);
+        ColumnChunk patched = new ColumnChunk(
+                withBloom(original.metaData(), fileLength, null),
+                original.offsetIndexOffset(), original.offsetIndexLength(),
+                original.columnIndexOffset(), original.columnIndexLength(), "");
+        List<ColumnChunk> columns = new ArrayList<>(first.columns());
+        columns.set(CODE_COLUMN, patched);
+        rowGroups.set(0, new RowGroup(columns, first.totalByteSize(), first.numRows()));
+
+        CountingInputFile file = new CountingInputFile(InputFile.of(FIXTURE));
+        file.open();
+        BloomFilterPrefetch prefetch = prefetch(file, resolvedCodePredicate(), rowGroups);
+        assertThat(file.readCount("bloom probe")).isEqualTo(4);
+        // The four honest probes parsed the fixture's real filters and were fetched as one
+        // merged region (they are contiguous); the EOF-guarded candidate contributed no
+        // probe, no region, and no cache entry.
+        assertThat(file.readCount("bloom region")).isEqualTo(1);
+        assertThat(prefetch).isNotNull();
+        assertThat(prefetch.lookup(fileLength)).isNull();
+    }
+
+    @Test
+    void legacyCandidatesProbeBeforeTheirExtentsAreKnown() throws Exception {
+        // Both legacy candidates are probed before their true extents are known. This keeps
+        // extent-bridging layouts eligible for coalescing instead of treating legacy filters as
+        // zero-length points.
+        RowGroup rowGroup = fixtureRowGroups().getFirst();
+        BloomFilterReadPlanner.BloomCandidate known =
+                new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN, 1000, 32);
+
+        CountingInputFile atBoundary = new CountingInputFile(InputFile.of(FIXTURE));
+        atBoundary.open();
+        BloomFilterPrefetcher.fetch(new BloomFilterReadPlanner.BloomFilterReadPlan(List.of(known,
+                new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN,
+                        1000 + 32 + 64 * 1024, null))), atBoundary);
+        assertThat(atBoundary.readCount("bloom probe")).isEqualTo(1);
+
+        CountingInputFile pastBoundary = new CountingInputFile(InputFile.of(FIXTURE));
+        pastBoundary.open();
+        BloomFilterPrefetcher.fetch(new BloomFilterReadPlanner.BloomFilterReadPlan(List.of(known,
+                new BloomFilterReadPlanner.BloomCandidate(0, rowGroup, CODE_COLUMN,
+                        1000 + 32 + 64 * 1024 + 1, null))), pastBoundary);
+        assertThat(pastBoundary.readCount("bloom probe"))
+                .as("legacy candidates are probed before their extents are known")
+                .isEqualTo(1);
+    }
+
+    @Test
+    void windowEndingExactlyAtEofServesTheWholeFilter() throws Exception {
+        // Two boundary rules in one shape: the probe window clamps to the bytes actually left
+        // in the file, and a filter exactly as long as the window is complete after the probe
+        // — no second read, no region fetch. A fencepost in either rule would re-fetch (or
+        // read past EOF and fall back).
+        long presentHash = XxHash64.hash(11);
+        byte[] filter = serializeMinimalFilter(presentHash);
+        int offsetA = 64;
+        int offsetB = 4096;
+        int fileLength = offsetB + filter.length; // the second filter ends exactly at EOF
+        byte[] fileBytes = new byte[fileLength];
+        System.arraycopy(filter, 0, fileBytes, offsetA, filter.length);
+        System.arraycopy(filter, 0, fileBytes, offsetB, filter.length);
+
+        CountingInputFile file = new CountingInputFile(InputFile.of(ByteBuffer.wrap(fileBytes)));
+        file.open();
+        List<RowGroup> rowGroups = syntheticSingleColumnRowGroups(offsetA, offsetB);
+        BloomFilterPrefetch prefetch = prefetch(file, resolvedIdPredicate(), rowGroups);
+
+        RowGroup second = rowGroups.get(1); // the one whose window was clamped to EOF
+        BloomFilter served = new RowGroupBloomFilterSource(file, second, prefetch).forColumn(0);
+        assertThat(served).isNotNull();
+        assertThat(served.mightContain(presentHash)).isTrue();
+
+        // Asserted after serving: a fencepost in either boundary rule would re-fetch the
+        // second filter lazily, and those reads would only be visible now.
+        assertThat(prefetch).isNotNull();
+        assertThat(file.readCount("bloom probe")).isEqualTo(2);
+        assertThat(file.readCount("bloom region")).isZero();
+        assertThat(file.readCount("bloom filter"))
+                .as("the clamped window served both filters; nothing fell back to a lazy read")
+                .isZero();
+    }
+
+    @Test
+    void oversizedLegacyProbeIsRetainedAndServesTheExactLazyRead() throws Exception {
+        // A legacy filter whose probe-derived length exceeds the region cap cannot be
+        // prefetched as bytes; its probe is retained so the source's lazy path can skip its
+        // own probe and read the exact region in one call. This drives that retained-probe
+        // wiring end to end: same filter as the probe-plus-refetch lazy path, at one read
+        // instead of two. 32 MB is above the 16 MB cap yet a valid power-of-two bitset, so
+        // the exact read parses a real (all-zero) filter.
+        int oversizedBitset = 32 * 1024 * 1024;
+        ByteArrayOutputStream headerBytes = new ByteArrayOutputStream();
+        Util.writeBloomFilterHeader(new BloomFilterHeader(oversizedBitset,
+                BloomFilterAlgorithm.BLOCK(new SplitBlockAlgorithm()),
+                BloomFilterHash.XXHASH(new XxHash()),
+                BloomFilterCompression.UNCOMPRESSED(new Uncompressed())), headerBytes);
+        byte[] header = headerBytes.toByteArray();
+        int totalLength = header.length + oversizedBitset;
+
+        long presentHash = XxHash64.hash(7);
+        byte[] windowFilter = serializeMinimalFilter(presentHash);
+        int offsetA = 64;
+        int offsetB = offsetA + totalLength + 64;
+        byte[] fileBytes = new byte[offsetB + windowFilter.length + 32];
+        System.arraycopy(header, 0, fileBytes, offsetA, header.length);
+        System.arraycopy(windowFilter, 0, fileBytes, offsetB, windowFilter.length);
+
+        List<RowGroup> rowGroups = syntheticSingleColumnRowGroups(offsetA, offsetB);
+        CountingInputFile file = new CountingInputFile(InputFile.of(ByteBuffer.wrap(fileBytes)));
+        file.open();
+        BloomFilterPrefetch prefetch = prefetch(file, resolvedIdPredicate(), rowGroups);
+        assertThat(prefetch).isNotNull();
+        assertThat(file.readCount("bloom probe")).isEqualTo(2);
+        assertThat(file.readCount("bloom region")).isZero();
+
+        // The oversized candidate is retained as a derived length, not prefetched bytes; the
+        // window-fitting sibling is prefetched complete.
+        assertThat(prefetch.lookup(offsetA)).isNull();
+        assertThat(prefetch.lookupProbe(offsetA))
+                .as("the oversized legacy probe is retained with its derived exact length")
+                .extracting(BloomFilterPrefetch.PrefetchedProbe::filterLength)
+                .isEqualTo(totalLength);
+        assertThat(prefetch.lookup(offsetB)).isNotNull();
+
+        // The retained probe serves the source's lazy path: one exact read, no re-probe, and
+        // the filter parses (a zero bitset contains nothing).
+        BloomFilter served = new RowGroupBloomFilterSource(file, rowGroups.getFirst(), prefetch)
+                .forColumn(0);
+        assertThat(served).isNotNull();
+        assertThat(served.mightContain(presentHash)).isFalse();
+        assertThat(file.readCount("bloom filter"))
+                .as("the retained probe length drove one exact lazy read")
+                .isEqualTo(1);
+
+        // The lazy path without prefetch reads the same filter with probe plus re-fetch.
+        BloomFilter lazy = new RowGroupBloomFilterSource(file, rowGroups.getFirst()).forColumn(0);
+        assertThat(lazy).isNotNull();
+        assertThat(lazy.mightContain(presentHash)).isFalse();
+        assertThat(file.readCount("bloom filter"))
+                .as("the reference lazy path pays probe plus exact re-fetch")
+                .isEqualTo(3);
     }
 
     @Test
@@ -920,6 +1341,56 @@ class BloomFilterIoCoalescingTest {
         assertThat(filter.mightContain(XxHash64.hash(1))).isFalse();
     }
 
+    @Test
+    void garbageLegacyProbeFallsBackToTheLazyPath() throws Exception {
+        // The probe read succeeds but the bytes are not a filter: the unchecked parse error
+        // must be contained — the candidate stays unprefetched — and the lazy path must throw
+        // its own historical error, where a CompletionException out of the prefetch would
+        // instead fail the read before any decision. Zero bytes make the header struct stop
+        // before its required numBytes field.
+        byte[] fileBytes = new byte[512];
+        InputFile input = InputFile.of(ByteBuffer.wrap(fileBytes));
+        input.open();
+        List<RowGroup> rowGroups = syntheticSingleColumnRowGroups(64, 96);
+        CountingInputFile file = new CountingInputFile(input);
+        assertThat(prefetch(file, resolvedIdPredicate(), rowGroups)).isNull();
+        assertThat(file.readCount("bloom probe"))
+                .as("both probes were issued and failed at the parse, not skipped by the gate")
+                .isEqualTo(2);
+
+        assertThatThrownBy(() -> new RowGroupBloomFilterSource(file, rowGroups.getFirst())
+                .forColumn(0))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessageContaining("Invalid BloomFilterHeader");
+    }
+
+    @Test
+    void corruptPrefetchedRegionFailsLikeTheLazyPath() throws Exception {
+        // A region fetch that succeeds but holds garbage: the lookup hits, the parse fails,
+        // and the unchecked parse error surfaces exactly as it does through the lazy read of
+        // the same bytes — nothing about it is prefetch-shaped. Footer-declared lengths, so
+        // no probe is involved.
+        byte[] fileBytes = new byte[512];
+        InputFile input = InputFile.of(ByteBuffer.wrap(fileBytes));
+        input.open();
+        List<RowGroup> rowGroups = syntheticSingleColumnRowGroups(64, 32, 128, 32);
+        CountingInputFile file = new CountingInputFile(input);
+        BloomFilterPrefetch prefetch = prefetch(file, resolvedIdPredicate(), rowGroups);
+        assertThat(prefetch).isNotNull();
+        assertThat(file.readCount("bloom region")).isEqualTo(1);
+
+        RowGroup first = rowGroups.getFirst();
+        Throwable lazy = catchThrowable(
+                () -> new RowGroupBloomFilterSource(file, first).forColumn(0));
+        Throwable prefetched = catchThrowable(
+                () -> new RowGroupBloomFilterSource(file, first, prefetch).forColumn(0));
+        assertThat(prefetched)
+                .as("a corrupt prefetched filter fails exactly like the lazy read")
+                .isInstanceOf(IllegalStateException.class)
+                .isInstanceOf(lazy.getClass())
+                .hasMessage(lazy.getMessage());
+    }
+
     // ==================== Legacy test scaffolding ====================
 
     /// A `BloomFilterHeader` thrift struct followed by a minimal one-block (32-byte) bitset
@@ -951,14 +1422,24 @@ class BloomFilterIoCoalescingTest {
     /// filters at the given offsets in the given file.
     private static List<RowGroup> syntheticSingleColumnRowGroups(long offsetA, long offsetB)
             throws Exception {
+        return syntheticSingleColumnRowGroups(offsetA, null, offsetB, null);
+    }
+
+    /// Two single-column row groups (the fixture's `id` leaf) whose chunks point at filters
+    /// with explicit footer-declared geometry at the given offsets.
+    private static List<RowGroup> syntheticSingleColumnRowGroups(long offsetA, Integer lengthA,
+                                                                 long offsetB, Integer lengthB)
+            throws Exception {
         RowGroup templateRowGroup;
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(FIXTURE))) {
             templateRowGroup = reader.getFileMetaData().rowGroups().getFirst();
         }
         ColumnChunk template = templateRowGroup.columns().getFirst();
         List<RowGroup> rowGroups = new ArrayList<>();
-        for (long offset : new long[] {offsetA, offsetB}) {
-            ColumnChunk chunk = new ColumnChunk(withBloom(template.metaData(), offset, null),
+        long[] offsets = {offsetA, offsetB};
+        Integer[] lengths = {lengthA, lengthB};
+        for (int i = 0; i < offsets.length; i++) {
+            ColumnChunk chunk = new ColumnChunk(withBloom(template.metaData(), offsets[i], lengths[i]),
                     template.offsetIndexOffset(), template.offsetIndexLength(),
                     template.columnIndexOffset(), template.columnIndexLength(), "");
             rowGroups.add(new RowGroup(List.of(chunk), templateRowGroup.totalByteSize(),
@@ -1010,6 +1491,36 @@ class BloomFilterIoCoalescingTest {
         @Override
         public long length() throws IOException {
             throw new IOException("Forced length failure");
+        }
+
+        @Override
+        public String name() {
+            return delegate.name();
+        }
+
+        @Override
+        public void close() throws IOException {
+            delegate.close();
+        }
+    }
+
+    /// Delegates everything but `length()`, which fails with an unchecked exception — the
+    /// prefetch must swallow it and leave the legacy candidates to the lazy path.
+    private record UncheckedFailingLengthFile(InputFile delegate) implements InputFile {
+
+        @Override
+        public void open() throws IOException {
+            delegate.open();
+        }
+
+        @Override
+        public ByteBuffer readRange(long offset, int length) throws IOException {
+            return delegate.readRange(offset, length);
+        }
+
+        @Override
+        public long length() {
+            throw new IllegalStateException("Forced unchecked length failure");
         }
 
         @Override

@@ -99,13 +99,20 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             return null;
         }
         try {
+            Integer length = metaData.bloomFilterLength();
             if (prefetch != null) {
                 BloomFilterPrefetch.PrefetchedBloom prefetched = prefetch.lookup(offset);
                 if (prefetched != null) {
                     return BloomFilterProbe.parseComplete(prefetched.data());
                 }
+                if (length == null) {
+                    BloomFilterPrefetch.PrefetchedProbe probe = prefetch.lookupProbe(offset);
+                    if (probe != null) {
+                        return readFilter(offset, probe.filterLength());
+                    }
+                }
             }
-            return readFilter(offset, metaData.bloomFilterLength());
+            return readFilter(offset, length);
         }
         catch (IOException e) {
             throw new UncheckedIOException(ExceptionContext.filePrefix(inputFile.name())
