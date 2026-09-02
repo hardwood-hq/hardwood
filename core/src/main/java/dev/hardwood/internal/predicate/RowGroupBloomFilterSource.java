@@ -14,10 +14,6 @@ import java.nio.ByteBuffer;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
-import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
-import dev.hardwood.internal.thrift.BloomFilterHeaderReader;
-import dev.hardwood.internal.thrift.BloomFilterReader;
-import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -32,10 +28,6 @@ import dev.hardwood.metadata.RowGroup;
 public final class RowGroupBloomFilterSource implements BloomFilterSource {
 
     private static final System.Logger LOG = System.getLogger(RowGroupBloomFilterSource.class.getName());
-
-    /// Bytes read to parse the header when `bloom_filter_length` is absent. The header is a tiny
-    /// Thrift struct (an i32 plus three single-variant unions), comfortably under this bound.
-    private static final int HEADER_PROBE_BYTES = 64;
 
     private final InputFile inputFile;
     private final RowGroup rowGroup;
@@ -104,25 +96,21 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     private BloomFilter readFilter(long offset, Integer length) throws IOException {
         if (length != null) {
             ByteBuffer buffer = inputFile.readRange(offset, length);
-            return BloomFilterReader.read(new ThriftCompactReader(buffer));
+            return BloomFilterProbe.parseComplete(buffer);
         }
         // Legacy writers omit bloom_filter_length. Over-read a fixed window — large enough to
         // hold the header (a fixed-shape struct: an i32 plus three single-variant unions, ~19
         // bytes at most), clamped so it never runs past EOF — and parse just the header to learn
         // the region's total length.
-        int probe = Math.toIntExact(Math.min(fileLength() - offset, HEADER_PROBE_BYTES));
-        ByteBuffer window = inputFile.readRange(offset, probe);
-        ThriftCompactReader windowReader = new ThriftCompactReader(window);
-        BloomFilterHeader header = BloomFilterHeaderReader.read(windowReader);
-        int totalLength = Math.addExact(windowReader.getBytesRead(), header.numBytes());
-        if (totalLength <= probe) {
-            // The probe window already covers the whole filter; slice the bitset straight from
-            // where the header parse ended, reusing the parsed header instead of decoding it again.
-            return BloomFilterReader.readBitset(header, windowReader);
-        }
-        // The bitset extends past the probe window: re-fetch the exact region and parse it in full.
-        ByteBuffer buffer = inputFile.readRange(offset, totalLength);
-        return BloomFilterReader.read(new ThriftCompactReader(buffer));
+        int probe = BloomFilterProbe.probeLength(fileLength(), offset);
+        BloomFilterProbe.Result parsed = BloomFilterProbe.parseWindow(inputFile.readRange(offset, probe));
+        return switch (parsed) {
+            // The probe window already covers the whole filter: use it directly, no re-fetch.
+            case BloomFilterProbe.Result.Complete complete -> complete.filter();
+            // The bitset extends past the probe window: re-fetch the exact region and parse it in full.
+            case BloomFilterProbe.Result.Oversized oversized ->
+                BloomFilterProbe.parseComplete(inputFile.readRange(offset, oversized.totalLength()));
+        };
     }
 
     /// File length, fetched at most once. Only the legacy length-absent path needs it, so it is
