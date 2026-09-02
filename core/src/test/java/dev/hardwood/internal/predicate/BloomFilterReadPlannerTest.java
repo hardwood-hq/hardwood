@@ -187,6 +187,17 @@ class BloomFilterReadPlannerTest {
     }
 
     @Test
+    void zeroLengthIsLeftToTheLazyPath() throws IOException {
+        // readNonNegativeI32 admits a zero bloom_filter_length, so a real footer can carry one.
+        // An empty region cannot hold a filter and the lazy path fails on it with its usual
+        // error, so the planner plans nothing rather than prefetch an empty filter.
+        RowGroup patched = patchColumn(CODE_COLUMN, md -> withBloom(md, 100L, 0));
+        assertThat(BloomFilterReadPlanner.plan(resolved(FilterPredicate.eq("code", 1)),
+                List.of(patched), BoundsReadability.ALL))
+                .isEqualTo(BloomFilterReadPlanner.BloomFilterReadPlan.EMPTY);
+    }
+
+    @Test
     void chunkInAnotherFileIsLeftToTheLazyPath() throws IOException {
         // A chunk whose file_path names another file makes the lazy path throw with its own
         // exception context; the planner excludes it so that timing and message stay unchanged.

@@ -72,6 +72,13 @@ learn the bitset size, then the full region. The planner pays at most two *phase
    `[offset, offset + totalLength)` regions, merged and fetched in the same pass as the
    length-known candidates.
 
+Probes are only issued for legacy candidates with at least one other candidate — known or
+legacy — within the coalescing gap. A derived length grows a candidate's region toward its
+neighbour, so a candidate within reach at its offset merges once probed; a candidate with no
+neighbour in reach can never merge, and probing it would only add a read ahead of the lazy
+path's identical probe-plus-refetch. The only way a probed candidate still fails to merge is
+the 16 MB region cap splitting the pair.
+
 ## Prefetch lookup
 
 The planner hands each row group's source a lookup keyed by `bloom_filter_offset`:
@@ -88,11 +95,16 @@ The lookup never changes an outcome: it only removes round trips when it can.
 
 ## Failure handling
 
-Prefetch is best-effort. A region fetch, probe, or `length()` call that fails is logged at
-DEBUG and treated as absent; the affected filters fall back to the lazy path, which
-re-issues the read and surfaces today's exception type, context, and timing. An invalid
-`bloom_filter_offset` (≤ 0) and a chunk naming another file (`requireSameFile`) are
-excluded from prefetch and left to the lazy path's existing warning / exception.
+Prefetch is best-effort. A region fetch, probe, or `length()` call that fails — an `IOException`
+or an unchecked read/parse error such as out-of-range region geometry, a malformed bitset, or a
+corrupt header — is logged at DEBUG and treated as absent; the affected filters fall back to
+the lazy path, which re-issues the read and surfaces today's exception type, context, and
+timing. An invalid `bloom_filter_offset` (≤ 0), a zero `bloom_filter_length` (an empty region
+cannot hold a filter; the lazy path fails on it with its usual error), and a chunk naming
+another file (`requireSameFile`) are excluded from prefetch and left to the lazy path's
+existing warning / exception. A prefetched region that fails to cover a candidate — possible
+only for an `InputFile` violating its read contract or a coalescer regression — throws an
+`IllegalArgumentException` naming the region and candidate, mirroring `SharedRegion.slice`.
 
 ## Opt-out
 
@@ -109,4 +121,7 @@ cached in a static field.
 - `BloomFilterIoCoalescingTest` pins the request counts over a multi-row-group fixture
   with contiguous filters: materially fewer bloom GETs than row groups, zero bloom I/O for
   ineligible queries, identical decisions with prefetch on and off, single-candidate and
-  legacy probe counts, and fallback behavior under injected fetch failures.
+  legacy probe counts, fallback behavior under injected fetch failures, and the region
+  grammar — gap splits, the size-cap split, legacy/length-known mixed merges — plus a latch
+  test proving the region fetches are actually concurrent and failure-parity tests for
+  past-EOF offsets, zero lengths, and single failing probes.

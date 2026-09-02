@@ -25,6 +25,9 @@ import java.util.function.Consumer;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.predicate.BloomFilterPrefetch;
+import dev.hardwood.internal.predicate.BloomFilterPrefetcher;
+import dev.hardwood.internal.predicate.BloomFilterReadPlanner;
 import dev.hardwood.internal.predicate.BoundsReadability;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.LogContext;
@@ -1387,12 +1390,16 @@ public class RowGroupIterator implements Closeable {
             }
             return unpruned;
         }
+        // Plan and prefetch the pass's bloom filter reads: one merged, concurrent fetch phase
+        // instead of a small sequential GET per (row group, predicate column). Best-effort —
+        // anything not prefetched is read lazily exactly as before (#735).
+        BloomFilterPrefetch prefetch = prefetchBloomFilters(rowGroups, inputFile, columnOrdinals);
         List<FilteredRowGroup> filtered = new ArrayList<>(rowGroups.size());
         int fullyMatching = 0;
         for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
             RowGroup rg = rowGroups.get(rgIndex);
             FilterDecision decision = RowGroupFilterEvaluator.decideRowGroup(columnOrdinals.filter(), rg,
-                    new RowGroupBloomFilterSource(inputFile, rg),
+                    new RowGroupBloomFilterSource(inputFile, rg, prefetch),
                     new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context),
                     new LogContext(inputFile.name(), rgIndex), columnOrdinals.boundsReadability());
             if (decision == FilterDecision.CANNOT_MATCH) {
@@ -1434,6 +1441,23 @@ public class RowGroupIterator implements Closeable {
                 originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
             FixedWidthValidator.validate(fileName, referenceSchema.getColumn(originalIndex));
         }
+    }
+
+    /// Plans and prefetches the bloom filter reads this file's pruning pass may perform
+    /// (#735). Returns `null` when prefetching is off (`hardwood.internal.bloomPrefetch`) or
+    /// cannot pay (no eligible predicate, too few candidates, nothing merges); every source
+    /// then reads lazily, unchanged from before prefetching existed.
+    private static BloomFilterPrefetch prefetchBloomFilters(List<RowGroup> rowGroups,
+                                                            InputFile inputFile,
+                                                            FileColumnOrdinals columnOrdinals)
+            throws IOException {
+        if (!Boolean.parseBoolean(System.getProperty("hardwood.internal.bloomPrefetch", "true"))) {
+            return null;
+        }
+        BloomFilterReadPlanner.BloomFilterReadPlan plan =
+                BloomFilterReadPlanner.plan(columnOrdinals.filter(), rowGroups,
+                        columnOrdinals.boundsReadability());
+        return BloomFilterPrefetcher.fetch(plan, inputFile);
     }
 
     /// The reference leaf ordinals a read with this projection and filter touches.
