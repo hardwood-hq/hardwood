@@ -55,37 +55,52 @@ public final class BloomFilterPrefetcher {
     }
 
     /// Fetches the plan's candidates merged and in parallel, returning a lookup over the
-    /// prefetched bytes. Returns `null` when prefetching cannot pay: fewer than two candidates
-    /// (a lone candidate has no neighbour to merge with and keeps today's single read), or
-    /// nothing merged and no probe completed — the `anyMerged` rule of cross-column coalescing,
-    /// where N contiguous candidates coalescing into one GET is precisely the case this exists
-    /// for.
+    /// prefetched bytes. Duplicate offsets and candidates with over-cap or invalid geometry stay
+    /// on the lazy path. Legacy candidates are probed before their extents are known so their
+    /// derived regions can participate in coalescing; isolated derived regions are fetched in
+    /// parallel without exceeding the lazy path's read count.
     public static BloomFilterPrefetch fetch(BloomFilterReadPlan plan, InputFile inputFile) {
         List<BloomCandidate> candidates = plan.candidates();
         if (candidates.size() < 2) {
             return null;
         }
+        Map<Long, Integer> offsetCounts = new HashMap<>();
+        for (BloomCandidate candidate : candidates) {
+            offsetCounts.merge(candidate.offset(), 1, Integer::sum);
+        }
+        List<BloomCandidate> uniqueCandidates = candidates.stream()
+                .filter(candidate -> offsetCounts.get(candidate.offset()) == 1)
+                .toList();
+        if (uniqueCandidates.size() < 2) {
+            return null;
+        }
+
         List<BloomCandidate> lengthKnown = new ArrayList<>();
         List<BloomCandidate> legacy = new ArrayList<>();
-        for (BloomCandidate candidate : candidates) {
+        for (BloomCandidate candidate : uniqueCandidates) {
             (candidate.length() != null ? lengthKnown : legacy).add(candidate);
         }
 
         Map<Long, BloomFilterPrefetch.PrefetchedBloom> filters = new HashMap<>();
-        List<BloomCandidate> fetchable = new ArrayList<>(lengthKnown);
-        if (!legacy.isEmpty()) {
-            List<BloomCandidate> probeable = probeableLegacy(legacy, lengthKnown);
-            if (!probeable.isEmpty()) {
-                fetchable.addAll(probeLegacy(probeable, inputFile, filters));
+        Map<Long, BloomFilterPrefetch.PrefetchedProbe> probeCache = new HashMap<>();
+        List<BloomCandidate> fetchable = new ArrayList<>();
+        for (BloomCandidate candidate : lengthKnown) {
+            if (candidate.length() <= BLOOM_MAX_REGION_BYTES) {
+                fetchable.add(candidate);
             }
+        }
+        if (!legacy.isEmpty()) {
+            fetchable.addAll(probeLegacy(legacy, inputFile, filters, probeCache));
         }
 
         List<Region> regions = mergeRegions(fetchable);
         boolean anyMerged = regions.stream().anyMatch(region -> region.candidates().size() > 1);
-        if (anyMerged) {
+        if (anyMerged || !legacy.isEmpty()) {
             fetchRegions(regions, inputFile, filters);
         }
-        return filters.isEmpty() ? null : new MergedRegionPrefetch(filters);
+        return filters.isEmpty() && probeCache.isEmpty()
+                ? null
+                : new MergedRegionPrefetch(filters, probeCache);
     }
 
     /// One merged byte region and the candidates it covers.
@@ -101,43 +116,14 @@ public final class BloomFilterPrefetcher {
                                 BloomFilterProbe.Result parsed) {
     }
 
-    /// The legacy candidates worth probing: those with at least one other candidate — known or
-    /// legacy — within the coalescing gap. Probing only pays when the derived region can merge
-    /// with a neighbour, and a derived length can only grow a candidate's extent toward its
-    /// neighbour, shrinking the gap, so a candidate within reach at its offset merges once
-    /// probed — bar the region size cap. A legacy candidate with no neighbour in reach can
-    /// never merge: probing it would only add a read ahead of the lazy path's identical
-    /// probe-plus-refetch, so it stays unprobed.
-    private static List<BloomCandidate> probeableLegacy(List<BloomCandidate> legacy,
-                                                        List<BloomCandidate> lengthKnown) {
-        List<BloomCandidate> all = new ArrayList<>(legacy);
-        all.addAll(lengthKnown);
-        List<BloomCandidate> probeable = new ArrayList<>();
-        for (BloomCandidate candidate : legacy) {
-            if (all.stream().anyMatch(other -> other != candidate
-                    && withinCoalescingGap(candidate, other))) {
-                probeable.add(candidate);
-            }
-        }
-        return probeable;
-    }
-
-    /// Whether two candidates' regions are adjacent enough to merge: overlapping, or separated
-    /// by at most the coalescing gap. A legacy candidate's length is unknown, so its region is
-    /// its offset alone.
-    private static boolean withinCoalescingGap(BloomCandidate a, BloomCandidate b) {
-        long aEnd = a.offset() + (a.length() == null ? 0 : a.length());
-        long bEnd = b.offset() + (b.length() == null ? 0 : b.length());
-        long gap = Math.max(a.offset(), b.offset()) - Math.min(aEnd, bEnd);
-        return gap <= BLOOM_COALESCE_GAP_BYTES;
-    }
 
     /// Probes every legacy candidate's header concurrently, filling `filters` with the
     /// candidates whose filter fits the probe window. Returns the rest as candidates with
     /// derived lengths, ready for the merged fetch. Candidates whose probe fails — unreadable
     /// file length, offset at or past EOF, failed read — stay out of both, on the lazy path.
     private static List<BloomCandidate> probeLegacy(List<BloomCandidate> legacy, InputFile inputFile,
-                                                    Map<Long, BloomFilterPrefetch.PrefetchedBloom> filters) {
+                                                    Map<Long, BloomFilterPrefetch.PrefetchedBloom> filters,
+                                                    Map<Long, BloomFilterPrefetch.PrefetchedProbe> probeCache) {
         Long fileLength = fileLength(inputFile);
         if (fileLength == null) {
             return List.of();
@@ -161,16 +147,24 @@ public final class BloomFilterPrefetcher {
                 continue;
             }
             switch (outcome.parsed()) {
-                case BloomFilterProbe.Result.Complete complete -> {
-                    ByteBuffer data = outcome.window().slice(0, complete.totalLength());
+                case BloomFilterProbe.Result.Complete complete ->
                     filters.put(outcome.candidate().offset(),
-                            new BloomFilterPrefetch.PrefetchedBloom(data, complete.totalLength()));
+                            new BloomFilterPrefetch.PrefetchedBloom(
+                                    complete.exactFilterSlice(), complete.totalLength()));
+                // The bitset extends past the probe window: its exact region joins the merged
+                // fetch unless it exceeds the region cap, in which case it stays lazy.
+                case BloomFilterProbe.Result.Oversized oversizedResult -> {
+                    if (oversizedResult.totalLength() <= BLOOM_MAX_REGION_BYTES) {
+                        oversized.add(new BloomCandidate(outcome.candidate().rowGroupIndex(),
+                                outcome.candidate().rowGroup(), outcome.candidate().columnIndex(),
+                                outcome.candidate().offset(), oversizedResult.totalLength()));
+                    }
+                    else {
+                        probeCache.put(outcome.candidate().offset(),
+                                new BloomFilterPrefetch.PrefetchedProbe(
+                                        oversizedResult.totalLength()));
+                    }
                 }
-                // The bitset extends past the probe window: its exact region joins the merged fetch.
-                case BloomFilterProbe.Result.Oversized oversizedResult ->
-                    oversized.add(new BloomCandidate(outcome.candidate().rowGroupIndex(),
-                            outcome.candidate().rowGroup(), outcome.candidate().columnIndex(),
-                            outcome.candidate().offset(), oversizedResult.totalLength()));
             }
         }
         return oversized;
@@ -266,8 +260,10 @@ public final class BloomFilterPrefetcher {
         }
     }
 
-    /// Sorts the candidates by offset and greedily merges those whose gap and combined span
-    /// stay within bounds.
+    /// Sorts candidates by offset and greedily merges regions whose gap and combined span stay
+    /// within bounds. Every candidate's length is within the region cap — [fetch] and
+    /// [BloomFilterPrefetcher.probeLegacy] filter over-cap candidates out before this runs —
+    /// and `offset + length` cannot overflow.
     private static List<Region> mergeRegions(List<BloomCandidate> candidates) {
         List<BloomCandidate> sorted = candidates.stream()
                 .sorted(Comparator.comparingLong(BloomCandidate::offset))
@@ -277,7 +273,13 @@ public final class BloomFilterPrefetcher {
         long end = -1;
         List<BloomCandidate> current = new ArrayList<>();
         for (BloomCandidate candidate : sorted) {
-            long candidateEnd = candidate.offset() + candidate.length();
+            long candidateEnd;
+            try {
+                candidateEnd = Math.addExact(candidate.offset(), candidate.length());
+            }
+            catch (ArithmeticException e) {
+                continue;
+            }
             if (!current.isEmpty()
                     && (candidate.offset() - end > BLOOM_COALESCE_GAP_BYTES
                     || candidateEnd - start > BLOOM_MAX_REGION_BYTES)) {
@@ -286,9 +288,12 @@ public final class BloomFilterPrefetcher {
             }
             if (current.isEmpty()) {
                 start = candidate.offset();
+                end = candidateEnd;
+            }
+            else {
+                end = Math.max(end, candidateEnd);
             }
             current.add(candidate);
-            end = candidateEnd;
         }
         if (!current.isEmpty()) {
             regions.add(new Region(start, Math.toIntExact(end - start), current));
@@ -298,16 +303,24 @@ public final class BloomFilterPrefetcher {
 
     /// Lookup over the merged regions' slices and probe-complete filters, built by the
     /// coordinating thread after the joins.
-    private record MergedRegionPrefetch(Map<Long, BloomFilterPrefetch.PrefetchedBloom> filters)
+    private record MergedRegionPrefetch(
+            Map<Long, BloomFilterPrefetch.PrefetchedBloom> filters,
+            Map<Long, BloomFilterPrefetch.PrefetchedProbe> probes)
             implements BloomFilterPrefetch {
 
         private MergedRegionPrefetch {
             filters = Map.copyOf(filters);
+            probes = Map.copyOf(probes);
         }
 
         @Override
         public BloomFilterPrefetch.PrefetchedBloom lookup(long offset) {
             return filters.get(offset);
+        }
+
+        @Override
+        public BloomFilterPrefetch.PrefetchedProbe lookupProbe(long offset) {
+            return probes.get(offset);
         }
     }
 }

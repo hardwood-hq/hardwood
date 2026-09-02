@@ -51,11 +51,11 @@ final class BloomFilterProbe {
         BloomFilterHeader header = BloomFilterHeaderReader.read(windowReader);
         int totalLength = Math.addExact(windowReader.getBytesRead(), header.numBytes());
         if (totalLength <= window.remaining()) {
-            // The window already covers the whole filter; slice the bitset straight from
-            // where the header parse ended, reusing the parsed header instead of decoding
-            // it again.
+            // The window already covers the whole filter; use the exact filter slice for both
+            // the parsed result and any prefetch cache entry.
+            ByteBuffer exactFilterSlice = window.slice(0, totalLength);
             return new Result.Complete(BloomFilterReader.readBitset(header, windowReader),
-                    totalLength);
+                    exactFilterSlice, totalLength);
         }
         return new Result.Oversized(totalLength);
     }
@@ -65,7 +65,8 @@ final class BloomFilterProbe {
 
         /// The window contained the whole filter; no further read is needed. `totalLength` is
         /// the filter's exact size in bytes.
-        record Complete(BloomFilter filter, int totalLength) implements Result {
+        record Complete(BloomFilter filter, ByteBuffer exactFilterSlice, int totalLength)
+                implements Result {
         }
 
         /// The bitset extends past the window; the caller must fetch the full
