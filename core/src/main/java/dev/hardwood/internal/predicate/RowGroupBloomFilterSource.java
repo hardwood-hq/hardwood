@@ -13,6 +13,7 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.FetchReason;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -25,12 +26,20 @@ import dev.hardwood.metadata.RowGroup;
 /// the same column reads its filter once. The cache is a pair of arrays indexed by column position;
 /// a row group is evaluated single-threaded (a sequential `stream().filter(...)`), so it needs no
 /// synchronization.
+///
+/// When a [BloomFilterPrefetch] was supplied by the pruning pass, a filter it already fetched is
+/// served from those bytes with no `readRange`; anything unprefetched — including candidates the
+/// prefetcher skipped or whose fetch failed — goes through the lazy path below, exactly as it
+/// would without prefetching.
 public final class RowGroupBloomFilterSource implements BloomFilterSource {
 
     private static final System.Logger LOG = System.getLogger(RowGroupBloomFilterSource.class.getName());
 
     private final InputFile inputFile;
     private final RowGroup rowGroup;
+    /// Prefetched filter bytes shared across this file's sources, or `null` when prefetching is
+    /// disabled. Lookup keys are `bloom_filter_offset` values, unique per filter.
+    private final BloomFilterPrefetch prefetch;
     /// Per-column filter cache indexed by column position; `null` entries mean either "not read yet"
     /// or "read, no filter" — `read[i]` disambiguates so absence is cached, not re-fetched.
     private final BloomFilter[] filters;
@@ -40,8 +49,15 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     private long fileLength = -1;
 
     public RowGroupBloomFilterSource(InputFile inputFile, RowGroup rowGroup) {
+        this(inputFile, rowGroup, null);
+    }
+
+    /// Use when the pruning pass prefetched the row group's filters; pass `null` for the
+    /// plain lazy behavior.
+    public RowGroupBloomFilterSource(InputFile inputFile, RowGroup rowGroup, BloomFilterPrefetch prefetch) {
         this.inputFile = inputFile;
         this.rowGroup = rowGroup;
+        this.prefetch = prefetch;
         int columnCount = rowGroup.columns().size();
         this.filters = new BloomFilter[columnCount];
         this.read = new boolean[columnCount];
@@ -83,6 +99,12 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
             return null;
         }
         try {
+            if (prefetch != null) {
+                BloomFilterPrefetch.PrefetchedBloom prefetched = prefetch.lookup(offset);
+                if (prefetched != null) {
+                    return BloomFilterProbe.parseComplete(prefetched.data());
+                }
+            }
             return readFilter(offset, metaData.bloomFilterLength());
         }
         catch (IOException e) {
@@ -94,23 +116,25 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     /// Reads the filter at `offset`. When `length` is known the whole region is read in one call;
     /// otherwise the header is probed first to derive the total length.
     private BloomFilter readFilter(long offset, Integer length) throws IOException {
-        if (length != null) {
-            ByteBuffer buffer = inputFile.readRange(offset, length);
-            return BloomFilterProbe.parseComplete(buffer);
+        try (FetchReason.Scope ignored = FetchReason.set("bloom filter " + offset)) {
+            if (length != null) {
+                ByteBuffer buffer = inputFile.readRange(offset, length);
+                return BloomFilterProbe.parseComplete(buffer);
+            }
+            // Legacy writers omit bloom_filter_length. Over-read a fixed window — large enough to
+            // hold the header (a fixed-shape struct: an i32 plus three single-variant unions, ~19
+            // bytes at most), clamped so it never runs past EOF — and parse just the header to learn
+            // the region's total length.
+            int probe = BloomFilterProbe.probeLength(fileLength(), offset);
+            BloomFilterProbe.Result parsed = BloomFilterProbe.parseWindow(inputFile.readRange(offset, probe));
+            return switch (parsed) {
+                // The probe window already covers the whole filter: use it directly, no re-fetch.
+                case BloomFilterProbe.Result.Complete complete -> complete.filter();
+                // The bitset extends past the probe window: re-fetch the exact region and parse it in full.
+                case BloomFilterProbe.Result.Oversized oversized ->
+                    BloomFilterProbe.parseComplete(inputFile.readRange(offset, oversized.totalLength()));
+            };
         }
-        // Legacy writers omit bloom_filter_length. Over-read a fixed window — large enough to
-        // hold the header (a fixed-shape struct: an i32 plus three single-variant unions, ~19
-        // bytes at most), clamped so it never runs past EOF — and parse just the header to learn
-        // the region's total length.
-        int probe = BloomFilterProbe.probeLength(fileLength(), offset);
-        BloomFilterProbe.Result parsed = BloomFilterProbe.parseWindow(inputFile.readRange(offset, probe));
-        return switch (parsed) {
-            // The probe window already covers the whole filter: use it directly, no re-fetch.
-            case BloomFilterProbe.Result.Complete complete -> complete.filter();
-            // The bitset extends past the probe window: re-fetch the exact region and parse it in full.
-            case BloomFilterProbe.Result.Oversized oversized ->
-                BloomFilterProbe.parseComplete(inputFile.readRange(offset, oversized.totalLength()));
-        };
     }
 
     /// File length, fetched at most once. Only the legacy length-absent path needs it, so it is

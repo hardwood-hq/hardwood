@@ -8,7 +8,6 @@
 package dev.hardwood.internal.predicate;
 
 import java.io.IOException;
-import java.io.UncheckedIOException;
 import java.nio.ByteBuffer;
 
 import dev.hardwood.internal.bloomfilter.BloomFilter;
@@ -33,14 +32,11 @@ final class BloomFilterProbe {
     }
 
     /// Bytes to read for a legacy probe window at `offset`: the fixed header window, clamped so
-    /// it never runs past EOF. A Parquet file is never zero-length, so `fileLength - offset`
-    /// is positive for any offset inside the file; callers with an offset at or past EOF must
-    /// not call this.
+    /// it never reads past EOF. Callers ensure `offset` sits inside the file — the planner
+    /// leaves candidates at or past EOF unprefetched, and the lazy read path passes the clamped
+    /// value straight to `readRange`, preserving that path's historical behavior for a corrupt
+    /// offset at or past the file's end.
     static int probeLength(long fileLength, long offset) {
-        if (offset >= fileLength) {
-            throw new IllegalArgumentException(
-                    "Bloom filter offset " + offset + " is at or past the file length " + fileLength);
-        }
         return Math.toIntExact(Math.min(fileLength - offset, HEADER_PROBE_BYTES));
     }
 
@@ -83,11 +79,5 @@ final class BloomFilterProbe {
     /// filter validates exactly like a lazily read one.
     static BloomFilter parseComplete(ByteBuffer region) throws IOException {
         return BloomFilterReader.read(new ThriftCompactReader(region));
-    }
-
-    /// IOException is checked by the thrift readers; the prefetch path cannot propagate a
-    /// checked exception, so callers that must not fail the read use this shape.
-    static UncheckedIOException unchecked(IOException e, String message) {
-        return new UncheckedIOException(message, e);
     }
 }

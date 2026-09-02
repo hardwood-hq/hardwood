@@ -36,8 +36,10 @@ public final class BloomFilterReadPlanner {
 
     /// One planned bloom read: column `columnIndex` of row group `rowGroupIndex` may consult its
     /// filter, which lives at `offset` — always positive; a null or non-positive footer offset is
-    /// left to the lazy path's existing warning — with the footer-declared `length`, or `null`
-    /// when the writer omitted `bloom_filter_length` (the legacy probe path).
+    /// left to the lazy path's existing warning — with the footer-declared `length` — always
+    /// positive when present; a zero footer length cannot hold a filter and is likewise left to
+    /// the lazy path — or `null` when the writer omitted `bloom_filter_length` (the legacy
+    /// probe path).
     public record BloomCandidate(int rowGroupIndex, RowGroup rowGroup, int columnIndex,
                                  long offset, Integer length) {
 
@@ -46,9 +48,9 @@ public final class BloomFilterReadPlanner {
                 throw new IllegalArgumentException(
                         "bloom_filter_offset must be positive but was " + offset);
             }
-            if (length != null && length < 0) {
+            if (length != null && length <= 0) {
                 throw new IllegalArgumentException(
-                        "bloom_filter_length must be non-negative but was " + length);
+                        "bloom_filter_length must be positive when present but was " + length);
             }
         }
     }
@@ -64,7 +66,7 @@ public final class BloomFilterReadPlanner {
         }
 
         /// The candidates for one row group, in column order.
-        public List<BloomCandidate> candidatesFor(int rowGroupIndex) {
+        List<BloomCandidate> candidatesFor(int rowGroupIndex) {
             return candidates.stream()
                     .filter(candidate -> candidate.rowGroupIndex() == rowGroupIndex)
                     .toList();
@@ -76,8 +78,10 @@ public final class BloomFilterReadPlanner {
 
     /// Plans the bloom reads [RowGroupFilterEvaluator#decideRowGroup] may perform over the given
     /// row groups. Columns whose chunk carries no usable filter — no or non-positive
-    /// `bloom_filter_offset`, or data in another file — produce no candidate and stay on the lazy
-    /// read path, which handles them exactly as it does without planning.
+    /// `bloom_filter_offset`, a zero `bloom_filter_length` (an empty region cannot hold a
+    /// filter; the lazy path fails on it with its usual error), or data in another file —
+    /// produce no candidate and stay on the lazy read path, which handles them exactly as it
+    /// does without planning.
     ///
     /// @param predicate the filter predicate with column indices resolved to this file's
     ///        ordinals (the value `FileColumnOrdinals.filter()` supplies), or `null` for no filter
@@ -105,14 +109,17 @@ public final class BloomFilterReadPlanner {
             ColumnChunk columnChunk = rowGroup.columns().get(columnIndex);
             ColumnMetaData metaData = columnChunk.metaData();
             Long offset = metaData.bloomFilterOffset();
+            Integer length = metaData.bloomFilterLength();
             if (offset == null || offset <= 0) {
+                continue;
+            }
+            if (length != null && length == 0) {
                 continue;
             }
             if (!sameFile(columnChunk)) {
                 continue;
             }
-            candidates.add(new BloomCandidate(rowGroupIndex, rowGroup, columnIndex, offset,
-                    metaData.bloomFilterLength()));
+            candidates.add(new BloomCandidate(rowGroupIndex, rowGroup, columnIndex, offset, length));
         }
         return candidates;
     }

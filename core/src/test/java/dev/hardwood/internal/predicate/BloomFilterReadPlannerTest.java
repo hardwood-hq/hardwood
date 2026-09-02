@@ -17,7 +17,6 @@ import java.util.LinkedHashSet;
 import java.util.Set;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -184,6 +183,16 @@ class BloomFilterReadPlannerTest {
                 List.of(patched)))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("bloom_filter_length");
+    }
+
+    @Test
+    void zeroLengthIsLeftToTheLazyPath() {
+        // readNonNegativeI32 admits a zero bloom_filter_length, so a real footer can carry one.
+        // An empty region cannot hold a filter and the lazy path fails on it with its usual
+        // error, so the planner plans nothing rather than prefetch an empty filter.
+        RowGroup patched = patchColumn(CODE_COLUMN, md -> withBloom(md, 100L, 0));
+        assertThat(BloomFilterReadPlanner.plan(resolved(FilterPredicate.eq("code", 1)),
+                List.of(patched))).isEqualTo(BloomFilterReadPlanner.BloomFilterReadPlan.EMPTY);
     }
 
     @Test
