@@ -25,29 +25,16 @@ Writers that omit `bloom_filter_length` cost two reads per filter today: a probe
 1. Probe every legacy candidate's header concurrently (one clamped 64-byte read each). `inputFile.length()` is obtained once per file and reused for every clamp. A probe window that already contains the whole filter needs no second read — the filter is complete after phase 1.
 2. Candidates whose bitset extends past the window contribute exact `[offset, offset + totalLength)` regions, merged and fetched in the same pass as the length-known candidates.
 
-Every legacy candidate is probed before its extent is known. This is required to discover a
-large filter whose extent bridges a gap that its offset alone exceeds. If the derived region
-is isolated, it is fetched as its own bounded region; this still costs the lazy path's two
-reads per filter, but both phases run concurrently. Candidates with derived lengths above the
-16 MB cap remain on the lazy path.
+Every legacy candidate is probed before its extent is known. This is required to discover a large filter whose extent bridges a gap that its offset alone exceeds. If the derived region is isolated, it is fetched as its own bounded region; this still costs the lazy path's two reads per filter, but both phases run concurrently. Candidates with derived lengths above the 16 MB cap remain on the lazy path.
 
-Known-length candidates with no merge partner remain on the lazy path. The optimization is
-about reducing ranged requests for contiguous regions; legacy probes are still performed
-because their unknown extents must be discovered before this decision is possible.
+Known-length candidates with no merge partner remain on the lazy path. The optimization is about reducing ranged requests for contiguous regions; legacy probes are still performed because their unknown extents must be discovered before this decision is possible.
 
 ## Prefetch lookup
 
-The planner hands each row group's source a lookup keyed by `bloom_filter_offset`. Candidates
-with duplicate offsets are excluded from prefetch because the source lookup also needs the
-declared or derived length to identify a filter unambiguously.
+The planner hands each row group's source a lookup keyed by `bloom_filter_offset`. Candidates with duplicate offsets are excluded from prefetch because the source lookup also needs the declared or derived length to identify a filter unambiguously.
 
-- A hit returns the exact filter bytes — a buffer positioned at the filter start plus the
-  filter's total length (footer-declared, or probe-derived for legacy candidates). The source
-  parses it through the same known-length code path it already has; validation, warnings and
-  exception contexts stay in one place.
-- A miss — not prefetched, prefetch disabled, skipped candidate, duplicate offset, or failed
-  fetch — falls through to the existing lazy path, which re-issues the read and reproduces
-  today's exact behavior.
+- A hit returns the exact filter bytes — a buffer positioned at the filter start plus the filter's total length (footer-declared, or probe-derived for legacy candidates). The source parses it through the same known-length code path it already has; validation, warnings and exception contexts stay in one place.
+- A miss — not prefetched, prefetch disabled, skipped candidate, duplicate offset, or failed fetch — falls through to the existing lazy path, which re-issues the read and reproduces today's exact behavior.
 
 The lookup never changes an outcome: it only removes round trips when it can.
 
@@ -63,10 +50,4 @@ The internal system property `hardwood.internal.bloomPrefetch` (default `true`) 
 
 - The planner is unit-tested over `bloom_filter_test.parquet` and synthetic metadata: EQ / IN / AND / OR candidates, statistics-short-circuited leaves, NaN (no consult), signed zero (consult), FLOAT16 (no consult), invalid offsets, split-file chunks, out-of-bounds indices, and the over-approximation bound (planner candidates ⊇ real consults).
 - `BloomFilterIoCoalescingTest` pins the request counts over a multi-row-group fixture with contiguous filters: materially fewer bloom GETs than row groups, zero bloom I/O for ineligible queries, identical decisions with prefetch on and off, single-candidate and legacy probe counts, fallback behavior under injected fetch failures, and the region grammar — gap splits, the size-cap split, legacy/length-known mixed merges — plus a latch test proving the region fetches are actually concurrent and failure-parity tests for past-EOF offsets, zero lengths, and single failing probes.
-- The opt-in `-Pmutation-test` profile runs mutation analysis over the bloom I/O classes,
-  including the prefetch lookup record, and enforces at least 89% killed mutants and no more
-  than 13 survivors. The accepted survivors are behaviorally equivalent or unobservable:
-  logging calls; the never-zero file-length sentinel; the `length()` fallback the EOF guard
-  already neutralizes; the retained-probe boundary at exactly the region cap (retained probe
-  and singleton region serve the same bytes with the same read count); and the zero-length
-  guard in `PrefetchedBloom` that planning already excludes.
+- The opt-in `-Pmutation-test` profile runs mutation analysis over the bloom I/O classes, including the prefetch lookup record, and enforces at least 89% killed mutants and no more than 13 survivors. The accepted survivors are behaviorally equivalent or unobservable: logging calls; the never-zero file-length sentinel; the `length()` fallback the EOF guard already neutralizes; the retained-probe boundary at exactly the region cap (retained probe and singleton region serve the same bytes with the same read count); and the zero-length guard in `PrefetchedBloom` that planning already excludes.
