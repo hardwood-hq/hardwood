@@ -270,6 +270,19 @@ hardwood version <version> (build <commit>)
 
 `ParquetFileWriter.DEFAULT_CREATED_BY` holds it. `createdBy(String)` replaces it; readers that key compatibility workarounds off this field expect the `<app> version <version> (build <hash>)` shape, and a bare application name is rejected by some of them.
 
+## Finishing and Abandoning a File
+
+| Call | Effect |
+|---|---|
+| `close()` | Writes the buffered row group and the footer, and publishes the file at the destination |
+| `close()` after the writer has failed | Discards the output, leaving nothing at the destination |
+| `abort()` | Discards the output and closes the writer |
+| `close()` or `abort()` on a closed or aborted writer | Nothing |
+
+The writer fails when `ColumnWriter.writeBatch` or `RowWriter.writeRow` throws, whatever the exception: a batch or record rejected by the checks under [What the Writer Rejects](#what-the-writer-rejects), an exception thrown by the filler, a destination `IOException` or a codec failure. A failed writer rejects further writes; `keyValueMetadata` and `createdBy` stay callable until `close()`.
+
+A failure while `close()` finishes the file discards the output as well. When the output cannot be discarded, `close()` and `abort()` throw the `IOException`.
+
 ## What the Writer Rejects
 
 | Exception | When |
@@ -277,7 +290,7 @@ hardwood version <version> (build <commit>)
 | `UnsupportedOperationException` | A schema column of an unsupported physical type (`INT96`); a refused codec (`LZ4`, `LZO`) or one whose library is missing; a [schema shape](#schema-shapes) the writer cannot produce |
 | `IllegalArgumentException` | A schema with no columns; a `null` metadata key, metadata map or `created_by`; an unknown column name or path; a setter that does not fit the column's type; a `null` value array, or a `null` value at a present row of a binary column; a column set twice in one batch or record; a batch that leaves a column unset, or whose arrays disagree in length; a null mask on a `REQUIRED` column; a `boolean[]` mask whose length does not match the values; list offsets that do not start at `0`, are not non-decreasing, or disagree with the element count; a value outside the range its annotation declares; a `REQUIRED` field left unset by a record |
 | `IndexOutOfBoundsException` | A leaf-column index outside `[0, leaf column count)` on a `ColumnBatch` setter, or a field index outside `[0, getFieldCount())` on a `StructBuilder` setter |
-| `IllegalStateException` | Writing, or setting key-value metadata or `created_by`, after `close()`; using both write APIs on one file; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned |
+| `IllegalStateException` | Writing, or setting key-value metadata or `created_by`, after `close()`; writing after the writer has failed; using both write APIs on one file; using a `ColumnBatch` after it has been submitted, or a nested builder after its filler has returned |
 | `IOException` | The destination cannot be created, written, or finalized |
 
 ### Schema Shapes
@@ -292,5 +305,3 @@ Every other arrangement of repetition is rejected when the writer is created, si
 - a `MAP` whose entry is a leaf rather than a group.
 
 The row API reaches a list's values through an element node below the entry, which the legacy two-level lists do not have, so `rowWriter()` refuses those two shapes and `columnWriter()` writes them. `rowWriter()` also requires sibling field names to be unique, which the `ColumnBatch` indices and dotted paths do not.
-
-A `ParquetFileWriter` that cannot finish a valid file discards its output, leaving nothing at the destination.

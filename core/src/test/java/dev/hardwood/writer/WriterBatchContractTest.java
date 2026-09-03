@@ -77,6 +77,10 @@ class WriterBatchContractTest {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(1, new int[] { 1 })))
                     .isInstanceOf(IndexOutOfBoundsException.class)
                     .hasMessage("Column index 1 is out of range [0, 1)");
+        }
+        // Separate writer: a failed writeBatch fails the writer, so the negative-index
+        // check needs its own.
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), oneColumn())) {
             assertThatThrownBy(() -> writer.columnWriter().writeBatch(batch -> batch.ints(-1, new int[] { 1 })))
                     .isInstanceOf(IndexOutOfBoundsException.class);
         }

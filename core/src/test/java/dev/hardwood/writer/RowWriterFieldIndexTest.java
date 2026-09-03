@@ -230,17 +230,14 @@ class RowWriterFieldIndexTest {
 
     @Test
     void indexOutsideTheStructsFieldsIsRejected() throws Exception {
-        withRowWriter(rows -> {
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(4, 1)))
-                    .isInstanceOf(IndexOutOfBoundsException.class)
-                    .hasMessage("Field index 4 is out of bounds for the record, which has 4 fields")
-                    ;
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(-1, 1)))
-                    .isInstanceOf(IndexOutOfBoundsException.class)
-                    .hasMessage("Field index -1 is out of bounds for the record, which has 4 fields");
-            assertThatThrownBy(() -> rows.writeRow(row -> row.getFieldName(4)))
-                    .isInstanceOf(IndexOutOfBoundsException.class);
-        });
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(4, 1)))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("Field index 4 is out of bounds for the record, which has 4 fields"));
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(-1, 1)))
+                .isInstanceOf(IndexOutOfBoundsException.class)
+                .hasMessage("Field index -1 is out of bounds for the record, which has 4 fields"));
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.getFieldName(4)))
+                .isInstanceOf(IndexOutOfBoundsException.class));
     }
 
     /// A nested struct's indices are its own, so a position valid in the record is not
@@ -256,28 +253,22 @@ class RowWriterFieldIndexTest {
 
     @Test
     void aFieldSetByNameAndThenByIndexIsRejected() throws Exception {
-        withRowWriter(rows -> {
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("id", 1).setInt(0, 2)))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field id is already set in this record");
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(0, 1).setInt("id", 2)))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field id is already set in this record");
-        });
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("id", 1).setInt(0, 2)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field id is already set in this record"));
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(0, 1).setInt("id", 2)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field id is already set in this record"));
     }
 
     @Test
     void aVerbThatDoesNotFitTheFieldAtThatIndexIsRejected() throws Exception {
-        withRowWriter(rows -> {
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(0, 1).setInt(3, 2)))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field address is a struct group; setInt applies to a leaf field")
-                    ;
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(0, 1).setStruct(2, tags -> { })))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field tags is a LIST group; setStruct applies to a struct group")
-                    ;
-        });
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(0, 1).setInt(3, 2)))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field address is a struct group; setInt applies to a leaf field"));
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setInt(0, 1).setStruct(2, tags -> { })))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field tags is a LIST group; setStruct applies to a struct group"));
     }
 
     /// The scope rule covers the by-index surface whole, introspection included: a retained
@@ -380,13 +371,10 @@ class RowWriterFieldIndexTest {
         return out.toByteArray();
     }
 
+    /// A rejection fails the writer, so each body asserts one rejection on a writer of its own.
     private static void withRowWriter(RowWrite body) throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, rulesSchema())) {
-            RowWriter rows = writer.rowWriter();
-            body.accept(rows);
-            // Leave one valid record behind so the file closes on a complete batch.
-            rows.writeRow(row -> row.setInt(0, 0));
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), rulesSchema())) {
+            body.accept(writer.rowWriter());
         }
     }
 

@@ -54,7 +54,7 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(Path.of("
 
 The writer creates the `StructBuilder`, hands it to the filler, and stages the record when the filler returns — there is no separate build or submit step. `RowWriter` is not closeable: the `ParquetFileWriter` owns the file, and closing it writes the records still staged along with the footer.
 
-The file is produced front to back and the footer is written last, so **it becomes a valid Parquet file only when `close()` returns**. A writer abandoned before that leaves nothing readable at the destination.
+The file is produced front to back and the footer is written last, so **it becomes a valid Parquet file only when `close()` returns**. A writer abandoned before that leaves nothing readable at the destination. After a failure, see [Handle Write Failures](write-failures.md).
 
 ## Typed Setters
 
@@ -91,7 +91,7 @@ rows.writeRow(row -> row
         .setString("name", "Katherine"));
 ```
 
-A `REQUIRED` field left unset fails the record. A failed record is staged in full or not at all: if the filler rejects a value or throws, everything it staged is discarded and the writer is left as it was, so the caller can handle the failure and carry on with the next record.
+A `REQUIRED` field left unset fails the record. A record that fails, because a value is rejected or the filler throws, fails the writer: `writeRow` accepts no more records, and `close()` discards the output rather than publishing the records written before it. See [Handle Write Failures](write-failures.md).
 
 ## Structs, Lists, and Maps
 

@@ -24,6 +24,7 @@ Read and write Parquet files with Hardwood. Pick the guide that matches what you
 - [**Read Geospatial Columns**](geospatial.md): GEOMETRY / GEOGRAPHY columns, bounding-box filter pushdown.
 - [**Write Row by Row**](write-row-by-row.md): `RowWriter`, typed setters, nested structs / lists / maps.
 - [**Write Column by Column**](write-column-by-column.md): `ColumnWriter`, typed arrays, nulls, per-layer offsets.
+- [**Handle Write Failures**](write-failures.md): what `close()` does after a failed write, and `abort()`.
 - [**Inspect File Metadata**](metadata.md): file metadata, row groups, column chunks, schema introspection.
 
 !!! example "Runnable examples"

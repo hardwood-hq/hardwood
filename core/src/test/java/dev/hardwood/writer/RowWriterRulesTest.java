@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.writer.ByteBufferOutputFile;
+import dev.hardwood.internal.writer.RowPlan;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
@@ -77,18 +78,18 @@ class RowWriterRulesTest {
                         element -> element.primitive(PhysicalType.INT32, RepetitionType.REQUIRED))
                 .build();
 
+        withRowWriter(schema, rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setList("tags", tags -> { })))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field address is REQUIRED; it must be set to a non-null value in every "
+                         + "record"));
+        withRowWriter(schema, rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setStruct("address", address -> { })))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field tags is REQUIRED; it must be set to a non-null value in every "
+                         + "record"));
+
         ByteBufferOutputFile out = new ByteBufferOutputFile();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
-            RowWriter rows = writer.rowWriter();
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setList("tags", tags -> { })))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field address is REQUIRED; it must be set to a non-null value in every "
-                             + "record");
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setStruct("address", address -> { })))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field tags is REQUIRED; it must be set to a non-null value in every "
-                             + "record");
-            rows.writeRow(row -> row.setStruct("address", address -> { }).setList("tags", tags -> { }));
+            writer.rowWriter().writeRow(row -> row.setStruct("address", address -> { }).setList("tags", tags -> { }));
         }
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
@@ -133,16 +134,14 @@ class RowWriterRulesTest {
 
     @Test
     void verbThatDoesNotFitTheFieldShapeIsRejected() throws Exception {
-        withRowWriter(rows -> {
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setStruct("tags", tags -> { })))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("Field tags is a LIST group; setStruct applies to a struct group");
-            assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("id", 1)
-                    .setList("tags", tags -> tags.addStruct(entry -> { }))))
-                    .isInstanceOf(IllegalArgumentException.class)
-                    .hasMessage("The element of list tags is a BYTE_ARRAY leaf field; addStruct applies to "
-                             + "a struct element");
-        });
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setStruct("tags", tags -> { })))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("Field tags is a LIST group; setStruct applies to a struct group"));
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> row.setInt("id", 1)
+                .setList("tags", tags -> tags.addStruct(entry -> { }))))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("The element of list tags is a BYTE_ARRAY leaf field; addStruct applies to "
+                         + "a struct element"));
     }
 
     @Test
@@ -182,26 +181,24 @@ class RowWriterRulesTest {
         });
     }
 
-    /// A record that fails is staged in full or not at all, so a caller that handles the
-    /// failure and carries on writes a file holding exactly the records that succeeded.
+    /// A record that fails is staged in full or not at all: the staged batch holds exactly the
+    /// records that succeeded. `writeRow` fails the writer on the rejection, so this is asserted
+    /// on the plan the row writer stages into.
     @Test
     void failedRecordLeavesTheStagedBatchUntouched() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
-            RowWriter rows = writer.rowWriter();
-            rows.writeRow(row -> row.setInt("id", 1).setString("name", "first")
-                    .setList("tags", tags -> tags.addBinary(new byte[] { 1 })));
-            assertThatThrownBy(() -> rows.writeRow(row -> row
-                    .setInt("id", 2)
-                    .setString("name", "doomed")
-                    .setList("tags", tags -> tags.addBinary(new byte[] { 2 }))
-                    .setStruct("address", address -> { })))
-                    .isInstanceOf(IllegalArgumentException.class);
-            rows.writeRow(row -> row.setInt("id", 3).setString("name", "third")
-                    .setList("tags", tags -> tags.addBinary(new byte[] { 3 })));
-        }
+        RowPlan plan = RowPlan.build(schema(), PrecisionLossPolicy.REJECT);
+        plan.writeRecord(row -> row.setInt("id", 1).setString("name", "first")
+                .setList("tags", tags -> tags.addBinary(new byte[] { 1 })));
+        assertThatThrownBy(() -> plan.writeRecord(row -> row
+                .setInt("id", 2)
+                .setString("name", "doomed")
+                .setList("tags", tags -> tags.addBinary(new byte[] { 2 }))
+                .setStruct("address", address -> { })))
+                .isInstanceOf(IllegalArgumentException.class);
+        plan.writeRecord(row -> row.setInt("id", 3).setString("name", "third")
+                .setList("tags", tags -> tags.addBinary(new byte[] { 3 })));
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(writeStaged(plan))))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(2);
             try (RowReader rows = reader.rowReader()) {
                 rows.next();
@@ -286,20 +283,28 @@ class RowWriterRulesTest {
     /// neither the record nor the call that caused it.
     @Test
     void reenteringAnOpenScopeIsRejectedAtTheCallSite() throws Exception {
-        ByteBufferOutputFile out = new ByteBufferOutputFile();
-        try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
-            RowWriter rows = writer.rowWriter();
-            assertThatThrownBy(() -> rows.writeRow(row -> {
-                row.setInt("id", 1);
-                uncheckedWriteRow(rows);
-            }))
-                    .isInstanceOf(IllegalStateException.class)
-                    .hasMessage("Cannot start a record while it is already being written; a filler must "
-                             + "not re-enter the scope it is inside");
-            rows.writeRow(row -> row.setInt("id", 2));
-        }
+        withRowWriter(rows -> assertThatThrownBy(() -> rows.writeRow(row -> {
+            row.setInt("id", 1);
+            uncheckedWriteRow(rows);
+        }))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Cannot start a record while it is already being written; a filler must "
+                         + "not re-enter the scope it is inside"));
+    }
 
-        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(out.toByteArray())))) {
+    /// The re-entry is rejected before the inner record takes a checkpoint, so the outer record
+    /// still rolls back to its own and leaves nothing staged.
+    @Test
+    void reenteredRecordRollsBackTheOuterRecord() throws Exception {
+        RowPlan plan = RowPlan.build(schema(), PrecisionLossPolicy.REJECT);
+        assertThatThrownBy(() -> plan.writeRecord(row -> {
+            row.setInt("id", 1);
+            plan.writeRecord(inner -> inner.setInt("id", 9));
+        }))
+                .isInstanceOf(IllegalStateException.class);
+        plan.writeRecord(row -> row.setInt("id", 2));
+
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(writeStaged(plan))))) {
             assertThat(reader.getFileMetaData().numRows()).isEqualTo(1);
         }
     }
@@ -422,16 +427,25 @@ class RowWriterRulesTest {
         }
     }
 
-    /// Runs a body against an open row writer over the standard schema. The file it produces
-    /// is irrelevant to these tests; only the rejection is.
+    /// Runs a body against an open row writer over the standard schema. A rejection fails the
+    /// writer, so each body asserts one rejection on a writer of its own.
     private static void withRowWriter(RowWriterBody body) throws Exception {
+        withRowWriter(schema(), body);
+    }
+
+    private static void withRowWriter(FileSchema schema, RowWriterBody body) throws Exception {
+        try (ParquetFileWriter writer = ParquetFileWriter.create(new ByteBufferOutputFile(), schema)) {
+            body.accept(writer.rowWriter());
+        }
+    }
+
+    /// Writes the records staged in `plan` as one batch, the way [RowWriter] submits them.
+    private static byte[] writeStaged(RowPlan plan) throws Exception {
         ByteBufferOutputFile out = new ByteBufferOutputFile();
         try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema())) {
-            RowWriter rows = writer.rowWriter();
-            body.accept(rows);
-            // Leave one valid record behind so the file closes on a complete batch.
-            rows.writeRow(row -> row.setInt("id", 0));
+            writer.writeStagedBatch(plan::fill);
         }
+        return out.toByteArray();
     }
 
     private interface RowWriterBody {

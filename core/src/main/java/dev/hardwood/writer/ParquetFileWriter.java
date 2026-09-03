@@ -61,7 +61,10 @@ import dev.hardwood.schema.FileSchema;
 /// body is compressed with the configured codec (`ZSTD` by default). All of these are
 /// configurable through [WriterConfig]. The row groups and footer are finalized on [#close()].
 ///
-/// The file is produced front to back and is valid only after `close()` returns.
+/// The file is produced front to back and is valid only after `close()` returns. A writer whose
+/// write has thrown accepts no more data, and `close()` discards its output rather than
+/// publishing the rows written before the failure. [#abort()] discards the output on a failure
+/// the writer does not see, such as one in the code producing the data.
 public final class ParquetFileWriter implements Closeable {
 
     private static final byte[] MAGIC = "PAR1".getBytes(StandardCharsets.UTF_8);
@@ -98,7 +101,12 @@ public final class ParquetFileWriter implements Closeable {
 
     private final RowGroupBuffer current;
     private long numRows;
-    private boolean closed;
+
+    /// Where the writer is in its lifecycle. A writer fails only while open: a flush that throws
+    /// inside [#close()] leaves it closed, so its output is discarded once.
+    private enum State { OPEN, FAILED, CLOSED }
+
+    private State state = State.OPEN;
 
     /// Which of the two write APIs this file is being written through. A file is written
     /// through one or the other: rows and batches would otherwise interleave two independent
@@ -214,16 +222,16 @@ public final class ParquetFileWriter implements Closeable {
             out.write(ByteBuffer.wrap(MAGIC));
             return new ParquetFileWriter(out, schema, config, compressor, encodings);
         }
-        catch (IOException | RuntimeException e) {
+        catch (Throwable t) {
             // The destination is open and holds no valid file. Discard it rather than leaving
             // the temporary artefact a local OutputFile streams into orphaned at the target.
             try {
                 out.discard();
             }
             catch (IOException suppressed) {
-                e.addSuppressed(suppressed);
+                t.addSuppressed(suppressed);
             }
-            throw e;
+            throw t;
         }
     }
 
@@ -389,43 +397,58 @@ public final class ParquetFileWriter implements Closeable {
     }
 
     /// Writes one batch without latching the write mode, so both views can submit through it:
-    /// [ColumnWriter] the batch its caller filled, [RowWriter] the batches it stages.
+    /// [ColumnWriter] the batch its caller filled, [RowWriter] the batches it stages. Any
+    /// exception fails the writer, so a caller that lets it propagate out of a
+    /// try-with-resources block never publishes the batches written before it.
     void writeStagedBatch(Consumer<ColumnBatch> filler) throws IOException {
-        ColumnBatch batch = new ColumnBatch(schema, ranges);
-        filler.accept(batch);
-        ColumnSource[] sources = batch.completedSources();
-        shredder.bind(sources, batch.validities(), batch.structValidities(),
-                batch.listValidities(), batch.listOffsets());
-        batch.markConsumed();
-        int rows = shredder.recordCount();
-        int pos = 0;
-        // Carried across iterations: what the row group holds after a slice is also the room the
-        // next slice is sized against, so it is read once per slice rather than once for each.
-        long retained = current.retainedBytes();
-        while (pos < rows) {
-            // A slice at a time. What a range actually costs is only known once it has been
-            // appended — a value interned against a live dictionary retains an index where it
-            // repeats and an index plus the value where it does not, which needs the hash — so
-            // the writer sizes a slice by what it *could* cost and then reads what the row group
-            // turned out to hold. Sizing it by the bound is what keeps a batch whose records
-            // widen part way through from carrying a row group far past its target, which no
-            // measurement of the records already appended could anticipate.
-            int slice = Math.min(Math.min(rows - pos, SLICE_RECORDS),
-                    rowGroupTargetRows - current.rowCount());
-            slice = current.sliceThatFits(shredder, sources, pos, slice,
-                    config.rowGroupBufferTargetBytes() - retained);
-            current.appendRecords(shredder, sources, pos, slice);
-            pos += slice;
-            retained = current.retainedBytes();
-            if (retained > peakRetainedBytes) {
-                peakRetainedBytes = retained;
-            }
-            // Either target closes the group, whichever is reached first.
-            if (retained >= config.rowGroupBufferTargetBytes()
-                    || current.rowCount() >= rowGroupTargetRows) {
-                flushRowGroup();
+        try {
+            ColumnBatch batch = new ColumnBatch(schema, ranges);
+            filler.accept(batch);
+            ColumnSource[] sources = batch.completedSources();
+            shredder.bind(sources, batch.validities(), batch.structValidities(),
+                    batch.listValidities(), batch.listOffsets());
+            batch.markConsumed();
+            int rows = shredder.recordCount();
+            int pos = 0;
+            // Carried across iterations: what the row group holds after a slice is also the room the
+            // next slice is sized against, so it is read once per slice rather than once for each.
+            long retained = current.retainedBytes();
+            while (pos < rows) {
+                // A slice at a time. What a range actually costs is only known once it has been
+                // appended — a value interned against a live dictionary retains an index where it
+                // repeats and an index plus the value where it does not, which needs the hash — so
+                // the writer sizes a slice by what it *could* cost and then reads what the row group
+                // turned out to hold. Sizing it by the bound is what keeps a batch whose records
+                // widen part way through from carrying a row group far past its target, which no
+                // measurement of the records already appended could anticipate.
+                int slice = Math.min(Math.min(rows - pos, SLICE_RECORDS),
+                        rowGroupTargetRows - current.rowCount());
+                slice = current.sliceThatFits(shredder, sources, pos, slice,
+                        config.rowGroupBufferTargetBytes() - retained);
+                current.appendRecords(shredder, sources, pos, slice);
+                pos += slice;
                 retained = current.retainedBytes();
+                if (retained > peakRetainedBytes) {
+                    peakRetainedBytes = retained;
+                }
+                // Either target closes the group, whichever is reached first.
+                if (retained >= config.rowGroupBufferTargetBytes()
+                        || current.rowCount() >= rowGroupTargetRows) {
+                    flushRowGroup();
+                    retained = current.retainedBytes();
+                }
             }
+        }
+        catch (Throwable t) {
+            markFailed();
+            throw t;
+        }
+    }
+
+    /// Fails the writer on an exception out of a write call. A writer fails only while open.
+    void markFailed() {
+        if (state == State.OPEN) {
+            state = State.FAILED;
         }
     }
 
@@ -438,12 +461,25 @@ public final class ParquetFileWriter implements Closeable {
     /// a column's slice is one bulk copy rather than a call per value.
     private static final int SLICE_RECORDS = 4096;
 
+    /// Finishes the file: writes the row group still buffered and the footer, and publishes the
+    /// file at the destination.
+    ///
+    /// If a write has thrown, the output is discarded instead, leaving nothing at the
+    /// destination. A failure while finishing discards the output as well. Does nothing if the
+    /// writer is already closed or aborted.
+    ///
+    /// @throws IOException if the file cannot be finished, or a discarded output cannot be
+    ///         released
     @Override
     public void close() throws IOException {
-        if (closed) {
+        if (state == State.FAILED) {
+            abort();
             return;
         }
-        closed = true;
+        if (state == State.CLOSED) {
+            return;
+        }
+        state = State.CLOSED;
         try {
             if (rowWriter != null) {
                 rowWriter.flushPending();
@@ -451,18 +487,54 @@ public final class ParquetFileWriter implements Closeable {
             flushRowGroup();
             writeFooter();
         }
-        catch (IOException | RuntimeException e) {
+        catch (Throwable t) {
             // The footer is incomplete, so the file is not valid. Discard it rather than
             // letting out.close() publish a truncated file.
             try {
                 out.discard();
             }
             catch (IOException suppressed) {
-                e.addSuppressed(suppressed);
+                t.addSuppressed(suppressed);
             }
-            throw e;
+            throw t;
         }
         out.close();
+    }
+
+    /// Discards the output without publishing a file, leaving nothing at the destination, and
+    /// closes the writer.
+    ///
+    /// For a failure the writer does not see, such as one in the code producing the data:
+    ///
+    /// ```java
+    /// try (ParquetFileWriter writer = ParquetFileWriter.create(out, schema)) {
+    ///     try {
+    ///         produce(writer);
+    ///     }
+    ///     catch (Exception e) {
+    ///         try {
+    ///             writer.abort();
+    ///         }
+    ///         catch (IOException discardFailure) {
+    ///             e.addSuppressed(discardFailure);
+    ///         }
+    ///         throw e;
+    ///     }
+    /// }
+    /// ```
+    ///
+    /// A failure of a write needs no call: `close()` discards the output of a writer whose write
+    /// has thrown. Does nothing if the writer is already closed or aborted, so a file `close()`
+    /// has published stays published.
+    ///
+    /// @throws IOException if the discarded output cannot be released, for example an upload
+    ///         that cannot be cancelled
+    public void abort() throws IOException {
+        if (state == State.CLOSED) {
+            return;
+        }
+        state = State.CLOSED;
+        out.discard();
     }
 
     /// Writes the buffered row group out.
@@ -521,8 +593,18 @@ public final class ParquetFileWriter implements Closeable {
     }
 
     void ensureOpen() {
-        if (closed) {
+        if (state == State.CLOSED) {
             throw new IllegalStateException("Writer is closed");
+        }
+    }
+
+    /// Rejects a write on a closed writer, or on one whose write has thrown. The metadata setters
+    /// check only [#ensureOpen()]: a footer value set after a failure changes nothing, since no
+    /// footer is written.
+    void ensureWritable() {
+        ensureOpen();
+        if (state == State.FAILED) {
+            throw new IllegalStateException("A previous write failed; the writer accepts no more data");
         }
     }
 }

@@ -152,9 +152,11 @@ already-set rule.
 
 A record is staged in full or not at all. Every node's staging is checkpointed before the filler
 runs and rolled back if it throws — whether the writer rejected a value or the caller's own code
-failed — so a rejected record leaves the batch exactly as it was and the caller can handle the
-failure and carry on with the next record. Without this a validation error would leave a
-half-populated batch whose columns no longer agree on their record count.
+failed — so a rejected record leaves the batch exactly as it was. Without this a validation
+error would leave a half-populated batch whose columns no longer agree on their record count.
+The exception still fails the writer, as every exception out of a write call does (see
+`WRITER_SUPPORT.md`); the rollback keeps the staged batch consistent for skipping a rejected
+record explicitly (#1253).
 
 A list or map entry is nullable only where the schema says so: `ListBuilder.addNull()` requires
 an `OPTIONAL` element, and a map's `key` is always `REQUIRED` by the Parquet `MAP` contract, so

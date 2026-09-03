@@ -23,7 +23,7 @@ import dev.hardwood.writer.StructBuilder;
 ///
 /// Built once per writer and reused for the whole file. Staging is checkpointed per record
 /// and rolled back if the record fails, so a rejected value leaves the batch exactly as it
-/// was and the caller can carry on with the next record.
+/// was.
 ///
 /// The plan keeps flat arrays of every node that stages something, so checkpointing, rolling
 /// back, filling and resetting are loops over arrays rather than walks of the tree.

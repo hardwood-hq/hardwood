@@ -33,6 +33,7 @@ nav:
     - Read Geospatial Columns: how-to/geospatial.md
     - Write Row by Row: how-to/write-row-by-row.md
     - Write Column by Column: how-to/write-column-by-column.md
+    - Handle Write Failures: how-to/write-failures.md
     - Inspect File Metadata: how-to/metadata.md
   - Concepts:
     - How a Parquet File Is Laid Out: concepts/parquet-layout.md

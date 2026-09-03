@@ -76,10 +76,9 @@ public final class RowWriter {
     /// populated, then stages the record. A field the filler leaves unset is written as null
     /// if it is `OPTIONAL`, and fails the record if it is `REQUIRED`.
     ///
-    /// A record that fails is staged in full or not at all: if the filler rejects a value or
-    /// throws, everything it staged is discarded and the writer is left exactly as it was
-    /// before the call, so the caller can handle the failure and carry on with the next
-    /// record.
+    /// Any exception fails the writer, whether the record is rejected, its `filler` throws, or a
+    /// batch of staged records cannot be written: the writer accepts no more records, and
+    /// [ParquetFileWriter#close()] discards the output.
     ///
     /// @param filler populates the record
     /// @throws IOException if writing a completed batch fails
@@ -88,10 +87,16 @@ public final class RowWriter {
     ///         leaves a `REQUIRED` field unset
     /// @throws IndexOutOfBoundsException if the filler addresses a field by an index the
     ///         struct it is setting does not have
-    /// @throws IllegalStateException if the writer is closed
+    /// @throws IllegalStateException if the writer is closed, or a previous write has failed
     public void writeRow(Consumer<StructBuilder> filler) throws IOException {
-        writer.ensureOpen();
-        plan.writeRecord(filler);
+        writer.ensureWritable();
+        try {
+            plan.writeRecord(filler);
+        }
+        catch (Throwable t) {
+            writer.markFailed();
+            throw t;
+        }
         stagedRecords++;
         if (stagedRecords >= STAGED_RECORDS_PER_BATCH || plan.variableWidthBytes() >= payloadLimitBytes) {
             flush();

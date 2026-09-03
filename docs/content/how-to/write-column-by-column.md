@@ -46,7 +46,7 @@ try (ParquetFileWriter writer = ParquetFileWriter.create(OutputFile.of(Path.of("
 
 The writer creates the batch — bound to the schema — hands it to the filler, then submits it, so there is no separate build or submit step. `columnWriter()` returns the same view on every call, so it can be obtained once and kept; call `writeBatch` as often as there is data and the writer bands the values into pages and row groups itself.
 
-The file is produced front to back and the footer is written last, so **it becomes a valid Parquet file only when `close()` returns**. A writer abandoned before that leaves nothing readable at the destination.
+The file is produced front to back and the footer is written last, so **it becomes a valid Parquet file only when `close()` returns**. A writer abandoned before that leaves nothing readable at the destination. After a failure, see [Handle Write Failures](write-failures.md).
 
 ## Batch Rules
 
