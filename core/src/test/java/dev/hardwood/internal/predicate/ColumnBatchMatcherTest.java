@@ -14,9 +14,11 @@ import org.junit.jupiter.api.Test;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.doubles.DoubleInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleNotEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.floats.FloatWideningDoubleInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.longs.LongGtEqBatchMatcher;
@@ -204,5 +206,51 @@ class ColumnBatchMatcherTest {
         double[] vals = {Double.NaN, 0.0};
         BatchExchange.Batch batch = doubleBatch(vals, null);
         assertArrayEquals(new long[]{bits(1)}, runMatcher(new DoubleLtBatchMatcher(5.0), batch));
+    }
+
+    @Test
+    void doubleIn_matchesOnlyExactValuesAndExcludesNulls() {
+        double[] vals = {1.5, 2.5, -0.0, +0.0, Double.NaN, 3.5};
+        BatchExchange.Batch batch = doubleBatch(vals, nullsAt(1));
+        double[] inValues = {2.5, -0.0, Double.NaN};
+        assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new DoubleInBatchMatcher(inValues), batch));
+    }
+
+    @Test
+    void doubleIn_acrossWordBoundary_setsBitsInBothWords() {
+        double[] vals = new double[70];
+        for (int i = 0; i < vals.length; i++) {
+            vals[i] = (double) i;
+        }
+        BatchExchange.Batch batch = doubleBatch(vals, null);
+        long[] out = runMatcher(new DoubleInBatchMatcher(new double[]{5.0, 65.0}), batch);
+        assertArrayEquals(new long[]{1L << 5, 1L << (65 - 64)}, out);
+    }
+
+    private static BatchExchange.Batch floatBatch(float[] values, BitSet nulls) {
+        BatchExchange.Batch batch = new BatchExchange.Batch();
+        batch.values = values;
+        batch.validity = toValidity(nulls, values.length);
+        batch.recordCount = values.length;
+        return batch;
+    }
+
+    @Test
+    void floatWideningDoubleIn_matchesOnlyExactValuesAndExcludesNulls() {
+        float[] vals = {0.5f, 1.5f, -0.0f, +0.0f, Float.NaN, 0.1f};
+        BatchExchange.Batch batch = floatBatch(vals, nullsAt(1));
+        double[] inValues = {1.5, -0.0, Double.NaN, 0.1};
+        assertArrayEquals(new long[]{bits(2, 4)}, runMatcher(new FloatWideningDoubleInBatchMatcher(inValues), batch));
+    }
+
+    @Test
+    void floatWideningDoubleIn_acrossWordBoundary_setsBitsInBothWords() {
+        float[] vals = new float[70];
+        for (int i = 0; i < vals.length; i++) {
+            vals[i] = (float) i;
+        }
+        BatchExchange.Batch batch = floatBatch(vals, null);
+        long[] out = runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{5.0, 65.0}), batch);
+        assertArrayEquals(new long[]{1L << 5, 1L << (65 - 64)}, out);
     }
 }

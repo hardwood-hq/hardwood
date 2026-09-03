@@ -775,6 +775,38 @@ class PredicatePushDownTest {
         }
     }
 
+    @Test
+    void testDoubleInPredicateOnDoubleColumnEndToEnd() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
+            FilterPredicate filter = FilterPredicate.in("price", 20.0, 120.0);
+
+            List<Double> prices = new ArrayList<>();
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                    prices.add(rows.getDouble("price"));
+                }
+            }
+            assertThat(prices).containsExactly(20.0, 120.0);
+        }
+    }
+
+    @Test
+    void testDoubleInPredicateOnFloatColumnEndToEnd() throws Exception {
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(MIXED_FILE))) {
+            FilterPredicate filter = FilterPredicate.in("rating", 2.0, 8.0, 0.1);
+
+            List<Float> ratings = new ArrayList<>();
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
+                while (rows.hasNext()) {
+                    rows.next();
+                    ratings.add(rows.getFloat("rating"));
+                }
+            }
+            assertThat(ratings).containsExactly(2.0f, 8.0f);
+        }
+    }
+
     // ==================== NOT(IN) end-to-end ====================
 
     @Test
