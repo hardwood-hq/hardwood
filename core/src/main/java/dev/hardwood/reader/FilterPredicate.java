@@ -88,6 +88,7 @@ public sealed interface FilterPredicate
                 FilterPredicate.UUIDColumnPredicate,
                 FilterPredicate.IntInPredicate,
                 FilterPredicate.LongInPredicate,
+                FilterPredicate.DoubleInPredicate,
                 FilterPredicate.BinaryInPredicate,
                 FilterPredicate.DateColumnPredicate,
                 FilterPredicate.InstantColumnPredicate,
@@ -274,6 +275,13 @@ public sealed interface FilterPredicate
             throw new IllegalArgumentException("IN predicate requires at least one value");
         }
         return new LongInPredicate(column, values);
+    }
+
+    static FilterPredicate in(String column, double... values) {
+        if (values.length == 0) {
+            throw new IllegalArgumentException("IN predicate requires at least one value");
+        }
+        return new DoubleInPredicate(column, values);
     }
 
     static FilterPredicate inStrings(String column, String... values) {
@@ -607,6 +615,26 @@ public sealed interface FilterPredicate
         public boolean equals(Object o) {
             if (this == o) return true;
             if (!(o instanceof LongInPredicate that)) return false;
+            return column.equals(that.column) && Arrays.equals(values, that.values);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * column.hashCode() + Arrays.hashCode(values);
+        }
+    }
+
+    record DoubleInPredicate(String column, double[] values) implements FilterPredicate {
+
+        public DoubleInPredicate(String column, double[] values) {
+            this.column = column;
+            this.values = values.clone();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof DoubleInPredicate that)) return false;
             return column.equals(that.column) && Arrays.equals(values, that.values);
         }
 

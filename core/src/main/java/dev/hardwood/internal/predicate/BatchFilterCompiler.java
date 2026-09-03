@@ -241,6 +241,7 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.BooleanPredicate p -> p.columnIndex();
             case ResolvedPredicate.IntInPredicate p -> p.columnIndex();
             case ResolvedPredicate.LongInPredicate p -> p.columnIndex();
+            case ResolvedPredicate.DoubleInPredicate p -> p.columnIndex();
             case ResolvedPredicate.IsNullPredicate p -> p.columnIndex();
             case ResolvedPredicate.IsNotNullPredicate p -> p.columnIndex();
             default -> -1;

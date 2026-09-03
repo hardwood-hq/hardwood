@@ -240,6 +240,31 @@ class RecordFilterCompilerTest {
         assertFalse(matchesRow(in, binaryStub("col", bytes("banana"), false), schema));
     }
 
+    @Test
+    void testDoubleInOnDoubleColumn() {
+        FileSchema schema = doubleSchema("col");
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, 4.5, -0.0, Double.NaN }, false, false);
+        assertTrue(matchesRow(in, doubleStub("col", 2.5, false), schema));
+        assertTrue(matchesRow(in, doubleStub("col", 4.5, false), schema));
+        assertTrue(matchesRow(in, doubleStub("col", -0.0, false), schema));
+        assertTrue(matchesRow(in, doubleStub("col", Double.NaN, false), schema));
+        assertFalse(matchesRow(in, doubleStub("col", +0.0, false), schema));
+        assertFalse(matchesRow(in, doubleStub("col", 3.5, false), schema));
+        assertFalse(matchesRow(in, doubleStub("col", 2.5, true), schema));
+    }
+
+    @Test
+    void testDoubleInOnFloatColumn() {
+        FileSchema schema = floatSchema("col");
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 0.5, 0.1, -0.0, Double.NaN }, true, false);
+        assertTrue(matchesRow(in, floatStub("col", 0.5f, false), schema));
+        assertTrue(matchesRow(in, floatStub("col", -0.0f, false), schema));
+        assertTrue(matchesRow(in, floatStub("col", Float.NaN, false), schema));
+        assertFalse(matchesRow(in, floatStub("col", +0.0f, false), schema));
+        assertFalse(matchesRow(in, floatStub("col", 0.1f, false), schema));
+        assertFalse(matchesRow(in, floatStub("col", 0.5f, true), schema));
+    }
+
     // ==================== Null handling ====================
 
     @Test

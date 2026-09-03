@@ -69,6 +69,7 @@ final class StatisticsFilterSupport {
                     StatisticsDecoder.decodeLong(stats.maxValue()));
             case ResolvedPredicate.BinaryInPredicate p -> canDropBinaryIn(p.values(),
                     stats.minValue(), stats.maxValue());
+            case ResolvedPredicate.DoubleInPredicate ignored -> false;
             case ResolvedPredicate.IsNullPredicate ignored -> false;
             case ResolvedPredicate.IsNotNullPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;
@@ -145,6 +146,7 @@ final class StatisticsFilterSupport {
                             StatisticsDecoder.decodeLong(stats.maxValue()));
             case ResolvedPredicate.BinaryInPredicate p ->
                     alwaysMatchesBinaryIn(p.values(), stats.minValue(), stats.maxValue());
+            case ResolvedPredicate.DoubleInPredicate ignored -> false;
             case ResolvedPredicate.IsNullPredicate ignored -> false;
             case ResolvedPredicate.IsNotNullPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;

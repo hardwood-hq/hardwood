@@ -512,6 +512,70 @@ class FilterPredicateResolverTest {
         assertThat(((ResolvedPredicate.Float16Predicate) resolved).ieee754TotalOrder()).isTrue();
     }
 
+    // ==================== Double IN (#868) ====================
+
+    @Test
+    void resolveDoubleInOnDoubleColumn() {
+        FileSchema schema = schemaWithLogicalType("d", PhysicalType.DOUBLE, null);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.in("d", 1.5, 2.5), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.DoubleInPredicate.class);
+        ResolvedPredicate.DoubleInPredicate dp = (ResolvedPredicate.DoubleInPredicate) resolved;
+        assertThat(dp.columnIndex()).isEqualTo(0);
+        assertThat(dp.values()).containsExactly(1.5, 2.5);
+        assertThat(dp.floatColumn()).isFalse();
+        assertThat(dp.ieee754TotalOrder()).isTrue();
+
+        ResolvedPredicate defaultOrder = FilterPredicateResolver.resolve(
+                FilterPredicate.in("d", 1.5, 2.5), schema, List.of());
+        assertThat(((ResolvedPredicate.DoubleInPredicate) defaultOrder).ieee754TotalOrder()).isFalse();
+    }
+
+    @Test
+    void resolveDoubleInOnFloatColumn() {
+        FileSchema schema = schemaWithLogicalType("f", PhysicalType.FLOAT, null);
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.in("f", 1.5, 2.5), schema, List.of(ColumnOrder.IEEE754_TOTAL_ORDER));
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.DoubleInPredicate.class);
+        ResolvedPredicate.DoubleInPredicate dp = (ResolvedPredicate.DoubleInPredicate) resolved;
+        assertThat(dp.columnIndex()).isEqualTo(0);
+        assertThat(dp.values()).containsExactly(1.5, 2.5);
+        assertThat(dp.floatColumn()).isTrue();
+        assertThat(dp.ieee754TotalOrder()).isTrue();
+
+        ResolvedPredicate defaultOrder = FilterPredicateResolver.resolve(
+                FilterPredicate.in("f", 1.5, 2.5), schema, List.of());
+        assertThat(((ResolvedPredicate.DoubleInPredicate) defaultOrder).ieee754TotalOrder()).isFalse();
+    }
+
+    @Test
+    void resolveDoubleInOnFloat16Throws() {
+        FileSchema schema = schemaWithLogicalType("h", PhysicalType.FIXED_LEN_BYTE_ARRAY, 2,
+                new LogicalType.Float16Type());
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("h", 1.5, 2.5), schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column 'h'")
+                .hasMessageContaining("FLOAT16");
+    }
+
+    @Test
+    void resolveDoubleInOnIncompatibleColumnThrows() {
+        FileSchema intSchema = schemaWithLogicalType("i", PhysicalType.INT32, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("i", 1.5, 2.5), intSchema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column 'i'")
+                .hasMessageContaining("INT32");
+
+        FileSchema stringSchema = schemaWithLogicalType("s", PhysicalType.BYTE_ARRAY, new LogicalType.StringType());
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("s", 1.5, 2.5), stringSchema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column 's'")
+                .hasMessageContaining("BYTE_ARRAY");
+    }
+
     // ==================== Helpers ====================
 
     private static FileSchema schemaWithLogicalType(String columnName, PhysicalType type,

@@ -184,6 +184,7 @@ public class RowGroupFilterEvaluator {
                 }
                 yield decision;
             }
+            case ResolvedPredicate.DoubleInPredicate p -> statisticsDecision(p, p.columnIndex(), rowGroup);
             case ResolvedPredicate.IsNullPredicate p -> {
                 Statistics stats = getStatistics(p.columnIndex(), rowGroup);
                 // Can drop IS NULL if nullCount is known to be 0 (no nulls exist).
