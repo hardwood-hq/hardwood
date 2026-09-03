@@ -4452,6 +4452,51 @@ print("  - Bloom filters on 'id', 'name', 'code', 'price', 'ratio', 'dec', 'ts',
       " 'value' has none")
 
 # =====================================================================
+# Multi-row-group bloom-filter fixture (#735). Five row groups whose
+# bloom filters for each column are written contiguously, so a coalescing
+# prefetch can fetch a column's filters in one ranged GET instead of one
+# per row group. `code` cycles within every row group so each row group's
+# statistics range overlaps the others — one in-range absent value makes
+# every row group a bloom candidate. `id` stays strictly increasing, so a
+# point lookup's statistics keep a single row group (the lone-candidate
+# case). No dictionary, no compression and no page index, so a filtered
+# read's request-count differential isolates bloom reads.
+# =====================================================================
+
+multi_rg_bloom_table = pa.table({
+    'id': list(range(1000)),
+    'value': [v * 10 for v in range(1000)],
+    'name': ['x' * (v % 64) for v in range(1000)],
+    'code': [(v % 4) * 3 for v in range(1000)],
+}, schema=pa.schema([
+    ('id', pa.int64(), False),
+    ('value', pa.int64(), False),
+    ('name', pa.string(), False),
+    ('code', pa.int32(), False),
+]))
+
+pq.write_table(
+    multi_rg_bloom_table,
+    'core/src/test/resources/bloom_filter_multi_rg_test.parquet',
+    row_group_size=200,
+    use_dictionary=False,
+    compression=None,
+    data_page_version='1.0',
+    write_page_index=False,
+    bloom_filter_options={
+        'id': {'ndv': 1000, 'fpp': 0.05},
+        'name': {'ndv': 1000, 'fpp': 0.05},
+        'code': {'ndv': 1000, 'fpp': 0.05},
+    },
+)
+
+print("\nGenerated bloom_filter_multi_rg_test.parquet:")
+print("  - 5 row groups of 200 rows, INT64 id + INT64 value + STRING name + INT32 code")
+print("  - Bloom filters on 'id', 'name', 'code'; 'value' has none")
+print("  - No dictionary, compression, or page index, so filtered-read request"
+      " counts isolate bloom fetches")
+
+# =====================================================================
 # FLOAT / DOUBLE signed-zero bloom-filter fixture (#829). Both columns
 # contain only -0.0, whose raw IEEE-754 bloom hash differs from +0.0.
 # Statistics are disabled so row-group decisions isolate bloom-filter
