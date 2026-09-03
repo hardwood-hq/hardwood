@@ -216,7 +216,7 @@
 
   <profiles>
     <!-- Mutation analysis over the bloom filter I/O classes. Opt-in because it recompiles
-         and re-runs the bloom suites once per planted fault: `mtk mvn -pl core
+         and re-runs the bloom suites once per planted fault: `./mvnw -pl core
          -Pmutation-test test-compile org.pitest:pitest-maven:mutationCoverage`. -->
     <profile>
       <id>mutation-test</id>
