@@ -253,4 +253,69 @@ class ColumnBatchMatcherTest {
         long[] out = runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{5.0, 65.0}), batch);
         assertArrayEquals(new long[]{1L << 5, 1L << (65 - 64)}, out);
     }
+
+    @Test
+    void doubleIn_allMatchAndNoneMatchAndAllNulls() {
+        double[] vals = {5.0, 5.0, 5.0, 5.0};
+        assertArrayEquals(new long[]{bits(0, 1, 2, 3)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{5.0}), doubleBatch(vals, null)));
+        assertArrayEquals(new long[]{0L},
+                runMatcher(new DoubleInBatchMatcher(new double[]{10.0}), doubleBatch(vals, null)));
+        assertArrayEquals(new long[]{0L},
+                runMatcher(new DoubleInBatchMatcher(new double[]{5.0}), doubleBatch(vals, nullsAt(0, 1, 2, 3))));
+    }
+
+    @Test
+    void doubleIn_signedZeroAndNaNPrecision() {
+        double[] vals = {+0.0, -0.0, Double.NaN};
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{+0.0}), doubleBatch(vals, null)));
+        assertArrayEquals(new long[]{bits(1)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{-0.0}), doubleBatch(vals, null)));
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.NaN}), doubleBatch(vals, null)));
+    }
+
+    @Test
+    void floatWideningDoubleIn_signedZeroAndExactWideningPrecision() {
+        float[] vals = {+0.0f, -0.0f, Float.NaN, 0.1f};
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{+0.0}), floatBatch(vals, null)));
+        assertArrayEquals(new long[]{bits(1)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{-0.0}), floatBatch(vals, null)));
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.NaN}), floatBatch(vals, null)));
+        // 0.1d does not equal (double) 0.1f -> 0L
+        assertArrayEquals(new long[]{0L},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{0.1}), floatBatch(vals, null)));
+        // Widened probe (double) 0.1f DOES match
+        assertArrayEquals(new long[]{bits(3)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{(double) 0.1f}), floatBatch(vals, null)));
+    }
+
+    @Test
+    void doubleIn_killsShiftAndBoundaryMutants() {
+        double[] vals64 = new double[64];
+        vals64[63] = 42.0;
+        assertArrayEquals(new long[]{1L << 63},
+                runMatcher(new DoubleInBatchMatcher(new double[]{42.0}), doubleBatch(vals64, null)));
+
+        double[] vals130 = new double[130];
+        vals130[65] = 99.0;
+        long[] out = runMatcher(new DoubleInBatchMatcher(new double[]{99.0}), doubleBatch(vals130, null));
+        assertArrayEquals(new long[]{0L, 1L << 1, 0L}, out);
+    }
+
+    @Test
+    void floatWideningDoubleIn_killsShiftAndBoundaryMutants() {
+        float[] vals64 = new float[64];
+        vals64[63] = 42.0f;
+        assertArrayEquals(new long[]{1L << 63},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{42.0}), floatBatch(vals64, null)));
+
+        float[] vals130 = new float[130];
+        vals130[65] = 99.0f;
+        long[] out = runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{99.0}), floatBatch(vals130, null));
+        assertArrayEquals(new long[]{0L, 1L << 1, 0L}, out);
+    }
 }

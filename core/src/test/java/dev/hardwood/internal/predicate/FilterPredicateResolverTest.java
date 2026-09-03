@@ -8,6 +8,7 @@
 package dev.hardwood.internal.predicate;
 
 import java.math.BigDecimal;
+import java.math.BigInteger;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.time.LocalTime;
@@ -574,6 +575,116 @@ class FilterPredicateResolverTest {
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessageContaining("Column 's'")
                 .hasMessageContaining("BYTE_ARRAY");
+
+        FileSchema int64Schema = schemaWithLogicalType("l", PhysicalType.INT64, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("l", 1.5, 2.5), int64Schema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column 'l'")
+                .hasMessageContaining("INT64");
+
+        FileSchema boolSchema = schemaWithLogicalType("b", PhysicalType.BOOLEAN, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("b", 1.5, 2.5), boolSchema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column 'b'")
+                .hasMessageContaining("BOOLEAN");
+
+        FileSchema flbaSchema = schemaWithLogicalType("flba", PhysicalType.FIXED_LEN_BYTE_ARRAY, 4, null);
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.in("flba", 1.5, 2.5), flbaSchema))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessageContaining("Column 'flba'")
+                .hasMessageContaining("FIXED_LEN_BYTE_ARRAY");
+    }
+
+    @Test
+    void allPredicatesRejectRepeatedColumns() {
+        FileSchema schema = schemaWithRepeatedColumn("rep", PhysicalType.INT32, null, null);
+        List<FilterPredicate> predicates = List.of(
+                FilterPredicate.eq("rep", 1),
+                FilterPredicate.eq("rep", 1L),
+                FilterPredicate.eq("rep", 1.0f),
+                FilterPredicate.eq("rep", 1.0d),
+                FilterPredicate.eq("rep", true),
+                FilterPredicate.eq("rep", "text"),
+                FilterPredicate.eq("rep", LocalDate.of(2026, 1, 1)),
+                FilterPredicate.eq("rep", Instant.EPOCH),
+                FilterPredicate.eq("rep", LocalTime.NOON),
+                FilterPredicate.eq("rep", BigDecimal.ONE),
+                FilterPredicate.eq("rep", UUID.randomUUID()),
+                new FilterPredicate.SignedBinaryColumnPredicate("rep", FilterPredicate.Operator.EQ, new byte[8]),
+                FilterPredicate.in("rep", 1, 2),
+                FilterPredicate.in("rep", 1L, 2L),
+                FilterPredicate.in("rep", 1.0, 2.0),
+                FilterPredicate.inStrings("rep", "a", "b"),
+                FilterPredicate.isNull("rep"),
+                FilterPredicate.isNotNull("rep")
+        );
+
+        for (FilterPredicate p : predicates) {
+            assertThatThrownBy(() -> FilterPredicateResolver.resolve(p, schema))
+                    .isInstanceOf(IllegalArgumentException.class)
+                    .hasMessageContaining("Column 'rep' is repeated");
+        }
+    }
+
+    @Test
+    void typeValidationOnAllPredicates() {
+        FileSchema int32Schema = schemaWithLogicalType("c", PhysicalType.INT32, null);
+        FileSchema int64Schema = schemaWithLogicalType("c", PhysicalType.INT64, null);
+
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", 1L), int32Schema))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", 1.0), int32Schema))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", true), int32Schema))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", "str"), int32Schema))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1, 2), int64Schema))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.in("c", 1L, 2L), int32Schema))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.inStrings("c", "a"), int32Schema))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+
+        FileSchema dateSchemaWrong = schemaWithLogicalType("c", PhysicalType.INT64, new LogicalType.DateType());
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", LocalDate.of(2026, 1, 1)), dateSchemaWrong))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+
+        FileSchema tsSchemaWrong = schemaWithLogicalType("c", PhysicalType.INT32,
+                new LogicalType.TimestampType(false, LogicalType.TimeUnit.MILLIS));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", Instant.EPOCH), tsSchemaWrong))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+
+        FileSchema timeMillisWrong = schemaWithLogicalType("c", PhysicalType.INT64,
+                new LogicalType.TimeType(false, LogicalType.TimeUnit.MILLIS));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", LocalTime.NOON), timeMillisWrong))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+
+        FileSchema timeMicrosWrong = schemaWithLogicalType("c", PhysicalType.INT32,
+                new LogicalType.TimeType(false, LogicalType.TimeUnit.MICROS));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(FilterPredicate.eq("c", LocalTime.NOON), timeMicrosWrong))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+
+        FileSchema signedBinaryWrong = schemaWithLogicalType("c", PhysicalType.INT32,
+                new LogicalType.DecimalType(2, 18));
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                new FilterPredicate.SignedBinaryColumnPredicate("c", FilterPredicate.Operator.EQ, new byte[8]), signedBinaryWrong))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+
+        FileSchema uuidWrong = schemaWithLogicalType("c", PhysicalType.INT32,
+                new LogicalType.UuidType());
+        assertThatThrownBy(() -> FilterPredicateResolver.resolve(
+                FilterPredicate.eq("c", UUID.randomUUID()), uuidWrong))
+                .isInstanceOf(IllegalArgumentException.class).hasMessageContaining("incompatible");
+    }
+
+    @Test
+    void toFixedLenDecimalBytes_zeroSignumPadding() {
+        byte[] bytes = FilterPredicateResolver.toFixedLenDecimalBytes(BigInteger.ZERO, 4);
+        assertThat(bytes).containsExactly(0, 0, 0, 0);
     }
 
     // ==================== Helpers ====================
@@ -587,6 +698,14 @@ class FilterPredicateResolverTest {
             Integer typeLength, LogicalType logicalType) {
         SchemaElement root = SchemaElement.root("root", 1);
         SchemaElement col = new SchemaElement(columnName, type, typeLength, RepetitionType.REQUIRED,
+                null, null, null, null, null, logicalType);
+        return FileSchema.fromSchemaElements(List.of(root, col));
+    }
+
+    private static FileSchema schemaWithRepeatedColumn(String columnName, PhysicalType type,
+            Integer typeLength, LogicalType logicalType) {
+        SchemaElement root = SchemaElement.root("root", 1);
+        SchemaElement col = new SchemaElement(columnName, type, typeLength, RepetitionType.REPEATED,
                 null, null, null, null, null, logicalType);
         return FileSchema.fromSchemaElements(List.of(root, col));
     }

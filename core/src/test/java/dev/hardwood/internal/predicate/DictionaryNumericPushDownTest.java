@@ -145,6 +145,26 @@ class DictionaryNumericPushDownTest {
                 .isFalse();
     }
 
+    @Test
+    void int32UnsortedProbesAndFirstIndexMatch() {
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 0, new int[]{ 9, 1, 5 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 0, new int[]{ 0, 5, 7 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(null, 0, new int[]{ 0 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 999, new int[]{ 0 })).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(null, 0, 0)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dictionaries(), 999, 0)).isFalse();
+    }
+
+    @Test
+    void int64UnsortedProbesAndFirstIndexMatch() {
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 1, new long[]{ 3000L, 100L, 500L })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 1, new long[]{ 0L, 500L, 700L })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(null, 1, new long[]{ 0L })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 999, new long[]{ 0L })).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(null, 1, 0L)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dictionaries(), 999, 0L)).isFalse();
+    }
+
     private static RowGroupDictionaryFilterSource dictionaries() {
         return new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context);
     }

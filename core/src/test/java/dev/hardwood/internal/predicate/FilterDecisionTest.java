@@ -134,6 +134,39 @@ class FilterDecisionTest {
     }
 
     @Test
+    void doubleInExactBoundariesKillMutants() {
+        double min = 10.0;
+        double max = 20.0;
+
+        // Exact boundary hits must NOT drop
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ min }, min, max, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ max }, min, max, false)).isFalse();
+
+        // Points just outside boundary must drop
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ Math.nextDown(min) }, min, max, false)).isTrue();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ Math.nextUp(max) }, min, max, false)).isTrue();
+
+        // Straddling outside: probes on both sides of [min, max] but none inside -> must drop
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0, 25.0 }, min, max, false)).isTrue();
+
+        // One probe inside and one probe outside -> must NOT drop
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0, 15.0 }, min, max, false)).isFalse();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 15.0, 25.0 }, min, max, false)).isFalse();
+
+        // Under IEEE 754 total order, -0.0 < +0.0
+        // Bounds [-0.0, -0.0]: +0.0 is strictly above max -> drops
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0 }, -0.0, -0.0, true)).isTrue();
+        // Bounds [+0.0, +0.0]: -0.0 is strictly below min -> drops
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ -0.0 }, +0.0, +0.0, true)).isTrue();
+
+        // Under type-defined order (!ieee754TotalOrder):
+        // Bounds [-0.0, -0.0] widens max to +0.0 -> contains +0.0 -> cannot drop
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0 }, -0.0, -0.0, false)).isFalse();
+        // Bounds [+0.0, +0.0] widens min to -0.0 -> contains -0.0 -> cannot drop
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ -0.0 }, +0.0, +0.0, false)).isFalse();
+    }
+
+    @Test
     void doubleInOnFloatColumnDecisions() {
         ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, 42.0, 99.0 }, true, false);
         assertThat(StatisticsFilterSupport.decideLeaf(in, floatStats(42.0f, 43.0f, 0L)))
@@ -277,6 +310,61 @@ class FilterDecisionTest {
             case GT -> value > literal;
             case GT_EQ -> value >= literal;
         };
+    }
+
+    @Test
+    void alwaysMatchesInPredicates() {
+        // alwaysMatchesIntIn
+        assertThat(StatisticsFilterSupport.alwaysMatchesIntIn(new int[]{ 5, 10 }, 10, 10)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesIntIn(new int[]{ 5, 10 }, 8, 8)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesIntIn(new int[]{ 5, 10 }, 5, 10)).isFalse();
+
+        // alwaysMatchesLongIn
+        assertThat(StatisticsFilterSupport.alwaysMatchesLongIn(new long[]{ 5L, 10L }, 10L, 10L)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesLongIn(new long[]{ 5L, 10L }, 8L, 8L)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesLongIn(new long[]{ 5L, 10L }, 5L, 10L)).isFalse();
+
+        // alwaysMatchesBinaryIn
+        byte[] a = "a".getBytes(StandardCharsets.UTF_8);
+        byte[] b = "b".getBytes(StandardCharsets.UTF_8);
+        byte[] c = "c".getBytes(StandardCharsets.UTF_8);
+        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, b, b)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, c, c)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesBinaryIn(new byte[][]{ a, b }, a, b)).isFalse();
+    }
+
+    @Test
+    void alwaysMatchesComparedBoundaries() {
+        // EQ
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.EQ, 0, 0, 0)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.EQ, 0, -1, 1)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.EQ, 1, 1, 0)).isFalse();
+
+        // NOT_EQ: cmpMin < 0 || cmpMax > 0
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.NOT_EQ, -1, -2, 1)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.NOT_EQ, 2, 1, 1)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.NOT_EQ, 0, -1, 1)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.NOT_EQ, 1, 0, 1)).isFalse();
+
+        // LT: cmpMax > 0
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.LT, 1, 1, 0)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.LT, 0, 0, 0)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.LT, -1, -1, 0)).isFalse();
+
+        // LT_EQ: cmpMax >= 0
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.LT_EQ, 1, 1, 0)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.LT_EQ, 0, 0, 0)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.LT_EQ, -1, -1, 0)).isFalse();
+
+        // GT: cmpMin < 0
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.GT, -1, -1, 0)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.GT, 0, 0, 0)).isFalse();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.GT, 1, 1, 0)).isFalse();
+
+        // GT_EQ: cmpMin <= 0
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.GT_EQ, -1, -1, 0)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.GT_EQ, 0, 0, 0)).isTrue();
+        assertThat(StatisticsFilterSupport.alwaysMatchesCompared(FilterPredicate.Operator.GT_EQ, 1, 1, 0)).isFalse();
     }
 
     // ==================== Fixtures ====================
