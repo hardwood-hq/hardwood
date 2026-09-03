@@ -210,6 +210,7 @@ final class SelectionEngine {
             case ResolvedPredicate.IntInPredicate x -> x.columnIndex();
             case ResolvedPredicate.LongInPredicate x -> x.columnIndex();
             case ResolvedPredicate.BinaryInPredicate x -> x.columnIndex();
+            case ResolvedPredicate.DoubleInPredicate x -> x.columnIndex();
             case ResolvedPredicate.IsNullPredicate x -> x.columnIndex();
             case ResolvedPredicate.IsNotNullPredicate x -> x.columnIndex();
             case ResolvedPredicate.GeospatialPredicate x -> x.columnIndex();

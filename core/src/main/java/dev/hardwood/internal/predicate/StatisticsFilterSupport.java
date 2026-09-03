@@ -147,6 +147,34 @@ final class StatisticsFilterSupport {
         return true;
     }
 
+    /// Whether the bounds prove every value in a floating-point `IN` list absent.
+    ///
+    /// Takes both widths over `double`: a `float` bound widens exactly, and a probe is never
+    /// narrowed to the stored width, so one that no `float` can represent simply matches nothing.
+    ///
+    /// A `NaN` probe stops the list from pruning at all. Stored `NaN` values sit outside the
+    /// min/max ordering, so no interval can prove one absent — where an unusable *bound* is
+    /// caught when the unit is sourced, this is a property of the probe.
+    static boolean canDropDoubleIn(double[] values, double min, double max, boolean ieee754TotalOrder) {
+        // See canDropFloat: widen ±0 bounds under the type-defined ordering, leave them exact for
+        // the unambiguous IEEE 754 total order.
+        if (!ieee754TotalOrder) {
+            min = (min == 0.0) ? -0.0 : min;
+            max = (max == 0.0) ? 0.0 : max;
+        }
+        for (double value : values) {
+            if (Double.isNaN(value)) {
+                return false;
+            }
+        }
+        for (double value : values) {
+            if (Double.compare(value, min) >= 0 && Double.compare(value, max) <= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     static boolean canDropBinaryIn(byte[][] values, byte[] min, byte[] max) {
         for (byte[] value : values) {
             if (BinaryComparator.compareUnsigned(value, min) >= 0

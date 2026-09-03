@@ -103,6 +103,8 @@ public final class RecordFilterCompiler {
                     longInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
             case ResolvedPredicate.BinaryInPredicate p ->
                     binaryInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values());
+            case ResolvedPredicate.DoubleInPredicate p ->
+                    doubleInLeaf(pathSegments(schema, p.columnIndex()), leafName(schema, p.columnIndex()), p.values(), p.floatColumn());
             case ResolvedPredicate.IsNullPredicate p -> {
                 int idx = indexedTopLevel(schema, p.columnIndex(), topLevelFieldIndex);
                 yield idx >= 0
@@ -441,6 +443,29 @@ public final class RecordFilterCompiler {
             byte[] val = a.getBinary(name);
             for (byte[] value : values) {
                 if (Arrays.equals(val, value)) return true;
+            }
+            return false;
+        };
+    }
+
+    private static RowMatcher doubleInLeaf(String[] path, String name, double[] values, boolean floatColumn) {
+        if (floatColumn) {
+            return row -> {
+                StructAccessor a = resolve(row, path);
+                if (a == null || a.isNull(name)) return false;
+                double val = a.getFloat(name);
+                for (double member : values) {
+                    if (Double.compare(val, member) == 0) return true;
+                }
+                return false;
+            };
+        }
+        return row -> {
+            StructAccessor a = resolve(row, path);
+            if (a == null || a.isNull(name)) return false;
+            double val = a.getDouble(name);
+            for (double member : values) {
+                if (Double.compare(val, member) == 0) return true;
             }
             return false;
         };

@@ -27,6 +27,7 @@ import dev.hardwood.reader.FilterPredicate.BooleanColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.DateColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.DecimalColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.DoubleColumnPredicate;
+import dev.hardwood.reader.FilterPredicate.DoubleInPredicate;
 import dev.hardwood.reader.FilterPredicate.FloatColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.InstantColumnPredicate;
 import dev.hardwood.reader.FilterPredicate.IntColumnPredicate;
@@ -213,6 +214,26 @@ public class FilterPredicateResolver {
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
                 yield new ResolvedPredicate.BinaryInPredicate(cs.columnIndex(), p.values());
+            }
+            case DoubleInPredicate p -> {
+                ColumnSchema cs = resolveColumn(p.column(), schema);
+                rejectRepeated(p.column(), cs);
+                if (cs.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY
+                        && cs.logicalType() instanceof LogicalType.Float16Type) {
+                    throw new IllegalArgumentException(
+                            "Column '" + p.column() + "': IN predicate is not supported on FLOAT16 columns");
+                }
+                if (cs.type() == PhysicalType.DOUBLE) {
+                    yield new ResolvedPredicate.DoubleInPredicate(cs.columnIndex(), p.values(), false,
+                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                }
+                if (cs.type() == PhysicalType.FLOAT) {
+                    yield new ResolvedPredicate.DoubleInPredicate(cs.columnIndex(), p.values(), true,
+                            isIeee754TotalOrder(cs.columnIndex(), columnOrders));
+                }
+                throw new IllegalArgumentException(
+                        "Column '" + p.column() + "' has physical type " + cs.type()
+                                + "; given filter predicate type DOUBLE/FLOAT is incompatible");
             }
             case FilterPredicate.IsNullPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);

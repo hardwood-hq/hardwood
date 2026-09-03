@@ -58,12 +58,12 @@ The `±0` ambiguity described by `parquet.thrift` applies to statistics min/max,
 |---|---|---|
 | `INT32` | yes | yes |
 | `INT64` | yes | yes |
-| `FLOAT` | yes | — |
-| `DOUBLE` | yes | — |
+| `FLOAT` | yes | yes |
+| `DOUBLE` | yes | yes |
 | `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` | yes | yes |
 | `FLOAT16` (`FIXED_LEN_BYTE_ARRAY(2)`) | yes | — |
 
-`IN` is not offered for `FLOAT` / `DOUBLE` / `FLOAT16` because `FilterPredicate` has no float or double `in` factory.
+`IN` on `FLOAT` and `DOUBLE` columns is evaluated via `DoubleInPredicate`. For `FLOAT` columns, dictionary entries are widened to `double` and compared with `Double.compare` without narrowing probes. `FLOAT16` does not support `IN`.
 
 A `FLOAT16` chunk's dictionary holds 2-byte values, and each is widened to `float` and compared with `Float.compare` like any other float. The predicate is never narrowed to binary16: the narrowing is lossy, and a probe binary16 cannot represent would round to a neighbouring value and prove the wrong one absent. Widening the entries instead leaves such a probe matching nothing, which is what a full scan finds too. This is also why bloom filters skip `FLOAT16` — they hash the 2-byte stored form, so they have no way to probe without narrowing.
 

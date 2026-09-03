@@ -173,4 +173,42 @@ public final class DictionaryFilterSupport {
         return true;
     }
 
+    /// `IN`-list dictionary check for `double` values across DOUBLE and FLOAT columns.
+    ///
+    /// [Arrays#sort(double[])] and [Arrays#binarySearch(double[], double)] impose the total order
+    /// [Double#compare] does — every `NaN` equal to every other, `-0.0` below `+0.0` — so indexing
+    /// the probes agrees with the equality the single-value check applies.
+    ///
+    /// For FLOAT columns the entries are widened to `double` rather than the probes narrowed to
+    /// `float`, for the reason [#valueAbsentFloat16] gives: narrowing is lossy, and a probe no
+    /// `float` can represent would round to a neighbour and prove the wrong value absent. Widening
+    /// leaves such a probe matching no entry, which is what a full scan finds too.
+    public static boolean absentAll(Dictionary dictionary, double[] values, boolean floatColumn) {
+        if (floatColumn) {
+            if (!(dictionary instanceof Dictionary.FloatDictionary dict)) {
+                return false;
+            }
+            // Sorted copy, not the predicate's own array: the resolved predicate is shared across
+            // every row group and file of the read.
+            double[] probes = values.clone();
+            Arrays.sort(probes);
+            for (float entry : dict.values()) {
+                if (Arrays.binarySearch(probes, entry) >= 0) {
+                    return false;
+                }
+            }
+            return true;
+        }
+        if (!(dictionary instanceof Dictionary.DoubleDictionary dict)) {
+            return false;
+        }
+        double[] probes = values.clone();
+        Arrays.sort(probes);
+        for (double entry : dict.values()) {
+            if (Arrays.binarySearch(probes, entry) >= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
 }

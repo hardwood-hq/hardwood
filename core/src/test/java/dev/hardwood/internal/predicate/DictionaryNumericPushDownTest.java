@@ -19,6 +19,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
+import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
@@ -131,6 +132,67 @@ class DictionaryNumericPushDownTest {
     void int64InListDropsOnlyWhenEveryValueIsAbsent() throws IOException {
         assertThat(dictionaryDrop(FilterPredicate.in("i64", 1500L, 2500L))).isTrue();
         assertThat(dictionaryDrop(FilterPredicate.in("i64", 1500L, 2000L))).isFalse();
+    }
+
+    @Test
+    void floatInListDropsOnlyWhenEveryValueIsAbsent() throws IOException {
+        assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0, 3.5))).isTrue();
+        assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0, 2.5))).isFalse();
+        assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.5, 0.1))).isTrue();
+
+        assertThat(DictionaryFilterSupport.absentAll(dict(F32_COLUMN), new double[]{ 3.5, Double.NaN }, true))
+                .isFalse();
+    }
+
+    @Test
+    void doubleInListDropsOnlyWhenEveryValueIsAbsent() throws IOException {
+        assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 3.5))).isTrue();
+        assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 2.5))).isFalse();
+
+        assertThat(DictionaryFilterSupport.absentAll(dict(F64_COLUMN), new double[]{ 3.5, Double.NaN }, false))
+                .isFalse();
+    }
+
+    @Test
+    void int32UnsortedProbesAndFirstIndexMatch() throws IOException {
+        assertThat(DictionaryFilterSupport.absentAll(dict(0), new int[]{ 9, 1, 5 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dict(0), new int[]{ 0, 5, 7 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(null, new int[]{ 0 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dict(999), new int[]{ 0 })).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(null, 0)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dict(999), 0)).isFalse();
+    }
+
+    @Test
+    void int64UnsortedProbesAndFirstIndexMatch() throws IOException {
+        assertThat(DictionaryFilterSupport.absentAll(dict(1), new long[]{ 3000L, 100L, 500L })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dict(1), new long[]{ 0L, 500L, 700L })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(null, new long[]{ 0L })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dict(999), new long[]{ 0L })).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(null, 0L)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dict(999), 0L)).isFalse();
+    }
+
+    @Test
+    void doubleInListNeedsTheDictionaryArmOfItsOwnWidth() throws IOException {
+        // Unsorted probes, and a match at the sorted list's first index, as the integer arms above.
+        assertThat(DictionaryFilterSupport.absentAll(dict(F64_COLUMN), new double[]{ 4.5, 1.5, 3.5 }, false))
+                .isFalse();
+
+        // No dictionary at all, and a column index past this row group: neither proves absence.
+        assertThat(DictionaryFilterSupport.absentAll(null, new double[]{ 3.5 }, false)).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(null, new double[]{ 3.5 }, true)).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dict(999), new double[]{ 3.5 }, false)).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dict(999), new double[]{ 3.5 }, true)).isFalse();
+
+        // A FLOAT-column list meeting DOUBLE entries, and the reverse: the arm that does not match
+        // the stored width proves nothing, rather than reading the entries at the wrong one.
+        assertThat(DictionaryFilterSupport.absentAll(dict(F64_COLUMN), new double[]{ 3.5 }, true)).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dict(F32_COLUMN), new double[]{ 3.5 }, false)).isFalse();
+    }
+
+    private static Dictionary dict(int columnIndex) throws IOException {
+        return dictionaries().forColumn(columnIndex);
     }
 
     private static RowGroupDictionaryFilterSource dictionaries() {

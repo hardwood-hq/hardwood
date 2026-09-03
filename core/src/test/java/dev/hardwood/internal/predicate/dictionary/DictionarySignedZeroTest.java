@@ -73,10 +73,34 @@ class DictionarySignedZeroTest {
     }
 
     @Test
+    void signedZeroInAnInListIsDecidedAtEachZeroSeparately() throws IOException {
+        // The list path indexes its probes and searches them per entry, where the single-value
+        // path scans; both orders separate the zeroes, so a +0.0 list is proven absent too.
+        assertThat(absentAll(FLOAT_COLUMN, true, 0.0)).isTrue();
+        assertThat(absentAll(DOUBLE_COLUMN, false, 0.0)).isTrue();
+
+        // -0.0 is stored, so a list holding it is kept — including one holding both zeroes,
+        // which the probe order keeps distinct rather than collapsing onto one value.
+        assertThat(absentAll(FLOAT_COLUMN, true, -0.0)).isFalse();
+        assertThat(absentAll(DOUBLE_COLUMN, false, -0.0)).isFalse();
+        assertThat(absentAll(FLOAT_COLUMN, true, 0.0, -0.0)).isFalse();
+        assertThat(absentAll(DOUBLE_COLUMN, false, 0.0, -0.0)).isFalse();
+
+        // A list of values the dictionary does not hold, a zero among them, still drops.
+        assertThat(absentAll(FLOAT_COLUMN, true, 0.0, 4.5)).isTrue();
+        assertThat(absentAll(DOUBLE_COLUMN, false, 0.0, 4.5)).isTrue();
+    }
+
+    @Test
     void nonZeroValuesAreDecidedTheSameWay() throws IOException {
         assertThat(DictionaryFilterSupport.valueAbsent(dictionaries.forColumn(FLOAT_COLUMN), 2.5f)).isFalse();
         assertThat(DictionaryFilterSupport.valueAbsent(dictionaries.forColumn(FLOAT_COLUMN), 4.5f)).isTrue();
         assertThat(DictionaryFilterSupport.valueAbsent(dictionaries.forColumn(DOUBLE_COLUMN), 2.5)).isFalse();
         assertThat(DictionaryFilterSupport.valueAbsent(dictionaries.forColumn(DOUBLE_COLUMN), 4.5)).isTrue();
+    }
+
+    private static boolean absentAll(int columnIndex, boolean floatColumn, double... probes)
+            throws IOException {
+        return DictionaryFilterSupport.absentAll(dictionaries.forColumn(columnIndex), probes, floatColumn);
     }
 }

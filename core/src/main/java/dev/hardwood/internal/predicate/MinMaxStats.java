@@ -165,6 +165,13 @@ sealed interface MinMaxStats {
                     p.ieee754TotalOrder(), nullCount);
             case ResolvedPredicate.BinaryPredicate p -> BinaryStats.of(min, max, p.signed(), nullCount);
             case ResolvedPredicate.BinaryInPredicate ignored -> BinaryStats.of(min, max, false, nullCount);
+            // An IN list reads the bounds of its column's own width, so it lands on the same
+            // variant the comparison of that width does.
+            case ResolvedPredicate.DoubleInPredicate p -> p.floatColumn()
+                    ? FloatStats.of(StatisticsDecoder.decodeFloat(min), StatisticsDecoder.decodeFloat(max),
+                            p.ieee754TotalOrder(), nullCount)
+                    : DoubleStats.of(StatisticsDecoder.decodeDouble(min), StatisticsDecoder.decodeDouble(max),
+                            p.ieee754TotalOrder(), nullCount);
             // These leaves read no bounds, so there is nothing to decode and nothing to
             // validate. What the file wrote is not discarded; it is simply not their business.
             case ResolvedPredicate.IsNullPredicate ignored -> new NullCountOnlyStats(nullCount, null);
@@ -333,6 +340,8 @@ sealed interface MinMaxStats {
                         p.op(), p.value(), min, max, ieee754TotalOrder);
                 case ResolvedPredicate.Float16Predicate p -> StatisticsFilterSupport.canDropFloat(
                         p.op(), p.value(), min, max, ieee754TotalOrder);
+                case ResolvedPredicate.DoubleInPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
+                        p.values(), min, max, ieee754TotalOrder);
                 default -> throw wrongWidth("FLOAT", leaf);
             };
         }
@@ -360,10 +369,13 @@ sealed interface MinMaxStats {
 
         @Override
         public boolean canDrop(ResolvedPredicate leaf) {
-            if (leaf instanceof ResolvedPredicate.DoublePredicate p) {
-                return StatisticsFilterSupport.canDropDouble(p.op(), p.value(), min, max, ieee754TotalOrder);
-            }
-            throw wrongWidth("DOUBLE", leaf);
+            return switch (leaf) {
+                case ResolvedPredicate.DoublePredicate p -> StatisticsFilterSupport.canDropDouble(
+                        p.op(), p.value(), min, max, ieee754TotalOrder);
+                case ResolvedPredicate.DoubleInPredicate p -> StatisticsFilterSupport.canDropDoubleIn(
+                        p.values(), min, max, ieee754TotalOrder);
+                default -> throw wrongWidth("DOUBLE", leaf);
+            };
         }
 
         /// See [FloatStats#alwaysMatches].

@@ -104,4 +104,48 @@ final class BloomFilterSupport {
         return true;
     }
 
+    /// `IN`-list bloom check for `double` values across DOUBLE and FLOAT columns.
+    /// Returns `false` when any probe is NaN, as NaNs are not portably hashed into bloom filters.
+    /// For FLOAT columns, non-representable probes are trivially absent, and representable probes
+    /// are hashed at float width.
+    static boolean absentAll(BloomFilter bloomFilter, double[] values, boolean floatColumn) {
+        if (anyNaN(values)) {
+            return false;
+        }
+        if (bloomFilter == null) {
+            return false;
+        }
+        if (floatColumn) {
+            for (double v : values) {
+                // Check if v is exactly float-representable (Double.isNaN handled above).
+                // Note on -0.0: The sign bit survives the float round-trip and the hash,
+                // so -0.0 is hashed at float width without special-casing.
+                if ((double) (float) v == v) {
+                    if (bloomFilter.mightContain(XxHash64.hash((float) v))) {
+                        return false;
+                    }
+                }
+                // Non-representable probes cannot match any stored 32-bit float and are trivially absent.
+            }
+            return true;
+        }
+        for (double value : values) {
+            if (bloomFilter.mightContain(XxHash64.hash(value))) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    /// Whether any probe in an `IN` list is `NaN`, which makes the bloom check undecidable for the
+    /// whole list. Callers evaluating a row group check this before resolving the filter, so the
+    /// filter is not read for a list it could not decide either way.
+    static boolean anyNaN(double[] values) {
+        for (double value : values) {
+            if (Double.isNaN(value)) {
+                return true;
+            }
+        }
+        return false;
+    }
 }

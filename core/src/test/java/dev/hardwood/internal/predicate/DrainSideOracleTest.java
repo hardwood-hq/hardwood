@@ -134,6 +134,29 @@ class DrainSideOracleTest {
     }
 
     @Test
+    void doubleIn_bothWidths_bothWaysAgree() {
+        Workload w = workload(0xD0AB1E);
+        double customNan = Double.longBitsToDouble(0x7ff8000000000001L);
+        double[] values = new double[]{0.0, -0.0, Double.NaN, customNan, 0.5, 0.1, 250.0, Float.NaN,
+                Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY};
+        ResolvedPredicate pDouble = new ResolvedPredicate.DoubleInPredicate(COL_VALUE, values, false, false);
+        assertSurvivorsAgree(pDouble, w);
+        ResolvedPredicate pFloat = new ResolvedPredicate.DoubleInPredicate(COL_SCORE, values, true, false);
+        assertSurvivorsAgree(pFloat, w);
+    }
+
+    @Test
+    void doubleInNegation_bothWidths_bothWaysAgree() {
+        Workload w = workload(0xD0ABA11);
+        double customNan = Double.longBitsToDouble(0x7ff8000000000001L);
+        double[] values = new double[]{0.5, Double.NaN, customNan, 0.1, Double.POSITIVE_INFINITY};
+        ResolvedPredicate pDouble = ResolvedPredicate.negate(new ResolvedPredicate.DoubleInPredicate(COL_VALUE, values, false, false));
+        assertSurvivorsAgree(pDouble, w);
+        ResolvedPredicate pFloat = ResolvedPredicate.negate(new ResolvedPredicate.DoubleInPredicate(COL_SCORE, values, true, false));
+        assertSurvivorsAgree(pFloat, w);
+    }
+
+    @Test
     void isNull_eachColumn_bothWaysAgree() {
         Workload w = workload(0x15A11);
         for (int col = 0; col < 5; col++) {
@@ -377,9 +400,11 @@ class DrainSideOracleTest {
         // Boundary-heavy values to cover NaN, infinities, type extremes, and
         // equal-to-literal cases. The first few rows of each column carry these.
         double[] boundaryDoubles = {0.5, -0.5, 0.0, -0.0, Double.NaN,
+                Double.longBitsToDouble(0x7ff8000000000042L),
                 Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY,
                 Double.MIN_VALUE, Double.MAX_VALUE};
         float[] boundaryFloats = {0.5f, -0.5f, 0.0f, -0.0f, Float.NaN,
+                Float.intBitsToFloat(0x7fc00001),
                 Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY,
                 Float.MIN_VALUE, Float.MAX_VALUE};
         int[] boundaryInts = {100, -100, 0, Integer.MIN_VALUE, Integer.MAX_VALUE};

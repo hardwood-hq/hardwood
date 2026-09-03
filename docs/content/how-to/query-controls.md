@@ -38,6 +38,7 @@ FilterPredicate filter = FilterPredicate.and(
 
 // IN filter
 FilterPredicate filter = FilterPredicate.in("department_id", 1, 3, 7);
+FilterPredicate filter = FilterPredicate.in("temperature", 20.5, 21.0, 22.5);
 FilterPredicate filter = FilterPredicate.inStrings("city", "NYC", "LA", "Chicago");
 
 // NULL checks
@@ -143,20 +144,29 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
   nested columns (structs, lists, or maps), record-level filtering is not active. Row-group
   and page-level statistics pushdown still apply, but non-matching rows within surviving pages
   will not be filtered out. A warning is logged when this occurs.
-- **Bloom filter pushdown applies to `eq` predicates** on `INT32`, `INT64`, `FLOAT`, `DOUBLE`, and
-  binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) columns that carry a Bloom filter, and to `in`
-  predicates on the integer and binary types. It runs automatically during row-group pruning,
-  alongside statistics, and skips a row group when the value is provably absent. For `FLOAT` /
-  `DOUBLE`, `eq(NaN)` is not pruned by the Bloom filter — raw-bit hashing distinguishes NaN
-  payloads that `Float.compare` / `Double.compare` treat as equal, so a Bloom miss cannot prove a
-  NaN absent; `eq(-0.0)` is pruned normally. A `BigDecimal` `eq` on a `DECIMAL` stored as
-  `BYTE_ARRAY` is pruned by neither the Bloom filter nor the dictionary: such a column may hold
-  the same number under more than one byte string, so a miss on the literal's own bytes does not
-  prove the value absent. Range predicates (`lt`, `gt`, …) and `notEq` are unaffected — a Bloom
-  filter answers only membership.
-- **Dictionary-based filtering is not supported
-  ([#196](https://github.com/hardwood-hq/hardwood/issues/196)).** Dictionary-encoded columns
-  are not checked for predicate matches before decoding.
+- **Bloom filter pushdown applies to `eq` and `in` predicates** on `INT32`, `INT64`, `FLOAT`,
+  `DOUBLE`, and binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) columns that carry a Bloom
+  filter. It runs automatically during row-group pruning, alongside statistics, and skips a
+  row group when every probed value is provably absent. For `FLOAT` / `DOUBLE`,
+  `eq(NaN)` and any `in` list containing `NaN` are not pruned by the Bloom filter — raw-bit
+  hashing distinguishes NaN payloads that `Float.compare` / `Double.compare` treat as equal,
+  so a Bloom miss cannot prove a NaN absent; `eq(-0.0)` and signed zeros in an `in` list are
+  hashed at their own bit width and pruned normally. On a `FLOAT` column, an `in` probe with
+  no exact `float` representation is provably absent without consulting the filter. A
+  `BigDecimal` `eq` on a `DECIMAL` stored as `BYTE_ARRAY` is pruned by neither the Bloom
+  filter nor the dictionary: such a column may hold the same number under more than one byte
+  string, so a miss on the literal's own bytes does not prove the value absent. Range
+  predicates (`lt`, `gt`, …) and `notEq` are unaffected — a Bloom filter answers only
+  membership.
+- **Dictionary-based filtering applies to equality and `in` predicates** on `INT32`, `INT64`,
+  `FLOAT`, `DOUBLE`, and binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) columns, and to `FLOAT16`
+  equality. The dictionary is checked before any page is decoded, and the row group is skipped
+  when none of its stored values can match. It applies only to a column chunk whose encoding
+  statistics show that *every* one of its data pages is dictionary-encoded: a chunk with even one
+  plain-encoded page holds values the dictionary does not list, so its dictionary proves nothing.
+  Every other chunk is pruned by statistics alone. On a `FLOAT` column the stored values are
+  widened to `double` before comparison, and on `FLOAT16` to `float`, so a probe with no exact
+  representation in the stored width matches nothing.
 
 ## Column Projection
 

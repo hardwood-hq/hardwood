@@ -150,6 +150,8 @@ public sealed interface ResolvedPredicate {
     record IntInPredicate(int columnIndex, int[] values) implements ResolvedPredicate {}
     record LongInPredicate(int columnIndex, long[] values) implements ResolvedPredicate {}
     record BinaryInPredicate(int columnIndex, byte[][] values) implements ResolvedPredicate {}
+    record DoubleInPredicate(int columnIndex, double[] values, boolean floatColumn,
+            boolean ieee754TotalOrder) implements ResolvedPredicate {}
 
     record IsNullPredicate(int columnIndex) implements ResolvedPredicate {}
     record IsNotNullPredicate(int columnIndex) implements ResolvedPredicate {}
@@ -217,6 +219,7 @@ public sealed interface ResolvedPredicate {
             case IntInPredicate p -> p.columnIndex();
             case LongInPredicate p -> p.columnIndex();
             case BinaryInPredicate p -> p.columnIndex();
+            case DoubleInPredicate p -> p.columnIndex();
             case IsNullPredicate p -> p.columnIndex();
             case IsNotNullPredicate p -> p.columnIndex();
             case GeospatialPredicate p -> p.columnIndex();
@@ -266,6 +269,8 @@ public sealed interface ResolvedPredicate {
             case IntInPredicate p -> new IntInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
             case LongInPredicate p -> new LongInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
             case BinaryInPredicate p -> new BinaryInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
+            case DoubleInPredicate p -> new DoubleInPredicate(mapped(p.columnIndex(), columnMapping), p.values(),
+                    p.floatColumn(), p.ieee754TotalOrder());
             case IsNullPredicate p -> new IsNullPredicate(mapped(p.columnIndex(), columnMapping));
             case IsNotNullPredicate p -> new IsNotNullPredicate(mapped(p.columnIndex(), columnMapping));
             case GeospatialPredicate p -> new GeospatialPredicate(mapped(p.columnIndex(), columnMapping),
@@ -334,6 +339,25 @@ public sealed interface ResolvedPredicate {
                 for (byte[] value : p.values()) {
                     notEqs.add(new BinaryPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value,
                             BinaryPredicate.Comparison.BYTE_STRING));
+                }
+                yield new And(notEqs);
+            }
+            case DoubleInPredicate p -> {
+                if (p.floatColumn()) {
+                    List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
+                    for (double v : p.values()) {
+                        if (Double.isNaN(v) || (double) (float) v == v) {
+                            notEqs.add(new FloatPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, (float) v));
+                        }
+                    }
+                    if (notEqs.isEmpty()) {
+                        yield new IsNotNullPredicate(p.columnIndex());
+                    }
+                    yield new And(notEqs);
+                }
+                List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
+                for (double value : p.values()) {
+                    notEqs.add(new DoublePredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value));
                 }
                 yield new And(notEqs);
             }

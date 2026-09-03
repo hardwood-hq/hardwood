@@ -356,7 +356,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Implement `FilterPredicate` hierarchy (sealed interface)
   - [x] Eq, NotEq
   - [x] Lt, LtEq, Gt, GtEq
-  - [x] In (int, long, String)
+  - [x] In (int, long, double, String)
   - [x] And, Or, Not
 - [x] Statistics-based row group filtering (`RowGroupFilterEvaluator`)
 - [x] Filter evaluation engine (supports INT32, INT64, FLOAT, DOUBLE, BOOLEAN, BINARY/STRING)
@@ -364,8 +364,8 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
 - [x] Inline `DataPageHeader.statistics` fallback when Column Index is absent (`InlinePageStatsScanner`)
 - [x] Drain-side per-batch record filtering (`BatchFilterCompiler` + `ColumnBatchMatcher`, on by default for column-local AND queries; see `_designs/DRAIN_SIDE_RECORD_FILTERING.md`)
 - [x] Exact column-reader filtering — `buildColumnReader(...).filter(...)` / `buildColumnReaders(...).filter(...)` return only matching rows with no client-side residual (`SelectionEngine` + `FilterCoordinator`; see `_designs/EXACT_COLUMN_READER_FILTERING.md`)
-- [x] Bloom filter-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the integer and binary types (`RowGroupBloomFilterSource`; see `_designs/BLOOM_FILTER_PUSHDOWN.md`)
-- [x] Dictionary-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE and binary columns, and `in` on the integer and binary types, for chunks whose `encoding_stats` prove every data page is dictionary-encoded (`RowGroupDictionaryFilterSource`; see `_designs/DICTIONARY_PUSHDOWN.md`)
+- [x] Bloom filter-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE, and binary columns, and `in` on the integer, floating-point, and binary types (`RowGroupBloomFilterSource`; see `_designs/BLOOM_FILTER_PUSHDOWN.md`)
+- [x] Dictionary-based row group filtering: `eq` on INT32, INT64, FLOAT, DOUBLE and binary columns, and `in` on the integer, floating-point, and binary types, for chunks whose `encoding_stats` prove every data page is dictionary-encoded (`RowGroupDictionaryFilterSource`; see `_designs/DICTIONARY_PUSHDOWN.md`)
 - [x] Always-match statistics decision: tri-state `FilterDecision` proves from statistics when every row in a row group matches, skipping per-row filter evaluation for that group and dropping the filter wholesale when all surviving groups fully match (see `_designs/ALWAYS_MATCH_STATISTICS.md`)
 - [x] Reader opt-out of metadata-based filtering: `hardwood.metadata-filtering` `ReaderConfig` option falls back to full-scan per-row predicate evaluation for files with unreliable footer/page-index metadata
 

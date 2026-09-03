@@ -8,6 +8,7 @@
 package dev.hardwood.internal.predicate;
 
 import java.io.IOException;
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -17,7 +18,9 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
+import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.FilterPredicate;
@@ -123,6 +126,35 @@ class DictionaryPushDownTest {
         assertThat(source.forColumn(CATEGORY_COLUMN))
                 .isNotNull()
                 .isSameAs(source.forColumn(CATEGORY_COLUMN));
+    }
+
+    @Test
+    void byteArrayValueAbsentAndAbsentAllDirectTests() throws IOException {
+        byte[] cat5 = "cat_5".getBytes(StandardCharsets.UTF_8);
+        byte[] cat0 = "cat_0".getBytes(StandardCharsets.UTF_8);
+        byte[] nope = "nope".getBytes(StandardCharsets.UTF_8);
+
+        // valueAbsent
+        assertThat(DictionaryFilterSupport.valueAbsent(dict(CATEGORY_COLUMN), cat5)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dict(CATEGORY_COLUMN), nope)).isTrue();
+        assertThat(DictionaryFilterSupport.valueAbsent(null, cat5)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dict(999), cat5)).isFalse();
+
+        // absentAll: probes given out of order still match, since the probe list is sorted first
+        assertThat(DictionaryFilterSupport.absentAll(dict(CATEGORY_COLUMN),
+                new byte[][]{ nope, cat5 })).isFalse();
+
+        // absentAll: a match at the sorted probe list's first index counts as present
+        assertThat(DictionaryFilterSupport.absentAll(dict(CATEGORY_COLUMN),
+                new byte[][]{ cat0, nope })).isFalse();
+
+        // absentAll: null / wrong column
+        assertThat(DictionaryFilterSupport.absentAll(null, new byte[][]{ cat0 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dict(999), new byte[][]{ cat0 })).isFalse();
+    }
+
+    private static Dictionary dict(int columnIndex) throws IOException {
+        return dictionaries().forColumn(columnIndex);
     }
 
     private static RowGroupDictionaryFilterSource dictionaries() {

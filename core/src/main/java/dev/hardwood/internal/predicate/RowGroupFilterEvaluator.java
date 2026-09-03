@@ -172,6 +172,21 @@ public class RowGroupFilterEvaluator {
                 }
                 yield decision;
             }
+            case ResolvedPredicate.DoubleInPredicate p -> {
+                FilterDecision decision = statisticsDecision(p, rowGroup, logContext, p.columnIndex());
+                if (decision != FilterDecision.CANNOT_MATCH
+                        // The NaN case is repeated from BloomFilterSupport so the filter is not
+                        // read for a list it could not decide either way. The dictionary holds the
+                        // chunk's exact values, so it decides a NaN probe and stays in play.
+                        && ((!BloomFilterSupport.anyNaN(p.values())
+                                && BloomFilterSupport.absentAll(
+                                        bloom(bloomFilters, p.columnIndex()), p.values(), p.floatColumn()))
+                                || DictionaryFilterSupport.absentAll(
+                                        dictionary(dictionaries, p.columnIndex()), p.values(), p.floatColumn()))) {
+                    yield FilterDecision.CANNOT_MATCH;
+                }
+                yield decision;
+            }
             case ResolvedPredicate.IsNullPredicate p -> {
                 Statistics stats = getStatistics(rowGroup, p.columnIndex());
                 // Can drop IS NULL if nullCount is known to be 0 (no nulls exist).

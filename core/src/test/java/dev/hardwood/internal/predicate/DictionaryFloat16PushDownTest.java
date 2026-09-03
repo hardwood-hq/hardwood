@@ -17,7 +17,9 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
+import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.LogicalType;
 import dev.hardwood.metadata.PhysicalType;
@@ -90,6 +92,21 @@ class DictionaryFloat16PushDownTest {
         // half — 2.0 among them — and wrongly report it present; widening the entries instead
         // compares it against the stored values exactly, and none of them equal it.
         assertThat(dictionaryDrop(FilterPredicate.eq("half", 2.0005f))).isTrue();
+    }
+
+    @Test
+    void valueAbsentFloat16FallbacksAndMatches() throws IOException {
+        // Present
+        assertThat(DictionaryFilterSupport.valueAbsentFloat16(dict(0), 1.0f)).isFalse();
+        // Absent
+        assertThat(DictionaryFilterSupport.valueAbsentFloat16(dict(0), 3.0f)).isTrue();
+        // Null dictionary or wrong column
+        assertThat(DictionaryFilterSupport.valueAbsentFloat16(null, 1.0f)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsentFloat16(dict(999), 1.0f)).isFalse();
+    }
+
+    private static Dictionary dict(int columnIndex) throws IOException {
+        return dictionaries().forColumn(columnIndex);
     }
 
     private static RowGroupDictionaryFilterSource dictionaries() {
