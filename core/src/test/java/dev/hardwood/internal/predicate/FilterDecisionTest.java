@@ -97,6 +97,51 @@ class FilterDecisionTest {
                 .isEqualTo(CANNOT_MATCH);
     }
 
+    @Test
+    void doubleInDecisions() {
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, 42.0, 99.0 }, false, false);
+        assertThat(StatisticsFilterSupport.decideLeaf(in, doubleStats(42.0, 43.0, 0L)))
+                .isEqualTo(MIGHT_MATCH);
+        assertThat(StatisticsFilterSupport.decideLeaf(in, doubleStats(6.0, 41.0, 0L)))
+                .isEqualTo(CANNOT_MATCH);
+
+        // NaN probe disables pruning (I4): even though [10.0, 20.0] contains neither 5.0 nor 42.0,
+        // NaN probe means stored NaNs could match -> MIGHT_MATCH
+        ResolvedPredicate inWithNaN = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, Double.NaN }, false, false);
+        assertThat(StatisticsFilterSupport.decideLeaf(inWithNaN, doubleStats(10.0, 20.0, 0L)))
+                .isEqualTo(MIGHT_MATCH);
+
+        // Defective bounds min > max -> cannot drop (I5)
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0 }, 20.0, 10.0, false))
+                .isFalse();
+
+        // NaN bounds -> cannot drop (I5)
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0 }, Double.NaN, 20.0, false))
+                .isFalse();
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0 }, 10.0, Double.NaN, false))
+                .isFalse();
+    }
+
+    @Test
+    void doubleInSignedZeroDispatch() {
+        double[] probe = new double[]{ -0.0 };
+
+        // Under type-defined ordering (!ieee754TotalOrder), bounds widen min to -0.0 and max to +0.0 -> contains -0.0 -> cannot drop (false)
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(probe, +0.0, +0.0, false)).isFalse();
+
+        // Under IEEE 754 total order (ieee754TotalOrder=true), bounds remain exact [+0.0, +0.0], -0.0 < +0.0 -> outside bounds -> drops (true)
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(probe, +0.0, +0.0, true)).isTrue();
+    }
+
+    @Test
+    void doubleInOnFloatColumnDecisions() {
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 5.0, 42.0, 99.0 }, true, false);
+        assertThat(StatisticsFilterSupport.decideLeaf(in, floatStats(42.0f, 43.0f, 0L)))
+                .isEqualTo(MIGHT_MATCH);
+        assertThat(StatisticsFilterSupport.decideLeaf(in, floatStats(6.0f, 41.0f, 0L)))
+                .isEqualTo(CANNOT_MATCH);
+    }
+
     // ==================== Null-count gating ====================
 
     @Test
@@ -133,6 +178,11 @@ class FilterDecisionTest {
         ResolvedPredicate gtFloat =
                 new ResolvedPredicate.FloatPredicate(0, FilterPredicate.Operator.GT, 1.0f);
         assertThat(StatisticsFilterSupport.decideLeaf(gtFloat, floatStats(10.0f, 20.0f, 0L)))
+                .isEqualTo(MIGHT_MATCH);
+
+        ResolvedPredicate inDouble =
+                new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 15.0 }, false, false);
+        assertThat(StatisticsFilterSupport.decideLeaf(inDouble, doubleStats(15.0, 15.0, 0L)))
                 .isEqualTo(MIGHT_MATCH);
 
         // The CANNOT_MATCH side is unaffected.

@@ -477,6 +477,36 @@ class FilterPredicateTest {
     }
 
     @Test
+    void testCanDropWithDoubleIn() {
+        RowGroup rg = createDoubleRowGroup(10.0, 20.0);
+        FileSchema schema = createDoubleSchema();
+
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 1.0, 5.0, 8.0), rg, schema)).isTrue();
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 25.0, 30.0), rg, schema)).isTrue();
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 5.0, 15.0, 25.0), rg, schema)).isFalse();
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 1.0, 10.0), rg, schema)).isFalse();
+
+        // NaN probe disables pruning
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 1.0, Double.NaN), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithFloatIn() {
+        RowGroup rg = createFloatRowGroup(10.0f, 20.0f);
+        FileSchema schema = createFloatSchema();
+
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 1.0, 5.0, 8.0), rg, schema)).isTrue();
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 5.0, 15.0, 25.0), rg, schema)).isFalse();
+    }
+
+    @Test
     void testCanDropWithInMissingStatistics() {
         RowGroup rg = createRowGroupWithoutStatistics();
         FileSchema schema = createIntSchema();
