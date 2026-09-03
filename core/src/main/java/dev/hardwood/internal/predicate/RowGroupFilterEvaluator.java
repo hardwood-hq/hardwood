@@ -187,7 +187,8 @@ public class RowGroupFilterEvaluator {
             case ResolvedPredicate.DoubleInPredicate p -> {
                 FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
                 if (decision != FilterDecision.CANNOT_MATCH
-                        && BloomFilterSupport.absentAll(bloomFilters, p.columnIndex(), p.values(), p.floatColumn())) {
+                        && (BloomFilterSupport.absentAll(bloomFilters, p.columnIndex(), p.values(), p.floatColumn())
+                                || DictionaryFilterSupport.absentAll(dictionaries, p.columnIndex(), p.values(), p.floatColumn()))) {
                     yield FilterDecision.CANNOT_MATCH;
                 }
                 yield decision;

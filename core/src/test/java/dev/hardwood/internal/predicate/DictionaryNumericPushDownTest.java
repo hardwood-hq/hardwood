@@ -126,6 +126,25 @@ class DictionaryNumericPushDownTest {
         assertThat(dictionaryDrop(FilterPredicate.in("i64", 1500L, 2000L))).isFalse();
     }
 
+    @Test
+    void floatInListDropsOnlyWhenEveryValueIsAbsent() {
+        assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0, 3.5))).isTrue();
+        assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0, 2.5))).isFalse();
+        assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.5, 0.1))).isTrue();
+
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), F32_COLUMN, new double[]{ 3.5, Double.NaN }, true))
+                .isFalse();
+    }
+
+    @Test
+    void doubleInListDropsOnlyWhenEveryValueIsAbsent() {
+        assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 3.5))).isTrue();
+        assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 2.5))).isFalse();
+
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), F64_COLUMN, new double[]{ 3.5, Double.NaN }, false))
+                .isFalse();
+    }
+
     private static RowGroupDictionaryFilterSource dictionaries() {
         return new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context);
     }
