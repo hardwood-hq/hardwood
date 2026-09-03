@@ -210,6 +210,42 @@ class BloomFilterPushDownTest {
     }
 
     @Test
+    void doubleInListIsDroppedOnlyWhenEveryValueIsAbsent() {
+        // `ratio` holds multiples of 0.5; 0.25 and 0.75 are in [0.0, 31.5] but absent.
+        FilterPredicate absent = FilterPredicate.in("ratio", 0.25, 0.75);
+        assertThat(statisticsDrop(absent)).isFalse();
+        assertThat(bloomDrop(absent)).isTrue();
+
+        FilterPredicate present = FilterPredicate.in("ratio", 0.25, 0.5);
+        assertThat(bloomDrop(present)).isFalse();
+    }
+
+    @Test
+    void floatInListIsDroppedOnlyWhenEveryValueIsAbsent() {
+        // `price` holds even multiples of 2; 1.0 and 3.0 are in [0.0, 126.0] but absent.
+        FilterPredicate absent = FilterPredicate.in("price", 1.0, 3.0);
+        assertThat(statisticsDrop(absent)).isFalse();
+        assertThat(bloomDrop(absent)).isTrue();
+
+        FilterPredicate present = FilterPredicate.in("price", 1.0, 2.0);
+        assertThat(bloomDrop(present)).isFalse();
+
+        // 0.1 is not float-representable (trivially absent); 1.0 is absent in the bloom filter -> drops
+        FilterPredicate absentNonRep = FilterPredicate.in("price", 1.0, 0.1);
+        assertThat(bloomDrop(absentNonRep)).isTrue();
+    }
+
+    @Test
+    void nanInListDisablesBloomPruning() {
+        // One NaN in the IN list disables bloom filtering for the whole predicate
+        FilterPredicate nanDouble = FilterPredicate.in("ratio", 0.25, Double.NaN);
+        assertThat(bloomDrop(nanDouble)).isFalse();
+
+        FilterPredicate nanFloat = FilterPredicate.in("price", 1.0, Double.NaN);
+        assertThat(bloomDrop(nanFloat)).isFalse();
+    }
+
+    @Test
     void andDropsWhenAnyBloomEligibleLeafIsAbsent() {
         // code=1 is absent -> the conjunction matches nothing.
         FilterPredicate and = FilterPredicate.and(
