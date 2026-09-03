@@ -38,6 +38,7 @@ FilterPredicate filter = FilterPredicate.and(
 
 // IN filter
 FilterPredicate filter = FilterPredicate.in("department_id", 1, 3, 7);
+FilterPredicate filter = FilterPredicate.in("temperature", 20.5, 21.0, 22.5);
 FilterPredicate filter = FilterPredicate.inStrings("city", "NYC", "LA", "Chicago");
 
 // NULL checks

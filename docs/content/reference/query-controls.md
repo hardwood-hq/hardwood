@@ -20,7 +20,7 @@ behavior of each control — predicate pushdown, projection, row limits, splits,
 | Category | Supported |
 |---|---|
 | Comparison operators | `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` |
-| Set operators | `in` (int, long), `inStrings` |
+| Set operators | `in` (int, long, double), `inStrings` |
 | Null operators | `isNull`, `isNotNull` (any type) |
 | Physical types (comparison) | `int`, `long`, `float`, `double`, `boolean`, `String` |
 | Logical types (comparison) | `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` |
