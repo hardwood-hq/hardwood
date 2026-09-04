@@ -33,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// so statistics alone keep the row group — but were never written, so only the dictionary can prove
 /// their absence.
 ///
-/// Asserts the evaluator decision directly; [dev.hardwood.DictionaryEndToEndTest] drives the same
+/// Asserts the evaluator decision directly; the dictionary end-to-end suite drives the same
 /// fixture through the public reader APIs.
 class DictionaryPushDownTest {
 

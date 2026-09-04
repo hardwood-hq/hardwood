@@ -34,6 +34,7 @@ import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.StructAccessor;
 import dev.hardwood.schema.FileSchema;
 
+import static org.assertj.core.api.Assertions.assertThat;
 import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
@@ -243,11 +244,16 @@ class RecordFilterCompilerTest {
     @Test
     void testDoubleInOnDoubleColumn() {
         FileSchema schema = doubleSchema("col");
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, 4.5, -0.0, Double.NaN }, false, false);
+        double customNan1 = Double.longBitsToDouble(0x7ff8000000000001L);
+        double customNan2 = Double.longBitsToDouble(0x7ff8000000000042L);
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, 4.5, -0.0, customNan1, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY }, false, false);
         assertTrue(matchesRow(in, doubleStub("col", 2.5, false), schema));
         assertTrue(matchesRow(in, doubleStub("col", 4.5, false), schema));
         assertTrue(matchesRow(in, doubleStub("col", -0.0, false), schema));
         assertTrue(matchesRow(in, doubleStub("col", Double.NaN, false), schema));
+        assertTrue(matchesRow(in, doubleStub("col", customNan2, false), schema));
+        assertTrue(matchesRow(in, doubleStub("col", Double.POSITIVE_INFINITY, false), schema));
+        assertTrue(matchesRow(in, doubleStub("col", Double.NEGATIVE_INFINITY, false), schema));
         assertFalse(matchesRow(in, doubleStub("col", +0.0, false), schema));
         assertFalse(matchesRow(in, doubleStub("col", 3.5, false), schema));
         assertFalse(matchesRow(in, doubleStub("col", 2.5, true), schema));
@@ -256,13 +262,75 @@ class RecordFilterCompilerTest {
     @Test
     void testDoubleInOnFloatColumn() {
         FileSchema schema = floatSchema("col");
-        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 0.5, 0.1, -0.0, Double.NaN }, true, false);
+        float customFloatNan = Float.intBitsToFloat(0x7fc00001);
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 0.5, 0.1, -0.0, Double.NaN, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY }, true, false);
         assertTrue(matchesRow(in, floatStub("col", 0.5f, false), schema));
         assertTrue(matchesRow(in, floatStub("col", -0.0f, false), schema));
         assertTrue(matchesRow(in, floatStub("col", Float.NaN, false), schema));
+        assertTrue(matchesRow(in, floatStub("col", customFloatNan, false), schema));
+        assertTrue(matchesRow(in, floatStub("col", Float.POSITIVE_INFINITY, false), schema));
+        assertTrue(matchesRow(in, floatStub("col", Float.NEGATIVE_INFINITY, false), schema));
         assertFalse(matchesRow(in, floatStub("col", +0.0f, false), schema));
         assertFalse(matchesRow(in, floatStub("col", 0.1f, false), schema));
         assertFalse(matchesRow(in, floatStub("col", 0.5f, true), schema));
+    }
+
+    @Test
+    void testNotDoubleInOnDoubleColumnIsRowLevelComplement() {
+        // Row-level complement with pruning out of the picture (I8/I8a): the negation of an
+        // IN list must accept exactly the non-null rows the IN form rejects.
+        FileSchema schema = doubleSchema("col");
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 2.5, -0.0, Double.NaN }, false, false);
+        ResolvedPredicate notIn = ResolvedPredicate.negate(in);
+        // Shapes: width-correct DoublePredicate NOT_EQ leaves.
+        assertThat(notIn).isInstanceOf(ResolvedPredicate.And.class);
+        // Rows the IN form matches are rejected by the negation.
+        assertFalse(matchesRow(notIn, doubleStub("col", 2.5, false), schema));
+        assertFalse(matchesRow(notIn, doubleStub("col", -0.0, false), schema));
+        assertFalse(matchesRow(notIn, doubleStub("col", Double.NaN, false), schema));
+        // Rows the IN form rejects are accepted by the negation.
+        assertTrue(matchesRow(notIn, doubleStub("col", +0.0, false), schema));
+        assertTrue(matchesRow(notIn, doubleStub("col", 3.5, false), schema));
+        // Null rows drop in both forms.
+        assertFalse(matchesRow(notIn, doubleStub("col", 2.5, true), schema));
+    }
+
+    @Test
+    void testNotDoubleInOnFloatColumnIsRowLevelComplement() {
+        FileSchema schema = floatSchema("col");
+        // 0.1 has no exact float representation: it matched nothing in the IN form, so the
+        // negation must not gain a conjunct for it; NaN must survive the representability
+        // test (JLS 15.21.1) and reject NaN rows.
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 0.5, 0.1, Double.NaN }, true, false);
+        ResolvedPredicate notIn = ResolvedPredicate.negate(in);
+        List<ResolvedPredicate> leaves = ((ResolvedPredicate.And) notIn).children();
+        assertThat(leaves).hasSize(2);
+        assertThat(leaves).allSatisfy(l -> assertThat(l).isInstanceOf(ResolvedPredicate.FloatPredicate.class));
+
+        // Rows the IN form matches are rejected by the negation.
+        assertFalse(matchesRow(notIn, floatStub("col", 0.5f, false), schema));
+        assertFalse(matchesRow(notIn, floatStub("col", Float.NaN, false), schema));
+        // Rows the IN form rejects are accepted by the negation (including 0.1f, which the
+        // IN form rejected because the probe is not float-representable).
+        assertTrue(matchesRow(notIn, floatStub("col", 0.1f, false), schema));
+        assertTrue(matchesRow(notIn, floatStub("col", +0.0f, false), schema));
+        assertTrue(matchesRow(notIn, floatStub("col", 3.5f, false), schema));
+        // Null rows drop in both forms.
+        assertFalse(matchesRow(notIn, floatStub("col", 0.5f, true), schema));
+    }
+
+    @Test
+    void testNotDoubleInWithOnlyNonRepresentableProbesResolvesToIsNotNull() {
+        // Zero-surviving-probe rule: every FLOAT probe is non-representable, so the negation
+        // is IsNotNull (the exact row-level complement), never an empty And.
+        FileSchema schema = floatSchema("col");
+        ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(0, new double[]{ 0.1, 0.3 }, true, false);
+        ResolvedPredicate notIn = ResolvedPredicate.negate(in);
+        assertThat(notIn).isInstanceOf(ResolvedPredicate.IsNotNullPredicate.class);
+        // Every non-null row matches; null rows drop.
+        assertTrue(matchesRow(notIn, floatStub("col", 0.1f, false), schema));
+        assertTrue(matchesRow(notIn, floatStub("col", 3.5f, false), schema));
+        assertFalse(matchesRow(notIn, floatStub("col", 3.5f, true), schema));
     }
 
     // ==================== Null handling ====================

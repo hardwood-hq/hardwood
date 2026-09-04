@@ -72,6 +72,12 @@ import java.util.UUID;
 ///   any value never match `NaN` rows; `gt` and `gtEq` against a finite value
 ///   always include `NaN` rows.
 ///
+/// `in(column, double...)` applies the same [Double#compare] total order to each listed
+/// value. On a `FLOAT` column, stored values are widened to `double` before comparison, so
+/// a probe with no exact `float` representation (e.g. `0.1`) never matches. `FLOAT16`
+/// columns are not supported and throw `IllegalArgumentException` at reader creation;
+/// express such filters as `or(eq(...), eq(...))` instead.
+///
 /// Predicate pushdown is defensive against non-conformant writers: if a
 /// column's statistics carry `NaN` as `min` or `max` (forbidden by the
 /// Parquet spec, but produced by older / buggy writers), the bound is

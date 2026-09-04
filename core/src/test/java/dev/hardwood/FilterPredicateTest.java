@@ -422,6 +422,16 @@ class FilterPredicateTest {
     }
 
     @Test
+    void testDoubleInPredicateDefensivelyCopiesValues() {
+        double[] values = {1.5, 2.5};
+        FilterPredicate.DoubleInPredicate p = (FilterPredicate.DoubleInPredicate) FilterPredicate.in("rate", values);
+        values[0] = 99.0;
+        assertThat(p.values()).containsExactly(1.5, 2.5);
+        p.values()[1] = 42.0;
+        assertThat(((FilterPredicate.DoubleInPredicate) FilterPredicate.in("rate", 1.5, 2.5)).values()).containsExactly(1.5, 2.5);
+    }
+
+    @Test
     void testOverloadResolutionMatrix() {
         // Primitive overloads bind correctly
         assertThat(FilterPredicate.in("c", 1)).isInstanceOf(FilterPredicate.IntInPredicate.class);

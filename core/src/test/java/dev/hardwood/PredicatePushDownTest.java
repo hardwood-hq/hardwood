@@ -22,6 +22,7 @@ import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ReaderConfig;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.schema.ColumnProjection;
 
@@ -694,9 +695,50 @@ class PredicatePushDownTest {
         }
     }
 
+    @Test
+    void testDoubleInOnNestedLeafColumn() throws Exception {
+        // m.d: RG0 1.5-3.5, RG1 4.5-5.5 (one null struct), RG2 6.5-8.5.
+        // in("m.d", 2.5, 5.5, 0.1) matches rows with widened float equality and ignores
+        // non-representable 0.1; the record path (batch support declines nested leaves)
+        // must filter RG1's rows exactly.
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FLOAT_FILE))) {
+            FilterPredicate filter = FilterPredicate.in("m.d", 2.5, 5.5, 0.1);
+            try (RowReader rows = reader.buildRowReader().filter(filter).build()) {
+                int totalRows = 0;
+                while (rows.hasNext()) {
+                    rows.next();
+                    totalRows++;
+                    int id = rows.getInt("id");
+                    assertThat(id).isIn(2, 5);
+                }
+                assertThat(totalRows).isEqualTo(2);
+            }
+        }
+    }
+
+    @Test
+    void testDoubleInOnNestedLeafColumnWithMetadataFilteringDisabled() throws Exception {
+        // Same predicate with pruning off: the record matcher alone is exact.
+        ReaderConfig statsOff = ReaderConfig.builder()
+                .option("hardwood.metadata-filtering", "false")
+                .build();
+        try (HardwoodContext context = HardwoodContext.create();
+             ParquetFileReader reader = ParquetFileReader.open(InputFile.of(NESTED_FLOAT_FILE), context, statsOff);
+             RowReader rows = reader.buildRowReader().filter(FilterPredicate.in("m.d", 2.5, 5.5, 0.1)).build()) {
+            int totalRows = 0;
+            while (rows.hasNext()) {
+                rows.next();
+                totalRows++;
+                assertThat(rows.getInt("id")).isIn(2, 5);
+            }
+            assertThat(totalRows).isEqualTo(2);
+        }
+    }
+
     // ==================== Nested struct with logical type ====================
 
     private static final Path NESTED_TS_FILE = Paths.get("src/test/resources/filter_pushdown_nested_ts.parquet");
+    private static final Path NESTED_FLOAT_FILE = Paths.get("src/test/resources/filter_pushdown_nested_float.parquet");
 
     @Test
     void testFilterOnNestedTimestampColumn() throws Exception {

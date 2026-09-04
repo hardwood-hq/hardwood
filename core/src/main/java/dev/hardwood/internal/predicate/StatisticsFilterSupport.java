@@ -309,17 +309,17 @@ final class StatisticsFilterSupport {
     }
 
     static boolean canDropDoubleIn(double[] values, double min, double max, boolean ieee754TotalOrder) {
-        if (Double.isNaN(min) || Double.isNaN(max) || min > max) {
+        if (!ieee754TotalOrder) {
+            min = (min == 0.0) ? -0.0 : min;
+            max = (max == 0.0) ? 0.0 : max;
+        }
+        if (Double.isNaN(min) || Double.isNaN(max) || Double.compare(min, max) > 0) {
             return false;
         }
         for (double v : values) {
             if (Double.isNaN(v)) {
                 return false;
             }
-        }
-        if (!ieee754TotalOrder) {
-            min = (min == 0.0) ? -0.0 : min;
-            max = (max == 0.0) ? 0.0 : max;
         }
         for (double value : values) {
             if (Double.compare(value, min) >= 0 && Double.compare(value, max) <= 0) {

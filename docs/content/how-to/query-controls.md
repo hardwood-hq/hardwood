@@ -144,17 +144,24 @@ Filters work with all reader types: `RowReader`, `ColumnReader`, `AvroRowReader`
   nested columns (structs, lists, or maps), record-level filtering is not active. Row-group
   and page-level statistics pushdown still apply, but non-matching rows within surviving pages
   will not be filtered out. A warning is logged when this occurs.
-- **Bloom filter pushdown applies to `eq` predicates** on `INT32`, `INT64`, `FLOAT`, `DOUBLE`, and
-  binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) columns that carry a Bloom filter, and to `in`
-  predicates on the integer and binary types. It runs automatically during row-group pruning,
-  alongside statistics, and skips a row group when the value is provably absent. For `FLOAT` /
-  `DOUBLE`, `eq(NaN)` is not pruned by the Bloom filter — raw-bit hashing distinguishes NaN
-  payloads that `Float.compare` / `Double.compare` treat as equal, so a Bloom miss cannot prove a
-  NaN absent; `eq(-0.0)` is pruned normally. Range predicates (`lt`, `gt`, …) and `notEq` are
-  unaffected — a Bloom filter answers only membership.
-- **Dictionary-based filtering is not supported
-  ([#196](https://github.com/hardwood-hq/hardwood/issues/196)).** Dictionary-encoded columns
-  are not checked for predicate matches before decoding.
+- **Bloom filter pushdown applies to `eq` and `in` predicates** on `INT32`, `INT64`, `FLOAT`,
+  `DOUBLE`, and binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`) columns that carry a Bloom
+  filter. It runs automatically during row-group pruning, alongside statistics, and skips a
+  row group when every probed value is provably absent. For `FLOAT` / `DOUBLE`,
+  `eq(NaN)` and any `in` list containing `NaN` are not pruned by the Bloom filter — raw-bit
+  hashing distinguishes NaN payloads that `Float.compare` / `Double.compare` treat as equal,
+  so a Bloom miss cannot prove a NaN absent; `eq(-0.0)` and signed zeros in an `in` list are
+  hashed at their own bit width and pruned normally. On a `FLOAT` column, an `in` probe with
+  no exact `float` representation is provably absent without consulting the filter. Range
+  predicates (`lt`, `gt`, …) and `notEq` are unaffected — a Bloom filter answers only
+  membership.
+- **Dictionary-based filtering applies to equality and `in` predicates.** Dictionary-encoded
+  `INT32`, `INT64`, `FLOAT`, `DOUBLE`, and binary (`BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY`)
+  columns, as well as `FLOAT16` equality, are checked against the dictionary before decoding:
+  a row group is skipped when none of the dictionary's exact stored values can match. On a
+  `FLOAT` column, stored values are widened to `double` before comparison, mirroring the
+  `in` predicate's widening rule (and on `FLOAT16`, entries are widened to `float`). Unsupported
+  dictionary encodings fall back to statistics-based pruning.
 
 ## Column Projection
 

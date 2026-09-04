@@ -134,6 +134,24 @@ class FilterDecisionTest {
     }
 
     @Test
+    void doubleInReversedSignedZeroBoundsStayConservative() {
+        // Defective bounds (+0.0, -0.0): under IEEE total order Double.compare(+0.0, -0.0) > 0
+        // (even though the primitive > is false), so the bounds are malformed and the chunk
+        // must not be dropped even though a probe could match (IR-001 regression).
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0 }, +0.0, -0.0, true))
+                .isFalse();
+        // Type-defined order widens first: min -> -0.0, max -> +0.0, bounds contain both zeros.
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ +0.0, -0.0 }, +0.0, -0.0, false))
+                .isFalse();
+        // Genuinely disjoint probes under widened bounds still drop.
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 5.0 }, +0.0, -0.0, false))
+                .isTrue();
+        // Float-column decode arm: reversed widened float bounds stay conservative too.
+        assertThat(StatisticsFilterSupport.canDropDoubleIn(new double[]{ 0.5f }, 1.0f, 0.5f, false))
+                .isFalse();
+    }
+
+    @Test
     void doubleInExactBoundariesKillMutants() {
         double min = 10.0;
         double max = 20.0;

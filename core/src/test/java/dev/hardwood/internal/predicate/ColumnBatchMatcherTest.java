@@ -277,6 +277,34 @@ class ColumnBatchMatcherTest {
     }
 
     @Test
+    void doubleIn_nanPayloadsAndInfinities() {
+        double customNan1 = Double.longBitsToDouble(0x7ff8000000000001L);
+        double customNan2 = Double.longBitsToDouble(0x7ff8000000000042L);
+        double[] vals = {customNan1, Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY, 1.0};
+        BatchExchange.Batch batch = doubleBatch(vals, null);
+
+        // Probe with canonical NaN matches customNan1
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.NaN}), batch));
+
+        // Probe with customNan2 matches customNan1
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{customNan2}), batch));
+
+        // Probe with +Inf matches +Inf
+        assertArrayEquals(new long[]{bits(1)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY}), batch));
+
+        // Probe with -Inf matches -Inf
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.NEGATIVE_INFINITY}), batch));
+
+        // Both infinities in probe list
+        assertArrayEquals(new long[]{bits(1, 2)},
+                runMatcher(new DoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}), batch));
+    }
+
+    @Test
     void floatWideningDoubleIn_signedZeroAndExactWideningPrecision() {
         float[] vals = {+0.0f, -0.0f, Float.NaN, 0.1f};
         assertArrayEquals(new long[]{bits(0)},
@@ -291,6 +319,34 @@ class ColumnBatchMatcherTest {
         // Widened probe (double) 0.1f DOES match
         assertArrayEquals(new long[]{bits(3)},
                 runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{(double) 0.1f}), floatBatch(vals, null)));
+    }
+
+    @Test
+    void floatWideningDoubleIn_nanPayloadsAndInfinities() {
+        float customFloatNan1 = Float.intBitsToFloat(0x7fc00001);
+        double customDoubleNan2 = Double.longBitsToDouble(0x7ff8000000000042L);
+        float[] vals = {customFloatNan1, Float.POSITIVE_INFINITY, Float.NEGATIVE_INFINITY, 1.0f};
+        BatchExchange.Batch batch = floatBatch(vals, null);
+
+        // Probe with canonical Double.NaN matches customFloatNan1 (widened)
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.NaN}), batch));
+
+        // Probe with customDoubleNan2 matches customFloatNan1 (widened)
+        assertArrayEquals(new long[]{bits(0)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{customDoubleNan2}), batch));
+
+        // Probe with Double.+Inf matches Float.+Inf (widened)
+        assertArrayEquals(new long[]{bits(1)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY}), batch));
+
+        // Probe with Double.-Inf matches Float.-Inf (widened)
+        assertArrayEquals(new long[]{bits(2)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.NEGATIVE_INFINITY}), batch));
+
+        // Both infinities in probe list
+        assertArrayEquals(new long[]{bits(1, 2)},
+                runMatcher(new FloatWideningDoubleInBatchMatcher(new double[]{Double.POSITIVE_INFINITY, Double.NEGATIVE_INFINITY}), batch));
     }
 
     @Test
