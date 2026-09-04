@@ -72,6 +72,12 @@ import java.util.UUID;
 ///   any value never match `NaN` rows; `gt` and `gtEq` against a finite value
 ///   always include `NaN` rows.
 ///
+/// `in(column, double...)` applies the same [Double#compare] total order to each listed
+/// value. On a `FLOAT` column, stored values are widened to `double` before comparison, so
+/// a probe with no exact `float` representation (e.g. `0.1`) never matches. `FLOAT16`
+/// columns are not supported and throw `IllegalArgumentException` at reader creation;
+/// express such filters as `or(eq(...), eq(...))` instead.
+///
 /// Predicate pushdown is defensive against non-conformant writers: if a
 /// column's statistics carry `NaN` as `min` or `max` (forbidden by the
 /// Parquet spec, but produced by older / buggy writers), the bound is
@@ -88,6 +94,7 @@ public sealed interface FilterPredicate
                 FilterPredicate.UUIDColumnPredicate,
                 FilterPredicate.IntInPredicate,
                 FilterPredicate.LongInPredicate,
+                FilterPredicate.DoubleInPredicate,
                 FilterPredicate.BinaryInPredicate,
                 FilterPredicate.DateColumnPredicate,
                 FilterPredicate.InstantColumnPredicate,
@@ -274,6 +281,13 @@ public sealed interface FilterPredicate
             throw new IllegalArgumentException("IN predicate requires at least one value");
         }
         return new LongInPredicate(column, values);
+    }
+
+    static FilterPredicate in(String column, double... values) {
+        if (values.length == 0) {
+            throw new IllegalArgumentException("IN predicate requires at least one value");
+        }
+        return new DoubleInPredicate(column, values);
     }
 
     static FilterPredicate inStrings(String column, String... values) {
@@ -607,6 +621,26 @@ public sealed interface FilterPredicate
         public boolean equals(Object o) {
             if (this == o) return true;
             if (!(o instanceof LongInPredicate that)) return false;
+            return column.equals(that.column) && Arrays.equals(values, that.values);
+        }
+
+        @Override
+        public int hashCode() {
+            return 31 * column.hashCode() + Arrays.hashCode(values);
+        }
+    }
+
+    record DoubleInPredicate(String column, double[] values) implements FilterPredicate {
+
+        public DoubleInPredicate(String column, double[] values) {
+            this.column = column;
+            this.values = values.clone();
+        }
+
+        @Override
+        public boolean equals(Object o) {
+            if (this == o) return true;
+            if (!(o instanceof DoubleInPredicate that)) return false;
             return column.equals(that.column) && Arrays.equals(values, that.values);
         }
 

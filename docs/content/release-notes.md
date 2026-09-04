@@ -27,6 +27,7 @@ Highlights of this release:
 - Two push-down sources for skipping non-matching row groups
     - A column's Bloom filter, for `eq` and `in` predicates
     - The chunk's dictionary page, when its encoding stats show every data page is dictionary-encoded
+- `FilterPredicate.in(String, double...)` supports set-membership filtering on `FLOAT` and `DOUBLE` columns, with lossless `FLOAT` widening, total-order comparison (distinguishing `-0.0` from `+0.0` and equating all `NaN` payloads), NaN-safe statistics/Bloom/dictionary pruning, and resolution-time rejection of unsupported types like `FLOAT16` ([#868](https://github.com/hardwood-hq/hardwood/issues/868))
 - Further improved read performance
     - A fast path for clean [fixed-length `LIST` pages](https://www.morling.dev/blog/fast-path-for-fixed-length-lists-in-parquet/)
     - Bulk-unpacked `DELTA_BINARY_PACKED` miniblocks

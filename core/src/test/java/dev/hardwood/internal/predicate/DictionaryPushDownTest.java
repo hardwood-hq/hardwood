@@ -7,6 +7,7 @@
  */
 package dev.hardwood.internal.predicate;
 
+import java.nio.charset.StandardCharsets;
 import java.nio.file.Path;
 import java.nio.file.Paths;
 
@@ -15,6 +16,7 @@ import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.RowGroup;
@@ -31,7 +33,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 /// so statistics alone keep the row group — but were never written, so only the dictionary can prove
 /// their absence.
 ///
-/// Asserts the evaluator decision directly; [dev.hardwood.DictionaryEndToEndTest] drives the same
+/// Asserts the evaluator decision directly; the dictionary end-to-end suite drives the same
 /// fixture through the public reader APIs.
 class DictionaryPushDownTest {
 
@@ -116,6 +118,31 @@ class DictionaryPushDownTest {
         assertThat(source.forColumn(CATEGORY_COLUMN))
                 .isNotNull()
                 .isSameAs(source.forColumn(CATEGORY_COLUMN));
+    }
+
+    @Test
+    void byteArrayValueAbsentAndAbsentAllDirectTests() {
+        byte[] cat5 = "cat_5".getBytes(StandardCharsets.UTF_8);
+        byte[] cat0 = "cat_0".getBytes(StandardCharsets.UTF_8);
+        byte[] nope = "nope".getBytes(StandardCharsets.UTF_8);
+
+        // valueAbsent
+        assertThat(DictionaryFilterSupport.valueAbsent(dictionaries(), CATEGORY_COLUMN, cat5)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dictionaries(), CATEGORY_COLUMN, nope)).isTrue();
+        assertThat(DictionaryFilterSupport.valueAbsent(null, CATEGORY_COLUMN, cat5)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dictionaries(), 999, cat5)).isFalse();
+
+        // absentAll: unsorted probes killing Arrays.sort removal
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), CATEGORY_COLUMN,
+                new byte[][]{ nope, cat5 })).isFalse();
+
+        // absentAll: match at index 0 after sort killing >= 0 -> > 0 mutant
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), CATEGORY_COLUMN,
+                new byte[][]{ cat0, nope })).isFalse();
+
+        // absentAll: null / wrong column
+        assertThat(DictionaryFilterSupport.absentAll(null, CATEGORY_COLUMN, new byte[][]{ cat0 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 999, new byte[][]{ cat0 })).isFalse();
     }
 
     private static RowGroupDictionaryFilterSource dictionaries() {

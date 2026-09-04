@@ -557,6 +557,83 @@ class PageFilterEvaluatorTest {
         assertFalse(ranges.overlapsPage(30, 60));
     }
 
+    @Test
+    void testDoubleInPageFiltering() {
+        ColumnIndex doubleIdx = doubleColumnIndex(new double[]{ 100.0, 200.0, 300.0 }, new double[]{ 199.0, 299.0, 399.0 });
+        OffsetIndex oi = offsetIndex(30, 30, 30);
+
+        RowRanges ranges = PageFilterEvaluator.evaluatePages(doubleIdx, oi, 90,
+                (ci, i) -> StatisticsFilterSupport.canDropDoubleIn(
+                        new double[]{ 150.0, 350.0 },
+                        StatisticsDecoder.decodeDouble(ci.minValues().get(i)),
+                        StatisticsDecoder.decodeDouble(ci.maxValues().get(i)),
+                        false));
+        assertTrue(ranges.overlapsPage(0, 30));
+        assertFalse(ranges.overlapsPage(30, 60));
+        assertTrue(ranges.overlapsPage(60, 90));
+    }
+
+    @Test
+    void testFloatColumnInPageFilteringWidensBounds() {
+        // FLOAT-column pages decode at float width; probes widen for comparison.
+        ColumnIndex floatIdx = floatColumnIndex(new float[]{ 100.0f, 200.0f, 300.0f }, new float[]{ 199.0f, 299.0f, 399.0f });
+        OffsetIndex oi = offsetIndex(30, 30, 30);
+
+        RowRanges ranges = PageFilterEvaluator.evaluatePages(floatIdx, oi, 90,
+                (ci, i) -> StatisticsFilterSupport.canDropDoubleIn(
+                        new double[]{ 150.0, 350.0 },
+                        StatisticsDecoder.decodeFloat(ci.minValues().get(i)),
+                        StatisticsDecoder.decodeFloat(ci.maxValues().get(i)),
+                        false));
+        assertTrue(ranges.overlapsPage(0, 30));
+        assertFalse(ranges.overlapsPage(30, 60));
+        assertTrue(ranges.overlapsPage(60, 90));
+
+        // NaN probe keeps every page (I4).
+        RowRanges nanRanges = PageFilterEvaluator.evaluatePages(floatIdx, oi, 90,
+                (ci, i) -> StatisticsFilterSupport.canDropDoubleIn(
+                        new double[]{ 150.0, Double.NaN },
+                        StatisticsDecoder.decodeFloat(ci.minValues().get(i)),
+                        StatisticsDecoder.decodeFloat(ci.maxValues().get(i)),
+                        false));
+        assertTrue(nanRanges.overlapsPage(0, 90));
+    }
+
+    @Test
+    void testDoubleInPageDispatchFiltersThroughResolvedLeaf() throws IOException {
+        // End-to-end page dispatch: a resolved DoubleInPredicate must flow through
+        // PageFilterEvaluator's leaf switch (unlike the decode-lambda tests above, removing
+        // the DoubleIn arm from the evaluator fails this). Three FLOAT-column pages
+        // [100,199], [200,299], [300,399]; probes 150/350 keep pages 0 and 2 only.
+        byte[] columnIndex = new ThriftStructBuilder()
+                .field(1, FieldType.LIST).boolList(false, false, false)
+                .field(2, FieldType.LIST)
+                .binaryList(floatBytes(100.0f), floatBytes(200.0f), floatBytes(300.0f))
+                .field(3, FieldType.LIST)
+                .binaryList(floatBytes(199.0f), floatBytes(299.0f), floatBytes(399.0f))
+                .stop().build();
+        byte[] offsetIndex = new ThriftStructBuilder()
+                .field(1, FieldType.LIST)
+                .structList(pageLocation(0, 0), pageLocation(100, 30), pageLocation(200, 60))
+                .stop().build();
+        ByteBuffer file = ByteBuffer.allocate(offsetIndex.length + columnIndex.length);
+        file.put(offsetIndex).put(columnIndex).flip();
+        ColumnChunk chunk = new ColumnChunk(null, 0L, offsetIndex.length,
+                (long) offsetIndex.length, columnIndex.length, "");
+        RowGroup rowGroup = new RowGroup(List.of(chunk), 1000, 90);
+
+        try (InputFile inputFile = InputFile.of(file)) {
+            RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
+            ResolvedPredicate in = new ResolvedPredicate.DoubleInPredicate(
+                    0, new double[]{ 150.0, 350.0 }, true, false);
+            RowRanges ranges = PageFilterEvaluator.computeMatchingRows(in, rowGroup, buffers,
+                    new PageFilterEvaluator.IndexLocation("float-in.parquet", 0));
+            assertTrue(ranges.overlapsPage(0, 30));
+            assertFalse(ranges.overlapsPage(30, 60));
+            assertTrue(ranges.overlapsPage(60, 90));
+        }
+    }
+
     private static ColumnIndex floatColumnIndex(float[] mins, float[] maxs) {
         List<byte[]> minValues = new ArrayList<>();
         List<byte[]> maxValues = new ArrayList<>();

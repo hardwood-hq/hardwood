@@ -69,6 +69,20 @@ final class StatisticsFilterSupport {
                     StatisticsDecoder.decodeLong(stats.maxValue()));
             case ResolvedPredicate.BinaryInPredicate p -> canDropBinaryIn(p.values(),
                     stats.minValue(), stats.maxValue());
+            case ResolvedPredicate.DoubleInPredicate p -> {
+                if (p.floatColumn()) {
+                    float minF = StatisticsDecoder.decodeFloat(stats.minValue());
+                    float maxF = StatisticsDecoder.decodeFloat(stats.maxValue());
+                    if (Float.isNaN(minF) || Float.isNaN(maxF)) {
+                        yield false;
+                    }
+                    yield canDropDoubleIn(p.values(), minF, maxF, p.ieee754TotalOrder());
+                }
+                yield canDropDoubleIn(p.values(),
+                        StatisticsDecoder.decodeDouble(stats.minValue()),
+                        StatisticsDecoder.decodeDouble(stats.maxValue()),
+                        p.ieee754TotalOrder());
+            }
             case ResolvedPredicate.IsNullPredicate ignored -> false;
             case ResolvedPredicate.IsNotNullPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;
@@ -145,6 +159,7 @@ final class StatisticsFilterSupport {
                             StatisticsDecoder.decodeLong(stats.maxValue()));
             case ResolvedPredicate.BinaryInPredicate p ->
                     alwaysMatchesBinaryIn(p.values(), stats.minValue(), stats.maxValue());
+            case ResolvedPredicate.DoubleInPredicate ignored -> false;
             case ResolvedPredicate.IsNullPredicate ignored -> false;
             case ResolvedPredicate.IsNotNullPredicate ignored -> false;
             case ResolvedPredicate.And ignored -> false;
@@ -287,6 +302,27 @@ final class StatisticsFilterSupport {
         for (byte[] value : values) {
             if (BinaryComparator.compareUnsigned(value, min) >= 0
                     && BinaryComparator.compareUnsigned(value, max) <= 0) {
+                return false;
+            }
+        }
+        return true;
+    }
+
+    static boolean canDropDoubleIn(double[] values, double min, double max, boolean ieee754TotalOrder) {
+        if (!ieee754TotalOrder) {
+            min = (min == 0.0) ? -0.0 : min;
+            max = (max == 0.0) ? 0.0 : max;
+        }
+        if (Double.isNaN(min) || Double.isNaN(max) || Double.compare(min, max) > 0) {
+            return false;
+        }
+        for (double v : values) {
+            if (Double.isNaN(v)) {
+                return false;
+            }
+        }
+        for (double value : values) {
+            if (Double.compare(value, min) >= 0 && Double.compare(value, max) <= 0) {
                 return false;
             }
         }

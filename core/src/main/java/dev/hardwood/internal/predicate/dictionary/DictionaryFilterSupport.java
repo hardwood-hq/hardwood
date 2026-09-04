@@ -183,4 +183,38 @@ public final class DictionaryFilterSupport {
         return true;
     }
 
+    /// `IN`-list dictionary check for `double` values across DOUBLE and FLOAT columns.
+    /// For FLOAT columns, entries from the [Dictionary.FloatDictionary] are widened to `double`
+    /// and compared via [Double#compare], preserving total ordering without narrowing probes.
+    public static boolean absentAll(RowGroupDictionaryFilterSource dictionaries, int columnIndex,
+            double[] values, boolean floatColumn) {
+        if (dictionaries == null) {
+            return false;
+        }
+        if (floatColumn) {
+            if (!(dictionaries.forColumn(columnIndex) instanceof Dictionary.FloatDictionary dict)) {
+                return false;
+            }
+            for (float entry : dict.values()) {
+                double widened = entry;
+                for (double probe : values) {
+                    if (Double.compare(widened, probe) == 0) {
+                        return false;
+                    }
+                }
+            }
+            return true;
+        }
+        if (!(dictionaries.forColumn(columnIndex) instanceof Dictionary.DoubleDictionary dict)) {
+            return false;
+        }
+        for (double entry : dict.values()) {
+            for (double probe : values) {
+                if (Double.compare(entry, probe) == 0) {
+                    return false;
+                }
+            }
+        }
+        return true;
+    }
 }

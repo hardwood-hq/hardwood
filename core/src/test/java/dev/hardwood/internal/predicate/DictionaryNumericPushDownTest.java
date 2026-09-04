@@ -126,6 +126,45 @@ class DictionaryNumericPushDownTest {
         assertThat(dictionaryDrop(FilterPredicate.in("i64", 1500L, 2000L))).isFalse();
     }
 
+    @Test
+    void floatInListDropsOnlyWhenEveryValueIsAbsent() {
+        assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0, 3.5))).isTrue();
+        assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.0, 2.5))).isFalse();
+        assertThat(dictionaryDrop(FilterPredicate.in("f32", 3.5, 0.1))).isTrue();
+
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), F32_COLUMN, new double[]{ 3.5, Double.NaN }, true))
+                .isFalse();
+    }
+
+    @Test
+    void doubleInListDropsOnlyWhenEveryValueIsAbsent() {
+        assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 3.5))).isTrue();
+        assertThat(dictionaryDrop(FilterPredicate.in("f64", 3.0, 2.5))).isFalse();
+
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), F64_COLUMN, new double[]{ 3.5, Double.NaN }, false))
+                .isFalse();
+    }
+
+    @Test
+    void int32UnsortedProbesAndFirstIndexMatch() {
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 0, new int[]{ 9, 1, 5 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 0, new int[]{ 0, 5, 7 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(null, 0, new int[]{ 0 })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 999, new int[]{ 0 })).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(null, 0, 0)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dictionaries(), 999, 0)).isFalse();
+    }
+
+    @Test
+    void int64UnsortedProbesAndFirstIndexMatch() {
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 1, new long[]{ 3000L, 100L, 500L })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 1, new long[]{ 0L, 500L, 700L })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(null, 1, new long[]{ 0L })).isFalse();
+        assertThat(DictionaryFilterSupport.absentAll(dictionaries(), 999, new long[]{ 0L })).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(null, 1, 0L)).isFalse();
+        assertThat(DictionaryFilterSupport.valueAbsent(dictionaries(), 999, 0L)).isFalse();
+    }
+
     private static RowGroupDictionaryFilterSource dictionaries() {
         return new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context);
     }

@@ -1902,6 +1902,49 @@ print("  - 3 row groups with struct column (address: {city, zip})")
 print("  - RG0: zip 70000-72000, RG1: zip 80000-82000, RG2: zip 90000-92000")
 
 
+# 25b. Multi-row-group file with a nested FLOAT32 leaf for double-IN push-down testing
+filter_nested_float_schema = pa.schema([
+    ('id', pa.int32(), False),
+    ('m', pa.struct([
+        ('d', pa.float32()),
+    ])),
+])
+
+nested_float_rg1 = pa.table({
+    'id': [1, 2, 3],
+    'm': [{'d': 1.5}, {'d': 2.5}, {'d': 3.5}],
+}, schema=filter_nested_float_schema)
+# d: 1.5..3.5
+
+nested_float_rg2 = pa.table({
+    'id': [4, 5, 6],
+    'm': [{'d': 4.5}, {'d': 5.5}, None],
+}, schema=filter_nested_float_schema)
+# d: 4.5..5.5, one null struct
+
+nested_float_rg3 = pa.table({
+    'id': [7, 8, 9],
+    'm': [{'d': 6.5}, {'d': 7.5}, {'d': 8.5}],
+}, schema=filter_nested_float_schema)
+# d: 6.5..8.5
+
+writer = pq.ParquetWriter(
+    'core/src/test/resources/filter_pushdown_nested_float.parquet',
+    schema=filter_nested_float_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='1.0',
+    write_statistics=True,
+)
+writer.write_table(nested_float_rg1)
+writer.write_table(nested_float_rg2)
+writer.write_table(nested_float_rg3)
+writer.close()
+
+print("\nGenerated filter_pushdown_nested_float.parquet:")
+print("  - 3 row groups with struct column (m: {d: float32})")
+print("  - RG0: d 1.5-3.5, RG1: d 4.5-5.5 plus one null struct, RG2: d 6.5-8.5")
+
 # Multi-file fixture for #577: two files with same schema and disjoint row ranges
 multi_schema = pa.schema([('id', pa.int64(), False)])
 for name, start, length in [('multi_file_part0', 0, 150), ('multi_file_part1', 150, 100)]:

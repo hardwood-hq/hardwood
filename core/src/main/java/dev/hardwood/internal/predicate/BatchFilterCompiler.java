@@ -20,6 +20,7 @@ import dev.hardwood.internal.predicate.matcher.booleans.BooleanNotEqBatchMatcher
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleGtEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.doubles.DoubleInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.doubles.DoubleNotEqBatchMatcher;
@@ -29,6 +30,7 @@ import dev.hardwood.internal.predicate.matcher.floats.FloatGtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.floats.FloatLtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.floats.FloatLtEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.floats.FloatNotEqBatchMatcher;
+import dev.hardwood.internal.predicate.matcher.floats.FloatWideningDoubleInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntEqBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntGtBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.ints.IntGtEqBatchMatcher;
@@ -241,6 +243,7 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.BooleanPredicate p -> p.columnIndex();
             case ResolvedPredicate.IntInPredicate p -> p.columnIndex();
             case ResolvedPredicate.LongInPredicate p -> p.columnIndex();
+            case ResolvedPredicate.DoubleInPredicate p -> p.columnIndex();
             case ResolvedPredicate.IsNullPredicate p -> p.columnIndex();
             case ResolvedPredicate.IsNotNullPredicate p -> p.columnIndex();
             default -> -1;
@@ -259,6 +262,7 @@ public final class BatchFilterCompiler {
             case ResolvedPredicate.FloatPredicate ignored -> true;
             case ResolvedPredicate.IntInPredicate ignored -> true;
             case ResolvedPredicate.LongInPredicate ignored -> true;
+            case ResolvedPredicate.DoubleInPredicate ignored -> true;
             case ResolvedPredicate.IsNullPredicate ignored -> true;
             case ResolvedPredicate.IsNotNullPredicate ignored -> true;
             case ResolvedPredicate.BooleanPredicate p ->
@@ -310,6 +314,9 @@ public final class BatchFilterCompiler {
             };
             case ResolvedPredicate.IntInPredicate p -> new IntInBatchMatcher(p.values());
             case ResolvedPredicate.LongInPredicate p -> new LongInBatchMatcher(p.values());
+            case ResolvedPredicate.DoubleInPredicate p -> p.floatColumn()
+                    ? new FloatWideningDoubleInBatchMatcher(p.values())
+                    : new DoubleInBatchMatcher(p.values());
             case ResolvedPredicate.IsNullPredicate p -> new IsNullBatchMatcher();
             case ResolvedPredicate.IsNotNullPredicate p -> new IsNotNullBatchMatcher();
             default -> throw new IllegalStateException(

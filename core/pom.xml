@@ -210,4 +210,49 @@
       </plugin>
     </plugins>
   </build>
+
+  <profiles>
+    <!-- Mutation analysis over floating-point IN predicates and pruning support.
+         Opt-in: `./mvnw -pl core -Pmutation-test test-compile org.pitest:pitest-maven:mutationCoverage` -->
+    <profile>
+      <id>mutation-test</id>
+      <build>
+        <plugins>
+          <plugin>
+            <groupId>org.pitest</groupId>
+            <artifactId>pitest-maven</artifactId>
+            <configuration>
+              <mutationThreshold>85</mutationThreshold>
+              <targetClasses>
+                <param>dev.hardwood.internal.predicate.matcher.doubles.DoubleInBatchMatcher</param>
+                <param>dev.hardwood.internal.predicate.matcher.floats.FloatWideningDoubleInBatchMatcher</param>
+                <param>dev.hardwood.internal.predicate.StatisticsFilterSupport</param>
+                <param>dev.hardwood.internal.predicate.BloomFilterSupport</param>
+                <param>dev.hardwood.internal.predicate.dictionary.DictionaryFilterSupport</param>
+                <param>dev.hardwood.internal.predicate.FilterPredicateResolver</param>
+              </targetClasses>
+              <targetTests>
+                <param>dev.hardwood.internal.predicate.ColumnBatchMatcherTest</param>
+                <param>dev.hardwood.internal.predicate.FilterDecisionTest</param>
+                <param>dev.hardwood.internal.predicate.BloomFilterPushDownTest</param>
+                <param>dev.hardwood.internal.predicate.DictionaryNumericPushDownTest</param>
+                <param>dev.hardwood.internal.predicate.DictionaryPushDownTest</param>
+                <param>dev.hardwood.internal.predicate.DictionaryFloat16PushDownTest</param>
+                <param>dev.hardwood.internal.predicate.dictionary.DictionarySignedZeroTest</param>
+                <param>dev.hardwood.internal.predicate.NaNStatisticsFilterTest</param>
+                <param>dev.hardwood.internal.predicate.PageFilterEvaluatorTest</param>
+                <param>dev.hardwood.internal.predicate.FilterPredicateResolverTest</param>
+                <param>dev.hardwood.FilterPredicateTest</param>
+                <param>dev.hardwood.PredicatePushDownTest</param>
+              </targetTests>
+              <outputFormats>
+                <param>HTML</param>
+                <param>CSV</param>
+              </outputFormats>
+            </configuration>
+          </plugin>
+        </plugins>
+      </build>
+    </profile>
+  </profiles>
 </project>

@@ -409,6 +409,43 @@ class FilterPredicateTest {
     }
 
     @Test
+    void testDoubleInPredicateCreation() {
+        FilterPredicate p = FilterPredicate.in("rate", 1.5, 2.5);
+        assertThat(p).isInstanceOf(FilterPredicate.DoubleInPredicate.class);
+        FilterPredicate.DoubleInPredicate dp = (FilterPredicate.DoubleInPredicate) p;
+        assertThat(dp.column()).isEqualTo("rate");
+        assertThat(dp.values()).containsExactly(1.5, 2.5);
+
+        assertThatThrownBy(() -> FilterPredicate.in("rate", new double[0]))
+                .isInstanceOf(IllegalArgumentException.class)
+                .hasMessage("IN predicate requires at least one value");
+    }
+
+    @Test
+    void testDoubleInPredicateDefensivelyCopiesValues() {
+        double[] values = {1.5, 2.5};
+        FilterPredicate.DoubleInPredicate p = (FilterPredicate.DoubleInPredicate) FilterPredicate.in("rate", values);
+        values[0] = 99.0;
+        assertThat(p.values()).containsExactly(1.5, 2.5);
+        p.values()[1] = 42.0;
+        assertThat(((FilterPredicate.DoubleInPredicate) FilterPredicate.in("rate", 1.5, 2.5)).values()).containsExactly(1.5, 2.5);
+    }
+
+    @Test
+    void testOverloadResolutionMatrix() {
+        // Primitive overloads bind correctly
+        assertThat(FilterPredicate.in("c", 1)).isInstanceOf(FilterPredicate.IntInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1L)).isInstanceOf(FilterPredicate.LongInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1.5)).isInstanceOf(FilterPredicate.DoubleInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1.5f)).isInstanceOf(FilterPredicate.DoubleInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1, 2)).isInstanceOf(FilterPredicate.IntInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1L, 2L)).isInstanceOf(FilterPredicate.LongInPredicate.class);
+        assertThat(FilterPredicate.in("c", 1.5, 2.5)).isInstanceOf(FilterPredicate.DoubleInPredicate.class);
+        // Note: FilterPredicate.in("c") is ambiguous between int..., long..., and double... varargs,
+        // which was already the case between int... and long...
+    }
+
+    @Test
     void testCanDropWithIntIn() {
         RowGroup rg = createIntRowGroup(10, 20);
         FileSchema schema = createIntSchema();
@@ -447,6 +484,36 @@ class FilterPredicateTest {
 
         assertThat(canDropRowGroup(
                 FilterPredicate.inStrings("col", "apple", "cherry"), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithDoubleIn() {
+        RowGroup rg = createDoubleRowGroup(10.0, 20.0);
+        FileSchema schema = createDoubleSchema();
+
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 1.0, 5.0, 8.0), rg, schema)).isTrue();
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 25.0, 30.0), rg, schema)).isTrue();
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 5.0, 15.0, 25.0), rg, schema)).isFalse();
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 1.0, 10.0), rg, schema)).isFalse();
+
+        // NaN probe disables pruning
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 1.0, Double.NaN), rg, schema)).isFalse();
+    }
+
+    @Test
+    void testCanDropWithFloatIn() {
+        RowGroup rg = createFloatRowGroup(10.0f, 20.0f);
+        FileSchema schema = createFloatSchema();
+
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 1.0, 5.0, 8.0), rg, schema)).isTrue();
+        assertThat(canDropRowGroup(
+                FilterPredicate.in("col", 5.0, 15.0, 25.0), rg, schema)).isFalse();
     }
 
     @Test
@@ -1011,6 +1078,62 @@ class FilterPredicateTest {
         RowGroup rgSingle = createIntRowGroup(5, 5);
         FilterPredicate notInSingle = FilterPredicate.not(FilterPredicate.in("col", 5, 10));
         assertThat(canDropRowGroup(notInSingle, rgSingle, schema)).isTrue();
+    }
+
+    @Test
+    void testNotOnDoubleInExpandsToAndNotEqOnDoubleColumn() {
+        FileSchema schema = createDoubleSchema();
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.in("col", 1.5, 2.5)), schema);
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.And.class);
+        ResolvedPredicate.And and = (ResolvedPredicate.And) resolved;
+        assertThat(and.children()).hasSize(2);
+        assertThat(and.children().get(0)).isEqualTo(new ResolvedPredicate.DoublePredicate(
+                0, FilterPredicate.Operator.NOT_EQ, 1.5, false));
+        assertThat(and.children().get(1)).isEqualTo(new ResolvedPredicate.DoublePredicate(
+                0, FilterPredicate.Operator.NOT_EQ, 2.5, false));
+    }
+
+    @Test
+    void testNotOnDoubleInExpandsToAndNotEqOnFloatColumn() {
+        FileSchema schema = createFloatSchema();
+        // Finite representable probes narrow losslessly to FloatPredicate NOT_EQ
+        ResolvedPredicate resolved = FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.in("col", 0.5, 1.5)), schema);
+        assertThat(resolved).isInstanceOf(ResolvedPredicate.And.class);
+        ResolvedPredicate.And and = (ResolvedPredicate.And) resolved;
+        assertThat(and.children()).hasSize(2);
+        assertThat(and.children().get(0)).isEqualTo(new ResolvedPredicate.FloatPredicate(
+                0, FilterPredicate.Operator.NOT_EQ, 0.5f, false));
+        assertThat(and.children().get(1)).isEqualTo(new ResolvedPredicate.FloatPredicate(
+                0, FilterPredicate.Operator.NOT_EQ, 1.5f, false));
+
+        // Mixed: 0.1 is not float-representable, so only 0.5 survives as a conjunct
+        ResolvedPredicate mixed = FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.in("col", 0.1, 0.5)), schema);
+        assertThat(mixed).isInstanceOf(ResolvedPredicate.And.class);
+        ResolvedPredicate.And mixedAnd = (ResolvedPredicate.And) mixed;
+        assertThat(mixedAnd.children()).containsExactly(new ResolvedPredicate.FloatPredicate(
+                0, FilterPredicate.Operator.NOT_EQ, 0.5f, false));
+
+        // Zero surviving probes: not(in("col", 0.1)) resolves to IsNotNullPredicate
+        ResolvedPredicate allNonRep = FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.in("col", 0.1)), schema);
+        assertThat(allNonRep).isInstanceOf(ResolvedPredicate.IsNotNullPredicate.class);
+        assertThat(((ResolvedPredicate.IsNotNullPredicate) allNonRep).columnIndex()).isEqualTo(0);
+
+        // NaN probe (PR-005 regression): NaN is float-representable; Double.isNaN(v) keeps it
+        // and resolves to an And containing FloatPredicate NOT_EQ Float.NaN (never IsNotNullPredicate)
+        ResolvedPredicate nanResolved = FilterPredicateResolver.resolve(
+                FilterPredicate.not(FilterPredicate.in("col", Double.NaN)), schema);
+        assertThat(nanResolved).isInstanceOf(ResolvedPredicate.And.class);
+        ResolvedPredicate.And nanAnd = (ResolvedPredicate.And) nanResolved;
+        assertThat(nanAnd.children()).hasSize(1);
+        assertThat(nanAnd.children().get(0)).isInstanceOf(ResolvedPredicate.FloatPredicate.class);
+        ResolvedPredicate.FloatPredicate fp = (ResolvedPredicate.FloatPredicate) nanAnd.children().get(0);
+        assertThat(fp.columnIndex()).isEqualTo(0);
+        assertThat(fp.op()).isEqualTo(FilterPredicate.Operator.NOT_EQ);
+        assertThat(Float.isNaN(fp.value())).isTrue();
     }
 
 

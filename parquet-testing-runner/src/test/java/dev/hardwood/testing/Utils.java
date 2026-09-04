@@ -112,7 +112,12 @@ public class Utils {
             "ARROW-GH-41317.parquet",
             "ARROW-GH-41321.parquet",
             "ARROW-GH-45185.parquet",
-            "ARROW-GH-47662.parquet"
+            "ARROW-GH-47662.parquet",
+
+            // Spec-violating fixture upstream added for apache/parquet-testing#122: the
+            // parquet-java reference itself rejects the footer while reading it, so no
+            // comparison is possible and the file belongs with the bad-data skips.
+            "int32_with_uuid_logical_type.parquet"
     );
 
     /// `shredded_variant` fixtures cases.json classifies as error cases: each

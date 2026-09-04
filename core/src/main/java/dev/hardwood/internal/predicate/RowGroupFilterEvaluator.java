@@ -184,6 +184,15 @@ public class RowGroupFilterEvaluator {
                 }
                 yield decision;
             }
+            case ResolvedPredicate.DoubleInPredicate p -> {
+                FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                if (decision != FilterDecision.CANNOT_MATCH
+                        && (BloomFilterSupport.absentAll(bloomFilters, p.columnIndex(), p.values(), p.floatColumn())
+                                || DictionaryFilterSupport.absentAll(dictionaries, p.columnIndex(), p.values(), p.floatColumn()))) {
+                    yield FilterDecision.CANNOT_MATCH;
+                }
+                yield decision;
+            }
             case ResolvedPredicate.IsNullPredicate p -> {
                 Statistics stats = getStatistics(p.columnIndex(), rowGroup);
                 // Can drop IS NULL if nullCount is known to be 0 (no nulls exist).

@@ -181,6 +181,7 @@ public class PageFilterEvaluator {
             case ResolvedPredicate.IntInPredicate p -> p.columnIndex();
             case ResolvedPredicate.LongInPredicate p -> p.columnIndex();
             case ResolvedPredicate.BinaryInPredicate p -> p.columnIndex();
+            case ResolvedPredicate.DoubleInPredicate p -> p.columnIndex();
             case ResolvedPredicate.IsNullPredicate p -> p.columnIndex();
             case ResolvedPredicate.IsNotNullPredicate p -> p.columnIndex();
             case ResolvedPredicate.GeospatialPredicate p -> p.columnIndex();

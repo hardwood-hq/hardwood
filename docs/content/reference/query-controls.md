@@ -20,12 +20,19 @@ behavior of each control — predicate pushdown, projection, row limits, splits,
 | Category | Supported |
 |---|---|
 | Comparison operators | `eq`, `notEq`, `lt`, `ltEq`, `gt`, `gtEq` |
-| Set operators | `in` (int, long), `inStrings` |
+| Set operators | `in` (int, long, double), `inStrings` |
 | Null operators | `isNull`, `isNotNull` (any type) |
 | Physical types (comparison) | `int`, `long`, `float`, `double`, `boolean`, `String` |
 | Logical types (comparison) | `LocalDate`, `Instant`, `LocalTime`, `BigDecimal`, `UUID` |
 | Combinators | `and`, `or`, `not` (`and` / `or` accept varargs for three or more conditions) |
 | Column form | Leaf columns only, by name or dot-separated path (`address.city`); group, `LIST`, and `MAP` names and leaves below a repeated group are rejected |
+
+
+`in(column, double...)` accepts FLOAT and DOUBLE columns only; other physical or logical
+types, including `FLOAT16`, throw `IllegalArgumentException` at reader creation. Comparisons
+use the `Double.compare` total order: all `NaN` values equal each other and `-0.0` differs
+from `+0.0`. On a `FLOAT` column, stored values are widened to `double` before comparison, so
+a probe with no exact `float` representation (e.g. `0.1`) never matches.
 
 All predicates, including those wrapped in `not`, are pushed down to the statistics level for
 row-group and page skipping.
