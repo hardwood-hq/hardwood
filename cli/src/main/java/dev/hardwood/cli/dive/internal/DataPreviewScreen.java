@@ -74,6 +74,9 @@ public final class DataPreviewScreen {
     public static boolean handle(KeyEvent event, ParquetModel model, dev.hardwood.cli.dive.NavigationStack stack) {
         ScreenState.DataPreview state = (ScreenState.DataPreview) stack.top();
         long total = model.facts().totalRows();
+        if (state.hasError()) {
+            return false;
+        }
         if (state.modalRow() >= 0) {
             return handleModal(event, state, stack, model);
         }
@@ -179,7 +182,7 @@ public final class DataPreviewScreen {
     /// Does nothing while the record modal is open: the modal owns the
     /// screen, and re-loading underneath it would move the row it is showing.
     public static void fitToViewport(ParquetModel model, NavigationStack stack, Rect body) {
-        if (!(stack.top() instanceof ScreenState.DataPreview state) || state.modalRow() >= 0) {
+        if (!(stack.top() instanceof ScreenState.DataPreview state) || state.modalRow() >= 0 || state.hasError()) {
             return;
         }
         int viewport = viewportRows(body);
@@ -200,6 +203,13 @@ public final class DataPreviewScreen {
         Keys.observeDataPreviewArea(area.width(), area.height());
         Keys.observeViewport(viewportRows(area));
         Keys.observeViewportWidth(area.width());
+
+        if (state.hasError()) {
+            buffer.setStyle(area, Theme.dim());
+            renderErrorOverlay(buffer, area, state.errorMessage());
+            return;
+        }
+
         int columnCount = state.columnNames().size();
         ColumnWindow window = columnWindow(state, area.width());
 
@@ -250,6 +260,22 @@ public final class DataPreviewScreen {
             buffer.setStyle(area, Theme.dim());
             renderRecordModal(buffer, area, model, state);
         }
+    }
+
+    private static void renderErrorOverlay(Buffer buffer, Rect screenArea, String message) {
+        int width = Math.min(60, Math.max(1, screenArea.width() - 4));
+        int descBudget = Math.max(1, width - 4);
+
+        List<Line> lines = new ArrayList<>();
+        lines.add(Line.from(new Span(" ERROR : Page could not be read", Theme.error())));
+        lines.add(Line.empty());
+        for (String chunk : Strings.wordWrap(message, descBudget)) {
+            lines.add(Line.from(Span.raw(" " + chunk)));
+        }
+
+        Rect area = ScrollPane.modalArea(screenArea, width, Math.max(10, lines.size() + 8));
+        ScrollPane.renderModal(buffer, area, " Data preview — error ", lines, 0,
+                "[Esc] to go back");
     }
 
     private static void renderRecordModal(Buffer buffer, Rect screenArea, ParquetModel model,
@@ -456,6 +482,9 @@ public final class DataPreviewScreen {
     }
 
     public static String keybarKeys(ScreenState.DataPreview state, ParquetModel model) {
+        if (state.hasError()) {
+            return "[Esc] back";
+        }
         if (state.modalRow() >= 0) {
             return "";
         }
@@ -751,10 +780,20 @@ public final class DataPreviewScreen {
 
     private static ScreenState.DataPreview loadPage(ParquetModel model, long firstRow, int pageSize,
                                                     int columnScroll, boolean logicalTypes) {
-        PreviewWindow.Slice slice = WINDOW.slice(model, firstRow, pageSize, logicalTypes);
-        return new ScreenState.DataPreview(firstRow, pageSize, slice.columnNames(),
-                slice.rows(), slice.expandedRows(), columnScroll, 0, -1,
-                logicalTypes, Set.of(), 0);
+        try {
+            PreviewWindow.Slice slice = WINDOW.slice(model, firstRow, pageSize, logicalTypes);
+            return new ScreenState.DataPreview(firstRow, pageSize, slice.columnNames(),
+                    slice.rows(), slice.expandedRows(), columnScroll, 0, -1,
+                    logicalTypes, Set.of(), 0);
+        } catch (Exception e) {
+            String msg = e.getMessage();
+            if (msg == null || msg.isBlank()) {
+                msg = e.getClass().getSimpleName();
+            }
+            return new ScreenState.DataPreview(firstRow, pageSize, List.of(),
+                    List.of(), List.of(), columnScroll, 0, -1,
+                    logicalTypes, Set.of(), 0, 0, msg);
+        }
     }
 
     /// How to position the cursor within the viewport after a navigation move.

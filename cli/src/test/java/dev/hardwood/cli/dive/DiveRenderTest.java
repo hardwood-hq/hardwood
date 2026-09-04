@@ -668,6 +668,24 @@ class DiveRenderTest {
                 .contains("               index, Dictionary) ");
     }
 
+    @Test
+    void dataPreviewErrorOverlayWrapsLongMessageWithinModalWidth() {
+        String longMessage = "IOException: Failed to decompress page data in column chunk at offset 1234. "
+                + "The decompressor returned an unexpected length. "
+                + "The file may be truncated or written by an incompatible encoder.";
+        ScreenState.DataPreview state = new ScreenState.DataPreview(
+                0, 5, List.of("id"), List.of(), List.of(),
+                0, 0, -1, true, Set.of(), 0, 0, longMessage);
+
+        RenderHarness.RenderedFrame frame = RenderHarness.render(new Rect(0, 0, 80, 24), state, model);
+
+        assertThat(frame.contains(" Data preview — error")).isTrue();
+        assertThat(frame.contains("[Esc] to go back")).isTrue();
+        for (String line : frame.lines()) {
+            assertThat(line.length()).isLessThanOrEqualTo(80);
+        }
+    }
+
     /// The overlay is where a TUI user reads which build they are on, so the line must carry
     /// the resolved version rather than the label alone.
     @Test

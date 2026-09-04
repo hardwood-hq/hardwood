@@ -292,7 +292,8 @@ public sealed interface ScreenState {
             boolean logicalTypes,
             java.util.Set<Integer> expandedColumns,
             int modalCursorLine,
-            int modalScroll)
+            int modalScroll,
+            String errorMessage)
             implements ScreenState {
         public DataPreview {
             columnNames = java.util.List.copyOf(columnNames);
@@ -307,7 +308,21 @@ public sealed interface ScreenState {
                            int columnScroll, int selectedRow, int modalRow, boolean logicalTypes,
                            java.util.Set<Integer> expandedColumns, int modalCursorLine) {
             this(firstRow, pageSize, columnNames, rows, expandedRows, columnScroll, selectedRow,
-                    modalRow, logicalTypes, expandedColumns, modalCursorLine, 0);
+                    modalRow, logicalTypes, expandedColumns, modalCursorLine, 0, null);
+        }
+
+        public DataPreview(long firstRow, int pageSize, java.util.List<String> columnNames,
+                           java.util.List<java.util.List<String>> rows,
+                           java.util.List<java.util.List<String>> expandedRows,
+                           int columnScroll, int selectedRow, int modalRow, boolean logicalTypes,
+                           java.util.Set<Integer> expandedColumns, int modalCursorLine,
+                           int modalScroll) {
+            this(firstRow, pageSize, columnNames, rows, expandedRows, columnScroll, selectedRow,
+                    modalRow, logicalTypes, expandedColumns, modalCursorLine, modalScroll, null);
+        }
+
+        public boolean hasError() {
+            return errorMessage != null;
         }
     }
 }

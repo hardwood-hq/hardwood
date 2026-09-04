@@ -850,6 +850,29 @@ class DiveStateTest {
     }
 
     @Test
+    void dataPreviewValidLoadHasNoError() {
+        ScreenState.DataPreview state = DataPreviewScreen.initialState(model, 5);
+
+        assertThat(state.hasError()).isFalse();
+        assertThat(state.errorMessage()).isNull();
+        assertThat(state.rows()).isNotEmpty();
+    }
+
+    @Test
+    void dataPreviewIoErrorSurfacesAsOverlayAndBlocksNavigation() {
+        ScreenState.DataPreview errorState = new ScreenState.DataPreview(
+                0, 5, List.of("id"), List.of(), List.of(),
+                0, 0, -1, true, java.util.Set.of(), 0, 0, "Corrupt page: bad checksum");
+        NavigationStack stack = rooted(errorState);
+
+        assertThat(errorState.hasError()).isTrue();
+        assertThat(DataPreviewScreen.handle(key(KeyCode.DOWN), model, stack)).isFalse();
+        assertThat(DataPreviewScreen.handle(key(KeyCode.PAGE_DOWN), model, stack)).isFalse();
+        assertThat(DataPreviewScreen.handle(key(KeyCode.ESCAPE), model, stack)).isFalse();
+        assertThat(stack.top()).isSameAs(errorState);
+    }
+
+    @Test
     void columnChunkDetailDictionaryEnabledWhenChunkHasDictionary() {
         // Walk chunks until we find one with a dictionary; if none, test is vacuous.
         for (int rg = 0; rg < model.rowGroupCount(); rg++) {
