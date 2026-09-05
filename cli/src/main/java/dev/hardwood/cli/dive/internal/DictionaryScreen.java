@@ -18,8 +18,8 @@ import dev.hardwood.cli.dive.ParquetModel;
 import dev.hardwood.cli.dive.ScreenState;
 import dev.hardwood.cli.internal.BinaryValues;
 import dev.hardwood.cli.internal.Fmt;
-import dev.hardwood.cli.internal.RowValueFormatter;
 import dev.hardwood.cli.internal.Strings;
+import dev.hardwood.cli.internal.ValueFormatter;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
@@ -244,7 +244,7 @@ public final class DictionaryScreen {
         if (state.modalOpen() && !filtered.isEmpty()) {
             int dictIdx = filtered.at(Math.min(state.selection(), filtered.size() - 1));
             buffer.setStyle(area, Theme.dim());
-            renderValueModal(buffer, area, dict, col, dictIdx, state.logicalTypes(),
+            renderEntryModal(buffer, area, dict, col, dictIdx, state.logicalTypes(),
                     state.modalScroll());
         }
     }
@@ -376,7 +376,7 @@ public final class DictionaryScreen {
     /// value the row has to cut is longer than the row either way.
     private static boolean isExpandable(Dictionary dict, int index, ColumnSchema col,
                                         boolean useLogicalType) {
-        return entryValue(dict, index, col, useLogicalType, VALUE_PREVIEW_MAX).length()
+        return Strings.width(entryValue(dict, index, col, useLogicalType, VALUE_PREVIEW_MAX))
                 > VALUE_PREVIEW_MAX;
     }
 
@@ -404,10 +404,7 @@ public final class DictionaryScreen {
     private static String formatValue(Dictionary dict, int index, ColumnSchema col, int max,
                                       boolean useLogicalType) {
         String full = entryValue(dict, index, col, useLogicalType, max);
-        if (full.length() <= max) {
-            return full;
-        }
-        return full.substring(0, max - 1) + "…";
+        return Strings.truncateRight(full, max);
     }
 
     private static String fullValue(Dictionary dict, int index, ColumnSchema col,
@@ -424,7 +421,7 @@ public final class DictionaryScreen {
             case Dictionary.DoubleDictionary d -> d.values()[index];
             case Dictionary.ByteArrayDictionary d -> d.values()[index];
         };
-        return RowValueFormatter.formatDictionaryValue(raw, col, useLogicalType, maxChars);
+        return ValueFormatter.formatDictionary(raw, col, useLogicalType, maxChars);
     }
 
     private static void renderConfirmPrompt(Buffer buffer, Rect area, ParquetModel model,
@@ -468,7 +465,7 @@ public final class DictionaryScreen {
                 .render(area, buffer);
     }
 
-    private static void renderValueModal(Buffer buffer, Rect screenArea, Dictionary dict, ColumnSchema col,
+    private static void renderEntryModal(Buffer buffer, Rect screenArea, Dictionary dict, ColumnSchema col,
                                          int index, boolean useLogicalType, int scroll) {
         Rect area = ScrollPane.modalArea(screenArea, 80, 16);
         boolean hasLogical = col.logicalType() != null;

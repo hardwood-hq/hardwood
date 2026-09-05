@@ -377,6 +377,25 @@ class LevelSummaryTest {
         assertThat(LevelSummary.renderLevels(rows, 40).get(1)).contains("element present");
     }
 
+    /// A wide-glyph label occupies two cells per character, so padding by
+    /// `String.length()` would push the count column out of line with
+    /// ASCII-labelled rows; the label field pads by display width.
+    @Test
+    void wideGlyphLabelsKeepTheCountColumnAligned() {
+        List<LevelSummary.LevelRow> rows = List.of(
+                new LevelSummary.LevelRow(0, "element present", 300L, 1.0),
+                new LevelSummary.LevelRow(1, "市区町村", 300L, 1.0));
+
+        List<String> lines = LevelSummary.renderLevels(rows, 60);
+        int asciiPrefix = countColumnStart(lines.get(0));
+        int widePrefix = countColumnStart(lines.get(1));
+        assertThat(widePrefix).isEqualTo(asciiPrefix);
+    }
+
+    private static int countColumnStart(String line) {
+        return Strings.width(line.substring(0, line.indexOf("300")));
+    }
+
     /// A full-share row is the widest a histogram produces, so it decides
     /// whether the block fits its budget. Below [LevelSummary#MINIMUM_WIDTH]
     /// the fixed level, label and count columns cannot fit at all and the

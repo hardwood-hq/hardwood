@@ -7,106 +7,46 @@
  */
 package dev.hardwood.cli.internal.table;
 
-import java.nio.charset.StandardCharsets;
-import java.util.HexFormat;
 import java.util.List;
 
 import org.junit.jupiter.api.Test;
 
-import dev.hardwood.metadata.LogicalType;
-import dev.hardwood.metadata.PhysicalType;
-import dev.hardwood.metadata.RepetitionType;
-import dev.hardwood.schema.SchemaNode;
+import dev.hardwood.cli.internal.Strings;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
+/// Grid and layout tests for [RowTable]: how a table of pre-rendered strings
+/// pads, aligns and draws its borders. Value-to-text rendering lives in
+/// [dev.hardwood.cli.internal.ValueFormatter] and its tests.
 class RowTableTest {
 
     @Test
     void displayWidthCountsAsciiAsOne() {
-        assertThat(RowTable.displayWidth("hello")).isEqualTo(5);
-        assertThat(RowTable.displayWidth("")).isZero();
+        assertThat(Strings.width("hello")).isEqualTo(5);
+        assertThat(Strings.width("")).isZero();
     }
 
     @Test
     void displayWidthTreatsLatinAccentsAsNarrow() {
-        assertThat(RowTable.displayWidth("Última")).isEqualTo(6);
-        assertThat(RowTable.displayWidth("Ñuble")).isEqualTo(5);
+        assertThat(Strings.width("Última")).isEqualTo(6);
+        assertThat(Strings.width("Ñuble")).isEqualTo(5);
     }
 
     @Test
     void displayWidthCountsHangulAsWide() {
         // 5 Hangul syllables → 10 terminal cells
-        assertThat(RowTable.displayWidth("말도나도주")).isEqualTo(10);
+        assertThat(Strings.width("말도나도주")).isEqualTo(10);
     }
 
     @Test
     void displayWidthCountsCjkIdeographsAsWide() {
         // 3 CJK ideographs → 6 terminal cells
-        assertThat(RowTable.displayWidth("漢字水")).isEqualTo(6);
+        assertThat(Strings.width("漢字水")).isEqualTo(6);
     }
 
     @Test
     void displayWidthCountsKanaAsWide() {
-        assertThat(RowTable.displayWidth("コキンボ")).isEqualTo(8);
-    }
-
-    @Test
-    void renderBareByteArrayAsStringWhenValidUtf8() {
-        SchemaNode.PrimitiveNode schema = bareByteArray();
-        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
-
-        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("hello");
-    }
-
-    @Test
-    void renderBareByteArrayAsHexWhenInvalidUtf8() {
-        SchemaNode.PrimitiveNode schema = bareByteArray();
-        // Lone continuation byte — not a valid UTF-8 sequence.
-        byte[] bytes = {(byte) 0xC3, (byte) 0x28, (byte) 0xA0, (byte) 0xA1};
-
-        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("0xc328a0a1");
-    }
-
-    /// The hex is rendered whole; the table caps the cell and marks it, the
-    /// same way it caps a long string.
-    @Test
-    void renderLongBareByteArrayAsCompleteHex() {
-        assertThat(RowTable.renderValue(wkbPoint(), bareByteArray()))
-                .isEqualTo("0x010100000000000000005366c0f71622f0fa1955c0");
-    }
-
-    /// A fixed-width column carries the same payload and renders it the same
-    /// way — the physical type makes no difference to the rendering.
-    @Test
-    void renderBareFixedLenByteArrayTheSameWay() {
-        SchemaNode.PrimitiveNode schema = new SchemaNode.PrimitiveNode(
-                "f", PhysicalType.FIXED_LEN_BYTE_ARRAY, RepetitionType.REQUIRED, null, 0, 0, 0);
-
-        assertThat(RowTable.renderValue(wkbPoint(), schema))
-                .isEqualTo("0x010100000000000000005366c0f71622f0fa1955c0");
-    }
-
-    @Test
-    void renderAnnotatedStringAlwaysDecodes() {
-        SchemaNode.PrimitiveNode schema = new SchemaNode.PrimitiveNode(
-                "f", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED,
-                new LogicalType.StringType(), 0, 0, 0);
-        byte[] bytes = "hello".getBytes(StandardCharsets.UTF_8);
-
-        assertThat(RowTable.renderValue(bytes, schema)).isEqualTo("hello");
-    }
-
-    /// A WKB `Point`, as GeoParquet 1.x stores geometry: an unannotated
-    /// `BYTE_ARRAY` holding a byte-order flag, a geometry type and two
-    /// little-endian doubles.
-    private static byte[] wkbPoint() {
-        return HexFormat.of().parseHex("010100000000000000005366c0f71622f0fa1955c0");
-    }
-
-    private static SchemaNode.PrimitiveNode bareByteArray() {
-        return new SchemaNode.PrimitiveNode(
-                "f", PhysicalType.BYTE_ARRAY, RepetitionType.REQUIRED, null, 0, 0, 0);
+        assertThat(Strings.width("コキンボ")).isEqualTo(8);
     }
 
     @Test
@@ -119,9 +59,9 @@ class RowTableTest {
         String out = RowTable.renderTable(headers, rows);
         String[] lines = out.split("\n");
         // Every line must have the same display width so the borders align visually.
-        int expected = RowTable.displayWidth(lines[0]);
+        int expected = Strings.width(lines[0]);
         for (String line : lines) {
-            assertThat(RowTable.displayWidth(line))
+            assertThat(Strings.width(line))
                     .as("line width: %s", line)
                     .isEqualTo(expected);
         }
@@ -143,8 +83,8 @@ class RowTableTest {
                 +------+--------+
                 | note |      x |
                 +------+--------+""");
-        int expectedWidth = RowTable.displayWidth(out.lines().findFirst().orElseThrow());
+        int expectedWidth = Strings.width(out.lines().findFirst().orElseThrow());
         assertThat(out.lines()).allSatisfy(line ->
-                assertThat(RowTable.displayWidth(line)).isEqualTo(expectedWidth));
+                assertThat(Strings.width(line)).isEqualTo(expectedWidth));
     }
 }

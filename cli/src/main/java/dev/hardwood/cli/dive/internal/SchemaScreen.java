@@ -165,21 +165,21 @@ public final class SchemaScreen {
         // Pre-compute the longest width per aligned column so every row's
         // type / logical / repetition fields line up vertically. Name column
         // = indent + marker + name in tree mode, path in filtered mode.
-        int maxName = "Name".length();
-        int maxType = "Type".length();
-        int maxLogical = "Logical".length();
-        int maxRepetition = "Repetition".length();
+        int maxName = Strings.width("Name");
+        int maxType = Strings.width("Type");
+        int maxLogical = Strings.width("Logical");
+        int maxRepetition = Strings.width("Repetition");
         TypeParts[] parts = new TypeParts[rows.size()];
         for (int i = 0; i < rows.size(); i++) {
             Row row = rows.get(i);
             int w = filtering
-                    ? row.path().length()
-                    : row.depth() * 2 + 2 + row.node().name().length();
+                    ? Strings.width(row.path())
+                    : row.depth() * 2 + 2 + Strings.width(row.node().name());
             maxName = Math.max(maxName, w);
             parts[i] = typeOf(row.node());
-            maxType = Math.max(maxType, parts[i].type().length());
-            maxLogical = Math.max(maxLogical, parts[i].logical().length());
-            maxRepetition = Math.max(maxRepetition, parts[i].repetition().length());
+            maxType = Math.max(maxType, Strings.width(parts[i].type()));
+            maxLogical = Math.max(maxLogical, Strings.width(parts[i].logical()));
+            maxRepetition = Math.max(maxRepetition, Strings.width(parts[i].repetition()));
         }
         // Column widths are measured over every row so they do not shift as
         // the tree scrolls; only the rows on screen become Lines. See
@@ -204,7 +204,7 @@ public final class SchemaScreen {
             TypeParts p = parts[i];
             String colSuffix = !row.isGroup() ? "[col " + row.columnIndex() + "]" : "";
             if (filtering) {
-                String pad = " ".repeat(maxName - row.path().length());
+                String pad = " ".repeat(maxName - Strings.width(row.path()));
                 lines.add(Line.from(
                         new Span(cursor, rowStyle),
                         new Span(row.path(), rowStyle),
@@ -223,7 +223,7 @@ public final class SchemaScreen {
             else {
                 marker = "  ";
             }
-            int rowName = row.depth() * 2 + 2 + row.node().name().length();
+            int rowName = row.depth() * 2 + 2 + Strings.width(row.node().name());
             String pad = " ".repeat(maxName - rowName);
             lines.add(Line.from(
                     new Span(cursor, rowStyle),

@@ -36,13 +36,6 @@ public class InfoCommand implements Command<CommandInvocation> {
     /// command's output.
     private static final int MAX_VALUE_WIDTH = 60;
 
-    /// Stands in for control characters in a rendered value. Key/value metadata
-    /// is arbitrary writer-supplied content: a raw newline would break the
-    /// column alignment and a raw escape sequence would reprogram the terminal.
-    /// Same glyph as [dev.hardwood.cli.internal.IndexValueFormatter] uses for
-    /// non-printable column values.
-    private static final char NON_PRINTABLE_PLACEHOLDER = '·';
-
     @Mixin
     FileMixin fileMixin;
 
@@ -124,16 +117,22 @@ public class InfoCommand implements Command<CommandInvocation> {
         int keyWidth = 0;
         int sizeWidth = 0;
         for (Map.Entry<String, String> entry : keyValueMetadata.entrySet()) {
-            keyWidth = Math.max(keyWidth, Strings.width(entry.getKey()));
+            String key = displayKey(entry.getKey());
+            keyWidth = Math.max(keyWidth, Strings.width(key));
             sizeWidth = Math.max(sizeWidth, size(entry.getValue()).length());
         }
 
         for (Map.Entry<String, String> entry : keyValueMetadata.entrySet()) {
-            String line = "  " + Strings.padRight(entry.getKey(), keyWidth)
+            String key = displayKey(entry.getKey());
+            String line = "  " + Strings.padRight(key, keyWidth)
                     + "  " + Fmt.fmt("%" + sizeWidth + "s", size(entry.getValue()));
             String rendered = render(entry.getValue());
             System.out.println(rendered.isEmpty() ? line : line + "  " + rendered);
         }
+    }
+
+    static String displayKey(String key) {
+        return Strings.sanitizeControls(key);
     }
 
     /// The size column for one entry: the value's length in bytes as written to the
@@ -146,21 +145,13 @@ public class InfoCommand implements Command<CommandInvocation> {
 
     /// The value column for one entry: control characters replaced so a writer's
     /// content cannot break the layout or drive the terminal, then truncated to
-    /// [MAX_VALUE_WIDTH] cells.
+    /// [MAX_VALUE_WIDTH] cells. The sanitiser is the shared
+    /// [Strings#sanitizeControls] — the same rule column values follow.
     private static String render(String value) {
         if (value == null) {
             return "";
         }
-        return Strings.truncateRight(printable(value), MAX_VALUE_WIDTH);
-    }
-
-    private static String printable(String value) {
-        StringBuilder sb = new StringBuilder(value.length());
-        for (int i = 0; i < value.length(); i++) {
-            char c = value.charAt(i);
-            sb.append(Character.isISOControl(c) ? NON_PRINTABLE_PLACEHOLDER : c);
-        }
-        return sb.toString();
+        return Strings.truncateRight(Strings.sanitizeControls(value), MAX_VALUE_WIDTH);
     }
 
     private static int byteLength(String value) {

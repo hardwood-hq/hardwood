@@ -360,7 +360,7 @@ public record LevelSummary(
         for (LevelRow row : rows) {
             StringBuilder line = new StringBuilder();
             line.append("  ").append(row.level()).append("  ");
-            line.append(padRight(row.label(), LABEL_WIDTH));
+            line.append(Strings.padRight(row.label(), LABEL_WIDTH));
             line.append(Fmt.fmt("%" + COUNT_WIDTH + "s", Fmt.fmt("%,d", row.count())));
             if (showPercentage) {
                 line.append(Fmt.fmt("  %5.1f%%", row.share() * 100));
@@ -374,9 +374,6 @@ public record LevelSummary(
         return lines;
     }
 
-    private static String padRight(String value, int width) {
-        return value.length() >= width ? value : value + " ".repeat(width - value.length());
-    }
 
     /// Values counted below the outermost repeated node — the records whose
     /// list is absent or empty, which contribute no element.

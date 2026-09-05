@@ -14,6 +14,8 @@ import java.util.List;
 import java.util.function.IntFunction;
 import java.util.stream.IntStream;
 
+import dev.hardwood.cli.internal.Strings;
+
 // note: align text left since it is how people do read in english
 public class StreamedTable {
 
@@ -36,14 +38,14 @@ public class StreamedTable {
         int[] widths = new int[n];
         int[] minWidths = new int[n];
         for (int i = 0; i < n; i++) {
-            widths[i] = RowTable.displayWidth(headers[i]);
+            widths[i] = Strings.width(headers[i]);
             minWidths[i] = mandatoryGlyph(headers[i], truncate);
         }
         for (String[] rowFunc : sampleRows) {
             for (int i = 0; i < n; i++) {
                 String cell = rowFunc[i];
                 if (cell != null) {
-                    widths[i] = Math.max(widths[i], RowTable.displayWidth(cell));
+                    widths[i] = Math.max(widths[i], Strings.width(cell));
                     minWidths[i] = Math.max(minWidths[i], mandatoryGlyph(cell, truncate));
                 }
             }
@@ -95,7 +97,7 @@ public class StreamedTable {
     /// and sizing the column to a glyph that the ellipsis may well replace pads it out
     /// with space no render can reach.
     private static int mandatoryGlyph(String value, boolean truncate) {
-        return truncate ? RowTable.firstGlyph(value) : RowTable.widestGlyph(value);
+        return truncate ? Strings.firstGlyph(value) : Strings.widestGlyph(value);
     }
 
     /// The narrowest a column can be and still render its content faithfully.
@@ -129,10 +131,7 @@ public class StreamedTable {
                 if (cell == null) {
                     cell = "";
                 }
-                if (RowTable.displayWidth(cell) > widths[i]) {
-                    int end = displayPrefixEnd(cell, 0, widths[i] - 1);
-                    cell = cell.substring(0, end) + "\u2026";
-                }
+                cell = Strings.truncateRight(cell, widths[i]);
                 printCell(out, cell, widths[i]);
             }
             out.println();
@@ -152,12 +151,9 @@ public class StreamedTable {
                 lines.add("");
             }
             for (int start = 0; start < cell.length();) {
-                int end = displayPrefixEnd(cell, start, widths[i]);
-                if (end == start) {
-                    end += Character.charCount(cell.codePointAt(start));
-                }
-                lines.add(cell.substring(start, end));
-                start = end;
+                String chunk = Strings.prefixByWidth(cell, start, widths[i]);
+                lines.add(chunk);
+                start += chunk.length();
             }
             maxLines = Math.max(maxLines, lines.size());
             wrappedCells.add(lines.toArray(new String[0]));
@@ -177,23 +173,8 @@ public class StreamedTable {
     private void printCell(PrintWriter out, String content, int width) {
         out.print(" ");
         out.print(content);
-        out.print(" ".repeat(Math.max(0, width - RowTable.displayWidth(content))));
+        out.print(" ".repeat(Math.max(0, width - Strings.width(content))));
         out.print(" |");
     }
 
-    private static int displayPrefixEnd(String value, int start, int maxWidth) {
-        int width = 0;
-        int end = start;
-        while (end < value.length()) {
-            int codePoint = value.codePointAt(end);
-            int next = end + Character.charCount(codePoint);
-            int codePointWidth = RowTable.charWidth(codePoint);
-            if (width + codePointWidth > maxWidth) {
-                break;
-            }
-            width += codePointWidth;
-            end = next;
-        }
-        return end;
-    }
 }

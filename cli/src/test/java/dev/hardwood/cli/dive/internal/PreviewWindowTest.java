@@ -49,9 +49,9 @@ class PreviewWindowTest {
                 assertThat(row.get(names.indexOf(leaf))).isEqualTo(hex);
                 assertThat(row.get(names.indexOf(leaf + "s"))).startsWith("[" + hex);
                 assertThat(row.get(names.indexOf(prefix.isEmpty() ? "holder" : "fixed_holder")))
-                        .isEqualTo("{payload: " + hex + "}");
+                        .isEqualTo("{ payload : " + hex + " }");
                 assertThat(row.get(names.indexOf(prefix.isEmpty() ? "by_name" : "fixed_by_name")))
-                        .isEqualTo("{geom: " + hex + "}");
+                        .isEqualTo("{ geom : " + hex + " }");
             }
         }
     }

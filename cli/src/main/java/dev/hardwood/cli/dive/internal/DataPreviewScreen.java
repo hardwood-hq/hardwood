@@ -22,7 +22,6 @@ import dev.tamboui.buffer.Buffer;
 import dev.tamboui.layout.Constraint;
 import dev.tamboui.layout.Rect;
 import dev.tamboui.style.Style;
-import dev.tamboui.text.CharWidth;
 import dev.tamboui.text.Line;
 import dev.tamboui.text.Span;
 import dev.tamboui.text.Text;
@@ -207,7 +206,7 @@ public final class DataPreviewScreen {
         for (List<String> row : state.rows()) {
             String[] truncated = new String[window.widths().size()];
             for (int i = 0; i < truncated.length; i++) {
-                truncated[i] = truncate(row.get(state.columnScroll() + i), window.widths().get(i));
+                truncated[i] = Strings.truncateRight(row.get(state.columnScroll() + i), window.widths().get(i));
             }
             rows.add(Row.from(truncated));
         }
@@ -218,7 +217,7 @@ public final class DataPreviewScreen {
         String typeMode = state.logicalTypes() ? "" : " · physical";
         // A clipped trailing column is only partly on screen — mark the range
         // with the same ellipsis the cells use rather than claiming it whole.
-        String clipMark = window.clipped() ? "…" : "";
+        String clipMark = window.clipped() ? String.valueOf(Strings.ELLIPSIS) : "";
         String title = Fmt.fmt(" Data preview (rows %,d–%,d of %,d · cols %d–%d%s of %d%s) ",
                 state.firstRow() + 1, lastRow, total,
                 state.columnScroll() + 1, window.end(), clipMark, columnCount, typeMode);
@@ -284,7 +283,7 @@ public final class DataPreviewScreen {
         for (int i = 0; i < names.size(); i++) {
             String name = names.get(i);
             String marker = CursorPane.marker(isExpandableField(state, i, geometry), false, mixed);
-            String pad = " ".repeat(maxKeyWidth - name.length());
+            String pad = " ".repeat(maxKeyWidth - Strings.width(name));
             boolean isExpanded = state.expandedColumns().contains(i);
             String value = i < values.size() ? values.get(i) : "";
             ownership[i] = all.size();
@@ -300,7 +299,7 @@ public final class DataPreviewScreen {
             else {
                 all.add(Line.from(
                         new Span(marker + name + pad + " : ", Theme.primary()),
-                        Span.raw(truncate(value, valueBudget))));
+                        Span.raw(Strings.truncateRight(value, valueBudget))));
             }
         }
 
@@ -312,7 +311,7 @@ public final class DataPreviewScreen {
         if (cursorLine < all.size()) {
             int fieldFirstLine = ownership[fieldIdx];
             String name = names.get(fieldIdx);
-            String pad = " ".repeat(maxKeyWidth - name.length());
+            String pad = " ".repeat(maxKeyWidth - Strings.width(name));
             boolean isExpanded = state.expandedColumns().contains(fieldIdx);
             String value = fieldIdx < values.size() ? values.get(fieldIdx) : "";
             Style selectionStyle = Theme.selection();
@@ -323,7 +322,7 @@ public final class DataPreviewScreen {
                     shown = wrapped.isEmpty() ? "" : wrapped.get(0);
                 }
                 else {
-                    shown = truncate(value, valueBudget);
+                    shown = Strings.truncateRight(value, valueBudget);
                 }
                 all.set(cursorLine, Line.from(
                         new Span(CursorPane.marker(focusExpandable, true, mixed)
@@ -414,7 +413,7 @@ public final class DataPreviewScreen {
         int height = Math.max(8, screenHeight - 2);
         int maxKeyWidth = 0;
         for (String name : names) {
-            maxKeyWidth = Math.max(maxKeyWidth, name.length());
+            maxKeyWidth = Math.max(maxKeyWidth, Strings.width(name));
         }
         // Two borders, the two-cell actionability marker, the key, " : ",
         // and a trailing cell.
@@ -640,7 +639,7 @@ public final class DataPreviewScreen {
         }
         List<String> wrapped = expandedValueLines(state, modalRow, field, geometry);
         List<String> values = state.rows().get(modalRow);
-        String collapsed = truncate(field < values.size() ? values.get(field) : "",
+        String collapsed = Strings.truncateRight(field < values.size() ? values.get(field) : "",
                 geometry.valueBudget());
         return wrapped.size() > 1 || !wrapped.get(0).equals(collapsed);
     }
@@ -825,7 +824,7 @@ public final class DataPreviewScreen {
             }
 
             int width = Math.min(naturalWidth, remaining);
-            headers.add(truncate(state.columnNames().get(column), width));
+            headers.add(Strings.truncateRight(state.columnNames().get(column), width));
             widths.add(width);
             used += spacing + width;
             column++;
@@ -853,19 +852,13 @@ public final class DataPreviewScreen {
     }
 
     private static int columnContentWidth(ScreenState.DataPreview state, int column) {
-        int width = CharWidth.of(state.columnNames().get(column));
+        int width = Strings.width(state.columnNames().get(column));
         for (List<String> row : state.rows()) {
-            width = Math.max(width, CharWidth.of(row.get(column)));
+            width = Math.max(width, Strings.width(row.get(column)));
         }
         return Math.max(1, Math.min(VALUE_TRUNCATE, width));
     }
 
-    private static String truncate(String s, int max) {
-        if (max < 1) {
-            throw new IllegalArgumentException("Maximum width must be positive");
-        }
-        return CharWidth.truncateWithEllipsis(s, max, "…", CharWidth.TruncatePosition.END);
-    }
 
     /// The columns the current viewport can show, starting at `columnScroll`.
     /// `end` is exclusive and counts a clipped trailing column; `clipped` says

@@ -49,4 +49,11 @@ class InfoCommandTest implements InfoCommandContract {
         assertThat(result.exitCode()).isNotZero();
         assertThat(result.errorOutput()).contains("not implemented yet");
     }
+    @Test
+    void sanitizesControlCharactersInDisplayedMetadataKeys() {
+        assertThat(InfoCommand.displayKey("line1\nline2\033[31m"))
+                .isEqualTo("line1·line2·[31m");
+        assertThat(InfoCommand.displayKey("\u0000\u0001"))
+                .startsWith("0x");
+    }
 }

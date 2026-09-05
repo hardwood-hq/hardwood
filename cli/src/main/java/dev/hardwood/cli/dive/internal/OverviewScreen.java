@@ -397,9 +397,6 @@ public final class OverviewScreen {
         if (s == null) {
             return "";
         }
-        if (s.length() <= max) {
-            return s;
-        }
-        return s.substring(0, max - 1) + "…";
+        return Strings.truncateRight(s, max);
     }
 }
