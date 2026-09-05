@@ -13,10 +13,10 @@ import java.util.List;
 import java.util.Set;
 import java.util.stream.IntStream;
 
+import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
-import dev.hardwood.cli.internal.Strings;
 
 public final class RowTable {
 

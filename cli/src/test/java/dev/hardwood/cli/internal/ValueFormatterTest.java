@@ -8,16 +8,14 @@
 package dev.hardwood.cli.internal;
 
 import java.io.IOException;
+import java.lang.reflect.Proxy;
 import java.math.BigDecimal;
 import java.math.BigInteger;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 import java.nio.charset.StandardCharsets;
-import java.lang.reflect.Proxy;
 import java.nio.file.Path;
-
 import java.util.HexFormat;
-
 
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
@@ -34,10 +32,10 @@ import dev.hardwood.row.PqInterval;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqVariant;
 import dev.hardwood.row.PqVariantObject;
+import dev.hardwood.row.VariantType;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 import dev.hardwood.schema.SchemaNode;
-import dev.hardwood.row.VariantType;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
