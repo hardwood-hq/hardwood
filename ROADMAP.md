@@ -433,6 +433,7 @@ For field-level `parquet.thrift` metadata coverage (which spec fields are read/p
   - [x] Recursive nested record materialization
   - [x] List and map materialization into standard Java collections
 - [x] `AvroReaders` factory — overloads for filter pushdown and column projection
+- [x] Internal parquet-avro 1.17.1-compatible generated named-type conversion (#925)
 - [ ] Avro `SpecificRecord` / generated class support
 
 ### 11.3 Parquet-Java Compatibility (`hardwood-parquet-java-compat`)

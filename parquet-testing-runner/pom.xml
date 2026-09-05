@@ -51,6 +51,11 @@
       <groupId>dev.hardwood</groupId>
       <artifactId>hardwood-core</artifactId>
     </dependency>
+    <dependency>
+      <groupId>dev.hardwood</groupId>
+      <artifactId>hardwood-avro</artifactId>
+      <scope>test</scope>
+    </dependency>
 
     <!-- Compression libraries needed for test files -->
     <dependency>
@@ -75,6 +80,11 @@
     </dependency>
 
     <!-- Parquet reference implementation -->
+    <dependency>
+      <groupId>org.apache.avro</groupId>
+      <artifactId>avro</artifactId>
+      <scope>test</scope>
+    </dependency>
     <dependency>
       <groupId>org.apache.parquet</groupId>
       <artifactId>parquet-avro</artifactId>
