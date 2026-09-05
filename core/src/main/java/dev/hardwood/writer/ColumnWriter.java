@@ -46,13 +46,18 @@ public final class ColumnWriter {
     /// populated (columns addressed by index or name), then submits it. There is no
     /// separate build or submit step to forget.
     ///
+    /// A failure anywhere in the batch — validation or I/O — marks the writer as failed.
+    /// Under the default [WriteFailurePolicy#DISCARD], a failed writer refuses subsequent writes
+    /// and discards the output on [ParquetFileWriter#close()] rather than publishing a
+    /// truncated file.
+    ///
     /// @param filler populates the batch's columns; must cover every column exactly once
     /// @throws IOException if the write fails
     /// @throws IllegalArgumentException if the batch does not cover every column, or its
     ///         per-layer inputs do not agree on a record count
     /// @throws UnsupportedOperationException if the schema has a shape the writer cannot
     ///         produce
-    /// @throws IllegalStateException if the writer is closed
+    /// @throws IllegalStateException if the writer is closed, or a previous write has failed
     public void writeBatch(Consumer<ColumnBatch> filler) throws IOException {
         writer.ensureOpen();
         writer.writeStagedBatch(filler);

@@ -76,6 +76,10 @@ public final class WriterConfig {
     /// than silently dropping the digits that do not fit.
     public static final PrecisionLossPolicy DEFAULT_PRECISION_LOSS_POLICY = PrecisionLossPolicy.REJECT;
 
+    /// Default write-failure policy: discard the output when a write has failed, so `try-with-resources`
+    /// is safe by default and a failure leaves nothing behind.
+    public static final WriteFailurePolicy DEFAULT_WRITE_FAILURE_POLICY = WriteFailurePolicy.DISCARD;
+
     /// Default encoding policy: [ColumnEncoding#AUTO], leaving each column chunk's encoding to
     /// the size comparison the writer makes once the row group is buffered.
     public static final ColumnEncoding DEFAULT_ENCODING = ColumnEncoding.AUTO;
@@ -88,6 +92,7 @@ public final class WriterConfig {
     private final int statisticsTruncationLength;
     private final CompressionCodec codec;
     private final PrecisionLossPolicy precisionLossPolicy;
+    private final WriteFailurePolicy writeFailurePolicy;
 
     private WriterConfig(Builder builder) {
         this.pageTargetBytes = builder.pageTargetBytes;
@@ -98,6 +103,7 @@ public final class WriterConfig {
         this.statisticsTruncationLength = builder.statisticsTruncationLength;
         this.codec = builder.codec;
         this.precisionLossPolicy = builder.precisionLossPolicy;
+        this.writeFailurePolicy = builder.writeFailurePolicy;
     }
 
     /// The default configuration.
@@ -162,6 +168,12 @@ public final class WriterConfig {
         return precisionLossPolicy;
     }
 
+    /// What [ParquetFileWriter#close()] does when a write has failed: discard the output
+    /// (the default) or commit the successfully-written prefix.
+    public WriteFailurePolicy writeFailurePolicy() {
+        return writeFailurePolicy;
+    }
+
     /// `ZSTD` when its library is loadable, otherwise `UNCOMPRESSED`. The class is only probed
     /// for presence, not initialized, so picking the default never triggers the native load.
     private static CompressionCodec defaultCodec() {
@@ -181,6 +193,7 @@ public final class WriterConfig {
         private int statisticsTruncationLength = DEFAULT_STATISTICS_TRUNCATION_LENGTH;
         private CompressionCodec codec = DEFAULT_CODEC;
         private PrecisionLossPolicy precisionLossPolicy = DEFAULT_PRECISION_LOSS_POLICY;
+        private WriteFailurePolicy writeFailurePolicy = DEFAULT_WRITE_FAILURE_POLICY;
 
         private Builder() {
         }
@@ -310,6 +323,21 @@ public final class WriterConfig {
                 throw new IllegalArgumentException("precisionLossPolicy must not be null");
             }
             this.precisionLossPolicy = precisionLossPolicy;
+            return this;
+        }
+
+        /// Sets what [ParquetFileWriter#close()] does when a write has failed; must be non‑null.
+        /// Defaults to [WriteFailurePolicy#DISCARD].
+        ///
+        /// Under [WriteFailurePolicy#DISCARD], a writer that has thrown once refuses to publish:
+        /// `close()` discards the output silently, and `try‑with‑resources` is safe by default.
+        /// Under [WriteFailurePolicy#COMMIT_PREFIX], `close()` writes a valid footer over the rows
+        /// that were flushed before the failure.
+        public Builder writeFailurePolicy(WriteFailurePolicy policy) {
+            if (policy == null) {
+                throw new IllegalArgumentException("writeFailurePolicy must not be null");
+            }
+            this.writeFailurePolicy = policy;
             return this;
         }
 

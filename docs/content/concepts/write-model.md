@@ -28,7 +28,7 @@ The `FileMetaData` footer carries the schema and every page and column-chunk off
 Three things follow for a caller:
 
 - **A file is valid only after `close()` returns.** Before that, the destination holds pages without a footer, and no reader can open it. A writer abandoned mid-way leaves nothing readable.
-- **A failure leaves nothing behind.** When the writer cannot finish, it discards what it has written. The local backend writes to a temporary sibling path and renames atomically on close, so a reader never observes a half-written file at the target path.
+- **A failure leaves nothing behind.** When the writer cannot finish — whether `create()`, a `writeBatch`, a `writeRow` flush, or `close()` itself fails — it discards what it has written. A writer that has thrown once refuses to publish; `close()` discards rather than committing a truncated prefix, and `try-with-resources` is safe by default. The local backend writes to a temporary sibling path and renames atomically on close, so a reader never observes a half-written file at the target path. A caller who wants the successfully-written prefix after a failure can configure `WriteFailurePolicy.COMMIT_PREFIX`, which makes `close()` finalize whatever rows were flushed before the failure rather than discarding them.
 - **The destination is a sequential sink.** `OutputFile` is `create` / `write` / `position` / `close` — no seeking, no size known ahead of time. That is what lets the same interface serve a file channel today and a multipart object upload later.
 
 ## What bounds memory
