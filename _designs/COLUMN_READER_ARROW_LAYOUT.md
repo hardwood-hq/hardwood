@@ -407,10 +407,13 @@ for (int r = 0; r < recordCount; r++) {
 drive them in lockstep on shared layer offsets:
 
 ```java
-try (ColumnReader keys   = reader.columnReader("tags.key_value.key");
-     ColumnReader values = reader.columnReader("tags.key_value.value")) {
+try (ColumnReaders columns = reader.columnReaders(
+        ColumnProjection.columns("tags.key_value.key", "tags.key_value.value"))) {
 
-    while (keys.nextBatch() & values.nextBatch()) {
+    ColumnReader keys   = columns.getColumnReader("tags.key_value.key");
+    ColumnReader values = columns.getColumnReader("tags.key_value.value");
+
+    while (columns.nextBatch()) {
         int[]    entryOffsets  = keys.getLayerOffsets(0);
         Validity mapValidity   = keys.getLayerValidity(0);
         byte[]   keyBytes      = keys.getBinaryValues();

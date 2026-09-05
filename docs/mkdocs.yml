@@ -128,7 +128,7 @@ extra:
       link: https://github.com/hardwood-hq/hardwood
   # Latest released version, substituted into Maven/Gradle examples in the
   # docs via the {{hardwood_version}} placeholder. Updated by release.sh.
-  hardwood_version: 1.0.0.Final
+  hardwood_version: 1.1.0.Beta1
   # GitHub release tag the CLI download link points at (git tag, v-prefixed).
   # Updated by release.sh for the tagged docs build; main keeps it at the
   # rolling early-access tag.

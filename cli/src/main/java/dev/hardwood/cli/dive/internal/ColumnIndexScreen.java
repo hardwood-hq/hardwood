@@ -214,7 +214,7 @@ public final class ColumnIndexScreen {
             int idx = filtered.get(i);
             String nulls = ci.nullCounts() != null && idx < ci.nullCounts().length
                     ? Fmt.fmt("%,d", ci.nullCounts()[idx])
-                    : "—";
+                    : Strings.ABSENT_VALUE;
             rows.add(Row.from(
                     CursorPane.marker(isExpandable(ci, idx, col, state.logicalTypes(), statBudget),
                             i == state.selection(), mixed) + idx,
@@ -300,7 +300,7 @@ public final class ColumnIndexScreen {
     private static void appendBound(List<Line> lines, String label, byte[] bytes, ColumnSchema col,
                                     boolean logical, int width) {
         // Modal has space — render whole value
-        String value = bytes == null ? "—" : ValueFormatter.formatBytes(bytes, col, logical);
+        String value = bytes == null ? Strings.ABSENT_VALUE : ValueFormatter.formatBytes(bytes, col, logical);
         // The label occupies the first five cells; continuation lines are
         // indented to match so a wrapped value reads as one field.
         List<String> wrapped = Strings.hardWrap(value, Math.max(1, width - 5));
@@ -455,14 +455,14 @@ public final class ColumnIndexScreen {
 
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical, int budget) {
         if (bytes == null) {
-            return "—";
+            return Strings.ABSENT_VALUE;
         }
         String full = ValueFormatter.formatBytes(bytes, col, logical, budget);
         return Strings.truncateRight(full, budget);
     }
 
     private static String formatStatFull(byte[] bytes, ColumnSchema col, boolean logical) {
-        return bytes == null ? "—" : ValueFormatter.formatBytes(bytes, col, logical);
+        return bytes == null ? Strings.ABSENT_VALUE : ValueFormatter.formatBytes(bytes, col, logical);
     }
 
     private static void renderEmpty(Buffer buffer, Rect area, String message) {

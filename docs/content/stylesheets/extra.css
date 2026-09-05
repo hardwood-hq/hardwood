@@ -64,3 +64,30 @@
 .md-typeset a:not(.headerlink):not(:has(img)):hover {
   text-decoration-thickness: 2px;
 }
+
+/*
+ * "news" admonition: home for release announcements on the landing page. Styled
+ * off the link colour so it follows the brand palette in both schemes, rather
+ * than borrowing one of Material's semantic colours, whose meanings (success,
+ * info) are not what a release announcement means.
+ */
+:root {
+  --md-admonition-icon--news: url('data:image/svg+xml;charset=utf-8,<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M20 5v14H4V5zm0-2H4c-1.11 0-2 .89-2 2v14c0 1.11.89 2 2 2h16c1.11 0 2-.89 2-2V5c0-1.11-.89-2-2-2m-2 12H6v2h12zm-8-8H6v6h4zm2 2h6V7h-6zm6 2h-6v2h6z"/></svg>');
+}
+
+.md-typeset .admonition.news,
+.md-typeset details.news {
+  border-color: var(--md-typeset-a-color);
+}
+
+.md-typeset .news > .admonition-title,
+.md-typeset .news > summary {
+  background-color: color-mix(in srgb, var(--md-typeset-a-color) 12%, transparent);
+}
+
+.md-typeset .news > .admonition-title::before,
+.md-typeset .news > summary::before {
+  background-color: var(--md-typeset-a-color);
+  -webkit-mask-image: var(--md-admonition-icon--news);
+          mask-image: var(--md-admonition-icon--news);
+}

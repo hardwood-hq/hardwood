@@ -79,6 +79,24 @@ scans. The full mechanics — layer counts per schema shape, the empty-vs-null d
 hot-loop null-check shapes — are documented in
 [Read Column by Column](../how-to/column-reader.md).
 
+## Several columns means one `ColumnReaders`, not several `ColumnReader`s
+
+A `ColumnReader` is a cursor over one column, and each one built separately is sized for itself.
+Batch capacity is a byte budget divided by the widths of the columns that reader projects, so a
+`BYTE_ARRAY` column batches at fewer rows than an `INT32` one over the same file, and a filtered
+reader is sized for its predicate's columns as well as its own. Two readers built independently
+therefore reach different rows on their *n*th batch.
+
+That makes `while (a.nextBatch() & b.nextBatch())` the wrong shape for reading two columns of the
+same rows: the loop stops when whichever reader has the larger batches runs out, and the values it
+took from each on any given turn came from different rows. Neither reader reports a problem,
+because neither has one — each is a complete, correct read of its own column.
+
+`ColumnReaders` is the multi-column read. Its readers share one row-group iterator and one batch
+size, and `ColumnReaders.nextBatch()` advances all of them together and checks that they agree.
+Reach for a bare `ColumnReader` when you want one column, and for `ColumnReaders` the moment you
+want two.
+
 ## They are not exclusive
 
 Nothing forces a single choice per file. A pipeline can open a `ColumnReader` to compute an

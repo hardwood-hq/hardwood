@@ -87,6 +87,7 @@ class ParquetTestingRepoTest {
         files.add("data/incorrect_map_schema.parquet");
         files.add("data/int32_decimal.parquet");
         files.add("data/int32_with_null_pages.parquet");
+        files.add("data/int32_with_uuid_logical_type.parquet");
         files.add("data/int64_decimal.parquet");
         files.add("data/int96_from_spark.parquet");
         files.add("data/large_string_map.brotli.parquet");

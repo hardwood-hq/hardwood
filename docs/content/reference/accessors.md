@@ -38,7 +38,7 @@ All accessors are available in two forms — name-based (`getInt("column_name")`
 | `getTime` | INT32 or INT64 | TIME | `LocalTime` |
 | `getTimestamp` | INT64, or legacy INT96 | TIMESTAMP (`isAdjustedToUTC = true`) | `Instant` |
 | `getLocalTimestamp` | INT64 | TIMESTAMP (`isAdjustedToUTC = false`) | `LocalDateTime` |
-| `getDecimal` | INT32, INT64, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
+| `getDecimal` | INT32, INT64, BYTE_ARRAY, or FIXED_LEN_BYTE_ARRAY | DECIMAL | `BigDecimal` |
 | `getUuid` | FIXED_LEN_BYTE_ARRAY | UUID | `UUID` |
 | `getInterval` | FIXED_LEN_BYTE_ARRAY(12) | INTERVAL | `PqInterval` |
 | `getStruct` | | | `PqStruct` |

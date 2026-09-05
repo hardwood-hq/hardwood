@@ -26,6 +26,7 @@ RUN microdnf install -y --nodocs \
       poppler-utils \
       vim-common \
       util-linux-script \
+      procps-ng \
       fontconfig \
       dejavu-sans-fonts \
       google-noto-sans-vf-fonts \

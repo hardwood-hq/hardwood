@@ -31,12 +31,14 @@ import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.LayerKind;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.reader.RowReader;
 import dev.hardwood.row.PqList;
 import dev.hardwood.row.PqMap;
 import dev.hardwood.row.PqStruct;
+import dev.hardwood.schema.ColumnProjection;
 import dev.hardwood.schema.SchemaNode;
 
 import static org.assertj.core.api.Assertions.assertThat;
@@ -639,10 +641,6 @@ class NestedPerformanceTest {
         try (Hardwood hardwood = Hardwood.create();
              ParquetFileReader reader = hardwood.open(InputFile.of(DATA_FILE))) {
 
-            // Resolve column indices from schema
-            int versionColIdx = reader.getFileSchema().getColumn("version").columnIndex();
-            int confidenceColIdx = reader.getFileSchema().getColumn("confidence").columnIndex();
-
             // Find bbox leaf columns by walking the schema tree
             SchemaNode.GroupNode root = reader.getFileSchema().getRootNode();
             SchemaNode.GroupNode bboxNode = (SchemaNode.GroupNode) findChild(root, "bbox");
@@ -660,10 +658,12 @@ class NestedPerformanceTest {
             int namesPrimaryColIdx = ((SchemaNode.PrimitiveNode) findChild(namesNode, "primary")).columnIndex();
 
             // Read flat primitives: version and confidence
-            try (ColumnReader versionCol = reader.columnReader(versionColIdx);
-                 ColumnReader confidenceCol = reader.columnReader(confidenceColIdx)) {
-                while (versionCol.nextBatch() & confidenceCol.nextBatch()) {
-                    int count = versionCol.getRecordCount();
+            try (ColumnReaders columns = reader.columnReaders(
+                    ColumnProjection.columns("version", "confidence"))) {
+                ColumnReader versionCol = columns.getColumnReader("version");
+                ColumnReader confidenceCol = columns.getColumnReader("confidence");
+                while (columns.nextBatch()) {
+                    int count = columns.getRecordCount();
                     int[] versions = versionCol.getInts();
                     double[] confidences = confidenceCol.getDoubles();
                     Validity vValid = versionCol.getLeafValidity();
@@ -690,10 +690,14 @@ class NestedPerformanceTest {
             }
 
             // Read bbox leaf columns
-            try (ColumnReader xminCol = reader.columnReader(bboxXminColIdx);
-                 ColumnReader xmaxCol = reader.columnReader(bboxXmaxColIdx)) {
-                while (xminCol.nextBatch() & xmaxCol.nextBatch()) {
-                    int count = xminCol.getRecordCount();
+            String xminName = columnName(reader, bboxXminColIdx);
+            String xmaxName = columnName(reader, bboxXmaxColIdx);
+            try (ColumnReaders columns = reader.columnReaders(
+                    ColumnProjection.columns(xminName, xmaxName))) {
+                ColumnReader xminCol = columns.getColumnReader(xminName);
+                ColumnReader xmaxCol = columns.getColumnReader(xmaxName);
+                while (columns.nextBatch()) {
+                    int count = columns.getRecordCount();
                     double[] xmins = xminCol.getDoubles();
                     double[] xmaxs = xmaxCol.getDoubles();
                     Validity xminValid = xminCol.getLeafValidity();
@@ -814,6 +818,12 @@ class NestedPerformanceTest {
             }
         }
         throw new IllegalArgumentException("Child not found: " + name + " in " + group.name());
+    }
+
+    /// The path of a leaf found by walking the schema tree, which reaches a node carrying a
+    /// column index where [dev.hardwood.schema.ColumnProjection] addresses columns by path.
+    private static String columnName(ParquetFileReader reader, int columnIndex) {
+        return reader.getFileSchema().getColumn(columnIndex).fieldPath().toString();
     }
 
     private static int findFirstLeafColumnIndex(SchemaNode node) {

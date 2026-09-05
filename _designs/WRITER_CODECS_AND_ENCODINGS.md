@@ -431,7 +431,7 @@ Each reachable from this shape and sequenced separately:
   decompression.
 - **DataPage V2**, its own milestone. Delta encodings pay more there, where level streams
   stay uncompressed beside a compressed value section.
-- **`encoding_stats`** in the column metadata, which no increment writes yet.
+- **`encoding_stats`** in the column metadata, which increment 37 writes.
 
 ## User documentation
 

@@ -194,8 +194,9 @@ single chunk.
 The list is the deduplicated set of encodings present, matching how the reader and other
 engines interpret field `2`. `RLE` appears only when the column has a level stream (max
 definition or repetition level > 0), unchanged from stage 4. The optional `encoding_stats`
-(field `13`, per-page-type encoding counts) is not written; it is advisory and no reader in
-scope requires it.
+(field `13`, per-page-type encoding counts) is not written here. It is what tells a reader
+whether a chunk's dictionary covers all of the chunk's values, so a file written without it
+gets no dictionary-based row-group pruning; increment 37 adds it.
 
 ## `WriterConfig`
 

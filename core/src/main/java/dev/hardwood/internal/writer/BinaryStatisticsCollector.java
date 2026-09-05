@@ -9,13 +9,14 @@ package dev.hardwood.internal.writer;
 
 import java.util.Arrays;
 
+import dev.hardwood.internal.predicate.BinaryComparator;
 import dev.hardwood.metadata.Statistics;
 
 /// Accumulates a binary column chunk's `min` / `max` / `null_count` in one of the two orders a
 /// byte string is compared in: unsigned lexicographic — the type-defined order for an
-/// unannotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` and for the string-like annotations,
-/// matching the reader's `BinaryComparator` — or signed big-endian two's complement, the order
-/// of a `DECIMAL`'s represented value.
+/// unannotated `BYTE_ARRAY` / `FIXED_LEN_BYTE_ARRAY` and for the string-like annotations — or
+/// signed big-endian two's complement, the order of a `DECIMAL`'s represented value. Both are
+/// the orders `BinaryComparator` compares in, which the signed arm calls directly.
 ///
 /// Bounds are **truncated** to at most `truncationLength` bytes so a chunk of long values does
 /// not bloat the footer. A truncated `min` keeps the value's first *N* bytes — a prefix is `<=`
@@ -67,32 +68,7 @@ final class BinaryStatisticsCollector implements BinaryStatistics {
     private int compare(byte[] left, byte[] right) {
         return order == Order.LEXICOGRAPHIC
                 ? Arrays.compareUnsigned(left, right)
-                : compareSignedBigEndian(left, right);
-    }
-
-    /// Compares two big-endian two's complement integers that may differ in length, as a
-    /// `DECIMAL`'s unscaled values do. A negative value is below every non-negative one; within
-    /// a sign, the shorter value is sign-extended to the longer and the bytes compare unsigned.
-    /// An empty array is the value zero.
-    private static int compareSignedBigEndian(byte[] left, byte[] right) {
-        boolean leftNegative = left.length > 0 && left[0] < 0;
-        boolean rightNegative = right.length > 0 && right[0] < 0;
-        if (leftNegative != rightNegative) {
-            return leftNegative ? -1 : 1;
-        }
-        int length = Math.max(left.length, right.length);
-        int leftPad = leftNegative ? 0xFF : 0x00;
-        int rightPad = rightNegative ? 0xFF : 0x00;
-        int leftOffset = length - left.length;
-        int rightOffset = length - right.length;
-        for (int i = 0; i < length; i++) {
-            int leftByte = i < leftOffset ? leftPad : left[i - leftOffset] & 0xFF;
-            int rightByte = i < rightOffset ? rightPad : right[i - rightOffset] & 0xFF;
-            if (leftByte != rightByte) {
-                return leftByte - rightByte;
-            }
-        }
-        return 0;
+                : BinaryComparator.compareSigned(left, right);
     }
 
     @Override

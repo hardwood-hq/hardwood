@@ -79,11 +79,11 @@ class BloomFilterEndToEndTest {
             try (ColumnReaders cols = reader.buildColumnReaders(projection).filter(PRESENT).build()) {
                 ColumnReader code = cols.getColumnReader("code");
                 ColumnReader id = cols.getColumnReader("id");
-                assertThat(code.nextBatch() & id.nextBatch()).isTrue();
-                assertThat(code.getRecordCount()).isEqualTo(1);
+                assertThat(cols.nextBatch()).isTrue();
+                assertThat(cols.getRecordCount()).isEqualTo(1);
                 assertThat(code.getInts()[0]).isEqualTo(3);
                 assertThat(id.getLongs()[0]).isEqualTo(1L); // code = id*3, so code==3 is id==1
-                assertThat(code.nextBatch() & id.nextBatch()).isFalse();
+                assertThat(cols.nextBatch()).isFalse();
             }
         }
     }

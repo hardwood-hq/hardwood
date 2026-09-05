@@ -2,6 +2,7 @@
 
 Avoid "not my department" thinking; if, for instance, there are build failures you consider unrelated to our current changes, still make an effort to fix them.
 Never add Claude (or any Anthropic identity) as a Co-Authored-By trailer on commit messages. Human co-authors are fine.
+Never put a Claude session link or session ID in a pull request description. It resolves only for the account that ran the session, so to everyone else reviewing the change it is a dead link.
 When a CLI tool is missing from the dev container (e.g. `cmp: command not found`), surface it to the user and propose adding the providing package to the `Dockerfile`'s `microdnf install` list — unless there is an obvious one-line alternative (e.g. `command -v` for `which`) or a Python equivalent that is just as terse. Do not silently work around it.
 
 # Multiple Sessions

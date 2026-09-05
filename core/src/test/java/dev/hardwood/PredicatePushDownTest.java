@@ -1085,8 +1085,8 @@ class PredicatePushDownTest {
             ColumnReader valueReader = columns.getColumnReader("value");
 
             int totalRows = 0;
-            while (idReader.nextBatch() & valueReader.nextBatch()) {
-                int count = idReader.getRecordCount();
+            while (columns.nextBatch()) {
+                int count = columns.getRecordCount();
                 long[] ids = idReader.getLongs();
                 long[] values = valueReader.getLongs();
                 for (int i = 0; i < count; i++) {
@@ -1127,8 +1127,8 @@ class PredicatePushDownTest {
             ColumnReader labelReader = columns.getColumnReader("label");
 
             int totalRows = 0;
-            while (valueReader.nextBatch() & labelReader.nextBatch()) {
-                int count = valueReader.getRecordCount();
+            while (columns.nextBatch()) {
+                int count = columns.getRecordCount();
                 long[] values = valueReader.getLongs();
                 String[] labels = labelReader.getStrings();
                 for (int i = 0; i < count; i++) {

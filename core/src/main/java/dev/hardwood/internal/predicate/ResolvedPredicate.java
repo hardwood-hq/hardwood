@@ -57,9 +57,95 @@ public sealed interface ResolvedPredicate {
     }
     record BooleanPredicate(int columnIndex, FilterPredicate.Operator op, boolean value) implements ResolvedPredicate {}
 
-    /// Binary predicate with optional signed comparison for FIXED_LEN_BYTE_ARRAY decimals.
+    /// A comparison against a byte string.
+    ///
+    /// The [Comparison] fixes both the order the bytes compare in and whether a number has a
+    /// single encoding in the column. The two are not independent — only a variable-length
+    /// `DECIMAL` compares signed while admitting more than one encoding of the same value — so
+    /// they are carried as one three-valued choice rather than as two flags.
     record BinaryPredicate(int columnIndex, FilterPredicate.Operator op, byte[] value,
-            boolean signed) implements ResolvedPredicate {}
+            Comparison comparison) implements ResolvedPredicate {
+
+        /// The order a binary column's values compare in, and whether a value has one encoding
+        /// in it.
+        public enum Comparison {
+
+            /// Unsigned lexicographic — the type-defined order of a byte string compared as
+            /// itself. A value is exactly the bytes it was written as.
+            BYTE_STRING(false, true),
+
+            /// Big-endian two's complement over a `FIXED_LEN_BYTE_ARRAY` `DECIMAL`, whose every
+            /// value is padded to the column width, so a number has one encoding in it.
+            ///
+            /// `DECIMAL(scale = 2)` over `FIXED_LEN_BYTE_ARRAY(4)`:
+            ///
+            /// ```text
+            ///  1.27  ->  00 00 00 7F
+            ///  1.28  ->  00 00 00 80
+            /// -1.00  ->  FF FF FF 9C
+            /// ```
+            ///
+            /// Equal widths, so the sign decides first and the rest compares unsigned. One
+            /// encoding per number, so a bloom-filter or dictionary probe for the literal's
+            /// bytes answers for the value.
+            FIXED_DECIMAL(true, true),
+
+            /// Big-endian two's complement over a `BYTE_ARRAY` `DECIMAL`. The format asks such a
+            /// column for the fewest bytes that hold each value but does not require them, so a
+            /// writer may pad and the same number may appear under more than one encoding.
+            ///
+            /// `DECIMAL(scale = 2)`, each value in the fewest bytes that hold it:
+            ///
+            /// ```text
+            ///  1.27  ->     7F
+            ///  1.28  ->  00 80     the leading 00 keeps 128 positive
+            /// -1.00  ->     9C
+            /// -2.56  ->  FF 00
+            /// ```
+            ///
+            /// Length does not track magnitude: byte-wise, `7F` outranks `00 80` and `9C` falls
+            /// below `FF 00`, both backwards. The shorter value is sign-extended to the longer
+            /// before the bytes compare — `7F` against `00 80` is `00 7F` against `00 80`.
+            ///
+            /// And `00 00 00 7F` is a legal spelling of the same `1.27`, so equality cannot be
+            /// decided by hashing or matching the literal's own bytes: the probe would miss a
+            /// value the column holds.
+            VARIABLE_DECIMAL(true, false);
+
+            private final boolean signed;
+            private final boolean byteExact;
+
+            Comparison(boolean signed, boolean byteExact) {
+                this.signed = signed;
+                this.byteExact = byteExact;
+            }
+
+            /// Whether the bytes compare as a big-endian two's complement value — the order a
+            /// `DECIMAL`'s unscaled value sorts in — rather than unsigned lexicographically.
+            public boolean signed() {
+                return signed;
+            }
+
+            /// Whether the column can hold a given value only as exactly one byte string.
+            /// Equality shortcuts that test bytes rather than order (bloom filters, dictionary
+            /// membership) are sound only when it holds; without it a padded value hashes to a
+            /// miss and its rows would be dropped.
+            public boolean byteExact() {
+                return byteExact;
+            }
+        }
+
+        /// Whether the predicate's bytes compare signed. See [Comparison#signed()].
+        public boolean signed() {
+            return comparison.signed();
+        }
+
+        /// Whether the column encodes a value as exactly these bytes. See
+        /// [Comparison#byteExact()].
+        public boolean byteExact() {
+            return comparison.byteExact();
+        }
+    }
 
     record IntInPredicate(int columnIndex, int[] values) implements ResolvedPredicate {}
     record LongInPredicate(int columnIndex, long[] values) implements ResolvedPredicate {}
@@ -176,7 +262,7 @@ public sealed interface ResolvedPredicate {
                     p.ieee754TotalOrder());
             case BooleanPredicate p -> new BooleanPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value());
             case BinaryPredicate p -> new BinaryPredicate(mapped(p.columnIndex(), columnMapping), p.op(), p.value(),
-                    p.signed());
+                    p.comparison());
             case IntInPredicate p -> new IntInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
             case LongInPredicate p -> new LongInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
             case BinaryInPredicate p -> new BinaryInPredicate(mapped(p.columnIndex(), columnMapping), p.values());
@@ -221,7 +307,8 @@ public sealed interface ResolvedPredicate {
             case DoublePredicate p -> new DoublePredicate(p.columnIndex(), p.op().invert(), p.value(),
                     p.ieee754TotalOrder());
             case BooleanPredicate p -> new BooleanPredicate(p.columnIndex(), p.op().invert(), p.value());
-            case BinaryPredicate p -> new BinaryPredicate(p.columnIndex(), p.op().invert(), p.value(), p.signed());
+            case BinaryPredicate p -> new BinaryPredicate(p.columnIndex(), p.op().invert(), p.value(),
+                    p.comparison());
             case IsNullPredicate p -> new IsNotNullPredicate(p.columnIndex());
             case IsNotNullPredicate p -> new IsNullPredicate(p.columnIndex());
             case And a -> new Or(a.children().stream()
@@ -245,7 +332,8 @@ public sealed interface ResolvedPredicate {
             case BinaryInPredicate p -> {
                 List<ResolvedPredicate> notEqs = new ArrayList<>(p.values().length);
                 for (byte[] value : p.values()) {
-                    notEqs.add(new BinaryPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value, false));
+                    notEqs.add(new BinaryPredicate(p.columnIndex(), FilterPredicate.Operator.NOT_EQ, value,
+                            BinaryPredicate.Comparison.BYTE_STRING));
                 }
                 yield new And(notEqs);
             }

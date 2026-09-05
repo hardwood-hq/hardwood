@@ -762,6 +762,11 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
         };
     }
 
+    /// Grows a byte-array-shaped value buffer to `newCapacity`.
+    ///
+    /// For `FIXED_LEN_BYTE_ARRAY` the new offsets stay `i * width`, with the width taken
+    /// from the column — present and positive, validated for every touched column by
+    /// [RowGroupIterator#initialize] before this worker was built.
     private BinaryBatchValues growBinaryBatchValues(BinaryBatchValues bbv, int newCapacity) {
         int oldCapacity = bbv.offsets.length - 1;
         if (newCapacity <= oldCapacity) {

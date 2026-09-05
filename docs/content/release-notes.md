@@ -13,16 +13,49 @@
 
 See [GitHub Releases](https://github.com/hardwood-hq/hardwood/releases) for downloads and more information.
 
-## 1.1.0-SNAPSHOT
+## 1.1.0.Beta1 (2026-08-31)
 
-- Physical `skip(N)` on multi-file row readers is now a true global offset over the concatenated input files; skipped files have their footers read for row counts, but their data pages are not decoded.
-- The `hardwood` CLI is now built on the aesh command framework instead of picocli/Quarkus; removing the Quarkus/CDI bootstrap makes the CLI start faster
-- `hardwood help <command>` is removed — use `hardwood <command> --help` (or `-h`)
-- Shell completion scripts are now generated for zsh and fish in addition to bash
-- The native `hardwood` binary now reads LZ4 and LZ4_RAW compressed files
-- Byte sizes printed by the CLI and the `dive` TUI carry binary unit labels (`KiB`, `MiB`, `GiB`), matching the 1024-based scaling they have always used
-- `hardwood convert --format json` writes numbers and booleans as JSON scalars instead of quoted strings, and a null as `null` instead of the string `"null"`
-- `hardwood convert --format csv` writes a null as an empty field instead of the text `null`, which collided with a string value of `null`; the new `--null-string` option picks a different representation, e.g. `--null-string '\N'`
+[Announcement blog post](https://www.morling.dev/blog/parquet-file-write-support-bloom-filters-improved-performance-hardwood-1-1-0-beta1/) ·
+[API changes](/api-changes/1.1.0.Beta1/)
+
+Highlights of this release:
+
+- Parquet files can be written — `RowWriter` a record at a time, `ColumnWriter` in aligned batches of primitive arrays — over the full type system, nested structs, lists and maps included
+    - Every encoding and compression codec the format defines, bar the deprecated `LZ4` framing and `LZO`
+    - Statistics and `nan_count` are written, page indexes and `SizeStatistics` are not
+    - Footer key-value metadata and the `created_by` identifier are set on `ParquetFileWriter`, at any point until `close()` writes the footer
+- Two push-down sources for skipping non-matching row groups
+    - A column's Bloom filter, for `eq` and `in` predicates
+    - The chunk's dictionary page, when its encoding stats show every data page is dictionary-encoded
+- Further improved read performance
+    - A fast path for clean [fixed-length `LIST` pages](https://www.morling.dev/blog/fast-path-for-fixed-length-lists-in-parquet/)
+    - Bulk-unpacked `DELTA_BINARY_PACKED` miniblocks
+    - Dictionary indices of 9 to 32 bits read a word at a time
+    - All-present definition levels are no longer materialized
+- Multi-file reading
+    - Columns are matched by field path, so files may declare them in any order; a real mismatch raises `SchemaIncompatibleException` as the file opens
+    - Physical `skip(N)` is a true global offset across the concatenated files
+    - Per-file metadata through `ParquetFileReader.getFileCount()` and `getFileMetaData(int)`
+- Correctness fixes
+    - A `FilterPredicate` naming a group resolved to one of its leaves and returned wrong rows; a group name is now rejected with `IllegalArgumentException` at reader creation
+    - Batch sizing accounts for list fan-out, so a high-fan-out repeated column no longer drains a whole file into a single batch and exhausts the heap
+    - `GeographyType.algorithm` is read as the enum it is, so a non-spherical geography column no longer reads as `SPHERICAL`; an unrecognized algorithm reports `EdgeInterpolationAlgorithm.UNKNOWN`
+    - Variant decoding bounds-checks lengths, guards 32-bit offset arithmetic, corrects the metadata offset-size read, and limits nesting depth
+- The `hardwood` CLI moves from picocli/Quarkus to aesh, which makes it start faster
+    - `dive` navigation is unified across all screens: every key moves the cursor, `▶` marks what `Enter` acts on
+    - `convert` preserves types and NULL — JSON writes real scalars and `null`, CSV an empty field, with `--null-string` to override
+    - `info` surfaces the file's key-value metadata
+
+**Breaking Changes:**
+
+- `Validity` moves to `dev.hardwood`, and `ColumnReader`'s raw `getDefinitionLevels()` / `getRepetitionLevels()` give way to the layer model ([#9](https://github.com/hardwood-hq/hardwood/issues/9), [#749](https://github.com/hardwood-hq/hardwood/issues/749))
+- `ColumnIndex.nullPages()` and `nullCounts()` return `boolean[]` and `long[]`, and the canonical constructors of `ColumnChunk`, `ColumnIndex`, `ColumnMetaData` and `OffsetIndex` take further components — reading these records is unaffected, constructing them directly is not ([#607](https://github.com/hardwood-hq/hardwood/issues/607), [#856](https://github.com/hardwood-hq/hardwood/issues/856), [#903](https://github.com/hardwood-hq/hardwood/issues/903))
+- `S3InputFile.length()` declares `throws IOException`, matching the `InputFile` contract ([#1072](https://github.com/hardwood-hq/hardwood/issues/1072))
+- `hardwood help <command>` is removed — use `hardwood <command> --help` ([#686](https://github.com/hardwood-hq/hardwood/issues/686))
+
+See the [1.1.0.Beta1 milestone](https://github.com/hardwood-hq/hardwood/milestone/8?closed=1) on GitHub for the full list of resolved issues.
+
+Thank you to all contributors to this release: [Arnab Nandy](https://github.com/arnabnandy7), [Chandan Dhamande](https://github.com/nitrogen404), [Fawzi Essam](https://github.com/iifawzi), [Florian Meyer](https://github.com/alloutflo), [Gunnar Morling](https://github.com/gunnarmorling), [Hursh](https://github.com/hurshh), [Hyungun](https://github.com/chlgusrbs0), [Joshua Buss](https://github.com/chicagobuss), [Karen Barseghyan](https://github.com/k-barseghyan), [Kohinoor Gupta](https://github.com/kogupta), [Mehmet Turac](https://github.com/mturac), [Mingjie Zhao](https://github.com/ZhaoMJ), [Morax](https://github.com/fzlzjerry), [Nikulin Nikita](https://github.com/w3lld1), [Rion Williams](https://github.com/rionmonster), [Sebastian Legarraga](https://github.com/slegarraga), [Semyon Sinchenko](https://github.com/SemyonSinchenko), [Shaik Sameer](https://github.com/samsameer2804-cloud), [Shril Kumar](https://github.com/shril), [Ståle Pedersen](https://github.com/stalep).
 
 ## 1.0.0.Final (2026-06-25)
 

@@ -28,6 +28,7 @@ import dev.hardwood.cli.internal.Encodings;
 import dev.hardwood.cli.internal.Fmt;
 import dev.hardwood.cli.internal.LevelSummary;
 import dev.hardwood.cli.internal.Sizes;
+import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.table.RowTable;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -168,24 +169,24 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
         return new String[]{
                 String.valueOf(rg),
                 Fmt.fmt("%,d", cmd.numValues()),
-                nulls >= 0 ? Fmt.fmt("%,d", nulls) : "-",
+                nulls >= 0 ? Fmt.fmt("%,d", nulls) : Strings.ABSENT_VALUE,
                 // Printed wherever the value is known, including where it
                 // follows from the column's shape rather than a histogram. The
                 // column occupies its width either way, and a reader — or a
                 // parser — should not have to know that a non-repeated column
                 // has one value per record to reconstruct the number.
-                summary.hasRecords() ? Fmt.fmt("%,d", summary.records()) : "-",
-                summary.hasPresentValues() ? Fmt.fmt("%,d", summary.presentValues()) : "-",
-                summary.hasAvgFanOut() ? Fmt.fmt("%.2f", summary.avgFanOut()) : "-",
+                summary.hasRecords() ? Fmt.fmt("%,d", summary.records()) : Strings.ABSENT_VALUE,
+                summary.hasPresentValues() ? Fmt.fmt("%,d", summary.presentValues()) : Strings.ABSENT_VALUE,
+                summary.hasAvgFanOut() ? Fmt.fmt("%.2f", summary.avgFanOut()) : Strings.ABSENT_VALUE,
                 cmd.codec().name(),
                 Sizes.format(cmd.totalCompressedSize()),
-                Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize(), "-"),
+                Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize()),
                 Encodings.label(Encodings.dataPages(cmd),
                         Encodings.dictionaryEntries(chunk, inputFile),
-                        dictionaryDenominator(summary, cmd), "-"),
+                        dictionaryDenominator(summary, cmd)),
                 summary.hasUnencoded()
                         ? Sizes.format(summary.unencodedBytes())
-                        : "-"
+                        : Strings.ABSENT_VALUE
         };
     }
 
@@ -332,13 +333,13 @@ public class InspectColumnsCommand implements Command<CommandInvocation> {
                     s.type(),
                     s.codec(),
                     Sizes.format(s.compressed()),
-                    totalCompressed > 0 ? Fmt.fmt("%.1f%%", 100.0 * s.compressed() / totalCompressed) : "-",
-                    Sizes.compression(s.compressed(), s.uncompressed(), "-"),
+                    totalCompressed > 0 ? Fmt.fmt("%.1f%%", 100.0 * s.compressed() / totalCompressed) : Strings.ABSENT_VALUE,
+                    Sizes.compression(s.compressed(), s.uncompressed()),
                     Encodings.label(s.encodings(),
                             s.dictionaryEntriesAvailable() ? s.dictionaryEntries() : -1,
-                            s.dictionaryDenominator(), "-"),
-                    s.unencodedAvailable() ? Sizes.format(s.unencoded()) : "-",
-                    s.pageCountAvailable() ? String.valueOf(s.pageCount()) : "-"
+                            s.dictionaryDenominator()),
+                    s.unencodedAvailable() ? Sizes.format(s.unencoded()) : Strings.ABSENT_VALUE,
+                    s.pageCountAvailable() ? String.valueOf(s.pageCount()) : Strings.ABSENT_VALUE
             });
         }
         System.out.println(RowTable.renderTable(headers, rows));

@@ -31,7 +31,19 @@ public class PlainDecoder implements ValueDecoder {
     private int currentByte = 0;
     private int bitPosition = 8; // 8 means we need to read a new byte
 
+    /// Creates a decoder over `data`.
+    ///
+    /// @param data the page bytes to decode from
+    /// @param offset the position in `data` to start at
+    /// @param type the physical type of the values to decode
+    /// @param typeLength the value width for `FIXED_LEN_BYTE_ARRAY`, `null` for every
+    ///        other type
+    /// @throws IllegalArgumentException if `type` is `FIXED_LEN_BYTE_ARRAY` and
+    ///         `typeLength` is `null`, which leaves the value boundaries undefined
     public PlainDecoder(byte[] data, int offset, PhysicalType type, Integer typeLength) {
+        if (type == PhysicalType.FIXED_LEN_BYTE_ARRAY && typeLength == null) {
+            throw new IllegalArgumentException("FIXED_LEN_BYTE_ARRAY requires a type length to decode");
+        }
         this.data = data;
         this.pos = offset;
         this.type = type;
@@ -214,12 +226,7 @@ public class PlainDecoder implements ValueDecoder {
     private byte[] readByteArrayValue() throws IOException {
         return switch (type) {
             case BYTE_ARRAY -> readByteArray();
-            case FIXED_LEN_BYTE_ARRAY -> {
-                if (typeLength == null) {
-                    throw new IOException("FIXED_LEN_BYTE_ARRAY requires type_length in schema");
-                }
-                yield readFixedLenByteArray(typeLength);
-            }
+            case FIXED_LEN_BYTE_ARRAY -> readFixedLenByteArray(typeLength);
             case INT96 -> readInt96();
             default -> throw new IOException("readByteArrays not supported for type: " + type);
         };

@@ -57,8 +57,8 @@ try (Hardwood hardwood = Hardwood.create();
     ColumnReader col1 = columns.getColumnReader("trip_distance");
     ColumnReader col2 = columns.getColumnReader("fare_amount");
 
-    while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
-        int count = col0.getRecordCount();
+    while (columns.nextBatch()) {
+        int count = columns.getRecordCount();
         double[] v0 = col0.getDoubles();
         double[] v1 = col1.getDoubles();
         double[] v2 = col2.getDoubles();

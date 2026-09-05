@@ -13,6 +13,8 @@ import java.time.Instant;
 import java.time.LocalTime;
 import java.util.List;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
+import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.SchemaPathResolver;
 import dev.hardwood.metadata.ColumnOrder;
 import dev.hardwood.metadata.LogicalType;
@@ -115,10 +117,23 @@ public class FilterPredicateResolver {
                     yield new ResolvedPredicate.LongPredicate(cs.columnIndex(), p.op(),
                             scaled.unscaledValue().longValueExact());
                 }
-                else {
+                else if (physicalType == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
+                    // Every value is padded to the column width, so the literal is too and the
+                    // encoding of a given number is the only one the column can hold.
                     yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
-                            toFixedLenDecimalBytes(scaled.unscaledValue(), cs.typeLength()),
-                            true);
+                            toFixedLenDecimalBytes(scaled.unscaledValue(),
+                                    FixedWidthValidator.requireWidth(null, cs)),
+                            Comparison.FIXED_DECIMAL);
+                }
+                else {
+                    validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
+                    // A BYTE_ARRAY decimal should store each value in the fewest bytes that hold
+                    // it — `should`, not `must`, so a writer may pad and two byte strings of
+                    // different lengths may be the same number. The literal takes the minimal
+                    // form, which is what a conforming writer produces, and VARIABLE_DECIMAL
+                    // keeps equality from ever riding on that encoding.
+                    yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
+                            scaled.unscaledValue().toByteArray(), Comparison.VARIABLE_DECIMAL);
                 }
             }
             case IntColumnPredicate p -> {
@@ -162,21 +177,24 @@ public class FilterPredicateResolver {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.BYTE_ARRAY, cs);
-                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), false);
+                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
+                        Comparison.BYTE_STRING);
             }
             case FilterPredicate.SignedBinaryColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
                 validateLogicalType(p.column(), LogicalType.DecimalType.class, cs);
-                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), true);
+                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
+                        Comparison.FIXED_DECIMAL);
             }
             case FilterPredicate.UUIDColumnPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);
                 rejectRepeated(p.column(), cs);
                 validateType(p.column(), PhysicalType.FIXED_LEN_BYTE_ARRAY, cs);
                 validateLogicalType(p.column(), LogicalType.UuidType.class, cs);
-                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(), false);
+                yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(), p.value(),
+                        Comparison.BYTE_STRING);
             }
             case IntInPredicate p -> {
                 ColumnSchema cs = resolveColumn(p.column(), schema);

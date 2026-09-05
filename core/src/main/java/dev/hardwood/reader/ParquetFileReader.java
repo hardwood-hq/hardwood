@@ -469,6 +469,26 @@ public class ParquetFileReader implements AutoCloseable {
         return reader;
     }
 
+    /// Resolves a user-facing predicate against the reference schema, or returns `null`
+    /// when the read is unfiltered.
+    ///
+    /// Resolution reads the schema of the columns the predicate tests — a `DECIMAL`
+    /// literal, for instance, is converted to the on-disk encoding the column declares —
+    /// so a schema that cannot state that encoding fails here, before the read is
+    /// planned. The file name is added the same way the decode paths add it, so both
+    /// report the same file for the same malformed column.
+    private ResolvedPredicate resolveFilter(FilterPredicate filter) {
+        if (filter == null) {
+            return null;
+        }
+        try {
+            return FilterPredicateResolver.resolve(filter, schema, firstFileMetaData.columnOrders());
+        }
+        catch (SchemaIncompatibleException e) {
+            throw ExceptionContext.addFileContext(inputFiles.get(0).name(), e);
+        }
+    }
+
     private RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
                                      long maxRows, List<RowGroup> firstFileRowGroups) {
         return buildRowReader(projection, filter, maxRows, firstFileRowGroups, 0L);
@@ -483,8 +503,7 @@ public class ParquetFileReader implements AutoCloseable {
     private RowReader buildRowReader(ColumnProjection projection, FilterPredicate filter,
                                      long maxRows, List<RowGroup> firstFileRowGroups,
                                      long tailSkip, long physicalSkip) {
-        ResolvedPredicate resolved = filter != null
-                ? FilterPredicateResolver.resolve(filter, schema, firstFileMetaData.columnOrders()) : null;
+        ResolvedPredicate resolved = resolveFilter(filter);
 
         ProjectedSchema projectedSchema = ProjectedSchema.create(schema, projection, true);
 
@@ -586,8 +605,7 @@ public class ParquetFileReader implements AutoCloseable {
             FilterPredicate filter,
             RowGroupPredicate rowGroupFilter,
             int batchSize) {
-        ResolvedPredicate resolved = filter != null
-                ? FilterPredicateResolver.resolve(filter, schema, firstFileMetaData.columnOrders()) : null;
+        ResolvedPredicate resolved = resolveFilter(filter);
         List<RowGroup> rowGroups = filterRowGroups(rowGroupFilter);
 
         if (resolved == null) {

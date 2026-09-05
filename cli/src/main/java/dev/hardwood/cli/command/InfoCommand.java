@@ -36,11 +36,6 @@ public class InfoCommand implements Command<CommandInvocation> {
     /// command's output.
     private static final int MAX_VALUE_WIDTH = 60;
 
-    /// Shown in the size column for an entry whose `value` field is absent
-    /// altogether — `KeyValue.value` is optional in `parquet.thrift`, so that is
-    /// a different thing from a present-but-empty value, which shows `0 B`.
-    private static final String ABSENT_VALUE = "—";
-
     @Mixin
     FileMixin fileMixin;
 
@@ -141,9 +136,11 @@ public class InfoCommand implements Command<CommandInvocation> {
     }
 
     /// The size column for one entry: the value's length in bytes as written to the
-    /// file, or [ABSENT_VALUE] if it carries no value.
+    /// file, or [Strings#ABSENT_VALUE] if it carries no value. `KeyValue.value` is
+    /// optional in `parquet.thrift`, so an absent value is a different thing from a
+    /// present-but-empty one, which shows `0 B`.
     private static String size(String value) {
-        return value == null ? ABSENT_VALUE : Sizes.format(byteLength(value));
+        return value == null ? Strings.ABSENT_VALUE : Sizes.format(byteLength(value));
     }
 
     /// The value column for one entry: control characters replaced so a writer's

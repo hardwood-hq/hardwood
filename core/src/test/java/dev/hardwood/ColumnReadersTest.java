@@ -15,6 +15,7 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.reader.ColumnReader;
 import dev.hardwood.reader.ColumnReaders;
+import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.ColumnProjection;
 
@@ -607,5 +608,95 @@ class ColumnReadersTest {
             assertThat(totalRows).isEqualTo(300);
             assertThat(batches).isGreaterThanOrEqualTo(1);
         }
+    }
+
+    // ==================== Multi-column alignment (#1062) ====================
+
+    @Test
+    void testCoordinatedNextBatchKeepsMixedWidthColumnsAligned() throws Exception {
+        // Readers built separately batch at their own row boundaries, so pairing them reads
+        // different rows from each. ColumnReaders carries that guarantee instead, and it has
+        // to hold across batch and row-group boundaries for columns of different physical
+        // widths — INT64 `id`/`value` alongside BYTE_ARRAY `label`.
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
+             ColumnReaders columns = parquet.buildColumnReaders(
+                             ColumnProjection.columns("id", "value", "label"))
+                     .batchSize(7).build()) {
+
+            ColumnReader idReader = columns.getColumnReader("id");
+            ColumnReader valueReader = columns.getColumnReader("value");
+            ColumnReader labelReader = columns.getColumnReader("label");
+
+            int batches = 0;
+            long totalRows = 0;
+            while (columns.nextBatch()) {
+                int count = columns.getRecordCount();
+                assertThat(idReader.getRecordCount()).isEqualTo(count);
+                assertThat(valueReader.getRecordCount()).isEqualTo(count);
+                assertThat(labelReader.getRecordCount()).isEqualTo(count);
+
+                long[] ids = idReader.getLongs();
+                long[] values = valueReader.getLongs();
+                String[] labels = labelReader.getStrings();
+                for (int i = 0; i < count; i++) {
+                    assertThat(values[i]).isEqualTo(ids[i]);
+                    assertThat(labels[i]).isEqualTo(expectedLabel(ids[i]));
+                }
+
+                batches++;
+                totalRows += count;
+            }
+
+            assertThat(batches).isGreaterThan(1);
+            assertThat(totalRows).isEqualTo(300);
+        }
+    }
+
+    @Test
+    void testCoordinatedNextBatchKeepsFilteredColumnsAligned() throws Exception {
+        // #1062 in miniature: a filtered read of several columns must return every matching
+        // row of every column, paired row for row. The batch size is small enough that the
+        // match set spans many batches and a row-group boundary, and the predicate column is
+        // not projected, so it is decoded to evaluate the filter but never exposed.
+        Path filePath = Paths.get("src/test/resources/filter_pushdown_int.parquet");
+
+        try (ParquetFileReader parquet = ParquetFileReader.open(InputFile.of(filePath));
+             ColumnReaders columns = parquet.buildColumnReaders(
+                             ColumnProjection.columns("value", "label"))
+                     .filter(FilterPredicate.gt("id", 120L))
+                     .batchSize(7).build()) {
+
+            ColumnReader valueReader = columns.getColumnReader("value");
+            ColumnReader labelReader = columns.getColumnReader("label");
+
+            int batches = 0;
+            long totalRows = 0;
+            while (columns.nextBatch()) {
+                int count = columns.getRecordCount();
+                assertThat(valueReader.getRecordCount()).isEqualTo(count);
+                assertThat(labelReader.getRecordCount()).isEqualTo(count);
+
+                long[] values = valueReader.getLongs();
+                String[] labels = labelReader.getStrings();
+                for (int i = 0; i < count; i++) {
+                    assertThat(values[i]).isGreaterThan(120L);
+                    assertThat(labels[i]).isEqualTo(expectedLabel(values[i]));
+                }
+
+                batches++;
+                totalRows += count;
+            }
+
+            assertThat(batches).isGreaterThan(1);
+            assertThat(totalRows).isEqualTo(180); // id 121..300
+        }
+    }
+
+    /// `filter_pushdown_int.parquet` labels every row `rg<N>_<id>`, `N` being its 1-based
+    /// hundred, so a label identifies the exact row its neighbours must have come from.
+    private static String expectedLabel(long id) {
+        return "rg" + ((id - 1) / 100 + 1) + "_" + id;
     }
 }

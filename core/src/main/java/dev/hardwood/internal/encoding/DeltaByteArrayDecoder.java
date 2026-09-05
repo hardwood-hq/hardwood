@@ -72,9 +72,7 @@ public class DeltaByteArrayDecoder implements ValueDecoder {
         // Read all prefix lengths using DELTA_BINARY_PACKED
         // Prefix lengths are always encoded as INT32 per the spec
         DeltaBinaryPackedDecoder prefixDecoder = new DeltaBinaryPackedDecoder(data, offset);
-        for (int i = 0; i < numNonNullValues; i++) {
-            prefixLengths[i] = prefixDecoder.readInt();
-        }
+        prefixDecoder.readInts(prefixLengths, null, 0);
 
         // Create the suffix decoder (uses DELTA_LENGTH_BYTE_ARRAY)
         // Continue reading from where the prefix decoder stopped

@@ -149,8 +149,13 @@ public class RowGroupFilterEvaluator {
                     statisticsDecision(p, p.columnIndex(), rowGroup);
             case ResolvedPredicate.BinaryPredicate p -> {
                 FilterDecision decision = statisticsDecision(p, p.columnIndex(), rowGroup);
+                // Bloom filters and dictionary membership answer "are these exact bytes here?",
+                // which stands in for "is this value here?" only where the value has one
+                // encoding — see BinaryPredicate#byteExact. Statistics compare in the column's
+                // order and stay available either way.
                 if (decision != FilterDecision.CANNOT_MATCH
                         && p.op() == FilterPredicate.Operator.EQ
+                        && p.byteExact()
                         && (BloomFilterSupport.valueAbsent(bloomFilters, p.columnIndex(), p.value())
                                 || DictionaryFilterSupport.valueAbsent(dictionaries, p.columnIndex(), p.value()))) {
                     yield FilterDecision.CANNOT_MATCH;

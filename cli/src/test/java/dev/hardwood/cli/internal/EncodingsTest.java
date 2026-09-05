@@ -66,15 +66,14 @@ class EncodingsTest {
     }
 
     /// A chunk declaring nothing but the level encodings leaves the set empty,
-    /// and the caller decides how absence renders — `-` in the tables, `—` in
-    /// `dive`.
+    /// and every surface uses the shared absent-value marker.
     @Test
-    void anEmptySetRendersAsTheCallersPlaceholder() {
+    void anEmptySetRendersAsTheSharedPlaceholder() {
         ColumnMetaData chunk = chunkDeclaring(List.of(Encoding.RLE, Encoding.BIT_PACKED));
 
         assertThat(Encodings.dataPages(chunk)).isEmpty();
-        assertThat(Encodings.label(Encodings.dataPages(chunk), "-")).isEqualTo("-");
-        assertThat(Encodings.label(Encodings.dataPages(chunk), "—")).isEqualTo("—");
+        assertThat(Encodings.label(Encodings.dataPages(chunk))).isEqualTo("—");
+        assertThat(Encodings.label(Encodings.dataPages(chunk), 3, 10)).isEqualTo("—");
     }
 
     /// A page type the writer recorded but never wrote contributes nothing.
@@ -99,16 +98,16 @@ class EncodingsTest {
     void theCardinalitySeparatesAUsefulDictionaryFromAVerbatimCopy() {
         Set<Encoding> dict = Set.of(Encoding.RLE_DICTIONARY);
 
-        assertThat(Encodings.label(dict, 20_000, 20_000, "-")).isEqualTo("DICT 100%");
-        assertThat(Encodings.label(dict, 10, 20_000, "-")).isEqualTo("DICT <1%");
-        assertThat(Encodings.label(dict, 5_000, 20_000, "-")).isEqualTo("DICT 25%");
+        assertThat(Encodings.label(dict, 20_000, 20_000)).isEqualTo("DICT 100%");
+        assertThat(Encodings.label(dict, 10, 20_000)).isEqualTo("DICT <1%");
+        assertThat(Encodings.label(dict, 5_000, 20_000)).isEqualTo("DICT 25%");
     }
 
     /// `<1%` rather than `0%`, which would read as "no dictionary" beside a
     /// label that just said there is one.
     @Test
     void aCardinalityRoundingToZeroIsNotRenderedAsZero() {
-        assertThat(Encodings.label(Set.of(Encoding.RLE_DICTIONARY), 1, 1_000_000, "-"))
+        assertThat(Encodings.label(Set.of(Encoding.RLE_DICTIONARY), 1, 1_000_000))
                 .isEqualTo("DICT <1%");
     }
 
@@ -117,11 +116,11 @@ class EncodingsTest {
     /// nothing for the figure to qualify.
     @Test
     void theCardinalityIsDroppedWhereItSaysNothing() {
-        assertThat(Encodings.label(Set.of(Encoding.RLE_DICTIONARY), -1, 20_000, "-"))
+        assertThat(Encodings.label(Set.of(Encoding.RLE_DICTIONARY), -1, 20_000))
                 .isEqualTo("DICT");
-        assertThat(Encodings.label(Set.of(Encoding.PLAIN), 20_000, 20_000, "-"))
+        assertThat(Encodings.label(Set.of(Encoding.PLAIN), 20_000, 20_000))
                 .isEqualTo("PLAIN");
-        assertThat(Encodings.label(Set.of(Encoding.RLE_DICTIONARY), 10, 0, "-"))
+        assertThat(Encodings.label(Set.of(Encoding.RLE_DICTIONARY), 10, 0))
                 .isEqualTo("DICT");
     }
 
@@ -130,7 +129,7 @@ class EncodingsTest {
     @Test
     void aFallbackChunkStillCarriesItsCardinality() {
         assertThat(Encodings.label(Set.of(Encoding.PLAIN, Encoding.RLE_DICTIONARY),
-                16_000, 20_000, "-")).isEqualTo("PLAIN+DICT 80%");
+                16_000, 20_000)).isEqualTo("PLAIN+DICT 80%");
     }
 
     /// `Set.of` iterates in an order that varies between JVM runs, so a label
@@ -138,14 +137,14 @@ class EncodingsTest {
     /// against the same file.
     @Test
     void theLabelIsOrderedByTheEnumNotByTheCallersIteration() {
-        assertThat(Encodings.label(List.of(Encoding.RLE_DICTIONARY, Encoding.PLAIN), "-"))
+        assertThat(Encodings.label(List.of(Encoding.RLE_DICTIONARY, Encoding.PLAIN)))
                 .isEqualTo("PLAIN+DICT");
-        assertThat(Encodings.label(List.of(Encoding.PLAIN, Encoding.RLE_DICTIONARY), "-"))
+        assertThat(Encodings.label(List.of(Encoding.PLAIN, Encoding.RLE_DICTIONARY)))
                 .isEqualTo("PLAIN+DICT");
     }
 
     private static String label(ColumnMetaData chunk) {
-        return Encodings.label(Encodings.dataPages(chunk), "-");
+        return Encodings.label(Encodings.dataPages(chunk));
     }
 
     private static PageEncodingStats stat(PageType pageType, Encoding encoding, int count) {

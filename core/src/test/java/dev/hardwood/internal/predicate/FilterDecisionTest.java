@@ -14,6 +14,7 @@ import java.util.Random;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.reader.FilterPredicate;
 
 import static dev.hardwood.internal.predicate.FilterDecision.ALWAYS_MATCHES;
@@ -239,7 +240,7 @@ class FilterDecisionTest {
     private static FilterDecision decideBinary(FilterPredicate.Operator op, String value,
             String min, String max) {
         ResolvedPredicate leaf = new ResolvedPredicate.BinaryPredicate(
-                0, op, value.getBytes(StandardCharsets.UTF_8), false);
+                0, op, value.getBytes(StandardCharsets.UTF_8), Comparison.BYTE_STRING);
         return StatisticsFilterSupport.decideLeaf(leaf, stats(
                 min.getBytes(StandardCharsets.UTF_8), max.getBytes(StandardCharsets.UTF_8), 0L));
     }

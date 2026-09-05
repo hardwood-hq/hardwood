@@ -114,10 +114,8 @@ class PageRangeIoTest {
                     ? parquet.buildColumnReaders(projection).filter(filter).build()
                     : parquet.columnReaders(projection);
             try (columns) {
-                ColumnReader col0 = columns.getColumnReader("id");
-                ColumnReader col1 = columns.getColumnReader("value");
-                while (col0.nextBatch() & col1.nextBatch()) {
-                    col0.getRecordCount();
+                while (columns.nextBatch()) {
+                    // Drain every batch; the test measures the bytes the read pulled.
                 }
             }
         }

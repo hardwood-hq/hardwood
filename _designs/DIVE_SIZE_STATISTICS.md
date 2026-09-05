@@ -408,11 +408,12 @@ A reader moves between the two surfaces on the same file, so a quantity
 that appears on both must appear the same way. Three shared helpers in
 `dev.hardwood.cli.internal` are what hold that:
 
-- `Sizes.compression(compressed, uncompressed, absent)` renders
+- `Sizes.compression(compressed, uncompressed)` renders
   compression as the percentage of the uncompressed size that survived
-  the codec — everywhere. `dive` previously showed a `×` factor on its
-  overview, row-group and chunk tables while `inspect` showed a
-  percentage, which describes the same quantity two ways and inverts
+  the codec — everywhere. When `uncompressed <= 0`, it renders the shared
+  absent-value marker `Strings.ABSENT_VALUE` (`—`). `dive` previously showed
+  a `×` factor on its overview, row-group and chunk tables while `inspect`
+  showed a percentage, which describes the same quantity two ways and inverts
   between them. The row-group detail pane's group caption is `Storage`,
   not `Compression`, since it now holds a `Compression` row of its own
   and `Storage` is what the column chunk detail already calls the same

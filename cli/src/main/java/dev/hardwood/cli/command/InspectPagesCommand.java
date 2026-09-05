@@ -254,7 +254,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
                     String.valueOf(totalDataValues),
                     "",
                     "",
-                    anyNullCount ? String.valueOf(totalNulls) : "-"
+                    anyNullCount ? String.valueOf(totalNulls) : Strings.ABSENT_VALUE
             });
         }
         else {
@@ -346,7 +346,7 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             max = statCell(ci.maxValues().get(dataPageCounter), col, budget);
         }
         long nullCount = -1;
-        String nulls = "-";
+        String nulls = Strings.ABSENT_VALUE;
         if (ci.nullCounts() != null && dataPageCounter < ci.nullCounts().length) {
             nullCount = ci.nullCounts()[dataPageCounter];
             nulls = String.valueOf(nullCount);
@@ -356,9 +356,9 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
 
     private static IndexCells fromInlineStats(PageInfo p, ColumnSchema col, int budget) {
         Statistics stats = p.inlineStats();
-        String firstRow = p.firstRowIndex() != null ? String.valueOf(p.firstRowIndex()) : "-";
+        String firstRow = p.firstRowIndex() != null ? String.valueOf(p.firstRowIndex()) : Strings.ABSENT_VALUE;
         if (stats == null) {
-            return new IndexCells(firstRow, "-", "-", "-", -1);
+            return new IndexCells(firstRow, Strings.ABSENT_VALUE, Strings.ABSENT_VALUE, Strings.ABSENT_VALUE, -1);
         }
         String min;
         String max;
@@ -367,11 +367,11 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             max = "(deprecated)";
         }
         else {
-            min = stats.minValue() != null ? statCell(stats.minValue(), col, budget) : "-";
-            max = stats.maxValue() != null ? statCell(stats.maxValue(), col, budget) : "-";
+            min = stats.minValue() != null ? statCell(stats.minValue(), col, budget) : Strings.ABSENT_VALUE;
+            max = stats.maxValue() != null ? statCell(stats.maxValue(), col, budget) : Strings.ABSENT_VALUE;
         }
         long nullCount = stats.nullCount() != null ? stats.nullCount() : -1;
-        String nulls = nullCount >= 0 ? String.valueOf(nullCount) : "-";
+        String nulls = nullCount >= 0 ? String.valueOf(nullCount) : Strings.ABSENT_VALUE;
         return new IndexCells(firstRow, min, max, nulls, nullCount);
     }
 
@@ -409,7 +409,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
     }
 
     private record IndexCells(String firstRow, String min, String max, String nulls, long nullCount) {
-        static final IndexCells DASHES = new IndexCells("-", "-", "-", "-", -1);
+        static final IndexCells DASHES = new IndexCells(
+                Strings.ABSENT_VALUE, Strings.ABSENT_VALUE, Strings.ABSENT_VALUE, Strings.ABSENT_VALUE, -1);
     }
 
     private record PageInfo(String label, String type, String encoding, long compressedSize, long numValues,
@@ -504,6 +505,8 @@ public class InspectPagesCommand implements Command<CommandInvocation> {
             case DATA_PAGE -> shortEncoding(header.dataPageHeader().encoding().name());
             case DATA_PAGE_V2 -> shortEncoding(header.dataPageHeaderV2().encoding().name());
             case DICTIONARY_PAGE -> shortEncoding(header.dictionaryPageHeader().encoding().name());
+            // Not the absent-value marker: an index page has no data encoding
+            // for a writer to have recorded, so there is nothing missing here.
             case INDEX_PAGE, UNKNOWN -> "N/A";
         };
     }

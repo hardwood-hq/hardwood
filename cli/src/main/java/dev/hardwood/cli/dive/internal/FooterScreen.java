@@ -304,8 +304,7 @@ public final class FooterScreen {
         lines.decoration(Line.from(new Span(" Aggregate ", Theme.accent().bold())));
         lines.row(fact("  Compressed data", Sizes.dualFormat(model.facts().compressedBytes())));
         lines.row(fact("  Uncompressed data", Sizes.dualFormat(model.facts().uncompressedBytes())));
-        lines.row(fact("  Compression", Sizes.compression(model.facts().compressedBytes(),
-                model.facts().uncompressedBytes(), "—")));
+        lines.row(fact("  Compression", Sizes.compression(model.facts().compressedBytes(), model.facts().uncompressedBytes())));
         return lines.build();
     }
 

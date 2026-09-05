@@ -118,30 +118,30 @@ public final class ColumnAcrossRowGroupsScreen {
             Statistics stats = cmd.statistics();
             String min = stats != null && stats.minValue() != null
                     ? formatStat(stats.minValue(), col, state.logicalTypes(), statBudget)
-                    : "—";
+                    : Strings.ABSENT_VALUE;
             String max = stats != null && stats.maxValue() != null
                     ? formatStat(stats.maxValue(), col, state.logicalTypes(), statBudget)
-                    : "—";
+                    : Strings.ABSENT_VALUE;
             // This screen is the interactive twin of `inspect columns --column`:
             // one row per row group for one column. The unencoded size belongs
             // here for the same reason it belongs there — it is what says
             // whether a chunk is large because of its values or its encoding.
             LevelSummary summary = LevelSummary.of(model.schema(), col, cmd);
             long nullCount = summary.nullCount(stats);
-            String nulls = nullCount >= 0 ? Fmt.fmt("%,d", nullCount) : "—";
+            String nulls = nullCount >= 0 ? Fmt.fmt("%,d", nullCount) : Strings.ABSENT_VALUE;
             // Page count from OffsetIndex if present; without OI we'd need
             // to walk page headers, which the chunk-detail screen does
             // already — render "—" here.
             OffsetIndex oi = cc.offsetIndexOffset() != null
                     ? model.offsetIndex(i, state.columnIndex()) : null;
-            String pages = oi != null ? Fmt.fmt("%,d", oi.pageLocations().size()) : "—";
+            String pages = oi != null ? Fmt.fmt("%,d", oi.pageLocations().size()) : Strings.ABSENT_VALUE;
             rows.add(Row.from(
                     String.valueOf(i),
                     Fmt.fmt("%,d", rg.numRows()),
                     pages,
                     Sizes.format(cmd.totalCompressedSize()),
-                    Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize(), "—"),
-                    summary.hasUnencoded() ? Sizes.format(summary.unencodedBytes()) : "—",
+                    Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize()),
+                    summary.hasUnencoded() ? Sizes.format(summary.unencodedBytes()) : Strings.ABSENT_VALUE,
                     cmd.dictionaryPageOffset() != null ? "yes" : "no",
                     cc.columnIndexOffset() != null ? "yes" : "no",
                     nulls,
@@ -216,7 +216,7 @@ public final class ColumnAcrossRowGroupsScreen {
 
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical, int budget) {
         if (bytes == null) {
-            return "—";
+            return Strings.ABSENT_VALUE;
         }
         String full = ValueFormatter.formatBytes(bytes, col, logical, budget);
         return Strings.truncateRight(full, budget);

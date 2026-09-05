@@ -34,6 +34,7 @@ import dev.hardwood.cli.dive.internal.OverviewScreen;
 import dev.hardwood.cli.dive.internal.PagesScreen;
 import dev.hardwood.cli.dive.internal.RowGroupDetailScreen;
 import dev.hardwood.cli.dive.internal.SchemaScreen;
+import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.Version;
 import dev.hardwood.schema.ColumnSchema;
 import dev.tamboui.buffer.Buffer;
@@ -836,6 +837,25 @@ class DiveRenderTest {
         assertThat(frame.contains("present")).isTrue();
         assertThat(frame.contains("· levels")).isFalse();
         assertThat(frame.contains("· unencoded")).isFalse();
+    }
+
+    /// The other half of the hint, and the two kinds it splits into: `Pages`
+    /// is a count, so having none to show is an absent value; the rest answer
+    /// whether the file carries the structure at all, which reads as a word
+    /// opposite `present` rather than as a missing quantity.
+    @Test
+    void menuHintsSeparateAnAbsentCountFromAStructureThatIsNotThere() throws Exception {
+        Path path = Path.of(getClass().getResource("/plain_uncompressed.parquet").toURI());
+        try (ParquetModel plainModel = ParquetModel.open(InputFile.of(path), path.toString())) {
+            RenderHarness.RenderedFrame frame = RenderHarness.render(AREA,
+                    new ScreenState.ColumnChunkDetail(0, 0,
+                            ScreenState.ColumnChunkDetail.Pane.MENU, 0, true, false), plainModel);
+
+            assertThat(frame.contains("Pages           " + Strings.ABSENT_VALUE)).isTrue();
+            assertThat(frame.contains("Column index    absent")).isTrue();
+            assertThat(frame.contains("Offset index    absent")).isTrue();
+            assertThat(frame.contains("Dictionary      absent")).isTrue();
+        }
     }
 
     /// Collapsed is the default: the derived rows are the summary worth

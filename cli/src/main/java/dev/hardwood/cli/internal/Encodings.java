@@ -91,7 +91,8 @@ public final class Encodings {
         }
         catch (IOException | RuntimeException e) {
             // Unknown, not zero: the surfaces drop the annotation rather than
-            // claim a cardinality, the same way `# Pages` renders `-`.
+            // claim a cardinality, the same way `# Pages` renders the
+            // shared absent-value marker.
             return -1;
         }
     }
@@ -102,11 +103,12 @@ public final class Encodings {
     /// order that varies between JVM runs, and this string is what a reader
     /// compares between two invocations.
     ///
-    /// @param absent what to render for an empty set, which differs between the
-    ///        tables and `dive`
-    public static String label(Collection<Encoding> encodings, String absent) {
+    /// @return the label, or [Strings#ABSENT_VALUE] for an empty set — a chunk
+    ///         declaring nothing but the level encodings has no data-page
+    ///         encoding to name
+    public static String label(Collection<Encoding> encodings) {
         if (encodings.isEmpty()) {
-            return absent;
+            return Strings.ABSENT_VALUE;
         }
         StringBuilder label = new StringBuilder();
         for (Encoding encoding : new TreeSet<>(encodings)) {
@@ -132,9 +134,8 @@ public final class Encodings {
     /// @param entries distinct values the dictionary holds, or -1 when unknown
     /// @param values values it could hold an entry for — the present-value
     ///        count where that is known, since nulls never reach a dictionary
-    public static String label(Collection<Encoding> encodings, long entries, long values,
-                               String absent) {
-        String label = label(encodings, absent);
+    public static String label(Collection<Encoding> encodings, long entries, long values) {
+        String label = label(encodings);
         if (entries < 0 || values <= 0 || !usesDictionary(encodings)) {
             return label;
         }

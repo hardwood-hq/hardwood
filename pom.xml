@@ -74,7 +74,7 @@
     <maven.compiler.release>${java.version}</maven.compiler.release>
     <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
     <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
-    <project.build.outputTimestamp>2026-06-25T10:51:35Z</project.build.outputTimestamp>
+    <project.build.outputTimestamp>2026-08-31T14:51:58Z</project.build.outputTimestamp>
   </properties>
 
   <build>

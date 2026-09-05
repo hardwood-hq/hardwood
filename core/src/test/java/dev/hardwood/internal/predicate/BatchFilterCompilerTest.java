@@ -13,6 +13,7 @@ import java.util.function.IntUnaryOperator;
 import org.junit.jupiter.api.Nested;
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.internal.predicate.matcher.longs.LongInBatchMatcher;
 import dev.hardwood.internal.predicate.matcher.nulls.IsNullBatchMatcher;
 import dev.hardwood.metadata.PhysicalType;
@@ -150,7 +151,7 @@ class BatchFilterCompilerTest {
             ResolvedPredicate predicate = new ResolvedPredicate.And(List.of(
                     new ResolvedPredicate.LongPredicate(0, Operator.GT, 5L),
                     new ResolvedPredicate.BinaryPredicate(1, Operator.EQ,
-                            new byte[]{'h', 'i'}, false)));
+                            new byte[]{'h', 'i'}, Comparison.BYTE_STRING)));
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 
@@ -158,7 +159,7 @@ class BatchFilterCompilerTest {
         void binaryLeaf_returnsNull() {
             FileSchema schema = schema(leaf("name", PhysicalType.BYTE_ARRAY));
             ResolvedPredicate predicate = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ,
-                    new byte[]{'h', 'i'}, false);
+                    new byte[]{'h', 'i'}, Comparison.BYTE_STRING);
             assertNull(BatchFilterCompiler.tryCompile(predicate, schema, IntUnaryOperator.identity()));
         }
 

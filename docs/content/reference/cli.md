@@ -180,7 +180,8 @@ Key/Value Metadata (3):
 
 An entry may carry a key with no value at all, which is distinct from a key
 whose value is empty. The size column tells the two apart: `—` for a value that
-is absent, `0 B` for one that is present and empty.
+is absent, `0 B` for one that is present and empty. See
+[Absent values](#absent-values).
 
 Pass `--kv-key <name>` to print one entry's value in full, untruncated and with
 no substitutions, and no other output — safe to pipe into another tool:
@@ -191,6 +192,30 @@ hardwood info -f data.parquet --kv-key ARROW:schema | base64 -d | xxd | head
 
 `--kv-key` exits non-zero if the file has no entry under that name, or if the
 entry has no value.
+
+## Absent values
+
+Every command and every `dive` screen renders a quantity the file does not carry
+as `—`. A column's `# Pages` without a page index, a page's `Min` and `Max`
+without statistics, a `Compression` with no uncompressed size to divide by, a
+key/value entry with no value — all read the same way, on both surfaces.
+
+Absent is not the same as empty. `0 B`, `0`, and `""` are values the writer
+recorded; `—` says it recorded none.
+
+Absent is not the same as inapplicable either. `—` marks a quantity that could
+have been written and was not, so it is worth knowing about — rewriting the file
+with statistics or a page index fills it in. A quantity that cannot exist for the
+row at hand reads `N/A` instead: an index page has no data encoding, whatever the
+writer does. Only `—` says something is missing.
+
+A script reading these tables should match `—` (U+2014 EM DASH) to detect an
+absent cell:
+
+```shell
+# Columns whose page count the file does not carry
+hardwood inspect columns -f data.parquet | awk -F'|' '$11 ~ /—/ {print $3}'
+```
 
 ## Binary values
 

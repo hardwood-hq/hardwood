@@ -54,9 +54,7 @@ public class DeltaLengthByteArrayDecoder implements ValueDecoder {
         // Read all lengths using DELTA_BINARY_PACKED
         // Lengths are always encoded as INT32 per the spec
         DeltaBinaryPackedDecoder lengthDecoder = new DeltaBinaryPackedDecoder(data, pos);
-        for (int i = 0; i < numNonNullValues; i++) {
-            lengths[i] = lengthDecoder.readInt();
-        }
+        lengthDecoder.readInts(lengths, null, 0);
         pos = lengthDecoder.getPos();
     }
 

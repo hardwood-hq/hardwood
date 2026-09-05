@@ -97,6 +97,13 @@ public class Utils {
             // and page index, and rejects the pages themselves until #581 adds ALP support.
             "alp_extended.zstd.parquet", // No parquet-java oracle: ALP encoding
 
+            // The fixture annotates an INT32 with UUID on purpose, to exercise how a reader
+            // handles a logical type its physical type cannot carry. parquet-java rejects the
+            // pairing while parsing the footer ("UUID can only annotate FIXED_LEN_BYTE_ARRAY(16)"),
+            // so it never opens the file and cannot serve as a reference. Hardwood reads the
+            // column as the INT32 it is.
+            "int32_with_uuid_logical_type.parquet", // No parquet-java oracle: invalid annotation
+
             // shredded_variant fixtures are skipped outside this list: spec-invalid
             // ones by isInvalidFixture() (the `-INVALID` suffix), error cases by
             // SHREDDED_VARIANT_ERROR_CASES. Both are folded in by isSkipped().

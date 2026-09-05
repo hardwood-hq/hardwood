@@ -25,8 +25,10 @@ import org.junit.jupiter.api.Test;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.FilterPredicate;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 
@@ -131,11 +133,11 @@ class PageFilterBenchmarkTest {
         double sum = 0.0;
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             ColumnReader idCol = reader.columnReader("id");
-             ColumnReader valCol = reader.columnReader("value")) {
+             ColumnReaders columns = reader.columnReaders(ColumnProjection.columns("id", "value"))) {
 
-            while (idCol.nextBatch() & valCol.nextBatch()) {
-                int count = idCol.getRecordCount();
+            ColumnReader valCol = columns.getColumnReader("value");
+            while (columns.nextBatch()) {
+                int count = columns.getRecordCount();
                 double[] values = valCol.getDoubles();
                 for (int i = 0; i < count; i++) {
                     sum += values[i];
@@ -156,11 +158,12 @@ class PageFilterBenchmarkTest {
         FilterPredicate filter = FilterPredicate.lt("id", (long) (TOTAL_ROWS / 10));
 
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(BENCHMARK_FILE));
-             ColumnReader idCol = reader.buildColumnReader("id").filter(filter).build();
-             ColumnReader valCol = reader.buildColumnReader("value").filter(filter).build()) {
+             ColumnReaders columns = reader.buildColumnReaders(ColumnProjection.columns("id", "value"))
+                     .filter(filter).build()) {
 
-            while (idCol.nextBatch() & valCol.nextBatch()) {
-                int count = idCol.getRecordCount();
+            ColumnReader valCol = columns.getColumnReader("value");
+            while (columns.nextBatch()) {
+                int count = columns.getRecordCount();
                 double[] values = valCol.getDoubles();
                 for (int i = 0; i < count; i++) {
                     sum += values[i];

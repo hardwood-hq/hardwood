@@ -24,8 +24,14 @@ public final class Strings {
     /// here so changes propagate to every screen at once.
     public static final char ELLIPSIS = '…';
 
-    private static final Pattern GRAPHEME = Pattern.compile("\\X");
+    /// Stands in for a value the file does not carry, on every command and
+    /// every `dive` screen. Absent is not the same as empty: a `0 B` size or an
+    /// empty-string bound is something the writer recorded, this marker says it
+    /// recorded nothing. Centralised here so the two surfaces cannot drift back
+    /// into spelling absence differently.
+    public static final String ABSENT_VALUE = "—";
 
+    private static final Pattern GRAPHEME = Pattern.compile("\\X");
     private Strings() {
     }
 

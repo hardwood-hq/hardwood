@@ -828,13 +828,13 @@ public final class ValueFormatter {
     /// whole payload. The result is still the value, not a cut of it: it runs
     /// just past the budget when the payload is longer, so the caller sees
     /// that there is more and marks what it cut. Absent statistics (`null`
-    /// bytes) render as `-`.
+    /// bytes) render as [Strings#ABSENT_VALUE].
     public static String formatBytes(byte[] bytes, ColumnSchema col,
                                      boolean useLogicalType, int budget) {
         requireBudget(budget);
         Objects.requireNonNull(col, "col");
         if (bytes == null) {
-            return "-";
+            return Strings.ABSENT_VALUE;
         }
         LogicalType lt = useLogicalType ? col.logicalType() : null;
         if (col.type() == PhysicalType.INT96 && bytes.length != 12) {
@@ -938,7 +938,7 @@ public final class ValueFormatter {
     }
 
     /// Formats an already-decoded `byte[]` dictionary entry. `null` renders
-    /// as `-`; otherwise delegates to the [#formatBytes] pipeline (UUID,
+    /// as [Strings#ABSENT_VALUE]; otherwise delegates to the [#formatBytes] pipeline (UUID,
     /// decimal, hex, UTF-8 string, etc.).
     public static String formatDecoded(byte[] value, ColumnSchema col) {
         return formatBytes(value, col);

@@ -32,6 +32,7 @@ import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
 import dev.hardwood.internal.reader.FileMetadataCache.PreparedFile;
+import dev.hardwood.internal.schema.FixedWidthValidator;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -332,6 +333,8 @@ public class RowGroupIterator {
         this.touchedColumns = touchedColumns(projected, filter, referenceSchema.getColumnCount());
         this.dropLeavesByColumn = filter != null && metadataFilteringEnabled
                 ? PageDropPredicates.byColumn(filter) : Map.of();
+
+        validateReferenceColumns();
 
         buildWorkList();
 
@@ -1231,6 +1234,26 @@ public class RowGroupIterator {
         event.commit();
 
         return filtered;
+    }
+
+    /// Validates the reference schema's own statement of the columns this read touches,
+    /// before any of them is planned for or decoded.
+    ///
+    /// [#validateSchemaCompatibility] cross-checks every file from the second onwards
+    /// against the reference schema, but the first file *is* the reference schema and so
+    /// is never cross-checked. What it declares therefore has to hold on its own terms:
+    /// a fixed-width column whose width the footer omits cannot be decoded by any of the
+    /// consumers downstream of here, and a read of a single file would otherwise reach
+    /// them with nothing having said so.
+    ///
+    /// @throws SchemaIncompatibleException if a touched column cannot be decoded under
+    ///         the schema the file declares for it
+    private void validateReferenceColumns() {
+        String fileName = inputFiles.get(0).name();
+        for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
+                originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
+            FixedWidthValidator.validate(fileName, referenceSchema.getColumn(originalIndex));
+        }
     }
 
     /// The reference leaf ordinals a read with this projection and filter touches.

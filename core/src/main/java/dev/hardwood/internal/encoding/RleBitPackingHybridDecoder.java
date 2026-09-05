@@ -345,6 +345,28 @@ public class RleBitPackingHybridDecoder {
             }
         }
 
+        // Above 8 a group of eight no longer fits one 64-bit word, so it is read a value at a
+        // time instead: the offset inside a byte is at most 7 and the constructor caps the width
+        // at 32, so a value reaches 39 bits and one eight-byte read still covers it whole.
+        // Nothing is carried between values, which is what the bit buffer below cannot do.
+        //
+        // Only while the buffer is empty, because this bypasses it, and only while the reads stay
+        // inside the data: they run past the bytes the group owns, though `pos` advances by just
+        // those, so over-reading would leave the cursor inside the next run's header.
+        else if (width <= 32) {
+            int groupSpan = ((7 * width) >>> 3) + Long.BYTES;
+            while (count >= 8 && bitsInBuffer == 0 && pos + groupSpan <= dataEnd) {
+                for (int i = 0; i < 8; i++) {
+                    int bitOffset = i * width;
+                    long word = dataBuffer.getLong(pos + (bitOffset >>> 3));
+                    output[outPos + i] = (int) ((word >>> (bitOffset & 7)) & mask);
+                }
+                outPos += 8;
+                count -= 8;
+                pos += width;
+            }
+        }
+
         // Handle remaining values
         while (count > 0) {
             while (bitsInBuffer < width && pos < dataEnd) {

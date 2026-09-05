@@ -79,7 +79,7 @@ class DictionaryEndToEndTest {
             try (ColumnReaders cols = reader.buildColumnReaders(projection).filter(PRESENT).build()) {
                 ColumnReader category = cols.getColumnReader("category");
                 ColumnReader id = cols.getColumnReader("id");
-                assertThat(category.nextBatch() & id.nextBatch()).isTrue();
+                assertThat(cols.nextBatch()).isTrue();
                 assertThat(category.getStrings()[0]).isEqualTo("cat_5");
                 // category is "cat_" + (id % 10), so the first match is id == 5.
                 assertThat(id.getLongs()[0]).isEqualTo(5L);

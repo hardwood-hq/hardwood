@@ -261,7 +261,9 @@ public class BatchExchange<B> {
     ///   via [BinaryBatchValues#appendAt].
     /// - `FIXED_LEN_BYTE_ARRAY`: bytes buffer is sized exactly to
     ///   `width * capacity` (`width = column.typeLength()`); offsets are
-    ///   filled trivially as `i * width`.
+    ///   filled trivially as `i * width`. The width is present and positive —
+    ///   [RowGroupIterator#initialize] validates it for every column a read
+    ///   touches before the first batch is allocated for it.
     public static Object allocateArray(ColumnSchema column, int capacity) {
         PhysicalType type = column.type();
         return switch (type) {

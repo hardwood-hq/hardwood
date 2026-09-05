@@ -705,9 +705,9 @@ class ValueFormatterTest {
     }
 
     @Test
-    void statsAbsentBytesRenderDash() {
-        assertThat(ValueFormatter.formatBytes(null, stringColumn())).isEqualTo("-");
-        assertThat(ValueFormatter.formatBytes(null, stringColumn(), false)).isEqualTo("-");
+    void statsAbsentBytesUseSharedMarker() {
+        assertThat(ValueFormatter.formatBytes(null, stringColumn())).isEqualTo(Strings.ABSENT_VALUE);
+        assertThat(ValueFormatter.formatBytes(null, stringColumn(), false)).isEqualTo(Strings.ABSENT_VALUE);
     }
 
     @Test
@@ -920,7 +920,7 @@ class ValueFormatterTest {
 
     @Test
     void decodedByteArrayDelegatesToTheBytesPipeline() {
-        assertThat(ValueFormatter.formatDecoded(null, stringColumn())).isEqualTo("-");
+        assertThat(ValueFormatter.formatDecoded(null, stringColumn())).isEqualTo(Strings.ABSENT_VALUE);
         assertThat(ValueFormatter.formatDecoded("hello".getBytes(StandardCharsets.UTF_8), stringColumn()))
                 .isEqualTo("hello");
     }

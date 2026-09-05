@@ -22,6 +22,7 @@ import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 
+import dev.hardwood.internal.predicate.ResolvedPredicate.BinaryPredicate.Comparison;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.metadata.RepetitionType;
 import dev.hardwood.metadata.SchemaElement;
@@ -200,7 +201,8 @@ class RecordFilterCompilerTest {
     @Test
     void testBinaryEq() {
         FileSchema schema = binarySchema("col");
-        ResolvedPredicate eq = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ, bytes("banana"), false);
+        ResolvedPredicate eq = new ResolvedPredicate.BinaryPredicate(0, Operator.EQ, bytes("banana"),
+                Comparison.BYTE_STRING);
         assertTrue(matchesRow(eq, binaryStub("col", bytes("banana"), false), schema));
         assertFalse(matchesRow(eq, binaryStub("col", bytes("apple"), false), schema));
     }
@@ -208,7 +210,8 @@ class RecordFilterCompilerTest {
     @Test
     void testBinaryLt() {
         FileSchema schema = binarySchema("col");
-        ResolvedPredicate lt = new ResolvedPredicate.BinaryPredicate(0, Operator.LT, bytes("banana"), false);
+        ResolvedPredicate lt = new ResolvedPredicate.BinaryPredicate(0, Operator.LT, bytes("banana"),
+                Comparison.BYTE_STRING);
         assertTrue(matchesRow(lt, binaryStub("col", bytes("apple"), false), schema));
         assertFalse(matchesRow(lt, binaryStub("col", bytes("cherry"), false), schema));
     }

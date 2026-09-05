@@ -266,7 +266,7 @@ public final class ColumnChunkDetailScreen {
         }
         lines.row(fact("Column idx", String.valueOf(col.columnIndex())));
         lines.row(fact("Physical", cmd.type().name()));
-        lines.row(fact("Logical", col.logicalType() != null ? col.logicalType().toString() : "—"));
+        lines.row(fact("Logical", col.logicalType() != null ? col.logicalType().toString() : Strings.ABSENT_VALUE));
 
         lines.blank();
         lines.decoration(group("Storage"));
@@ -282,7 +282,7 @@ public final class ColumnChunkDetailScreen {
         long dictionaryEntries = model.dictionaryEntries(state.rowGroupIndex(), state.columnIndex());
         long dictionaryValues = summary.hasPresentValues() ? summary.presentValues() : cmd.numValues();
         lines.row(fact("Encoding",
-                Encodings.label(Encodings.dataPages(cmd), dictionaryEntries, dictionaryValues, "—")
+                Encodings.label(Encodings.dataPages(cmd), dictionaryEntries, dictionaryValues)
                         + dictionaryQualifier(dictionaryEntries, dictionaryValues)));
         if (Encodings.hasEncodingStats(cmd)) {
             lines.row(fact("Chunk encodings", cmd.encodings().stream()
@@ -303,13 +303,13 @@ public final class ColumnChunkDetailScreen {
         lines.row(fact("Data offset", Fmt.fmt("%,d", cmd.dataPageOffset())));
         lines.row(fact("Dict offset", cmd.dictionaryPageOffset() != null
                 ? Fmt.fmt("%,d", cmd.dictionaryPageOffset())
-                : "—"));
+                : Strings.ABSENT_VALUE));
         lines.row(fact("Column index offset", chunk.columnIndexOffset() != null
                 ? Fmt.fmt("%,d", chunk.columnIndexOffset())
-                : "—"));
+                : Strings.ABSENT_VALUE));
         lines.row(fact("Offset index offset", chunk.offsetIndexOffset() != null
                 ? Fmt.fmt("%,d", chunk.offsetIndexOffset())
-                : "—"));
+                : Strings.ABSENT_VALUE));
         return lines.build();
     }
 
@@ -355,7 +355,7 @@ public final class ColumnChunkDetailScreen {
     private static void appendStorageStatistics(Document.Builder lines, LevelSummary summary, ColumnMetaData cmd,
                                                 ParquetModel model, ScreenState.ColumnChunkDetail state) {
         if (!summary.hasSizeStatistics()) {
-            lines.row(advisory("Size statistics", "— (not written)"));
+            lines.row(advisory("Size statistics", Strings.ABSENT_VALUE + " (not written)"));
         }
         else {
             lines.row(fact("Size statistics", coverage(model, state)));
@@ -409,13 +409,13 @@ public final class ColumnChunkDetailScreen {
         long nulls = summary.nullCount(stats);
         lines.row(fact("Nulls", nulls >= 0
                 ? Fmt.fmt("%,d", nulls) + share(nulls, cmd.numValues())
-                : "—"));
+                : Strings.ABSENT_VALUE));
         if (summary.hasAvgListLength()) {
             lines.row(fact("Avg list length", Fmt.fmt("%.2f", summary.avgListLength())
                     + qualifier("non-empty")));
         }
-        lines.row(fact("Min", stats != null ? formatStatValue(stats.minValue(), col, state.logicalTypes()) : "—"));
-        lines.row(fact("Max", stats != null ? formatStatValue(stats.maxValue(), col, state.logicalTypes()) : "—"));
+        lines.row(fact("Min", stats != null ? formatStatValue(stats.minValue(), col, state.logicalTypes()) : Strings.ABSENT_VALUE));
+        lines.row(fact("Max", stats != null ? formatStatValue(stats.maxValue(), col, state.logicalTypes()) : Strings.ABSENT_VALUE));
         if (summary.mismatch() != null) {
             lines.row(Line.from(
                     new Span(" ⚠ " + padRight("Declared vs actual", 20), Theme.error()),
@@ -461,7 +461,7 @@ public final class ColumnChunkDetailScreen {
     /// does not have to infer it from two adjacent sizes.
     private static String compressionQualifier(ColumnMetaData cmd) {
         return cmd.totalUncompressedSize() > 0
-                ? qualifier(Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize(), "")
+                ? qualifier(Sizes.compression(cmd.totalCompressedSize(), cmd.totalUncompressedSize())
                         + " of uncompressed")
                 : "";
     }
@@ -489,11 +489,15 @@ public final class ColumnChunkDetailScreen {
     }
 
     private static String definitionLevelsAbsent(LevelSummary summary) {
-        return summary.maxDefinitionLevel() == 0 ? "— (required, every value present)" : "— (not written)";
+        return summary.maxDefinitionLevel() == 0
+                ? Strings.ABSENT_VALUE + " (required, every value present)"
+                : Strings.ABSENT_VALUE + " (not written)";
     }
 
     private static String repetitionLevelsAbsent(LevelSummary summary) {
-        return summary.maxRepetitionLevel() == 0 ? "— (not repeated)" : "— (not written)";
+        return summary.maxRepetitionLevel() == 0
+                ? Strings.ABSENT_VALUE + " (not repeated)"
+                : Strings.ABSENT_VALUE + " (not written)";
     }
 
     private static void appendLevelBlock(Document.Builder lines, String label, List<LevelSummary.LevelRow> rows,
@@ -556,17 +560,26 @@ public final class ColumnChunkDetailScreen {
         Paragraph.builder().block(block).text(Text.from(lines)).left().build().render(area, buffer);
     }
 
+    /// What the reader gets for a keystroke on this item. `Pages` is a count,
+    /// so a chunk with no offset index has none to show and the hint is the
+    /// absent-value marker. The other three answer whether the structure is in
+    /// the file at all, which is a yes or a no rather than a missing value —
+    /// a word on both sides, so the pane does not read one half as a quantity.
     private static String menuHint(MenuItem item, ParquetModel model, ScreenState.ColumnChunkDetail state) {
         ColumnChunk chunk = model.chunk(state.rowGroupIndex(), state.columnIndex());
         return switch (item) {
             case PAGES -> {
                 OffsetIndex oi = model.offsetIndex(state.rowGroupIndex(), state.columnIndex());
-                yield oi != null ? Plurals.format(oi.pageLocations().size(), "page", "pages") : "—";
+                yield oi != null ? Plurals.format(oi.pageLocations().size(), "page", "pages") : Strings.ABSENT_VALUE;
             }
-            case COLUMN_INDEX -> chunk.columnIndexOffset() != null ? "present" : "n/a";
-            case OFFSET_INDEX -> chunk.offsetIndexOffset() != null ? "present" : "n/a";
-            case DICTIONARY -> chunk.metaData().dictionaryPageOffset() != null ? "present" : "n/a";
+            case COLUMN_INDEX -> presence(chunk.columnIndexOffset() != null);
+            case OFFSET_INDEX -> presence(chunk.offsetIndexOffset() != null);
+            case DICTIONARY -> presence(chunk.metaData().dictionaryPageOffset() != null);
         };
+    }
+
+    private static String presence(boolean present) {
+        return present ? "present" : "absent";
     }
 
     /// Says whether an index carries the per-page size statistics, so the
@@ -624,7 +637,7 @@ public final class ColumnChunkDetailScreen {
 
     private static String formatStatValue(byte[] bytes, ColumnSchema col, boolean useLogicalType) {
         if (bytes == null) {
-            return "—";
+            return Strings.ABSENT_VALUE;
         }
         // Facts pane has plenty of horizontal room — render the full value
         // rather than passing a budget.

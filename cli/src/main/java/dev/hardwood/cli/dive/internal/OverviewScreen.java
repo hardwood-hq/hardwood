@@ -225,7 +225,7 @@ public final class OverviewScreen {
         doc.row(factsLine("Uncompressed", Sizes.format(f.uncompressedBytes()), cursorRow == 2));
         doc.row(factsLine("Compressed", Sizes.format(f.compressedBytes()), cursorRow == 3));
         doc.row(factsLine("Compression",
-                Sizes.compression(f.compressedBytes(), f.uncompressedBytes(), "—"), cursorRow == 4));
+                Sizes.compression(f.compressedBytes(), f.uncompressedBytes()), cursorRow == 4));
         if (!kv.isEmpty()) {
             doc.blank();
             doc.decoration(Line.from(new Span("  key/value meta (" + kv.size() + ")",

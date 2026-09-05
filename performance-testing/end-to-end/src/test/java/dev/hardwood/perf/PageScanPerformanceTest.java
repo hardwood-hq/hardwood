@@ -26,7 +26,9 @@ import dev.hardwood.Hardwood;
 import dev.hardwood.InputFile;
 import dev.hardwood.Validity;
 import dev.hardwood.reader.ColumnReader;
+import dev.hardwood.reader.ColumnReaders;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.schema.ColumnProjection;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.withinPercentage;
@@ -171,12 +173,15 @@ class PageScanPerformanceTest {
 
         try (Hardwood hardwood = Hardwood.create();
              ParquetFileReader reader = hardwood.open(InputFile.of(file));
-             ColumnReader col0 = reader.columnReader("passenger_count");
-             ColumnReader col1 = reader.columnReader("trip_distance");
-             ColumnReader col2 = reader.columnReader("fare_amount")) {
+             ColumnReaders columns = reader.columnReaders(ColumnProjection.columns(
+                     "passenger_count", "trip_distance", "fare_amount"))) {
 
-            while (col0.nextBatch() & col1.nextBatch() & col2.nextBatch()) {
-                int count = col0.getRecordCount();
+            ColumnReader col0 = columns.getColumnReader("passenger_count");
+            ColumnReader col1 = columns.getColumnReader("trip_distance");
+            ColumnReader col2 = columns.getColumnReader("fare_amount");
+
+            while (columns.nextBatch()) {
+                int count = columns.getRecordCount();
                 int[] v0 = col0.getInts();
                 double[] v1 = col1.getDoubles();
                 double[] v2 = col2.getDoubles();

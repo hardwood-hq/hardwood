@@ -227,7 +227,7 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
                 rows.add(new String[]{
                         rgCell(i, rgIdx),
                         String.valueOf(i),
-                        value != null ? String.valueOf(value.length) : "-",
+                        value != null ? String.valueOf(value.length) : Strings.ABSENT_VALUE,
                         formatted
                 });
             }

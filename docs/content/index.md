@@ -14,9 +14,11 @@
 _A modern lightweight Java reader and writer for the [Apache Parquet](https://parquet.apache.org/) file format.
 Available as a Java library and a command-line tool._
 
-!!! success "Hardwood 1.0 is out!"
+!!! news "What's new"
 
-    Hardwood 1.0 is released — read the [announcement blog post](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/) for the story behind the project and what it can do.
+    - **2026-08-31** — [Hardwood 1.1.0.Beta1](https://www.morling.dev/blog/parquet-file-write-support-bloom-filters-improved-performance-hardwood-1-1-0-beta1/): Parquet write support, Bloom filter pruning, faster reads
+    - **2026-06-25** — [Hardwood 1.0](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/): the release announcement and the story behind the project
+    - **2026-06-01** — [Confluent Developer Podcast, Ep. 31](https://www.youtube.com/watch?v=9Ov0Cn_ArHE): Gunnar Morling on building a new Parquet parser with AI
 
 ## Why Hardwood
 
@@ -24,7 +26,7 @@ Hardwood gives applications fast and efficient support for reading and writing P
 It is built to be:
 
 * **Light-weight**: Zero transitive dependencies beyond optional compression libraries (Snappy, ZSTD, LZ4, Brotli)
-* **Fast**: Hardwood aims to be the fastest Parquet reader and writer for the JVM — the [1.0 read benchmarks](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/#_performance) are published
+* **Fast**: Hardwood aims to be the fastest Parquet reader and writer for the JVM ([1.0 read benchmarks](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/#_performance))
 * **Complete**: Read and write support for flat and nested schemas, every logical type, every primitive type in current use, and the encodings and codecs in current use, with new format additions tracked as they land
 * **Scalable**: Hardwood is multi-threaded at the core, pages are decoded in parallel, with cross-file prefetching for multi-file reads
 * **Embeddable**: The Hardwood library can be used in GraalVM native binaries; WASM support coming soon ([preview](/experiments/dive-web/))
@@ -107,8 +109,8 @@ Forward-looking items tracked for post-1.0. None are committed to a specific rel
 
 ## Articles, talks & podcasts
 
-- [Hardwood: A New Parser for Apache Parquet](https://www.morling.dev/blog/hardwood-new-parser-for-apache-parquet/) (project announcement)
-- [Hardwood 1.0: A Fast, Lightweight Apache Parquet Reader for the JVM](https://www.morling.dev/blog/hardwood-1-0-fast-lightweight-apache-parquet-reader-for-the-jvm/) (release announcement)
+- [Hardwood: A New Parser for Apache Parquet](https://www.morling.dev/blog/hardwood-new-parser-for-apache-parquet/) (original project announcement)
+- [Building a New Parquet Engine with AI](https://www.youtube.com/watch?v=9Ov0Cn_ArHE) (Confluent Developer podcast)
 - [Hardwood Promises High-Speed JVM Apache Parquet Processing with Zero Mandatory Dependencies](https://www.infoq.com/news/2026/07/hardwood-java-parquet/) (InfoQ article)
 - [Hardwood: Building a Parquet Parser From Scratch (With a Little Help From AI)](https://speakerdeck.com/gunnarmorling/hardwood-building-a-parquet-parser-from-scratch-with-a-little-help-from-ai) (conference talk)
 - [GitHub Open Source Friday with Gunnar Morling](https://www.youtube.com/watch?v=teqFSSQEtCw) (GitHub podcast)

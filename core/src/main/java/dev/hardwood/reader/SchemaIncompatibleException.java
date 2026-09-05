@@ -18,10 +18,16 @@ package dev.hardwood.reader;
 ///
 /// Also thrown, for a read of any size, when a file's footer is internally
 /// inconsistent: the column chunks a row group lists disagree with the schema about
-/// which leaf they hold.
+/// which leaf they hold, or a touched `FIXED_LEN_BYTE_ARRAY` column declares no
+/// `type_length` — which is optional in the format but required to decode the column —
+/// or declares one that is not positive.
 public class SchemaIncompatibleException extends RuntimeException {
 
     public SchemaIncompatibleException(String message) {
         super(message);
+    }
+
+    public SchemaIncompatibleException(String message, Throwable cause) {
+        super(message, cause);
     }
 }

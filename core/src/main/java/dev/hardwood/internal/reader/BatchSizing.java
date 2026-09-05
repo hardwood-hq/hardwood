@@ -133,7 +133,9 @@ public final class BatchSizing {
             // interned-String reuse — but the byte-array estimate is intentionally
             // approximate.
             case BYTE_ARRAY -> 16;
-            case FIXED_LEN_BYTE_ARRAY -> col.typeLength() != null ? col.typeLength() : 16;
+            // The width is present and positive: RowGroupIterator#initialize validates every
+            // projected column before a batch size is ever computed for it.
+            case FIXED_LEN_BYTE_ARRAY -> col.typeLength();
         };
     }
 }

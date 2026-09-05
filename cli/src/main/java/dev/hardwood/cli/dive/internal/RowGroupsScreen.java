@@ -86,7 +86,7 @@ public final class RowGroupsScreen {
                     formatLong(rg.numRows()),
                     Sizes.format(uncompressed),
                     Sizes.format(compressed),
-                    Sizes.compression(compressed, uncompressed, "—"),
+                    Sizes.compression(compressed, uncompressed),
                     ciCount + "/" + chunkCount,
                     oiCount + "/" + chunkCount));
         }

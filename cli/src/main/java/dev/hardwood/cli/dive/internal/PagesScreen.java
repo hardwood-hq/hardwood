@@ -170,10 +170,10 @@ public final class PagesScreen {
         int statBudget = statBudget(area.width());
         for (int i = window.start(); i < window.end(); i++) {
             PageHeader h = headers.get(i);
-            String firstRow = "—";
-            String min = "—";
-            String max = "—";
-            String nulls = "—";
+            String firstRow = Strings.ABSENT_VALUE;
+            String min = Strings.ABSENT_VALUE;
+            String max = Strings.ABSENT_VALUE;
+            String nulls = Strings.ABSENT_VALUE;
             int values;
             String uncompressed = Sizes.format(h.uncompressedPageSize());
             if (h.type() == PageType.DICTIONARY_PAGE) {
@@ -306,7 +306,7 @@ public final class PagesScreen {
         if (h.dictionaryPageHeader() != null) {
             return h.dictionaryPageHeader().encoding().name();
         }
-        return "—";
+        return Strings.ABSENT_VALUE;
     }
 
     private static Row header(boolean hasAnyStats) {
@@ -346,7 +346,7 @@ public final class PagesScreen {
 
     private static String formatStat(byte[] bytes, ColumnSchema col, boolean logical, int budget) {
         return bytes == null ?
-                "—" :
+                Strings.ABSENT_VALUE :
                 Strings.truncateRight(
                         ValueFormatter.formatBytes(bytes, col, logical, budget),
                         budget);
@@ -355,7 +355,7 @@ public final class PagesScreen {
     private static String formatStatFull(byte[] bytes, ColumnSchema col, boolean logical) {
         // Modal has space — no budget constraint, so the whole value is rendered.
         return bytes == null ?
-                "—" :
+                Strings.ABSENT_VALUE :
                 ValueFormatter.formatBytes(bytes, col, logical);
     }
 
@@ -392,7 +392,7 @@ public final class PagesScreen {
         lines.add(kv("Type", header.type().name()));
         lines.add(kv("Compressed size", Sizes.dualFormat(header.compressedPageSize())));
         lines.add(kv("Uncompressed size", Sizes.dualFormat(header.uncompressedPageSize())));
-        lines.add(kv("CRC", header.crc() != null ? "0x" + Integer.toHexString(header.crc()) : "—"));
+        lines.add(kv("CRC", header.crc() != null ? "0x" + Integer.toHexString(header.crc()) : Strings.ABSENT_VALUE));
         lines.add(Line.empty());
         DataPageHeader dph = header.dataPageHeader();
         DataPageHeaderV2 dphv2 = header.dataPageHeaderV2();

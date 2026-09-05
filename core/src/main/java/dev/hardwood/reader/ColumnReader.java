@@ -151,18 +151,25 @@ public class ColumnReader implements AutoCloseable {
 
     /// Advance to the next batch.
     ///
-    /// **Multi-column alignment.** Every [ColumnReader] over the same file produces
-    /// batches at the same row boundaries — call `nextBatch()` on each in turn and they
-    /// will report identical [#getRecordCount()]s for the matching batch. This holds
-    /// because the per-column drain workers all use the same internal batch capacity and
-    /// every reader observes the same total row count per row group.
+    /// **One reader advances only itself.** Readers built separately — each from its own
+    /// [ParquetFileReader#buildColumnReader(String)] — are independent cursors, and the
+    /// batch a reader hands out is sized for the columns *it* reads. A batch of a
+    /// `BYTE_ARRAY` column therefore covers fewer rows than a batch of an `INT32` one over
+    /// the same file, and a filtered reader is sized for its predicate's columns as well as
+    /// its own. Two such readers reach different rows on their nth batch.
     ///
-    /// Consumers reading multiple columns in lockstep should generally prefer
-    /// [ColumnReaders] (obtained from
-    /// [ParquetFileReader#buildColumnReaders(dev.hardwood.schema.ColumnProjection)]),
-    /// which shares a single [dev.hardwood.internal.reader.RowGroupIterator] across all
-    /// columns and exposes a single coordinated [ColumnReaders#nextBatch()] that drives
-    /// every reader and validates alignment in one call.
+    /// So do not pair them: `while (a.nextBatch() & b.nextBatch())` ends when whichever
+    /// reader has the larger batches runs out first, and the values it took from each on any
+    /// given turn are from different rows. Neither reader reports anything wrong, because
+    /// neither is wrong — each is a complete, correct read of its own column.
+    ///
+    /// To read several columns of the same rows, use [ColumnReaders], from
+    /// [ParquetFileReader#buildColumnReaders(dev.hardwood.schema.ColumnProjection)]. Its
+    /// readers share one [dev.hardwood.internal.reader.RowGroupIterator] and one batch size,
+    /// and [ColumnReaders#nextBatch()] advances them together and checks that their record
+    /// counts agree. Advance them through that method rather than this one: this method moves
+    /// a single reader, so calling it on one member of a [ColumnReaders] leaves the rest
+    /// behind on the batch they already hold.
     ///
     /// @return true if a batch is available, false if exhausted
     public boolean nextBatch() {

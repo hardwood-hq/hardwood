@@ -56,7 +56,7 @@ A filtered column reader returns **only** the matching rows — exact, with no c
 
 ### Reading Multiple Columns
 
-For reading multiple columns together, use `columnReaders(projection)` which returns a `ColumnReaders` collection. Drive every reader in lockstep with `ColumnReaders.nextBatch()`:
+For reading multiple columns together, use `columnReaders(projection)` which returns a `ColumnReaders` collection. Drive every reader in lockstep with `ColumnReaders.nextBatch()`. Open the columns together rather than building one `ColumnReader` per column: separately built readers batch at different row boundaries, so pairing their values by position reads different rows from each (see [RowReader vs. ColumnReader](../concepts/reader-models.md#several-columns-means-one-columnreaders-not-several-columnreaders)).
 
 ```java
 import dev.hardwood.Hardwood;
@@ -100,7 +100,9 @@ try (ColumnReaders columns = parquet.buildColumnReaders(
 
 The batch size caps the number of **records** per batch, never the number of leaf values. A batch boundary always falls between records: a record — and, for a repeated column, all of the leaf values belonging to it — is never split across two batches. A consequence for repeated columns is that `getValueCount()` can exceed the configured batch size, since one record may carry many leaf values; size any per-value buffers off `getValueCount()`, not the batch size.
 
-`ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when any reader is exhausted — partial advancement isn't possible because all readers consume from a shared `RowGroupIterator`. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-reader record counts throw `IllegalStateException`. Single-column consumers, or callers that need fine-grained per-reader cadence, can still call `ColumnReader.nextBatch()` directly on the readers returned by `getColumnReader(...)`.
+`ColumnReaders.nextBatch()` advances every underlying reader once and returns `false` when any reader is exhausted — partial advancement isn't possible because all readers consume from a shared `RowGroupIterator`. The aligned record count is exposed via `ColumnReaders.getRecordCount()`. As a defensive guard, mismatched per-reader record counts throw `IllegalStateException`.
+
+`ColumnReaders.nextBatch()` is how the readers it holds are advanced. `ColumnReader.nextBatch()` moves one reader, so calling it on a reader from `getColumnReader(...)` leaves that reader's siblings on the batch they already hold — the record counts still match, the guard stays silent, and every later batch pairs values from different rows.
 
 ### Retaining and Handing Off Batch Arrays
 
@@ -345,14 +347,17 @@ try (ColumnReader col = reader.columnReader("tags.list.element")) {
 
 Maps report as `REPEATED` (Hardwood does not distinguish map-shape from list-shape on the layer enum — consult `getColumnSchema()` if you need that distinction).
 
-To pair keys with values, open both leaves and drive them in lockstep. The two columns share the same `map.key_value` parent, so their layer offsets agree — entry `i` of one is entry `i` of the other:
+To pair keys with values, open both leaves through `columnReaders(...)` and drive them with `ColumnReaders.nextBatch()`. The two columns share the same `map.key_value` parent, so their layer offsets agree — entry `i` of one is entry `i` of the other. Open them together: a key and a value built as separate `ColumnReader`s batch at different row boundaries.
 
 ```java
-try (ColumnReader keys   = reader.columnReader("tags.key_value.key");
-     ColumnReader values = reader.columnReader("tags.key_value.value")) {
+try (ColumnReaders columns = reader.columnReaders(
+        ColumnProjection.columns("tags.key_value.key", "tags.key_value.value"))) {
 
-    while (keys.nextBatch() & values.nextBatch()) {
-        int recordCount        = keys.getRecordCount();
+    ColumnReader keys   = columns.getColumnReader("tags.key_value.key");
+    ColumnReader values = columns.getColumnReader("tags.key_value.value");
+
+    while (columns.nextBatch()) {
+        int recordCount        = columns.getRecordCount();
         int[]    entryOffsets  = keys.getLayerOffsets(0);
         Validity mapValidity   = keys.getLayerValidity(0);
         byte[]   keyBytes      = keys.getBinaryValues();
@@ -384,7 +389,7 @@ try (ColumnReader keys   = reader.columnReader("tags.key_value.key");
 
 Two orthogonal offset axes show up here, as in `list<string>`: `entryOffsets` walks map entries within a record (across the `getValueCount()` axis), `keyOffsets` walks byte spans within a single key (across the byte axis of `getBinaryValues()`).
 
-If the map sits under an `OPTIONAL` group — e.g. `optional group meta { map<string, int> tags }` — the chain gains a `STRUCT` layer on top. The same key/value lockstep walk applies, with `getLayerValidity(0)` for `meta`, `getLayerValidity(1)` plus `getLayerOffsets(1)` for the map, and `getLeafValidity()` for the value:
+If the map sits under an `OPTIONAL` group — e.g. `optional group meta { map<string, int> tags }` — the chain gains a `STRUCT` layer on top. The same key/value walk applies, with `getLayerValidity(0)` for `meta`, `getLayerValidity(1)` plus `getLayerOffsets(1)` for the map, and `getLeafValidity()` for the value:
 
 ```java
 Validity metaValidity  = values.getLayerValidity(0);   // STRUCT layer for `meta`
