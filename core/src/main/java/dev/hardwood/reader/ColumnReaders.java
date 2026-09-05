@@ -124,7 +124,8 @@ public class ColumnReaders implements AutoCloseable {
         }
 
         SelectionEngine engine = SelectionEngine.create(schema, augProjected, resolved, allReaders, batchSize);
-        FilterCoordinator coordinator = new FilterCoordinator(allReaders, payloadReaders, engine);
+        FilterCoordinator coordinator = new FilterCoordinator(
+                allReaders, payloadReaders, engine, rowGroupIterator::renderedFilterPredicate);
         for (ColumnReader reader : allReaders) {
             reader.setCoordinator(coordinator);
         }

@@ -305,7 +305,8 @@ public final class FlatRowReader implements FileAwareRowReader {
         // The tally spans both filtered paths: the drain-side reader feeds it whole
         // batches, the wrapper feeds it single records, and either way the reader
         // marks the file boundaries as it loads batches.
-        RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
+        RecordFilterTally tally = filter != null
+                ? new RecordFilterTally(rowGroupIterator::renderedFilterPredicate) : null;
         FlatRowReader reader = new FlatRowReader(buffers, workers, schema, projectedSchema,
                 drainSide, wordsLen, mergePlan, readerMatchLimit, tally);
         reader.initialize();

@@ -26,6 +26,10 @@ public class RowGroupFilterEvent extends Event {
     @Description("Name of the Parquet file")
     public String file;
 
+    @Label("Predicate")
+    @Description("Predicate structure with literal values elided")
+    public String predicate;
+
     @Label("Total Row Groups")
     @Description("Total number of row groups before predicate push-down")
     public int totalRowGroups;

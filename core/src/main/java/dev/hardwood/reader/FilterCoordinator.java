@@ -7,6 +7,8 @@
  */
 package dev.hardwood.reader;
 
+import java.util.function.Supplier;
+
 import dev.hardwood.internal.reader.RecordFilterTally;
 
 /// Drives the filtered column-reader path (#624). It advances every reader of
@@ -29,17 +31,19 @@ final class FilterCoordinator {
     private final SelectionEngine engine;
     /// Per-file record-filter counts for JFR. Every batch this path produces has
     /// passed through the selection, so the counts are complete for the read.
-    private final RecordFilterTally tally = new RecordFilterTally();
+    private final RecordFilterTally tally;
 
     private long generation;
     private boolean hasBatch;
     private int recordCount;
     private boolean closed;
 
-    FilterCoordinator(ColumnReader[] allReaders, ColumnReader[] payloadReaders, SelectionEngine engine) {
+    FilterCoordinator(ColumnReader[] allReaders, ColumnReader[] payloadReaders, SelectionEngine engine,
+                      Supplier<String> renderedPredicate) {
         this.allReaders = allReaders;
         this.payloadReaders = payloadReaders;
         this.engine = engine;
+        this.tally = new RecordFilterTally(renderedPredicate);
     }
 
     long generation() {

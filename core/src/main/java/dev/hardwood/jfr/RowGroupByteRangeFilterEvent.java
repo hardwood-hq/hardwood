@@ -32,6 +32,10 @@ public class RowGroupByteRangeFilterEvent extends Event {
     @Description("Name of the Parquet file")
     public String file;
 
+    @Label("Predicate")
+    @Description("Row-group predicate including byte-range bounds")
+    public String predicate;
+
     @Label("Total Row Groups")
     @Description("Total number of row groups in the file before byte-range selection")
     public int totalRowGroups;

@@ -28,6 +28,7 @@ import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.predicate.ResolvedPredicateRenderer;
 import dev.hardwood.internal.predicate.RowGroupBloomFilterSource;
 import dev.hardwood.internal.predicate.RowGroupFilterEvaluator;
 import dev.hardwood.internal.predicate.dictionary.RowGroupDictionaryFilterSource;
@@ -99,6 +100,7 @@ public class RowGroupIterator {
     private FileSchema referenceSchema;
     private ProjectedSchema projectedSchema;
     private ResolvedPredicate filterPredicate;
+    private volatile String renderedFilterPredicate;
     private boolean filterSatisfiedByStatistics;
     private boolean metadataFilteringEnabled = true;
 
@@ -330,6 +332,7 @@ public class RowGroupIterator {
         this.metadataFilteringEnabled = metadataFilteringEnabled;
         this.projectedSchema = projected;
         this.filterPredicate = filter;
+        this.renderedFilterPredicate = null;
         this.touchedColumns = touchedColumns(projected, filter, referenceSchema.getColumnCount());
         this.dropLeavesByColumn = filter != null && metadataFilteringEnabled
                 ? PageDropPredicates.byColumn(filter) : Map.of();
@@ -368,6 +371,25 @@ public class RowGroupIterator {
     /// Returns the filter predicate, or `null` if none.
     public ResolvedPredicate filterPredicate() {
         return filterPredicate;
+    }
+
+    /// Returns the filter's structural representation with literals elided, rendering it on
+    /// first use and reusing the result for every JFR event emitted by this read.
+    public String renderedFilterPredicate() {
+        if (filterPredicate == null) {
+            return null;
+        }
+        String rendered = renderedFilterPredicate;
+        if (rendered == null) {
+            synchronized (this) {
+                rendered = renderedFilterPredicate;
+                if (rendered == null) {
+                    rendered = ResolvedPredicateRenderer.render(filterPredicate, referenceSchema);
+                    renderedFilterPredicate = rendered;
+                }
+            }
+        }
+        return rendered;
     }
 
     /// Returns shared metadata for the given work item, computing it on first access.
@@ -901,13 +923,17 @@ public class RowGroupIterator {
     /// by push-down and so report nothing. The absence of the event is therefore the
     /// signal that no page was a candidate for skipping, and a `pagesSkipped` of 0
     /// means the filter ran and kept everything.
-    private static void emitPageFilterEvent(String fileName, int rowGroupIndex, String column,
-                                            boolean pageFilterApplied, int totalPages, int pagesKept) {
+    private void emitPageFilterEvent(String fileName, int rowGroupIndex, String column,
+                                     boolean pageFilterApplied, int totalPages, int pagesKept) {
         if (!pageFilterApplied) {
             return;
         }
         PageFilterEvent event = new PageFilterEvent();
+        if (!event.isEnabled()) {
+            return;
+        }
         event.file = fileName;
+        event.predicate = renderedFilterPredicate();
         event.rowGroupIndex = rowGroupIndex;
         event.column = column;
         event.totalPages = totalPages;
@@ -1226,12 +1252,15 @@ public class RowGroupIterator {
         }
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();
-        event.file = inputFile.name();
-        event.totalRowGroups = rowGroups.size();
-        event.rowGroupsKept = filtered.size();
-        event.rowGroupsSkipped = rowGroups.size() - filtered.size();
-        event.rowGroupsFullyMatching = fullyMatching;
-        event.commit();
+        if (event.isEnabled()) {
+            event.file = inputFile.name();
+            event.predicate = renderedFilterPredicate();
+            event.totalRowGroups = rowGroups.size();
+            event.rowGroupsKept = filtered.size();
+            event.rowGroupsSkipped = rowGroups.size() - filtered.size();
+            event.rowGroupsFullyMatching = fullyMatching;
+            event.commit();
+        }
 
         return filtered;
     }

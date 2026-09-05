@@ -64,6 +64,7 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
                 .isEqualTo(3);
         assertThat(pushDown.getFirst().getInt("rowGroupsKept")).isEqualTo(2);
         assertThat(pushDown.getFirst().getInt("rowGroupsSkipped")).isEqualTo(1);
+        assertThat(pushDown.getFirst().getString("predicate")).isEqualTo("gt(id, ?)");
 
         assertThat(events(BYTE_RANGE_EVENT).count())
                 .as("no byte-range event without a RowGroupPredicate")
@@ -116,6 +117,8 @@ class RowGroupFilterEventTest extends AbstractJfrRecorderTest {
         assertThat(events(BYTE_RANGE_EVENT).count())
                 .as("byte-range selection emits exactly one byte-range event")
                 .isEqualTo(1);
+        assertThat(events(BYTE_RANGE_EVENT).findFirst().orElseThrow().getString("predicate"))
+                .isEqualTo("byteRange(0, " + fileLen + ")");
         assertThat(events(PUSH_DOWN_EVENT).count())
                 .as("no push-down event without a FilterPredicate")
                 .isZero();

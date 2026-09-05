@@ -7,6 +7,9 @@
  */
 package dev.hardwood.internal.reader;
 
+import java.util.Objects;
+import java.util.function.Supplier;
+
 import dev.hardwood.jfr.RecordFilterEvent;
 
 /// Accumulates the outcome of record-level predicate evaluation and emits one
@@ -28,9 +31,14 @@ import dev.hardwood.jfr.RecordFilterEvent;
 /// this revisited.
 public final class RecordFilterTally {
 
+    private final Supplier<String> renderedPredicate;
     private String file;
     private long evaluated;
     private long kept;
+
+    public RecordFilterTally(Supplier<String> renderedPredicate) {
+        this.renderedPredicate = Objects.requireNonNull(renderedPredicate, "renderedPredicate");
+    }
 
     /// Attributes subsequent counts to `fileName`, emitting the counts gathered
     /// for the previous file. Idempotent for repeated calls naming the same file,
@@ -68,11 +76,14 @@ public final class RecordFilterTally {
             return;
         }
         RecordFilterEvent event = new RecordFilterEvent();
-        event.file = file;
-        event.totalRecords = evaluated;
-        event.recordsKept = kept;
-        event.recordsSkipped = evaluated - kept;
-        event.commit();
+        if (event.isEnabled()) {
+            event.file = file;
+            event.predicate = renderedPredicate.get();
+            event.totalRecords = evaluated;
+            event.recordsKept = kept;
+            event.recordsSkipped = evaluated - kept;
+            event.commit();
+        }
         evaluated = 0;
         kept = 0;
     }

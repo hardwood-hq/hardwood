@@ -40,6 +40,10 @@ public class RecordFilterEvent extends Event {
     @Description("Name of the Parquet file whose records were filtered")
     public String file;
 
+    @Label("Predicate")
+    @Description("Predicate structure with literal values elided")
+    public String predicate;
+
     @Label("Total Records")
     @Description("Total number of records evaluated against the predicate")
     public long totalRecords;

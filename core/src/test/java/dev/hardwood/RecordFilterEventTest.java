@@ -63,6 +63,7 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
 
         RecordedEvent event = singleEvent();
         assertThat(event.getString("file")).endsWith("filter_pushdown_int.parquet");
+        assertThat(event.getString("predicate")).isEqualTo("gt(id, ?)");
         assertThat(event.getLong("totalRecords"))
                 .as("only the surviving row groups reach the record filter")
                 .isEqualTo(EVALUATED);
@@ -112,6 +113,7 @@ class RecordFilterEventTest extends AbstractJfrRecorderTest {
 
         RecordedEvent event = singleEvent();
         assertThat(event.getString("file")).endsWith("filter_pushdown_nested.parquet");
+        assertThat(event.getString("predicate")).isEqualTo("gt(address.zip, ?)");
         assertThat(event.getLong("totalRecords")).isEqualTo(6);
         assertThat(event.getLong("recordsKept")).isEqualTo(4);
         assertThat(event.getLong("recordsSkipped")).isEqualTo(2);

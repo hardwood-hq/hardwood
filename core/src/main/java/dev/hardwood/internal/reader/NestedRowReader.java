@@ -158,7 +158,8 @@ public final class NestedRowReader implements FileAwareRowReader {
             worker.start();
         }
 
-        RecordFilterTally tally = filter != null ? new RecordFilterTally() : null;
+        RecordFilterTally tally = filter != null
+                ? new RecordFilterTally(rowGroupIterator::renderedFilterPredicate) : null;
         NestedRowReader reader = new NestedRowReader(buffers, workers, schema, projectedSchema, tally);
         reader.initialize();
         if (filter != null) {

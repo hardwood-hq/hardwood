@@ -41,6 +41,10 @@ public class PageFilterEvent extends Event {
     @Description("Name of the Parquet file")
     public String file;
 
+    @Label("Predicate")
+    @Description("Predicate structure with literal values elided")
+    public String predicate;
+
     @Label("Row Group Index")
     @Description("Index of the row group within the file")
     public int rowGroupIndex;

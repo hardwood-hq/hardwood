@@ -18,6 +18,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
+import dev.hardwood.internal.predicate.RowGroupPredicateRenderer;
 import dev.hardwood.internal.reader.BatchSizing;
 import dev.hardwood.internal.reader.FileMetadataCache;
 import dev.hardwood.internal.reader.FlatRowReader;
@@ -725,11 +726,14 @@ public class ParquetFileReader implements AutoCloseable {
                 .toList();
 
         RowGroupByteRangeFilterEvent event = new RowGroupByteRangeFilterEvent();
-        event.file = inputFiles.get(0).name();
-        event.totalRowGroups = all.size();
-        event.rowGroupsKept = kept.size();
-        event.rowGroupsSkipped = all.size() - kept.size();
-        event.commit();
+        if (event.isEnabled()) {
+            event.file = inputFiles.get(0).name();
+            event.predicate = RowGroupPredicateRenderer.render(rowGroupFilter);
+            event.totalRowGroups = all.size();
+            event.rowGroupsKept = kept.size();
+            event.rowGroupsSkipped = all.size() - kept.size();
+            event.commit();
+        }
 
         return kept;
     }

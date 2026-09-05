@@ -62,6 +62,7 @@ class PageFilterEventTest extends AbstractJfrRecorderTest {
 
         for (RecordedEvent event : events) {
             assertThat(event.getString("file")).endsWith("column_index_pushdown.parquet");
+            assertThat(event.getString("predicate")).isEqualTo("lt(id, ?)");
             assertThat(event.getInt("rowGroupIndex")).isZero();
             assertThat(event.getInt("totalPages")).isEqualTo(PAGES_PER_COLUMN);
             assertThat(event.getInt("pagesKept")).isEqualTo(1);
