@@ -146,6 +146,30 @@ and as a comment in Protobuf:
 optional double total__usd_ = 1;
 ```
 
+Lists and maps keep the element and value types of the Parquet schema in
+both formats. Positions where the target grammar cannot express
+nullability or nesting directly are wrapped: an optional list element or
+map value is a `["null", T]` union in Avro and a single-field wrapper
+message in Protobuf; a list inside a list, a list inside a map value, a map inside
+a list, and a map inside a map value become wrapper messages in Protobuf. A map whose
+`key_value` group carries no value renders with bare `null` values in
+Avro and an empty value message in Protobuf.
+
+Fixed-width columns keep their physical size: `fixed_len_byte_array(n)`
+and `int96` become named Avro `fixed` types of `n` and 12 bytes, and the
+`interval` and `float16` logical types map to shared 12- and 2-byte
+`fixed` types defined once per schema.
+
+Named types in Avro — records and fixed types — are unique by full name.
+Each carries a namespace derived from its position, so two records with
+the same Parquet name under different parents stay distinct:
+`Schema.Home.Address` and `Schema.Work.Address`. Candidates that still
+collide within one namespace get a `_2`, `_3`, … suffix on the *type*
+name; field names keep their own suffixes independently, so a field may
+read `address_2` while its type reads `Address_2`. The same
+uniqueness rule covers Protobuf message declarations, including the
+synthesized wrapper messages.
+
 ## Key-value metadata
 
 `hardwood info` prints a file's key-value metadata below the size summary, one

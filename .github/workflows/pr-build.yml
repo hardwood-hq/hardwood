@@ -154,6 +154,35 @@ jobs:
           path: ~/.m2/repository/dev/hardwood/
           merge-multiple: true
 
+      - name: 'Set up protoc'
+        timeout-minutes: 5
+        env:
+          DEBIAN_FRONTEND: noninteractive
+          NEEDRESTART_MODE: a
+        run: |
+          # The protoc parser tests need the protobuf compiler. Freshly booted
+          # ubuntu-24.04 runners may still be running unattended-upgrades, which
+          # holds /var/lib/dpkg/lock-frontend and makes apt-get block
+          # indefinitely. Stop the service and wait for the lock to clear before
+          # installing, with every wait bounded so a runner that cannot be made
+          # ready fails the step instead of burning the job in silence.
+          stop_status=0
+          sudo timeout 60 systemctl stop unattended-upgrades.service 2>/dev/null || stop_status=$?
+          if [ "$stop_status" -eq 124 ]; then
+            echo "::warning::systemctl stop unattended-upgrades did not complete within 60s; it may still hold the dpkg lock"
+          fi
+          for _ in $(seq 1 60); do
+            sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1 || break
+            echo "Waiting for dpkg lock..."
+            sleep 2
+          done
+          if sudo fuser /var/lib/dpkg/lock-frontend >/dev/null 2>&1; then
+            echo "::error::dpkg lock still held after 120s; runner is not installable"
+            exit 1
+          fi
+          sudo -E apt-get update
+          sudo -E apt-get install -y protobuf-compiler
+
       - name: 'Build and install cli'
         run: ./mvnw -B clean install -pl :hardwood-cli
 
