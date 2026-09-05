@@ -142,7 +142,7 @@ public class ParquetReader<T> implements AutoCloseable {
             return new ParquetReader<>(resolveHardwoodInputFile(), resolveFilter());
         }
 
-        private dev.hardwood.InputFile resolveHardwoodInputFile() {
+        private dev.hardwood.InputFile resolveHardwoodInputFile() throws IOException {
             if (inputFile != null) {
                 return InputFiles.unwrap(inputFile);
             }
