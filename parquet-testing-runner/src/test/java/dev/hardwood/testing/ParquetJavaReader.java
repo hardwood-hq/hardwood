@@ -106,6 +106,21 @@ final class ParquetJavaReader {
         }
     }
 
+    /// The file's footer as the format's own Thrift structure, parsed by parquet-java. Some
+    /// fields are folded into higher-level defaults by [#readFooter], so tests that need to
+    /// assert the field is really present on the wire use this path.
+    ///
+    /// @param file the file to read
+    /// @return the parsed format footer
+    /// @throws IOException if parquet-java cannot parse the footer
+    static FileMetaData readFormatFooter(Path file) throws IOException {
+        observe(file);
+        try (SeekableInputStream in = HadoopInputFile
+                .fromPath(hadoopPath(file), new Configuration()).newStream()) {
+            return readThriftFooter(file, in);
+        }
+    }
+
     /// Asserts that parquet-java can identify the writer that produced the file.
     ///
     /// A `created_by` its [VersionParser] cannot parse leaves parquet-java unable to tell which
@@ -236,18 +251,14 @@ final class ParquetJavaReader {
     /// @return one entry per column chunk in footer order, null where the chunk carries no count
     /// @throws IOException if the footer cannot be read
     static List<Long> readDistinctCounts(Path file) throws IOException {
-        observe(file);
         List<Long> counts = new ArrayList<>();
-        try (SeekableInputStream in = HadoopInputFile
-                .fromPath(hadoopPath(file), new Configuration()).newStream()) {
-            FileMetaData metaData = readThriftFooter(file, in);
-            for (RowGroup rowGroup : metaData.getRow_groups()) {
-                for (ColumnChunk chunk : rowGroup.getColumns()) {
-                    Statistics statistics = chunk.getMeta_data().getStatistics();
-                    counts.add(statistics != null && statistics.isSetDistinct_count()
-                            ? statistics.getDistinct_count()
-                            : null);
-                }
+        FileMetaData metaData = readFormatFooter(file);
+        for (RowGroup rowGroup : metaData.getRow_groups()) {
+            for (ColumnChunk chunk : rowGroup.getColumns()) {
+                Statistics statistics = chunk.getMeta_data().getStatistics();
+                counts.add(statistics != null && statistics.isSetDistinct_count()
+                        ? statistics.getDistinct_count()
+                        : null);
             }
         }
         return counts;
