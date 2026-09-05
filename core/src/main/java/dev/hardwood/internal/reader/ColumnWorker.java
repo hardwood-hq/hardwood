@@ -298,7 +298,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 t0 = System.nanoTime();
                 while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
                     throttleParks++;
-                    LockSupport.park();
+                    LockSupport.parkNanos(WAKE_CHECK_NANOS);
                 }
                 throttleNanos += System.nanoTime() - t0;
                 if (done) {
@@ -324,7 +324,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 // are occupied (pages submitted but not yet drained), wait for
                 // the drain to advance before writing.
                 while (!done && nextSeq - consumePosition >= MAX_INFLIGHT_PAGES) {
-                    LockSupport.park();
+                    LockSupport.parkNanos(WAKE_CHECK_NANOS);
                 }
                 if (!done) {
                     int sentinelSlot = nextSeq % MAX_INFLIGHT_PAGES;
@@ -379,10 +379,11 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 assemblyNanos += System.nanoTime() - t0;
 
                 if (!done && !drained) {
-                    // No pages were ready — park until a decode task completes
+                    // No pages were ready — wait for a decode task to complete, but re-check rather than
+                    // rely on being told. See WAKE_CHECK_NANOS.
                     long parkStart = System.nanoTime();
                     decodeWaitParks++;
-                    LockSupport.park();
+                    LockSupport.parkNanos(WAKE_CHECK_NANOS);
                     decodeWaitNanos += System.nanoTime() - parkStart;
                 }
                 // If we drained something, loop immediately to check for more
@@ -511,4 +512,45 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// evacuation pauses. Overridable via the `hardwood.internal.maxOutstanding` system property.
     public static final int MAX_INFLIGHT_PAGES =
             Integer.getInteger("hardwood.internal.maxOutstanding", 8);
+
+    /// How long the drain and the retriever wait for each other before re-checking, rather than waiting to
+    /// be told.
+    ///
+    /// Both VThreads wait on a condition the other side makes true and then unparks them for: the drain
+    /// waits for `reorderBuffer[consumePosition]` to be filled by a decode task, the retriever waits for
+    /// `consumePosition` to advance. Both conditions are monotone - once true they stay true until the
+    /// waiter itself acts - so re-checking is always safe and always sufficient. That is not why these
+    /// waits are timed, though: an unpark racing a park is safe by specification, because the permit makes
+    /// the next park return immediately.
+    ///
+    /// They are timed because the runtime can drop the unpark outright. On JDK 25 - GA through 25.0.2, and
+    /// 26 before 26.0.1 - an *untimed* park on a VThread that recently did a *timed* park can be stranded
+    /// by the earlier park's stale timeout task (JDK-8369227, a regression from JDK-8351927, fixed in
+    /// 25.0.3, 26.0.1 and 27). The timeout task's cancellation races with its execution; a survivor sets
+    /// the park permit but requires the state to still be `TIMED_PARKED` before it resubmits the
+    /// continuation, so against an untimed `PARKED` it resubmits nothing - and every later `unpark` then
+    /// short-circuits on the permit it already set. The thread is parked for good.
+    ///
+    /// The drain matches that shape once per iteration: a 10 ms timed queue operation inside
+    /// [BatchExchange] - `readyQueue.offer` when publishing, `freeQueue.poll` when taking a batch, both
+    /// under back-pressure - and then an untimed wait for a decode task's `unpark`, which arrives from the
+    /// decode executor at an arbitrary instant. Under 64 concurrent readers a drain was found parked
+    /// indefinitely with `reorderBuffer[consumePosition]` already holding a decoded page, `done == false`,
+    /// no error, zero in-flight decodes and its retriever throttled at exactly `MAX_INFLIGHT_PAGES`
+    /// submitted-but-undrained pages: every notification had been sent and the one that mattered had been
+    /// dropped. The consumer then waits for that column's batch forever, which surfaces as one request
+    /// thread stuck in `BatchExchange.poll` while every other request completes.
+    ///
+    /// So neither wait is unbounded any more. Only untimed parks are stranded - a stale timeout task
+    /// firing against `TIMED_PARKED` satisfies its own guard and does resubmit, and a timed waiter is
+    /// bounded by its own fresh timeout regardless - so bounding both waits sidesteps the bug. A spurious
+    /// wake costs one re-evaluation of an integer comparison or one `AtomicReferenceArray` read, and the
+    /// unparks are kept because they are what makes the common case immediate rather than up to 10 ms
+    /// late. [BatchExchange] already times its two queue waits, though for its own reason: it waits on a
+    /// `finished` flag that carries no notification at all.
+    ///
+    /// This is a workaround, not a fix. The fix is a runtime of 25.0.3+ or 26.0.1+, and the exposure is
+    /// wider than these two waits - any untimed park after a timed park is affected, including
+    /// [#close()]'s joins when the closing thread is itself a VThread.
+    private static final long WAKE_CHECK_NANOS = 10L * 1_000_000L;
 }
