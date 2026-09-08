@@ -10,8 +10,8 @@ package dev.hardwood.internal.thrift;
 import java.util.Arrays;
 
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
+import dev.hardwood.internal.bloomfilter.UnsupportedBloomFilterException;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
-import dev.hardwood.reader.ParquetReadException;
 
 public class BloomFilterHeaderReader {
 
@@ -86,7 +86,7 @@ public class BloomFilterHeaderReader {
         short variant = reader.readUnionVariant(ThriftStruct.BLOOM_FILTER_ALGORITHM);
         return switch (variant) {
             case 1 -> BloomFilterHeader.Algorithm.BLOCK;
-            default -> throw notAVariantOf(ThriftStruct.BLOOM_FILTER_ALGORITHM, variant,
+            default -> throw unsupportedVariantOf(ThriftStruct.BLOOM_FILTER_ALGORITHM, variant,
                     "bloom filter algorithm");
         };
     }
@@ -95,7 +95,7 @@ public class BloomFilterHeaderReader {
         short variant = reader.readUnionVariant(ThriftStruct.BLOOM_FILTER_HASH);
         return switch (variant) {
             case 1 -> BloomFilterHeader.Hash.XXHASH;
-            default -> throw notAVariantOf(ThriftStruct.BLOOM_FILTER_HASH, variant,
+            default -> throw unsupportedVariantOf(ThriftStruct.BLOOM_FILTER_HASH, variant,
                     "bloom filter hash");
         };
     }
@@ -104,14 +104,15 @@ public class BloomFilterHeaderReader {
         short variant = reader.readUnionVariant(ThriftStruct.BLOOM_FILTER_COMPRESSION);
         return switch (variant) {
             case 1 -> BloomFilterHeader.Compression.UNCOMPRESSED;
-            default -> throw notAVariantOf(ThriftStruct.BLOOM_FILTER_COMPRESSION, variant,
+            default -> throw unsupportedVariantOf(ThriftStruct.BLOOM_FILTER_COMPRESSION, variant,
                     "bloom filter compression");
         };
     }
 
-    private static ParquetReadException notAVariantOf(ThriftStruct union, short variant,
-            String what) {
-        return new ParquetReadException(union.describe(variant) + " is not a " + what);
+    private static UnsupportedBloomFilterException unsupportedVariantOf(ThriftStruct union,
+            short variant, String what) {
+        return new UnsupportedBloomFilterException(
+                union.describe(variant) + " is not a " + what + " this version implements");
     }
 
 }

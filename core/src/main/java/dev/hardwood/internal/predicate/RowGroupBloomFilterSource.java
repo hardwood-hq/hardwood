@@ -14,6 +14,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
+import dev.hardwood.internal.bloomfilter.UnsupportedBloomFilterException;
 import dev.hardwood.internal.thrift.BloomFilterHeaderReader;
 import dev.hardwood.internal.thrift.BloomFilterReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
@@ -78,18 +79,41 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
         }
         // The offset addresses the file named by file_path, not this one. Pruning on whatever
         // sits there would drop row groups that match.
-        requireSameFile(columnChunk, columnIndex);
+        requireSameFile(columnChunk);
         if (offset <= 0) {
             // The offset is present but points at or before the file's magic header, so it cannot
             // name a real filter. Treat it as corruption but stay conservative — decline to prune
             // rather than throw, keeping the row group (statistics still apply) — and warn so the
             // malformed footer is visible instead of silently reducing pruning.
-            LOG.log(System.Logger.Level.WARNING, () -> ExceptionContext.filePrefix(inputFile.name())
-                    + "Ignoring invalid bloom_filter_offset " + offset + " for column " + columnIndex
+            LOG.log(System.Logger.Level.WARNING, () -> columnPrefix(metaData)
+                    + "Ignoring invalid bloom_filter_offset " + offset
                     + "; keeping the row group (statistics still apply)");
             return null;
         }
-        return readFilter(offset, metaData.bloomFilterLength());
+        try {
+            return readFilter(offset, metaData.bloomFilterLength());
+        }
+        catch (UnsupportedBloomFilterException e) {
+            // The header names an algorithm, hash or compression this version of Hardwood does
+            // not implement — a correct file it cannot evaluate, not a corrupt one. The filter
+            // is unusable but the row group is still readable, so decline to prune rather than
+            // fail the whole read, and warn so the reduced pruning is visible. Caught by its own
+            // type: every other unsupported condition this read can meet is about the file rather
+            // than the filter, and keeps failing the read.
+            LOG.log(System.Logger.Level.WARNING, () -> columnPrefix(metaData)
+                    + "Cannot evaluate the bloom filter: " + e.getMessage()
+                    + "; keeping the row group (statistics still apply)");
+            return null;
+        }
+    }
+
+    /// The `[file: column 'X'] ` prefix for a message about one column of this row group.
+    ///
+    /// A `RowGroup` does not carry its own ordinal, so the row group is the one part of the
+    /// position this class cannot name.
+    private String columnPrefix(ColumnMetaData metaData) {
+        return ExceptionContext.readPrefix(inputFile.name(), ExceptionContext.UNKNOWN_ROW_GROUP,
+                metaData.pathInSchema().toString());
     }
 
     /// Reads the filter at `offset`. When `length` is known the whole region is read in one call;
@@ -132,13 +156,13 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     /// Checked, because reading a filter is a read like any other and every frame above this
     /// one says so; the cause is the [IOException] the metadata contract advertises for the
     /// split-file layout.
-    private void requireSameFile(ColumnChunk columnChunk, int columnIndex) {
+    private void requireSameFile(ColumnChunk columnChunk) {
         try {
             columnChunk.requireSameFile();
         }
         catch (UnsupportedOperationException e) {
-            throw new UnsupportedOperationException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Cannot read column " + columnIndex + ": " + e.getMessage(), e);
+            throw new UnsupportedOperationException(
+                    columnPrefix(columnChunk.metaData()) + e.getMessage(), e);
         }
     }
 }

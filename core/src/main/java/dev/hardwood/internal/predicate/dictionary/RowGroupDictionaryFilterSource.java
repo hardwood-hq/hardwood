@@ -109,7 +109,7 @@ public final class RowGroupDictionaryFilterSource {
         // Reading this chunk's dictionary from the file being read would decode bytes belonging
         // to some other column, and prune row groups on them. Fail rather than degrade to
         // "no dictionary": the scan cannot read the chunk either.
-        requireSameFile(columnChunk, columnIndex);
+        requireSameFile(columnChunk);
 
         Long dictionaryOffset = metaData.dictionaryPageOffset();
         long dataPageOffset = metaData.dataPageOffset();
@@ -117,10 +117,9 @@ public final class RowGroupDictionaryFilterSource {
         // A first data page *preceding* the dictionary page cannot be read at all, so fail rather
         // than degrade to "no dictionary".
         if (dictionaryOffset != null && dataPageOffset < dictionaryOffset) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Malformed Parquet metadata: column " + columnIndex
-                    + " declares a dictionary page at offset " + dictionaryOffset
-                    + " which lies after its first data page at offset " + dataPageOffset);
+            throw new ParquetReadException(columnPrefix(metaData)
+                    + "Malformed Parquet metadata: the dictionary page at offset " + dictionaryOffset
+                    + " lies after the first data page at offset " + dataPageOffset);
         }
 
         // A dictionary page is always the chunk's first page, so one offset is both the page's
@@ -134,15 +133,14 @@ public final class RowGroupDictionaryFilterSource {
         long chunkStart = columnChunk.chunkStartOffset();
         long chunkEnd = chunkStart + metaData.totalCompressedSize();
         if (chunkEnd <= chunkStart) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Malformed Parquet metadata: column " + columnIndex
-                    + " declares a dictionary page at offset " + chunkStart
-                    + " but its chunk ends at offset " + chunkEnd);
+            throw new ParquetReadException(columnPrefix(metaData)
+                    + "Malformed Parquet metadata: the dictionary page is at offset " + chunkStart
+                    + " but the chunk ends at offset " + chunkEnd);
         }
         int availableBytes = Math.toIntExact(chunkEnd - chunkStart);
 
         ColumnSchema columnSchema = fileSchema.getColumn(columnIndex);
-        ByteBuffer region = readDictionaryPage(columnIndex, chunkStart,
+        ByteBuffer region = readDictionaryPage(metaData, chunkStart,
                 dataPageOffset > chunkStart
                         ? Math.toIntExact(dataPageOffset - chunkStart)
                         : DICTIONARY_PROBE_BYTES,
@@ -161,8 +159,8 @@ public final class RowGroupDictionaryFilterSource {
     /// before being used to size a read. A page that claims to run past its own chunk is corrupt
     /// and is rejected here — truncating the read to the chunk instead would fail later and less
     /// clearly.
-    private ByteBuffer readDictionaryPage(int columnIndex, long dictionaryStart, int gapBytes,
-            int availableBytes) throws IOException {
+    private ByteBuffer readDictionaryPage(ColumnMetaData metaData, long dictionaryStart,
+            int gapBytes, int availableBytes) throws IOException {
         ByteBuffer region = inputFile.readRange(dictionaryStart, Math.min(gapBytes, availableBytes));
         int pageLength = DictionaryParser.pageLength(region);
         if (pageLength < 0) {
@@ -170,10 +168,10 @@ public final class RowGroupDictionaryFilterSource {
         }
 
         if (pageLength > availableBytes) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Malformed Parquet metadata: column " + columnIndex
-                    + " declares a dictionary page of " + pageLength
-                    + " bytes but only " + availableBytes + " bytes remain in its chunk");
+            throw new ParquetReadException(columnPrefix(metaData)
+                    + "Malformed Parquet metadata: the dictionary page header declares "
+                    + pageLength + " bytes but only " + availableBytes
+                    + " bytes remain in the chunk");
         }
 
         return pageLength > region.remaining()
@@ -187,13 +185,22 @@ public final class RowGroupDictionaryFilterSource {
     /// Checked, because reading a filter is a read like any other and every frame above this
     /// one says so; the cause is the [IOException] the metadata contract advertises for the
     /// split-file layout.
-    private void requireSameFile(ColumnChunk columnChunk, int columnIndex) {
+    private void requireSameFile(ColumnChunk columnChunk) {
         try {
             columnChunk.requireSameFile();
         }
         catch (UnsupportedOperationException e) {
-            throw new UnsupportedOperationException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Cannot read column " + columnIndex + ": " + e.getMessage(), e);
+            throw new UnsupportedOperationException(
+                    columnPrefix(columnChunk.metaData()) + e.getMessage(), e);
         }
+    }
+
+    /// The `[file: column 'X'] ` prefix for a message about one column of this row group.
+    ///
+    /// A `RowGroup` does not carry its own ordinal, so the row group is the one part of the
+    /// position this class cannot name.
+    private String columnPrefix(ColumnMetaData metaData) {
+        return ExceptionContext.readPrefix(inputFile.name(), ExceptionContext.UNKNOWN_ROW_GROUP,
+                metaData.pathInSchema().toString());
     }
 }

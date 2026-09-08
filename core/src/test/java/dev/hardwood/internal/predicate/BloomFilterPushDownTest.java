@@ -43,6 +43,7 @@ import dev.hardwood.reader.ParquetFileReader;
 import dev.hardwood.schema.FileSchema;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
 /// Bloom-filter row-group pruning against `bloom_filter_test.parquet` (one row group, 64 rows;
 /// bloom filters on `id` INT64 `0..63`, `code` INT32 `0,3,…,189`, `name` STRING `""`…`"x"*63`,
@@ -290,6 +291,36 @@ class BloomFilterPushDownTest {
     }
 
     @Test
+    void unrecognizedBloomFilterAlgorithmIsTreatedAsAbsent() throws IOException {
+        // Same fragment as ThriftFieldNamingTest.rejectsAVariantIdTheUnionDoesNotDefine: a
+        // BloomFilterHeader whose algorithm union names variant 2, which the format does not
+        // define. A file naming an algorithm this library predates is correct Parquet the
+        // library cannot evaluate — decline to prune rather than fail the whole read.
+        byte[] header = { 0x15, 0x40, 0x1c, 0x2c, 0x00, 0x00, 0x00 };
+        int offset = 4; // must be positive: offset 0 would instead hit the invalid-offset branch
+        byte[] fileBytes = new byte[offset + header.length + 32]; // leading + trailing padding
+        System.arraycopy(header, 0, fileBytes, offset, header.length);
+        InputFile memory = InputFile.of(ByteBuffer.wrap(fileBytes));
+
+        assertThat(new RowGroupBloomFilterSource(memory, singleColumnRowGroup(offset)).forColumn(0))
+                .isNull();
+    }
+
+    @Test
+    void filterFailureNamesTheColumnInTheContextPrefix() {
+        // Every message this source raises or logs carries the read position in the bracket
+        // prefix EXCEPTION_MODEL.md prescribes, so the problem itself does not name the column.
+        // The split-file refusal is the one that throws, so it is the one a test can assert on.
+        InputFile memory = InputFile.of(ByteBuffer.wrap(new byte[64]));
+        RowGroup splitFile = singleColumnRowGroup(8, "elsewhere.parquet");
+
+        assertThatThrownBy(() -> new RowGroupBloomFilterSource(memory, splitFile).forColumn(0))
+                .isInstanceOf(UnsupportedOperationException.class)
+                .hasMessage("[<memory>: column 'id'] Column chunk stores its data in a separate "
+                        + "file ('elsewhere.parquet'); the split-file layout is not supported");
+    }
+
+    @Test
     void rowGroupBloomFilterSourceExposesFiltersPerColumn() throws IOException {
         RowGroupBloomFilterSource source = new RowGroupBloomFilterSource(inputFile, rowGroup);
         assertThat(source.forColumn(NAME_COLUMN)).isNotNull();
@@ -332,6 +363,10 @@ class BloomFilterPushDownTest {
     /// declared length, forcing the header-probe path. Non-bloom metadata is copied from a real
     /// column since the source reads only `bloomFilterOffset` / `bloomFilterLength`.
     private static RowGroup singleColumnRowGroup(long bloomOffset) {
+        return singleColumnRowGroup(bloomOffset, "");
+    }
+
+    private static RowGroup singleColumnRowGroup(long bloomOffset, String filePath) {
         ColumnChunk template = rowGroup.columns().getFirst();
         ColumnMetaData md = template.metaData();
         ColumnMetaData withBloom = new ColumnMetaData(
@@ -340,7 +375,8 @@ class BloomFilterPushDownTest {
                 md.keyValueMetadata(), md.dataPageOffset(), md.dictionaryPageOffset(),
                 md.statistics(), md.geospatialStatistics(), bloomOffset, null, md.encodingStats(), md.sizeStatistics());
         ColumnChunk chunk = new ColumnChunk(withBloom, template.offsetIndexOffset(),
-                template.offsetIndexLength(), template.columnIndexOffset(), template.columnIndexLength(), "");
+                template.offsetIndexLength(), template.columnIndexOffset(),
+                template.columnIndexLength(), filePath);
         return new RowGroup(List.of(chunk), rowGroup.totalByteSize(), rowGroup.numRows());
     }
 }
