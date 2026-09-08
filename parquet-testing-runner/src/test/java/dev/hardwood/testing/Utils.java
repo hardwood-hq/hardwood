@@ -221,6 +221,20 @@ public class Utils {
                 .hasMessage(expectedMessage);
     }
 
+    /// Asserts the message of a rejection whose text carries a byte offset.
+    ///
+    /// A column's pages are decoded concurrently and a corrupt file usually
+    /// ruins several of them, so the offset in the message belongs to whichever
+    /// page lost the race to report first — observed as 4, 394, 784 and 2275 on
+    /// one file across four runs. The parts that identify the failure are
+    /// stable; the byte is not, and pinning it would be a flake.
+    static void assertBadDataRejectedContaining(String fileName, ThrowableAssert.ThrowingCallable action,
+            String... fragments) throws IOException {
+        assertThatThrownBy(action)
+                .as("Expected %s to be rejected", fileName)
+                .hasMessageContainingAll(fragments);
+    }
+
     /// Read all rows using parquet-java's AvroParquetReader.
     static List<GenericRecord> readWithParquetJava(Path file) throws IOException {
         List<GenericRecord> rows = new ArrayList<>();

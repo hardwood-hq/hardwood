@@ -24,7 +24,7 @@ import org.junit.jupiter.api.Test;
 import org.junit.jupiter.api.Timeout;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.reader.FileMetadataCache.PreparedFile;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.reader.ParquetFileReader;
@@ -188,7 +188,7 @@ class FileMetadataCacheTest {
 
         @Override
         public ByteBuffer readRange(long offset, int length) throws IOException {
-            if (FetchReason.current().startsWith("footer-") && firstFooterRead.compareAndSet(true, false)) {
+            if (readingFileMetadata() && firstFooterRead.compareAndSet(true, false)) {
                 footerReadStarted.countDown();
                 try {
                     if (!releaseFooterRead.await(WAIT_SECONDS, TimeUnit.SECONDS)) {
@@ -218,5 +218,12 @@ class FileMetadataCacheTest {
             closeCount.incrementAndGet();
             delegate.close();
         }
+    }
+
+    /// Whether the read in progress is of the file's own bookkeeping — the
+    /// magic markers, the footer length, the footer — rather than of its data.
+    private static boolean readingFileMetadata() {
+        ReadScope.Place place = ReadScope.current();
+        return place != null && place.region() != null && place.region().isFileMetadata();
     }
 }

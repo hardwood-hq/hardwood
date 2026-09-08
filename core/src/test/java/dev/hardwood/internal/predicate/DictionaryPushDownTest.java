@@ -65,7 +65,7 @@ class DictionaryPushDownTest {
     void fixtureIsDictionaryEncoded() throws IOException {
         // A readable dictionary is exactly what the push-down precondition amounts to: the chunk is
         // fully dictionary-encoded and its page is locatable.
-        assertThat(new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context)
+        assertThat(new RowGroupDictionaryFilterSource(inputFile, rowGroup, 0, schema, context)
                 .forColumn(CATEGORY_COLUMN)).isNotNull();
     }
 
@@ -120,7 +120,7 @@ class DictionaryPushDownTest {
     }
 
     private static RowGroupDictionaryFilterSource dictionaries() {
-        return new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context);
+        return new RowGroupDictionaryFilterSource(inputFile, rowGroup, 0, schema, context);
     }
 
     private static boolean dictionaryDrop(FilterPredicate filter) throws IOException {

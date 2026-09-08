@@ -47,8 +47,9 @@ class BadDataHandlingTest {
     void rejectParquet1481() throws IOException {
         // Corrupted schema Thrift value: physical type field is -7
         assertBadDataRejected("PARQUET-1481.parquet",
-                "[PARQUET-1481.parquet] Invalid or corrupt physical type value: -7 (expected 0-7)."
-                        + " File metadata may be corrupted");
+                "[PARQUET-1481.parquet] footer at byte 289 (0x000121) — Invalid"
+                        + " or corrupt physical type value: -7 (expected 0-7). File metadata"
+                        + " may be corrupted");
     }
 
     @Test
@@ -86,16 +87,20 @@ class BadDataHandlingTest {
     void rejectArrowGH45185() throws IOException {
         // Repetition levels start with 1 instead of the required 0
         assertBadDataRejected("ARROW-GH-45185.parquet",
-                "[ARROW-GH-45185.parquet] Invalid column chunk for 'element':"
-                        + " first repetition level must be 0 but was 1");
+                "[ARROW-GH-45185.parquet] row group 0, column x.list.element, batch assembly"
+                        + " — Invalid column chunk: first repetition level must be 0 but was 1");
     }
 
     @Test
     void rejectArrowGH47662() throws IOException {
         // Schema declares flba_field as required fixed_len_byte_array(4) with
         // 1000 values, but the page data runs out at value 92.
-        assertBadDataRejected("ARROW-GH-47662.parquet",
-                "[ARROW-GH-47662.parquet] Unexpected EOF while reading fixed-length byte array");
+        // No byte is asserted, and none is reported: the failure ran out of
+        // input part way through a page, which names no byte of its own.
+        Utils.assertBadDataRejectedContaining("ARROW-GH-47662.parquet",
+                readAction("ARROW-GH-47662.parquet"),
+                "[ARROW-GH-47662.parquet] row group 0, column flba_field, data page",
+                " — Unexpected EOF while reading fixed-length byte array");
     }
 
     @Test
@@ -104,21 +109,24 @@ class BadDataHandlingTest {
         // The CRC IOException is wrapped in UncheckedIOException with file context
         // by ColumnWorker before BatchExchange forwards it.
         assertCorruptChecksumRejected("data/datapage_v1-corrupt-checksum.parquet",
-                "[datapage_v1-corrupt-checksum.parquet]"
-                        + " CRC mismatch for column a: expected bbce3b9d but computed f4f6d0a",
-                "CRC mismatch for column a: expected bbce3b9d but computed f4f6d0a");
+                "[datapage_v1-corrupt-checksum.parquet] row group 0, column a, data page",
+                " — CRC mismatch: expected bbce3b9d but computed f4f6d0a",
+                "CRC mismatch: expected bbce3b9d but computed f4f6d0a");
     }
 
     @Test
     void rejectCorruptDictionaryChecksum() throws IOException {
-        // Intentionally corrupted CRC checksum in dictionary page. The mismatch
-        // is a ParquetReadException and so passes IndexedFetchPlan's
-        // `catch (IOException)`, which would have retitled it after the step
-        // that noticed rather than the thing that is wrong.
+        // Intentionally corrupted CRC checksum in dictionary page.
+        // The fetch plan attaches the region and the dictionary's own offset,
+        // which the retriever's catch could not: it knows only that a fetch was
+        // in progress, and would have reported this as "page fetch". A checksum
+        // mismatch is the file being wrong, so it arrives there unchecked and is
+        // caught as a `ParquetReadException` rather than an `IOException`.
         assertCorruptChecksumRejected("data/rle-dict-uncompressed-corrupt-checksum.parquet",
-                "[rle-dict-uncompressed-corrupt-checksum.parquet] CRC mismatch for column"
-                        + " long_field: expected 6522df6a but computed 6522df69",
-                "CRC mismatch for column long_field: expected 6522df6a but computed 6522df69");
+                "[rle-dict-uncompressed-corrupt-checksum.parquet] row group 0,"
+                        + " column long_field, dictionary page",
+                " — CRC mismatch: expected 6522df6a but computed 6522df69",
+                "CRC mismatch: expected 6522df6a but computed 6522df69");
     }
 
     @Test
@@ -146,8 +154,9 @@ class BadDataHandlingTest {
         Path good = repoDir.resolve("data/alltypes_plain.parquet");
         Path bad = repoDir.resolve("bad_data/PARQUET-1481.parquet");
         Utils.assertBadDataRejected("PARQUET-1481.parquet",
-                "[PARQUET-1481.parquet] Invalid or corrupt physical type value: -7 (expected 0-7)."
-                        + " File metadata may be corrupted",
+                "[PARQUET-1481.parquet] footer at byte 289 (0x000121) — Invalid"
+                        + " or corrupt physical type value: -7 (expected 0-7). File metadata"
+                        + " may be corrupted",
                 concatenatedReadAction(good, bad));
     }
 
@@ -164,14 +173,15 @@ class BadDataHandlingTest {
         Path good = repoDir.resolve("data/good_c.parquet");
         Path bad = repoDir.resolve("bad_data/ARROW-RS-GH-6229-LEVELS.parquet");
         Utils.assertBadDataRejected("ARROW-RS-GH-6229-LEVELS.parquet",
-                "[ARROW-RS-GH-6229-LEVELS.parquet] Column 'c' not found",
+                "[ARROW-RS-GH-6229-LEVELS.parquet] column c — Not present in this file's schema",
                 concatenatedReadAction(good, bad));
     }
 
     // ==================== Helpers ====================
 
-    private void assertCorruptChecksumRejected(String relativePath, String expectedMessage,
-                                                String expectedCauseMessage) throws IOException {
+    private void assertCorruptChecksumRejected(String relativePath, String messageStart,
+                                                String messageEnd, String expectedCauseMessage)
+            throws IOException {
         Path testFile = repoDir.resolve(relativePath);
 
         assertThatThrownBy(() -> {
@@ -182,8 +192,7 @@ class BadDataHandlingTest {
                 }
             }
         }).as("Expected %s to be rejected due to corrupt checksum", relativePath)
-          .hasMessage(expectedMessage)
-          .hasRootCauseMessage(expectedCauseMessage);
+          .hasMessageContainingAll(messageStart, messageEnd, expectedCauseMessage);
     }
 
     private ThrowableAssert.ThrowingCallable readAction(String fileName) {

@@ -17,6 +17,7 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import dev.hardwood.HardwoodContext;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.predicate.FilterPredicateResolver;
 import dev.hardwood.internal.predicate.ResolvedPredicate;
 import dev.hardwood.internal.reader.BatchSizing;
@@ -490,11 +491,10 @@ public class ParquetFileReader implements Closeable {
         if (filter == null) {
             return null;
         }
-        try {
+        // Entered rather than caught: a schema the filter cannot be stated against fails
+        // inside the file it was read from, so it names that file when it is raised.
+        try (ReadScope.Scope file = ReadScope.file(inputFiles.get(0).name())) {
             return FilterPredicateResolver.resolve(filter, schema, firstFileMetaData.columnOrders());
-        }
-        catch (SchemaIncompatibleException e) {
-            throw ExceptionContext.addFileContext(inputFiles.get(0).name(), e);
         }
     }
 

@@ -12,6 +12,8 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.bloomfilter.BloomFilter;
 import dev.hardwood.internal.bloomfilter.BloomFilterHeader;
 import dev.hardwood.internal.thrift.BloomFilterHeaderReader;
@@ -19,6 +21,7 @@ import dev.hardwood.internal.thrift.BloomFilterReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.RowGroup;
 
 /// [BloomFilterSource] backed by one `(InputFile, RowGroup)` pair.
@@ -38,6 +41,8 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
 
     private final InputFile inputFile;
     private final RowGroup rowGroup;
+    /// The row group's own index in the file, for the failures that can name no byte.
+    private final int rowGroupIndex;
     /// Per-column filter cache indexed by column position; `null` entries mean either "not read yet"
     /// or "read, no filter" — `read[i]` disambiguates so absence is cached, not re-fetched.
     private final BloomFilter[] filters;
@@ -46,9 +51,10 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
     /// "not yet fetched"; a Parquet file is never zero-length, so the sentinel is unambiguous.
     private long fileLength = -1;
 
-    public RowGroupBloomFilterSource(InputFile inputFile, RowGroup rowGroup) {
+    public RowGroupBloomFilterSource(InputFile inputFile, RowGroup rowGroup, int rowGroupIndex) {
         this.inputFile = inputFile;
         this.rowGroup = rowGroup;
+        this.rowGroupIndex = rowGroupIndex;
         int columnCount = rowGroup.columns().size();
         this.filters = new BloomFilter[columnCount];
         this.read = new boolean[columnCount];
@@ -79,17 +85,38 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
         // The offset addresses the file named by file_path, not this one. Pruning on whatever
         // sits there would drop row groups that match.
         requireSameFile(columnChunk, columnIndex);
+
+        try (ReadScope.Scope scope = ReadScope.file(inputFile.name())
+                .column(rowGroupIndex, columnPath(columnIndex))
+                .region(Region.BLOOM_FILTER, offset)) {
+            return readFilterAt(metaData, offset);
+        }
+    }
+
+    /// Reads the filter the footer placed at `offset`, inside the scope that
+    /// names where that is.
+    private BloomFilter readFilterAt(ColumnMetaData metaData, long offset) throws IOException {
         if (offset <= 0) {
             // The offset is present but points at or before the file's magic header, so it cannot
             // name a real filter. Treat it as corruption but stay conservative — decline to prune
             // rather than throw, keeping the row group (statistics still apply) — and warn so the
             // malformed footer is visible instead of silently reducing pruning.
-            LOG.log(System.Logger.Level.WARNING, () -> ExceptionContext.filePrefix(inputFile.name())
-                    + "Ignoring invalid bloom_filter_offset " + offset + " for column " + columnIndex
+            ReadScope.Place where = ReadScope.current();
+            LOG.log(System.Logger.Level.WARNING, () -> where.describe()
+                    + "Ignoring invalid bloom_filter_offset " + offset
                     + "; keeping the row group (statistics still apply)");
             return null;
         }
-        return readFilter(offset, metaData.bloomFilterLength());
+        try {
+            return readFilter(offset, metaData.bloomFilterLength());
+        }
+        catch (IOException e) {
+            throw new IOException(ReadScope.here() + "Failed to read the bloom filter", e);
+        }
+    }
+
+    private FieldPath columnPath(int columnIndex) {
+        return rowGroup.columns().get(columnIndex).metaData().pathInSchema();
     }
 
     /// Reads the filter at `offset`. When `length` is known the whole region is read in one call;
@@ -129,14 +156,16 @@ public final class RowGroupBloomFilterSource implements BloomFilterSource {
 
     /// Fails unless this chunk stores its data in the file being read.
     ///
-    /// Checked, because reading a filter is a read like any other and every frame above this
-    /// one says so; the cause is the [IOException] the metadata contract advertises for the
-    /// split-file layout.
+    /// The split-file layout is legal Parquet that this reader does not read, so the failure
+    /// leaves as the [UnsupportedOperationException] it arrived as, carrying the column it
+    /// was raised for.
     private void requireSameFile(ColumnChunk columnChunk, int columnIndex) {
         try {
             columnChunk.requireSameFile();
         }
         catch (UnsupportedOperationException e) {
+            // Named, not positioned: the file is correct, so no byte of it is
+            // worth putting in front of anyone.
             throw new UnsupportedOperationException(ExceptionContext.filePrefix(inputFile.name())
                     + "Cannot read column " + columnIndex + ": " + e.getMessage(), e);
         }

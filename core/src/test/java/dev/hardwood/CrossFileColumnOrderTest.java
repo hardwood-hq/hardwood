@@ -154,7 +154,7 @@ class CrossFileColumnOrderTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_order_b_only.parquet] Column 'a' not found");
+                    .hasMessage("[compat_order_b_only.parquet] column a — Not present in this file's schema");
         }
     }
 
@@ -266,8 +266,8 @@ class CrossFileColumnOrderTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_chunk_path_swapped.parquet] Row group 0 lists column 'b'"
-                            + " where the schema declares 'a'");
+                    .hasMessage("[compat_chunk_path_swapped.parquet] row group 0, column a — The row group"
+                            + " lists column 'b' at this position");
         }
     }
 }

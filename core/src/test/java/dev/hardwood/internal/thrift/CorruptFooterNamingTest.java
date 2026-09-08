@@ -26,7 +26,7 @@ import static org.assertj.core.api.Assertions.assertThatThrownBy;
 /// by byte, which is exact but says nothing about whether the naming reaches a
 /// failure in a file PyArrow wrote, through the API a user calls. This damages
 /// one, opens it the way a caller would, and checks the whole message they see
-/// — the file it came from included.
+/// — the file, the byte and the field.
 class CorruptFooterNamingTest {
 
     /// Byte 195 of `plain_uncompressed.parquet` is the field header for
@@ -45,8 +45,13 @@ class CorruptFooterNamingTest {
                 Path.of("src/test/resources/plain_uncompressed.parquet"));
         damaged[FIELD_HEADER_BYTE] ^= (byte) (1 << WIRE_TYPE_BIT);
 
+        // The byte the message names is the byte this test damaged: the region
+        // says where the footer starts and the parse says how far into it it
+        // got, and neither half knows the answer on its own.
         assertThatThrownBy(() -> ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(damaged))))
                 .isInstanceOf(ParquetReadException.class)
-                .hasMessage("[<memory>] SchemaElement.type — Unknown field type: 13");
+                .hasMessage("[<memory>] footer at byte " + FIELD_HEADER_BYTE
+                        + String.format(" (0x%06x)", FIELD_HEADER_BYTE)
+                        + " — SchemaElement.type — Unknown field type: 13");
     }
 }

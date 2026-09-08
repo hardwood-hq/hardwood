@@ -11,6 +11,8 @@ package dev.hardwood.internal.compression;
 /// classpath. These are optional dependencies, so both the read and write paths must confirm
 /// a codec's library is present before handing work to it, and fail with an actionable message
 /// naming the missing dependency when it is not.
+import dev.hardwood.internal.ReadScope;
+
 public final class CodecLibraries {
 
     private CodecLibraries() {
@@ -42,7 +44,7 @@ public final class CodecLibraries {
     /// @throws UnsupportedOperationException if the library is not on the classpath
     public static void require(String className, String codecName, String dependency, String action) {
         if (!isPresent(className)) {
-            throw new UnsupportedOperationException(
+            throw new UnsupportedOperationException(ReadScope.fileHere() +
                     "Cannot " + action + " " + codecName + "-compressed Parquet file: required library not found. " +
                             "Add the following dependency to your project: " + dependency);
         }

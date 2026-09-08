@@ -18,6 +18,7 @@ import java.util.concurrent.CompletionException;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.jfr.FileOpenedEvent;
 import dev.hardwood.metadata.FileMetaData;
 import dev.hardwood.metadata.RowGroup;
@@ -148,14 +149,22 @@ public final class FileMetadataCache {
         return CompletableFuture.supplyAsync(() -> loadFile(fileIndex));
     }
 
+    /// A failed read of a file not yet open, so there is no scope to take a
+    /// place from — the file is the whole of what can be said, and it is said by
+    /// entering it just long enough to raise.
+    private static IOException placed(InputFile inputFile, String message, IOException cause) {
+        try (ReadScope.Scope file = ReadScope.file(inputFile.name())) {
+            return new IOException(ReadScope.here() + message, cause);
+        }
+    }
+
     private PreparedFile loadFile(int fileIndex) {
         InputFile inputFile = inputFiles.get(fileIndex);
         try {
             inputFile.open();
         }
         catch (IOException e) {
-            throw new UncheckedIOException(
-                    ExceptionContext.filePrefix(inputFile.name()) + "Failed to open file", e);
+            throw new UncheckedIOException(placed(inputFile, "Failed to open file", e));
         }
 
         FileOpenedEvent event = new FileOpenedEvent();
@@ -174,8 +183,7 @@ public final class FileMetadataCache {
             return new PreparedFile(inputFile, metaData, schema, metaData.rowGroups());
         }
         catch (IOException e) {
-            throw new UncheckedIOException(
-                    ExceptionContext.filePrefix(inputFile.name()) + "Failed to read metadata", e);
+            throw new UncheckedIOException(placed(inputFile, "Failed to read metadata", e));
         }
         catch (RuntimeException e) {
             throw ExceptionContext.addFileContext(inputFile.name(), e);

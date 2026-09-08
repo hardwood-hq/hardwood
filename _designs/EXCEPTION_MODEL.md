@@ -196,6 +196,60 @@ in a separate file, a row group whose page-index region spans more than
 cache. Each of those files is correct and another reader will open it. Whether the
 last two limits are worth keeping is tracked as #1113.
 
+## Where a failure happened
+
+The type says what kind of failure it is; the message says where the read was when
+it happened. Both are properties of the failure rather than of any frame that
+catches it, so both are taken at the moment it is raised.
+
+**The place is entered, not passed.** `ReadScope` holds a `ThreadLocal<Place>` —
+file name, row group, column, region, and the region's first byte — that a frame
+narrows with try-with-resources:
+
+```java
+try (ReadScope.Scope footer = ReadScope.region(Region.FOOTER, footerStart)) {
+    return FileMetaDataReader.read(new ThriftCompactReader(buffer));
+}
+```
+
+The code that knows it is reading a bloom filter is the code running. By the time a
+failure has travelled to a frame that could report it, that knowledge is gone, and
+every catch site that names a region is restating what its own call stack already
+said. Scopes nest and the innermost wins, which is the rule the reader wants: a
+page header read inside a chunk fetch is a page-header failure.
+
+`ParquetReadException` and `PlacedIOException` read the scope in their constructors
+and render it in `getMessage()`. No site states a position, nothing enriches a
+failure on the way out, and nothing rebuilds one.
+
+Three properties follow from that shape rather than from care at any one site:
+
+- **A failure is described once.** A place is taken once, at construction, so a
+  failure travelling out through further scopes cannot collect a second prefix.
+  Nothing inspects a message to find out whether it has one already.
+- **A correct file is named but never positioned.** `UnsupportedFileException`
+  carries the file name and no place, because it is not the type that carries one.
+  There is nothing at any byte for a caller to go and look at.
+- **Describing a failure keeps its exact type.** The place is rendered into the
+  message, not wrapped around the exception, so a `SchemaIncompatibleException`
+  that a caller catches on is still one after it has been described.
+
+Work that crosses a thread boundary carries its place as data. A page is read on the
+retriever thread and decoded on a pool thread, which inherits nothing; the decode
+task re-enters the page's place with `ReadScope.resume` before it runs, so a failure
+inside it is built exactly as one on the retriever thread would be. `ColumnWorker`'s
+outermost catches do the same before restating what a decoder threw.
+
+**Which byte.** The region's own first byte is the answer for almost every failure:
+`RowGroupDictionaryFilterSource` enters one scope and has six throws that all want
+the chunk's start. Two cases differ. A region that has no address of its own —
+`DATA_PAGE`, where a decode fails an arbitrary distance into the page — is entered
+without one and names no byte, since the row group and column already say which page
+it was. A read that knows how far it got says so through `ReadScope.stoppedAt`,
+which narrows the place to that byte before building the failure;
+`ThriftCompactReader` is the only caller, and reports the field header it stepped
+onto rather than the byte it came to rest on, which is one further along.
+
 ## A truncated buffer
 
 `ThriftTruncatedException` is a `ParquetReadException` and reads as one everywhere

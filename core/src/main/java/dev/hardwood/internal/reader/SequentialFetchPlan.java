@@ -13,6 +13,8 @@ import java.util.List;
 import java.util.NoSuchElementException;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -364,9 +366,14 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             while (true) {
                 ByteBuffer headerBuf = readBytes(relPos, peekSize);
                 ThriftCompactReader headerReader = new ThriftCompactReader(headerBuf);
-                try {
-                    PageHeader header = PageHeaderReader.read(headerReader);
-                    return new ParsedHeader(header, headerReader.getBytesRead());
+                // A header that will not parse is not a header that is merely
+                // too short for the peek, so growing cannot help; the loop is
+                // for truncation alone, and a parse failure leaves placed at the
+                // byte it stopped on.
+                try (ReadScope.Scope header = ReadScope.region(Region.PAGE_HEADER,
+                        columnChunkOffset + relPos)) {
+                    PageHeader parsed = PageHeaderReader.read(headerReader);
+                    return new ParsedHeader(parsed, headerReader.getBytesRead());
                 }
                 catch (ThriftTruncatedException truncated) {
                     if (peekSize >= remaining) {
@@ -461,8 +468,11 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 // parser would have to open and read the same header out of again.
                 ByteBuffer compressedData = readBytes(position, dictTotalSize)
                         .slice(headerSize, compressedSize);
-                dictionary = DictionaryParser.parsePage(header, compressedData,
-                        columnSchema, metaData, context);
+                try (ReadScope.Scope page = ReadScope.region(Region.DICTIONARY_PAGE,
+                        columnChunkOffset + position)) {
+                    dictionary = DictionaryParser.parsePage(header, compressedData,
+                            columnSchema, metaData, context);
+                }
                 position += dictTotalSize;
             }
         }
@@ -567,7 +577,8 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 }
                 else {
                     ByteBuffer pageData = readBytes(position, totalPageSize);
-                    pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask);
+                    pageInfo = new PageInfo(pageData, columnSchema, metaData, dictionary, mask,
+                            columnChunkOffset + position);
                 }
                 valuesRead += numValues;
                 recordsRead += recordsInPage;

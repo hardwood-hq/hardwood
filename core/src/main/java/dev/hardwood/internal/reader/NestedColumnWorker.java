@@ -269,8 +269,8 @@ public class NestedColumnWorker extends ColumnWorker<NestedBatch> {
             nestedFirstValueSeen = true;
             if (pageRepLevels != null && pageRepLevels[0] != 0) {
                 throw new IllegalStateException(
-                        "Invalid column chunk for '" + column.name()
-                        + "': first repetition level must be 0 but was " + pageRepLevels[0]);
+                        "Invalid column chunk: first repetition level must be 0 but was "
+                        + pageRepLevels[0]);
             }
         }
 

@@ -23,7 +23,9 @@ import java.util.function.Consumer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ExceptionContext.ReadContext;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.predicate.FilterDecision;
 import dev.hardwood.internal.predicate.PageDropPredicates;
 import dev.hardwood.internal.predicate.PageFilterEvaluator;
@@ -428,9 +430,11 @@ public class RowGroupIterator {
                 return new SharedRowGroupMetadata(indexBuffers, matchingRows, maskCapability);
             }
             catch (IOException e) {
+                // Wrapped only to leave the mapping function; the frame that can
+                // declare it undoes the wrap, so the place travels on the inner
+                // failure rather than on this.
                 throw new UncheckedIOException(
-                        ExceptionContext.filePrefix(workItem.inputFile().name())
-                        + "Failed to fetch metadata for row group " + workItem.rowGroupIndex(), e);
+                        new IOException(ReadScope.here() + "Failed to fetch the row-group metadata", e));
             }
         });
     }
@@ -452,13 +456,10 @@ public class RowGroupIterator {
                 columns.get(i).requireSameFile();
             }
             catch (UnsupportedOperationException e) {
-                // Named here rather than by the catch around the caller, which only sees
-                // `IOException`: this is unchecked and travels past it, so the file it came
-                // from has to be added where it is raised.
-                throw new UnsupportedOperationException(
-                        ExceptionContext.filePrefix(workItem.inputFile().name())
-                        + "Cannot read column " + i + " in row group "
-                        + workItem.rowGroupIndex() + ": " + e.getMessage(), e);
+                // Named, not positioned. Its own type says the file is correct,
+                // so nothing about where in it the limit was met would help.
+                throw new UnsupportedOperationException(ReadScope.fileHere() + "Cannot read column " + i
+                        + " in row group " + workItem.rowGroupIndex() + ": " + e.getMessage(), e);
             }
         }
     }
@@ -752,9 +753,10 @@ public class RowGroupIterator {
                         context, workItem.rowGroupIndex(), inputFile.name());
             }
             catch (ParquetReadException e) {
-                throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                        + "Failed to compute fetch plan for column " + projCol
-                        + " in row group " + workItem.rowGroupIndex() + ": " + e.getMessage(), e);
+                // Already placed where it happened; this frame only says which
+                // step of the read was running when it did.
+                throw new ParquetReadException("Failed to compute the fetch plan: "
+                        + e.getMessage(), e);
             }
         }
 
@@ -1304,20 +1306,16 @@ public class RowGroupIterator {
                 int fileOrdinal = fileOrdinals[i];
                 FieldPath schemaPath = schemaPaths[i];
                 if (fileOrdinal >= chunkCount) {
-                    throw new SchemaIncompatibleException(
-                            ExceptionContext.filePrefix(inputFile.name())
-                                    + "Row group " + rowGroupIndex + " lists " + chunkCount
-                                    + " column chunks, but the schema declares '"
-                                    + schemaPath + "' at index " + fileOrdinal);
+                    throw chunkMismatch(inputFile, rowGroupIndex, schemaPath,
+                            "The row group lists %d column chunks, but the schema declares"
+                                    + " this column at index %d", chunkCount, fileOrdinal);
                 }
                 FieldPath chunkPath = chunks.get(fileOrdinal).metaData().pathInSchema();
                 if (chunkPath.isEmpty() || chunkPath.equals(schemaPath)) {
                     continue;
                 }
-                throw new SchemaIncompatibleException(
-                        ExceptionContext.filePrefix(inputFile.name())
-                                + "Row group " + rowGroupIndex + " lists column '" + chunkPath
-                                + "' where the schema declares '" + schemaPath + "'");
+                throw chunkMismatch(inputFile, rowGroupIndex, schemaPath,
+                        "The row group lists column '%s' at this position", chunkPath);
             }
         }
     }
@@ -1354,10 +1352,15 @@ public class RowGroupIterator {
         }
         List<FilteredRowGroup> filtered = new ArrayList<>(rowGroups.size());
         int fullyMatching = 0;
-        for (RowGroup rg : rowGroups) {
+        // Indexed rather than enhanced-for: the position in this list is the row
+        // group's own index in the file, and it is the only place a pruning
+        // failure can get one from — the list this returns has the pruned row
+        // groups missing, so its indexes no longer line up with the file's.
+        for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
+            RowGroup rg = rowGroups.get(rgIndex);
             FilterDecision decision = RowGroupFilterEvaluator.decideRowGroup(columnOrdinals.filter(), rg,
-                    new RowGroupBloomFilterSource(inputFile, rg),
-                    new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context));
+                    new RowGroupBloomFilterSource(inputFile, rg, rgIndex),
+                    new RowGroupDictionaryFilterSource(inputFile, rg, rgIndex, fileSchema, context));
             if (decision == FilterDecision.CANNOT_MATCH) {
                 continue;
             }
@@ -1392,10 +1395,11 @@ public class RowGroupIterator {
     /// @throws SchemaIncompatibleException if a touched column cannot be decoded under
     ///         the schema the file declares for it
     private void validateReferenceColumns() {
-        String fileName = inputFiles.get(0).name();
-        for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
-                originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
-            FixedWidthValidator.validate(fileName, referenceSchema.getColumn(originalIndex));
+        try (ReadScope.Scope file = ReadScope.file(inputFiles.get(0).name())) {
+            for (int originalIndex = touchedColumns.nextSetBit(0); originalIndex >= 0;
+                    originalIndex = touchedColumns.nextSetBit(originalIndex + 1)) {
+                FixedWidthValidator.validate(referenceSchema.getColumn(originalIndex));
+            }
         }
     }
 
@@ -1439,52 +1443,51 @@ public class RowGroupIterator {
     /// @return the column's leaf ordinal in `fileSchema`
     private int validateColumn(InputFile inputFile, FileSchema fileSchema, int originalIndex) {
         ColumnSchema refColumn = referenceSchema.getColumn(originalIndex);
+        try (ReadScope.Scope scope = ReadScope.file(inputFile.name())
+                .column(ReadContext.UNKNOWN_ROW_GROUP, refColumn.fieldPath())) {
+            return compareColumn(fileSchema, refColumn);
+        }
+    }
 
+    /// Compares one reference column against its counterpart, inside the scope
+    /// that names which column it is. Every failure below says only what
+    /// disagrees.
+    private static int compareColumn(FileSchema fileSchema, ColumnSchema refColumn) {
         ColumnSchema fileColumn;
         try {
             fileColumn = fileSchema.getColumn(refColumn.fieldPath());
         }
         catch (IllegalArgumentException e) {
-            throw new SchemaIncompatibleException(
-                    ExceptionContext.filePrefix(inputFile.name())
-                            + "Column '" + refColumn.fieldPath() + "' not found");
+            throw incompatible("Not present in this file's schema");
         }
 
         PhysicalType refType = refColumn.type();
         PhysicalType fileType = fileColumn.type();
         if (refType != fileType) {
-            throw new SchemaIncompatibleException(
-                    ExceptionContext.filePrefix(inputFile.name())
-                            + "Column '" + refColumn.fieldPath() + "' has incompatible type"
-                            + ": expected " + refType + " but found " + fileType);
+            throw incompatible("Incompatible type: expected %s but found %s",
+                            refType, fileType);
         }
 
         LogicalType refLogical = refColumn.logicalType();
         LogicalType fileLogical = fileColumn.logicalType();
         if (!Objects.equals(refLogical, fileLogical)) {
-            throw new SchemaIncompatibleException(
-                    ExceptionContext.filePrefix(inputFile.name())
-                            + "Column '" + refColumn.fieldPath() + "' has incompatible logical type"
-                            + ": expected " + refLogical + " but found " + fileLogical);
+            throw incompatible("Incompatible logical type: expected %s but found %s",
+                            refLogical, fileLogical);
         }
 
         RepetitionType refRep = refColumn.repetitionType();
         RepetitionType fileRep = fileColumn.repetitionType();
         if (refRep != fileRep) {
-            throw new SchemaIncompatibleException(
-                    ExceptionContext.filePrefix(inputFile.name())
-                            + "Column '" + refColumn.fieldPath() + "' has incompatible repetition type"
-                            + ": expected " + refRep + " but found " + fileRep);
+            throw incompatible("Incompatible repetition type: expected %s but found %s",
+                            refRep, fileRep);
         }
 
         // The FLBA width drives every decode of the column's bytes.
         Integer refLength = refColumn.typeLength();
         Integer fileLength = fileColumn.typeLength();
         if (!Objects.equals(refLength, fileLength)) {
-            throw new SchemaIncompatibleException(
-                    ExceptionContext.filePrefix(inputFile.name())
-                            + "Column '" + refColumn.fieldPath() + "' has incompatible type length"
-                            + ": expected " + refLength + " but found " + fileLength);
+            throw incompatible("Incompatible type length: expected %s but found %s",
+                            refLength, fileLength);
         }
 
         // The leaf's own repetition type matching does not imply its ancestors' do,
@@ -1496,23 +1499,33 @@ public class RowGroupIterator {
         int refMaxDef = refColumn.maxDefinitionLevel();
         int fileMaxDef = fileColumn.maxDefinitionLevel();
         if (refMaxDef != fileMaxDef) {
-            throw new SchemaIncompatibleException(
-                    ExceptionContext.filePrefix(inputFile.name())
-                            + "Column '" + refColumn.fieldPath()
-                            + "' has incompatible maximum definition level"
-                            + ": expected " + refMaxDef + " but found " + fileMaxDef);
+            throw incompatible("Incompatible maximum definition level: expected %s but found %s",
+                            refMaxDef, fileMaxDef);
         }
 
         int refMaxRep = refColumn.maxRepetitionLevel();
         int fileMaxRep = fileColumn.maxRepetitionLevel();
         if (refMaxRep != fileMaxRep) {
-            throw new SchemaIncompatibleException(
-                    ExceptionContext.filePrefix(inputFile.name())
-                            + "Column '" + refColumn.fieldPath()
-                            + "' has incompatible maximum repetition level"
-                            + ": expected " + refMaxRep + " but found " + fileMaxRep);
+            throw incompatible("Incompatible maximum repetition level: expected %s but found %s",
+                            refMaxRep, fileMaxRep);
         }
 
         return fileColumn.columnIndex();
+    }
+
+    /// A row group whose chunks do not line up with the schema. Raised inside
+    /// the scope naming the file, the row group and the column, so the message
+    /// says only what disagrees.
+    private static SchemaIncompatibleException chunkMismatch(InputFile inputFile, int rowGroupIndex,
+            FieldPath column, String message, Object... args) {
+        try (ReadScope.Scope scope = ReadScope.file(inputFile.name())
+                .column(rowGroupIndex, column)) {
+            return new SchemaIncompatibleException(String.format(message, args));
+        }
+    }
+
+    /// What disagrees. Which column, and in which file, is the scope's to say.
+    private static SchemaIncompatibleException incompatible(String message, Object... args) {
+        return new SchemaIncompatibleException(String.format(message, args));
     }
 }

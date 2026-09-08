@@ -54,6 +54,32 @@ Requesting the wrong type for a column — `getLong` on an `INT32` column — is
 error whose exception type is deliberately unspecified, and is covered in
 [Type mismatches](accessors.md#type-mismatches).
 
+### What a read failure's message says
+
+A failure raised while reading a file states where the read was, in front of what
+went wrong:
+
+```
+[orders.parquet] row group 3, column customer.id, page header at byte 41104 (0x00a090) — PageHeader.type — Unknown field type: 15
+```
+
+The parts, in order, each present only when it is known:
+
+| Part | Means |
+|---|---|
+| `[orders.parquet]` | the file being read. `[<memory>]` for a file read from a `ByteBuffer` |
+| `row group 3` | the row group. Absent for the footer and for a batch that spans a file boundary |
+| `column customer.id` | the column chunk, by path. `column #0` where the file's own metadata does not name the column |
+| `page header` | what was being read: `magic bytes`, `footer length`, `footer`, `column index`, `offset index`, `row-group index`, `bloom filter`, `chunk fetch`, `dictionary page`, `page fetch`, `page header`, `data page`, `batch assembly` |
+| `at byte 41104 (0x00a090)` | the byte to go and look at, in decimal and hex. Absent where nothing narrows the failure to one — a `data page` names the page through its row group and column instead |
+| `PageHeader.type` | the Thrift struct and field a metadata parse stopped on, named from `parquet.thrift`. Only on a parse failure, and only where the field has a name in the format |
+
+An `UnsupportedOperationException` names the file and nothing else. The file is
+correct, so there is no byte to go and look at.
+
+Both the message and the position are subject to change between releases; match on
+the exception type rather than parsing the text.
+
 Reading a `RowReader` inside a `Stream` or an `Iterator` means adapting a checked
 exception to an interface that cannot declare one. Wrap it in
 `UncheckedIOException` at that boundary and unwrap it where the stream is

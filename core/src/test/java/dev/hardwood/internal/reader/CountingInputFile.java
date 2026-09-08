@@ -13,7 +13,7 @@ import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.atomic.AtomicLong;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.ReadScope;
 
 /// An [InputFile] wrapper that delegates to another `InputFile` and counts both the number of
 /// [#readRange] calls and the total bytes read. Useful in tests that need to assert on I/O patterns
@@ -59,7 +59,7 @@ public class CountingInputFile implements InputFile {
     @Override
     public ByteBuffer readRange(long offset, int length) throws IOException {
         readRangeCount.incrementAndGet();
-        if (FetchReason.current().startsWith("footer-")) {
+        if (readingFileMetadata()) {
             footerReadCount.incrementAndGet();
         }
         bytesRead.addAndGet(length);
@@ -80,5 +80,12 @@ public class CountingInputFile implements InputFile {
     public void close() throws IOException {
         closeCount.incrementAndGet();
         delegate.close();
+    }
+
+    /// Whether the read in progress is of the file's own bookkeeping — the
+    /// magic markers, the footer length, the footer — rather than of its data.
+    private static boolean readingFileMetadata() {
+        ReadScope.Place place = ReadScope.current();
+        return place != null && place.region() != null && place.region().isFileMetadata();
     }
 }

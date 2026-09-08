@@ -130,7 +130,7 @@ class DictionaryEndToEndTest {
         FileSchema schema = FileSchema.fromSchemaElements(reader.getFileMetaData().schema());
 
         try (HardwoodContextImpl context = HardwoodContextImpl.create()) {
-            assertThat(new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context)
+            assertThat(new RowGroupDictionaryFilterSource(inputFile, rowGroup, 0, schema, context)
                     .forColumn(columnIndex))
                     .as("dictionary for column '%s'", column)
                     .isNotNull();

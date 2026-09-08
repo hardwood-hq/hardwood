@@ -21,6 +21,7 @@ import dev.hardwood.InputFile;
 import dev.hardwood.internal.schema.ProjectedSchema;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetFileReader;
+import dev.hardwood.reader.ParquetReadException;
 import dev.hardwood.schema.ColumnSchema;
 import dev.hardwood.schema.FileSchema;
 
@@ -243,6 +244,36 @@ class ColumnWorkerTest {
                     .isInstanceOf(RuntimeException.class)
                     .hasMessageContaining("Simulated pipeline error");
         }
+    }
+
+    /// Working out what to say about a failure must not be able to discard it.
+    ///
+    /// These catches are the only thing that reports a decode failure at all —
+    /// the future running the task drops what escapes it — so a throw while
+    /// describing one would hang the read instead of failing it, with no
+    /// exception and no log line. Asserted here because that outcome is
+    /// invisible in every other test: a hang looks like a slow test.
+    @Test
+    void describingAFailureCannotDiscardIt() {
+        ParquetReadException original = new ParquetReadException("the page is corrupt");
+
+        Throwable reported = ColumnWorker.describedOrRaw(original, () -> {
+            throw new NullPointerException("bug while describing");
+        });
+
+        assertThat(reported).isSameAs(original);
+        assertThat(reported.getSuppressed()).hasSize(1);
+        assertThat(reported.getSuppressed()[0]).isInstanceOf(NullPointerException.class)
+                .hasMessage("bug while describing");
+    }
+
+    /// And when describing works, its answer is what the caller gets.
+    @Test
+    void aDescribedFailureIsTheOneReported() {
+        ParquetReadException original = new ParquetReadException("raw");
+        ParquetReadException described = new ParquetReadException("described");
+
+        assertThat(ColumnWorker.describedOrRaw(original, () -> described)).isSameAs(described);
     }
 
     /// Nested pipeline delivers all rows with pre-computed index structures.

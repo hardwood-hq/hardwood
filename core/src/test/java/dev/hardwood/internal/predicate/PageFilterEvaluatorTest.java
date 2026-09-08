@@ -627,10 +627,14 @@ class PageFilterEvaluatorTest {
             assertThatThrownBy(() -> PageFilterEvaluator.computeMatchingRows(
                     new ResolvedPredicate.IsNotNullPredicate(0), rowGroup, buffers,
                     new PageFilterEvaluator.IndexLocation("indexes.parquet", 7)))
+                    // Both structs parsed and contradict each other, so this is
+                    // malformed metadata rather than a failed read.
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[indexes.parquet] Failed to parse the page index of column 0"
-                            + " in row group 7: Malformed Parquet metadata: ColumnIndex describes"
-                            + " 3 pages but OffsetIndex locates 2");
+                    // The chunk carries no meta_data, so the column is named by its
+                    // ordinal; the byte is the column index's own start in the file.
+                    .hasMessage("[indexes.parquet] row group 7, column #0, column index at byte 20"
+                            + " (0x000014) — Malformed Parquet metadata: the column index"
+                            + " describes 3 pages but the offset index locates 2");
         }
     }
 

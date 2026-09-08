@@ -12,8 +12,10 @@ import java.nio.ByteBuffer;
 import java.util.concurrent.CompletableFuture;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.ReadScope;
+import dev.hardwood.reader.ParquetReadException;
 
 /// A contiguous, multi-column byte range fetched in a single
 /// `readRange` call. Exists to coalesce the per-column reads of a row
@@ -120,14 +122,22 @@ public final class SharedRegion {
             }
             String outer = FetchReason.current();
             String composed = "unattributed".equals(outer) ? purpose : outer + " | " + purpose;
-            try (FetchReason.Scope ignored = FetchReason.set(composed)) {
-                data = inputFile.readRange(fileOffset, length);
-            }
-            catch (IOException e) {
-                throw new IOException(
-                        ExceptionContext.filePrefix(inputFile.name())
-                        + "Failed to fetch region at offset " + fileOffset
-                        + " (length " + length + ")", e);
+            try (FetchReason.Scope ignored = FetchReason.set(composed);
+                 ReadScope.Scope fetch = ReadScope.region(Region.CHUNK_FETCH, fileOffset)) {
+                try {
+                    data = inputFile.readRange(fileOffset, length);
+                }
+                catch (IOException e) {
+                    throw new IOException(ReadScope.here() + "Failed to fetch " + length + " bytes", e);
+                }
+                catch (IndexOutOfBoundsException e) {
+                    // The footer named an address the file does not have, so
+                    // nothing was ever going to arrive. That is the metadata
+                    // contradicting itself, not a read that went wrong.
+                    throw new ParquetReadException("Malformed Parquet metadata: the region of "
+                            + length + " bytes at offset " + fileOffset
+                            + " runs past the end of the file", e);
+                }
             }
         }
     }

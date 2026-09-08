@@ -59,9 +59,8 @@ class SchemaCompatibilityTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_ts_millis.parquet] Column 'ts' has incompatible logical type:" +
-                            " expected TIMESTAMP(MICROS, UTC)" +
-                            " but found TIMESTAMP(MILLIS, UTC)");
+                    .hasMessage("[compat_ts_millis.parquet] column ts — Incompatible logical type: expected"
+                            + " TIMESTAMP(MICROS, UTC) but found TIMESTAMP(MILLIS, UTC)");
         }
     }
 
@@ -79,9 +78,8 @@ class SchemaCompatibilityTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_decimal_10_4.parquet] Column 'amount' has incompatible logical type:" +
-                            " expected DECIMAL(10, 2)" +
-                            " but found DECIMAL(10, 4)");
+                    .hasMessage("[compat_decimal_10_4.parquet] column amount — Incompatible logical type:"
+                            + " expected DECIMAL(10, 2) but found DECIMAL(10, 4)");
         }
     }
 
@@ -99,8 +97,8 @@ class SchemaCompatibilityTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_optional_value.parquet] Column 'value' has incompatible repetition type:" +
-                            " expected REQUIRED but found OPTIONAL");
+                    .hasMessage("[compat_optional_value.parquet] column value — Incompatible repetition type:"
+                            + " expected REQUIRED but found OPTIONAL");
         }
     }
 
@@ -118,8 +116,8 @@ class SchemaCompatibilityTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_plain_int64.parquet] Column 'ts' has incompatible logical type:" +
-                            " expected TIMESTAMP(MICROS, UTC) but found null");
+                    .hasMessage("[compat_plain_int64.parquet] column ts — Incompatible logical type: expected"
+                            + " TIMESTAMP(MICROS, UTC) but found null");
         }
     }
 
@@ -137,8 +135,8 @@ class SchemaCompatibilityTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_flba_8.parquet] Column 'v' has incompatible type length:" +
-                            " expected 4 but found 8");
+                    .hasMessage("[compat_flba_8.parquet] column v — Incompatible type length: expected 4 but"
+                            + " found 8");
         }
     }
 
@@ -159,8 +157,8 @@ class SchemaCompatibilityTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_nested_opt_group.parquet] Column 'g.v'" +
-                            " has incompatible maximum definition level: expected 0 but found 1");
+                    .hasMessage("[compat_nested_opt_group.parquet] column g.v — Incompatible maximum"
+                            + " definition level: expected 0 but found 1");
         }
     }
 
@@ -183,8 +181,8 @@ class SchemaCompatibilityTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_maxrep_struct.parquet] Column 'g.list.element'" +
-                            " has incompatible maximum repetition level: expected 1 but found 0");
+                    .hasMessage("[compat_maxrep_struct.parquet] column g.list.element — Incompatible maximum"
+                            + " repetition level: expected 1 but found 0");
         }
     }
 
@@ -205,8 +203,8 @@ class SchemaCompatibilityTest {
                     }
                 }
             }).isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[compat_maxrep_list.parquet] Column 'g.list.element'" +
-                            " has incompatible maximum repetition level: expected 0 but found 1");
+                    .hasMessage("[compat_maxrep_list.parquet] column g.list.element — Incompatible maximum"
+                            + " repetition level: expected 0 but found 1");
         }
     }
 

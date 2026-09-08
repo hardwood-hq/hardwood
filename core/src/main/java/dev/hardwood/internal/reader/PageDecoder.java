@@ -10,6 +10,8 @@ package dev.hardwood.internal.reader;
 import java.nio.ByteBuffer;
 import java.nio.ByteOrder;
 
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.compression.Decompressor;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.internal.encoding.ByteStreamSplitDecoder;
@@ -151,9 +153,14 @@ public class PageDecoder {
         PageDecodedEvent event = new PageDecodedEvent();
         event.begin();
 
-        // Parse page header directly from buffer
+        // The header is the only Thrift-encoded thing in a page, and saying so
+        // structurally is what lets a failure in it be told from one in the
+        // values without asking the failure which it was.
         ThriftCompactReader headerReader = new ThriftCompactReader(pageBuffer, 0);
-        PageHeader pageHeader = PageHeaderReader.read(headerReader);
+        PageHeader pageHeader;
+        try (ReadScope.Scope header = ReadScope.narrow(Region.PAGE_HEADER)) {
+            pageHeader = PageHeaderReader.read(headerReader);
+        }
         int headerSize = headerReader.getBytesRead();
 
         // Slice the page data (avoids copying)
@@ -161,7 +168,7 @@ public class PageDecoder {
         ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
 
         if (pageHeader.crc() != null) {
-            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData, column.name());
+            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
         }
 
         Page result = switch (pageHeader.type()) {

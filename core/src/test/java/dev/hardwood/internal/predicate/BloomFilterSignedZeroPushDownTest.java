@@ -73,7 +73,7 @@ class BloomFilterSignedZeroPushDownTest {
     private static boolean bloomDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
         return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup,
-                new RowGroupBloomFilterSource(inputFile, rowGroup), null) == FilterDecision.CANNOT_MATCH;
+                new RowGroupBloomFilterSource(inputFile, rowGroup, 0), null) == FilterDecision.CANNOT_MATCH;
     }
 
     private static boolean statisticsDrop(FilterPredicate filter) throws IOException {

@@ -180,14 +180,16 @@ class MultiFileRowReaderTest {
         try (ParquetFileReader reader = ParquetFileReader.openAll(List.of(valid, invalid))) {
             assertThatThrownBy(() -> reader.getFileMetaData(1))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[<memory>] Not a Parquet file (invalid magic number at start)");
+                    .hasMessage("[<memory>] magic bytes at byte 0 (0x000000) — Not a Parquet file"
+                            + " (invalid magic number at start)");
             int readsAfterFailure = invalid.footerReadCount();
 
             // A malformed file now reaches the caller as what it is, rather than
             // wrapped as a metadata read that failed.
             assertThatThrownBy(reader::rowReader)
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[<memory>] Not a Parquet file (invalid magic number at start)");
+                    .hasMessage("[<memory>] magic bytes at byte 0 (0x000000) — Not a Parquet file"
+                            + " (invalid magic number at start)");
             assertThat(invalid.footerReadCount()).isEqualTo(readsAfterFailure);
         }
 
@@ -195,7 +197,8 @@ class MultiFileRowReaderTest {
         try (ParquetFileReader reader = ParquetFileReader.openAll(List.of(valid, invalid))) {
             assertThatThrownBy(() -> reader.getFileMetaData(1))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[<memory>] Not a Parquet file (invalid magic number at start)");
+                    .hasMessage("[<memory>] magic bytes at byte 0 (0x000000) — Not a Parquet file"
+                            + " (invalid magic number at start)");
         }
         assertThat(invalid.footerReadCount()).isGreaterThan(readsBeforeReopen);
     }

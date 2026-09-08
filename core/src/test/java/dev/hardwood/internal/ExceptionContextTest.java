@@ -9,6 +9,11 @@ package dev.hardwood.internal;
 
 import org.junit.jupiter.api.Test;
 
+import dev.hardwood.internal.ExceptionContext.ReadContext;
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
+
+import static dev.hardwood.internal.ExceptionContext.ReadContext.UNKNOWN_OFFSET;
+import static dev.hardwood.internal.ExceptionContext.ReadContext.UNKNOWN_ROW_GROUP;
 import static org.assertj.core.api.Assertions.assertThat;
 
 /// Unit tests for [ExceptionContext].
@@ -81,5 +86,33 @@ class ExceptionContextTest {
         CustomException() {
             super("custom error");
         }
+    }
+
+    /// A footer belongs to the file rather than to any part of it, so a
+    /// context naming a region and an offset and no column at all still reads
+    /// as a sentence.
+    @Test
+    void readContextWithNeitherRowGroupNorColumn() {
+        assertThat(ExceptionContext.prefix(new ReadContext("f.parquet", UNKNOWN_ROW_GROUP, null,
+                Region.FOOTER, 161340)))
+                .isEqualTo("[f.parquet] footer at byte 161340 (0x02763c) — ");
+    }
+
+    /// A context that knows the stage but not how far it got must not leave a
+    /// dangling "at byte" behind; the clause carries only what it was given.
+    @Test
+    void readContextWithoutAnOffsetNamesNoByte() {
+        assertThat(ExceptionContext.prefix(
+                new ReadContext("f.parquet", 3, "id", Region.DATA_PAGE, UNKNOWN_OFFSET)))
+                .isEqualTo("[f.parquet] row group 3, column id, data page — ");
+    }
+
+    /// Nothing beyond the file leaves the prefix exactly as it has always been,
+    /// so a caller can concatenate it without checking.
+    @Test
+    void readContextWithNothingButAFileNameIsJustThePrefix() {
+        assertThat(ExceptionContext.prefix(new ReadContext("f.parquet", UNKNOWN_ROW_GROUP, null,
+                null, UNKNOWN_OFFSET)))
+                .isEqualTo("[f.parquet] ");
     }
 }

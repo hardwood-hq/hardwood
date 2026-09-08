@@ -248,7 +248,7 @@ class BloomFilterPushDownTest {
         columns.set(NAME_COLUMN, patched);
         RowGroup patchedRowGroup = new RowGroup(columns, rowGroup.totalByteSize(), rowGroup.numRows());
 
-        BloomFilter filter = new RowGroupBloomFilterSource(inputFile, patchedRowGroup).forColumn(NAME_COLUMN);
+        BloomFilter filter = new RowGroupBloomFilterSource(inputFile, patchedRowGroup, 0).forColumn(NAME_COLUMN);
         assertThat(filter).isNotNull();
         assertThat(filter.mightContain(XxHash64.hash("x".getBytes(StandardCharsets.UTF_8)))).isTrue();
     }
@@ -270,7 +270,7 @@ class BloomFilterPushDownTest {
         System.arraycopy(serialized, 0, fileBytes, offset, serialized.length);
         CountingInputFile memory = new CountingInputFile(InputFile.of(ByteBuffer.wrap(fileBytes)));
 
-        BloomFilter filter = new RowGroupBloomFilterSource(memory, singleColumnRowGroup(offset)).forColumn(0);
+        BloomFilter filter = new RowGroupBloomFilterSource(memory, singleColumnRowGroup(offset), 0).forColumn(0);
         assertThat(filter).isNotNull();
         assertThat(filter.header().numBytes()).isEqualTo(32);
         assertThat(filter.mightContain(presentHash)).isTrue(); // no false negative for a stored value
@@ -286,12 +286,12 @@ class BloomFilterPushDownTest {
         // before the file's magic header). The source stays conservative — no filter, so the row
         // group is kept — rather than throwing or reading garbage.
         InputFile memory = InputFile.of(ByteBuffer.wrap(new byte[64]));
-        assertThat(new RowGroupBloomFilterSource(memory, singleColumnRowGroup(0)).forColumn(0)).isNull();
+        assertThat(new RowGroupBloomFilterSource(memory, singleColumnRowGroup(0), 0).forColumn(0)).isNull();
     }
 
     @Test
     void rowGroupBloomFilterSourceExposesFiltersPerColumn() throws IOException {
-        RowGroupBloomFilterSource source = new RowGroupBloomFilterSource(inputFile, rowGroup);
+        RowGroupBloomFilterSource source = new RowGroupBloomFilterSource(inputFile, rowGroup, 0);
         assertThat(source.forColumn(NAME_COLUMN)).isNotNull();
         assertThat(source.forColumn(VALUE_COLUMN)).isNull();
         // Out-of-bounds index (e.g. a narrower file in a multi-file scan) is conservatively
@@ -302,7 +302,7 @@ class BloomFilterPushDownTest {
     private static boolean bloomDrop(FilterPredicate filter) throws IOException {
         ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
         return RowGroupFilterEvaluator.decideRowGroup(resolved, rowGroup,
-                new RowGroupBloomFilterSource(inputFile, rowGroup), null) == FilterDecision.CANNOT_MATCH;
+                new RowGroupBloomFilterSource(inputFile, rowGroup, 0), null) == FilterDecision.CANNOT_MATCH;
     }
 
     private static boolean statisticsDrop(FilterPredicate filter) throws IOException {

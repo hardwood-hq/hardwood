@@ -121,7 +121,7 @@ public final class DictionaryParser {
         }
 
         if (header.crc() != null) {
-            CrcValidator.assertCorrectCrc(header.crc(), compressedData, columnSchema.name());
+            CrcValidator.assertCorrectCrc(header.crc(), compressedData);
         }
 
         return decompress(compressedData, numValues, header.uncompressedPageSize(),
@@ -168,8 +168,10 @@ public final class DictionaryParser {
             throw e;
         }
         catch (RuntimeException e) {
-            throw new ParquetReadException("Failed to parse dictionary for column '" + column.name()
-                    + "' (type=" + column.type()
+            // The column is read context, added once on the way out; naming it
+            // here as well said it twice in one sentence.
+            throw new ParquetReadException("Failed to parse dictionary"
+                    + " (type=" + column.type()
                     + ", numValues=" + numValues
                     + ", uncompressedSize=" + uncompressedSize
                     + ", compressedSize=" + compressedData.remaining()

@@ -9,6 +9,7 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 import java.io.UncheckedIOException;
+import java.util.OptionalLong;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ConcurrentHashMap;
@@ -16,8 +17,11 @@ import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.concurrent.atomic.AtomicReferenceArray;
 import java.util.concurrent.locks.LockSupport;
+import java.util.function.Supplier;
 
-import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ExceptionContext.ReadContext;
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.compression.DecompressorFactory;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.ParquetReadException;
@@ -76,24 +80,29 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // retriever throttle prevents reuse until the drain has consumed the page.
     private final PageDecoder.LevelScratch[] levelScratchBuffer;
 
-    // === File name per reorder-buffer slot (retriever writes, drain reads) ===
-    // Visibility: retriever writes fileNameBuffer[slot] before submitting the
+    // === Where each reorder-buffer slot's page came from (retriever writes, drain reads) ===
+    // Visibility: retriever writes placeBuffer[slot] before submitting the
     // decode task. The decode task's volatile write to reorderBuffer[slot]
     // happens-after the retriever's plain write. The drain's volatile read of
-    // reorderBuffer[slot] sees the fileName via the happens-before chain.
+    // reorderBuffer[slot] sees the place via the happens-before chain.
     //
     // Slot reuse safety: the retriever may only reuse a slot once consumePosition
     // has advanced past it (throttle: nextSeq - consumePosition < MAX_INFLIGHT_PAGES).
-    // drainReadyPages reads fileNameBuffer[slot] before incrementing consumePosition,
+    // drainReadyPages reads placeBuffer[slot] before incrementing consumePosition,
     // so the previous occupant's fileName is always read before being overwritten.
     // Any future change to the throttle or to the read-then-increment ordering must
     // preserve this invariant.
-    private final String[] fileNameBuffer;
+    private final ReadScope.Place[] placeBuffer;
 
     // Per-slot filter-always-matches flag, written by the retriever alongside
-    // fileNameBuffer[slot] under the same happens-before chain: whether the page's
+    // placeBuffer[slot] under the same happens-before chain: whether the page's
     // row group was proven by statistics to match the filter in full.
     private final boolean[] filterAlwaysMatchesBuffer;
+
+    // Per-slot row group index, written by the retriever alongside
+    // placeBuffer[slot] under the same happens-before chain. Read only when a
+    // page fails, to say which row group of the column it was in.
+
 
     // === Drain position (only modified by drain thread, read by retriever for throttle) ===
     private volatile int consumePosition;
@@ -141,6 +150,15 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// Written only by the drain thread.
     String currentBatchFileName;
 
+    /// Row group of the page currently being assembled. Written only by the
+    /// drain thread.
+    ///
+    /// Per page rather than per batch: batches are flushed on file boundaries,
+    /// not row-group ones, so one batch routinely spans several row groups and
+    /// has no single row group to name. A failure, though, happens while
+    /// assembling one particular page, and that page has one.
+    int currentPageRowGroup = ReadContext.UNKNOWN_ROW_GROUP;
+
     /// Whether every page of the current batch comes from a row group whose statistics
     /// prove the filter matches all rows. Only maintained (with batch flushes on
     /// transitions) when [#flushOnFilterAlwaysMatchesTransition] is `true`.
@@ -180,8 +198,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         for (int i = 0; i < levelScratchBuffer.length; i++) {
             levelScratchBuffer[i] = new PageDecoder.LevelScratch();
         }
-        this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
+        this.placeBuffer = new ReadScope.Place[MAX_INFLIGHT_PAGES];
         this.filterAlwaysMatchesBuffer = new boolean[MAX_INFLIGHT_PAGES];
+
     }
 
     /// Initializes subclass-specific drain state (called at the start of `runDrain`).
@@ -329,7 +348,7 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 int seq = nextSeq++;
                 totalPagesSubmitted++;
                 int slot = seq % MAX_INFLIGHT_PAGES;
-                fileNameBuffer[slot] = pageSource.getCurrentFileName();
+                placeBuffer[slot] = pageAt(pageInfo);
                 filterAlwaysMatchesBuffer[slot] = pageSource.isCurrentFilterAlwaysMatches();
                 PageInfo pi = pageInfo;
                 PageDecoder rdr = pageDecoder;
@@ -360,7 +379,12 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     sourceNanos / 1_000_000.0, throttleNanos / 1_000_000.0, throttleWakes);
         }
         catch (Throwable t) {
-            signalError(enrichWithFileName(t, pageSource.getCurrentFileName()));
+            // No region: the retriever runs every step of getting a page — the
+            // plan, the filters, the index, the fetch — and whichever one this
+            // was has already said so from inside itself. Naming one here named
+            // the wrong one for everything but a fetch.
+            report(t, () -> placedAt(columnPlace(pageSource.getCurrentFileName(),
+                    pageSource.getCurrentRowGroupIndex()), t));
         }
     }
 
@@ -369,14 +393,22 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         if (done || error.get() != null) {
             return;
         }
-        try {
-            Page page = pageInfo.isNullPlaceholder()
-                    ? pageDecoder.nullPage(pageInfo.placeholderNumValues())
-                    : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(), levelScratchBuffer[slot]);
-            reorderBuffer.set(slot, new DecodedPage(page, pageInfo.mask()));
-        }
-        catch (Throwable t) {
-            signalError(enrichWithFileName(t, fileNameBuffer[slot]));
+        // The page was read on the retriever thread; this one has to be told
+        // where it came from, and inherits nothing from whatever it ran last.
+        try (ReadScope.Scope scope = ReadScope.resume(placeBuffer[slot])
+                .region(Region.DATA_PAGE)) {
+            try {
+                Page page = pageInfo.isNullPlaceholder()
+                        ? pageDecoder.nullPage(pageInfo.placeholderNumValues())
+                        : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(),
+                                levelScratchBuffer[slot]);
+                reorderBuffer.set(slot, new DecodedPage(page, pageInfo.mask()));
+            }
+            catch (Throwable t) {
+                // Raised inside the scope above, so it takes the page's place
+                // without being handed one.
+                report(t, () -> asReadFailure(t));
+            }
         }
         LockSupport.unpark(drainThread);
     }
@@ -422,7 +454,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     publishBlockNanos / 1_000_000.0);
         }
         catch (Throwable t) {
-            signalError(enrichWithFileName(t, currentBatchFileName));
+            // A region this frame does know: assembling is what it does.
+            report(t, () -> placedAt(columnPlace(currentBatchFileName, currentPageRowGroup)
+                    .withRegion(Region.BATCH_ASSEMBLY), t));
         }
     }
 
@@ -443,7 +477,9 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
 
             // Detect file boundary: flush the current batch when the file changes
             // so that each batch is attributed to a single file.
-            String pageFileName = fileNameBuffer[slot];
+            ReadScope.Place page = placeBuffer[slot];
+            currentPageRowGroup = page.rowGroup();
+            String pageFileName = page.fileName();
             if (pageFileName != null) {
                 if (currentBatchFileName != null
                         && !pageFileName.equals(currentBatchFileName)
@@ -505,34 +541,71 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         LockSupport.unpark(drainThread);
     }
 
-    /// Says what a throwable means, then names the file it came from.
+    /// Reports `t` to the caller, and reports it even if working out what to
+    /// say about it fails.
     ///
-    /// [#asReadFailure] decides the type first, so what is enriched here is already the
-    /// exception a caller will see. A `RuntimeException` — including the
-    /// `ParquetReadException` most decoder failures have just become — is enriched via
-    /// [ExceptionContext#addFileContext], which preserves whatever type it arrived as.
-    /// `IOException` is restated as a fresh `IOException` carrying the prefix: the pipeline
-    /// carries a failure across its thread boundary as a `Throwable`, so it stays checked the
-    /// whole way and the readers declare it rather than unwrapping anything. `Error` and other
-    /// throwables propagate unchanged.
-    private static Throwable enrichWithFileName(Throwable t, String fileName) {
-        Throwable typed = asReadFailure(t);
-        if (fileName == null || fileName.isEmpty()) {
-            return typed;
+    /// These catches are the only thing able to report a failure at all: the
+    /// decode task's own failure is discarded by the future that ran it, and
+    /// each thread's dies with the thread. A throw from inside one of them
+    /// would leave nothing to set the error and nothing to wake the drain, so
+    /// the read would never return rather than fail — the one outcome worse
+    /// than a bad message. `describe` is therefore allowed to fail, and the
+    /// failure it was describing is reported instead, carrying it.
+    ///
+    /// [#signalError] itself needs no guard: a compare-and-set, a flag, a queue
+    /// hand-off and two unparks.
+    private void report(Throwable t, Supplier<Throwable> describe) {
+        signalError(describedOrRaw(t, describe));
+    }
+
+    /// What `t` means, said from inside `place`.
+    ///
+    /// For the two catches that meet a failure after the scope it happened in
+    /// has closed — a task boundary, a thread's outermost catch. Re-entering
+    /// the place is what lets the failure be built the same way every other one
+    /// is, rather than having a second mechanism for attaching a place to an
+    /// exception that already exists.
+    private Throwable placedAt(ReadScope.Place place, Throwable t) {
+        try (ReadScope.Scope resumed = ReadScope.resume(place)) {
+            return asReadFailure(t);
         }
-        if (typed instanceof RuntimeException re) {
-            return ExceptionContext.addFileContext(fileName, re);
+    }
+
+    /// What `describe` makes of `t`, or `t` itself when describing it throws.
+    ///
+    /// Package-private and static so the guarantee can be asserted directly:
+    /// the failure that matters here is the one in `describe`, and it must not
+    /// be able to take `t` down with it.
+    static Throwable describedOrRaw(Throwable t, Supplier<Throwable> describe) {
+        try {
+            return describe.get();
         }
-        if (typed instanceof IOException ioe) {
-            // Stays checked. The pipeline carries a failure across its thread
-            // boundary as a `Throwable`, so nothing between here and the reader
-            // needs it wrapped, and the reader's own signature can declare it.
-            return new IOException(
-                    ExceptionContext.filePrefix(fileName)
-                            + (ioe.getMessage() != null ? ioe.getMessage() : "I/O failure"),
-                    ioe);
+        catch (Throwable failed) {
+            t.addSuppressed(failed);
+            return t;
         }
-        return typed;
+    }
+
+    /// Where a page came from, captured on the retriever thread so the decode
+    /// task and the drain can re-enter it.
+    ///
+    /// The page's own first byte is the region start for everything done to it:
+    /// the only Thrift-encoded thing in a page is the header at its front, so a
+    /// parse position added to this lands inside that header and never in the
+    /// values, which have no file offset a decoder could report.
+    private ReadScope.Place pageAt(PageInfo pageInfo) {
+        OptionalLong offset = pageInfo.fileOffset();
+        return new ReadScope.Place(pageSource.getCurrentFileName(),
+                pageSource.getCurrentRowGroupIndex(), String.valueOf(column.fieldPath()), null,
+                offset.isPresent() ? offset.getAsLong() : ReadContext.UNKNOWN_OFFSET);
+    }
+
+    /// This worker's column in one file's row group, with no region and no
+    /// byte: what a frame knows once the step that failed has finished
+    /// unwinding past it.
+    private ReadScope.Place columnPlace(String fileName, int rowGroup) {
+        return new ReadScope.Place(fileName, rowGroup, String.valueOf(column.fieldPath()), null,
+                ReadContext.UNKNOWN_OFFSET);
     }
 
     /// What a decoder threw, said as what it means.

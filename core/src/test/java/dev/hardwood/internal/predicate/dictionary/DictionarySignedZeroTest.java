@@ -49,7 +49,7 @@ class DictionarySignedZeroTest {
         RowGroup rowGroup = reader.getFileMetaData().rowGroups().getFirst();
         FileSchema schema = FileSchema.fromSchemaElements(reader.getFileMetaData().schema());
         context = HardwoodContextImpl.create();
-        dictionaries = new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context);
+        dictionaries = new RowGroupDictionaryFilterSource(inputFile, rowGroup, 0, schema, context);
     }
 
     @AfterAll

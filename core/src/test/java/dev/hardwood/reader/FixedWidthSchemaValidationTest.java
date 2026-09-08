@@ -60,8 +60,8 @@ class FixedWidthSchemaValidationTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.columns("digest")).build())
                     .isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[no-width.parquet] Column 'digest' is a FIXED_LEN_BYTE_ARRAY "
-                            + "that declares no type length");
+                    .hasMessage("[no-width.parquet] column digest — FIXED_LEN_BYTE_ARRAY declares no type"
+                            + " length");
         }
     }
 
@@ -72,8 +72,8 @@ class FixedWidthSchemaValidationTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             assertThatThrownBy(() -> reader.buildRowReader().projection(ColumnProjection.columns("digest")).build())
                     .isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[zero-width.parquet] Column 'digest' declares a FIXED_LEN_BYTE_ARRAY "
-                            + "type length of 0, which must be positive");
+                    .hasMessage("[zero-width.parquet] column digest — FIXED_LEN_BYTE_ARRAY declares a type"
+                            + " length of 0, which must be positive");
         }
     }
 
@@ -84,8 +84,8 @@ class FixedWidthSchemaValidationTest {
         try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(file))) {
             assertThatThrownBy(() -> reader.columnReaders(ColumnProjection.columns("digest")))
                     .isInstanceOf(SchemaIncompatibleException.class)
-                    .hasMessage("[negative-width.parquet] Column 'digest' declares a FIXED_LEN_BYTE_ARRAY "
-                            + "type length of -4, which must be positive");
+                    .hasMessage("[negative-width.parquet] column digest — FIXED_LEN_BYTE_ARRAY declares a"
+                            + " type length of -4, which must be positive");
         }
     }
 
@@ -99,8 +99,8 @@ class FixedWidthSchemaValidationTest {
                     .filter(FilterPredicate.gt("price", new BigDecimal("1.00")))
                     .build())
                             .isInstanceOf(SchemaIncompatibleException.class)
-                            .hasMessage("[no-decimal-width.parquet] Column 'price' is a FIXED_LEN_BYTE_ARRAY "
-                                    + "that declares no type length");
+                            .hasMessage("[no-decimal-width.parquet] column price — FIXED_LEN_BYTE_ARRAY"
+                                    + " declares no type length");
         }
     }
 

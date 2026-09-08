@@ -9,13 +9,15 @@ package dev.hardwood.internal.predicate;
 
 import java.util.List;
 
-import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.reader.ColumnIndexBuffers;
 import dev.hardwood.internal.reader.RowGroupIndexBuffers;
 import dev.hardwood.internal.reader.RowRanges;
 import dev.hardwood.internal.thrift.ColumnIndexReader;
 import dev.hardwood.internal.thrift.OffsetIndexReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
+import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnIndex;
 import dev.hardwood.metadata.OffsetIndex;
 import dev.hardwood.metadata.PageLocation;
@@ -96,7 +98,7 @@ public class PageFilterEvaluator {
             return RowRanges.all(rowCount);
         }
 
-        IndexPair indexPair = readIndexPair(colBuffers, location, columnIndex);
+        IndexPair indexPair = readIndexPair(colBuffers, location, rowGroup.columns().get(columnIndex), columnIndex);
         ColumnIndex columnIdx = indexPair.columnIndex;
         OffsetIndex offsetIdx = indexPair.offsetIndex;
 
@@ -137,7 +139,7 @@ public class PageFilterEvaluator {
             return RowRanges.all(rowCount);
         }
 
-        IndexPair indexPair = readIndexPair(colBuffers, location, columnIndex);
+        IndexPair indexPair = readIndexPair(colBuffers, location, rowGroup.columns().get(columnIndex), columnIndex);
         ColumnIndex columnIdx = indexPair.columnIndex;
         OffsetIndex offsetIdx = indexPair.offsetIndex;
 
@@ -224,36 +226,48 @@ public class PageFilterEvaluator {
     /// [dev.hardwood.internal.reader.ParquetMetadataReader] attributes, so failures are named
     /// here: file, row group and column are all at hand.
     private static IndexPair readIndexPair(ColumnIndexBuffers colBuffers, IndexLocation location,
-            int columnIndex) {
-        ColumnIndex columnIdx;
-        OffsetIndex offsetIdx;
-        try {
-            columnIdx = ColumnIndexReader.read(new ThriftCompactReader(colBuffers.columnIndex()));
-            offsetIdx = OffsetIndexReader.read(new ThriftCompactReader(colBuffers.offsetIndex()));
+            ColumnChunk columnChunk, int columnIndex) {
+        try (ReadScope.Scope file = ReadScope.file(location.fileName());
+             ReadScope.Scope column = at(location, columnChunk, columnIndex)) {
+            ColumnIndex columnIdx;
+            try (ReadScope.Scope region = ReadScope.region(Region.COLUMN_INDEX,
+                    ReadScope.orUnknown(columnChunk.columnIndexOffset()))) {
+                columnIdx = ColumnIndexReader.read(new ThriftCompactReader(colBuffers.columnIndex()));
+            }
+            OffsetIndex offsetIdx;
+            try (ReadScope.Scope region = ReadScope.region(Region.OFFSET_INDEX,
+                    ReadScope.orUnknown(columnChunk.offsetIndexOffset()))) {
+                offsetIdx = OffsetIndexReader.read(new ThriftCompactReader(colBuffers.offsetIndex()));
+            }
+
+            int columnIndexPages = columnIdx.getPageCount();
+            int offsetIndexPages = offsetIdx.pageLocations().size();
+            if (columnIndexPages != offsetIndexPages) {
+                // Not a failed parse: both structs read, and they contradict
+                // each other. Attributed to the column index, which is the one
+                // whose count the reader would have indexed with.
+                try (ReadScope.Scope region = ReadScope.region(Region.COLUMN_INDEX,
+                        ReadScope.orUnknown(columnChunk.columnIndexOffset()))) {
+                    throw new ParquetReadException(String.format(
+                            "Malformed Parquet metadata: the column index describes %d pages but"
+                                    + " the offset index locates %d",
+                            columnIndexPages, offsetIndexPages));
+                }
+            }
+            return new IndexPair(columnIdx, offsetIdx);
         }
-        catch (ParquetReadException e) {
-            // The reader already says the failure is the file's; what it cannot
-            // say is which column's index it was parsing.
-            throw new ParquetReadException(prefix(location, columnIndex) + e.getMessage(), e);
-        }
-        // Outside the catch, and prefixed once: both structs parsed, so this is the
-        // pair disagreeing rather than either of them failing to read.
-        int columnIndexPages = columnIdx.getPageCount();
-        int offsetIndexPages = offsetIdx.pageLocations().size();
-        if (columnIndexPages != offsetIndexPages) {
-            throw new ParquetReadException(prefix(location, columnIndex)
-                    + "Malformed Parquet metadata: ColumnIndex describes "
-                    + columnIndexPages + " pages but OffsetIndex locates " + offsetIndexPages);
-        }
-        return new IndexPair(columnIdx, offsetIdx);
     }
 
-    /// Names the column chunk whose page index failed to parse, for the message of every
-    /// failure [#readIndexPair] reports.
-    private static String prefix(IndexLocation location, int columnIndex) {
-        return ExceptionContext.filePrefix(location.fileName())
-                + "Failed to parse the page index of column " + columnIndex
-                + " in row group " + location.rowGroupIndex() + ": ";
+    /// Narrows to the chunk whose page index is being parsed.
+    ///
+    /// `meta_data` is optional in parquet.thrift — a chunk that defers to
+    /// another file carries none — so the path may be unavailable. The ordinal
+    /// always is, and `#0` cannot be mistaken for a column named `0`.
+    private static ReadScope.Scope at(IndexLocation location, ColumnChunk columnChunk,
+            int columnIndex) {
+        return columnChunk.metaData() == null
+                ? ReadScope.column(location.rowGroupIndex(), "#" + columnIndex)
+                : ReadScope.column(location.rowGroupIndex(), columnChunk.metaData().pathInSchema());
     }
 
     /// The column chunk whose page index is being parsed, minus the column: file and row group

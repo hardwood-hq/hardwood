@@ -102,6 +102,9 @@ public class MappedInputFile implements InputFile {
         // (it would map beyond the file and SIGBUS on access), unlike ByteBuffer.slice.
         // The comparison is written to avoid overflow when offset + length wraps.
         if (offset < 0 || length < 0 || offset > fileBytes - length) {
+            // Caller misuse at this level: an offset this file does not have.
+            // The reader translates it where it knows the offset came from the
+            // footer, which makes it the file being wrong rather than a bad call.
             throw new IndexOutOfBoundsException(ExceptionContext.filePrefix(name)
                     + "readRange(" + offset + ", " + length
                     + ") out of bounds (" + fileBytes + " bytes)");

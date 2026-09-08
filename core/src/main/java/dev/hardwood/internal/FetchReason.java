@@ -36,6 +36,7 @@ public final class FetchReason {
         return value != null ? value : "unattributed";
     }
 
+
     /// Sets the reason for the current thread until [Scope#close] is called.
     /// Pass the returned [Scope] to a try-with-resources statement.
     public static Scope set(String reason) {

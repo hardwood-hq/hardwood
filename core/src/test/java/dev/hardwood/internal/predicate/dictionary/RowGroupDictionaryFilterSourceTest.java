@@ -151,9 +151,9 @@ class RowGroupDictionaryFilterSourceTest {
 
             assertThatThrownBy(() -> source.forColumn(DICTIONARY_COLUMN))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[column_index_pushdown_dict.parquet] Malformed Parquet metadata: column 1"
-                            + " declares a dictionary page at offset 4096 which lies after its"
-                            + " first data page at offset 1024");
+                    .hasMessage("[column_index_pushdown_dict.parquet] row group 0, column category,"
+                            + " dictionary page at byte 4096 (0x001000) — Malformed Parquet"
+                            + " metadata: the dictionary page lies after the first data page at offset 1024");
         });
     }
 
@@ -164,9 +164,10 @@ class RowGroupDictionaryFilterSourceTest {
 
             assertThatThrownBy(() -> source.forColumn(DICTIONARY_COLUMN))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[column_index_pushdown_dict.parquet] Malformed Parquet metadata: column 1"
-                            + " declares a dictionary page at offset 95903 but its chunk ends"
-                            + " at offset 95903");
+                    .hasMessage("[column_index_pushdown_dict.parquet] row group 0, column category,"
+                            + " dictionary page at byte 95903 (0x01769f) — Malformed Parquet"
+                            + " metadata: the chunk holding the dictionary page ends at offset 95903, so it"
+                            + " holds no bytes at all");
         });
     }
 
@@ -180,9 +181,10 @@ class RowGroupDictionaryFilterSourceTest {
 
             assertThatThrownBy(() -> source.forColumn(DICTIONARY_COLUMN))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[column_index_pushdown_dict.parquet] Malformed Parquet metadata: column 1"
-                            + " declares a dictionary page of 106 bytes but only 50 bytes remain"
-                            + " in its chunk");
+                    .hasMessage("[column_index_pushdown_dict.parquet] row group 0, column category,"
+                            + " dictionary page at byte 95903 (0x01769f) — Malformed Parquet"
+                            + " metadata: the dictionary page header declares 106 bytes but only 50 remain"
+                            + " in the chunk");
         });
     }
 
@@ -227,7 +229,7 @@ class RowGroupDictionaryFilterSourceTest {
         }
 
         RowGroupDictionaryFilterSource source() {
-            return new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context);
+            return new RowGroupDictionaryFilterSource(inputFile, rowGroup, 0, schema, context);
         }
 
         RowGroupDictionaryFilterSource sourceWithOffsets(Long dictionaryPageOffset, long dataPageOffset) {
@@ -271,7 +273,7 @@ class RowGroupDictionaryFilterSourceTest {
                     .map(chunk -> chunk == original ? replacement : chunk)
                     .toList();
             return new RowGroupDictionaryFilterSource(inputFile,
-                    new RowGroup(columns, rowGroup.totalByteSize(), rowGroup.numRows()),
+                    new RowGroup(columns, rowGroup.totalByteSize(), rowGroup.numRows()), 0,
                     schema, context);
         }
     }

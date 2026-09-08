@@ -7,6 +7,8 @@
  */
 package dev.hardwood.reader;
 
+import dev.hardwood.internal.ReadScope;
+
 /// Thrown when a file's own bytes are wrong: the read succeeded and what it
 /// returned does not say something a Parquet file can say.
 ///
@@ -31,11 +33,40 @@ public class ParquetReadException extends RuntimeException {
 
     private static final long serialVersionUID = 1L;
 
+    /// Where the read was when this was raised, or `null` if it was raised
+    /// outside a read.
+    ///
+    /// Taken at construction, which is the only moment the answer is known: a
+    /// frame that catches this is by definition no longer in the place the
+    /// failure happened. Not serialised — the message states the same facts,
+    /// and an exception that has been through serialisation is being read
+    /// rather than acted on.
+    ///
+    /// That the file being wrong is the type that carries one is the whole
+    /// rule. An [UnsupportedOperationException] says the file is correct and
+    /// this library will not read it, so there is nothing at any byte for a
+    /// caller to go and look at and it is given no place to name — not by a
+    /// check at some raise site, but because it is not this type.
+    private final transient ReadScope.Place place;
+
     public ParquetReadException(String message) {
         super(message);
+        this.place = ReadScope.current();
     }
 
     public ParquetReadException(String message, Throwable cause) {
         super(message, cause);
+        this.place = ReadScope.current();
+    }
+
+    /// The message, behind where the read was.
+    ///
+    /// Composed here rather than at construction so that nothing has to rebuild
+    /// the exception — and with it its type, which callers catch on — in order
+    /// to say where it was.
+    @Override
+    public String getMessage() {
+        String message = super.getMessage();
+        return place == null ? message : place.describe() + message;
     }
 }

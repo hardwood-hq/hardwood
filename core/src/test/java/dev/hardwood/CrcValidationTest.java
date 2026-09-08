@@ -73,8 +73,8 @@ class CrcValidationTest {
                     colReader.nextBatch();
                 }
             }
-        }).hasRootCauseInstanceOf(ParquetReadException.class)
-          .rootCause().hasMessageContaining("CRC mismatch");
+        }).isInstanceOf(ParquetReadException.class)
+          .hasMessageContaining("CRC mismatch");
     }
 
     @Test
@@ -121,8 +121,8 @@ class CrcValidationTest {
                     colReader.nextBatch();
                 }
             }
-        }).hasRootCauseInstanceOf(ParquetReadException.class)
-          .rootCause().hasMessageContaining("CRC mismatch");
+        }).isInstanceOf(ParquetReadException.class)
+          .hasMessageContaining("CRC mismatch");
     }
 
     @Test
@@ -141,5 +141,34 @@ class CrcValidationTest {
                 assertThat(idReader.nextBatch()).isFalse();
             }
         }
+    }
+
+    /// Which column a mismatch was in is read context, added once on the way
+    /// out. The validator naming it as well put it in the message twice, which
+    /// reads as a bug in the reader rather than in the file.
+    @Test
+    void crcMismatchNamesTheColumnExactlyOnce() throws Exception {
+        byte[] bytes = Files.readAllBytes(Paths.get("src/test/resources/plain_with_crc.parquet"));
+        long corruptOffset;
+        try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(ByteBuffer.wrap(bytes)))) {
+            ColumnMetaData meta = reader.getFileMetaData().rowGroups().get(0).columns().get(0).metaData();
+            corruptOffset = meta.dataPageOffset() + meta.totalCompressedSize() - 1;
+        }
+        bytes[(int) corruptOffset] ^= 0xFF;
+
+        ByteBuffer corrupted = ByteBuffer.wrap(bytes);
+        assertThatThrownBy(() -> {
+            try (ParquetFileReader reader = ParquetFileReader.open(InputFile.of(corrupted))) {
+                try (ColumnReader colReader = reader.columnReader("id")) {
+                    colReader.nextBatch();
+                }
+            }
+        }).satisfies(thrown -> {
+            String message = thrown.getMessage();
+            assertThat(message).contains("column id").doesNotContain("for column id");
+            assertThat(message.split("column id", -1).length - 1)
+                    .as("times the column is named in: %s", message)
+                    .isOne();
+        });
     }
 }

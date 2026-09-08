@@ -13,7 +13,9 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.CompletableFuture;
 
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
 import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
@@ -206,7 +208,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             ChunkHandle handle = chunkHandles.get(currentGroupIndex);
             ByteBuffer pageData = handle.slice(loc.offset(), loc.compressedPageSize());
             PageInfo page = new PageInfo(pageData, columnSchema, columnChunk.metaData(),
-                    dictionary, needed.mask());
+                    dictionary, needed.mask(), loc.offset());
 
             if (!eventEmitted && !hasNext()) {
                 emitEvent();
@@ -237,10 +239,12 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             int dictRegionSize = Math.toIntExact(firstDataPageOffset - dictAreaStart);
             ByteBuffer dictRegion = chunkHandles.get(0).slice(dictAreaStart, dictRegionSize);
 
-            // Not retitled on the way out. The parser says what is wrong with the
-            // dictionary — a checksum that disagrees, a header that will not parse —
-            // and naming the step that noticed would replace that with less.
-            return DictionaryParser.parse(dictRegion, columnSchema, metaData, context);
+            // The parser says what is wrong with the dictionary; where the
+            // dictionary is, is this frame's to say, and a parse failure inside
+            // leaves placed at the byte it stopped on.
+            try (ReadScope.Scope page = ReadScope.region(Region.DICTIONARY_PAGE, dictAreaStart)) {
+                return DictionaryParser.parse(dictRegion, columnSchema, metaData, context);
+            }
         }
 
         private void emitEvent() {

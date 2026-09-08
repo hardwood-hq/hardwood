@@ -122,7 +122,7 @@ public class FilterPredicateResolver {
                     // encoding of a given number is the only one the column can hold.
                     yield new ResolvedPredicate.BinaryPredicate(cs.columnIndex(), p.op(),
                             toFixedLenDecimalBytes(scaled.unscaledValue(),
-                                    FixedWidthValidator.requireWidth(null, cs)),
+                                    FixedWidthValidator.requireWidth(cs)),
                             Comparison.FIXED_DECIMAL);
                 }
                 else {

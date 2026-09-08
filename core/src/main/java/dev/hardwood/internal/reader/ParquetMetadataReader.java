@@ -16,7 +16,8 @@ import java.util.Arrays;
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.EncryptedFileException;
 import dev.hardwood.internal.ExceptionContext;
-import dev.hardwood.internal.FetchReason;
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.thrift.FileMetaDataReader;
 import dev.hardwood.internal.thrift.ThriftCompactReader;
 import dev.hardwood.metadata.FileMetaData;
@@ -51,72 +52,88 @@ public final class ParquetMetadataReader {
     /// @throws IOException if the file cannot be read
     /// @throws ParquetReadException if what it holds is not a Parquet file
     public static FileMetaData readMetadata(InputFile inputFile) throws IOException {
-        long fileSize = inputFile.length();
-        if (fileSize < MAGIC_SIZE + MAGIC_SIZE + FOOTER_LENGTH_SIZE) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "File too small to be a valid Parquet file");
-        }
+        try (ReadScope.Scope file = ReadScope.file(inputFile.name())) {
+            long fileSize = inputFile.length();
+            if (fileSize < MAGIC_SIZE + MAGIC_SIZE + FOOTER_LENGTH_SIZE) {
+                throw new ParquetReadException(
+                        "File too small to be a valid Parquet file (" + fileSize + " bytes)");
+            }
 
-        // Validate magic number at start
-        ByteBuffer startMagicBuf;
-        try (FetchReason.Scope ignored = FetchReason.set("footer-magic-start")) {
-            startMagicBuf = inputFile.readRange(0, MAGIC_SIZE);
-        }
-        byte[] startMagic = new byte[MAGIC_SIZE];
-        startMagicBuf.get(startMagic);
-        if (Arrays.equals(startMagic, ENCRYPTED_MAGIC)) {
-            throw encrypted(inputFile);
-        }
-        if (!Arrays.equals(startMagic, MAGIC)) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Not a Parquet file (invalid magic number at start)");
-        }
+            try (ReadScope.Scope magic = ReadScope.region(Region.MAGIC, 0)) {
+                requireMagic(inputFile.readRange(0, MAGIC_SIZE), "at start");
+            }
 
-        // Read footer size and magic number at end
-        long footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
-        ByteBuffer footerInfoBuf;
-        try (FetchReason.Scope ignored = FetchReason.set("footer-info")) {
-            footerInfoBuf = inputFile.readRange(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
+            long footerInfoPos = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE;
+            int footerLength;
+            try (ReadScope.Scope length = ReadScope.region(Region.FOOTER_LENGTH, footerInfoPos)) {
+                footerLength = readFooterLength(inputFile, footerInfoPos, fileSize);
+            }
+
+            long footerStart = footerInfoPos - footerLength;
+            try (ReadScope.Scope footer = ReadScope.region(Region.FOOTER, footerStart)) {
+                return parseFooter(inputFile, footerStart, footerLength);
+            }
         }
-        footerInfoBuf.order(ByteOrder.LITTLE_ENDIAN);
-        int footerLength = footerInfoBuf.getInt();
+    }
+
+    /// The declared footer length, checked against the space there is for it.
+    ///
+    /// The closing magic rides in the same read — four bytes in front of it —
+    /// so it is checked here, in its own region: a file whose last four bytes
+    /// are not `PAR1` is not a footer that is the wrong length, it is not a
+    /// Parquet file.
+    private static int readFooterLength(InputFile inputFile, long footerInfoPos, long fileSize)
+            throws IOException {
+        ByteBuffer footerInfo = inputFile.readRange(footerInfoPos, FOOTER_LENGTH_SIZE + MAGIC_SIZE);
+        footerInfo.order(ByteOrder.LITTLE_ENDIAN);
+        int footerLength = footerInfo.getInt();
+
         byte[] endMagic = new byte[MAGIC_SIZE];
-        footerInfoBuf.get(endMagic);
-        if (Arrays.equals(endMagic, ENCRYPTED_MAGIC)) {
-            throw encrypted(inputFile);
-        }
-        if (!Arrays.equals(endMagic, MAGIC)) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Not a Parquet file (invalid magic number at end)");
+        footerInfo.get(endMagic);
+        try (ReadScope.Scope magic = ReadScope.region(Region.MAGIC, fileSize - MAGIC_SIZE)) {
+            requireMagic(endMagic, "at end");
         }
 
-        // Validate footer length
-        long footerStart = fileSize - MAGIC_SIZE - FOOTER_LENGTH_SIZE - footerLength;
-        if (footerStart < MAGIC_SIZE) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Invalid footer length: " + footerLength);
+        if (footerInfoPos - footerLength < MAGIC_SIZE) {
+            throw new ParquetReadException(footerLength
+                    + " would start the footer in front of the file's opening magic");
         }
+        return footerLength;
+    }
 
-        // Parse file metadata
-        ByteBuffer footerBuffer;
-        try (FetchReason.Scope ignored = FetchReason.set("footer-body")) {
-            footerBuffer = inputFile.readRange(footerStart, footerLength);
-        }
-        ThriftCompactReader reader = new ThriftCompactReader(footerBuffer);
+    /// Parses the footer, whose failures are the file's.
+    ///
+    /// The one catch says what a failure *is* rather than where it was: a
+    /// plaintext footer that parses and then declares its columns encrypted is
+    /// a correct file this library does not read, and it must not leave as a
+    /// malformed one.
+    private static FileMetaData parseFooter(InputFile inputFile, long footerStart, int footerLength)
+            throws IOException {
+        ByteBuffer footer = inputFile.readRange(footerStart, footerLength);
         try {
-            return FileMetaDataReader.read(reader);
+            return FileMetaDataReader.read(new ThriftCompactReader(footer));
         }
         catch (EncryptedFileException e) {
-            // Plaintext-footer encryption: the footer parsed, but the data is
-            // encrypted. Re-throw with file context for an attributable error.
-            throw encrypted(inputFile);
+            throw encrypted();
         }
-        catch (ParquetReadException e) {
-            // Negative sizes, an unknown field type, a struct that ends early —
-            // the reader already types all of them as the file being wrong. What
-            // it cannot name is the file, which only this frame knows.
-            throw new ParquetReadException(
-                    ExceptionContext.filePrefix(inputFile.name()) + e.getMessage(), e);
+    }
+
+    /// Fails unless `PAR1` is where it has to be.
+    ///
+    /// `PARE` in either position is the encrypted-footer layout, which is a
+    /// correct file this library does not read rather than a broken one.
+    private static void requireMagic(ByteBuffer buffer, String where) {
+        byte[] magic = new byte[MAGIC_SIZE];
+        buffer.get(magic);
+        requireMagic(magic, where);
+    }
+
+    private static void requireMagic(byte[] magic, String where) {
+        if (Arrays.equals(magic, ENCRYPTED_MAGIC)) {
+            throw encrypted();
+        }
+        if (!Arrays.equals(magic, MAGIC)) {
+            throw new ParquetReadException("Not a Parquet file (invalid magic number " + where + ")");
         }
     }
 
@@ -124,8 +141,10 @@ public final class ParquetMetadataReader {
     /// what [UnsupportedOperationException] says everywhere else the reader meets
     /// something it has not implemented — an absent codec library, an encoding it
     /// does not decode.
-    private static UnsupportedOperationException encrypted(InputFile inputFile) {
+    private static UnsupportedOperationException encrypted() {
+        String fileName = ReadScope.current() == null ? null : ReadScope.current().fileName();
         return new UnsupportedOperationException(
-                ExceptionContext.filePrefix(inputFile.name()) + ENCRYPTED_MESSAGE);
+                ExceptionContext.filePrefix(fileName) + ENCRYPTED_MESSAGE);
     }
+
 }

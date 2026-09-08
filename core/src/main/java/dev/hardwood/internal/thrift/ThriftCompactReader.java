@@ -15,6 +15,7 @@ import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.thrift.ThriftCompactConstants.FieldType.Codes;
 import dev.hardwood.reader.ParquetReadException;
 
@@ -81,13 +82,18 @@ public class ThriftCompactReader {
     private static final int NO_SAVED_STRUCT = 0;
 
     private final ByteBuffer buffer;
-    private final int startPosition;
     private short lastFieldId = 0;
 
     /// The struct being read, or `null` for one that has no name. Only the innermost
     /// is ever consulted, and [#pushFieldIdContext] hands the enclosing one back in
     /// its token, so no stack is needed.
     private ThriftStruct currentStruct;
+
+    /// Offset of the field header the reader most recently stepped onto,
+    /// relative to where it was handed the buffer. A failure over it reports
+    /// the file byte the enclosing region's address puts it at.
+    private int lastFieldStart = -1;
+
     /// Per-decode cache of repeated column paths, created on first use so the page-header path —
     /// which has none — never allocates one.
     private RepeatedPathCache pathCache;
@@ -97,7 +103,6 @@ public class ThriftCompactReader {
     /// @param buffer the buffer to read from (position should be at start of data)
     public ThriftCompactReader(ByteBuffer buffer) {
         this.buffer = buffer.slice().order(ByteOrder.LITTLE_ENDIAN);
-        this.startPosition = 0;
     }
 
     /// Creates a reader that reads from a ByteBuffer starting at a specific offset.
@@ -106,12 +111,11 @@ public class ThriftCompactReader {
     /// @param offset the offset within the buffer to start reading
     public ThriftCompactReader(ByteBuffer buffer, int offset) {
         this.buffer = buffer.slice(offset, buffer.limit() - offset).order(ByteOrder.LITTLE_ENDIAN);
-        this.startPosition = 0;
     }
 
     /// Returns the number of bytes read from the buffer.
     public int getBytesRead() {
-        return buffer.position() - startPosition;
+        return buffer.position();
     }
 
     /// Returns the number of bytes still available to read in the buffer.
@@ -207,8 +211,7 @@ public class ThriftCompactReader {
             }
             shift += 7;
             if (shift > MAX_VARINT_SHIFT) {
-                throw new ParquetReadException(inStruct(
-                        "Malformed varint: more than " + MAX_VARINT_BYTES + " bytes"));
+                throw malformed("Malformed varint: more than " + MAX_VARINT_BYTES + " bytes");
             }
         }
         throw new ThriftTruncatedException("Unexpected EOF while reading varint");
@@ -245,7 +248,7 @@ public class ThriftCompactReader {
         else if (b == TYPE_BOOLEAN_FALSE) {
             return false;
         }
-        throw new ParquetReadException(inStruct("Invalid boolean value: " + b));
+        throw malformed("Invalid boolean value: " + b);
     }
 
     /// Read an i32 value (zigzag encoded).
@@ -328,6 +331,11 @@ public class ThriftCompactReader {
     /// escapes into [#acceptField], so it is allocated for real rather than scalarized.
     /// Unpack it with [#fieldId] and [#fieldType].
     public int readFieldHeader() {
+        // Where this field starts, so a failure over it names its first byte
+        // rather than the position the reader stopped at, which is one past.
+        // One store beside the field id that is written here anyway, and only
+        // on the metadata path — no value is ever read through this method.
+        lastFieldStart = buffer.position();
         byte b = readByte();
 
         if (b == ThriftCompactConstants.STOP) {
@@ -763,7 +771,7 @@ public class ThriftCompactReader {
                 skipStruct();
                 break;
             default:
-                throw new ParquetReadException(inStruct("Unknown field type: " + type));
+                throw malformed("Unknown field type: " + type);
         }
     }
 
@@ -840,12 +848,16 @@ public class ThriftCompactReader {
     /// — and an unchecked one, where [ThriftStruct]'s is checked against
     /// parquet-format's own metadata.
     ///
+    /// The byte comes the same way: the field header the reader stepped onto is
+    /// where the damage is, and the enclosing region's address is what turns
+    /// that into a byte of the file.
+    ///
     /// Only for a complaint about a *field*. A complaint about the struct as a
     /// whole — a required field that never arrived, discovered at the STOP that
-    /// ends it — is standing on no field, and would take the name of whichever
-    /// one happened to be last.
+    /// ends it — is standing on no field, and would take the name and the byte
+    /// of whichever one happened to be last.
     ParquetReadException malformed(String message) {
-        return new ParquetReadException(inStruct(message));
+        return ReadScope.stoppedAt(inStruct(message), lastFieldStart);
     }
 
     /// The field id of the one variant a union has set.

@@ -81,7 +81,7 @@ class DictionaryFixedLenByteArrayPushDownTest {
     }
 
     private static RowGroupDictionaryFilterSource dictionaries() {
-        return new RowGroupDictionaryFilterSource(inputFile, rowGroup, schema, context);
+        return new RowGroupDictionaryFilterSource(inputFile, rowGroup, 0, schema, context);
     }
 
     private static boolean dictionaryDrop(FilterPredicate filter) throws IOException {

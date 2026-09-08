@@ -9,6 +9,10 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 
+import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ReadScope;
+import dev.hardwood.metadata.FieldPath;
+
 /// Per-column iterator that yields [PageInfo] objects across all row groups and files.
 ///
 /// For each row group, obtains a [FetchPlan] from [RowGroupIterator#getColumnPlan]
@@ -48,10 +52,25 @@ public class PageSource {
         // pulls them one at a time as this column advances. See #1107.
     }
 
+    /// The column this source yields pages for, by path.
+    private FieldPath columnPath() {
+        return rowGroupIterator.projectedSchema()
+                .getProjectedColumn(projectedColumnIndex).fieldPath();
+    }
+
     /// Returns the name of the file currently being read, or `null` if no work item
     /// is active. Only valid on the retriever thread.
     public String getCurrentFileName() {
         return currentWorkItem != null ? currentWorkItem.inputFile().name() : null;
+    }
+
+    /// Index of the row group currently being read, or
+    /// [dev.hardwood.internal.ExceptionContext.ReadContext#UNKNOWN_ROW_GROUP]
+    /// if no work item is active. Only valid on the retriever thread.
+    public int getCurrentRowGroupIndex() {
+        return currentWorkItem != null
+                ? currentWorkItem.rowGroupIndex()
+                : ExceptionContext.ReadContext.UNKNOWN_ROW_GROUP;
     }
 
     /// Whether statistics proved the current work item's row group matches the filter
@@ -68,8 +87,18 @@ public class PageSource {
 
     public PageInfo next() throws IOException {
         while (true) {
-            if (currentPlan != null && currentPlan.hasNext()) {
-                return currentPlan.next();
+            if (currentPlan != null) {
+                // Everything getting a page does — the plan, the filters, the
+                // index, the fetch, the header — happens under this column, so
+                // it is named once here rather than by each of them. `hasNext`
+                // is inside it because deciding whether a page is coming reads
+                // the headers that say so.
+                try (ReadScope.Scope scope = ReadScope.file(getCurrentFileName())
+                        .column(getCurrentRowGroupIndex(), columnPath())) {
+                    if (currentPlan.hasNext()) {
+                        return currentPlan.next();
+                    }
+                }
             }
 
             // currentPlan is exhausted (or null) — this column is done with the
@@ -85,7 +114,14 @@ public class PageSource {
                 return null;
             }
             workItemCursor++;
-            FetchPlan plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
+            FetchPlan plan;
+            // Planning reads too — the page index, the dictionary, the chunk it
+            // sits in — and the work item names the file and row group that
+            // `getCurrentRowGroupIndex` cannot until the plan is in hand.
+            try (ReadScope.Scope scope = ReadScope.file(workItem.inputFile().name())
+                    .column(workItem.rowGroupIndex(), columnPath())) {
+                plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
+            }
             currentPlan = plan.isEmpty() ? null : plan.pages();
             currentWorkItem = workItem;
         }

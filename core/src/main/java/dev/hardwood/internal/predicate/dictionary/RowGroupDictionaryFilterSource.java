@@ -12,12 +12,15 @@ import java.nio.ByteBuffer;
 
 import dev.hardwood.InputFile;
 import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ExceptionContext.ReadContext.Region;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.DictionaryParser;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.metadata.Encoding;
+import dev.hardwood.metadata.FieldPath;
 import dev.hardwood.metadata.PageEncodingStats;
 import dev.hardwood.metadata.RowGroup;
 import dev.hardwood.reader.ParquetReadException;
@@ -38,15 +41,18 @@ public final class RowGroupDictionaryFilterSource {
 
     private final InputFile inputFile;
     private final RowGroup rowGroup;
+    /// The row group's own index in the file, for the failures that can name no byte.
+    private final int rowGroupIndex;
     private final FileSchema fileSchema;
     private final HardwoodContextImpl context;
     private final Dictionary[] dictionaries;
     private final boolean[] read;
 
-    public RowGroupDictionaryFilterSource(InputFile inputFile, RowGroup rowGroup,
+    public RowGroupDictionaryFilterSource(InputFile inputFile, RowGroup rowGroup, int rowGroupIndex,
                                           FileSchema fileSchema, HardwoodContextImpl context) {
         this.inputFile = inputFile;
         this.rowGroup = rowGroup;
+        this.rowGroupIndex = rowGroupIndex;
         this.fileSchema = fileSchema;
         this.context = context;
         int columnCount = rowGroup.columns().size();
@@ -111,16 +117,27 @@ public final class RowGroupDictionaryFilterSource {
         // "no dictionary": the scan cannot read the chunk either.
         requireSameFile(columnChunk, columnIndex);
 
+        try (ReadScope.Scope scope = ReadScope.file(inputFile.name())
+                .column(rowGroupIndex, columnPath(columnIndex))
+                .region(Region.DICTIONARY_PAGE, columnChunk.chunkStartOffset())) {
+            return readDictionaryPage(columnChunk, metaData, columnIndex);
+        }
+    }
+
+    /// Locates and parses the chunk's dictionary page, inside the scope that
+    /// names the file, the column and the page's own first byte. Every failure
+    /// below says only what is wrong.
+    private Dictionary readDictionaryPage(ColumnChunk columnChunk, ColumnMetaData metaData,
+            int columnIndex) throws IOException {
         Long dictionaryOffset = metaData.dictionaryPageOffset();
         long dataPageOffset = metaData.dataPageOffset();
 
         // A first data page *preceding* the dictionary page cannot be read at all, so fail rather
         // than degrade to "no dictionary".
         if (dictionaryOffset != null && dataPageOffset < dictionaryOffset) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Malformed Parquet metadata: column " + columnIndex
-                    + " declares a dictionary page at offset " + dictionaryOffset
-                    + " which lies after its first data page at offset " + dataPageOffset);
+            throw malformed("Malformed Parquet metadata: the dictionary page lies after the first"
+                            + " data page at offset %d",
+                            dataPageOffset);
         }
 
         // A dictionary page is always the chunk's first page, so one offset is both the page's
@@ -134,20 +151,32 @@ public final class RowGroupDictionaryFilterSource {
         long chunkStart = columnChunk.chunkStartOffset();
         long chunkEnd = chunkStart + metaData.totalCompressedSize();
         if (chunkEnd <= chunkStart) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Malformed Parquet metadata: column " + columnIndex
-                    + " declares a dictionary page at offset " + chunkStart
-                    + " but its chunk ends at offset " + chunkEnd);
+            throw malformed("Malformed Parquet metadata: the chunk holding the dictionary page"
+                            + " ends at offset %d, so it holds no bytes at all", chunkEnd);
         }
         int availableBytes = Math.toIntExact(chunkEnd - chunkStart);
 
         ColumnSchema columnSchema = fileSchema.getColumn(columnIndex);
-        ByteBuffer region = readDictionaryPage(columnIndex, chunkStart,
-                dataPageOffset > chunkStart
-                        ? Math.toIntExact(dataPageOffset - chunkStart)
-                        : DICTIONARY_PROBE_BYTES,
-                availableBytes);
-        return region == null ? null : DictionaryParser.parse(region, columnSchema, metaData, context);
+        try {
+            ByteBuffer region = readDictionaryPage(columnIndex, chunkStart,
+                    dataPageOffset > chunkStart
+                            ? Math.toIntExact(dataPageOffset - chunkStart)
+                            : DICTIONARY_PROBE_BYTES,
+                    availableBytes);
+            return region == null ? null : DictionaryParser.parse(region, columnSchema, metaData, context);
+        }
+        catch (IOException e) {
+            throw new IOException(ReadScope.here() + "Failed to read the dictionary", e);
+        }
+    }
+
+    /// What is wrong with the file. Where it is wrong is the scope's to say.
+    private static ParquetReadException malformed(String message, Object... args) {
+        return new ParquetReadException(String.format(message, args));
+    }
+
+    private FieldPath columnPath(int columnIndex) {
+        return rowGroup.columns().get(columnIndex).metaData().pathInSchema();
     }
 
     /// Reads the bytes of the dictionary page beginning at `dictionaryStart`, or `null` when no
@@ -170,10 +199,8 @@ public final class RowGroupDictionaryFilterSource {
         }
 
         if (pageLength > availableBytes) {
-            throw new ParquetReadException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Malformed Parquet metadata: column " + columnIndex
-                    + " declares a dictionary page of " + pageLength
-                    + " bytes but only " + availableBytes + " bytes remain in its chunk");
+            throw malformed("Malformed Parquet metadata: the dictionary page header declares %d"
+                            + " bytes but only %d remain in the chunk", pageLength, availableBytes);
         }
 
         return pageLength > region.remaining()
@@ -184,14 +211,17 @@ public final class RowGroupDictionaryFilterSource {
 
     /// Fails unless this chunk stores its data in the file being read.
     ///
-    /// Checked, because reading a filter is a read like any other and every frame above this
-    /// one says so; the cause is the [IOException] the metadata contract advertises for the
-    /// split-file layout.
+    /// The split-file layout is legal Parquet that this reader does not read, so the failure
+    /// leaves as the [UnsupportedOperationException] it arrived as, carrying the column it
+    /// was raised for.
     private void requireSameFile(ColumnChunk columnChunk, int columnIndex) {
         try {
             columnChunk.requireSameFile();
         }
         catch (UnsupportedOperationException e) {
+            // Named, not positioned. The file is correct, so there is nothing at
+            // any byte for a caller to go and look at, and the remedy is the
+            // same whichever column met it first.
             throw new UnsupportedOperationException(ExceptionContext.filePrefix(inputFile.name())
                     + "Cannot read column " + columnIndex + ": " + e.getMessage(), e);
         }

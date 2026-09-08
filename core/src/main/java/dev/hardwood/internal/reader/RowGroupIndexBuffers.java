@@ -12,7 +12,7 @@ import java.nio.ByteBuffer;
 import java.util.List;
 
 import dev.hardwood.InputFile;
-import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.metadata.ColumnChunk;
 import dev.hardwood.metadata.RowGroup;
 
@@ -89,9 +89,8 @@ public class RowGroupIndexBuffers {
             // The file is correct; this reader will not fetch a region it cannot
             // address with an int. Not the file's fault, and not something a
             // second attempt changes.
-            throw new UnsupportedOperationException(ExceptionContext.filePrefix(inputFile.name())
-                    + "Row-group index region too large (" + indexRegionSize
-                    + " bytes) — split the file into smaller row groups");
+            throw new UnsupportedOperationException(ReadScope.fileHere() + "Row-group index region too large ("
+                    + indexRegionSize + " bytes) — split the file into smaller row groups");
         }
         ByteBuffer indexRegion = inputFile.readRange(minOffset, Math.toIntExact(indexRegionSize));
 

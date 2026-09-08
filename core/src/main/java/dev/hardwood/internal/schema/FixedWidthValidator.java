@@ -7,7 +7,8 @@
  */
 package dev.hardwood.internal.schema;
 
-import dev.hardwood.internal.ExceptionContext;
+import dev.hardwood.internal.ExceptionContext.ReadContext;
+import dev.hardwood.internal.ReadScope;
 import dev.hardwood.metadata.PhysicalType;
 import dev.hardwood.reader.SchemaIncompatibleException;
 import dev.hardwood.schema.ColumnSchema;
@@ -36,33 +37,35 @@ public final class FixedWidthValidator {
 
     /// Validates `column` if it is a `FIXED_LEN_BYTE_ARRAY`, and does nothing otherwise.
     ///
-    /// @param fileName the file the column was read from, for the message; may be `null`
     /// @param column the column to check
     /// @throws SchemaIncompatibleException if the column is fixed-width and its declared
     ///         width is absent or not positive
-    public static void validate(String fileName, ColumnSchema column) {
+    public static void validate(ColumnSchema column) {
         if (column.type() == PhysicalType.FIXED_LEN_BYTE_ARRAY) {
-            requireWidth(fileName, column);
+            requireWidth(column);
         }
     }
 
     /// Returns the byte width of a `FIXED_LEN_BYTE_ARRAY` column.
     ///
-    /// @param fileName the file the column was read from, for the message; may be `null`
     /// @param column the fixed-width column whose width is needed
     /// @return the column's positive byte width
     /// @throws SchemaIncompatibleException if the declared width is absent or not positive
-    public static int requireWidth(String fileName, ColumnSchema column) {
+    public static int requireWidth(ColumnSchema column) {
         Integer width = column.typeLength();
-        if (width == null) {
-            throw new SchemaIncompatibleException(ExceptionContext.filePrefix(fileName)
-                    + "Column '" + column.fieldPath() + "' is a FIXED_LEN_BYTE_ARRAY that declares no type length");
+        if (width != null && width > 0) {
+            return width;
         }
-        if (width <= 0) {
-            throw new SchemaIncompatibleException(ExceptionContext.filePrefix(fileName)
-                    + "Column '" + column.fieldPath() + "' declares a FIXED_LEN_BYTE_ARRAY type length of "
-                    + width + ", which must be positive");
+        // The file comes from the scope the caller is already in; only the column is
+        // narrowed here, so the failure names both without either being passed.
+        try (ReadScope.Scope scope = ReadScope.column(
+                ReadContext.UNKNOWN_ROW_GROUP, column.fieldPath())) {
+            throw width == null
+                    ? new SchemaIncompatibleException("FIXED_LEN_BYTE_ARRAY declares no type length")
+                    : new SchemaIncompatibleException(String.format(
+                            "FIXED_LEN_BYTE_ARRAY declares a type length of %d,"
+                                    + " which must be positive", width));
         }
-        return width;
     }
+
 }

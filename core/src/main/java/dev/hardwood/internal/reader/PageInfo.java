@@ -8,6 +8,7 @@
 package dev.hardwood.internal.reader;
 
 import java.nio.ByteBuffer;
+import java.util.OptionalLong;
 
 import dev.hardwood.metadata.ColumnMetaData;
 import dev.hardwood.schema.ColumnSchema;
@@ -33,27 +34,32 @@ import dev.hardwood.schema.ColumnSchema;
 /// partially overlaps the matching rows.
 public class PageInfo {
 
+    /// Field value for a page that was never read from the file.
+    ///
+    /// Private, and paired with an [OptionalLong] accessor, so no caller has to
+    /// know the number or agree with anyone else about it. Only
+    /// [#nullPlaceholder] produces one: every page that came off disk knows
+    /// where it came from, because the plans that read it computed the position
+    /// to read at.
+    private static final long NO_OFFSET = -1;
+
     private final ByteBuffer pageData;
     private final ColumnSchema columnSchema;
     private final ColumnMetaData columnMetaData;
     private final Dictionary dictionary;
     private final int placeholderNumValues;
     private final PageRowMask mask;
-
-    public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
-                    ColumnMetaData columnMetaData, Dictionary dictionary) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0, PageRowMask.ALL);
-    }
+    private final long fileOffset;
 
     public PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                     ColumnMetaData columnMetaData, Dictionary dictionary,
-                    PageRowMask mask) {
-        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask);
+                    PageRowMask mask, long fileOffset) {
+        this(pageData, columnSchema, columnMetaData, dictionary, 0, mask, fileOffset);
     }
 
     private PageInfo(ByteBuffer pageData, ColumnSchema columnSchema,
                      ColumnMetaData columnMetaData, Dictionary dictionary,
-                     int placeholderNumValues, PageRowMask mask) {
+                     int placeholderNumValues, PageRowMask mask, long fileOffset) {
         if (mask == null) {
             throw new IllegalArgumentException("mask must not be null; use PageRowMask.ALL");
         }
@@ -63,6 +69,22 @@ public class PageInfo {
         this.dictionary = dictionary;
         this.placeholderNumValues = placeholderNumValues;
         this.mask = mask;
+        this.fileOffset = fileOffset;
+    }
+
+    /// Byte offset in the file where this page's header begins, empty for a
+    /// page that was never read from one.
+    ///
+    /// Read only when a page has failed, to say where in the file to look, so
+    /// the wrapper costs nothing a passing read pays. The field behind it stays
+    /// a primitive: it is written once per page, which is not a place to put an
+    /// allocation.
+    ///
+    /// It is a file offset, not a position within the decoded page: the two are
+    /// the same only for an uncompressed column, and a reader sent to the wrong
+    /// one finds unrelated bytes.
+    public OptionalLong fileOffset() {
+        return fileOffset == NO_OFFSET ? OptionalLong.empty() : OptionalLong.of(fileOffset);
     }
 
     /// Creates a null-placeholder `PageInfo` representing `numValues` rows whose
@@ -74,7 +96,8 @@ public class PageInfo {
         if (numValues <= 0) {
             throw new IllegalArgumentException("placeholder numValues must be positive: " + numValues);
         }
-        return new PageInfo(null, columnSchema, columnMetaData, null, numValues, PageRowMask.ALL);
+        return new PageInfo(null, columnSchema, columnMetaData, null, numValues,
+                PageRowMask.ALL, NO_OFFSET);
     }
 
     /// Returns the page data buffer (header + compressed data), or `null` if this
