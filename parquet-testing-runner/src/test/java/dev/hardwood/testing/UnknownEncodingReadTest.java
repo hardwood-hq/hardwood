@@ -89,9 +89,11 @@ class UnknownEncodingReadTest {
 
             assertThatThrownBy(columnReader::nextBatch)
                     .isInstanceOf(UnsupportedOperationException.class)
-                    .hasMessage("[alp_extended.zstd.parquet] Encoding not yet supported: UNKNOWN (Thrift "
-                             + "encoding value 10)")
-                    ;
+                    // Every row group of the column carries the encoding, and they are read
+                    // at once, so which one is reported is whichever failed first.
+                    .hasMessageMatching("\\[alp_extended\\.zstd\\.parquet: row group \\d+, column"
+                            + " 'double_alp_1024', page 0\\] Encoding not yet supported: UNKNOWN"
+                            + " \\(Thrift encoding value 10\\)");
         }
     }
 

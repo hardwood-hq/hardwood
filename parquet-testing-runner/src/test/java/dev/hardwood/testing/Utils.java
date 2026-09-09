@@ -221,6 +221,16 @@ public class Utils {
                 .hasMessage(expectedMessage);
     }
 
+    /// The same, for a file whose columns race: several are read at once and the first
+    /// failure wins, so which page or row group the message names varies between runs.
+    /// The pattern still covers the whole message — only the part that races is loose.
+    static void assertBadDataRejectedMatching(String fileName, String expectedPattern,
+            ThrowableAssert.ThrowingCallable action) throws IOException {
+        assertThatThrownBy(action)
+                .as("Expected %s to be rejected", fileName)
+                .hasMessageMatching(expectedPattern);
+    }
+
     /// Read all rows using parquet-java's AvroParquetReader.
     static List<GenericRecord> readWithParquetJava(Path file) throws IOException {
         List<GenericRecord> rows = new ArrayList<>();

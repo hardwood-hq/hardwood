@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 import java.util.concurrent.CompletableFuture;
 
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.FetchReason;
 import dev.hardwood.jfr.RowGroupScannedEvent;
 import dev.hardwood.metadata.ColumnChunk;
@@ -163,11 +164,19 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
     /// Iterator that lazily parses the dictionary on first access and yields
     /// [PageInfo] objects with lazy byte resolution via [ChunkHandle].
     private class IndexedPageIterator implements PageIterator {
+
         private Dictionary dictionary;
         private boolean dictionaryParsed;
+        /// Which page this walk is on, for a failure to name.
+        private int currentPage = ExceptionContext.UNKNOWN_PAGE;
         private boolean eventEmitted;
         private int index;
         private int currentGroupIndex;
+
+        @Override
+        public int currentPage() {
+            return currentPage;
+        }
 
         @Override
         public boolean hasNext() {
@@ -187,7 +196,9 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
                 // calls signalError → done=true → the pipeline stops; next() is
                 // never re-entered on the same iterator.
                 dictionaryParsed = true;
+                currentPage = ExceptionContext.DICTIONARY_PAGE;
                 dictionary = parseDictionary();
+                currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
 
             // Advance to next page group if needed
@@ -202,6 +213,7 @@ final class IndexedFetchPlan implements FetchPlan, RowGroupIterator.CoalescableF
             }
 
             RowGroupIterator.NeededPage needed = neededPages.get(index++);
+            currentPage = needed.pageIndex();
             PageLocation loc = needed.location();
             ChunkHandle handle = chunkHandles.get(currentGroupIndex);
             ByteBuffer pageData = handle.slice(loc.offset(), loc.compressedPageSize());

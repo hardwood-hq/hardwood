@@ -86,16 +86,19 @@ class BadDataHandlingTest {
     void rejectArrowGH45185() throws IOException {
         // Repetition levels start with 1 instead of the required 0
         assertBadDataRejected("ARROW-GH-45185.parquet",
-                "[ARROW-GH-45185.parquet] Invalid column chunk for 'element':"
-                        + " first repetition level must be 0 but was 1");
+                "[ARROW-GH-45185.parquet: row group 0, column 'x.list.element', page 0] Invalid"
+                        + " column chunk: first repetition level must be 0 but was 1");
     }
 
     @Test
     void rejectArrowGH47662() throws IOException {
         // Schema declares flba_field as required fixed_len_byte_array(4) with
         // 1000 values, but the page data runs out at value 92.
-        assertBadDataRejected("ARROW-GH-47662.parquet",
-                "[ARROW-GH-47662.parquet] Unexpected EOF while reading fixed-length byte array");
+        // Which page runs out first depends on which decode task gets there first, so the
+        // ordinal is the one part of the message this cannot pin.
+        assertBadDataRejectedMatching("ARROW-GH-47662.parquet",
+                "\\[ARROW-GH-47662\\.parquet: row group 0, column 'flba_field', page \\d+\\]"
+                        + " Unexpected EOF while reading fixed-length byte array");
     }
 
     @Test
@@ -104,9 +107,8 @@ class BadDataHandlingTest {
         // The CRC IOException is wrapped in UncheckedIOException with file context
         // by ColumnWorker before BatchExchange forwards it.
         assertCorruptChecksumRejected("data/datapage_v1-corrupt-checksum.parquet",
-                "[datapage_v1-corrupt-checksum.parquet]"
-                        + " CRC mismatch for column a: expected bbce3b9d but computed f4f6d0a",
-                "CRC mismatch for column a: expected bbce3b9d but computed f4f6d0a");
+                "[datapage_v1-corrupt-checksum.parquet: row group 0, column 'a', page 0] CRC"
+                        + " mismatch: expected bbce3b9d but computed f4f6d0a");
     }
 
     @Test
@@ -116,9 +118,9 @@ class BadDataHandlingTest {
         // `catch (IOException)`, which would have retitled it after the step
         // that noticed rather than the thing that is wrong.
         assertCorruptChecksumRejected("data/rle-dict-uncompressed-corrupt-checksum.parquet",
-                "[rle-dict-uncompressed-corrupt-checksum.parquet] CRC mismatch for column"
-                        + " long_field: expected 6522df6a but computed 6522df69",
-                "CRC mismatch for column long_field: expected 6522df6a but computed 6522df69");
+                "[rle-dict-uncompressed-corrupt-checksum.parquet: row group 0, column"
+                        + " 'long_field', dictionary page] CRC mismatch: expected 6522df6a but"
+                        + " computed 6522df69");
     }
 
     @Test
@@ -170,8 +172,8 @@ class BadDataHandlingTest {
 
     // ==================== Helpers ====================
 
-    private void assertCorruptChecksumRejected(String relativePath, String expectedMessage,
-                                                String expectedCauseMessage) throws IOException {
+    private void assertCorruptChecksumRejected(String relativePath, String expectedMessage)
+            throws IOException {
         Path testFile = repoDir.resolve(relativePath);
 
         assertThatThrownBy(() -> {
@@ -182,8 +184,7 @@ class BadDataHandlingTest {
                 }
             }
         }).as("Expected %s to be rejected due to corrupt checksum", relativePath)
-          .hasMessage(expectedMessage)
-          .hasRootCauseMessage(expectedCauseMessage);
+          .hasMessage(expectedMessage);
     }
 
     private ThrowableAssert.ThrowingCallable readAction(String fileName) {
@@ -204,6 +205,11 @@ class BadDataHandlingTest {
 
     private void assertBadDataRejected(String fileName, String expectedMessage) throws IOException {
         Utils.assertBadDataRejected(fileName, expectedMessage, readAction(fileName));
+    }
+
+    private void assertBadDataRejectedMatching(String fileName, String expectedPattern)
+            throws IOException {
+        Utils.assertBadDataRejectedMatching(fileName, expectedPattern, readAction(fileName));
     }
 
     private ThrowableAssert.ThrowingCallable concatenatedReadAction(Path good, Path bad) {

@@ -9,6 +9,8 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 
+import dev.hardwood.internal.ExceptionContext;
+
 /// Walks the pages of one projected column in one row group.
 ///
 /// [java.util.Iterator] in every respect but one: both methods declare
@@ -36,6 +38,17 @@ public interface PageIterator {
     /// @throws IOException if reading the file failed
     /// @throws java.util.NoSuchElementException if no page is available
     PageInfo next() throws IOException;
+
+    /// Which page of the column chunk this walk is on: an ordinal,
+    /// [ExceptionContext#DICTIONARY_PAGE], or [ExceptionContext#UNKNOWN_PAGE].
+    ///
+    /// Read by the retriever when a page is handed on and when one is not — a header that
+    /// will not parse fails before any [PageInfo] exists.
+    ///
+    /// @return the page this walk is on
+    default int currentPage() {
+        return ExceptionContext.UNKNOWN_PAGE;
+    }
 
     /// A column the filter left with no pages in this row group.
     static PageIterator empty() {

@@ -446,8 +446,7 @@ class PageFilterEvaluatorTest {
             ResolvedPredicate resolved = FilterPredicateResolver.resolve(filter, schema);
             RowGroup rowGroup = metaData.rowGroups().get(0);
             RowGroupIndexBuffers indexBuffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
-            return PageFilterEvaluator.computeMatchingRows(resolved, rowGroup, indexBuffers,
-                    new PageFilterEvaluator.IndexLocation(inputFile.name(), 0));
+            return PageFilterEvaluator.computeMatchingRows(resolved, rowGroup, indexBuffers);
         }
         finally {
             inputFile.close();
@@ -624,13 +623,13 @@ class PageFilterEvaluatorTest {
 
         try (InputFile inputFile = InputFile.of(file)) {
             RowGroupIndexBuffers buffers = RowGroupIndexBuffers.fetch(inputFile, rowGroup);
+            // Called directly here; in the reader this runs while a column's pages are
+            // planned, and the pipeline puts the file and row group in front of it.
             assertThatThrownBy(() -> PageFilterEvaluator.computeMatchingRows(
-                    new ResolvedPredicate.IsNotNullPredicate(0), rowGroup, buffers,
-                    new PageFilterEvaluator.IndexLocation("indexes.parquet", 7)))
+                    new ResolvedPredicate.IsNotNullPredicate(0), rowGroup, buffers))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("[indexes.parquet] Failed to parse the page index of column 0"
-                            + " in row group 7: Malformed Parquet metadata: ColumnIndex describes"
-                            + " 3 pages but OffsetIndex locates 2");
+                    .hasMessage("Failed to parse the page index of column 0: Malformed Parquet"
+                            + " metadata: ColumnIndex describes 3 pages but OffsetIndex locates 2");
         }
     }
 

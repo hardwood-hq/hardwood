@@ -161,7 +161,7 @@ public class PageDecoder {
         ByteBuffer pageData = pageBuffer.slice(headerSize, compressedSize);
 
         if (pageHeader.crc() != null) {
-            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData, column.name());
+            CrcValidator.assertCorrectCrc(pageHeader.crc(), pageData);
         }
 
         Page result = switch (pageHeader.type()) {
@@ -511,7 +511,7 @@ public class PageDecoder {
                 int bitWidth = data[offset++] & 0xFF;
                 if (bitWidth > 32) {
                     throw new ParquetReadException("Invalid dictionary index bit width: " + bitWidth
-                            + " for column '" + column.name() + "'. Must be between 0 and 32");
+                            + ". Must be between 0 and 32");
                 }
                 RleBitPackingHybridDecoder indexDecoder = new RleBitPackingHybridDecoder(data, offset, data.length - offset, bitWidth);
 

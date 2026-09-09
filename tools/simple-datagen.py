@@ -5572,3 +5572,36 @@ pq.write_table(
 print("\nGenerated avro_name_resolution.parquet:")
 print("  - Schema: home.address.city, work.address.zip, 'acme.address'.city, 'a-b'")
 print("  - 2 rows: duplicate nested record names plus names outside the Avro grammar")
+
+# ============================================================================
+# Multi-Row-Group File Carrying a Page Index
+# ============================================================================
+
+# A file with several row groups *and* a column/offset index per chunk. Every other
+# page-index fixture holds a single row group, which cannot exercise the reader's
+# planning of the second work item onwards — where the row group and the page it
+# reports for a failure come from different places.
+_multi_rg_index_schema = pa.schema([
+    ('id', pa.int64(), False),
+    ('value', pa.int64(), False),
+])
+_multi_rg_index_table = pa.table({
+    'id': list(range(0, 3000)),
+    'value': list(range(1000, 4000)),
+}, schema=_multi_rg_index_schema)
+_multi_rg_index_writer = pq.ParquetWriter(
+    'core/src/test/resources/multi_row_group_page_index.parquet',
+    schema=_multi_rg_index_schema,
+    use_dictionary=False,
+    compression='NONE',
+    data_page_version='2.0',
+    data_page_size=128,
+    write_statistics=True,
+    write_page_index=True,
+)
+for _chunk_start in range(0, 3000, 1000):
+    _multi_rg_index_writer.write_table(_multi_rg_index_table.slice(_chunk_start, 1000))
+_multi_rg_index_writer.close()
+print("\nGenerated multi_row_group_page_index.parquet:")
+print("  - 3 row groups of 1000 rows, id ascending across the file")
+print("  - column index and offset index per chunk, ~10 pages each")

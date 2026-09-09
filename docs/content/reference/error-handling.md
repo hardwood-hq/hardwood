@@ -11,37 +11,19 @@
 -->
 # Error Handling
 
-Hardwood throws specific exceptions for common error conditions.
+A failed read leaves you one decision — try again, or stop — and the exception type answers
+it. **Trying again may help for `IOException`, and will not for anything else.**
 
-## Reading
-
-A read that fails leaves you one decision: try again, or stop. The exception
-type answers it.
-
-> **Trying again may help:** `IOException`
-> **Trying again will not:** `ParquetReadException`, `UnsupportedOperationException`
-
-`IOException` means the bytes did not arrive. Once they have, nothing about them
-changes on a second attempt, so parsing and decoding raise `ParquetReadException`
-instead — including for a page that will not decompress and a dictionary that will
-not decode.
-
-Every message names the file the reader was on. Exceptions raised for an invalid file add
-more detail, such as the file region, row group or column the read stopped at.
-
-### The read failed
+## The read failed
 
 | Exception | When |
 |-----------|------|
-| `IOException` | Reading the file failed: a local-disk read error, an S3 transport failure (after retry exhaustion — see [Read from S3](../how-to/s3.md)), a file that cannot be opened. Checked, and declared by every method that reaches the file: `ParquetFileReader.open`/`openAll`; the reader factories and their builders' `build()` — `rowReader`, `columnReader`, `columnReaders`; `RowReader.hasNext`/`next`/`close`; `ColumnReader.nextBatch`/`close`; `ColumnReaders.nextBatch`/`close` |
-| `ParquetReadException` | The file was read and is not valid Parquet: a bad magic number, a corrupt footer, a malformed page index, a dictionary page the metadata places outside its column chunk, a page whose checksum fails, values that do not decode. Unchecked |
+| `IOException` | The bytes did not arrive: a local-disk read error, an S3 transport failure (after retry exhaustion — see [Read from S3](../how-to/s3.md)), a file that cannot be opened. Checked, and declared by every method that reaches the file: `ParquetFileReader.open`/`openAll`; the reader factories and their builders' `build()` — `rowReader`, `columnReader`, `columnReaders`; `RowReader.hasNext`/`next`/`close`; `ColumnReader.nextBatch`/`close`; `ColumnReaders.nextBatch`/`close` |
+| `ParquetReadException` | They arrived and are not valid Parquet: a bad magic number, a corrupt footer, a malformed page index, a dictionary page the metadata places outside its column chunk, a page whose checksum fails, a page that will not decompress, values that do not decode. Unchecked |
 | `SchemaIncompatibleException` | A `ParquetReadException`. In a multi-file read, a file whose schema cannot be reconciled with the first file's; or one file's footer disagreeing with itself about which leaf a column chunk holds |
 | `UnsupportedOperationException` | The file is correct and Hardwood cannot read it: Parquet Modular Encryption, an encoding not implemented, a compression codec whose library is absent — the message names the dependency to add — a column chunk stored in a separate file (the legacy split-file layout), a row group whose page-index region exceeds 2 GB, or a file over 2 GB opened with the mmap-backed range cache |
 
-### The call was wrong
-
-These are mistakes in the calling code rather than read failures. The message names the file
-and the column, and nothing about where in the file the read had got to.
+## The call was wrong
 
 | Exception | When |
 |-----------|------|
@@ -54,10 +36,23 @@ Requesting the wrong type for a column — `getLong` on an `INT32` column — is
 error whose exception type is deliberately unspecified, and is covered in
 [Type mismatches](accessors.md#type-mismatches).
 
-Reading a `RowReader` inside a `Stream` or an `Iterator` means adapting a checked
-exception to an interface that cannot declare one. Wrap it in
-`UncheckedIOException` at that boundary and unwrap it where the stream is
-consumed; Hardwood itself raises `UncheckedIOException` from no public method.
+Hardwood raises `UncheckedIOException` from no public method. Reading a `RowReader` inside a
+`Stream` or an `Iterator` means wrapping the checked exception at that boundary yourself and
+unwrapping it where the stream is consumed.
+
+## What a message says
+
+```
+[data.parquet: row group 0, column 'category', page 123] CRC mismatch: expected 609e7e3 but computed 2b0b086e
+[data.parquet: row group 0, column 'category', dictionary page] CRC mismatch: expected 609e7e3 but computed 2b0b086e
+[data.parquet] Not a Parquet file (invalid magic number at start)
+```
+
+Every message the reader composes names the file. A message for an invalid file also names
+the row group, column and page, leaving out any part the reader could not determine: a
+failure before a column chunk's pages are walked names no page, and one while the footer is
+parsed names only the file. A message for a wrong call names the file alone. An `IOException`
+an `InputFile` raises for itself is unprefixed.
 
 ## Writing
 

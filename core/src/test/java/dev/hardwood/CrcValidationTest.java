@@ -73,8 +73,9 @@ class CrcValidationTest {
                     colReader.nextBatch();
                 }
             }
-        }).hasRootCauseInstanceOf(ParquetReadException.class)
-          .rootCause().hasMessage("CRC mismatch for column id: expected 2bcb8d87 but computed 6c9620a");
+        }).isInstanceOf(ParquetReadException.class)
+          .hasMessage("[<memory>: row group 0, column 'id', page 0] CRC mismatch: expected 2bcb8d87 but "
+                   + "computed 6c9620a");
     }
 
     @Test
@@ -121,9 +122,9 @@ class CrcValidationTest {
                     colReader.nextBatch();
                 }
             }
-        }).hasRootCauseInstanceOf(ParquetReadException.class)
-          .rootCause().hasMessage("CRC mismatch for column category: expected 609e7e3 but computed "
-                               + "2b0b086e");
+        }).isInstanceOf(ParquetReadException.class)
+          .hasMessage("[<memory>: row group 0, column 'category', dictionary page] CRC mismatch: expected "
+                   + "609e7e3 but computed 2b0b086e");
     }
 
     @Test

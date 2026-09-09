@@ -13,6 +13,7 @@ import java.util.List;
 import java.util.NoSuchElementException;
 
 import dev.hardwood.InputFile;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.metadata.DataPageHeader;
 import dev.hardwood.internal.metadata.DataPageHeaderV2;
 import dev.hardwood.internal.metadata.PageHeader;
@@ -300,6 +301,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
     /// resolution. As scanning advances past the current chunk, a new
     /// handle is created and chained for one-ahead pre-fetch.
     private class SequentialPageIterator implements PageIterator {
+
         private final ColumnMetaData metaData = columnChunk.metaData();
         private Dictionary dictionary;
         private boolean initialized;
@@ -313,6 +315,10 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         /// is never consulted.
         private long recordsRead;
         private int pageCount;
+        /// Which page this walk is on, for a failure to name. Set before the bytes of a
+        /// page are touched rather than after they parse, because a header that will not
+        /// parse is exactly the case with no [PageInfo] to carry it.
+        private int currentPage = ExceptionContext.UNKNOWN_PAGE;
         /// Look-ahead cache for the next page to emit. Populated lazily by
         /// [#hasNext()] and consumed by [#next()]. Look-ahead is required
         /// because per-page row masks may drop pages while counters still
@@ -325,6 +331,11 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
         private ChunkHandle currentHandle;
         private int handleStart; // relative position where current handle starts
         private int handleEnd;   // relative position where current handle ends (exclusive)
+
+        @Override
+        public int currentPage() {
+            return currentPage;
+        }
 
         @Override
         public boolean hasNext() throws IOException {
@@ -450,11 +461,16 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             if (position >= columnChunkLength) {
                 return;
             }
+            // The chunk's first page, whichever kind it turns out to be: that is in the
+            // header about to be read, so a header that will not parse can only be named by
+            // position — and the dictionary page, when there is one, is at this position.
+            currentPage = pageCount;
             ParsedHeader parsed = readPageHeader(position);
             PageHeader header = parsed.header();
             int headerSize = parsed.headerSize();
 
             if (header.type() == PageType.DICTIONARY_PAGE) {
+                currentPage = ExceptionContext.DICTIONARY_PAGE;
                 int compressedSize = header.compressedPageSize();
                 int dictTotalSize = headerSize + compressedSize;
                 // The header is already parsed, so hand it over rather than a region the
@@ -464,6 +480,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 dictionary = DictionaryParser.parsePage(header, compressedData,
                         columnSchema, metaData, context);
                 position += dictTotalSize;
+                currentPage = ExceptionContext.UNKNOWN_PAGE;
             }
         }
 
@@ -500,6 +517,7 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
                 if (!matchingRows.isAll() && recordsRead >= matchingRows.endRow()) {
                     return null;
                 }
+                currentPage = pageCount;
                 ParsedHeader parsed = readPageHeader(position);
                 PageHeader header = parsed.header();
                 int headerSize = parsed.headerSize();
@@ -577,14 +595,13 @@ public final class SequentialFetchPlan implements FetchPlan, RowGroupIterator.Co
             }
 
             if (valuesRead != metaData.numValues()) {
-                throw new ParquetReadException("Value count mismatch for column '" + columnSchema.name()
-                        + "': metadata declares " + metaData.numValues()
-                        + " values but pages contain " + valuesRead);
+                throw new ParquetReadException("Value count mismatch: metadata declares "
+                        + metaData.numValues() + " values but pages contain " + valuesRead);
             }
             if (!matchingRows.isAll() && recordsRead != rowGroupRowCount) {
-                throw new ParquetReadException("Record count mismatch for column '" + columnSchema.name()
-                        + "': row group declares " + rowGroupRowCount
-                        + " rows but pages contain " + recordsRead + " records.");
+                throw new ParquetReadException("Record count mismatch: row group declares "
+                        + rowGroupRowCount + " rows but pages contain " + recordsRead
+                        + " records.");
             }
             return null;
         }

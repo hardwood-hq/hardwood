@@ -90,6 +90,13 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     // preserve this invariant.
     private final String[] fileNameBuffer;
 
+    // Row group and page ordinal per reorder-buffer slot, written by the retriever
+    // alongside fileNameBuffer[slot] under the same happens-before chain and read under the
+    // same slot-reuse rule. Together they say where a page came from, which is what a
+    // failure met at a thread boundary needs in order to place itself.
+    private final int[] rowGroupBuffer;
+    private final int[] pageBuffer;
+
     // Per-slot filter-always-matches flag, written by the retriever alongside
     // fileNameBuffer[slot] under the same happens-before chain: whether the page's
     // row group was proven by statistics to match the filter in full.
@@ -141,6 +148,16 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// Written only by the drain thread.
     String currentBatchFileName;
 
+    /// Row group of the page the drain last took from the reorder buffer, or
+    /// [ExceptionContext#UNKNOWN_ROW_GROUP] before it has taken one. The drain runs on its
+    /// own thread and is handed pages rather than reading them, so this is all it knows of
+    /// where the one it is assembling came from. Written only by the drain thread.
+    int currentPageRowGroup = ExceptionContext.UNKNOWN_ROW_GROUP;
+
+    /// Page ordinal of the page the drain last took, or [ExceptionContext#UNKNOWN_PAGE]
+    /// before it has taken one. Written only by the drain thread.
+    int currentPageIndex = ExceptionContext.UNKNOWN_PAGE;
+
     /// Whether every page of the current batch comes from a row group whose statistics
     /// prove the filter matches all rows. Only maintained (with batch flushes on
     /// transitions) when [#flushOnFilterAlwaysMatchesTransition] is `true`.
@@ -181,6 +198,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             levelScratchBuffer[i] = new PageDecoder.LevelScratch();
         }
         this.fileNameBuffer = new String[MAX_INFLIGHT_PAGES];
+        this.rowGroupBuffer = new int[MAX_INFLIGHT_PAGES];
+        this.pageBuffer = new int[MAX_INFLIGHT_PAGES];
         this.filterAlwaysMatchesBuffer = new boolean[MAX_INFLIGHT_PAGES];
     }
 
@@ -330,6 +349,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                 totalPagesSubmitted++;
                 int slot = seq % MAX_INFLIGHT_PAGES;
                 fileNameBuffer[slot] = pageSource.getCurrentFileName();
+                rowGroupBuffer[slot] = pageSource.getCurrentRowGroupIndex();
+                pageBuffer[slot] = pageSource.getCurrentPageIndex();
                 filterAlwaysMatchesBuffer[slot] = pageSource.isCurrentFilterAlwaysMatches();
                 PageInfo pi = pageInfo;
                 PageDecoder rdr = pageDecoder;
@@ -359,8 +380,17 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     column.name(), totalPagesSubmitted,
                     sourceNanos / 1_000_000.0, throttleNanos / 1_000_000.0, throttleWakes);
         }
-        catch (Throwable t) {
-            signalError(enrichWithFileName(t, pageSource.getCurrentFileName()));
+        catch (Exception e) {
+            signalError(enrichWithPlace(e, pageSource.getCurrentFileName(),
+                    pageSource.getCurrentRowGroupIndex(), pageSource.getCurrentPageIndex()));
+        }
+        catch (Error err) {
+            // Nothing here can act on it, and it is not the file's fault, so it is neither
+            // retyped nor placed. But a consumer waiting on work this thread will never
+            // finish would wait for ever, so it is recorded on the way past: `checkError`
+            // rethrows an `Error` as it was raised.
+            signalError(err);
+            throw err;
         }
     }
 
@@ -375,8 +405,17 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     : pageDecoder.decodePage(pageInfo.pageData(), pageInfo.dictionary(), levelScratchBuffer[slot]);
             reorderBuffer.set(slot, new DecodedPage(page, pageInfo.mask()));
         }
-        catch (Throwable t) {
-            signalError(enrichWithFileName(t, fileNameBuffer[slot]));
+        catch (Exception e) {
+            signalError(enrichWithPlace(e, fileNameBuffer[slot], rowGroupBuffer[slot],
+                    pageBuffer[slot]));
+        }
+        catch (Error err) {
+            // Nothing here can act on it, and it is not the file's fault, so it is neither
+            // retyped nor placed. But a consumer waiting on work this thread will never
+            // finish would wait for ever, so it is recorded on the way past: `checkError`
+            // rethrows an `Error` as it was raised.
+            signalError(err);
+            throw err;
         }
         LockSupport.unpark(drainThread);
     }
@@ -421,8 +460,17 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
                     pureAssembly / 1_000_000.0, decodeWaitNanos / 1_000_000.0, decodeWaitWakes,
                     publishBlockNanos / 1_000_000.0);
         }
-        catch (Throwable t) {
-            signalError(enrichWithFileName(t, currentBatchFileName));
+        catch (Exception e) {
+            signalError(enrichWithPlace(e, currentBatchFileName, currentPageRowGroup,
+                    currentPageIndex));
+        }
+        catch (Error err) {
+            // Nothing here can act on it, and it is not the file's fault, so it is neither
+            // retyped nor placed. But a consumer waiting on work this thread will never
+            // finish would wait for ever, so it is recorded on the way past: `checkError`
+            // rethrows an `Error` as it was raised.
+            signalError(err);
+            throw err;
         }
     }
 
@@ -444,6 +492,8 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
             // Detect file boundary: flush the current batch when the file changes
             // so that each batch is attributed to a single file.
             String pageFileName = fileNameBuffer[slot];
+            currentPageRowGroup = rowGroupBuffer[slot];
+            currentPageIndex = pageBuffer[slot];
             if (pageFileName != null) {
                 if (currentBatchFileName != null
                         && !pageFileName.equals(currentBatchFileName)
@@ -505,30 +555,35 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
         LockSupport.unpark(drainThread);
     }
 
-    /// Says what a throwable means, then names the file it came from.
+    /// Says what a throwable means, then names where the read that produced it was.
     ///
     /// [#asReadFailure] decides the type first, so what is enriched here is already the
     /// exception a caller will see. A `RuntimeException` — including the
     /// `ParquetReadException` most decoder failures have just become — is enriched via
-    /// [ExceptionContext#addFileContext], which preserves whatever type it arrived as.
+    /// [ExceptionContext#addReadContext], which preserves whatever type it arrived as.
     /// `IOException` is restated as a fresh `IOException` carrying the prefix: the pipeline
     /// carries a failure across its thread boundary as a `Throwable`, so it stays checked the
     /// whole way and the readers declare it rather than unwrapping anything. `Error` and other
     /// throwables propagate unchanged.
-    private static Throwable enrichWithFileName(Throwable t, String fileName) {
-        Throwable typed = asReadFailure(t);
+    ///
+    /// The column is this worker's own; the file, row group and page are the work item and
+    /// page the failure came from, which each caller passes from what it holds — the
+    /// retriever from the source, the decode task and drain from the page's slot.
+    private Exception enrichWithPlace(Exception e, String fileName, int rowGroup, int page) {
+        Exception typed = asReadFailure(e);
         if (fileName == null || fileName.isEmpty()) {
             return typed;
         }
+        String columnPath = column.fieldPath().toString();
         if (typed instanceof RuntimeException re) {
-            return ExceptionContext.addFileContext(fileName, re);
+            return ExceptionContext.addReadContext(fileName, rowGroup, columnPath, page, re);
         }
         if (typed instanceof IOException ioe) {
             // Stays checked. The pipeline carries a failure across its thread
             // boundary as a `Throwable`, so nothing between here and the reader
             // needs it wrapped, and the reader's own signature can declare it.
             return new IOException(
-                    ExceptionContext.filePrefix(fileName)
+                    ExceptionContext.readPrefix(fileName, rowGroup, columnPath, page)
                             + (ioe.getMessage() != null ? ioe.getMessage() : "I/O failure"),
                     ioe);
         }
@@ -563,18 +618,20 @@ public abstract class ColumnWorker<B> implements AutoCloseable {
     /// Package-private rather than private: this mapping is the judgement the reader's exception
     /// model rests on, and it is asserted directly rather than through a corrupt file for every
     /// arm of it.
-    static Throwable asReadFailure(Throwable t) {
-        if (t instanceof Error || t instanceof IOException
-                || t instanceof UncheckedIOException
-                || t instanceof ParquetReadException
-                || t instanceof UnsupportedOperationException) {
-            return t;
+    /// `Error` is not an arm here: the pipeline catches `Exception`, so an `Error` never
+    /// reaches this and propagates as it was raised.
+    static Exception asReadFailure(Exception e) {
+        if (e instanceof IOException
+                || e instanceof UncheckedIOException
+                || e instanceof ParquetReadException
+                || e instanceof UnsupportedOperationException) {
+            return e;
         }
-        if (t instanceof RuntimeException) {
+        if (e instanceof RuntimeException) {
             return new ParquetReadException(
-                    t.getMessage() != null ? t.getMessage() : t.getClass().getSimpleName(), t);
+                    e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName(), e);
         }
-        return t;
+        return e;
     }
 
     private void unparkRetriever() {

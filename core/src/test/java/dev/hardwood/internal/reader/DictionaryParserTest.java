@@ -70,8 +70,7 @@ class DictionaryParserTest {
             assertThatThrownBy(() -> DictionaryParser.parsePage(page.header(), page.region(),
                     page.columnSchema(), page.metaData(), context))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("Invalid dictionary page for column '" + page.columnSchema().name()
-                            + "': body of " + page.region().remaining()
+                    .hasMessage("Invalid dictionary page: body of " + page.region().remaining()
                             + " bytes, header claims " + page.header().compressedPageSize());
         }
     }
@@ -87,8 +86,7 @@ class DictionaryParserTest {
             assertThatThrownBy(() -> DictionaryParser.parsePage(dataPage, page.body(),
                     page.columnSchema(), page.metaData(), context))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("Invalid dictionary page for column '" + page.columnSchema().name()
-                            + "': page type is DATA_PAGE");
+                    .hasMessage("Invalid dictionary page: page type is DATA_PAGE");
         }
     }
 
@@ -103,8 +101,7 @@ class DictionaryParserTest {
             assertThatThrownBy(() -> DictionaryParser.parsePage(headerless, page.body(),
                     page.columnSchema(), page.metaData(), context))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("Invalid dictionary page for column '" + page.columnSchema().name()
-                            + "': no dictionary_page_header");
+                    .hasMessage("Invalid dictionary page: no dictionary_page_header");
         }
     }
 
@@ -120,8 +117,7 @@ class DictionaryParserTest {
             assertThatThrownBy(() -> DictionaryParser.parsePage(negative, page.body(),
                     page.columnSchema(), page.metaData(), context))
                     .isInstanceOf(ParquetReadException.class)
-                    .hasMessage("Invalid dictionary page for column '" + page.columnSchema().name()
-                            + "': negative numValues (-1)");
+                    .hasMessage("Invalid dictionary page: negative numValues (-1)");
         }
     }
 

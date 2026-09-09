@@ -97,31 +97,30 @@ public final class DictionaryParser {
                             ColumnSchema columnSchema, ColumnMetaData metaData,
                             HardwoodContextImpl context) {
         if (header.type() != PageType.DICTIONARY_PAGE) {
-            throw new ParquetReadException("Invalid dictionary page for column '"
-                    + columnSchema.name() + "': page type is " + header.type());
+            throw new ParquetReadException(
+                    "Invalid dictionary page: page type is " + header.type());
         }
 
         int compressedSize = header.compressedPageSize();
         if (compressedData.remaining() != compressedSize) {
-            throw new ParquetReadException("Invalid dictionary page for column '"
-                    + columnSchema.name() + "': body of " + compressedData.remaining()
-                    + " bytes, header claims " + compressedSize);
+            throw new ParquetReadException("Invalid dictionary page: body of "
+                    + compressedData.remaining() + " bytes, header claims " + compressedSize);
         }
 
         DictionaryPageHeader dictionaryPageHeader = header.dictionaryPageHeader();
         if (dictionaryPageHeader == null) {
-            throw new ParquetReadException("Invalid dictionary page for column '"
-                    + columnSchema.name() + "': no dictionary_page_header");
+            throw new ParquetReadException(
+                    "Invalid dictionary page: no dictionary_page_header");
         }
 
         int numValues = dictionaryPageHeader.numValues();
         if (numValues < 0) {
-            throw new ParquetReadException("Invalid dictionary page for column '"
-                    + columnSchema.name() + "': negative numValues (" + numValues + ")");
+            throw new ParquetReadException(
+                    "Invalid dictionary page: negative numValues (" + numValues + ")");
         }
 
         if (header.crc() != null) {
-            CrcValidator.assertCorrectCrc(header.crc(), compressedData, columnSchema.name());
+            CrcValidator.assertCorrectCrc(header.crc(), compressedData);
         }
 
         return decompress(compressedData, numValues, header.uncompressedPageSize(),
@@ -168,8 +167,7 @@ public final class DictionaryParser {
             throw e;
         }
         catch (RuntimeException e) {
-            throw new ParquetReadException("Failed to parse dictionary for column '" + column.name()
-                    + "' (type=" + column.type()
+            throw new ParquetReadException("Failed to parse dictionary (type=" + column.type()
                     + ", numValues=" + numValues
                     + ", uncompressedSize=" + uncompressedSize
                     + ", compressedSize=" + compressedData.remaining()

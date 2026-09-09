@@ -79,11 +79,17 @@ class ReadFailureTypingTest {
         assertThat(ColumnWorker.asReadFailure(unsupported)).isSameAs(unsupported);
     }
 
+    /// An `Error` is not the file's fault and nothing here can act on it, so it is neither
+    /// retyped nor placed — but it is recorded, because a consumer waiting on work the
+    /// failed thread will never finish would otherwise wait for ever.
     @Test
-    void errorsPassThroughUnchanged() {
-        OutOfMemoryError oome = new OutOfMemoryError("Java heap space");
+    void anErrorReachesTheConsumerAsItWasRaised() throws Exception {
+        BatchExchange<Object> exchange = BatchExchange.<Object>recycling("amount", Object::new);
+        OutOfMemoryError raised = new OutOfMemoryError("Java heap space");
 
-        assertThat(ColumnWorker.asReadFailure(oome)).isSameAs(oome);
+        exchange.signalError(raised);
+
+        assertThatThrownBy(exchange::checkError).isSameAs(raised);
     }
 
     // ==================== What the exchange does with it ====================

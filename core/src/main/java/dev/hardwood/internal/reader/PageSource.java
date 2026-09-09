@@ -9,6 +9,8 @@ package dev.hardwood.internal.reader;
 
 import java.io.IOException;
 
+import dev.hardwood.internal.ExceptionContext;
+
 /// Per-column iterator that yields [PageInfo] objects across all row groups and files.
 ///
 /// For each row group, obtains a [FetchPlan] from [RowGroupIterator#getColumnPlan]
@@ -54,6 +56,22 @@ public class PageSource {
         return currentWorkItem != null ? currentWorkItem.inputFile().name() : null;
     }
 
+    /// Index of the row group currently being read, or
+    /// [dev.hardwood.internal.ExceptionContext#UNKNOWN_ROW_GROUP] if no work item is
+    /// active. Only valid on the retriever thread.
+    public int getCurrentRowGroupIndex() {
+        return currentWorkItem != null
+                ? currentWorkItem.rowGroupIndex()
+                : ExceptionContext.UNKNOWN_ROW_GROUP;
+    }
+
+    /// Which page of the current column chunk is being read, or
+    /// [dev.hardwood.internal.ExceptionContext#UNKNOWN_PAGE] when no plan is walking one.
+    /// Only valid on the retriever thread.
+    public int getCurrentPageIndex() {
+        return currentPlan != null ? currentPlan.currentPage() : ExceptionContext.UNKNOWN_PAGE;
+    }
+
     /// Whether statistics proved the current work item's row group matches the filter
     /// predicate in full. Only valid on the retriever thread.
     public boolean isCurrentFilterAlwaysMatches() {
@@ -85,9 +103,15 @@ public class PageSource {
                 return null;
             }
             workItemCursor++;
+            // Recorded before it is planned. Planning reads — the page index, the
+            // dictionary, the chunk they sit in — and the retriever can only report a
+            // failure in there against a work item it knows about. The old plan goes with
+            // it: leaving it in place would answer "which page" with the last page of the
+            // row group before this one.
+            currentWorkItem = workItem;
+            currentPlan = null;
             FetchPlan plan = rowGroupIterator.getColumnPlan(workItem, projectedColumnIndex);
             currentPlan = plan.isEmpty() ? null : plan.pages();
-            currentWorkItem = workItem;
         }
     }
 }

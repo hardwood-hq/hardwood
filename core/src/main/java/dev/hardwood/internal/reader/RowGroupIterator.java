@@ -415,9 +415,7 @@ public class RowGroupIterator {
                 RowRanges matchingRows = RowRanges.ALL;
                 if (pageFiltering) {
                     matchingRows = PageFilterEvaluator.computeMatchingRows(
-                            workItem.columnOrdinals().filter(), workItem.rowGroup(), indexBuffers,
-                            new PageFilterEvaluator.IndexLocation(
-                                    workItem.inputFile().name(), workItem.rowGroupIndex()));
+                            workItem.columnOrdinals().filter(), workItem.rowGroup(), indexBuffers);
                 }
 
                 MaskCapability maskCapability = masksApplicableForRowGroup(
@@ -891,7 +889,11 @@ public class RowGroupIterator {
     /// which records within the page the assembler should keep. The mask is
     /// [PageRowMask#ALL] when no filter is active or when the page falls
     /// entirely inside the matching ranges.
-    record NeededPage(PageLocation location, PageRowMask mask) {}
+    ///
+    /// `pageIndex` is the page's ordinal in the whole column chunk, not its position in
+    /// this list: a filter drops pages, and a failure that named the position would send
+    /// a reader to a page the offset index numbers differently.
+    record NeededPage(PageLocation location, PageRowMask mask, int pageIndex) {}
 
     /// Coalesces needed pages within a column into page groups with gap tolerance.
     /// Includes the dictionary prefix in the first group if present.
@@ -961,8 +963,8 @@ public class RowGroupIterator {
                                                        long rowGroupRowCount) {
         if (matchingRows.isAll()) {
             List<NeededPage> needed = new ArrayList<>(allPages.size());
-            for (PageLocation page : allPages) {
-                needed.add(new NeededPage(page, PageRowMask.ALL));
+            for (int i = 0; i < allPages.size(); i++) {
+                needed.add(new NeededPage(allPages.get(i), PageRowMask.ALL, i));
             }
             return needed;
         }
@@ -974,7 +976,7 @@ public class RowGroupIterator {
                     : rowGroupRowCount;
             PageRowMask mask = matchingRows.maskForPage(pageFirstRow, pageLastRow);
             if (mask != null) {
-                needed.add(new NeededPage(allPages.get(i), mask));
+                needed.add(new NeededPage(allPages.get(i), mask, i));
             }
         }
         return needed;
@@ -1172,9 +1174,10 @@ public class RowGroupIterator {
         List<FilteredRowGroup> rowGroups = filterRowGroups(
                 sourceRowGroups, prepared.inputFile(), prepared.schema(), columnOrdinals);
 
-        for (int rgIndex = 0; rgIndex < rowGroups.size() && planRowBudget > 0; rgIndex++) {
-            FilteredRowGroup decided = rowGroups.get(rgIndex);
+        for (int kept = 0; kept < rowGroups.size() && planRowBudget > 0; kept++) {
+            FilteredRowGroup decided = rowGroups.get(kept);
             RowGroup rg = decided.rowGroup();
+            int rgIndex = decided.fileRowGroupIndex();
             long rgRows = rg.numRows();
             if (planSkipRemaining >= rgRows) {
                 planSkipRemaining -= rgRows;
@@ -1187,8 +1190,8 @@ public class RowGroupIterator {
                 firstRowGroupSkip = leadingSkip;
             }
 
-            // Not yet cross-checked when pruning was skipped: filterRowGroups then
-            // returns every row group untouched, so rgIndex is the file's own index.
+            // Not yet cross-checked when pruning was skipped: with pruning active the
+            // loop above has already covered every row group in the file.
             if (!pruningIndexesChunks) {
                 chunkPaths.verify(rg, rgIndex, prepared.inputFile());
             }
@@ -1340,7 +1343,11 @@ public class RowGroupIterator {
 
     /// A row group surviving predicate push-down, and whether its statistics prove
     /// every row matches (so per-row filtering can be skipped for it).
-    private record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches) {}
+    /// A row group that survived pruning, with the index it has **in the file** — not its
+    /// position in this list, which pruning makes a different number. Every consumer means
+    /// the file's: the fetch log, the JFR events, the row group a failure names.
+    private record FilteredRowGroup(RowGroup rowGroup, boolean alwaysMatches,
+            int fileRowGroupIndex) {}
 
     private List<FilteredRowGroup> filterRowGroups(List<RowGroup> rowGroups, InputFile inputFile,
                                                    FileSchema fileSchema, FileColumnOrdinals columnOrdinals) throws IOException {
@@ -1348,13 +1355,16 @@ public class RowGroupIterator {
         // dictionary membership included — with it off, no row group is dropped without
         // reading rows.
         if (filterPredicate == null || !metadataFilteringEnabled) {
-            return rowGroups.stream()
-                    .map(rg -> new FilteredRowGroup(rg, false))
-                    .toList();
+            List<FilteredRowGroup> unpruned = new ArrayList<>(rowGroups.size());
+            for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
+                unpruned.add(new FilteredRowGroup(rowGroups.get(rgIndex), false, rgIndex));
+            }
+            return unpruned;
         }
         List<FilteredRowGroup> filtered = new ArrayList<>(rowGroups.size());
         int fullyMatching = 0;
-        for (RowGroup rg : rowGroups) {
+        for (int rgIndex = 0; rgIndex < rowGroups.size(); rgIndex++) {
+            RowGroup rg = rowGroups.get(rgIndex);
             FilterDecision decision = RowGroupFilterEvaluator.decideRowGroup(columnOrdinals.filter(), rg,
                     new RowGroupBloomFilterSource(inputFile, rg),
                     new RowGroupDictionaryFilterSource(inputFile, rg, fileSchema, context));
@@ -1365,7 +1375,7 @@ public class RowGroupIterator {
             if (alwaysMatches) {
                 fullyMatching++;
             }
-            filtered.add(new FilteredRowGroup(rg, alwaysMatches));
+            filtered.add(new FilteredRowGroup(rg, alwaysMatches, rgIndex));
         }
 
         RowGroupFilterEvent event = new RowGroupFilterEvent();

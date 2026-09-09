@@ -25,6 +25,7 @@ import dev.hardwood.cli.internal.IndexValueFormatter;
 import dev.hardwood.cli.internal.Sizes;
 import dev.hardwood.cli.internal.Strings;
 import dev.hardwood.cli.internal.table.RowTable;
+import dev.hardwood.internal.ExceptionContext;
 import dev.hardwood.internal.reader.Dictionary;
 import dev.hardwood.internal.reader.DictionaryParser;
 import dev.hardwood.internal.reader.HardwoodContextImpl;
@@ -139,8 +140,8 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
                     chunk.metaData().totalCompressedSize(), 4 * 1024 * 1024));
             ByteBuffer dictRegion = inputFile.readRange(chunkStart, dictReadSize);
 
-            Dictionary dictionary = DictionaryParser.parse(
-                    dictRegion, columnSchema, chunk.metaData(), context);
+            Dictionary dictionary = parseDictionary(
+                    dictRegion, columnSchema, chunk, context, inputFile, rgIdx);
 
             if (dictionary == null) {
                 messages.add("Row Group " + rgIdx + ": no dictionary (column is not dictionary-encoded)");
@@ -167,6 +168,22 @@ public class InspectDictionaryCommand implements Command<CommandInvocation> {
                     ? new String[]{"RG", "Index", "Length", "Value"}
                     : new String[]{"RG", "Index", "Value"};
             System.out.println(RowTable.renderTable(headers, rows, separatorsBefore, List.of()));
+        }
+    }
+
+    /// Parses one row group's dictionary, naming the file, row group and column on anything
+    /// the parser raises. A read through `ColumnReader` gets that from the pipeline; this
+    /// command reaches the parser directly, so without it a corrupt dictionary reports only
+    /// "CRC mismatch: expected … but computed …".
+    private static Dictionary parseDictionary(ByteBuffer dictRegion, ColumnSchema columnSchema,
+            ColumnChunk chunk, HardwoodContextImpl context, InputFile inputFile,
+            int rowGroupIndex) {
+        try {
+            return DictionaryParser.parse(dictRegion, columnSchema, chunk.metaData(), context);
+        }
+        catch (RuntimeException e) {
+            throw ExceptionContext.addReadContext(
+                    inputFile.name(), rowGroupIndex, columnSchema.fieldPath().toString(), e);
         }
     }
 

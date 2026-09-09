@@ -11,11 +11,28 @@ import java.io.IOException;
 import java.io.UncheckedIOException;
 import java.util.concurrent.CompletionException;
 
-/// Utility for enriching exception messages with file-name context.
+import dev.hardwood.reader.ParquetReadException;
+
+/// Utility for enriching exception messages with the file, and where in it a read failed.
 ///
-/// All exception-wrapping for file-name enrichment is centralised here so that
-/// reader classes share the same logic.
+/// A failure the file caused names the row group, column and page the read stopped on,
+/// because that varies between failures; one the calling code caused names only the file,
+/// because the fix is the same wherever the reader had got to.
 public final class ExceptionContext {
+
+    /// The row group of a read that is in none: the footer parse, the per-file schema
+    /// check, or a failure the pipeline could not attribute.
+    ///
+    /// Plain ints, because they travel through per-page arrays and per-call arguments where
+    /// an [java.util.OptionalInt] would allocate. [ParquetReadException] is where they
+    /// become optional, once, at the boundary a caller sees.
+    public static final int UNKNOWN_ROW_GROUP = -1;
+
+    /// The page of a read that is on none.
+    public static final int UNKNOWN_PAGE = -1;
+
+    /// The chunk's dictionary page, which has no ordinal among the data pages.
+    public static final int DICTIONARY_PAGE = -2;
 
     private ExceptionContext() {
     }
@@ -25,6 +42,69 @@ public final class ExceptionContext {
     /// so callers can always concatenate the result without a null check.
     public static String filePrefix(String fileName) {
         return fileName != null ? "[" + fileName + "] " : "";
+    }
+
+    /// Returns the `[fileName: row group N, column 'X'] ` prefix that marks a message with
+    /// where in a file the read failed, dropping whichever part is unknown.
+    ///
+    /// The bracket already says "this is where", so the position goes inside it: one marker
+    /// rather than two, and no separator to render. With no position this is [#filePrefix].
+    ///
+    /// @param fileName the originating file name, may be `null`
+    /// @param rowGroup the row group being read, or [#UNKNOWN_ROW_GROUP]
+    /// @param column   the column being read, may be `null`
+    /// @return the prefix, or the empty string when `fileName` is `null`
+    public static String readPrefix(String fileName, int rowGroup, String column) {
+        return readPrefix(fileName, rowGroup, column, UNKNOWN_PAGE);
+    }
+
+    /// The same, naming the page the read was on.
+    ///
+    /// @param fileName the originating file name, may be `null`
+    /// @param rowGroup the row group being read, or [#UNKNOWN_ROW_GROUP]
+    /// @param column   the column being read, may be `null`
+    /// @param page     the page's ordinal in its column chunk, [#DICTIONARY_PAGE], or
+    ///                 [#UNKNOWN_PAGE]
+    /// @return the prefix, or the empty string when `fileName` is `null`
+    public static String readPrefix(String fileName, int rowGroup, String column, int page) {
+        return readPrefix(fileName, rowGroup, column,
+                page == DICTIONARY_PAGE ? UNKNOWN_PAGE : page, page == DICTIONARY_PAGE);
+    }
+
+    /// The same, with the dictionary page named rather than encoded in `page`. Any negative
+    /// `rowGroup` or `page` is a part the reader could not determine and is left out.
+    ///
+    /// @param fileName       the originating file name, may be `null`
+    /// @param rowGroup       the row group being read, negative if not known
+    /// @param column         the column being read, may be `null`
+    /// @param page           the page's ordinal in its column chunk, negative if not known
+    /// @param dictionaryPage whether the read was on the chunk's dictionary page
+    /// @return the prefix, or the empty string when `fileName` is `null`
+    public static String readPrefix(String fileName, int rowGroup, String column, int page,
+            boolean dictionaryPage) {
+        if (fileName == null) {
+            return "";
+        }
+        if (rowGroup < 0 && column == null && page < 0 && !dictionaryPage) {
+            return filePrefix(fileName);
+        }
+        StringBuilder prefix = new StringBuilder("[").append(fileName).append(": ");
+        String separator = "";
+        if (rowGroup >= 0) {
+            prefix.append("row group ").append(rowGroup);
+            separator = ", ";
+        }
+        if (column != null) {
+            prefix.append(separator).append("column '").append(column).append('\'');
+            separator = ", ";
+        }
+        if (dictionaryPage) {
+            prefix.append(separator).append("dictionary page");
+        }
+        else if (page >= 0) {
+            prefix.append(separator).append("page ").append(page);
+        }
+        return prefix.append("] ").toString();
     }
 
     /// Amends the exception message with a `[fileName] ` prefix. Preserves the
@@ -40,10 +120,36 @@ public final class ExceptionContext {
     /// @param e        the exception to enrich
     /// @return the enriched (or original) exception — never `null`
     public static RuntimeException addFileContext(String fileName, RuntimeException e) {
+        return addReadContext(fileName, UNKNOWN_ROW_GROUP, null, e);
+    }
+
+    /// The same, with the row group and column the read failed in — what the read pipeline
+    /// knows at the three boundaries between its threads.
+    ///
+    /// @param fileName the originating file name, may be `null`
+    /// @param rowGroup the row group being read, or [#UNKNOWN_ROW_GROUP]
+    /// @param column   the column being read, may be `null`
+    /// @param e        the exception to enrich
+    /// @return the enriched (or original) exception — never `null`
+    public static RuntimeException addReadContext(String fileName, int rowGroup, String column,
+            RuntimeException e) {
+        return addReadContext(fileName, rowGroup, column, UNKNOWN_PAGE, e);
+    }
+
+    /// The same, naming the page the read was on.
+    ///
+    /// @param fileName the originating file name, may be `null`
+    /// @param rowGroup the row group being read, or [#UNKNOWN_ROW_GROUP]
+    /// @param column   the column being read, may be `null`
+    /// @param page     the page's ordinal, [#DICTIONARY_PAGE], or [#UNKNOWN_PAGE]
+    /// @param e        the exception to enrich
+    /// @return the enriched (or original) exception — never `null`
+    public static RuntimeException addReadContext(String fileName, int rowGroup, String column,
+            int page, RuntimeException e) {
         if (fileName == null || fileName.isEmpty()) {
             return e;
         }
-        String prefix = "[" + fileName + "] ";
+        String prefix = readPrefix(fileName, rowGroup, column, page);
         String originalMessage = e.getMessage();
         if (hasFilePrefix(originalMessage)) {
             return e;
