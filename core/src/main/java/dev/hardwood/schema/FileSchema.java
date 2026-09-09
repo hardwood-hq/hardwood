@@ -386,28 +386,28 @@ public class FileSchema {
             return null;
         }
         return switch (converted) {
-            case UTF8 -> new LogicalType.StringType();
-            case ENUM -> new LogicalType.EnumType();
-            case JSON -> new LogicalType.JsonType();
-            case BSON -> new LogicalType.BsonType();
-            case INTERVAL -> new LogicalType.IntervalType();
-            case DATE -> new LogicalType.DateType();
+            case UTF8 -> LogicalType.string();
+            case ENUM -> LogicalType.enumType();
+            case JSON -> LogicalType.json();
+            case BSON -> LogicalType.bson();
+            case INTERVAL -> LogicalType.interval();
+            case DATE -> LogicalType.date();
             case DECIMAL -> decimalFromElement(element);
             // The parquet-format backward-compatibility rule maps the legacy
             // TIME_*/TIMESTAMP_* converted types to isAdjustedToUTC=true; these
             // annotations always denoted UTC-normalized values.
-            case TIME_MILLIS -> new LogicalType.TimeType(true, LogicalType.TimeUnit.MILLIS);
-            case TIME_MICROS -> new LogicalType.TimeType(true, LogicalType.TimeUnit.MICROS);
-            case TIMESTAMP_MILLIS -> new LogicalType.TimestampType(true, LogicalType.TimeUnit.MILLIS);
-            case TIMESTAMP_MICROS -> new LogicalType.TimestampType(true, LogicalType.TimeUnit.MICROS);
-            case INT_8 -> new LogicalType.IntType(8, true);
-            case INT_16 -> new LogicalType.IntType(16, true);
-            case INT_32 -> new LogicalType.IntType(32, true);
-            case INT_64 -> new LogicalType.IntType(64, true);
-            case UINT_8 -> new LogicalType.IntType(8, false);
-            case UINT_16 -> new LogicalType.IntType(16, false);
-            case UINT_32 -> new LogicalType.IntType(32, false);
-            case UINT_64 -> new LogicalType.IntType(64, false);
+            case TIME_MILLIS -> LogicalType.time(true, LogicalType.TimeUnit.MILLIS);
+            case TIME_MICROS -> LogicalType.time(true, LogicalType.TimeUnit.MICROS);
+            case TIMESTAMP_MILLIS -> LogicalType.timestamp(true, LogicalType.TimeUnit.MILLIS);
+            case TIMESTAMP_MICROS -> LogicalType.timestamp(true, LogicalType.TimeUnit.MICROS);
+            case INT_8 -> LogicalType.intType(8, true);
+            case INT_16 -> LogicalType.intType(16, true);
+            case INT_32 -> LogicalType.intType(32, true);
+            case INT_64 -> LogicalType.intType(64, true);
+            case UINT_8 -> LogicalType.intType(8, false);
+            case UINT_16 -> LogicalType.intType(16, false);
+            case UINT_32 -> LogicalType.intType(32, false);
+            case UINT_64 -> LogicalType.intType(64, false);
             // Group-level annotations are handled on GroupNode, not here.
             case LIST, MAP, MAP_KEY_VALUE -> null;
         };
@@ -427,7 +427,7 @@ public class FileSchema {
             return element.logicalType();
         }
         if (hasMapKeyValueChild(children)) {
-            return new LogicalType.MapType();
+            return LogicalType.map();
         }
         return null;
     }
@@ -451,7 +451,7 @@ public class FileSchema {
                     "DECIMAL converted type requires a precision: " + element.name());
         }
         int scale = element.scale() != null ? element.scale() : 0;
-        return new LogicalType.DecimalType(scale, element.precision());
+        return LogicalType.decimal(element.precision(), scale);
     }
 
     /// Validate a Variant-annotated group's shape: required `metadata` binary
@@ -992,13 +992,13 @@ public class FileSchema {
                 }
                 case BuilderList list -> {
                     out.add(new SchemaElement(list.name(), null, null, list.repetition(), 1,
-                            ConvertedType.LIST, null, null, null, new LogicalType.ListType()));
+                            ConvertedType.LIST, null, null, null, LogicalType.list()));
                     out.add(SchemaElement.group("list", RepetitionType.REPEATED, 1));
                     flatten(List.of(list.element()), out);
                 }
                 case BuilderMap map -> {
                     out.add(new SchemaElement(map.name(), null, null, map.repetition(), 1,
-                            ConvertedType.MAP, null, null, null, new LogicalType.MapType()));
+                            ConvertedType.MAP, null, null, null, LogicalType.map()));
                     out.add(SchemaElement.group("key_value", RepetitionType.REPEATED, 2));
                     out.add(leafElement(map.key()));
                     flatten(List.of(map.value()), out);

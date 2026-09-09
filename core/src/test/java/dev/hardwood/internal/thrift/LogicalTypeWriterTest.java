@@ -28,38 +28,42 @@ class LogicalTypeWriterTest {
 
     static Stream<LogicalType> roundTripped() {
         return Stream.of(
-                new LogicalType.StringType(),
-                new LogicalType.MapType(),
-                new LogicalType.ListType(),
-                new LogicalType.EnumType(),
-                new LogicalType.DateType(),
-                new LogicalType.JsonType(),
-                new LogicalType.BsonType(),
-                new LogicalType.NullType(),
-                new LogicalType.UuidType(),
-                new LogicalType.Float16Type(),
-                new LogicalType.DecimalType(0, 1),
-                new LogicalType.DecimalType(2, 9),
-                new LogicalType.DecimalType(38, 38),
-                new LogicalType.VariantType(1),
-                new LogicalType.VariantType(2),
-                new LogicalType.GeometryType("EPSG:4326"),
-                new LogicalType.GeographyType("EPSG:4326", EdgeInterpolationAlgorithm.KARNEY));
+                LogicalType.string(),
+                LogicalType.map(),
+                LogicalType.list(),
+                LogicalType.enumType(),
+                LogicalType.date(),
+                LogicalType.json(),
+                LogicalType.bson(),
+                LogicalType.nullType(),
+                LogicalType.uuid(),
+                LogicalType.float16(),
+                LogicalType.decimal(1, 0),
+                LogicalType.decimal(9, 2),
+                LogicalType.decimal(38, 38),
+                LogicalType.variant(1),
+                LogicalType.variant(2),
+                LogicalType.geometry("EPSG:4326"),
+                LogicalType.geography("EPSG:4326", EdgeInterpolationAlgorithm.KARNEY));
+    }
+
+    static Stream<LogicalType> parameterlessMembers() {
+        return roundTripped().filter(logicalType -> logicalType.getClass().getRecordComponents().length == 0);
     }
 
     static Stream<LogicalType> timeAndTimestampVariants() {
         return Stream.of(TimeUnit.values())
                 .flatMap(unit -> Stream.of(true, false)
                         .flatMap(utc -> Stream.of(
-                                new LogicalType.TimeType(utc, unit),
-                                new LogicalType.TimestampType(utc, unit))));
+                                LogicalType.time(utc, unit),
+                                LogicalType.timestamp(utc, unit))));
     }
 
     static Stream<LogicalType> intVariants() {
         return Stream.of(8, 16, 32, 64)
                 .flatMap(width -> Stream.of(
-                        new LogicalType.IntType(width, true),
-                        new LogicalType.IntType(width, false)));
+                        LogicalType.intType(width, true),
+                        LogicalType.intType(width, false)));
     }
 
     /// Every algorithm the format defines. `UNKNOWN` is excluded: it is the reader's placeholder
@@ -68,7 +72,7 @@ class LogicalTypeWriterTest {
     static Stream<LogicalType> edgeInterpolations() {
         return Stream.of(EdgeInterpolationAlgorithm.values())
                 .filter(algorithm -> algorithm != EdgeInterpolationAlgorithm.UNKNOWN)
-                .map(algorithm -> new LogicalType.GeographyType("OGC:CRS84", algorithm));
+                .map(algorithm -> LogicalType.geography("OGC:CRS84", algorithm));
     }
 
     @ParameterizedTest
@@ -77,14 +81,24 @@ class LogicalTypeWriterTest {
         assertThat(roundTrip(logicalType)).isEqualTo(logicalType);
     }
 
-    /// The reader substitutes the spec's default CRS for an absent one, so a geospatial
-    /// annotation without a CRS reads back as the default rather than as null.
+    /// The members carrying no parameters have one value, and a footer names it once per column
+    /// that is annotated with it. The reader hands back the shared instance rather than
+    /// allocating one per column.
+    @ParameterizedTest
+    @MethodSource("parameterlessMembers")
+    void parameterlessMembersReadBackAsTheSharedInstance(LogicalType logicalType) throws Exception {
+        assertThat(roundTrip(logicalType)).isSameAs(logicalType);
+    }
+
+    /// The CRS is optional on the wire, and the reader substitutes the spec's default for an
+    /// absent one. Only the record constructor expresses that absence — the factories
+    /// substitute the default themselves — so it is what builds the annotation here.
     @Test
     void absentCrsReadsBackAsTheDefault() throws Exception {
         assertThat(roundTrip(new LogicalType.GeometryType(null)))
-                .isEqualTo(new LogicalType.GeometryType("OGC:CRS84"));
+                .isEqualTo(LogicalType.geometry("OGC:CRS84"));
         assertThat(roundTrip(new LogicalType.GeographyType(null, EdgeInterpolationAlgorithm.VINCENTY)))
-                .isEqualTo(new LogicalType.GeographyType("OGC:CRS84", EdgeInterpolationAlgorithm.VINCENTY));
+                .isEqualTo(LogicalType.geography("OGC:CRS84", EdgeInterpolationAlgorithm.VINCENTY));
     }
 
     /// An algorithm the reader could not name decodes to `UNKNOWN`, which names no union member.
@@ -92,7 +106,7 @@ class LogicalTypeWriterTest {
     /// schema read from a newer file fails on the way back out instead.
     @Test
     void unrecognizedEdgeInterpolationIsRejected() {
-        LogicalType geography = new LogicalType.GeographyType("OGC:CRS84", EdgeInterpolationAlgorithm.UNKNOWN);
+        LogicalType geography = LogicalType.geography("OGC:CRS84", EdgeInterpolationAlgorithm.UNKNOWN);
 
         assertThatThrownBy(() -> LogicalTypeWriter.write(new ThriftCompactWriter(), geography))
                 .isInstanceOf(IllegalArgumentException.class)
@@ -103,7 +117,7 @@ class LogicalTypeWriterTest {
     /// so an interval column is annotated by its legacy `converted_type` alone.
     @Test
     void intervalHasNoUnionMember() {
-        assertThatThrownBy(() -> LogicalTypeWriter.write(new ThriftCompactWriter(), new LogicalType.IntervalType()))
+        assertThatThrownBy(() -> LogicalTypeWriter.write(new ThriftCompactWriter(), LogicalType.interval()))
                 .isInstanceOf(IllegalArgumentException.class)
                 .hasMessage("INTERVAL has no LogicalType union member and is written as the legacy "
                          + "converted_type only");
@@ -116,14 +130,14 @@ class LogicalTypeWriterTest {
         ThriftCompactWriter writer = new ThriftCompactWriter();
         writer.pushFieldIdContext();
         writer.writeFieldBegin(1, FieldType.STRUCT);
-        LogicalTypeWriter.write(writer, new LogicalType.TimestampType(false, TimeUnit.NANOS));
+        LogicalTypeWriter.write(writer, LogicalType.timestamp(false, TimeUnit.NANOS));
         writer.writeFieldBegin(2, FieldType.I32);
         writer.writeI32(7);
 
         ThriftCompactReader reader = new ThriftCompactReader(ByteBuffer.wrap(writer.toByteArray()));
         assertThat(ThriftCompactReader.fieldId(reader.readFieldHeader())).isEqualTo((short) 1);
         assertThat(LogicalTypeReader.read(reader))
-                .isEqualTo(new LogicalType.TimestampType(false, TimeUnit.NANOS));
+                .isEqualTo(LogicalType.timestamp(false, TimeUnit.NANOS));
 
         assertThat(ThriftCompactReader.fieldId(reader.readFieldHeader())).isEqualTo((short) 2);
         assertThat(reader.readI32()).isEqualTo(7);

@@ -44,51 +44,51 @@ public class LogicalTypeReader {
                 result = switch (ThriftCompactReader.fieldId(header)) {
                     case 1 -> { // STRING
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield new LogicalType.StringType();
+                        yield LogicalType.string();
                     }
                     case 2 -> { // MAP
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty Struct
-                        yield new LogicalType.MapType();
+                        yield LogicalType.map();
                     }
                     case 3 -> { // LIST
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty Struct
-                        yield new LogicalType.ListType();
+                        yield LogicalType.list();
                     }
                     case 4 -> { // ENUM
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield new LogicalType.EnumType();
+                        yield LogicalType.enumType();
                     }
                     case 5 -> readDecimalType(reader);
                     case 6 -> { // DATE
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield new LogicalType.DateType();
+                        yield LogicalType.date();
                     }
                     case 7 -> readTimeType(reader);
                     case 8 -> readTimestampType(reader);
                     case 9 -> { // INTERVAL
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield new LogicalType.IntervalType();
+                        yield LogicalType.interval();
                     }
                     case 10 -> readIntType(reader);
                     case 11 -> { // NULL
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield new LogicalType.NullType();
+                        yield LogicalType.nullType();
                     }
                     case 12 -> { // JSON
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield new LogicalType.JsonType();
+                        yield LogicalType.json();
                     }
                     case 13 -> { // BSON
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield new LogicalType.BsonType();
+                        yield LogicalType.bson();
                     }
                     case 14 -> { // UUID
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield new LogicalType.UuidType();
+                        yield LogicalType.uuid();
                     }
                     case 15 -> { // FLOAT16
                         reader.skipField(ThriftCompactReader.fieldType(header)); // Empty struct
-                        yield new LogicalType.Float16Type();
+                        yield LogicalType.float16();
                     }
                     case 16 -> readVariantType(reader);
                     case 17 -> readGeometryType(reader);
@@ -152,13 +152,15 @@ public class LogicalTypeReader {
             }
         }
 
-        // Validate both fields were read
-        if (scale < 0 || precision <= 0) {
+        // Validate both fields were read, and that the pair is one the annotation admits: the
+        // record rejects a scale above the precision as a caller error, which a file carrying
+        // one is not.
+        if (scale < 0 || precision <= 0 || scale > precision) {
             throw new ParquetReadException(
                     "Invalid DecimalType: scale=" + scale + ", precision=" + precision);
         }
 
-        return new LogicalType.DecimalType(scale, precision);
+        return LogicalType.decimal(precision, scale);
     }
 
     private static LogicalType.TimeType readTimeType(ThriftCompactReader reader) {
@@ -194,7 +196,7 @@ public class LogicalTypeReader {
             }
         }
 
-        return new LogicalType.TimeType(isAdjustedToUTC, unit);
+        return LogicalType.time(isAdjustedToUTC, unit);
     }
 
     private static LogicalType.TimestampType readTimestampType(ThriftCompactReader reader) {
@@ -230,7 +232,7 @@ public class LogicalTypeReader {
             }
         }
 
-        return new LogicalType.TimestampType(isAdjustedToUTC, unit);
+        return LogicalType.timestamp(isAdjustedToUTC, unit);
     }
 
     private static LogicalType.IntType readIntType(ThriftCompactReader reader) {
@@ -268,7 +270,7 @@ public class LogicalTypeReader {
             }
         }
 
-        return new LogicalType.IntType(bitWidth, isSigned);
+        return LogicalType.intType(bitWidth, isSigned);
     }
 
     private static LogicalType.VariantType readVariantType(ThriftCompactReader reader) {
@@ -302,7 +304,7 @@ public class LogicalTypeReader {
             }
         }
 
-        return new LogicalType.VariantType(specVersion);
+        return LogicalType.variant(specVersion);
     }
 
     private static TimeUnit readTimeUnit(ThriftCompactReader reader) {
@@ -346,11 +348,8 @@ public class LogicalTypeReader {
             }
         }
 
-        if (crs == null) {
-            crs = "OGC:CRS84";
-        }
-
-        return new LogicalType.GeometryType(crs);
+        // An absent CRS is the format's default, which the factory substitutes.
+        return LogicalType.geometry(crs);
     }
 
     private static LogicalType.GeographyType readGeographyType(ThriftCompactReader reader) {
@@ -389,14 +388,8 @@ public class LogicalTypeReader {
             }
         }
 
-        if (crs == null) {
-            crs = "OGC:CRS84";
-        }
-        if (edgeInterpolation == null) {
-            edgeInterpolation = EdgeInterpolationAlgorithm.SPHERICAL;
-        }
-
-        return new LogicalType.GeographyType(crs, edgeInterpolation);
+        // An absent CRS or algorithm is the format's default, which the factory substitutes.
+        return LogicalType.geography(crs, edgeInterpolation);
     }
 
     /// Reads the single variant of a Thrift union and returns its field id, leaving the reader on

@@ -79,10 +79,6 @@ public class LogicalTypeValidator {
     /// complement of that byte length spans. A `BYTE_ARRAY` is unbounded.
     private static void validateDecimal(String columnName, PhysicalType type, Integer typeLength,
                                         LogicalType.DecimalType decimal) {
-        if (decimal.scale() > decimal.precision()) {
-            throw new IllegalArgumentException("DECIMAL scale " + decimal.scale()
-                    + " exceeds precision " + decimal.precision() + " on column " + columnName);
-        }
         int maxPrecision = switch (type) {
             case INT32 -> 9;
             case INT64 -> 18;

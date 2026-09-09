@@ -89,8 +89,8 @@ public record LogicalTypeAnnotations(LogicalType union, ConvertedType convertedT
             return NONE;
         }
         return switch (convertedType) {
-            case LIST -> both(new LogicalType.ListType(), ConvertedType.LIST);
-            case MAP -> both(new LogicalType.MapType(), ConvertedType.MAP);
+            case LIST -> both(LogicalType.list(), ConvertedType.LIST);
+            case MAP -> both(LogicalType.map(), ConvertedType.MAP);
             default -> new LogicalTypeAnnotations(null, convertedType, null, null);
         };
     }
