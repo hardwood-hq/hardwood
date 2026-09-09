@@ -77,6 +77,7 @@ Key rules for `///` Markdown JavaDoc:
 To generate test Parquet files, extend tools/simple-datagen.py and run: `source .docker-venv/bin/activate && python tools/simple-datagen.py`
 When running Python, use _.docker-venv_ as the venv directory.
 Use Python 3.10–3.14 (PyArrow 24.0.0, pinned in `requirements.txt`, supports that range). The pinned versions of `pyarrow` and `thriftpy2` are load-bearing: both directly produce bytes that get checked into `core/src/test/resources/`, so any upgrade must be paired with regenerating the affected fixtures.
+Assert exception messages in full, with AssertJ's `hasMessage(...)`. Never `hasMessageContaining(...)`: a substring assertion passes on a message whose remainder has gone wrong, and it leaves the text a caller actually reads untested. The same holds for the other partial matchers (`hasMessageStartingWith`, `hasMessageMatching` and friends). A message that is impractical to pin in full — one carrying a path, a byte offset or another value that varies per run — is a message to reshape so that the varying part is the only thing interpolated, not a reason to match a substring of it.
 
 # Contributions
 
